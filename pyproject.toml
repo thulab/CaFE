@@ -1,0 +1,16 @@
+[project]
+name = "tsbenchmark-dynamic"
+version = "0.1.0"
+description = "Dynamic benchmark system for time-series forecasting evaluation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi",
+  "flask",
+  "pydantic",
+  "requests",
+  "uvicorn",
+]
+
+[tool.setuptools]
+packages = ["backend", "backend.app", "frontend"]

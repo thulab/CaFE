@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TS Dynamic Benchmark</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Dynamic Benchmark for Time-Series Forecasting</p>
+          <h1>动态评测集与在线评测系统</h1>
+          <p class="hero-copy">
+            后端负责动态批次生成、任务执行、报告与榜单，前端作为开源客户端消费统一 API，
+            用于展示赛道状态并触发最小闭环冒烟。
+          </p>
+          <p class="view-switch">
+            <a href="{{ url_for('index') }}" class="{{ 'active' if current_view == 'gallery' else '' }}">Gallery View</a>
+            <a href="{{ url_for('console') }}">Console View</a>
+          </p>
+        </div>
+        <div class="hero-metrics">
+          <article>
+            <span>赛道</span>
+            <strong>{{ overview.tracks | length }}</strong>
+          </article>
+          <article>
+            <span>模型</span>
+            <strong>{{ overview.models | length }}</strong>
+          </article>
+          <article>
+            <span>最近任务</span>
+            <strong>{{ overview.recent_tasks | length }}</strong>
+          </article>
+        </div>
+      </section>
+
+      {% if message %}
+      <section class="banner">{{ message }}</section>
+      {% endif %}
+
+      <section class="grid two-column">
+        <article class="panel">
+          <h2>生成动态批次</h2>
+          <form method="post" action="{{ url_for('generate') }}" class="control-form">
+            <input type="hidden" name="view" value="gallery">
+            <label>赛道
+              <select name="track">
+                {% for track in overview.tracks %}
+                <option value="{{ track.track }}">{{ track.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>样本数 <input type="number" name="sample_count" min="4" value="8"></label>
+            <label>上下文长度 <input type="number" name="context_length" min="24" value="96"></label>
+            <label>预测长度 <input type="number" name="horizon" min="8" value="24"></label>
+            <label>随机种子 <input type="number" name="seed" value="7"></label>
+            <button type="submit">生成批次</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <h2>运行评测任务</h2>
+          <form method="post" action="{{ url_for('run_task') }}" class="control-form">
+            <input type="hidden" name="view" value="gallery">
+            <label>模型
+              <select name="model_id">
+                {% for model in overview.models %}
+                <option value="{{ model.model_id }}">{{ model.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>批次
+              <select name="batch_id">
+                {% for batch in overview.batches %}
+                <option value="{{ batch.batch_id }}">{{ batch.batch_id }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <button type="submit" {% if not overview.batches %}disabled{% endif %}>执行评测</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="grid three-column">
+        <article class="panel">
+          <h2>赛道定义</h2>
+          <div class="stack">
+            {% for track in overview.tracks %}
+            <div class="card">
+              <h3>{{ track.name }}</h3>
+              <p>{{ track.description }}</p>
+              <p class="muted">公平性策略：{{ track.fairness_policy }}</p>
+            </div>
+            {% endfor %}
+          </div>
+        </article>
+
+        <article class="panel">
+          <h2>最近批次</h2>
+          <div class="stack">
+            {% for batch in overview.batches %}
+            <div class="card">
+              <h3>{{ batch.batch_id }}</h3>
+              <p>{{ batch.track }} / {{ batch.sample_count }} samples</p>
+              <p class="muted">policy={{ batch.policy }}, validation={{ batch.validation.passed }}</p>
+            </div>
+            {% else %}
+            <p class="muted">暂无批次</p>
+            {% endfor %}
+          </div>
+        </article>
+
+        <article class="panel">
+          <h2>排行榜</h2>
+          <div class="stack">
+            {% for item in overview.leaderboard %}
+            <div class="card highlight">
+              <h3>{{ item.model_name }}</h3>
+              <p>score={{ item.composite_score }}</p>
+              <p class="muted">{{ item.track }} / mse={{ item.mse }} / latency={{ item.mean_latency_ms }}ms</p>
+            </div>
+            {% else %}
+            <p class="muted">暂无评测记录</p>
+            {% endfor %}
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>最近任务</h2>
+        <div class="task-table">
+          <div class="task-row task-head">
+            <span>Task</span>
+            <span>Model</span>
+            <span>Track</span>
+            <span>Status</span>
+            <span>Composite</span>
+          </div>
+          {% for task in overview.recent_tasks %}
+          <div class="task-row">
+            <span>{{ task.task_id }}</span>
+            <span>{{ task.model_id }}</span>
+            <span>{{ task.track }}</span>
+            <span>{{ task.status }}</span>
+            <span>{{ task.metrics.composite_score if task.metrics else "-" }}</span>
+          </div>
+          {% else %}
+          <p class="muted">暂无任务</p>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
