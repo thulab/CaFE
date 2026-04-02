@@ -54,76 +54,76 @@
           </div>
           <form method="post" action="{{ url_for('submit_model') }}" class="control-form">
             <label>Repo ID
-              <input type="text" name="repo_id" value="amazon/chronos-2" placeholder="例如：gpt2 或 org/model-name" required>
+              <input type="text" name="repo_id" value="{{ user_defaults.repo_id }}" placeholder="例如：gpt2 或 org/model-name" required>
             </label>
             <label>展示名称
-              <input type="text" name="name" value="Amazon Chronos-2" placeholder="可选，默认使用 repo id">
+              <input type="text" name="name" value="{{ user_defaults.name }}" placeholder="可选，默认使用 repo id">
             </label>
             <label>自定义模型 ID
-              <input type="text" name="model_id" placeholder="可选，默认自动生成">
+              <input type="text" name="model_id" value="{{ user_defaults.model_id }}" placeholder="可选，默认自动生成">
             </label>
             <label>任务类型
               <select name="task">
-                <option value="chronos-2" selected>chronos-2</option>
-                <option value="text-generation">text-generation</option>
-                <option value="text2text-generation">text2text-generation</option>
+                <option value="chronos-2" {% if user_defaults.task == 'chronos-2' %}selected{% endif %}>chronos-2</option>
+                <option value="text-generation" {% if user_defaults.task == 'text-generation' %}selected{% endif %}>text-generation</option>
+                <option value="text2text-generation" {% if user_defaults.task == 'text2text-generation' %}selected{% endif %}>text2text-generation</option>
               </select>
             </label>
             <label>Revision
-              <input type="text" name="revision" value="main" placeholder="可选，例如 main 或 commit hash">
+              <input type="text" name="revision" value="{{ user_defaults.revision }}" placeholder="可选，例如 main 或 commit hash">
             </label>
             <label>模型说明
-              <textarea name="manual" rows="4" required>Amazon Chronos-2 baseline loaded from Hugging Face Transformers-compatible Chronos2Pipeline for benchmark evaluation.</textarea>
+              <textarea name="manual" rows="4" required>{{ user_defaults.manual }}</textarea>
             </label>
             <div class="inline-grid">
               <label>max_new_tokens
-                <input type="number" name="max_new_tokens" min="16" value="128">
+                <input type="number" name="max_new_tokens" min="16" value="{{ user_defaults.max_new_tokens }}">
               </label>
               <label>temperature
-                <input type="number" name="temperature" step="0.1" min="0" value="0.0">
+                <input type="number" name="temperature" step="0.1" min="0" value="{{ user_defaults.temperature }}">
               </label>
               <label>top_p
-                <input type="number" name="top_p" step="0.1" min="0" max="1" value="1.0">
+                <input type="number" name="top_p" step="0.1" min="0" max="1" value="{{ user_defaults.top_p }}">
               </label>
             </div>
             <div class="inline-grid">
               <label>device_map
-                <input type="text" name="device_map" value="cpu" placeholder="例如：cpu / auto">
+                <input type="text" name="device_map" value="{{ user_defaults.device_map }}" placeholder="例如：cpu / auto">
               </label>
               <label>torch_dtype
-                <input type="text" name="torch_dtype" value="float32" placeholder="例如：float32 / bfloat16">
+                <input type="text" name="torch_dtype" value="{{ user_defaults.torch_dtype }}" placeholder="例如：float32 / bfloat16">
               </label>
               <label>attn_implementation
-                <input type="text" name="attn_implementation" placeholder="可选">
+                <input type="text" name="attn_implementation" value="{{ user_defaults.attn_implementation }}" placeholder="可选">
               </label>
             </div>
             <div class="inline-grid">
               <label>batch_size
-                <input type="number" name="batch_size" min="1" value="8">
+                <input type="number" name="batch_size" min="1" value="{{ user_defaults.batch_size }}">
               </label>
               <label>context_length
-                <input type="number" name="context_length" min="16" value="512" placeholder="可选">
+                <input type="number" name="context_length" min="16" value="{{ user_defaults.context_length_value }}" placeholder="可选">
               </label>
               <label>max_output_patches
-                <input type="number" name="max_output_patches" min="1" placeholder="可选">
+                <input type="number" name="max_output_patches" min="1" value="{{ user_defaults.max_output_patches_value }}" placeholder="可选">
               </label>
             </div>
             <div class="inline-grid">
               <label>load_retries
-                <input type="number" name="load_retries" min="1" value="3">
+                <input type="number" name="load_retries" min="1" value="{{ user_defaults.load_retries }}">
               </label>
               <label>retry_backoff_seconds
-                <input type="number" name="load_retry_backoff_seconds" step="0.5" min="0" value="1.0">
+                <input type="number" name="load_retry_backoff_seconds" step="0.5" min="0" value="{{ user_defaults.load_retry_backoff_seconds }}">
               </label>
               <label>推荐配置
-                <input type="text" value="amazon/chronos-2 / cpu / float32 / batch=8" readonly>
+                <input type="text" value="{{ user_defaults.recommended_profile_label }}" readonly>
               </label>
             </div>
             <div class="checkbox-row">
-              <label><input type="checkbox" name="do_sample"> 允许采样</label>
-              <label><input type="checkbox" name="trust_remote_code" checked> trust_remote_code</label>
-              <label><input type="checkbox" name="use_covariates" checked> 使用协变量</label>
-              <label><input type="checkbox" name="cross_learning"> 跨序列联合预测</label>
+              <label><input type="checkbox" name="do_sample" {% if user_defaults.do_sample %}checked{% endif %}> 允许采样</label>
+              <label><input type="checkbox" name="trust_remote_code" {% if user_defaults.trust_remote_code %}checked{% endif %}> trust_remote_code</label>
+              <label><input type="checkbox" name="use_covariates" {% if user_defaults.use_covariates %}checked{% endif %}> 使用协变量</label>
+              <label><input type="checkbox" name="cross_learning" {% if user_defaults.cross_learning %}checked{% endif %}> 跨序列联合预测</label>
             </div>
             <button type="submit">提交模型</button>
           </form>
@@ -161,26 +161,30 @@
         <div class="panel-head">
           <div>
             <p class="eyebrow">Overall Ranking</p>
-            <h2>最新总榜</h2>
+            <h2>总榜</h2>
           </div>
         </div>
         <div class="leaderboard-table">
           <div class="leaderboard-row head">
             <span>排名</span>
             <span>模型</span>
-            <span>赛道</span>
-            <span>Score</span>
-            <span>MSE</span>
-            <span>Latency</span>
+            <span>名次和</span>
+            <span>覆盖赛道</span>
+            <span>平均分</span>
+            <span>赛道名次</span>
           </div>
           {% for item in overview.overall_leaderboard %}
           <div class="leaderboard-row">
-            <span>#{{ loop.index }}</span>
+            <span>#{{ item.rank }}</span>
             <span>{{ item.model_name }}</span>
-            <span>{{ item.track }}</span>
-            <span>{{ item.composite_score }}</span>
-            <span>{{ item.mse }}</span>
-            <span>{{ item.mean_latency_ms }} ms</span>
+            <span>{{ item.rank_sum }}</span>
+            <span>{{ item.covered_tracks }}</span>
+            <span>{{ item.mean_composite_score }}</span>
+            <span class="muted mono">
+              {% for track_name, rank in item.track_ranks.items() %}
+              {{ track_name }}=#{{ rank }}{% if not loop.last %} / {% endif %}
+              {% endfor %}
+            </span>
           </div>
           {% else %}
           <p class="muted">暂无排行榜数据</p>
@@ -196,12 +200,13 @@
               <p class="eyebrow">Track Ranking</p>
               <h2>{{ board.track }}</h2>
             </div>
+            <span class="pill">{{ board.scoring_strategy }}</span>
           </div>
           <div class="stack">
             {% for item in board.entries %}
             <article class="card">
               <header class="card-head">
-                <h3>#{{ loop.index }} {{ item.model_name }}</h3>
+                <h3>#{{ item.rank }} {{ item.model_name }}</h3>
                 <span class="pill">{{ item.composite_score }}</span>
               </header>
               <p class="muted mono">{{ item.model_id }} / {{ item.batch_id }}</p>

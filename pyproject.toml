@@ -20,4 +20,18 @@ huggingface = [
 ]
 
 [tool.setuptools]
-packages = ["backend", "backend.app", "backend.app.dataloaders", "backend.app.data_processors", "backend.app.data_validators", "frontend"]
+packages = [
+  "backend",
+  "backend.app",
+  "backend.app.data_management",
+  "backend.app.data_management.data_loader",
+  "backend.app.data_management.processors",
+  "backend.app.data_management.validators",
+  "backend.app.data_loader",
+  "backend.app.data_processors",
+  "backend.app.data_validators",
+  "backend.app.model_management",
+  "backend.app.task_management",
+  "backend.app.leaderboard_management",
+  "frontend",
+]

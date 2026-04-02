@@ -10,7 +10,8 @@ from .domain import (
     TaskRunRequest,
     TrackKind,
 )
-from .services import BenchmarkEngine, BenchmarkError, NotFoundError
+from .errors import BenchmarkError, InternalBenchmarkError, NotFoundError
+from .services import BenchmarkEngine
 
 
 def create_api(engine: BenchmarkEngine) -> FastAPI:
@@ -20,100 +21,102 @@ def create_api(engine: BenchmarkEngine) -> FastAPI:
     def _raise_http_error(exc: Exception) -> None:
         if isinstance(exc, NotFoundError):
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if isinstance(exc, InternalBenchmarkError):
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         if isinstance(exc, BenchmarkError):
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    async def health() -> dict[str, str]:
         return {"status": "ok", "service": "backend"}
 
     @app.get("/api/v1/tracks")
-    def list_tracks():
+    async def list_tracks():
         return engine.list_tracks()
 
     @app.get("/api/v1/models")
-    def list_models():
+    async def list_models():
         return engine.list_models()
 
     @app.post("/api/v1/models/register")
-    def register_model(request: ModelRegistrationRequest):
+    async def register_model(request: ModelRegistrationRequest):
         try:
             return engine.register_model(request)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.post("/api/v1/models/register/huggingface")
-    def register_huggingface_model(request: HuggingFaceModelRegistrationRequest):
+    async def register_huggingface_model(request: HuggingFaceModelRegistrationRequest):
         try:
             return engine.register_huggingface_model(request)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.post("/api/v1/models/{model_id}/load")
-    def load_model(model_id: str):
+    async def load_model(model_id: str):
         try:
             return engine.load_model(model_id)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.get("/api/v1/datasets/batches")
-    def list_batches():
+    async def list_batches():
         return engine.list_batches()
 
     @app.post("/api/v1/datasets/generate")
-    def generate_batch(request: BatchGenerationRequest):
+    async def generate_batch(request: BatchGenerationRequest):
         try:
             return engine.generate_batch(request)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.post("/api/v1/datasets/load/csv")
-    def load_csv_batch(request: CsvBatchLoadRequest):
+    async def load_csv_batch(request: CsvBatchLoadRequest):
         try:
             return engine.load_batch(request)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.get("/api/v1/tasks")
-    def list_tasks():
+    async def list_tasks():
         return engine.list_tasks()
 
     @app.get("/api/v1/tasks/{task_id}")
-    def get_task(task_id: str):
+    async def get_task(task_id: str):
         try:
             return engine.get_task(task_id)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.post("/api/v1/tasks/run")
-    def run_task(request: TaskRunRequest):
+    async def run_task(request: TaskRunRequest):
         try:
             return engine.run_task(request)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.get("/api/v1/reports/{report_id}")
-    def get_report(report_id: str):
+    async def get_report(report_id: str):
         try:
             return engine.get_report(report_id)
         except Exception as exc:
             _raise_http_error(exc)
 
     @app.get("/api/v1/leaderboard")
-    def leaderboard(track: TrackKind | None = Query(default=None)):
+    async def leaderboard(track: TrackKind | None = Query(default=None)):
         return engine.leaderboard(track=track)
 
     @app.get("/api/v1/overview")
-    def overview():
+    async def overview():
         return engine.overview()
 
     @app.get("/api/v1/overview/user")
-    def user_overview():
+    async def user_overview():
         return engine.user_overview()
 
     @app.get("/api/v1/overview/admin")
-    def admin_overview():
+    async def admin_overview():
         return engine.admin_overview()
 
     return app

@@ -15,16 +15,32 @@
 - `Reporter`：聚合 MSE、MAE、sMAPE、延迟、Token 成本，输出 bad case 与总结。
 - `Online System`：独立前端系统，仅通过 API 访问后端。
 
-详细设计见 [docs/architecture.md](/Users/zhanghongyin/code/python/TSBenchmark/docs/architecture.md)。
+详细设计见 [docs/architecture.md](docs/architecture.md)。
 
 ## 目录
 
 ```text
 backend/app/     FastAPI 后端
 frontend/        Flask 前端
+conf/            系统统一配置
 scripts/         启停与冒烟脚本
 runtime/         运行时生成内容
 docs/            架构说明
+```
+
+## 配置
+
+系统的运行参数已经统一收敛到 `conf/system.toml`，包括：
+
+- 后端/前端 host、port、timeout
+- 启停脚本的 PID、日志、健康检查和关闭等待参数
+- 赛道默认参数、数据生成参数、评分阈值、报告阈值
+- 前端表单默认值和页面展示条目上限
+
+默认情况下，后端、前端和脚本都会读取 `conf/system.toml`。如果需要切换配置文件，可设置环境变量：
+
+```bash
+export TSBENCHMARK_CONF=/absolute/path/to/system.toml
 ```
 
 ## 启动
@@ -50,10 +66,12 @@ bash scripts/stop_system.sh
 
 启动脚本会将 PID 和日志写入 `runtime/system/`。
 
-默认情况下，前端会请求 `http://127.0.0.1:8000` 的后端。可通过环境变量 `TSBENCHMARK_BACKEND_URL` 覆盖。
+默认配置下：
 
 - 用户页面：`http://127.0.0.1:8501/`
 - 管理页面：`http://127.0.0.1:8501/admin`
+
+如果修改了 `conf/system.toml` 中的 host/port，启动地址会随配置变化。前端仍可通过环境变量 `TSBENCHMARK_BACKEND_URL` 额外覆盖后端地址。
 
 数据加载模块位于 `backend/app/dataloaders/`，当前提供统一的 `dataloader` 抽象，底层已实现 `CSV` 格式加载，后续可以按相同接口扩展更多来源。
 

@@ -5,7 +5,8 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
-from ..domain import CsvBatchLoadRequest, DatasetLoadRequest, DatasetSourceType, SeriesSample, SeriesTruth, TrackKind
+from ...config import future_known_covariates, infer_difficulty, infer_periods_for_track, infer_trend_type
+from ...domain import CsvBatchLoadRequest, DatasetLoadRequest, DatasetSourceType, SeriesSample, SeriesTruth, TrackKind
 from .base import DataLoaderError, DatasetLoader
 
 
@@ -32,9 +33,7 @@ class CsvDatasetLoader(DatasetLoader):
             rows.sort(key=lambda item: item["step"])
             expected = request.context_length + request.horizon
             if len(rows) < expected:
-                raise CsvLoaderError(
-                    f"sample {sample_key} has only {len(rows)} rows, requires at least {expected}"
-                )
+                raise CsvLoaderError(f"sample {sample_key} has only {len(rows)} rows, requires at least {expected}")
 
             trimmed_rows = rows[:expected]
             history = [row["target"] for row in trimmed_rows[: request.context_length]]
@@ -96,10 +95,8 @@ class CsvDatasetLoader(DatasetLoader):
         return grouped_rows
 
     def _build_truth(self, series: list[float], track: TrackKind) -> SeriesTruth:
-        diffs = [series[index] - series[index - 1] for index in range(1, len(series))]
-        trend_type = "linear" if abs(sum(diffs)) > len(series) * 0.05 else "smooth_curve"
-        amplitude = max(series) - min(series)
-        difficulty = "hard" if amplitude > 6 else "medium" if amplitude > 3 else "easy"
+        trend_type = infer_trend_type(series)
+        difficulty = infer_difficulty(series)
         noise_level = self._estimate_noise(series)
         periods = self._infer_periods(track=track, length=len(series))
         return SeriesTruth(
@@ -113,13 +110,7 @@ class CsvDatasetLoader(DatasetLoader):
         )
 
     def _infer_periods(self, track: TrackKind, length: int) -> list[int]:
-        if track == TrackKind.COST_INTENSIVE:
-            return [24, 48, min(96, max(length // 2, 48))]
-        if track == TrackKind.COVARIATE_ROBUSTNESS:
-            return [6, 18]
-        if track == TrackKind.NOISE_ROBUSTNESS:
-            return [8, 24]
-        return [12, 24] if length >= 96 else [6, 12]
+        return infer_periods_for_track(track, length)
 
     def _estimate_noise(self, series: list[float]) -> float:
         if len(series) < 3:
@@ -129,8 +120,4 @@ class CsvDatasetLoader(DatasetLoader):
         return round(math.sqrt(max(variance, 0.0)), 4)
 
     def _future_known_covariates(self, covariate_columns: list[str]) -> list[str]:
-        return [
-            name
-            for name in covariate_columns
-            if name == "helpful_covariate" or name.startswith("calendar_") or name.startswith("load_")
-        ]
+        return future_known_covariates(covariate_columns)

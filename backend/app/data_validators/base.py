@@ -1,20 +1,3 @@
-from __future__ import annotations
+from ..data_management.validators.base import DataValidationContext, DataValidator
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass
-
-from ..domain import SeriesSample, ValidationReport
-
-
-@dataclass(frozen=True)
-class DataValidationContext:
-    context_length: int
-    horizon: int
-
-
-class DataValidator(ABC):
-    name: str
-
-    @abstractmethod
-    def validate(self, samples: list[SeriesSample], context: DataValidationContext) -> list[str]:
-        raise NotImplementedError
+__all__ = ["DataValidationContext", "DataValidator"]

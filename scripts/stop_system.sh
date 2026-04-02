@@ -4,11 +4,29 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-RUNTIME_DIR="${REPO_ROOT}/runtime/system"
-BACKEND_PID_FILE="${RUNTIME_DIR}/backend.pid"
-FRONTEND_PID_FILE="${RUNTIME_DIR}/frontend.pid"
-BACKEND_PORT=8000
-FRONTEND_PORT=8501
+CONF_PATH="${TSBENCHMARK_CONF:-${REPO_ROOT}/conf/system.toml}"
+
+read_conf() {
+  PYTHONPATH="${REPO_ROOT}" python -m backend.app.config get "$1" "${CONF_PATH}"
+}
+
+resolve_path() {
+  local path="$1"
+  if [[ "${path}" = /* ]]; then
+    printf '%s\n' "${path}"
+  else
+    printf '%s\n' "${REPO_ROOT}/${path}"
+  fi
+}
+
+RUNTIME_ROOT="$(resolve_path "$(read_conf system.runtime.root)")"
+RUNTIME_DIR="${RUNTIME_ROOT}/system"
+BACKEND_PID_FILE="${RUNTIME_DIR}/$(read_conf system.runtime.backend_pid_file)"
+FRONTEND_PID_FILE="${RUNTIME_DIR}/$(read_conf system.runtime.frontend_pid_file)"
+BACKEND_PORT="$(read_conf service.backend.port)"
+FRONTEND_PORT="$(read_conf service.frontend.port)"
+SHUTDOWN_GRACE_ATTEMPTS="$(read_conf system.shutdown.grace_attempts)"
+SHUTDOWN_INTERVAL_SECONDS="$(read_conf system.shutdown.interval_seconds)"
 
 is_pid_running() {
   local pid="$1"
@@ -25,12 +43,12 @@ stop_pid() {
   fi
 
   kill "${pid}" 2>/dev/null || true
-  for _ in {1..10}; do
+  for ((i = 1; i <= SHUTDOWN_GRACE_ATTEMPTS; i++)); do
     if ! is_pid_running "${pid}"; then
       echo "${name} stopped (PID ${pid})."
       return 0
     fi
-    sleep 1
+    sleep "${SHUTDOWN_INTERVAL_SECONDS}"
   done
 
   kill -9 "${pid}" 2>/dev/null || true

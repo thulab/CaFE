@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
+from pathlib import Path
 from typing import Any, Protocol
 
 import requests
 from flask import Flask, redirect, render_template, request, url_for
+
+from backend.app.config import AppSettings, get_settings
 
 
 class BackendProvider(Protocol):
@@ -14,10 +18,19 @@ class BackendProvider(Protocol):
     def fetch_admin_overview(self) -> dict[str, Any]:
         ...
 
+    def fetch_report(self, report_id: str) -> dict[str, Any]:
+        ...
+
     def generate_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         ...
 
+    def load_csv_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
     def run_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def register_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         ...
 
     def submit_huggingface_model(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -28,16 +41,17 @@ class BackendProvider(Protocol):
 
 
 class HttpBackendProvider:
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, settings: AppSettings | None = None) -> None:
+        self.settings = settings or get_settings()
         self.base_url = base_url.rstrip("/")
 
     def _get(self, path: str) -> dict[str, Any]:
-        response = requests.get(f"{self.base_url}{path}", timeout=10)
+        response = requests.get(f"{self.base_url}{path}", timeout=self.settings.service.frontend.get_timeout_seconds)
         response.raise_for_status()
         return response.json()
 
     def _post(self, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        response = requests.post(f"{self.base_url}{path}", json=payload, timeout=30)
+        response = requests.post(f"{self.base_url}{path}", json=payload, timeout=self.settings.service.frontend.post_timeout_seconds)
         response.raise_for_status()
         return response.json()
 
@@ -47,11 +61,20 @@ class HttpBackendProvider:
     def fetch_admin_overview(self) -> dict[str, Any]:
         return self._get("/api/v1/overview/admin")
 
+    def fetch_report(self, report_id: str) -> dict[str, Any]:
+        return self._get(f"/api/v1/reports/{report_id}")
+
     def generate_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/v1/datasets/generate", payload)
 
+    def load_csv_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/datasets/load/csv", payload)
+
     def run_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/v1/tasks/run", payload)
+
+    def register_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/models/register", payload)
 
     def submit_huggingface_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/v1/models/register/huggingface", payload)
@@ -60,17 +83,32 @@ class HttpBackendProvider:
         return self._post(f"/api/v1/models/{model_id}/load")
 
 
-def create_app(provider: BackendProvider | None = None) -> Flask:
+def create_app(provider: BackendProvider | None = None, settings: AppSettings | None = None) -> Flask:
+    app_settings = settings or get_settings()
     app = Flask(__name__)
-    app.config["BACKEND_PROVIDER"] = provider or HttpBackendProvider(
-        os.environ.get("TSBENCHMARK_BACKEND_URL", "http://127.0.0.1:8000")
-    )
+    backend_url = os.environ.get("TSBENCHMARK_BACKEND_URL", app_settings.frontend_backend_base_url())
+    app.config["BACKEND_PROVIDER"] = provider or HttpBackendProvider(backend_url, settings=app_settings)
+    app.config["APP_SETTINGS"] = app_settings
 
     def backend() -> BackendProvider:
         return app.config["BACKEND_PROVIDER"]
 
+    def settings() -> AppSettings:
+        return app.config["APP_SETTINGS"]
+
     def redirect_with_message(target: str, message: str) -> Any:
         return redirect(url_for(target, message=message))
+
+    def parse_csv_list(raw_value: str) -> list[str]:
+        return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+    def parse_json_field(raw_value: str, *, default: Any, field_name: str) -> Any:
+        if not raw_value.strip():
+            return default
+        try:
+            return json.loads(raw_value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{field_name} 不是合法 JSON: {exc}") from exc
 
     def error_message(exc: Exception) -> str:
         response = getattr(exc, "response", None)
@@ -96,6 +134,7 @@ def create_app(provider: BackendProvider | None = None) -> Flask:
         return render_template(
             "user.html",
             overview=overview,
+            user_defaults=settings().ui.user_model_submission,
             message=request.args.get("message", ""),
             current_view="user",
         )
@@ -106,9 +145,28 @@ def create_app(provider: BackendProvider | None = None) -> Flask:
         return render_template(
             "admin.html",
             overview=overview,
+            admin_defaults=settings().ui.admin_batch_generation,
+            runtime_generated_dir=str(Path(settings().system.runtime.root) / "generated"),
+            manual_model_adapters=[
+                ("seasonal_naive", "seasonal_naive"),
+                ("recent_mean", "recent_mean"),
+                ("covariate_trap", "covariate_trap"),
+            ],
             message=request.args.get("message", ""),
             current_view="admin",
         )
+
+    @app.get("/reports/<report_id>")
+    def report_detail(report_id: str):
+        try:
+            report = backend().fetch_report(report_id)
+            return render_template(
+                "report.html",
+                report=report,
+                current_view="admin",
+            )
+        except Exception as exc:
+            return redirect_with_message("admin", f"报告加载失败：{error_message(exc)}")
 
     @app.get("/console")
     def console():
@@ -145,6 +203,28 @@ def create_app(provider: BackendProvider | None = None) -> Flask:
         except Exception as exc:
             return redirect_with_message("user_home", f"提交失败：{error_message(exc)}")
 
+    @app.post("/actions/models/register")
+    def register_model():
+        try:
+            metadata = parse_json_field(
+                request.form.get("metadata_json", ""),
+                default={},
+                field_name="metadata_json",
+            )
+            payload = {
+                "model_id": request.form["model_id"],
+                "name": request.form["name"],
+                "adapter": request.form["adapter"],
+                "source_type": request.form.get("source_type") or "uploaded_stub",
+                "manual": request.form["manual"],
+                "capabilities": parse_csv_list(request.form.get("capabilities", "")),
+                "metadata": metadata,
+            }
+            model = backend().register_model(payload)
+            return redirect_with_message("admin", f"模型 {model['model_id']} 已注册")
+        except Exception as exc:
+            return redirect_with_message("admin", f"注册失败：{error_message(exc)}")
+
     @app.post("/actions/models/load")
     def load_model():
         try:
@@ -168,6 +248,34 @@ def create_app(provider: BackendProvider | None = None) -> Flask:
         except Exception as exc:
             return redirect_with_message("admin", f"生成失败：{error_message(exc)}")
 
+    @app.post("/actions/datasets/load_csv")
+    def load_csv_dataset():
+        try:
+            processors = parse_json_field(
+                request.form.get("processors_json", ""),
+                default=[],
+                field_name="processors_json",
+            )
+            payload = {
+                "source_type": "csv",
+                "csv_path": request.form["csv_path"],
+                "track": request.form["track"],
+                "context_length": int(request.form["context_length"]),
+                "horizon": int(request.form["horizon"]),
+                "max_samples": int(request.form["max_samples"]) if request.form.get("max_samples") else None,
+                "batch_id_prefix": request.form.get("batch_id_prefix") or "csv",
+                "sample_id_column": request.form.get("sample_id_column") or "sample_id",
+                "step_column": request.form.get("step_column") or "step",
+                "target_column": request.form.get("target_column") or "target",
+                "covariate_columns": parse_csv_list(request.form.get("covariate_columns", "")),
+                "delimiter": request.form.get("delimiter") or ",",
+                "processors": processors,
+            }
+            batch = backend().load_csv_batch(payload)
+            return redirect_with_message("admin", f"CSV 批次 {batch['batch_id']} 已导入")
+        except Exception as exc:
+            return redirect_with_message("admin", f"CSV 导入失败：{error_message(exc)}")
+
     @app.post("/actions/run")
     def run_task():
         payload = {"model_id": request.form["model_id"], "batch_id": request.form["batch_id"]}
@@ -184,4 +292,9 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8501, debug=False)
+    settings = get_settings()
+    app.run(
+        host=settings.service.frontend.host,
+        port=settings.service.frontend.port,
+        debug=settings.service.frontend.debug,
+    )

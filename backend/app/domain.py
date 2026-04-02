@@ -6,9 +6,19 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from .config import get_settings
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _user_submission_defaults():
+    return get_settings().ui.user_model_submission
+
+
+def _admin_batch_defaults():
+    return get_settings().ui.admin_batch_generation
 
 
 class TrackKind(str, Enum):
@@ -110,21 +120,21 @@ class HuggingFaceConfig(BaseModel):
     task: HuggingFaceTask = HuggingFaceTask.TEXT_GENERATION
     revision: str | None = None
     trust_remote_code: bool = False
-    max_new_tokens: int = 128
-    do_sample: bool = False
-    temperature: float = 0.0
-    top_p: float = 1.0
+    max_new_tokens: int = Field(default_factory=lambda: _user_submission_defaults().max_new_tokens)
+    do_sample: bool = Field(default_factory=lambda: _user_submission_defaults().do_sample)
+    temperature: float = Field(default_factory=lambda: _user_submission_defaults().temperature)
+    top_p: float = Field(default_factory=lambda: _user_submission_defaults().top_p)
     device: int = -1
     device_map: str | None = None
     torch_dtype: str | None = None
     attn_implementation: str | None = None
-    batch_size: int = 1
+    batch_size: int = Field(default_factory=lambda: _user_submission_defaults().batch_size)
     context_length: int | None = None
-    use_covariates: bool = True
-    cross_learning: bool = False
+    use_covariates: bool = Field(default_factory=lambda: _user_submission_defaults().use_covariates)
+    cross_learning: bool = Field(default_factory=lambda: _user_submission_defaults().cross_learning)
     max_output_patches: int | None = None
-    load_retries: int = 3
-    load_retry_backoff_seconds: float = 1.0
+    load_retries: int = Field(default_factory=lambda: _user_submission_defaults().load_retries)
+    load_retry_backoff_seconds: float = Field(default_factory=lambda: _user_submission_defaults().load_retry_backoff_seconds)
 
 
 class ModelRecord(BaseModel):
@@ -203,31 +213,31 @@ class HuggingFaceModelRegistrationRequest(BaseModel):
     manual: str
     task: HuggingFaceTask = HuggingFaceTask.TEXT_GENERATION
     revision: str | None = None
-    trust_remote_code: bool = False
-    max_new_tokens: int = 128
-    do_sample: bool = False
-    temperature: float = 0.0
-    top_p: float = 1.0
+    trust_remote_code: bool = Field(default_factory=lambda: _user_submission_defaults().trust_remote_code)
+    max_new_tokens: int = Field(default_factory=lambda: _user_submission_defaults().max_new_tokens)
+    do_sample: bool = Field(default_factory=lambda: _user_submission_defaults().do_sample)
+    temperature: float = Field(default_factory=lambda: _user_submission_defaults().temperature)
+    top_p: float = Field(default_factory=lambda: _user_submission_defaults().top_p)
     capabilities: list[str] = Field(default_factory=lambda: ["forecast", "huggingface"])
     metadata: dict[str, Any] = Field(default_factory=dict)
     device_map: str | None = None
     torch_dtype: str | None = None
     attn_implementation: str | None = None
-    batch_size: int = 1
+    batch_size: int = Field(default_factory=lambda: _user_submission_defaults().batch_size)
     context_length: int | None = None
-    use_covariates: bool = True
-    cross_learning: bool = False
+    use_covariates: bool = Field(default_factory=lambda: _user_submission_defaults().use_covariates)
+    cross_learning: bool = Field(default_factory=lambda: _user_submission_defaults().cross_learning)
     max_output_patches: int | None = None
-    load_retries: int = 3
-    load_retry_backoff_seconds: float = 1.0
+    load_retries: int = Field(default_factory=lambda: _user_submission_defaults().load_retries)
+    load_retry_backoff_seconds: float = Field(default_factory=lambda: _user_submission_defaults().load_retry_backoff_seconds)
 
 
 class BatchGenerationRequest(BaseModel):
     track: TrackKind
-    sample_count: int = 12
+    sample_count: int = Field(default_factory=lambda: _admin_batch_defaults().sample_count)
     context_length: int | None = None
     horizon: int | None = None
-    seed: int = 7
+    seed: int = Field(default_factory=lambda: _admin_batch_defaults().seed)
 
 
 class DatasetLoadRequest(BaseModel):
@@ -263,6 +273,7 @@ class TaskRunRequest(BaseModel):
 
 
 class LeaderboardEntry(BaseModel):
+    rank: int
     task_id: str
     model_id: str
     model_name: str
@@ -300,14 +311,27 @@ class TaskSummary(BaseModel):
 
 class TrackLeaderboard(BaseModel):
     track: TrackKind
+    scoring_strategy: str
     entries: list[LeaderboardEntry]
+
+
+class OverallLeaderboardEntry(BaseModel):
+    rank: int
+    model_id: str
+    model_name: str
+    rank_sum: int
+    covered_tracks: int
+    mean_composite_score: float
+    track_ranks: dict[str, int] = Field(default_factory=dict)
+    track_scores: dict[str, float] = Field(default_factory=dict)
 
 
 class UserDashboardOverview(BaseModel):
     generated_at: datetime = Field(default_factory=utc_now)
     tracks: list[TrackSpec]
     models: list[ModelRecord]
-    overall_leaderboard: list[LeaderboardEntry]
+    overall_leaderboard_strategy: str
+    overall_leaderboard: list[OverallLeaderboardEntry]
     track_leaderboards: list[TrackLeaderboard]
 
 
@@ -317,4 +341,5 @@ class AdminDashboardOverview(BaseModel):
     models: list[ModelRecord]
     batches: list[BatchSummary]
     recent_tasks: list[TaskSummary]
-    leaderboard: list[LeaderboardEntry]
+    overall_leaderboard_strategy: str
+    leaderboard: list[OverallLeaderboardEntry]
