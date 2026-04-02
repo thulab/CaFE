@@ -25,12 +25,38 @@
 - `GET /api/v1/models`
 - `POST /api/v1/models/register`
 - `POST /api/v1/datasets/generate`
+- `POST /api/v1/datasets/load/csv`
 - `GET /api/v1/datasets/batches`
 - `POST /api/v1/tasks/run`
 - `GET /api/v1/tasks`
 - `GET /api/v1/reports/{report_id}`
 - `GET /api/v1/leaderboard`
 - `GET /api/v1/overview`
+
+数据加载模块使用独立目录 `backend/app/dataloaders/` 组织：
+
+- `base.py` 定义统一的 `DatasetLoader` 抽象。
+- `registry.py` 负责按 `source_type` 注册与分发 loader。
+- `csv_loader.py` 提供当前的 CSV 实现。
+
+服务层只依赖 dataloader 抽象，不依赖具体文件格式；未来扩展 `parquet`、`jsonl` 或数据库来源时，只需要新增 loader 并注册即可。
+
+数据处理模块使用独立目录 `backend/app/data_processors/` 组织：
+
+- `base.py` 定义统一的 `DataProcessor` 抽象。
+- `registry.py` 负责按 `processor_type` 注册与分发 processor。
+- `pipeline.py` 负责按请求中的配置顺序执行 processor 链。
+- `builtin.py` 提供当前内置的通用 processor。
+
+数据验证模块使用独立目录 `backend/app/data_validators/` 组织：
+
+- `base.py` 定义统一的 `DataValidator` 抽象和验证上下文。
+- `registry.py` 负责注册 validator。
+- `pipeline.py` 负责聚合 validator 输出并生成最终 `ValidationReport`。
+- `builtin.py` 提供当前内置的通用校验规则。
+
+当前外部数据链路为：`loader -> data processor pipeline -> data validator pipeline -> batch persistence`。
+当前动态生成链路为：`sample generation -> data validator pipeline -> fail then regenerate -> batch persistence`。
 
 当前实现的赛道：
 

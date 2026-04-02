@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TS Dynamic Benchmark Admin Console</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body>
+    <main class="console-shell">
+      <header class="console-header">
+        <div>
+          <p class="label">ADMIN CONSOLE</p>
+          <h1>数据集与任务管理页</h1>
+          <p class="subcopy">管理页面承载数据集生成、任务创建、模型加载和运行态巡检等工作。</p>
+        </div>
+        <nav class="switcher">
+          <a href="{{ url_for('user_home') }}">用户页</a>
+          <a href="{{ url_for('admin') }}" class="{{ 'active' if current_view == 'admin' else '' }}">管理页</a>
+        </nav>
+      </header>
+
+      {% if message %}
+      <section class="notice">{{ message }}</section>
+      {% endif %}
+
+      <section class="status-strip">
+        <article>
+          <span>Tracks</span>
+          <strong>{{ overview.tracks | length }}</strong>
+        </article>
+        <article>
+          <span>Models</span>
+          <strong>{{ overview.models | length }}</strong>
+        </article>
+        <article>
+          <span>Batches</span>
+          <strong>{{ overview.batches | length }}</strong>
+        </article>
+        <article>
+          <span>Tasks</span>
+          <strong>{{ overview.recent_tasks | length }}</strong>
+        </article>
+      </section>
+
+      <section class="workspace">
+        <aside class="rail">
+          <section class="module">
+            <h2>批次生成</h2>
+            <form method="post" action="{{ url_for('generate') }}" class="compact-form">
+              <label>Track
+                <select name="track">
+                  {% for track in overview.tracks %}
+                  <option value="{{ track.track }}">{{ track.name }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>Samples <input type="number" name="sample_count" min="4" value="8"></label>
+              <label>Context <input type="number" name="context_length" min="24" value="96"></label>
+              <label>Horizon <input type="number" name="horizon" min="8" value="24"></label>
+              <label>Seed <input type="number" name="seed" value="17"></label>
+              <button type="submit">Create Batch</button>
+            </form>
+          </section>
+
+          <section class="module">
+            <h2>创建任务</h2>
+            <form method="post" action="{{ url_for('run_task') }}" class="compact-form">
+              <label>Model
+                <select name="model_id">
+                  {% for model in overview.models %}
+                  <option value="{{ model.model_id }}">{{ model.name }} ({{ model.runtime_status }})</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>Batch
+                <select name="batch_id">
+                  {% for batch in overview.batches %}
+                  <option value="{{ batch.batch_id }}">{{ batch.batch_id }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <button type="submit" {% if not overview.batches %}disabled{% endif %}>Run Task</button>
+            </form>
+          </section>
+
+          <section class="module">
+            <h2>运行约定</h2>
+            <ul class="meta-list">
+              <li>内置模型可直接执行。</li>
+              <li>Hugging Face 模型支持显式加载后再运行。</li>
+              <li>批次、任务、报告均写入 `runtime/generated/`。</li>
+            </ul>
+          </section>
+        </aside>
+
+        <section class="board">
+          <section class="module">
+            <h2>模型管理</h2>
+            <div class="stack">
+              {% for model in overview.models %}
+              <article class="item">
+                <header class="item-head">
+                  <div>
+                    <strong>{{ model.name }}</strong>
+                    <span class="mono">{{ model.model_id }}</span>
+                  </div>
+                  <span class="status status-{{ model.runtime_status }}">{{ model.runtime_status }}</span>
+                </header>
+                <p>{{ model.manual }}</p>
+                <p class="mono">adapter={{ model.adapter }} / source={{ model.source_type }}</p>
+                {% if model.huggingface %}
+                <p class="mono">repo={{ model.huggingface.repo_id }} / task={{ model.huggingface.task }} / revision={{ model.huggingface.revision or 'default' }}</p>
+                {% endif %}
+                {% if model.last_error %}
+                <p class="error-text">{{ model.last_error }}</p>
+                {% endif %}
+                <form method="post" action="{{ url_for('load_model') }}">
+                  <input type="hidden" name="model_id" value="{{ model.model_id }}">
+                  <button type="submit" {% if model.source_type != 'huggingface_hub' %}disabled{% endif %}>Load Model</button>
+                </form>
+              </article>
+              {% else %}
+              <div class="empty">暂无模型</div>
+              {% endfor %}
+            </div>
+          </section>
+
+          <section class="double">
+            <section class="module">
+              <h2>Recent Batches</h2>
+              <div class="stack">
+                {% for batch in overview.batches %}
+                <article class="item">
+                  <header class="item-head">
+                    <strong>{{ batch.batch_id }}</strong>
+                    <span>{{ batch.track }}</span>
+                  </header>
+                  <p>samples={{ batch.sample_count }} / context={{ batch.context_length }} / horizon={{ batch.horizon }}</p>
+                  <p class="mono">policy={{ batch.policy }} / validation={{ batch.validation_passed }}</p>
+                </article>
+                {% else %}
+                <div class="empty">暂无批次</div>
+                {% endfor %}
+              </div>
+            </section>
+
+            <section class="module">
+              <h2>Recent Tasks</h2>
+              <div class="stack">
+                {% for task in overview.recent_tasks %}
+                <article class="item">
+                  <header class="item-head">
+                    <strong>{{ task.task_id }}</strong>
+                    <span>{{ task.status }}</span>
+                  </header>
+                  <p>{{ task.model_name }} on {{ task.batch_id }}</p>
+                  <p class="mono">score={{ task.composite_score if task.composite_score is not none else '-' }}</p>
+                  {% if task.error_message %}
+                  <p class="error-text">{{ task.error_message }}</p>
+                  {% endif %}
+                </article>
+                {% else %}
+                <div class="empty">暂无任务</div>
+                {% endfor %}
+              </div>
+            </section>
+          </section>
+
+          <section class="module">
+            <h2>总体排行榜</h2>
+            <div class="table">
+              <div class="row head">
+                <span>Model</span>
+                <span>Track</span>
+                <span>Score</span>
+                <span>MSE</span>
+                <span>Latency</span>
+              </div>
+              {% for item in overview.leaderboard %}
+              <div class="row">
+                <span>{{ item.model_name }}</span>
+                <span>{{ item.track }}</span>
+                <span>{{ item.composite_score }}</span>
+                <span>{{ item.mse }}</span>
+                <span>{{ item.mean_latency_ms }} ms</span>
+              </div>
+              {% else %}
+              <div class="empty">暂无评测记录</div>
+              {% endfor %}
+            </div>
+          </section>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

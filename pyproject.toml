@@ -12,5 +12,12 @@ dependencies = [
   "uvicorn",
 ]
 
+[project.optional-dependencies]
+huggingface = [
+  "chronos-forecasting>=1.5.0",
+  "transformers",
+  "torch",
+]
+
 [tool.setuptools]
-packages = ["backend", "backend.app", "frontend"]
+packages = ["backend", "backend.app", "backend.app.dataloaders", "backend.app.data_processors", "backend.app.data_validators", "frontend"]

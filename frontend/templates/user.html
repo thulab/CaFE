@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TS Dynamic Benchmark User Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='user.css') }}">
+  </head>
+  <body>
+    <main class="page-shell">
+      <header class="hero">
+        <section class="hero-copy">
+          <p class="eyebrow">User Portal</p>
+          <h1>查看榜单，提交 Hugging Face 模型</h1>
+          <p>
+            用户页面聚焦最新排行榜与模型提交。你可以查看总榜和各赛道榜单，并通过 Hugging Face repo
+            提交自己的模型，交给管理侧加载和创建评测任务。
+          </p>
+          <nav class="view-switch">
+            <a href="{{ url_for('user_home') }}" class="{{ 'active' if current_view == 'user' else '' }}">用户页</a>
+            <a href="{{ url_for('admin') }}">管理页</a>
+          </nav>
+        </section>
+        <section class="hero-metrics">
+          <article>
+            <span>赛道数</span>
+            <strong>{{ overview.tracks | length }}</strong>
+          </article>
+          <article>
+            <span>模型数</span>
+            <strong>{{ overview.models | length }}</strong>
+          </article>
+          <article>
+            <span>总榜条目</span>
+            <strong>{{ overview.overall_leaderboard | length }}</strong>
+          </article>
+        </section>
+      </header>
+
+      {% if message %}
+      <section class="banner">{{ message }}</section>
+      {% endif %}
+
+      <section class="grid two-column top-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Submit Model</p>
+              <h2>提交 Hugging Face 模型</h2>
+            </div>
+          </div>
+          <form method="post" action="{{ url_for('submit_model') }}" class="control-form">
+            <label>Repo ID
+              <input type="text" name="repo_id" value="amazon/chronos-2" placeholder="例如：gpt2 或 org/model-name" required>
+            </label>
+            <label>展示名称
+              <input type="text" name="name" value="Amazon Chronos-2" placeholder="可选，默认使用 repo id">
+            </label>
+            <label>自定义模型 ID
+              <input type="text" name="model_id" placeholder="可选，默认自动生成">
+            </label>
+            <label>任务类型
+              <select name="task">
+                <option value="chronos-2" selected>chronos-2</option>
+                <option value="text-generation">text-generation</option>
+                <option value="text2text-generation">text2text-generation</option>
+              </select>
+            </label>
+            <label>Revision
+              <input type="text" name="revision" value="main" placeholder="可选，例如 main 或 commit hash">
+            </label>
+            <label>模型说明
+              <textarea name="manual" rows="4" required>Amazon Chronos-2 baseline loaded from Hugging Face Transformers-compatible Chronos2Pipeline for benchmark evaluation.</textarea>
+            </label>
+            <div class="inline-grid">
+              <label>max_new_tokens
+                <input type="number" name="max_new_tokens" min="16" value="128">
+              </label>
+              <label>temperature
+                <input type="number" name="temperature" step="0.1" min="0" value="0.0">
+              </label>
+              <label>top_p
+                <input type="number" name="top_p" step="0.1" min="0" max="1" value="1.0">
+              </label>
+            </div>
+            <div class="inline-grid">
+              <label>device_map
+                <input type="text" name="device_map" value="cpu" placeholder="例如：cpu / auto">
+              </label>
+              <label>torch_dtype
+                <input type="text" name="torch_dtype" value="float32" placeholder="例如：float32 / bfloat16">
+              </label>
+              <label>attn_implementation
+                <input type="text" name="attn_implementation" placeholder="可选">
+              </label>
+            </div>
+            <div class="inline-grid">
+              <label>batch_size
+                <input type="number" name="batch_size" min="1" value="8">
+              </label>
+              <label>context_length
+                <input type="number" name="context_length" min="16" value="512" placeholder="可选">
+              </label>
+              <label>max_output_patches
+                <input type="number" name="max_output_patches" min="1" placeholder="可选">
+              </label>
+            </div>
+            <div class="inline-grid">
+              <label>load_retries
+                <input type="number" name="load_retries" min="1" value="3">
+              </label>
+              <label>retry_backoff_seconds
+                <input type="number" name="load_retry_backoff_seconds" step="0.5" min="0" value="1.0">
+              </label>
+              <label>推荐配置
+                <input type="text" value="amazon/chronos-2 / cpu / float32 / batch=8" readonly>
+              </label>
+            </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" name="do_sample"> 允许采样</label>
+              <label><input type="checkbox" name="trust_remote_code" checked> trust_remote_code</label>
+              <label><input type="checkbox" name="use_covariates" checked> 使用协变量</label>
+              <label><input type="checkbox" name="cross_learning"> 跨序列联合预测</label>
+            </div>
+            <button type="submit">提交模型</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Model Catalog</p>
+              <h2>已提交模型</h2>
+            </div>
+          </div>
+          <div class="stack">
+            {% for model in overview.models %}
+            <article class="card {% if model.source_type == 'huggingface_hub' %}highlight{% endif %}">
+              <header class="card-head">
+                <h3>{{ model.name }}</h3>
+                <span class="pill">{{ model.runtime_status }}</span>
+              </header>
+              <p class="muted mono">{{ model.model_id }}</p>
+              <p>{{ model.manual }}</p>
+              <p class="muted">adapter={{ model.adapter }} / source={{ model.source_type }}</p>
+              {% if model.huggingface %}
+              <p class="muted">repo={{ model.huggingface.repo_id }} / task={{ model.huggingface.task }}</p>
+              {% endif %}
+            </article>
+            {% else %}
+            <p class="muted">暂无模型</p>
+            {% endfor %}
+          </div>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Overall Ranking</p>
+            <h2>最新总榜</h2>
+          </div>
+        </div>
+        <div class="leaderboard-table">
+          <div class="leaderboard-row head">
+            <span>排名</span>
+            <span>模型</span>
+            <span>赛道</span>
+            <span>Score</span>
+            <span>MSE</span>
+            <span>Latency</span>
+          </div>
+          {% for item in overview.overall_leaderboard %}
+          <div class="leaderboard-row">
+            <span>#{{ loop.index }}</span>
+            <span>{{ item.model_name }}</span>
+            <span>{{ item.track }}</span>
+            <span>{{ item.composite_score }}</span>
+            <span>{{ item.mse }}</span>
+            <span>{{ item.mean_latency_ms }} ms</span>
+          </div>
+          {% else %}
+          <p class="muted">暂无排行榜数据</p>
+          {% endfor %}
+        </div>
+      </section>
+
+      <section class="grid track-grid">
+        {% for board in overview.track_leaderboards %}
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Track Ranking</p>
+              <h2>{{ board.track }}</h2>
+            </div>
+          </div>
+          <div class="stack">
+            {% for item in board.entries %}
+            <article class="card">
+              <header class="card-head">
+                <h3>#{{ loop.index }} {{ item.model_name }}</h3>
+                <span class="pill">{{ item.composite_score }}</span>
+              </header>
+              <p class="muted mono">{{ item.model_id }} / {{ item.batch_id }}</p>
+              <p>MSE={{ item.mse }} / sMAPE={{ item.smape }} / latency={{ item.mean_latency_ms }} ms</p>
+            </article>
+            {% else %}
+            <p class="muted">当前赛道暂无评测结果</p>
+            {% endfor %}
+          </div>
+        </article>
+        {% endfor %}
+      </section>
+    </main>
+  </body>
+</html>
