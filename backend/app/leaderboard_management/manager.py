@@ -4,11 +4,13 @@ from pathlib import Path
 
 from ..config import AppSettings, get_settings
 from ..data_management.manager import DataManager
-from ..domain import EvaluationTask, LeaderboardEntry, OverallLeaderboardEntry, TaskStatus, TrackKind
+from ..data_management.domain import TrackKind
 from ..errors import BenchmarkError
 from ..model_management.manager import ModelManager
 from ..storage import FileRepository
+from ..task_management.domain import EvaluationTask, TaskStatus
 from ..task_management.manager import TaskManager
+from .domain import LeaderboardEntry, OverallLeaderboardEntry
 
 
 class LeaderboardManager:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...domain import DatasetLoadRequest, SeriesSample
+from ..domain import DatasetLoadRequest, SeriesSample
 from .base import DataProcessorError
 from .builtin import ClipProcessor, CovariateFilterProcessor, IdentityProcessor, ScaleProcessor
 from .registry import DataProcessorRegistry

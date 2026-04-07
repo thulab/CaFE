@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from ...domain import DataProcessorConfig, DataProcessorType, DatasetLoadRequest, SeriesSample
+from ..domain import DataProcessorConfig, DataProcessorType, DatasetLoadRequest, SeriesSample
 
 
 class DataProcessorError(RuntimeError):

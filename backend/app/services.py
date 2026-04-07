@@ -4,17 +4,17 @@ from pathlib import Path
 
 from .config import AppSettings, get_settings
 from .data_management.manager import DataManager
-from .domain import (
+from .data_management.domain import TrackKind
+from .errors import BenchmarkError, NotFoundError
+from .leaderboard_management.domain import (
     AdminDashboardOverview,
     BatchSummary,
-    ModelRecord,
     TaskSummary,
-    TrackKind,
     TrackLeaderboard,
     UserDashboardOverview,
 )
-from .errors import BenchmarkError, NotFoundError
 from .leaderboard_management.manager import LeaderboardManager
+from .model_management.domain import ModelRecord
 from .model_management.manager import ExecutionResult, ModelManager
 from .storage import FileRepository
 from .task_management.manager import TaskManager

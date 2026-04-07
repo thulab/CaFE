@@ -4,7 +4,7 @@ import math
 import random
 
 from ..config import AppSettings, infer_periods_for_track
-from ..domain import SeriesSample, SeriesTruth, TrackKind
+from .domain import SeriesSample, SeriesTruth, TrackKind
 
 
 class SyntheticDatasetGenerator:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...domain import DataProcessorConfig, DataProcessorType, DatasetLoadRequest, SeriesSample
+from ..domain import DataProcessorConfig, DataProcessorType, DatasetLoadRequest, SeriesSample
 from .base import DataProcessor, DataProcessorError
 from .helpers import rebuild_sample
 

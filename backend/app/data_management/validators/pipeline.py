@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ...domain import SeriesSample, ValidationReport
+from ..domain import SeriesSample, ValidationReport
 from .base import DataValidationContext
 from .builtin import ContextLengthValidator, FiniteValueValidator, HorizonLengthValidator, LowVarianceValidator
 from .registry import DataValidatorRegistry

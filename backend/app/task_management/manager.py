@@ -5,21 +5,12 @@ from uuid import uuid4
 
 from ..config import AppSettings, get_settings
 from ..data_management.manager import DataManager
-from ..domain import (
-    AggregatedMetrics,
-    BenchmarkReport,
-    DatasetBatch,
-    EvaluationTask,
-    ModelAdapter,
-    ModelRecord,
-    SampleOutcome,
-    TaskRunRequest,
-    TaskStatus,
-    TrackKind,
-)
+from ..data_management.domain import DatasetBatch, TrackKind
 from ..errors import BenchmarkError, InternalBenchmarkError, NotFoundError
+from ..model_management.domain import ModelAdapter, ModelRecord
 from ..model_management import HuggingFaceForecast, ModelManager
 from ..storage import FileRepository
+from .domain import AggregatedMetrics, BenchmarkReport, EvaluationTask, SampleOutcome, TaskRunRequest, TaskStatus
 
 
 class TaskManager:

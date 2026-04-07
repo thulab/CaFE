@@ -6,7 +6,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from ...config import future_known_covariates, infer_difficulty, infer_periods_for_track, infer_trend_type
-from ...domain import CsvBatchLoadRequest, DatasetLoadRequest, DatasetSourceType, SeriesSample, SeriesTruth, TrackKind
+from ..domain import CsvBatchLoadRequest, DatasetLoadRequest, DatasetSourceType, SeriesSample, SeriesTruth, TrackKind
 from .base import DataLoaderError, DatasetLoader
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from ...config import get_settings, infer_difficulty, infer_periods_for_track, infer_trend_type
-from ...domain import SeriesSample, SeriesTruth, TrackKind
+from ..domain import SeriesSample, SeriesTruth, TrackKind
 
 
 def infer_truth(track: TrackKind, series: list[float]) -> SeriesTruth:
