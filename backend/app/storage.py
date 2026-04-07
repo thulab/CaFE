@@ -10,7 +10,7 @@ from pydantic import BaseModel
 class FileRepository:
     def __init__(self, root: Path) -> None:
         self.root = root
-        for category in ("models", "batches", "tasks", "reports"):
+        for category in ("models", "dataset_sources", "datasets", "batches", "tasks", "task_runs", "reports"):
             self._dir(category).mkdir(parents=True, exist_ok=True)
 
     def _dir(self, category: str) -> Path:
@@ -18,7 +18,13 @@ class FileRepository:
 
     def save(self, category: str, key: str, payload: BaseModel | dict[str, Any]) -> None:
         path = self._dir(category) / f"{key}.json"
-        data = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else payload
+        if isinstance(payload, BaseModel):
+            if hasattr(payload, "model_dump"):
+                data = payload.model_dump(mode="json")
+            else:
+                data = payload.dict()
+        else:
+            data = payload
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def load(self, category: str, key: str) -> dict[str, Any]:

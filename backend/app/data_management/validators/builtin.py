@@ -41,6 +41,14 @@ class FiniteValueValidator(DataValidator):
                 if not all(math.isfinite(value) for value in values):
                     issues.append(f"{sample.sample_id}: non-finite covariate value found in {covariate_name}")
                     break
+            for channel_name, values in sample.input_channel_values.items():
+                if not all(math.isfinite(value) for value in values):
+                    issues.append(f"{sample.sample_id}: non-finite input channel value found in {channel_name}")
+                    break
+            for channel_name, values in sample.target_channel_values.items():
+                if not all(math.isfinite(value) for value in values):
+                    issues.append(f"{sample.sample_id}: non-finite target channel value found in {channel_name}")
+                    break
         return issues
 
 

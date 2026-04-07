@@ -30,6 +30,7 @@ _EXPORTS = {
     "SeriesSample": ("backend.app.data_management.domain", "SeriesSample"),
     "SeriesTruth": ("backend.app.data_management.domain", "SeriesTruth"),
     "TaskRunRequest": ("backend.app.task_management.domain", "TaskRunRequest"),
+    "TaskRunRecord": ("backend.app.task_management.domain", "TaskRunRecord"),
     "TaskStatus": ("backend.app.task_management.domain", "TaskStatus"),
     "TaskSummary": ("backend.app.leaderboard_management.domain", "TaskSummary"),
     "TrackKind": ("backend.app.data_management.domain", "TrackKind"),

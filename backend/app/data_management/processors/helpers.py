@@ -41,6 +41,9 @@ def rebuild_sample(
     target: list[float],
     covariates: dict[str, list[float]],
     *,
+    input_channel_values: dict[str, list[float]] | None = None,
+    target_channel_values: dict[str, list[float]] | None = None,
+    future_known_channel_values: dict[str, list[float]] | None = None,
     extra_tags: list[str] | None = None,
     processor_note: dict[str, object] | None = None,
 ) -> SeriesSample:
@@ -58,11 +61,21 @@ def rebuild_sample(
     if extra_tags:
         track_tags.extend(extra_tags)
 
-    return sample.model_copy(
+    primary = sample.channel_layout.primary_target_channel
+    return sample.copy(
         update={
             "history": history,
             "target": target,
             "covariates": covariates,
+            "input_channel_values": input_channel_values
+            if input_channel_values is not None
+            else {name: list(values) if name != primary else list(history) for name, values in sample.input_channel_values.items()},
+            "target_channel_values": target_channel_values
+            if target_channel_values is not None
+            else {name: list(values) if name != primary else list(target) for name, values in sample.target_channel_values.items()},
+            "future_known_channel_values": future_known_channel_values
+            if future_known_channel_values is not None
+            else {name: list(values) for name, values in sample.future_known_channel_values.items()},
             "track_tags": track_tags,
             "truth": infer_truth(track=track, series=history + target),
             "notes": notes,

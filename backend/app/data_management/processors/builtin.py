@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..domain import DataProcessorConfig, DataProcessorType, DatasetLoadRequest, SeriesSample
+from ..domain import DataProcessorConfig, DataProcessorType, DatasetLoadRequest, SeriesSample, TrackSpec
 from .base import DataProcessor, DataProcessorError
 from .helpers import rebuild_sample
 
@@ -12,15 +12,19 @@ class IdentityProcessor(DataProcessor):
         self,
         samples: list[SeriesSample],
         request: DatasetLoadRequest,
+        track_spec: TrackSpec,
         config: DataProcessorConfig,
     ) -> list[SeriesSample]:
         return [
             rebuild_sample(
                 sample,
-                request.track,
+                track_spec.track,
                 list(sample.history),
                 list(sample.target),
                 {name: list(values) for name, values in sample.covariates.items()},
+                input_channel_values={name: list(values) for name, values in sample.input_channel_values.items()},
+                target_channel_values={name: list(values) for name, values in sample.target_channel_values.items()},
+                future_known_channel_values={name: list(values) for name, values in sample.future_known_channel_values.items()},
                 extra_tags=["processor_identity"],
                 processor_note={"name": self.processor_type.value},
             )
@@ -35,6 +39,7 @@ class ScaleProcessor(DataProcessor):
         self,
         samples: list[SeriesSample],
         request: DatasetLoadRequest,
+        track_spec: TrackSpec,
         config: DataProcessorConfig,
     ) -> list[SeriesSample]:
         factor = float(config.params.get("factor", 1.0))
@@ -42,12 +47,24 @@ class ScaleProcessor(DataProcessor):
         return [
             rebuild_sample(
                 sample,
-                request.track,
+                track_spec.track,
                 [round(value * factor, 6) for value in sample.history],
                 [round(value * factor, 6) for value in sample.target],
                 {
                     name: [round(value * factor, 6) for value in values] if include_covariates else list(values)
                     for name, values in sample.covariates.items()
+                },
+                input_channel_values={
+                    name: [round(value * factor, 6) for value in values] if include_covariates or name == sample.channel_layout.primary_target_channel else list(values)
+                    for name, values in sample.input_channel_values.items()
+                },
+                target_channel_values={
+                    name: [round(value * factor, 6) for value in values]
+                    for name, values in sample.target_channel_values.items()
+                },
+                future_known_channel_values={
+                    name: [round(value * factor, 6) for value in values] if include_covariates else list(values)
+                    for name, values in sample.future_known_channel_values.items()
                 },
                 extra_tags=["processor_scale"],
                 processor_note={
@@ -67,6 +84,7 @@ class ClipProcessor(DataProcessor):
         self,
         samples: list[SeriesSample],
         request: DatasetLoadRequest,
+        track_spec: TrackSpec,
         config: DataProcessorConfig,
     ) -> list[SeriesSample]:
         min_value = config.params.get("min_value")
@@ -85,12 +103,21 @@ class ClipProcessor(DataProcessor):
         return [
             rebuild_sample(
                 sample,
-                request.track,
+                track_spec.track,
                 [clamp(value) for value in sample.history],
                 [clamp(value) for value in sample.target],
                 {
                     name: [clamp(value) for value in values] if include_covariates else list(values)
                     for name, values in sample.covariates.items()
+                },
+                input_channel_values={
+                    name: [clamp(value) for value in values] if include_covariates or name == sample.channel_layout.primary_target_channel else list(values)
+                    for name, values in sample.input_channel_values.items()
+                },
+                target_channel_values={name: [clamp(value) for value in values] for name, values in sample.target_channel_values.items()},
+                future_known_channel_values={
+                    name: [clamp(value) for value in values] if include_covariates else list(values)
+                    for name, values in sample.future_known_channel_values.items()
                 },
                 extra_tags=["processor_clip"],
                 processor_note={
@@ -111,6 +138,7 @@ class CovariateFilterProcessor(DataProcessor):
         self,
         samples: list[SeriesSample],
         request: DatasetLoadRequest,
+        track_spec: TrackSpec,
         config: DataProcessorConfig,
     ) -> list[SeriesSample]:
         keep = config.params.get("keep")
@@ -120,10 +148,17 @@ class CovariateFilterProcessor(DataProcessor):
         return [
             rebuild_sample(
                 sample,
-                request.track,
+                track_spec.track,
                 list(sample.history),
                 list(sample.target),
                 {name: list(values) for name, values in sample.covariates.items() if name in keep_set},
+                input_channel_values={
+                    name: list(values)
+                    for name, values in sample.input_channel_values.items()
+                    if name in keep_set or name == sample.channel_layout.primary_target_channel
+                },
+                target_channel_values={name: list(values) for name, values in sample.target_channel_values.items()},
+                future_known_channel_values={name: list(values) for name, values in sample.future_known_channel_values.items() if name in keep_set},
                 extra_tags=["processor_covariate_filter"],
                 processor_note={"name": self.processor_type.value, "keep": keep},
             )

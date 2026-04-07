@@ -25,7 +25,7 @@ def run_smoke_flow() -> None:
 
         user_overview_before = backend_request(backend_app, "GET", "/api/v1/overview/user").json()
         assert len(user_overview_before["models"]) >= 2
-        assert len(user_overview_before["track_leaderboards"]) == 4
+        assert len(user_overview_before["track_leaderboards"]) == len(user_overview_before["tracks"])
 
         batch = backend_request(
             backend_app,
