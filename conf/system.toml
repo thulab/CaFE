@@ -59,14 +59,12 @@ admin_recent_tasks_limit = 8
 admin_leaderboard_limit = 8
 
 [ui.user_model_submission]
-# 用户页模型提交表单默认的 Hugging Face 仓库 ID。
-repo_id = "amazon/chronos-2"
+# 用户页模型提交表单默认的 Hugging Face 模型 URL。
+huggingface_url = "https://huggingface.co/amazon/chronos-2"
 # 用户页模型提交表单默认的展示名称。
 name = "Amazon Chronos-2"
 # 用户页模型提交表单默认的自定义模型 ID；空字符串表示默认自动生成。
 model_id = ""
-# 用户页模型提交表单默认的任务类型。
-task = "chronos-2"
 # 用户页模型提交表单默认的 revision。
 revision = "main"
 # 用户页模型提交表单默认的模型说明。
@@ -188,45 +186,79 @@ knobs = ["context_length", "horizon", "token_budget", "latency_budget"]
 
 [[benchmark.builtin_models]]
 # 内置模型的唯一 ID。
-model_id = "seasonal-naive-stub"
+model_id = "amazon-chronos-2"
 # 内置模型展示名称。
-name = "Seasonal Naive Stub"
+name = "Amazon Chronos-2"
 # 内置模型适配器类型。
-adapter = "seasonal_naive"
+adapter = "huggingface_chronos2"
 # 模型来源类型。
-source_type = "builtin_stub"
+source_type = "builtin_huggingface"
 # 模型说明文本。
-manual = "重复历史中的主周期片段，适合做周期理解赛道基线。"
+manual = "内置 Amazon Chronos-2 零样本预测模型，支持协变量输入，适合作为系统默认基线。"
 # 模型能力标签列表。
-capabilities = ["forecast", "multi_period"]
+capabilities = ["forecast", "huggingface", "covariates", "builtin"]
+
+[benchmark.builtin_models.huggingface]
+# 对应的 Hugging Face 仓库 ID。
+repo_id = "amazon/chronos-2"
+# 内置模型绑定的任务类型。
+task = "chronos-2"
+# 默认 revision。
+revision = "main"
+# 是否开启 trust_remote_code。
+trust_remote_code = false
+# 模型加载默认的 device_map。
+device_map = "cpu"
+# 模型加载默认的 torch_dtype。
+torch_dtype = "float32"
+# 默认批量推理 batch_size。
+batch_size = 8
+# 默认上下文长度提示值。
+context_length = 512
+# 是否启用协变量输入。
+use_covariates = true
+# 是否启用跨序列联合预测。
+cross_learning = false
+# 模型加载失败后的默认重试次数。
+load_retries = 3
+# 模型加载失败后每轮退避的基础秒数。
+load_retry_backoff_seconds = 1.0
 
 [[benchmark.builtin_models]]
 # 内置模型的唯一 ID。
-model_id = "recent-mean-stub"
+model_id = "thuml-sundial-base-128m"
 # 内置模型展示名称。
-name = "Recent Mean Stub"
+name = "THUML Sundial Base 128M"
 # 内置模型适配器类型。
-adapter = "recent_mean"
+adapter = "huggingface_sundial"
 # 模型来源类型。
-source_type = "builtin_stub"
+source_type = "builtin_huggingface"
 # 模型说明文本。
-manual = "用近期窗口均值外推，作为简单平滑型基线。"
+manual = "内置 THUML Sundial Base 128M 零样本预测模型，基于 raw series generate 接口执行预测。"
 # 模型能力标签列表。
-capabilities = ["forecast", "low_cost"]
+capabilities = ["forecast", "huggingface", "builtin"]
 
-[[benchmark.builtin_models]]
-# 内置模型的唯一 ID。
-model_id = "covariate-trap-stub"
-# 内置模型展示名称。
-name = "Covariate Trap Stub"
-# 内置模型适配器类型。
-adapter = "covariate_trap"
-# 模型来源类型。
-source_type = "builtin_stub"
-# 模型说明文本。
-manual = "故意依赖协变量顺序的桩模型，用于验证协变量赛道是否能识别脆弱行为。"
-# 模型能力标签列表。
-capabilities = ["covariate", "bad_case_generation"]
+[benchmark.builtin_models.huggingface]
+# 对应的 Hugging Face 仓库 ID。
+repo_id = "thuml/sundial-base-128m"
+# 内置模型绑定的任务类型。
+task = "sundial"
+# 默认 revision。
+revision = "main"
+# Sundial 依赖仓库内自定义代码。
+trust_remote_code = true
+# 模型加载默认的 device_map。
+device_map = "cpu"
+# 模型加载默认的 torch_dtype。
+torch_dtype = "float32"
+# 默认批量推理 batch_size。
+batch_size = 8
+# Sundial 当前不消费协变量。
+use_covariates = false
+# 模型加载失败后的默认重试次数。
+load_retries = 3
+# 模型加载失败后每轮退避的基础秒数。
+load_retry_backoff_seconds = 1.0
 
 [benchmark.synthetic_generation]
 # 自动生成数据集时最多尝试多少次，超过后视为失败。
@@ -353,7 +385,7 @@ composite_latency_penalty = 0.35
 composite_token_penalty = 0.01
 
 [benchmark.stub_models.seasonal_naive]
-# seasonal_naive 内置模型的基础延迟，单位毫秒。
+# seasonal_naive 兼容基线的基础延迟，单位毫秒。
 latency_base = 4.5
 # seasonal_naive 每个预测步长增加的延迟，单位毫秒。
 latency_per_horizon = 0.12
@@ -361,15 +393,15 @@ latency_per_horizon = 0.12
 latency_per_covariate = 0.2
 
 [benchmark.stub_models.recent_mean]
-# recent_mean 内置模型取平均时使用的回看窗口长度。
+# recent_mean 兼容基线取平均时使用的回看窗口长度。
 window = 8
-# recent_mean 内置模型的基础延迟，单位毫秒。
+# recent_mean 兼容基线的基础延迟，单位毫秒。
 latency_base = 2.0
 # recent_mean 每个预测步长增加的延迟，单位毫秒。
 latency_per_horizon = 0.08
 
 [benchmark.stub_models.covariate_trap]
-# covariate_trap 内置模型的基础延迟，单位毫秒。
+# covariate_trap 兼容基线的基础延迟，单位毫秒。
 latency_base = 5.5
 # covariate_trap 每个预测步长增加的延迟，单位毫秒。
 latency_per_horizon = 0.16

@@ -148,6 +148,8 @@ class BenchmarkEngine:
 
     def _task_summary(self, task, model_map: dict[str, ModelRecord]) -> TaskSummary:
         model = model_map.get(task.model_id)
+        runtime_parameters = task.spec.model_runtime_parameters if task.spec is not None else {}
+        evaluation_metrics = task.spec.evaluation_metrics if task.spec is not None else []
         return TaskSummary(
             task_id=task.task_id,
             model_id=task.model_id,
@@ -159,6 +161,8 @@ class BenchmarkEngine:
             composite_score=task.metrics.composite_score if task.metrics else None,
             report_id=task.report_id,
             error_message=task.error_message,
+            model_runtime_parameters=runtime_parameters,
+            evaluation_metrics=evaluation_metrics,
         )
 
 

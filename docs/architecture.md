@@ -7,7 +7,7 @@
 - `Dataset Manager`
   负责动态批次生成、变换、校验和文件系统持久化。
 - `Model Manager`
-  负责注册模型元信息，并通过 adapter 绑定到可执行的桩策略。
+  负责注册模型元信息，并通过 adapter 绑定到可执行的 Hugging Face / 兼容基线路径。
 - `Mission Manager / Executor`
   负责把“模型 + 批次 + 赛道”组合成最小任务单元并执行评测。
 - `Reporter`
@@ -65,11 +65,10 @@
 - `noise_robustness`
 - `cost_intensive`
 
-当前实现的桩模型：
+当前默认内置模型：
 
-- `seasonal-naive-stub`
-- `recent-mean-stub`
-- `covariate-trap-stub`
+- `amazon-chronos-2`
+- `thuml-sundial-base-128m`
 
 ## 前端系统
 
@@ -88,7 +87,7 @@
 1. 启动临时后端应用。
 2. 获取模型目录。
 3. 生成协变量赛道数据批次。
-4. 运行桩模型评测任务。
+4. 运行内置 Hugging Face 模型评测任务。
 5. 拉取报告与排行榜。
 6. 启动临时前端应用。
 7. 通过前端页面再次触发“生成批次 / 运行任务”。

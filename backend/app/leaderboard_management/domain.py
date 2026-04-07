@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -45,6 +46,8 @@ class TaskSummary(BaseModel):
     composite_score: float | None = None
     report_id: str | None = None
     error_message: str | None = None
+    model_runtime_parameters: dict[str, Any] = Field(default_factory=dict)
+    evaluation_metrics: list[str] = Field(default_factory=list)
 
 
 class TrackLeaderboard(BaseModel):

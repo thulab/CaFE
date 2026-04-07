@@ -24,7 +24,7 @@ def run_smoke_flow() -> None:
         assert backend_request(backend_app, "GET", "/health").status_code == 200
 
         user_overview_before = backend_request(backend_app, "GET", "/api/v1/overview/user").json()
-        assert len(user_overview_before["models"]) >= 3
+        assert len(user_overview_before["models"]) >= 2
         assert len(user_overview_before["track_leaderboards"]) == 4
 
         batch = backend_request(
@@ -45,57 +45,41 @@ def run_smoke_flow() -> None:
             backend_app,
             "POST",
             "/api/v1/tasks/run",
-            {"model_id": "seasonal-naive-stub", "batch_id": batch["batch_id"]},
+            {
+                "model_id": "amazon-chronos-2",
+                "batch_id": batch["batch_id"],
+                "model_runtime_parameters": {"batch_size": 2, "use_covariates": True},
+                "evaluation_metrics": ["mse", "smape", "composite_score"],
+            },
         ).json()
         assert builtin_task["status"] == "succeeded"
+        assert builtin_task["spec"]["model_runtime_parameters"]["batch_size"] == 2
 
         frontend_app = create_app(provider=AsgiBackendProvider(backend_app))
         frontend_client = frontend_app.test_client()
 
         user_page = frontend_client.get("/")
         assert user_page.status_code == 200
-        assert "提交 Hugging Face 模型" in user_page.get_data(as_text=True)
+        page_text = user_page.get_data(as_text=True)
+        assert "提交测试模型" in page_text
+        assert "榜单模型" in page_text
 
         admin_page = frontend_client.get("/admin")
         assert admin_page.status_code == 200
-        assert "数据集与任务管理页" in admin_page.get_data(as_text=True)
-
-        manual_model_page = frontend_client.post(
-            "/actions/models/register",
-            data={
-                "model_id": "custom-recent-mean",
-                "name": "Custom Recent Mean",
-                "adapter": "recent_mean",
-                "source_type": "uploaded_stub",
-                "capabilities": "forecast,manual",
-                "metadata_json": '{"owner":"smoke"}',
-                "manual": "Manual registration smoke path.",
-            },
-            follow_redirects=True,
-        )
-        assert manual_model_page.status_code == 200
-        assert "已注册" in manual_model_page.get_data(as_text=True)
+        admin_page_text = admin_page.get_data(as_text=True)
+        assert "数据集与任务管理页" in admin_page_text
+        assert "批次数据" in admin_page_text
+        assert "CSV 直接加载" in admin_page_text
+        assert "注册通用模型" not in admin_page_text
 
         submitted_page = frontend_client.post(
             "/actions/models/submit",
             data={
-                "repo_id": "org/demo-forecast-model",
+                "huggingface_url": "https://huggingface.co/org/demo-forecast-model",
                 "name": "Demo Forecast HF",
                 "model_id": "",
                 "manual": "用于验证 Hugging Face 提交流程。",
-                "task": "chronos-2",
                 "revision": "",
-                "max_new_tokens": "64",
-                "temperature": "0.0",
-                "top_p": "1.0",
-                "device_map": "",
-                "torch_dtype": "",
-                "attn_implementation": "",
-                "batch_size": "1",
-                "context_length": "",
-                "use_covariates": "on",
-                "load_retries": "3",
-                "load_retry_backoff_seconds": "1.0",
             },
             follow_redirects=True,
         )
@@ -118,8 +102,9 @@ def run_smoke_flow() -> None:
         assert "已加载" in load_page.get_data(as_text=True)
 
         csv_import_page = frontend_client.post(
-            "/actions/datasets/load_csv",
+            "/actions/datasets/create",
             data={
+                "source_mode": "csv",
                 "csv_path": str(csv_path),
                 "track": "forecast_accuracy",
                 "context_length": "8",
@@ -139,8 +124,9 @@ def run_smoke_flow() -> None:
         assert "已导入" in csv_import_page.get_data(as_text=True)
 
         admin_generate_page = frontend_client.post(
-            "/actions/generate",
+            "/actions/datasets/create",
             data={
+                "source_mode": "generate",
                 "track": "noise_robustness",
                 "sample_count": "4",
                 "context_length": "64",
@@ -156,7 +142,12 @@ def run_smoke_flow() -> None:
         latest_batch = refreshed_admin["batches"][0]["batch_id"]
         hf_task_page = frontend_client.post(
             "/actions/run",
-            data={"model_id": huggingface_model["model_id"], "batch_id": latest_batch},
+            data={
+                "model_id": huggingface_model["model_id"],
+                "batch_id": latest_batch,
+                "runtime_param__integer__batch_size": "1",
+                "evaluation_metrics": ["mse", "mae", "smape", "composite_score"],
+            },
             follow_redirects=True,
         )
         assert hf_task_page.status_code == 200

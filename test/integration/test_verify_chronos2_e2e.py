@@ -15,7 +15,7 @@ def run_real_chronos2_e2e() -> dict[str, object]:
     settings = get_settings()
     user_defaults = settings.ui.user_model_submission
     admin_defaults = settings.ui.admin_batch_generation
-    repo_id = os.environ.get("TSBENCHMARK_CHRONOS2_REPO_ID", user_defaults.repo_id)
+    repo_id = os.environ.get("TSBENCHMARK_CHRONOS2_REPO_ID", "amazon/chronos-2")
 
     async def run() -> dict[str, object]:
         with temporary_runtime_dir(prefix="chronos2-") as runtime_root:
@@ -25,20 +25,11 @@ def run_real_chronos2_e2e() -> dict[str, object]:
                 register = await client.post(
                     "/api/v1/models/register/huggingface",
                     json={
-                        "repo_id": repo_id,
+                        "huggingface_url": f"https://huggingface.co/{repo_id}",
                         "name": user_defaults.name,
                         "manual": "Real Chronos-2 end-to-end validation run.",
-                        "task": user_defaults.task,
                         "revision": user_defaults.revision,
                         "trust_remote_code": user_defaults.trust_remote_code,
-                        "device_map": user_defaults.device_map,
-                        "torch_dtype": user_defaults.torch_dtype,
-                        "batch_size": min(user_defaults.batch_size, 2),
-                        "context_length": 128,
-                        "use_covariates": user_defaults.use_covariates,
-                        "cross_learning": user_defaults.cross_learning,
-                        "load_retries": user_defaults.load_retries,
-                        "load_retry_backoff_seconds": user_defaults.load_retry_backoff_seconds,
                     },
                 )
                 register.raise_for_status()

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
-from ..config import AppSettings, get_settings
+from ..config import AppSettings, BuiltinModelConfig, BuiltinHuggingFaceConfig, get_settings
 from ..data_management.domain import SeriesSample, TrackKind
 from ..domain.common import utc_now
 from ..errors import BenchmarkError, InternalBenchmarkError, NotFoundError
@@ -14,10 +15,15 @@ from .domain import (
     HuggingFaceConfig,
     HuggingFaceModelRegistrationRequest,
     HuggingFaceTask,
+    ModelSpec,
     ModelAdapter,
     ModelRecord,
     ModelRegistrationRequest,
     ModelRuntimeStatus,
+    build_huggingface_url,
+    build_runtime_parameter_definitions,
+    infer_huggingface_task,
+    normalize_huggingface_repo_id,
 )
 from .huggingface import HuggingFaceForecast, HuggingFaceModelRunner, HuggingFaceRunnerError
 
@@ -32,6 +38,7 @@ class ExecutionResult:
 
 class ModelManager:
     def __init__(self, runtime_root: Path, settings: AppSettings | None = None, repository: FileRepository | None = None) -> None:
+        self.runtime_root = runtime_root
         self.settings = settings or get_settings()
         self.repo = repository or FileRepository(runtime_root)
         self.huggingface_runner_factory = HuggingFaceModelRunner
@@ -48,7 +55,11 @@ class ModelManager:
         return ModelRecord.model_validate(self.repo.load("models", model_id))
 
     def register_model(self, request: ModelRegistrationRequest) -> ModelRecord:
-        if request.adapter in {ModelAdapter.HUGGINGFACE_TEXT_GENERATION, ModelAdapter.HUGGINGFACE_CHRONOS2}:
+        if request.adapter in {
+            ModelAdapter.HUGGINGFACE_TEXT_GENERATION,
+            ModelAdapter.HUGGINGFACE_CHRONOS2,
+            ModelAdapter.HUGGINGFACE_SUNDIAL,
+        }:
             raise BenchmarkError("use the dedicated Hugging Face registration endpoint for huggingface models")
         self._ensure_model_not_exists(request.model_id)
         record = ModelRecord(**request.model_dump(), runtime_status=ModelRuntimeStatus.READY)
@@ -56,22 +67,27 @@ class ModelManager:
         return record
 
     def register_huggingface_model(self, request: HuggingFaceModelRegistrationRequest) -> ModelRecord:
-        model_id = self._normalize_model_id(request.model_id or request.repo_id)
+        repo_source = request.huggingface_url or request.repo_id
+        if not repo_source:
+            raise BenchmarkError("huggingface_url or repo_id is required")
+        repo_id = normalize_huggingface_repo_id(repo_source)
+        task = request.task or infer_huggingface_task(repo_id)
+        model_id = self._normalize_model_id(request.model_id or repo_id)
         self._ensure_model_not_exists(model_id)
-        adapter = ModelAdapter.HUGGINGFACE_CHRONOS2 if request.task == HuggingFaceTask.CHRONOS2 else ModelAdapter.HUGGINGFACE_TEXT_GENERATION
         record = ModelRecord(
             model_id=model_id,
-            name=request.name or request.repo_id,
-            adapter=adapter,
+            name=request.name or repo_id,
+            adapter=self._adapter_for_huggingface_task(task),
             source_type="huggingface_hub",
             manual=request.manual,
             capabilities=request.capabilities,
             metadata=request.metadata,
             runtime_status=ModelRuntimeStatus.REGISTERED,
             huggingface=HuggingFaceConfig(
-                repo_id=request.repo_id,
-                task=request.task,
+                repo_id=repo_id,
+                task=task,
                 revision=request.revision,
+                weights_path=self._weights_path_for_model(model_id),
                 trust_remote_code=request.trust_remote_code,
                 max_new_tokens=request.max_new_tokens,
                 do_sample=request.do_sample,
@@ -88,6 +104,12 @@ class ModelManager:
                 load_retries=request.load_retries,
                 load_retry_backoff_seconds=request.load_retry_backoff_seconds,
             ),
+            spec=self._build_huggingface_model_spec(
+                model_id=model_id,
+                repo_id=repo_id,
+                revision=request.revision,
+                task=task,
+            ),
         )
         self.repo.save("models", record.model_id, record)
         return record
@@ -100,21 +122,10 @@ class ModelManager:
                 self.repo.save("models", model.model_id, model)
             return model
 
-        try:
-            self.get_or_load_huggingface_runner(model)
-        except InternalBenchmarkError as exc:
-            updated = model.model_copy(update={"runtime_status": ModelRuntimeStatus.LOAD_FAILED, "last_error": str(exc)})
-            self.repo.save("models", model.model_id, updated)
-            raise
-        except Exception as exc:
-            updated = model.model_copy(update={"runtime_status": ModelRuntimeStatus.LOAD_FAILED, "last_error": str(exc)})
-            self.repo.save("models", model.model_id, updated)
-            raise InternalBenchmarkError(str(exc)) from exc
-
-        updated = model.model_copy(
-            update={"runtime_status": ModelRuntimeStatus.READY, "last_loaded_at": utc_now(), "last_error": None}
-        )
-        self.repo.save("models", model.model_id, updated)
+        self.get_or_load_huggingface_runner(model)
+        refreshed = self.get_model(model.model_id)
+        updated = refreshed.model_copy(update={"runtime_status": ModelRuntimeStatus.READY, "last_loaded_at": utc_now(), "last_error": None})
+        self.repo.save("models", updated.model_id, updated)
         return updated
 
     def execute_model(self, model: ModelRecord, sample: SeriesSample, track: TrackKind) -> ExecutionResult:
@@ -148,7 +159,11 @@ class ModelManager:
                 prediction = [round(history[-1], 4)] * horizon
             latency = stubs.covariate_trap.latency_base + horizon * stubs.covariate_trap.latency_per_horizon + len(covariates) * stubs.covariate_trap.latency_per_covariate
             notes = {"decision": "trust first covariate", "first_covariate": next(iter(covariates.keys()), "none")}
-        elif model.adapter in {ModelAdapter.HUGGINGFACE_TEXT_GENERATION, ModelAdapter.HUGGINGFACE_CHRONOS2}:
+        elif model.adapter in {
+            ModelAdapter.HUGGINGFACE_TEXT_GENERATION,
+            ModelAdapter.HUGGINGFACE_CHRONOS2,
+            ModelAdapter.HUGGINGFACE_SUNDIAL,
+        }:
             huggingface_result = self.execute_huggingface_model(model, sample, track)
             prediction = huggingface_result.prediction
             latency = huggingface_result.latency_ms
@@ -190,29 +205,53 @@ class ModelManager:
     def get_or_load_huggingface_runner(self, model: ModelRecord) -> HuggingFaceModelRunner:
         if model.huggingface is None:
             raise InternalBenchmarkError(f"model {model.model_id} has no huggingface config")
-        runner = self._huggingface_runners.get(model.model_id)
+        runner_key = self._huggingface_runner_key(model)
+        runner = self._huggingface_runners.get(runner_key)
         if runner is None:
             runner = self.huggingface_runner_factory(model.huggingface)
-            self._huggingface_runners[model.model_id] = runner
+            self._huggingface_runners[runner_key] = runner
         try:
+            weights_path = model.huggingface.weights_path
+            if weights_path:
+                Path(weights_path).mkdir(parents=True, exist_ok=True)
             runner.load()
+            if model.runtime_status != ModelRuntimeStatus.READY or model.last_error is not None:
+                updated = model.model_copy(
+                    update={"runtime_status": ModelRuntimeStatus.READY, "last_loaded_at": utc_now(), "last_error": None}
+                )
+                self.repo.save("models", model.model_id, updated)
         except HuggingFaceRunnerError as exc:
+            updated = model.model_copy(update={"runtime_status": ModelRuntimeStatus.LOAD_FAILED, "last_error": str(exc)})
+            self.repo.save("models", model.model_id, updated)
+            raise InternalBenchmarkError(str(exc)) from exc
+        except Exception as exc:
+            updated = model.model_copy(update={"runtime_status": ModelRuntimeStatus.LOAD_FAILED, "last_error": str(exc)})
+            self.repo.save("models", model.model_id, updated)
             raise InternalBenchmarkError(str(exc)) from exc
         return runner
 
     def _bootstrap_builtin_models(self) -> None:
-        for builtin in self.settings.benchmark.builtin_models:
-            record = ModelRecord(
-                model_id=builtin.model_id,
-                name=builtin.name,
-                adapter=ModelAdapter(builtin.adapter),
-                source_type=builtin.source_type,
-                manual=builtin.manual,
-                capabilities=builtin.capabilities,
-                runtime_status=ModelRuntimeStatus.READY,
-            )
-            if not self.repo.exists("models", record.model_id):
-                self.repo.save("models", record.model_id, record)
+        configured = {builtin.model_id: self._build_builtin_record(builtin) for builtin in self.settings.benchmark.builtin_models}
+        existing = {item["model_id"]: ModelRecord.model_validate(item) for item in self.repo.list("models")}
+
+        for model_id, model in existing.items():
+            if model.source_type.startswith("builtin_") and model_id not in configured:
+                self.repo.delete("models", model_id)
+
+        for model_id, record in configured.items():
+            current = existing.get(model_id)
+            if current and not current.source_type.startswith("builtin_"):
+                continue
+            if current:
+                record = record.model_copy(
+                    update={
+                        "created_at": current.created_at,
+                        "runtime_status": current.runtime_status if record.huggingface else ModelRuntimeStatus.READY,
+                        "last_loaded_at": current.last_loaded_at if record.huggingface else None,
+                        "last_error": current.last_error if record.huggingface else None,
+                    }
+                )
+            self.repo.save("models", model_id, record)
 
     def _ensure_model_not_exists(self, model_id: str) -> None:
         if self.repo.exists("models", model_id):
@@ -223,4 +262,79 @@ class ModelManager:
         return normalized or f"model-{uuid4().hex[:6]}"
 
     def _is_huggingface_adapter(self, adapter: ModelAdapter) -> bool:
-        return adapter in {ModelAdapter.HUGGINGFACE_TEXT_GENERATION, ModelAdapter.HUGGINGFACE_CHRONOS2}
+        return adapter in {
+            ModelAdapter.HUGGINGFACE_TEXT_GENERATION,
+            ModelAdapter.HUGGINGFACE_CHRONOS2,
+            ModelAdapter.HUGGINGFACE_SUNDIAL,
+        }
+
+    def _build_builtin_record(self, builtin: BuiltinModelConfig) -> ModelRecord:
+        huggingface = self._build_builtin_huggingface_config(builtin.model_id, builtin.huggingface) if builtin.huggingface else None
+        runtime_status = ModelRuntimeStatus.REGISTERED if huggingface else ModelRuntimeStatus.READY
+        return ModelRecord(
+            model_id=builtin.model_id,
+            name=builtin.name,
+            adapter=ModelAdapter(builtin.adapter),
+            source_type=builtin.source_type,
+            manual=builtin.manual,
+            capabilities=builtin.capabilities,
+            runtime_status=runtime_status,
+            huggingface=huggingface,
+            spec=self._build_huggingface_model_spec(
+                model_id=builtin.model_id,
+                repo_id=huggingface.repo_id,
+                revision=huggingface.revision,
+                task=huggingface.task,
+            )
+            if huggingface is not None
+            else ModelSpec(),
+        )
+
+    def _build_builtin_huggingface_config(self, model_id: str, config: BuiltinHuggingFaceConfig) -> HuggingFaceConfig:
+        return HuggingFaceConfig(
+            repo_id=config.repo_id,
+            task=HuggingFaceTask(config.task),
+            revision=config.revision,
+            weights_path=self._weights_path_for_model(model_id),
+            trust_remote_code=config.trust_remote_code,
+            max_new_tokens=config.max_new_tokens,
+            do_sample=config.do_sample,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            device_map=config.device_map,
+            torch_dtype=config.torch_dtype,
+            attn_implementation=config.attn_implementation,
+            batch_size=config.batch_size,
+            context_length=config.context_length,
+            use_covariates=config.use_covariates,
+            cross_learning=config.cross_learning,
+            max_output_patches=config.max_output_patches,
+            load_retries=config.load_retries,
+            load_retry_backoff_seconds=config.load_retry_backoff_seconds,
+        )
+
+    def _adapter_for_huggingface_task(self, task: HuggingFaceTask) -> ModelAdapter:
+        if task == HuggingFaceTask.CHRONOS2:
+            return ModelAdapter.HUGGINGFACE_CHRONOS2
+        if task == HuggingFaceTask.SUNDIAL:
+            return ModelAdapter.HUGGINGFACE_SUNDIAL
+        return ModelAdapter.HUGGINGFACE_TEXT_GENERATION
+
+    def _build_huggingface_model_spec(self, model_id: str, repo_id: str, revision: str | None, task: HuggingFaceTask) -> ModelSpec:
+        return ModelSpec(
+            source={
+                "huggingface_repo_id": repo_id,
+                "huggingface_url": build_huggingface_url(repo_id),
+                "local_weight_path": self._weights_path_for_model(model_id),
+                "revision": revision,
+            },
+            runtime_parameter_definitions=build_runtime_parameter_definitions(task),
+        )
+
+    def _weights_path_for_model(self, model_id: str) -> str:
+        return str((self.runtime_root / "generated" / "model_weights" / model_id).resolve())
+
+    def _huggingface_runner_key(self, model: ModelRecord) -> str:
+        if model.huggingface is None:
+            return model.model_id
+        return json.dumps(model.huggingface.model_dump(mode="json"), ensure_ascii=False, sort_keys=True)

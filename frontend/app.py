@@ -9,6 +9,7 @@ import requests
 from flask import Flask, redirect, render_template, request, url_for
 
 from backend.app.config import AppSettings, get_settings
+from backend.app.task_management.domain import DEFAULT_EVALUATION_METRICS
 
 
 class BackendProvider(Protocol):
@@ -110,6 +111,86 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         except json.JSONDecodeError as exc:
             raise ValueError(f"{field_name} 不是合法 JSON: {exc}") from exc
 
+    def parse_runtime_parameter_value(*, value_type: str, raw_value: str, field_name: str) -> Any:
+        value = raw_value.strip()
+        if value_type == "string":
+            return value
+        if value_type == "integer":
+            try:
+                return int(value)
+            except ValueError as exc:
+                raise ValueError(f"{field_name} 需要整数") from exc
+        if value_type == "float":
+            try:
+                return float(value)
+            except ValueError as exc:
+                raise ValueError(f"{field_name} 需要浮点数") from exc
+        if value_type == "boolean":
+            normalized = value.lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+            raise ValueError(f"{field_name} 需要布尔值 true/false")
+        raise ValueError(f"{field_name} 使用了不支持的参数类型 {value_type}")
+
+    def parse_runtime_parameters() -> dict[str, Any]:
+        runtime_parameters: dict[str, Any] = {}
+        for key in request.form.keys():
+            if not key.startswith("runtime_param__"):
+                continue
+            _, value_type, parameter_name = key.split("__", 2)
+            raw_value = request.form.get(key, "")
+            if not raw_value.strip():
+                continue
+            runtime_parameters[parameter_name] = parse_runtime_parameter_value(
+                value_type=value_type,
+                raw_value=raw_value,
+                field_name=parameter_name,
+            )
+        return runtime_parameters
+
+    def build_generate_payload() -> dict[str, Any]:
+        return {
+            "track": request.form["track"],
+            "sample_count": int(request.form["sample_count"]),
+            "context_length": int(request.form["context_length"]),
+            "horizon": int(request.form["horizon"]),
+            "seed": int(request.form["seed"]),
+        }
+
+    def build_csv_payload() -> dict[str, Any]:
+        processors = parse_json_field(
+            request.form.get("processors_json", ""),
+            default=[],
+            field_name="processors_json",
+        )
+        return {
+            "source_type": "csv",
+            "csv_path": request.form["csv_path"],
+            "track": request.form["track"],
+            "context_length": int(request.form["context_length"]),
+            "horizon": int(request.form["horizon"]),
+            "max_samples": int(request.form["max_samples"]) if request.form.get("max_samples") else None,
+            "batch_id_prefix": request.form.get("batch_id_prefix") or "csv",
+            "sample_id_column": request.form.get("sample_id_column") or "sample_id",
+            "step_column": request.form.get("step_column") or "step",
+            "target_column": request.form.get("target_column") or "target",
+            "covariate_columns": parse_csv_list(request.form.get("covariate_columns", "")),
+            "delimiter": request.form.get("delimiter") or ",",
+            "processors": processors,
+        }
+
+    def handle_dataset_create(source_mode: str | None = None) -> Any:
+        dataset_source = source_mode or request.form.get("source_mode") or "generate"
+        if dataset_source == "generate":
+            batch = backend().generate_batch(build_generate_payload())
+            return redirect_with_message("admin", f"生成批次 {batch['batch_id']} 成功")
+        if dataset_source == "csv":
+            batch = backend().load_csv_batch(build_csv_payload())
+            return redirect_with_message("admin", f"CSV 批次 {batch['batch_id']} 已导入")
+        raise ValueError(f"source_mode 不支持: {dataset_source}")
+
     def error_message(exc: Exception) -> str:
         response = getattr(exc, "response", None)
         if response is not None:
@@ -147,11 +228,7 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             overview=overview,
             admin_defaults=settings().ui.admin_batch_generation,
             runtime_generated_dir=str(Path(settings().system.runtime.root) / "generated"),
-            manual_model_adapters=[
-                ("seasonal_naive", "seasonal_naive"),
-                ("recent_mean", "recent_mean"),
-                ("covariate_trap", "covariate_trap"),
-            ],
+            evaluation_metric_options=DEFAULT_EVALUATION_METRICS,
             message=request.args.get("message", ""),
             current_view="admin",
         )
@@ -175,27 +252,12 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
     @app.post("/actions/models/submit")
     def submit_model():
         payload = {
-            "repo_id": request.form["repo_id"],
+            "huggingface_url": request.form["huggingface_url"],
             "name": request.form.get("name") or None,
             "model_id": request.form.get("model_id") or None,
             "manual": request.form["manual"],
-            "task": request.form["task"],
             "revision": request.form.get("revision") or None,
             "trust_remote_code": request.form.get("trust_remote_code") == "on",
-            "max_new_tokens": int(request.form["max_new_tokens"]),
-            "do_sample": request.form.get("do_sample") == "on",
-            "temperature": float(request.form["temperature"]),
-            "top_p": float(request.form["top_p"]),
-            "device_map": request.form.get("device_map") or None,
-            "torch_dtype": request.form.get("torch_dtype") or None,
-            "attn_implementation": request.form.get("attn_implementation") or None,
-            "batch_size": int(request.form["batch_size"]),
-            "context_length": int(request.form["context_length"]) if request.form.get("context_length") else None,
-            "use_covariates": request.form.get("use_covariates") == "on",
-            "cross_learning": request.form.get("cross_learning") == "on",
-            "max_output_patches": int(request.form["max_output_patches"]) if request.form.get("max_output_patches") else None,
-            "load_retries": int(request.form["load_retries"]),
-            "load_retry_backoff_seconds": float(request.form["load_retry_backoff_seconds"]),
         }
         try:
             model = backend().submit_huggingface_model(payload)
@@ -215,7 +277,7 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "model_id": request.form["model_id"],
                 "name": request.form["name"],
                 "adapter": request.form["adapter"],
-                "source_type": request.form.get("source_type") or "uploaded_stub",
+                "source_type": request.form.get("source_type") or "uploaded_manual",
                 "manual": request.form["manual"],
                 "capabilities": parse_csv_list(request.form.get("capabilities", "")),
                 "metadata": metadata,
@@ -248,38 +310,32 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         except Exception as exc:
             return redirect_with_message("admin", f"生成失败：{error_message(exc)}")
 
+    @app.post("/actions/datasets/create")
+    def create_dataset():
+        source_mode = request.form.get("source_mode") or "generate"
+        try:
+            return handle_dataset_create(source_mode)
+        except Exception as exc:
+            prefix = "CSV 导入" if source_mode == "csv" else "批次创建"
+            return redirect_with_message("admin", f"{prefix}失败：{error_message(exc)}")
+
     @app.post("/actions/datasets/load_csv")
     def load_csv_dataset():
         try:
-            processors = parse_json_field(
-                request.form.get("processors_json", ""),
-                default=[],
-                field_name="processors_json",
-            )
-            payload = {
-                "source_type": "csv",
-                "csv_path": request.form["csv_path"],
-                "track": request.form["track"],
-                "context_length": int(request.form["context_length"]),
-                "horizon": int(request.form["horizon"]),
-                "max_samples": int(request.form["max_samples"]) if request.form.get("max_samples") else None,
-                "batch_id_prefix": request.form.get("batch_id_prefix") or "csv",
-                "sample_id_column": request.form.get("sample_id_column") or "sample_id",
-                "step_column": request.form.get("step_column") or "step",
-                "target_column": request.form.get("target_column") or "target",
-                "covariate_columns": parse_csv_list(request.form.get("covariate_columns", "")),
-                "delimiter": request.form.get("delimiter") or ",",
-                "processors": processors,
-            }
-            batch = backend().load_csv_batch(payload)
-            return redirect_with_message("admin", f"CSV 批次 {batch['batch_id']} 已导入")
+            return handle_dataset_create("csv")
         except Exception as exc:
             return redirect_with_message("admin", f"CSV 导入失败：{error_message(exc)}")
 
     @app.post("/actions/run")
     def run_task():
-        payload = {"model_id": request.form["model_id"], "batch_id": request.form["batch_id"]}
         try:
+            payload = {
+                "model_id": request.form["model_id"],
+                "batch_id": request.form["batch_id"],
+                "model_runtime_parameters": parse_runtime_parameters(),
+                "evaluation_metrics": request.form.getlist("evaluation_metrics")
+                or parse_csv_list(request.form.get("evaluation_metrics", "")),
+            }
             task = backend().run_task(payload)
             return redirect_with_message("admin", f"评测任务 {task['task_id']} 已完成")
         except Exception as exc:

@@ -33,3 +33,8 @@ class FileRepository:
         for path in sorted(self._dir(category).glob("*.json")):
             items.append(json.loads(path.read_text(encoding="utf-8")))
         return items
+
+    def delete(self, category: str, key: str) -> None:
+        path = self._dir(category) / f"{key}.json"
+        if path.exists():
+            path.unlink()

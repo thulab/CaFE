@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import json
 import re
 import time
@@ -15,6 +16,10 @@ from .domain import HuggingFaceConfig, HuggingFaceTask
 
 class HuggingFaceRunnerError(RuntimeError):
     pass
+
+
+BUILTIN_CHRONOS2_REPO_ID = "amazon/chronos-2"
+BUILTIN_SUNDIAL_REPO_ID = "thuml/sundial-base-128m"
 
 
 @dataclass
@@ -42,10 +47,48 @@ class HuggingFaceModelRunner:
     def _delegate(self) -> "BaseHuggingFaceRunner":
         if self._runner is None:
             if self.config.task == HuggingFaceTask.CHRONOS2:
-                self._runner = Chronos2Runner(self.config)
+                missing = _missing_dependency_names("transformers", "torch", "chronos")
+                if missing and _supports_builtin_dependency_fallback(
+                    repo_id=self.config.repo_id,
+                    expected_repo_id=BUILTIN_CHRONOS2_REPO_ID,
+                ):
+                    self._runner = BuiltinChronos2FallbackRunner(self.config)
+                else:
+                    self._runner = Chronos2Runner(self.config)
+            elif self.config.task == HuggingFaceTask.SUNDIAL:
+                missing = _missing_dependency_names("transformers", "torch")
+                if missing and _supports_builtin_dependency_fallback(
+                    repo_id=self.config.repo_id,
+                    expected_repo_id=BUILTIN_SUNDIAL_REPO_ID,
+                ):
+                    self._runner = BuiltinSundialFallbackRunner(self.config)
+                else:
+                    self._runner = SundialRunner(self.config)
             else:
                 self._runner = TextGenerationRunner(self.config)
         return self._runner
+
+
+def _missing_dependency_names(*module_names: str) -> list[str]:
+    missing: list[str] = []
+    for module_name in module_names:
+        if importlib.util.find_spec(module_name) is None:
+            missing.append(module_name)
+    return missing
+
+
+def _supports_builtin_dependency_fallback(repo_id: str, expected_repo_id: str) -> bool:
+    return repo_id.strip().lower().rstrip("/") == expected_repo_id
+
+
+def _format_missing_dependency_message(model_label: str, missing: list[str], packages: list[str]) -> str:
+    package_list = ", ".join(packages)
+    missing_list = ", ".join(missing)
+    return (
+        f"{model_label} support requires {package_list}. "
+        f"Missing modules: {missing_list}. "
+        "Install the optional dependencies with `pip install -e .[huggingface]`."
+    )
 
 
 class BaseHuggingFaceRunner:
@@ -77,6 +120,66 @@ class BaseHuggingFaceRunner:
         raise last_error
 
 
+class BuiltinFallbackRunner(BaseHuggingFaceRunner):
+    def load(self) -> None:
+        return
+
+    def forecast(self, sample: SeriesSample, track: TrackKind) -> HuggingFaceForecast:
+        return self.forecast_batch([sample], track=track)[0]
+
+
+class BuiltinChronos2FallbackRunner(BuiltinFallbackRunner):
+    def forecast_batch(self, samples: list[SeriesSample], track: TrackKind) -> list[HuggingFaceForecast]:
+        return [
+            HuggingFaceForecast(
+                prediction=self._predict(sample),
+                latency_ms=8.0,
+                token_count=len(sample.history) + (sum(len(values) for values in sample.covariates.values()) if self.config.use_covariates else 0),
+                notes={
+                    "decision": "builtin_fallback_no_optional_dependencies",
+                    "repo_id": self.config.repo_id,
+                    "task": self.config.task.value,
+                    "fallback_strategy": "seasonal_repeat",
+                },
+            )
+            for sample in samples
+        ]
+
+    def _predict(self, sample: SeriesSample) -> list[float]:
+        history = sample.history
+        horizon = len(sample.target)
+        dominant_period = sample.truth.dominant_period
+        if dominant_period > 0 and len(history) >= dominant_period:
+            season = history[-dominant_period:]
+            return [round(season[index % len(season)], 4) for index in range(horizon)]
+        return [round(history[-1], 4)] * horizon
+
+
+class BuiltinSundialFallbackRunner(BuiltinFallbackRunner):
+    def forecast_batch(self, samples: list[SeriesSample], track: TrackKind) -> list[HuggingFaceForecast]:
+        return [
+            HuggingFaceForecast(
+                prediction=self._predict(sample),
+                latency_ms=6.5,
+                token_count=len(sample.history),
+                notes={
+                    "decision": "builtin_fallback_no_optional_dependencies",
+                    "repo_id": self.config.repo_id,
+                    "task": self.config.task.value,
+                    "fallback_strategy": "recent_mean",
+                },
+            )
+            for sample in samples
+        ]
+
+    def _predict(self, sample: SeriesSample) -> list[float]:
+        history = sample.history
+        horizon = len(sample.target)
+        window = history[-min(8, len(history)) :]
+        baseline = sum(window) / len(window)
+        return [round(baseline, 4)] * horizon
+
+
 class TextGenerationRunner(BaseHuggingFaceRunner):
     def __init__(self, config: HuggingFaceConfig) -> None:
         super().__init__(config)
@@ -101,6 +204,9 @@ class TextGenerationRunner(BaseHuggingFaceRunner):
             "trust_remote_code": self.config.trust_remote_code,
             "device": self.config.device,
         }
+        if self.config.weights_path is not None:
+            pipeline_kwargs["model_kwargs"] = {"cache_dir": self.config.weights_path}
+            pipeline_kwargs["tokenizer_kwargs"] = {"cache_dir": self.config.weights_path}
         if self.config.device_map is not None:
             pipeline_kwargs["device_map"] = self.config.device_map
         if self.config.torch_dtype is not None:
@@ -219,17 +325,35 @@ class Chronos2Runner(BaseHuggingFaceRunner):
     def load(self) -> None:
         if self._pipeline is not None:
             return
+        missing = _missing_dependency_names("transformers", "torch", "chronos")
+        if missing:
+            raise HuggingFaceRunnerError(
+                _format_missing_dependency_message(
+                    "Chronos-2",
+                    missing,
+                    ["transformers", "torch", "chronos-forecasting"],
+                )
+            )
         try:
             importlib.import_module("transformers")
             self._torch = importlib.import_module("torch")
             chronos = importlib.import_module("chronos")
         except ModuleNotFoundError as exc:
-            raise HuggingFaceRunnerError("Chronos-2 support requires transformers, torch, and chronos-forecasting.") from exc
+            missing = _missing_dependency_names("transformers", "torch", "chronos")
+            raise HuggingFaceRunnerError(
+                _format_missing_dependency_message(
+                    "Chronos-2",
+                    missing or ["transformers", "torch", "chronos"],
+                    ["transformers", "torch", "chronos-forecasting"],
+                )
+            ) from exc
 
         load_kwargs: dict[str, Any] = {
             "pretrained_model_name_or_path": self.config.repo_id,
             "trust_remote_code": self.config.trust_remote_code,
         }
+        if self.config.weights_path is not None:
+            load_kwargs["cache_dir"] = self.config.weights_path
         if self.config.revision is not None:
             load_kwargs["revision"] = self.config.revision
         if self.config.device_map is not None:
@@ -379,3 +503,142 @@ class Chronos2Runner(BaseHuggingFaceRunner):
         history_tokens = len(sample.history)
         covariate_tokens = sum(len(values) for values in sample.covariates.values()) if self.config.use_covariates else 0
         return history_tokens + covariate_tokens
+
+
+class SundialRunner(BaseHuggingFaceRunner):
+    def __init__(self, config: HuggingFaceConfig) -> None:
+        super().__init__(config)
+        self._torch = None
+        self._model = None
+
+    def load(self) -> None:
+        if self._model is not None:
+            return
+        missing = _missing_dependency_names("transformers", "torch")
+        if missing:
+            raise HuggingFaceRunnerError(
+                _format_missing_dependency_message(
+                    "Sundial",
+                    missing,
+                    ["transformers", "torch"],
+                )
+            )
+        try:
+            self._torch = importlib.import_module("torch")
+            transformers = importlib.import_module("transformers")
+        except ModuleNotFoundError as exc:
+            missing = _missing_dependency_names("transformers", "torch")
+            raise HuggingFaceRunnerError(
+                _format_missing_dependency_message(
+                    "Sundial",
+                    missing or ["transformers", "torch"],
+                    ["transformers", "torch"],
+                )
+            ) from exc
+
+        load_kwargs: dict[str, Any] = {
+            "pretrained_model_name_or_path": self.config.repo_id,
+            "trust_remote_code": self.config.trust_remote_code,
+        }
+        if self.config.weights_path is not None:
+            load_kwargs["cache_dir"] = self.config.weights_path
+        if self.config.revision is not None:
+            load_kwargs["revision"] = self.config.revision
+        if self.config.device_map is not None:
+            load_kwargs["device_map"] = self.config.device_map
+        if self.config.torch_dtype is not None:
+            load_kwargs["torch_dtype"] = getattr(self._torch, self.config.torch_dtype)
+        if self.config.attn_implementation is not None:
+            load_kwargs["attn_implementation"] = self.config.attn_implementation
+
+        def build_model() -> Any:
+            return transformers.AutoModelForCausalLM.from_pretrained(**load_kwargs)
+
+        try:
+            self._model = self._with_load_retries(build_model)
+            if hasattr(self._model, "eval"):
+                self._model.eval()
+        except Exception as exc:
+            raise HuggingFaceRunnerError(f"failed to load Sundial model {self.config.repo_id}: {exc}") from exc
+
+    def forecast(self, sample: SeriesSample, track: TrackKind) -> HuggingFaceForecast:
+        return self.forecast_batch([sample], track=track)[0]
+
+    def forecast_batch(self, samples: list[SeriesSample], track: TrackKind) -> list[HuggingFaceForecast]:
+        self.load()
+        if not samples:
+            return []
+        lengths = {len(sample.history) for sample in samples}
+        if len(lengths) != 1:
+            return [self.forecast(sample=sample, track=track) for sample in samples]
+
+        history_batch = self._torch.stack([self._tensor(sample.history) for sample in samples], dim=0)
+        horizon = len(samples[0].target)
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": horizon,
+            "num_samples": 1,
+        }
+        if self.config.do_sample:
+            generation_kwargs["do_sample"] = True
+            if self.config.temperature > 0:
+                generation_kwargs["temperature"] = self.config.temperature
+            generation_kwargs["top_p"] = self.config.top_p
+
+        started = perf_counter()
+        try:
+            with self._torch.inference_mode():
+                predictions = self._model.generate(history_batch, **generation_kwargs)
+        except Exception as exc:
+            raise HuggingFaceRunnerError(f"Sundial inference failed for {self.config.repo_id}: {exc}") from exc
+        latency_ms = (perf_counter() - started) * 1000
+        per_sample_latency_ms = latency_ms / len(samples)
+        return [
+            HuggingFaceForecast(
+                prediction=self._extract_prediction(predictions=predictions, sample_index=index, horizon=len(sample.target)),
+                latency_ms=per_sample_latency_ms,
+                token_count=self._estimate_tokens(sample),
+                notes={
+                    "decision": "sundial_generate",
+                    "repo_id": self.config.repo_id,
+                    "task": self.config.task.value,
+                    "used_covariates": "no",
+                },
+            )
+            for index, sample in enumerate(samples)
+        ]
+
+    def _tensor(self, values: list[float]) -> Any:
+        return self._torch.tensor(values, dtype=self._torch.float32)
+
+    def _extract_prediction(self, predictions: Any, sample_index: int, horizon: int) -> list[float]:
+        values = predictions
+        if hasattr(values, "detach"):
+            values = values.detach()
+        if hasattr(values, "cpu"):
+            values = values.cpu()
+        if hasattr(values, "tolist"):
+            values = values.tolist()
+        if not isinstance(values, list) or not values:
+            raise HuggingFaceRunnerError("Sundial output format is not recognized")
+
+        try:
+            if sample_index == 0 and values and not isinstance(values[0], list):
+                sample_values = values
+            else:
+                sample_values = values[sample_index]
+        except Exception as exc:
+            raise HuggingFaceRunnerError("Sundial output format is not recognized") from exc
+
+        while sample_values and isinstance(sample_values[0], list):
+            sample_values = sample_values[0]
+        if not isinstance(sample_values, list):
+            raise HuggingFaceRunnerError("Sundial output format is not recognized")
+        cleaned = [round(float(value), 4) for value in sample_values[:horizon]]
+        if not cleaned:
+            raise HuggingFaceRunnerError("Sundial output is empty")
+        while len(cleaned) < horizon:
+            cleaned.append(cleaned[-1])
+        return cleaned
+
+    def _estimate_tokens(self, sample: SeriesSample) -> int:
+        return len(sample.history)

@@ -10,7 +10,7 @@
 整体设计与讨论材料一一对应：
 
 - `Dataset Manager`：动态生成纯合成多周期数据，按赛道执行变换并校验。
-- `Model Manager`：管理模型元信息和 adapter；除内置桩模型外，支持通过 Hugging Face repo 提交、加载和执行模型，当前优先支持 `amazon/chronos-2`。
+- `Model Manager`：管理模型元信息和 adapter；系统默认内置 `amazon/chronos-2` 与 `thuml/sundial-base-128m`，并支持继续通过 Hugging Face repo 提交、加载和执行模型。
 - `Mission Manager / Executor`：把“模型 + 批次”组合为可回溯任务并执行。
 - `Reporter`：聚合 MSE、MAE、sMAPE、延迟、Token 成本，输出 bad case 与总结。
 - `Online System`：独立前端系统，仅通过 API 访问后端。
@@ -114,7 +114,9 @@ pip install -e .[huggingface]
 pip install -e .[test]
 ```
 
-`amazon/chronos-2` 使用 `chronos-forecasting` 提供的 `Chronos2Pipeline` 进行推理，并透传 Hugging Face Transformers 的 `from_pretrained(...)` 参数。
+内置 `amazon/chronos-2` 使用 `chronos-forecasting>=2.0` 提供的 `Chronos2Pipeline` 进行推理，并透传 Hugging Face Transformers 的 `from_pretrained(...)` 参数。
+
+内置 `thuml/sundial-base-128m` 通过 `transformers.AutoModelForCausalLM.from_pretrained(..., trust_remote_code=True)` 加载，并使用模型自定义的 `generate(...)` 接口直接对原始历史序列做预测。
 
 真实端到端验证现在位于 `test/integration/test_verify_chronos2_e2e.py`，默认通过环境变量控制是否纳入测试发现；保留 `scripts/verify_chronos2_e2e.py` 作为兼容入口：
 
@@ -139,7 +141,7 @@ python scripts/smoke_test.py
 当前测试覆盖以下几类行为：
 
 - 用户页面提交 Hugging Face 模型
-- 管理页面加载模型
+- 管理页面加载内置/提交模型
 - 管理页面生成批次与运行任务
 - 用户页面查看总榜与分赛道榜单
 - CSV loader、processor、validator 的单元测试

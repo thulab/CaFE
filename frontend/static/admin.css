@@ -164,6 +164,7 @@ h1 {
 
 select,
 input,
+textarea,
 button {
   width: 100%;
   border-radius: 12px;
@@ -172,10 +173,15 @@ button {
 }
 
 select,
-input {
+input,
+textarea {
   padding: 10px 12px;
   color: var(--text);
   background: white;
+}
+
+textarea {
+  resize: vertical;
 }
 
 button {
@@ -189,6 +195,159 @@ button {
 button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.choice-tabs,
+.metric-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.choice-tab,
+.metric-tab {
+  cursor: pointer;
+}
+
+.choice-tab input,
+.metric-tab input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.choice-tab span,
+.metric-tab span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--muted);
+  transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+
+.choice-tab input:checked + span,
+.metric-tab input:checked + span {
+  color: white;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), #2f9587);
+  transform: translateY(-1px);
+}
+
+.dataset-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.source-panel {
+  display: grid;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(241, 237, 226, 0.56);
+}
+
+.dataset-card {
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 240, 231, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.dataset-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dataset-card-head h3 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.panel-copy {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.field-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.field-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field-grid-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field-block {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(31, 111, 100, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.task-parameter-shell,
+.task-parameter-panel,
+.task-parameter-list {
+  display: grid;
+  gap: 10px;
+}
+
+.task-parameter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(180px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.task-parameter-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.task-parameter-title {
+  font-weight: 700;
+}
+
+.task-parameter-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.task-parameter-help {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.option-group {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.option-group legend {
+  padding: 0;
+  font-size: 0.92rem;
 }
 
 .meta-list {
@@ -224,6 +383,45 @@ button:disabled {
 
 .item {
   padding: 12px;
+}
+
+.detail-row,
+.param-group {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.meta-label {
+  color: var(--accent);
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+}
+
+.detail-row a {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.detail-row span:last-child {
+  word-break: break-all;
+}
+
+.param-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.param-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(31, 111, 100, 0.08);
+  color: var(--text);
 }
 
 .item-head {
@@ -263,7 +461,10 @@ button:disabled {
   .workspace,
   .double,
   .status-strip,
-  .row {
+  .row,
+  .field-grid-two,
+  .field-grid-three,
+  .task-parameter-row {
     grid-template-columns: 1fr;
   }
 }

@@ -64,10 +64,9 @@ class DashboardUiConfig(BaseModel):
 
 
 class UserModelSubmissionConfig(BaseModel):
-    repo_id: str
+    huggingface_url: str
     name: str
     model_id: str = ""
-    task: str
     revision: str = ""
     manual: str
     max_new_tokens: int
@@ -130,6 +129,31 @@ class BuiltinModelConfig(BaseModel):
     source_type: str
     manual: str
     capabilities: list[str] = Field(default_factory=list)
+    huggingface: "BuiltinHuggingFaceConfig | None" = None
+
+
+class BuiltinHuggingFaceConfig(BaseModel):
+    repo_id: str
+    task: str
+    revision: str | None = None
+    trust_remote_code: bool = False
+    max_new_tokens: int = 128
+    do_sample: bool = False
+    temperature: float = 0.0
+    top_p: float = 1.0
+    device_map: str | None = None
+    torch_dtype: str | None = None
+    attn_implementation: str | None = None
+    batch_size: int = 1
+    context_length: int | None = None
+    use_covariates: bool = True
+    cross_learning: bool = False
+    max_output_patches: int | None = None
+    load_retries: int = 1
+    load_retry_backoff_seconds: float = 1.0
+
+
+BuiltinModelConfig.update_forward_refs()
 
 
 class SyntheticGenerationConfig(BaseModel):

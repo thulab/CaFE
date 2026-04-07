@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 from ..data_management.domain import TrackKind
 from ..domain.common import utc_now
 
+DEFAULT_EVALUATION_METRICS = ["mse", "mae", "smape", "latency_ms", "token_count", "composite_score"]
+
 
 class TaskStatus(str, Enum):
     PENDING = "pending"
@@ -48,12 +50,28 @@ class BenchmarkReport(BaseModel):
     distribution: dict[str, float] = Field(default_factory=dict)
 
 
+class TaskDatasetSpec(BaseModel):
+    batch_id: str
+    track: TrackKind
+    sample_count: int
+    context_length: int
+    horizon: int
+
+
+class TaskSpec(BaseModel):
+    model_id: str
+    model_runtime_parameters: dict[str, Any] = Field(default_factory=dict)
+    dataset: TaskDatasetSpec
+    evaluation_metrics: list[str] = Field(default_factory=lambda: list(DEFAULT_EVALUATION_METRICS))
+
+
 class EvaluationTask(BaseModel):
     task_id: str
     model_id: str
     batch_id: str
     track: TrackKind
     status: TaskStatus
+    spec: TaskSpec | None = None
     created_at: datetime = Field(default_factory=utc_now)
     metrics: AggregatedMetrics | None = None
     report_id: str | None = None
@@ -64,3 +82,5 @@ class EvaluationTask(BaseModel):
 class TaskRunRequest(BaseModel):
     model_id: str
     batch_id: str
+    model_runtime_parameters: dict[str, Any] = Field(default_factory=dict)
+    evaluation_metrics: list[str] = Field(default_factory=lambda: list(DEFAULT_EVALUATION_METRICS))

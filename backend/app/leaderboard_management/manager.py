@@ -38,7 +38,7 @@ class LeaderboardManager:
         models = {model.model_id: model for model in self.model_manager.list_models()}
         grouped: dict[str, list[EvaluationTask]] = {}
         for task in self.task_manager.list_tasks():
-            if task.status != TaskStatus.SUCCEEDED or task.metrics is None or task.track != track:
+            if task.status != TaskStatus.SUCCEEDED or task.metrics is None or task.track != track or task.model_id not in models:
                 continue
             grouped.setdefault(task.model_id, []).append(task)
 
@@ -98,8 +98,7 @@ class LeaderboardManager:
         models = {model.model_id: model for model in self.model_manager.list_models()}
         track_order = [track.track for track in self.data_manager.list_tracks()]
         penalty_policy = self.settings.benchmark.leaderboards.missing_track_rank_penalty
-        model_ids = {task.model_id for task in self.task_manager.list_tasks()}
-        model_ids.update(entry.model_id for entries in track_boards.values() for entry in entries)
+        model_ids = set(models)
         rows: list[OverallLeaderboardEntry] = []
 
         for model_id in model_ids:

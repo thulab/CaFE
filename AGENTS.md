@@ -38,10 +38,14 @@
 ## Validation
 
 - 完成代码改动后，默认跑完与改动相关的验证，优先跑单元测试。
-- 如果仓库缺少标准单元测试，应明确说明缺口，并执行最接近单元/集成验证目标的现有脚本。
+- 当前仓库已经有标准测试目录 `test/`，新增或修改功能后应优先补充并执行对应的 `unit` / `integration` 测试，而不是继续把测试逻辑放回 `scripts/`。
+- 默认的测试发现入口：
+  - `python -m unittest discover -s test -t . -p 'test_*.py'`
 - 当前仓库可见的主要验证入口：
-  - `python scripts/smoke_test.py`
-  - `python scripts/verify_chronos2_e2e.py`（依赖较重，仅在改动涉及 Hugging Face/Chronos2 链路且环境允许时使用）
+  - `test/unit/`：模块级单元测试，优先覆盖 `data_management`、`model_management`、`task_management`、`leaderboard_management`、`frontend` 的局部行为。
+  - `test/integration/test_smoke_flow.py`
+  - `test/integration/test_verify_chronos2_e2e.py`（真实 Chronos2 端到端验证，依赖较重，默认受 `TSBENCHMARK_RUN_CHRONOS2_E2E=1` 控制，仅在改动涉及 Hugging Face/Chronos2 链路且环境允许时使用）
+- `scripts/smoke_test.py` 和 `scripts/verify_chronos2_e2e.py` 现在是兼容入口；如无特殊需要，优先直接运行 `test/` 下对应测试或统一的 `unittest discover` 命令。
 - 如果只做静态结构调整，至少补充最小导入或编译校验，并在结果中说明。
 - 不要声称运行了未实际执行的测试。
 

@@ -14,148 +14,20 @@
       <header class="hero">
         <section class="hero-copy">
           <p class="eyebrow">User Portal</p>
-          <h1>查看榜单，提交 Hugging Face 模型</h1>
+          <h1>TSBenchmark 榜单</h1>
           <p>
-            用户页面聚焦最新排行榜与模型提交。你可以查看总榜和各赛道榜单，并通过 Hugging Face repo
-            提交自己的模型，交给管理侧加载和创建评测任务。
+            用户页面优先展示总榜和分榜，再提供测试模型提交通道。你可以先查看榜单表现，再提交自己的 Hugging Face 模型进入评测流程。
           </p>
           <nav class="view-switch">
             <a href="{{ url_for('user_home') }}" class="{{ 'active' if current_view == 'user' else '' }}">用户页</a>
             <a href="{{ url_for('admin') }}">管理页</a>
           </nav>
         </section>
-        <section class="hero-metrics">
-          <article>
-            <span>赛道数</span>
-            <strong>{{ overview.tracks | length }}</strong>
-          </article>
-          <article>
-            <span>模型数</span>
-            <strong>{{ overview.models | length }}</strong>
-          </article>
-          <article>
-            <span>总榜条目</span>
-            <strong>{{ overview.overall_leaderboard | length }}</strong>
-          </article>
-        </section>
       </header>
 
       {% if message %}
       <section class="banner">{{ message }}</section>
       {% endif %}
-
-      <section class="grid two-column top-grid">
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Submit Model</p>
-              <h2>提交 Hugging Face 模型</h2>
-            </div>
-          </div>
-          <form method="post" action="{{ url_for('submit_model') }}" class="control-form">
-            <label>Repo ID
-              <input type="text" name="repo_id" value="{{ user_defaults.repo_id }}" placeholder="例如：gpt2 或 org/model-name" required>
-            </label>
-            <label>展示名称
-              <input type="text" name="name" value="{{ user_defaults.name }}" placeholder="可选，默认使用 repo id">
-            </label>
-            <label>自定义模型 ID
-              <input type="text" name="model_id" value="{{ user_defaults.model_id }}" placeholder="可选，默认自动生成">
-            </label>
-            <label>任务类型
-              <select name="task">
-                <option value="chronos-2" {% if user_defaults.task == 'chronos-2' %}selected{% endif %}>chronos-2</option>
-                <option value="text-generation" {% if user_defaults.task == 'text-generation' %}selected{% endif %}>text-generation</option>
-                <option value="text2text-generation" {% if user_defaults.task == 'text2text-generation' %}selected{% endif %}>text2text-generation</option>
-              </select>
-            </label>
-            <label>Revision
-              <input type="text" name="revision" value="{{ user_defaults.revision }}" placeholder="可选，例如 main 或 commit hash">
-            </label>
-            <label>模型说明
-              <textarea name="manual" rows="4" required>{{ user_defaults.manual }}</textarea>
-            </label>
-            <div class="inline-grid">
-              <label>max_new_tokens
-                <input type="number" name="max_new_tokens" min="16" value="{{ user_defaults.max_new_tokens }}">
-              </label>
-              <label>temperature
-                <input type="number" name="temperature" step="0.1" min="0" value="{{ user_defaults.temperature }}">
-              </label>
-              <label>top_p
-                <input type="number" name="top_p" step="0.1" min="0" max="1" value="{{ user_defaults.top_p }}">
-              </label>
-            </div>
-            <div class="inline-grid">
-              <label>device_map
-                <input type="text" name="device_map" value="{{ user_defaults.device_map }}" placeholder="例如：cpu / auto">
-              </label>
-              <label>torch_dtype
-                <input type="text" name="torch_dtype" value="{{ user_defaults.torch_dtype }}" placeholder="例如：float32 / bfloat16">
-              </label>
-              <label>attn_implementation
-                <input type="text" name="attn_implementation" value="{{ user_defaults.attn_implementation }}" placeholder="可选">
-              </label>
-            </div>
-            <div class="inline-grid">
-              <label>batch_size
-                <input type="number" name="batch_size" min="1" value="{{ user_defaults.batch_size }}">
-              </label>
-              <label>context_length
-                <input type="number" name="context_length" min="16" value="{{ user_defaults.context_length_value }}" placeholder="可选">
-              </label>
-              <label>max_output_patches
-                <input type="number" name="max_output_patches" min="1" value="{{ user_defaults.max_output_patches_value }}" placeholder="可选">
-              </label>
-            </div>
-            <div class="inline-grid">
-              <label>load_retries
-                <input type="number" name="load_retries" min="1" value="{{ user_defaults.load_retries }}">
-              </label>
-              <label>retry_backoff_seconds
-                <input type="number" name="load_retry_backoff_seconds" step="0.5" min="0" value="{{ user_defaults.load_retry_backoff_seconds }}">
-              </label>
-              <label>推荐配置
-                <input type="text" value="{{ user_defaults.recommended_profile_label }}" readonly>
-              </label>
-            </div>
-            <div class="checkbox-row">
-              <label><input type="checkbox" name="do_sample" {% if user_defaults.do_sample %}checked{% endif %}> 允许采样</label>
-              <label><input type="checkbox" name="trust_remote_code" {% if user_defaults.trust_remote_code %}checked{% endif %}> trust_remote_code</label>
-              <label><input type="checkbox" name="use_covariates" {% if user_defaults.use_covariates %}checked{% endif %}> 使用协变量</label>
-              <label><input type="checkbox" name="cross_learning" {% if user_defaults.cross_learning %}checked{% endif %}> 跨序列联合预测</label>
-            </div>
-            <button type="submit">提交模型</button>
-          </form>
-        </article>
-
-        <article class="panel">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">Model Catalog</p>
-              <h2>已提交模型</h2>
-            </div>
-          </div>
-          <div class="stack">
-            {% for model in overview.models %}
-            <article class="card {% if model.source_type == 'huggingface_hub' %}highlight{% endif %}">
-              <header class="card-head">
-                <h3>{{ model.name }}</h3>
-                <span class="pill">{{ model.runtime_status }}</span>
-              </header>
-              <p class="muted mono">{{ model.model_id }}</p>
-              <p>{{ model.manual }}</p>
-              <p class="muted">adapter={{ model.adapter }} / source={{ model.source_type }}</p>
-              {% if model.huggingface %}
-              <p class="muted">repo={{ model.huggingface.repo_id }} / task={{ model.huggingface.task }}</p>
-              {% endif %}
-            </article>
-            {% else %}
-            <p class="muted">暂无模型</p>
-            {% endfor %}
-          </div>
-        </article>
-      </section>
 
       <section class="panel">
         <div class="panel-head">
@@ -218,6 +90,65 @@
           </div>
         </article>
         {% endfor %}
+      </section>
+
+      <section class="grid two-column top-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Model Catalog</p>
+              <h2>榜单模型</h2>
+              <p class="muted">这里展示当前已进入系统榜单视图的模型，你可以查看其运行状态并跳转到对应的 Hugging Face 页面。</p>
+            </div>
+          </div>
+          <div class="stack">
+            {% for model in overview.models %}
+            <article class="card {% if model.huggingface %}highlight{% endif %}">
+              <header class="card-head">
+                <h3>{{ model.name }}</h3>
+                <span class="pill">{{ model.runtime_status }}</span>
+              </header>
+              {% if model.spec.source.huggingface_url %}
+              <p class="muted"><a href="{{ model.spec.source.huggingface_url }}" target="_blank" rel="noreferrer">{{ model.spec.source.huggingface_url }}</a></p>
+              {% else %}
+              <p class="muted mono">{{ model.model_id }}</p>
+              {% endif %}
+            </article>
+            {% else %}
+            <p class="muted">暂无模型</p>
+            {% endfor %}
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Submit Model</p>
+              <h2>提交测试模型</h2>
+            </div>
+          </div>
+          <form method="post" action="{{ url_for('submit_model') }}" class="control-form">
+            <label>Hugging Face URL
+              <input type="text" name="huggingface_url" value="{{ user_defaults.huggingface_url }}" placeholder="例如：https://huggingface.co/amazon/chronos-2" required>
+            </label>
+            <label>展示名称
+              <input type="text" name="name" value="{{ user_defaults.name }}" placeholder="可选，默认使用 repo id">
+            </label>
+            <label>自定义模型 ID
+              <input type="text" name="model_id" value="{{ user_defaults.model_id }}" placeholder="可选，默认自动生成">
+            </label>
+            <label>Revision
+              <input type="text" name="revision" value="{{ user_defaults.revision }}" placeholder="可选，例如 main 或 commit hash">
+            </label>
+            <label>模型说明
+              <textarea name="manual" rows="4" required>{{ user_defaults.manual }}</textarea>
+            </label>
+            <div class="checkbox-row">
+              <label><input type="checkbox" name="trust_remote_code" {% if user_defaults.trust_remote_code %}checked{% endif %}> trust_remote_code</label>
+            </div>
+            <button type="submit">提交模型</button>
+          </form>
+        </article>
       </section>
     </main>
   </body>
