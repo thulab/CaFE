@@ -1,89 +1,14 @@
 from __future__ import annotations
 
-import asyncio
-import os
 import sys
 from pathlib import Path
-from tempfile import TemporaryDirectory
-
-import httpx
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from backend.app.config import get_settings
-from backend.app.main import create_backend_app
-
-
-def main() -> None:
-    settings = get_settings()
-    user_defaults = settings.ui.user_model_submission
-    admin_defaults = settings.ui.admin_batch_generation
-    repo_id = os.environ.get("TSBENCHMARK_CHRONOS2_REPO_ID", user_defaults.repo_id)
-
-    async def run() -> None:
-        with TemporaryDirectory() as tmpdir:
-            app = create_backend_app(Path(tmpdir))
-            transport = httpx.ASGITransport(app=app)
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                register = await client.post(
-                    "/api/v1/models/register/huggingface",
-                    json={
-                        "repo_id": repo_id,
-                        "name": user_defaults.name,
-                        "manual": "Real Chronos-2 end-to-end validation run.",
-                        "task": user_defaults.task,
-                        "revision": user_defaults.revision,
-                        "trust_remote_code": user_defaults.trust_remote_code,
-                        "device_map": user_defaults.device_map,
-                        "torch_dtype": user_defaults.torch_dtype,
-                        "batch_size": min(user_defaults.batch_size, 2),
-                        "context_length": 128,
-                        "use_covariates": user_defaults.use_covariates,
-                        "cross_learning": user_defaults.cross_learning,
-                        "load_retries": user_defaults.load_retries,
-                        "load_retry_backoff_seconds": user_defaults.load_retry_backoff_seconds,
-                    },
-                )
-                register.raise_for_status()
-                model = register.json()
-
-                load = await client.post(f"/api/v1/models/{model['model_id']}/load")
-                load.raise_for_status()
-
-                batch = await client.post(
-                    "/api/v1/datasets/generate",
-                    json={
-                        "track": admin_defaults.track,
-                        "sample_count": 1,
-                        "context_length": admin_defaults.context_length,
-                        "horizon": 16,
-                        "seed": admin_defaults.seed + 6,
-                    },
-                )
-                batch.raise_for_status()
-                batch_id = batch.json()["batch_id"]
-
-                task = await client.post(
-                    "/api/v1/tasks/run",
-                    json={"model_id": model["model_id"], "batch_id": batch_id},
-                )
-                task.raise_for_status()
-
-                payload = task.json()
-                print("VERIFY_CHRONOS2_OK")
-                print(
-                    {
-                        "model_id": model["model_id"],
-                        "batch_id": batch_id,
-                        "task_id": payload["task_id"],
-                        "score": payload["metrics"]["composite_score"],
-                    }
-                )
-
-    asyncio.run(run())
+from test.integration.test_verify_chronos2_e2e import run_real_chronos2_e2e
 
 
 if __name__ == "__main__":
-    main()
+    run_real_chronos2_e2e()

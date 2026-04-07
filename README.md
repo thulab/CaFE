@@ -23,7 +23,8 @@
 backend/app/     FastAPI 后端
 frontend/        Flask 前端
 conf/            系统统一配置
-scripts/         启停与冒烟脚本
+scripts/         启停与兼容测试入口
+test/            单元测试与集成测试
 runtime/         运行时生成内容
 docs/            架构说明
 ```
@@ -107,23 +108,39 @@ curl -X POST http://127.0.0.1:8000/api/v1/datasets/load/csv \
 pip install -e .[huggingface]
 ```
 
+如需运行测试，可安装测试依赖：
+
+```bash
+pip install -e .[test]
+```
+
 `amazon/chronos-2` 使用 `chronos-forecasting` 提供的 `Chronos2Pipeline` 进行推理，并透传 Hugging Face Transformers 的 `from_pretrained(...)` 参数。
 
-真实端到端验证脚本：
+真实端到端验证现在位于 `test/integration/test_verify_chronos2_e2e.py`，默认通过环境变量控制是否纳入测试发现；保留 `scripts/verify_chronos2_e2e.py` 作为兼容入口：
 
 ```bash
 python scripts/verify_chronos2_e2e.py
 ```
 
-## 冒烟
+也可以直接按目录执行测试：
+
+```bash
+python -m unittest discover -s test -t . -p 'test_*.py'
+```
+
+## 测试
 
 ```bash
 python scripts/smoke_test.py
 ```
 
-该脚本使用临时目录存储运行数据，验证以下最小闭环，不污染正式 `runtime/` 目录：
+冒烟流程已经迁移到 `test/integration/test_smoke_flow.py`，脚本入口会直接复用该测试逻辑。测试数据会写入仓库内的 `test/.tmp/` 临时目录，执行完后自动清理，不污染正式 `runtime/` 目录。
+
+当前测试覆盖以下几类行为：
 
 - 用户页面提交 Hugging Face 模型
 - 管理页面加载模型
 - 管理页面生成批次与运行任务
 - 用户页面查看总榜与分赛道榜单
+- CSV loader、processor、validator 的单元测试
+- Data/Model/Task/Leaderboard Manager 的核心行为单元测试
