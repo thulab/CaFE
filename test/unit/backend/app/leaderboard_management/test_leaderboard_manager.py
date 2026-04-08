@@ -50,7 +50,11 @@ class LeaderboardManagerTest(unittest.TestCase):
             overall_board = leaderboard_manager.overall_leaderboard()
 
         self.assertEqual(forecast_board[0].rank, 1)
+        self.assertEqual(forecast_board[0].metric_id, "mse")
+        self.assertEqual(forecast_board[0].track_variant_id, "univariate_forecast.clean")
+        self.assertEqual(forecast_board[0].metric_value, forecast_board[0].metric_snapshot["mse"])
         builtin_row = next(row for row in overall_board if row.model_id == "amazon-chronos-2")
         custom_row = next(row for row in overall_board if row.model_id == custom_model.model_id)
+        self.assertEqual(builtin_row.metric_id, "mse")
         self.assertGreaterEqual(builtin_row.covered_tracks, custom_row.covered_tracks)
         self.assertLessEqual(builtin_row.rank, custom_row.rank)

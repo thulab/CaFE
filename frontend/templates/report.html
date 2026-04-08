@@ -23,6 +23,9 @@
       <section class="module">
         <h2>Summary</h2>
         <p>{{ report.summary }}</p>
+        {% if report.run_ids %}
+        <p class="mono">runs={{ report.run_ids | join(', ') }}</p>
+        {% endif %}
       </section>
 
       <section class="double">

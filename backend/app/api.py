@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Query
 
-from .data_management.domain import BatchGenerationRequest, CsvBatchLoadRequest, TrackKind
+from .data_management.domain import BatchGenerationRequest, CsvBatchLoadRequest
 from .errors import BenchmarkError, InternalBenchmarkError, NotFoundError
 from .model_management.domain import HuggingFaceModelRegistrationRequest, ModelRegistrationRequest
 from .services import BenchmarkEngine
@@ -99,19 +99,19 @@ def create_api(engine: BenchmarkEngine) -> FastAPI:
             _raise_http_error(exc)
 
     @app.get("/api/v1/leaderboard")
-    async def leaderboard(track: TrackKind | None = Query(default=None)):
-        return engine.leaderboard(track=track)
+    async def leaderboard(track: str | None = Query(default=None), metric_id: str = Query(default="mse")):
+        return engine.leaderboard(track=track, metric_id=metric_id)
 
     @app.get("/api/v1/overview")
-    async def overview():
-        return engine.overview()
+    async def overview(metric_id: str = Query(default="mse")):
+        return engine.overview(metric_id=metric_id)
 
     @app.get("/api/v1/overview/user")
-    async def user_overview():
-        return engine.user_overview()
+    async def user_overview(metric_id: str = Query(default="mse")):
+        return engine.user_overview(metric_id=metric_id)
 
     @app.get("/api/v1/overview/admin")
-    async def admin_overview():
-        return engine.admin_overview()
+    async def admin_overview(metric_id: str = Query(default="mse")):
+        return engine.admin_overview(metric_id=metric_id)
 
     return app

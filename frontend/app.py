@@ -13,10 +13,10 @@ from backend.app.task_management.domain import DEFAULT_EVALUATION_METRICS
 
 
 class BackendProvider(Protocol):
-    def fetch_user_overview(self) -> dict[str, Any]:
+    def fetch_user_overview(self, metric_id: str = "mse") -> dict[str, Any]:
         ...
 
-    def fetch_admin_overview(self) -> dict[str, Any]:
+    def fetch_admin_overview(self, metric_id: str = "mse") -> dict[str, Any]:
         ...
 
     def fetch_report(self, report_id: str) -> dict[str, Any]:
@@ -46,8 +46,12 @@ class HttpBackendProvider:
         self.settings = settings or get_settings()
         self.base_url = base_url.rstrip("/")
 
-    def _get(self, path: str) -> dict[str, Any]:
-        response = requests.get(f"{self.base_url}{path}", timeout=self.settings.service.frontend.get_timeout_seconds)
+    def _get(self, path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = requests.get(
+            f"{self.base_url}{path}",
+            params=params,
+            timeout=self.settings.service.frontend.get_timeout_seconds,
+        )
         response.raise_for_status()
         return response.json()
 
@@ -56,11 +60,11 @@ class HttpBackendProvider:
         response.raise_for_status()
         return response.json()
 
-    def fetch_user_overview(self) -> dict[str, Any]:
-        return self._get("/api/v1/overview/user")
+    def fetch_user_overview(self, metric_id: str = "mse") -> dict[str, Any]:
+        return self._get("/api/v1/overview/user", params={"metric_id": metric_id})
 
-    def fetch_admin_overview(self) -> dict[str, Any]:
-        return self._get("/api/v1/overview/admin")
+    def fetch_admin_overview(self, metric_id: str = "mse") -> dict[str, Any]:
+        return self._get("/api/v1/overview/admin", params={"metric_id": metric_id})
 
     def fetch_report(self, report_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/reports/{report_id}")
@@ -98,7 +102,11 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         return app.config["APP_SETTINGS"]
 
     def redirect_with_message(target: str, message: str) -> Any:
-        return redirect(url_for(target, message=message))
+        params: dict[str, Any] = {"message": message}
+        current_metric_id = request.values.get("current_metric_id")
+        if current_metric_id:
+            params["metric_id"] = current_metric_id
+        return redirect(url_for(target, **params))
 
     def parse_csv_list(raw_value: str) -> list[str]:
         return [item.strip() for item in raw_value.split(",") if item.strip()]
@@ -151,13 +159,18 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         return runtime_parameters
 
     def build_generate_payload() -> dict[str, Any]:
-        return {
-            "track": request.form["track"],
+        payload = {
             "sample_count": int(request.form["sample_count"]),
             "context_length": int(request.form["context_length"]),
             "horizon": int(request.form["horizon"]),
             "seed": int(request.form["seed"]),
         }
+        track_variant_id = request.form.get("track_variant_id", "").strip()
+        if track_variant_id:
+            payload["track_variant_id"] = track_variant_id
+        else:
+            payload["track"] = request.form["track"]
+        return payload
 
     def build_csv_payload() -> dict[str, Any]:
         processors = parse_json_field(
@@ -165,10 +178,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             default=[],
             field_name="processors_json",
         )
-        return {
+        payload = {
             "source_type": "csv",
             "csv_path": request.form["csv_path"],
-            "track": request.form["track"],
             "context_length": int(request.form["context_length"]),
             "horizon": int(request.form["horizon"]),
             "max_samples": int(request.form["max_samples"]) if request.form.get("max_samples") else None,
@@ -180,6 +192,12 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             "delimiter": request.form.get("delimiter") or ",",
             "processors": processors,
         }
+        track_variant_id = request.form.get("track_variant_id", "").strip()
+        if track_variant_id:
+            payload["track_variant_id"] = track_variant_id
+        else:
+            payload["track"] = request.form["track"]
+        return payload
 
     def handle_dataset_create(source_mode: str | None = None) -> Any:
         dataset_source = source_mode or request.form.get("source_mode") or "generate"
@@ -211,24 +229,30 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
 
     @app.get("/")
     def user_home():
-        overview = backend().fetch_user_overview()
+        selected_metric_id = request.args.get("metric_id", "mse")
+        overview = backend().fetch_user_overview(metric_id=selected_metric_id)
         return render_template(
             "user.html",
             overview=overview,
             user_defaults=settings().ui.user_model_submission,
+            leaderboard_metric_options=DEFAULT_EVALUATION_METRICS,
+            selected_metric_id=selected_metric_id,
             message=request.args.get("message", ""),
             current_view="user",
         )
 
     @app.get("/admin")
     def admin():
-        overview = backend().fetch_admin_overview()
+        selected_metric_id = request.args.get("metric_id", "mse")
+        overview = backend().fetch_admin_overview(metric_id=selected_metric_id)
         return render_template(
             "admin.html",
             overview=overview,
             admin_defaults=settings().ui.admin_batch_generation,
             runtime_generated_dir=str(Path(settings().system.runtime.root) / "generated"),
             evaluation_metric_options=DEFAULT_EVALUATION_METRICS,
+            leaderboard_metric_options=DEFAULT_EVALUATION_METRICS,
+            selected_metric_id=selected_metric_id,
             message=request.args.get("message", ""),
             current_view="admin",
         )
@@ -336,6 +360,8 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "evaluation_metrics": request.form.getlist("evaluation_metrics")
                 or parse_csv_list(request.form.get("evaluation_metrics", "")),
             }
+            if request.form.get("execution_repeat_count", "").strip():
+                payload["execution_repeat_count"] = int(request.form["execution_repeat_count"])
             task = backend().run_task(payload)
             return redirect_with_message("admin", f"评测任务 {task['task_id']} 已完成")
         except Exception as exc:

@@ -12,16 +12,23 @@ class FakeBackendProvider:
         self.last_csv_payload = None
         self.last_run_payload = None
 
-    def fetch_user_overview(self):
-        return {"models": [], "track_leaderboards": [], "tracks": [], "overall_leaderboard": []}
+    def fetch_user_overview(self, metric_id: str = "mse"):
+        return {
+            "models": [],
+            "track_leaderboards": [],
+            "tracks": [],
+            "overall_metric_id": metric_id,
+            "overall_leaderboard": [],
+        }
 
-    def fetch_admin_overview(self):
+    def fetch_admin_overview(self, metric_id: str = "mse"):
         return {
             "tracks": [],
             "models": [],
             "batches": [],
             "recent_tasks": [],
             "leaderboard": [],
+            "overall_metric_id": metric_id,
             "overall_leaderboard_strategy": "rank_sum",
         }
 
@@ -56,7 +63,7 @@ class FakeBackendProvider:
 class FrontendAppTest(unittest.TestCase):
     def test_admin_page_formats_model_management_card(self) -> None:
         class ProviderWithModel(FakeBackendProvider):
-            def fetch_admin_overview(self):
+            def fetch_admin_overview(self, metric_id: str = "mse"):
                 return {
                     "tracks": [],
                     "models": [
@@ -100,6 +107,7 @@ class FrontendAppTest(unittest.TestCase):
                     "batches": [],
                     "recent_tasks": [],
                     "leaderboard": [],
+                    "overall_metric_id": "mse",
                     "overall_leaderboard_strategy": "rank_sum",
                 }
 
@@ -267,6 +275,36 @@ class FrontendAppTest(unittest.TestCase):
         )
         self.assertIsNone(provider.last_generate_payload)
 
+    def test_create_dataset_prefers_track_variant_id_when_provided(self) -> None:
+        provider = FakeBackendProvider()
+        app = create_app(provider=provider)
+        client = app.test_client()
+
+        response = client.post(
+            "/actions/datasets/create",
+            data={
+                "source_mode": "generate",
+                "track_variant_id": "univariate_forecast.noisy",
+                "sample_count": "2",
+                "context_length": "24",
+                "horizon": "8",
+                "seed": "7",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            provider.last_generate_payload,
+            {
+                "track_variant_id": "univariate_forecast.noisy",
+                "sample_count": 2,
+                "context_length": 24,
+                "horizon": 8,
+                "seed": 7,
+            },
+        )
+
     def test_run_task_uses_multi_select_evaluation_metrics(self) -> None:
         provider = FakeBackendProvider()
         app = create_app(provider=provider)
@@ -292,6 +330,34 @@ class FrontendAppTest(unittest.TestCase):
                 "batch_id": "batch-1",
                 "model_runtime_parameters": {"batch_size": 1, "use_covariates": True},
                 "evaluation_metrics": ["mse", "smape", "composite_score"],
+            },
+        )
+
+    def test_run_task_includes_execution_repeat_count_when_provided(self) -> None:
+        provider = FakeBackendProvider()
+        app = create_app(provider=provider)
+        client = app.test_client()
+
+        response = client.post(
+            "/actions/run",
+            data={
+                "model_id": "amazon-chronos-2",
+                "batch_id": "batch-1",
+                "execution_repeat_count": "5",
+                "evaluation_metrics": ["mse"],
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            provider.last_run_payload,
+            {
+                "model_id": "amazon-chronos-2",
+                "batch_id": "batch-1",
+                "model_runtime_parameters": {},
+                "evaluation_metrics": ["mse"],
+                "execution_repeat_count": 5,
             },
         )
 

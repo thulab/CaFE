@@ -68,11 +68,12 @@
                 </header>
                 <form method="post" action="{{ url_for('create_dataset') }}" class="compact-form">
                   <input type="hidden" name="source_mode" value="generate">
+                  <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
                   <div class="field-grid field-grid-two">
                     <label>评测赛道
-                      <select name="track">
+                      <select name="track_variant_id">
                         {% for track in overview.tracks %}
-                        <option value="{{ track.track }}" {% if admin_defaults.track == track.track %}selected{% endif %}>{{ track.name }}</option>
+                        <option value="{{ track.track_variant_id }}" {% if admin_defaults.track == track.track_variant_id or (admin_defaults.track == track.track and track.noise_mode == 'clean') %}selected{% endif %}>{{ track.name }} / {{ track.track_variant_id }}</option>
                         {% endfor %}
                       </select>
                     </label>
@@ -104,14 +105,15 @@
                 </header>
                 <form method="post" action="{{ url_for('create_dataset') }}" class="compact-form">
                   <input type="hidden" name="source_mode" value="csv">
+                  <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
                   <label>CSV 文件路径
                     <input type="text" name="csv_path" placeholder="/absolute/path/to/data.csv" required>
                   </label>
                   <div class="field-grid field-grid-two">
                     <label>评测赛道
-                      <select name="track">
+                      <select name="track_variant_id">
                         {% for track in overview.tracks %}
-                        <option value="{{ track.track }}" {% if admin_defaults.track == track.track %}selected{% endif %}>{{ track.name }}</option>
+                        <option value="{{ track.track_variant_id }}" {% if admin_defaults.track == track.track_variant_id or (admin_defaults.track == track.track and track.noise_mode == 'clean') %}selected{% endif %}>{{ track.name }} / {{ track.track_variant_id }}</option>
                         {% endfor %}
                       </select>
                     </label>
@@ -167,6 +169,7 @@
           <section class="module">
             <h2>创建任务</h2>
             <form method="post" action="{{ url_for('run_task') }}" class="compact-form" data-task-form>
+              <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
               <label>Model
                 <select name="model_id" data-model-select required>
                   <option value="" selected>请选择模型</option>
@@ -265,6 +268,9 @@
                   {% endfor %}
                 </div>
               </fieldset>
+              <label>execution_repeat_count
+                <input type="number" name="execution_repeat_count" min="1" value="3">
+              </label>
               <button type="submit" {% if not overview.batches %}disabled{% endif %}>Run Task</button>
             </form>
           </section>
@@ -326,6 +332,7 @@
                 {% endif %}
                 <form method="post" action="{{ url_for('load_model') }}">
                   <input type="hidden" name="model_id" value="{{ model.model_id }}">
+                  <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
                   <button type="submit" {% if not model.huggingface %}disabled{% endif %}>Load Model</button>
                 </form>
               </article>
@@ -343,7 +350,7 @@
                 <article class="item">
                   <header class="item-head">
                     <strong>{{ batch.batch_id }}</strong>
-                    <span>{{ batch.track }}</span>
+                    <span>{{ batch.track_variant_id or batch.track }}</span>
                   </header>
                   <p>samples={{ batch.sample_count }} / context={{ batch.context_length }} / horizon={{ batch.horizon }}</p>
                   <p class="mono">policy={{ batch.policy }} / validation={{ batch.validation_passed }}</p>
@@ -364,7 +371,9 @@
                     <span>{{ task.status }}</span>
                   </header>
                   <p>{{ task.model_name }} on {{ task.batch_id }}</p>
-                  <p class="mono">score={{ task.composite_score if task.composite_score is not none else '-' }}</p>
+                  <p class="mono">{{ task.primary_metric_id or 'metric' }}={{ task.primary_metric_value if task.primary_metric_value is not none else '-' }}</p>
+                  <p class="mono">track={{ task.track_variant_id or task.track }}</p>
+                  <p class="mono">runs={{ task.task_run_count }} / repeat={{ task.execution_repeat_count if task.execution_repeat_count is not none else '-' }}</p>
                   {% if task.model_runtime_parameters %}
                   <p class="mono">params={{ task.model_runtime_parameters }}</p>
                   {% endif %}
@@ -387,13 +396,25 @@
 
           <section class="module">
             <h2>总体排行榜</h2>
+            <div class="panel-head">
+              <p class="mono">metric={{ overview.overall_metric_id }}</p>
+              <form method="get" action="{{ url_for('admin') }}" class="metric-filter">
+                <label>指标
+                  <select name="metric_id" onchange="this.form.submit()">
+                    {% for metric in leaderboard_metric_options %}
+                    <option value="{{ metric }}" {% if metric == selected_metric_id %}selected{% endif %}>{{ metric }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+              </form>
+            </div>
             <div class="table">
               <div class="row head">
                 <span>Rank</span>
                 <span>Model</span>
                 <span>Rank Sum</span>
                 <span>Tracks</span>
-                <span>Mean Score</span>
+                <span>Mean Metric</span>
                 <span>Breakdown</span>
               </div>
               {% for item in overview.leaderboard %}
@@ -402,7 +423,7 @@
                 <span>{{ item.model_name }}</span>
                 <span>{{ item.rank_sum }}</span>
                 <span>{{ item.covered_tracks }}</span>
-                <span>{{ item.mean_composite_score }}</span>
+                <span>{{ item.mean_metric_value }}</span>
                 <span class="mono">
                   {% for track_name, rank in item.track_ranks.items() %}
                   {{ track_name }}=#{{ rank }}{% if not loop.last %} / {% endif %}

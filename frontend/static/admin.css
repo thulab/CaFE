@@ -162,6 +162,16 @@ h1 {
   font-size: 0.92rem;
 }
 
+.metric-filter {
+  min-width: 160px;
+}
+
+.metric-filter label {
+  display: grid;
+  gap: 8px;
+  font-size: 0.92rem;
+}
+
 select,
 input,
 textarea,

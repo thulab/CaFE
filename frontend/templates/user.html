@@ -34,7 +34,17 @@
           <div>
             <p class="eyebrow">Overall Ranking</p>
             <h2>总榜</h2>
+            <p class="muted mono">metric={{ overview.overall_metric_id }}</p>
           </div>
+          <form method="get" action="{{ url_for('user_home') }}" class="metric-filter">
+            <label>指标
+              <select name="metric_id" onchange="this.form.submit()">
+                {% for metric in leaderboard_metric_options %}
+                <option value="{{ metric }}" {% if metric == selected_metric_id %}selected{% endif %}>{{ metric }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </form>
         </div>
         <div class="leaderboard-table">
           <div class="leaderboard-row head">
@@ -42,7 +52,7 @@
             <span>模型</span>
             <span>名次和</span>
             <span>覆盖赛道</span>
-            <span>平均分</span>
+            <span>平均指标值</span>
             <span>赛道名次</span>
           </div>
           {% for item in overview.overall_leaderboard %}
@@ -51,7 +61,7 @@
             <span>{{ item.model_name }}</span>
             <span>{{ item.rank_sum }}</span>
             <span>{{ item.covered_tracks }}</span>
-            <span>{{ item.mean_composite_score }}</span>
+            <span>{{ item.mean_metric_value }}</span>
             <span class="muted mono">
               {% for track_name, rank in item.track_ranks.items() %}
               {{ track_name }}=#{{ rank }}{% if not loop.last %} / {% endif %}
@@ -70,19 +80,20 @@
           <div class="panel-head">
             <div>
               <p class="eyebrow">Track Ranking</p>
-              <h2>{{ board.track }}</h2>
+              <h2>{{ board.track_label }}</h2>
+              <p class="muted mono">{{ board.track }}</p>
             </div>
-            <span class="pill">{{ board.scoring_strategy }}</span>
+            <span class="pill">{{ board.metric_id }}</span>
           </div>
           <div class="stack">
             {% for item in board.entries %}
             <article class="card">
               <header class="card-head">
                 <h3>#{{ item.rank }} {{ item.model_name }}</h3>
-                <span class="pill">{{ item.composite_score }}</span>
+                <span class="pill">{{ item.metric_id }}={{ item.metric_value }}</span>
               </header>
               <p class="muted mono">{{ item.model_id }} / {{ item.batch_id }}</p>
-              <p>MSE={{ item.mse }} / sMAPE={{ item.smape }} / latency={{ item.mean_latency_ms }} ms</p>
+              <p>MSE={{ item.metric_snapshot.get('mse', '-') }} / sMAPE={{ item.metric_snapshot.get('smape', '-') }} / latency={{ item.metric_snapshot.get('latency_ms', '-') }} ms</p>
             </article>
             {% else %}
             <p class="muted">当前赛道暂无评测结果</p>
@@ -128,6 +139,7 @@
             </div>
           </div>
           <form method="post" action="{{ url_for('submit_model') }}" class="control-form">
+            <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
             <label>Hugging Face URL
               <input type="text" name="huggingface_url" value="{{ user_defaults.huggingface_url }}" placeholder="例如：https://huggingface.co/amazon/chronos-2" required>
             </label>

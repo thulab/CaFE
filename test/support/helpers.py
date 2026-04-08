@@ -27,21 +27,21 @@ class AsgiBackendProvider(BackendProvider):
     def __init__(self, app) -> None:
         self.app = app
 
-    def _request(self, method: str, path: str, payload=None):
+    def _request(self, method: str, path: str, payload=None, params=None):
         async def once():
             transport = httpx.ASGITransport(app=self.app)
             async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                response = await client.request(method, path, json=payload)
+                response = await client.request(method, path, json=payload, params=params)
                 response.raise_for_status()
                 return response.json()
 
         return asyncio.run(once())
 
-    def fetch_user_overview(self):
-        return self._request("GET", "/api/v1/overview/user")
+    def fetch_user_overview(self, metric_id: str = "mse"):
+        return self._request("GET", "/api/v1/overview/user", params={"metric_id": metric_id})
 
-    def fetch_admin_overview(self):
-        return self._request("GET", "/api/v1/overview/admin")
+    def fetch_admin_overview(self, metric_id: str = "mse"):
+        return self._request("GET", "/api/v1/overview/admin", params={"metric_id": metric_id})
 
     def fetch_report(self, report_id):
         return self._request("GET", f"/api/v1/reports/{report_id}")
