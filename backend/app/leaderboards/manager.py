@@ -4,10 +4,10 @@ from pathlib import Path
 
 from ..config import AppSettings, get_settings
 from ..errors import BenchmarkError
-from ..model_management.manager import ModelManager
+from ..models.manager import ModelManager
 from ..storage import FileRepository
-from ..task_management.domain import EvaluationTask, TaskStatus
-from ..task_management.manager import TaskManager
+from ..tasks.domain import EvaluationTask, TaskStatus
+from ..tasks.manager import TaskManager
 from .domain import LeaderboardEntry, OverallLeaderboardEntry
 
 

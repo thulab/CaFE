@@ -5,10 +5,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ..data_management.domain import TrackKind, TrackSpec
+from ..datasets.domain import TrackKind, TrackSpec
 from ..domain.common import utc_now
-from ..model_management.domain import ModelRecord
-from ..task_management.domain import TaskStatus
+from ..models.domain import ModelRecord
+from ..tasks.domain import TaskStatus
 
 
 class LeaderboardEntry(BaseModel):

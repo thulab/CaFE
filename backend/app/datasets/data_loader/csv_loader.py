@@ -11,10 +11,13 @@ from ..domain import (
     CsvBatchLoadRequest,
     DatasetLoadRequest,
     DatasetSourceType,
+    ExecutionConstraint,
+    NoiseMode,
     SeriesSample,
     SeriesTruth,
     TrackKind,
     TrackSpec,
+    TrackTemplateKind,
 )
 from .base import DataLoaderError, DatasetLoader
 
@@ -26,9 +29,10 @@ class CsvLoaderError(DataLoaderError):
 class CsvDatasetLoader(DatasetLoader):
     source_type = DatasetSourceType.CSV
 
-    def load_samples(self, request: DatasetLoadRequest, track_spec: TrackSpec) -> list[SeriesSample]:
+    def load_samples(self, request: DatasetLoadRequest, track_spec: TrackSpec | None = None) -> list[SeriesSample]:
         if not isinstance(request, CsvBatchLoadRequest):
             raise CsvLoaderError(f"csv loader received unsupported request type: {type(request).__name__}")
+        effective_track_spec = track_spec or self._compat_track_spec(request)
 
         csv_path = Path(request.csv_path).expanduser().resolve()
         if not csv_path.exists():
@@ -51,7 +55,7 @@ class CsvDatasetLoader(DatasetLoader):
 
             input_channel_values = {
                 channel: [row["inputs"][channel] for row in trimmed_rows[: request.input_length]]
-                for channel in track_spec.input_channels
+                for channel in effective_track_spec.input_channels
                 if channel in trimmed_rows[0]["inputs"]
             }
             input_channel_values.setdefault(primary, list(history))
@@ -84,7 +88,7 @@ class CsvDatasetLoader(DatasetLoader):
                     **future_known_channel_values,
                 }.items()
             }
-            truth = self._build_truth(series=history + target, track=track_spec.track)
+            truth = self._build_truth(series=history + target, track=effective_track_spec.track)
             notes: dict[str, object] = {
                 "source_type": request.source_type.value,
                 "source_path": str(csv_path),
@@ -102,11 +106,11 @@ class CsvDatasetLoader(DatasetLoader):
                     future_known_channel_values=future_known_channel_values,
                     channel_layout=ChannelLayout(
                         primary_target_channel=primary,
-                        input_channels=list(track_spec.input_channels),
-                        target_channels=list(track_spec.target_channels),
-                        future_known_channels=list(track_spec.future_known_channels),
+                        input_channels=list(effective_track_spec.input_channels),
+                        target_channels=list(effective_track_spec.target_channels),
+                        future_known_channels=list(effective_track_spec.future_known_channels),
                     ),
-                    track_tags=[track_spec.track_variant_id, request.source_type.value, "csv_loaded"],
+                    track_tags=[effective_track_spec.track_variant_id, request.source_type.value, "csv_loaded"],
                     truth=truth,
                     notes=notes,
                 )
@@ -180,3 +184,28 @@ class CsvDatasetLoader(DatasetLoader):
 
     def _future_known_covariates(self, covariate_columns: list[str]) -> list[str]:
         return future_known_covariates(covariate_columns)
+
+    def _compat_track_spec(self, request: CsvBatchLoadRequest) -> TrackSpec:
+        primary = request.primary_target_column or request.target_columns[0]
+        input_channels = list(request.input_columns or [primary])
+        if primary not in input_channels:
+            input_channels.insert(0, primary)
+        target_channels = list(request.target_columns or [primary])
+        if primary not in target_channels:
+            target_channels.insert(0, primary)
+        return TrackSpec(
+            track=request.track,
+            track_variant_id=request.track.value,
+            track_template_kind=TrackTemplateKind.UNIVARIATE_FORECAST,
+            noise_mode=NoiseMode.CLEAN,
+            execution_constraint=ExecutionConstraint.JOINT_MULTIVARIATE,
+            name=request.track.value,
+            description="compatibility track spec inferred by csv loader",
+            fairness_policy="legacy_request",
+            default_context_length=request.input_length,
+            default_horizon=request.prediction_length,
+            suggested_sample_count=request.max_samples or 1,
+            input_channels=input_channels,
+            target_channels=target_channels,
+            future_known_channels=list(request.future_known_columns),
+        )

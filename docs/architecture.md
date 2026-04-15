@@ -33,7 +33,7 @@
 - `GET /api/v1/leaderboard`
 - `GET /api/v1/overview`
 
-数据加载模块使用独立目录 `backend/app/data_management/data_loader/` 组织：
+数据加载模块使用独立目录 `backend/app/datasets/data_loader/` 组织：
 
 - `base.py` 定义统一的 `DatasetLoader` 抽象。
 - `registry.py` 负责按 `source_type` 注册与分发 loader。
@@ -41,14 +41,14 @@
 
 服务层只依赖 dataloader 抽象，不依赖具体文件格式；未来扩展 `parquet`、`jsonl` 或数据库来源时，只需要新增 loader 并注册即可。
 
-数据处理模块使用独立目录 `backend/app/data_management/processors/` 组织：
+数据处理模块使用独立目录 `backend/app/datasets/processors/` 组织：
 
 - `base.py` 定义统一的 `DataProcessor` 抽象。
 - `registry.py` 负责按 `processor_type` 注册与分发 processor。
 - `pipeline.py` 负责按请求中的配置顺序执行 processor 链。
 - `builtin.py` 提供当前内置的通用 processor。
 
-数据验证模块使用独立目录 `backend/app/data_management/validators/` 组织：
+数据验证模块使用独立目录 `backend/app/datasets/validators/` 组织：
 
 - `base.py` 定义统一的 `DataValidator` 抽象和验证上下文。
 - `registry.py` 负责注册 validator。

@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import unittest
 
-from backend.app.data_management.validators import DataValidationContext, build_default_dataset_validation_pipeline
+from backend.app.datasets.validators import DataValidationContext, build_default_dataset_validation_pipeline
 from test.support.helpers import build_sample
 
 

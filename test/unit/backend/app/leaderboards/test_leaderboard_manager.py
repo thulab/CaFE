@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from backend.app.data_management.domain import BatchGenerationRequest, TrackKind
-from backend.app.data_management.manager import DataManager
-from backend.app.leaderboard_management.manager import LeaderboardManager
-from backend.app.model_management.domain import HuggingFaceModelRegistrationRequest
-from backend.app.model_management.manager import ModelManager
-from backend.app.task_management.domain import TaskRunRequest
-from backend.app.task_management.manager import TaskManager
+from backend.app.datasets.domain import BatchGenerationRequest, TrackKind
+from backend.app.datasets.manager import DataManager
+from backend.app.leaderboards.manager import LeaderboardManager
+from backend.app.models.domain import HuggingFaceModelRegistrationRequest
+from backend.app.models.manager import ModelManager
+from backend.app.tasks.domain import TaskRunRequest
+from backend.app.tasks.manager import TaskManager
 from test.support.helpers import FakeHuggingFaceRunner, temporary_runtime_dir
 
 

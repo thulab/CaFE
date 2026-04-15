@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from backend.app.data_management.data_loader.csv_loader import CsvDatasetLoader, CsvLoaderError
-from backend.app.data_management.domain import CsvBatchLoadRequest, TrackKind
+from backend.app.datasets.data_loader.csv_loader import CsvDatasetLoader, CsvLoaderError
+from backend.app.datasets.domain import CsvBatchLoadRequest, TrackKind
 from test.support.helpers import temporary_runtime_dir, write_demo_csv
 
 
@@ -30,7 +30,7 @@ class CsvDatasetLoaderTest(unittest.TestCase):
         self.assertEqual(sample.history, [10.0, 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7])
         self.assertEqual(sample.target, [10.8, 10.9, 11.0, 11.1])
         self.assertEqual(sample.notes["future_known_covariates"], ["calendar_signal"])
-        self.assertEqual(sample.track_tags, ["forecast_accuracy", "csv_loaded"])
+        self.assertEqual(sample.track_tags, ["forecast_accuracy", "csv", "csv_loaded"])
 
     def test_load_samples_rejects_missing_columns(self) -> None:
         with temporary_runtime_dir(prefix="csv-loader-") as runtime_root:

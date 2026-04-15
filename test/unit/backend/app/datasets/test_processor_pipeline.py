@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from backend.app.data_management.domain import CsvBatchLoadRequest, DataProcessorConfig, DataProcessorType, TrackKind, TrackSpec, TrackTemplateKind, NoiseMode, ExecutionConstraint
-from backend.app.data_management.processors import DataProcessorError, build_default_dataset_processor_pipeline
+from backend.app.datasets.domain import CsvBatchLoadRequest, DataProcessorConfig, DataProcessorType, TrackKind, TrackSpec, TrackTemplateKind, NoiseMode, ExecutionConstraint
+from backend.app.datasets.processors import DataProcessorError, build_default_dataset_processor_pipeline
 from test.support.helpers import build_sample
 
 

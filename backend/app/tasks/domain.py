@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, root_validator
 
-from ..data_management.domain import TrackKind
+from ..datasets.domain import TrackKind
 from ..domain.common import utc_now
 
 DEFAULT_EXECUTION_REPEAT_COUNT = 3

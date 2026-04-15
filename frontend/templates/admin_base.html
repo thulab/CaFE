@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}TSBenchmark Admin{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  </head>
+  <body>
+    <main class="console-shell">
+      <header class="console-header">
+        <div>
+          <p class="label">ADMIN CONSOLE</p>
+          <h1>{% block page_title %}{% endblock %}</h1>
+          <p class="subcopy">{% block page_description %}{% endblock %}</p>
+        </div>
+        <div class="admin-nav-shell">
+          <nav class="switcher">
+            <a href="{{ url_for('admin_datasets') }}" class="{{ 'active' if current_view == 'admin_datasets' else '' }}">数据集</a>
+            <a href="{{ url_for('admin_models') }}" class="{{ 'active' if current_view == 'admin_models' else '' }}">模型</a>
+            <a href="{{ url_for('admin_tasks') }}" class="{{ 'active' if current_view == 'admin_tasks' else '' }}">任务</a>
+            <a href="{{ url_for('admin_leaderboard') }}" class="{{ 'active' if current_view == 'admin_leaderboard' else '' }}">榜单</a>
+          </nav>
+          <a class="return-link" href="{{ url_for('user_home') }}">返回公开榜单</a>
+        </div>
+      </header>
+
+      {% if message %}
+      <section class="notice">{{ message }}</section>
+      {% endif %}
+
+      <section class="status-strip">
+        <article>
+          <span>Tracks</span>
+          <strong>{{ overview.tracks | length }}</strong>
+        </article>
+        <article>
+          <span>Models</span>
+          <strong>{{ overview.models | length }}</strong>
+        </article>
+        <article>
+          <span>Batches</span>
+          <strong>{{ overview.batches | length }}</strong>
+        </article>
+        <article>
+          <span>Tasks</span>
+          <strong>{{ overview.recent_tasks | length }}</strong>
+        </article>
+      </section>
+
+      {% block content %}{% endblock %}
+    </main>
+    {% block scripts %}{% endblock %}
+  </body>
+</html>

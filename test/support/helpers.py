@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 import httpx
 
-from backend.app.data_management.domain import SeriesSample, SeriesTruth, TrackKind
+from backend.app.datasets.domain import SeriesSample, SeriesTruth, TrackKind
 from backend.app.huggingface import HuggingFaceForecast
 from frontend.app import BackendProvider
 
@@ -42,6 +42,9 @@ class AsgiBackendProvider(BackendProvider):
 
     def fetch_admin_overview(self, metric_id: str = "mse"):
         return self._request("GET", "/api/v1/overview/admin", params={"metric_id": metric_id})
+
+    def fetch_task(self, task_id):
+        return self._request("GET", f"/api/v1/tasks/{task_id}")
 
     def fetch_report(self, report_id):
         return self._request("GET", f"/api/v1/reports/{report_id}")

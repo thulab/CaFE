@@ -104,7 +104,7 @@
 - `fairness_note`: 批次公平性说明，如是否参与月考、是否纳入赛季统计
 
 ## 当前实现映射
-- 主要代码位于 `backend/app/data_management/`
+- 主要代码位于 `backend/app/datasets/`
 - 已有 `DatasetSourceRecord`、`DatasetRecord`、`DatasetBatch`、`DatasetFeatureProfile`
 - 已有结构化赛道定义：`TrackTemplateKind`、`NoiseMode`、`ExecutionConstraint`、`TrackSpec`
 - `SeriesSample` 已同时支持兼容视图 `history/target/covariates` 和结构化通道视图
@@ -152,7 +152,7 @@
 - `runtime_create_time`: 创建时间
 
 ## 当前实现映射
-- 主要代码位于 `backend/app/model_management/`
+- 主要代码位于 `backend/app/models/`
 - 当前核心对象是 `ModelRecord`
 - Hugging Face 接入已经有 `HuggingFaceConfig`、任务推断、参数定义生成与加载状态管理
 - 当前已经能表达一部分运行参数定义，如 `batch_size`、`context_length`、`use_covariates`
@@ -264,8 +264,8 @@
 - `result_time`: 结果生成时间
 
 ## 当前实现映射
-- 赛道相关定义目前主要落在 `backend/app/data_management/domain.py`
-- 任务执行主要位于 `backend/app/task_management/`
+- 赛道相关定义目前主要落在 `backend/app/datasets/domain.py`
+- 任务执行主要位于 `backend/app/tasks/`
 - 已落地 `task_run` 与 `execution_repeat_count`
 - 前后端已经支持 `track_variant_id`、`metric_id`、`execution_repeat_count`
 
@@ -317,7 +317,7 @@
 - `support_result_ids`: 支撑该条目的结果编号列表
 
 ## 当前实现映射
-- 主要代码位于 `backend/app/leaderboard_management/`
+- 主要代码位于 `backend/app/leaderboards/`
 - 已经按 `metric_id` 生成赛道榜和总榜
 - 已经使用 `track_variant_id` 作为主要赛道标识
 - 前端页面已支持切换 `metric_id`
@@ -398,7 +398,7 @@
 - `generate bad case report`: 读取 bad case 引用与数据画像
 
 # 后续改造优先级
-- 第一优先级：重构 `model_management`，把当前 `ModelRecord` 拆成更清晰的 `model + model_runtime_spec`
-- 第二优先级：在 `task_management` 中补齐 `evaluation_plan`、`evaluation_result`、`resource_usage`
-- 第三优先级：让 `leaderboard_management` 持久化真实 `leaderboard` 与 `leaderboard_entry`，并移除 `composite_score` 兼容依赖
+- 第一优先级：重构 `models`，把当前 `ModelRecord` 拆成更清晰的 `model + model_runtime_spec`
+- 第二优先级：在 `tasks` 中补齐 `evaluation_plan`、`evaluation_result`、`resource_usage`
+- 第三优先级：让 `leaderboards` 持久化真实 `leaderboard` 与 `leaderboard_entry`，并移除 `composite_score` 兼容依赖
 - 第四优先级：把 `reports` 扩展为统一 `analysis_report` 体系，并补齐榜单报告和 bad case 报告

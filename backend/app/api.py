@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException, Query
 
-from .data_management.domain import BatchGenerationRequest, CsvBatchLoadRequest
+from .datasets.domain import BatchGenerationRequest, CsvBatchLoadRequest
 from .errors import BenchmarkError, InternalBenchmarkError, NotFoundError
-from .model_management.domain import HuggingFaceModelRegistrationRequest, ModelRegistrationRequest
+from .models.domain import HuggingFaceModelRegistrationRequest, ModelRegistrationRequest
 from .services import BenchmarkEngine
-from .task_management.domain import TaskRunRequest
+from .tasks.domain import TaskRunRequest
 
 
 def create_api(engine: BenchmarkEngine) -> FastAPI:

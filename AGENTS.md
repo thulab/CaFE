@@ -19,10 +19,10 @@
 - 优先保持目录结构清晰、模块职责清楚、命名可读。
 - 性能有限是本项目的重要约束；涉及数据处理、批量推理、序列转换、排行榜聚合时，优先避免明显低效实现。
 - 修改时优先复用现有模块边界：
-  - `backend/app/data_management/`
-  - `backend/app/model_management/`
-  - `backend/app/task_management/`
-  - `backend/app/leaderboard_management/`
+  - `backend/app/datasets/`
+  - `backend/app/models/`
+  - `backend/app/tasks/`
+  - `backend/app/leaderboards/`
   - `frontend/`
 
 ## Communication
@@ -42,7 +42,7 @@
 - 默认的测试发现入口：
   - `python -m unittest discover -s test -t . -p 'test_*.py'`
 - 当前仓库可见的主要验证入口：
-  - `test/unit/`：模块级单元测试，优先覆盖 `data_management`、`model_management`、`task_management`、`leaderboard_management`、`frontend` 的局部行为。
+  - `test/unit/`：模块级单元测试，优先覆盖 `datasets`、`models`、`tasks`、`leaderboards`、`frontend` 的局部行为。
   - `test/integration/test_smoke_flow.py`
   - `test/integration/test_verify_chronos2_e2e.py`（真实 Chronos2 端到端验证，依赖较重，默认受 `TSBENCHMARK_RUN_CHRONOS2_E2E=1` 控制，仅在改动涉及 Hugging Face/Chronos2 链路且环境允许时使用）
 - `scripts/smoke_test.py` 和 `scripts/verify_chronos2_e2e.py` 现在是兼容入口；如无特殊需要，优先直接运行 `test/` 下对应测试或统一的 `unittest discover` 命令。

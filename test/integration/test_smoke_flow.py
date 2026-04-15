@@ -61,16 +61,35 @@ def run_smoke_flow() -> None:
         user_page = frontend_client.get("/")
         assert user_page.status_code == 200
         page_text = user_page.get_data(as_text=True)
-        assert "提交测试模型" in page_text
-        assert "榜单模型" in page_text
+        assert "TSBenchmark 榜单" in page_text
+        assert "提交测试模型" not in page_text
+        assert "榜单模型" not in page_text
 
-        admin_page = frontend_client.get("/admin")
-        assert admin_page.status_code == 200
-        admin_page_text = admin_page.get_data(as_text=True)
-        assert "数据集与任务管理页" in admin_page_text
-        assert "批次数据" in admin_page_text
-        assert "CSV 直接加载" in admin_page_text
-        assert "注册通用模型" not in admin_page_text
+        submit_page = frontend_client.get("/submit-model")
+        assert submit_page.status_code == 200
+        assert "上传 Hugging Face 模型" in submit_page.get_data(as_text=True)
+
+        admin_page = frontend_client.get("/admin", follow_redirects=False)
+        assert admin_page.status_code == 302
+        assert "/admin/datasets" in admin_page.headers["Location"]
+
+        datasets_page = frontend_client.get("/admin/datasets")
+        datasets_page_text = datasets_page.get_data(as_text=True)
+        assert datasets_page.status_code == 200
+        assert "数据集管理" in datasets_page_text
+        assert "CSV 直接加载" in datasets_page_text
+
+        models_page = frontend_client.get("/admin/models")
+        assert models_page.status_code == 200
+        assert "模型模块" in models_page.get_data(as_text=True)
+
+        tasks_page = frontend_client.get("/admin/tasks")
+        assert tasks_page.status_code == 200
+        assert "按 task_id 查询" in tasks_page.get_data(as_text=True)
+
+        leaderboard_page = frontend_client.get("/admin/leaderboard")
+        assert leaderboard_page.status_code == 200
+        assert "总体排行榜" in leaderboard_page.get_data(as_text=True)
 
         submitted_page = frontend_client.post(
             "/actions/models/submit",
@@ -100,6 +119,7 @@ def run_smoke_flow() -> None:
         )
         assert load_page.status_code == 200
         assert "已加载" in load_page.get_data(as_text=True)
+        assert "模型管理" in load_page.get_data(as_text=True)
 
         csv_import_page = frontend_client.post(
             "/actions/datasets/create",
@@ -122,6 +142,7 @@ def run_smoke_flow() -> None:
         )
         assert csv_import_page.status_code == 200
         assert "已导入" in csv_import_page.get_data(as_text=True)
+        assert "数据集管理" in csv_import_page.get_data(as_text=True)
 
         admin_generate_page = frontend_client.post(
             "/actions/datasets/create",
@@ -137,6 +158,7 @@ def run_smoke_flow() -> None:
         )
         assert admin_generate_page.status_code == 200
         assert "生成批次" in admin_generate_page.get_data(as_text=True)
+        assert "数据集管理" in admin_generate_page.get_data(as_text=True)
 
         refreshed_admin = backend_request(backend_app, "GET", "/api/v1/overview/admin").json()
         latest_batch = refreshed_admin["batches"][0]["batch_id"]
@@ -152,6 +174,7 @@ def run_smoke_flow() -> None:
         )
         assert hf_task_page.status_code == 200
         assert "已完成" in hf_task_page.get_data(as_text=True)
+        assert "任务管理" in hf_task_page.get_data(as_text=True)
 
         refreshed_tasks = backend_request(backend_app, "GET", "/api/v1/tasks").json()
         latest_task = next(task for task in refreshed_tasks if task["model_id"] == huggingface_model["model_id"])
@@ -160,11 +183,19 @@ def run_smoke_flow() -> None:
         assert report_payload["report_id"] == report_id
         assert report_payload["summary"]
 
-        report_page = frontend_client.get(f"/reports/{report_id}")
+        queried_task_page = frontend_client.get(f"/admin/tasks?task_id={latest_task['task_id']}")
+        assert queried_task_page.status_code == 200
+        assert latest_task["task_id"] in queried_task_page.get_data(as_text=True)
+
+        report_page = frontend_client.get(f"/admin/reports/{report_id}")
         assert report_page.status_code == 200
         assert report_id in report_page.get_data(as_text=True)
 
-        missing_report_page = frontend_client.get("/reports/report-missing", follow_redirects=True)
+        legacy_report_redirect = frontend_client.get(f"/reports/{report_id}", follow_redirects=False)
+        assert legacy_report_redirect.status_code == 302
+        assert f"/admin/reports/{report_id}" in legacy_report_redirect.headers["Location"]
+
+        missing_report_page = frontend_client.get("/admin/reports/report-missing", follow_redirects=True)
         assert missing_report_page.status_code == 200
         assert "报告加载失败" in missing_report_page.get_data(as_text=True)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from backend.app.data_management.domain import (
+from backend.app.datasets.domain import (
     BatchGenerationRequest,
     CsvBatchLoadRequest,
     DataProcessorConfig,
@@ -11,7 +11,7 @@ from backend.app.data_management.domain import (
     TrackKind,
     TrackTemplateKind,
 )
-from backend.app.data_management.manager import DataManager
+from backend.app.datasets.manager import DataManager
 from backend.app.errors import BenchmarkError
 from test.support.helpers import temporary_runtime_dir, write_demo_csv
 

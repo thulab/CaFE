@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import AppSettings, BuiltinModelConfig, BuiltinHuggingFaceConfig, get_settings
-from ..data_management.domain import SeriesSample, TrackKind
+from ..datasets.domain import SeriesSample, TrackKind
 from ..domain.common import utc_now
 from ..errors import BenchmarkError, InternalBenchmarkError, NotFoundError
 from ..storage import FileRepository

@@ -10,7 +10,7 @@ from time import perf_counter
 from typing import Any
 
 from ..config import future_known_covariates, get_settings
-from ..data_management.domain import SeriesSample, TrackKind
+from ..datasets.domain import SeriesSample, TrackKind
 from .domain import HuggingFaceConfig, HuggingFaceTask
 
 

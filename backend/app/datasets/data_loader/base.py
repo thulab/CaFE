@@ -13,5 +13,5 @@ class DatasetLoader(ABC):
     source_type: DatasetSourceType
 
     @abstractmethod
-    def load_samples(self, request: DatasetLoadRequest, track_spec: TrackSpec) -> list[SeriesSample]:
+    def load_samples(self, request: DatasetLoadRequest, track_spec: TrackSpec | None = None) -> list[SeriesSample]:
         raise NotImplementedError

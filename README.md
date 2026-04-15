@@ -63,9 +63,11 @@ python -m frontend.app
 ```bash
 bash scripts/start_system.sh
 bash scripts/stop_system.sh
+bash scripts/stopAndDestroy.sh
 ```
 
 启动脚本会将 PID 和日志写入 `runtime/system/`。
+`stopAndDestroy.sh` 会先停止前后端，再清空 `conf/system.toml` 中 `system.runtime.root` 指向的全部运行时数据。
 
 默认配置下：
 
@@ -74,11 +76,11 @@ bash scripts/stop_system.sh
 
 如果修改了 `conf/system.toml` 中的 host/port，启动地址会随配置变化。前端仍可通过环境变量 `TSBENCHMARK_BACKEND_URL` 额外覆盖后端地址。
 
-数据加载模块位于 `backend/app/data_management/data_loader/`，当前提供统一的 `DatasetLoader` 抽象，底层已实现 `CSV` 格式加载，后续可以按相同接口扩展更多来源。
+数据加载模块位于 `backend/app/datasets/data_loader/`，当前提供统一的 `DatasetLoader` 抽象，底层已实现 `CSV` 格式加载，后续可以按相同接口扩展更多来源。
 
-数据处理模块位于 `backend/app/data_management/processors/`，负责在数据被 loader 读入后做统一变换。当前内置 `identity`、`scale`、`clip`、`covariate_filter` 四种 processor，并通过通用接口支持按顺序串联处理。
+数据处理模块位于 `backend/app/datasets/processors/`，负责在数据被 loader 读入后做统一变换。当前内置 `identity`、`scale`、`clip`、`covariate_filter` 四种 processor，并通过通用接口支持按顺序串联处理。
 
-数据验证模块位于 `backend/app/data_management/validators/`，负责在批次最终落盘前验证数据集是否有效。当前默认执行上下文长度、预测长度、有限值、低方差等校验；对于系统自动生成的数据，如果验证失败会自动重新生成，直到通过或超过重试上限。
+数据验证模块位于 `backend/app/datasets/validators/`，负责在批次最终落盘前验证数据集是否有效。当前默认执行上下文长度、预测长度、有限值、低方差等校验；对于系统自动生成的数据，如果验证失败会自动重新生成，直到通过或超过重试上限。
 
 CSV 批次加载 API：
 

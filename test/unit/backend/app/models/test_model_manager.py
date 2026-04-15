@@ -3,10 +3,10 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from backend.app.data_management.domain import TrackKind
+from backend.app.datasets.domain import TrackKind
 from backend.app.errors import InternalBenchmarkError
-from backend.app.model_management.domain import HuggingFaceModelRegistrationRequest, ModelAdapter, ModelRuntimeStatus
-from backend.app.model_management.manager import ModelManager
+from backend.app.models.domain import HuggingFaceModelRegistrationRequest, ModelAdapter, ModelRuntimeStatus
+from backend.app.models.manager import ModelManager
 from test.support.helpers import FakeHuggingFaceRunner, build_sample, temporary_runtime_dir
 
 
@@ -104,7 +104,7 @@ class ModelManagerTest(unittest.TestCase):
     def test_builtin_models_load_with_fallback_when_optional_dependencies_are_missing(self) -> None:
         with temporary_runtime_dir(prefix="model-manager-") as runtime_root:
             manager = ModelManager(runtime_root)
-            with patch("backend.app.model_management.huggingface.importlib.util.find_spec") as find_spec:
+            with patch("backend.app.models.huggingface.importlib.util.find_spec") as find_spec:
                 find_spec.side_effect = lambda name: object() if name == "transformers" else None
                 chronos_model = manager.load_model("amazon-chronos-2")
                 sundial_model = manager.load_model("thuml-sundial-base-128m")
@@ -129,7 +129,7 @@ class ModelManagerTest(unittest.TestCase):
                     task="sundial",
                 )
             )
-            with patch("backend.app.model_management.huggingface.importlib.util.find_spec") as find_spec:
+            with patch("backend.app.models.huggingface.importlib.util.find_spec") as find_spec:
                 find_spec.side_effect = lambda name: object() if name == "transformers" else None
                 with self.assertRaises(InternalBenchmarkError) as ctx:
                     manager.load_model(record.model_id)

@@ -8,12 +8,12 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import AppSettings, get_settings
-from ..data_management.domain import DatasetBatch, TrackKind
-from ..data_management.manager import DataManager
+from ..datasets.domain import DatasetBatch, TrackKind
+from ..datasets.manager import DataManager
 from ..domain.common import utc_now
 from ..errors import BenchmarkError, InternalBenchmarkError, NotFoundError
-from ..model_management import HuggingFaceForecast, ModelManager
-from ..model_management.domain import HuggingFaceConfig, ModelAdapter, ModelRecord, ModelRuntimeParameterDefinition
+from ..models import HuggingFaceForecast, ModelManager
+from ..models.domain import HuggingFaceConfig, ModelAdapter, ModelRecord, ModelRuntimeParameterDefinition
 from ..storage import FileRepository
 from .domain import (
     DEFAULT_EVALUATION_METRICS,

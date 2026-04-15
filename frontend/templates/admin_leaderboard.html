@@ -1,0 +1,53 @@
+{% extends "admin_base.html" %}
+
+{% block title %}管理台 · 榜单{% endblock %}
+{% block page_title %}榜单查看{% endblock %}
+{% block page_description %}第四部分只查看排行榜结果与指标切换，不混入数据集、模型或任务操作。{% endblock %}
+
+{% block content %}
+<section class="page-stack">
+  <section class="module">
+    <div class="panel-head">
+      <div>
+        <h2>总体排行榜</h2>
+        <p class="panel-copy">metric={{ overview.overall_metric_id }} / strategy={{ overview.overall_leaderboard_strategy }}</p>
+      </div>
+      <form method="get" action="{{ url_for('admin_leaderboard') }}" class="metric-filter">
+        <label>指标
+          <select name="metric_id" onchange="this.form.submit()">
+            {% for metric in leaderboard_metric_options %}
+            <option value="{{ metric }}" {% if metric == selected_metric_id %}selected{% endif %}>{{ metric }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </form>
+    </div>
+    <div class="table">
+      <div class="row head leaderboard-row-wide">
+        <span>Rank</span>
+        <span>Model</span>
+        <span>Rank Sum</span>
+        <span>Tracks</span>
+        <span>Mean Metric</span>
+        <span>Breakdown</span>
+      </div>
+      {% for item in overview.leaderboard %}
+      <div class="row leaderboard-row-wide">
+        <span>#{{ item.rank }}</span>
+        <span>{{ item.model_name }}</span>
+        <span>{{ item.rank_sum }}</span>
+        <span>{{ item.covered_tracks }}</span>
+        <span>{{ item.mean_metric_value }}</span>
+        <span class="mono">
+          {% for track_name, rank in item.track_ranks.items() %}
+          {{ track_name }}=#{{ rank }}{% if not loop.last %} / {% endif %}
+          {% endfor %}
+        </span>
+      </div>
+      {% else %}
+      <div class="empty">暂无评测记录</div>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}

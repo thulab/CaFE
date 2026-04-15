@@ -3,21 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from .config import AppSettings, get_settings
-from .data_management.manager import DataManager
-from .data_management.domain import TrackKind
+from .datasets.manager import DataManager
+from .datasets.domain import TrackKind
 from .errors import BenchmarkError, NotFoundError
-from .leaderboard_management.domain import (
+from .leaderboards.domain import (
     AdminDashboardOverview,
     BatchSummary,
     TaskSummary,
     TrackLeaderboard,
     UserDashboardOverview,
 )
-from .leaderboard_management.manager import LeaderboardManager
-from .model_management.domain import ModelRecord
-from .model_management.manager import ExecutionResult, ModelManager
+from .leaderboards.manager import LeaderboardManager
+from .models.domain import ModelRecord
+from .models.manager import ExecutionResult, ModelManager
 from .storage import FileRepository
-from .task_management.manager import TaskManager
+from .tasks.manager import TaskManager
 
 
 class BenchmarkEngine:

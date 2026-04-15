@@ -9,7 +9,7 @@ import requests
 from flask import Flask, redirect, render_template, request, url_for
 
 from backend.app.config import AppSettings, get_settings
-from backend.app.task_management.domain import DEFAULT_EVALUATION_METRICS
+from backend.app.tasks.domain import DEFAULT_EVALUATION_METRICS
 
 
 class BackendProvider(Protocol):
@@ -17,6 +17,9 @@ class BackendProvider(Protocol):
         ...
 
     def fetch_admin_overview(self, metric_id: str = "mse") -> dict[str, Any]:
+        ...
+
+    def fetch_task(self, task_id: str) -> dict[str, Any]:
         ...
 
     def fetch_report(self, report_id: str) -> dict[str, Any]:
@@ -66,6 +69,9 @@ class HttpBackendProvider:
     def fetch_admin_overview(self, metric_id: str = "mse") -> dict[str, Any]:
         return self._get("/api/v1/overview/admin", params={"metric_id": metric_id})
 
+    def fetch_task(self, task_id: str) -> dict[str, Any]:
+        return self._get(f"/api/v1/tasks/{task_id}")
+
     def fetch_report(self, report_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/reports/{report_id}")
 
@@ -101,11 +107,15 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
     def settings() -> AppSettings:
         return app.config["APP_SETTINGS"]
 
-    def redirect_with_message(target: str, message: str) -> Any:
-        params: dict[str, Any] = {"message": message}
-        current_metric_id = request.values.get("current_metric_id")
-        if current_metric_id:
-            params["metric_id"] = current_metric_id
+    def current_metric_id() -> str:
+        return request.values.get("current_metric_id") or request.args.get("metric_id") or "mse"
+
+    def redirect_to(target: str, *, message: str | None = None, **params: Any) -> Any:
+        if message is not None:
+            params["message"] = message
+        metric_id = current_metric_id()
+        if metric_id and "metric_id" not in params:
+            params["metric_id"] = metric_id
         return redirect(url_for(target, **params))
 
     def parse_csv_list(raw_value: str) -> list[str]:
@@ -199,16 +209,6 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             payload["track"] = request.form["track"]
         return payload
 
-    def handle_dataset_create(source_mode: str | None = None) -> Any:
-        dataset_source = source_mode or request.form.get("source_mode") or "generate"
-        if dataset_source == "generate":
-            batch = backend().generate_batch(build_generate_payload())
-            return redirect_with_message("admin", f"生成批次 {batch['batch_id']} 成功")
-        if dataset_source == "csv":
-            batch = backend().load_csv_batch(build_csv_payload())
-            return redirect_with_message("admin", f"CSV 批次 {batch['batch_id']} 已导入")
-        raise ValueError(f"source_mode 不支持: {dataset_source}")
-
     def error_message(exc: Exception) -> str:
         response = getattr(exc, "response", None)
         if response is not None:
@@ -223,6 +223,34 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 return response.text
         return str(exc)
 
+    def admin_template_context(selected_metric_id: str) -> dict[str, Any]:
+        return {
+            "overview": backend().fetch_admin_overview(metric_id=selected_metric_id),
+            "admin_defaults": settings().ui.admin_batch_generation,
+            "runtime_generated_dir": str(Path(settings().system.runtime.root) / "generated"),
+            "evaluation_metric_options": DEFAULT_EVALUATION_METRICS,
+            "leaderboard_metric_options": DEFAULT_EVALUATION_METRICS,
+            "selected_metric_id": selected_metric_id,
+            "message": request.args.get("message", ""),
+        }
+
+    def render_admin_page(template_name: str, *, current_view: str, **extra: Any) -> str:
+        selected_metric_id = request.args.get("metric_id", "mse")
+        context = admin_template_context(selected_metric_id)
+        context["current_view"] = current_view
+        context.update(extra)
+        return render_template(template_name, **context)
+
+    def handle_dataset_create(source_mode: str | None = None) -> Any:
+        dataset_source = source_mode or request.form.get("source_mode") or "generate"
+        if dataset_source == "generate":
+            batch = backend().generate_batch(build_generate_payload())
+            return redirect_to("admin_datasets", message=f"生成批次 {batch['batch_id']} 成功")
+        if dataset_source == "csv":
+            batch = backend().load_csv_batch(build_csv_payload())
+            return redirect_to("admin_datasets", message=f"CSV 批次 {batch['batch_id']} 已导入")
+        raise ValueError(f"source_mode 不支持: {dataset_source}")
+
     @app.get("/health")
     def health():
         return {"status": "ok", "service": "frontend"}
@@ -234,44 +262,76 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         return render_template(
             "user.html",
             overview=overview,
-            user_defaults=settings().ui.user_model_submission,
             leaderboard_metric_options=DEFAULT_EVALUATION_METRICS,
             selected_metric_id=selected_metric_id,
             message=request.args.get("message", ""),
             current_view="user",
         )
 
-    @app.get("/admin")
-    def admin():
+    @app.get("/submit-model")
+    def submit_model_page():
         selected_metric_id = request.args.get("metric_id", "mse")
-        overview = backend().fetch_admin_overview(metric_id=selected_metric_id)
         return render_template(
-            "admin.html",
-            overview=overview,
-            admin_defaults=settings().ui.admin_batch_generation,
-            runtime_generated_dir=str(Path(settings().system.runtime.root) / "generated"),
-            evaluation_metric_options=DEFAULT_EVALUATION_METRICS,
-            leaderboard_metric_options=DEFAULT_EVALUATION_METRICS,
+            "submit_model.html",
+            user_defaults=settings().ui.user_model_submission,
             selected_metric_id=selected_metric_id,
             message=request.args.get("message", ""),
-            current_view="admin",
+            current_view="submit_model",
         )
+
+    @app.get("/admin")
+    def admin():
+        return redirect_to("admin_datasets")
+
+    @app.get("/admin/datasets")
+    def admin_datasets():
+        return render_admin_page("admin_datasets.html", current_view="admin_datasets")
+
+    @app.get("/admin/models")
+    def admin_models():
+        return render_admin_page("admin_models.html", current_view="admin_models")
+
+    @app.get("/admin/tasks")
+    def admin_tasks():
+        task_lookup_id = request.args.get("task_id", "").strip()
+        task_lookup = None
+        task_lookup_error = ""
+        if task_lookup_id:
+            try:
+                task_lookup = backend().fetch_task(task_lookup_id)
+            except Exception as exc:
+                task_lookup_error = error_message(exc)
+        return render_admin_page(
+            "admin_tasks.html",
+            current_view="admin_tasks",
+            task_lookup_id=task_lookup_id,
+            task_lookup=task_lookup,
+            task_lookup_error=task_lookup_error,
+        )
+
+    @app.get("/admin/leaderboard")
+    def admin_leaderboard():
+        return render_admin_page("admin_leaderboard.html", current_view="admin_leaderboard")
+
+    @app.get("/admin/reports/<report_id>")
+    def admin_report_detail(report_id: str):
+        try:
+            report = backend().fetch_report(report_id)
+            return render_admin_page(
+                "report.html",
+                current_view="admin_tasks",
+                report=report,
+            )
+        except Exception as exc:
+            return redirect_to("admin_tasks", message=f"报告加载失败：{error_message(exc)}")
 
     @app.get("/reports/<report_id>")
     def report_detail(report_id: str):
-        try:
-            report = backend().fetch_report(report_id)
-            return render_template(
-                "report.html",
-                report=report,
-                current_view="admin",
-            )
-        except Exception as exc:
-            return redirect_with_message("admin", f"报告加载失败：{error_message(exc)}")
+        return redirect(url_for("admin_report_detail", report_id=report_id, metric_id=current_metric_id()))
 
     @app.get("/console")
     def console():
-        return redirect(url_for("admin"))
+        return redirect(url_for("admin_datasets"))
 
     @app.post("/actions/models/submit")
     def submit_model():
@@ -285,9 +345,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         }
         try:
             model = backend().submit_huggingface_model(payload)
-            return redirect_with_message("user_home", f"模型 {model['model_id']} 已提交")
+            return redirect_to("submit_model_page", message=f"模型 {model['model_id']} 已提交")
         except Exception as exc:
-            return redirect_with_message("user_home", f"提交失败：{error_message(exc)}")
+            return redirect_to("submit_model_page", message=f"提交失败：{error_message(exc)}")
 
     @app.post("/actions/models/register")
     def register_model():
@@ -307,17 +367,17 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "metadata": metadata,
             }
             model = backend().register_model(payload)
-            return redirect_with_message("admin", f"模型 {model['model_id']} 已注册")
+            return redirect_to("admin_models", message=f"模型 {model['model_id']} 已注册")
         except Exception as exc:
-            return redirect_with_message("admin", f"注册失败：{error_message(exc)}")
+            return redirect_to("admin_models", message=f"注册失败：{error_message(exc)}")
 
     @app.post("/actions/models/load")
     def load_model():
         try:
             model = backend().load_model(request.form["model_id"])
-            return redirect_with_message("admin", f"模型 {model['model_id']} 已加载")
+            return redirect_to("admin_models", message=f"模型 {model['model_id']} 已加载")
         except Exception as exc:
-            return redirect_with_message("admin", f"加载失败：{error_message(exc)}")
+            return redirect_to("admin_models", message=f"加载失败：{error_message(exc)}")
 
     @app.post("/actions/generate")
     def generate():
@@ -330,9 +390,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         }
         try:
             batch = backend().generate_batch(payload)
-            return redirect_with_message("admin", f"生成批次 {batch['batch_id']} 成功")
+            return redirect_to("admin_datasets", message=f"生成批次 {batch['batch_id']} 成功")
         except Exception as exc:
-            return redirect_with_message("admin", f"生成失败：{error_message(exc)}")
+            return redirect_to("admin_datasets", message=f"生成失败：{error_message(exc)}")
 
     @app.post("/actions/datasets/create")
     def create_dataset():
@@ -341,14 +401,14 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             return handle_dataset_create(source_mode)
         except Exception as exc:
             prefix = "CSV 导入" if source_mode == "csv" else "批次创建"
-            return redirect_with_message("admin", f"{prefix}失败：{error_message(exc)}")
+            return redirect_to("admin_datasets", message=f"{prefix}失败：{error_message(exc)}")
 
     @app.post("/actions/datasets/load_csv")
     def load_csv_dataset():
         try:
             return handle_dataset_create("csv")
         except Exception as exc:
-            return redirect_with_message("admin", f"CSV 导入失败：{error_message(exc)}")
+            return redirect_to("admin_datasets", message=f"CSV 导入失败：{error_message(exc)}")
 
     @app.post("/actions/run")
     def run_task():
@@ -363,9 +423,20 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             if request.form.get("execution_repeat_count", "").strip():
                 payload["execution_repeat_count"] = int(request.form["execution_repeat_count"])
             task = backend().run_task(payload)
-            return redirect_with_message("admin", f"评测任务 {task['task_id']} 已完成")
+            return redirect_to("admin_tasks", message=f"评测任务 {task['task_id']} 已完成")
         except Exception as exc:
-            return redirect_with_message("admin", f"任务失败：{error_message(exc)}")
+            return redirect_to("admin_tasks", message=f"任务失败：{error_message(exc)}")
+
+    @app.post("/actions/tasks/query")
+    def query_task():
+        task_id = request.form.get("task_id", "").strip()
+        if not task_id:
+            return redirect_to("admin_tasks", message="请输入 task_id")
+        try:
+            backend().fetch_task(task_id)
+            return redirect_to("admin_tasks", task_id=task_id, message=f"任务 {task_id} 查询成功")
+        except Exception as exc:
+            return redirect_to("admin_tasks", task_id=task_id, message=f"查询失败：{error_message(exc)}")
 
     return app
 
