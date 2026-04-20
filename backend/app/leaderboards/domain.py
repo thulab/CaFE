@@ -121,3 +121,4 @@ class AdminDashboardOverview(BaseModel):
     overall_leaderboard_strategy: str
     overall_metric_id: str = "mse"
     leaderboard: list[OverallLeaderboardEntry]
+    track_leaderboards: list[TrackLeaderboard] = Field(default_factory=list)

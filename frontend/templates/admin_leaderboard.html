@@ -10,17 +10,8 @@
     <div class="panel-head">
       <div>
         <h2>总体排行榜</h2>
-        <p class="panel-copy">metric={{ overview.overall_metric_id }} / strategy={{ overview.overall_leaderboard_strategy }}</p>
+        <p class="panel-copy">strategy={{ overview.overall_leaderboard_strategy }}</p>
       </div>
-      <form method="get" action="{{ url_for('admin_leaderboard') }}" class="metric-filter">
-        <label>指标
-          <select name="metric_id" onchange="this.form.submit()">
-            {% for metric in leaderboard_metric_options %}
-            <option value="{{ metric }}" {% if metric == selected_metric_id %}selected{% endif %}>{{ metric }}</option>
-            {% endfor %}
-          </select>
-        </label>
-      </form>
     </div>
     <div class="table">
       <div class="row head leaderboard-row-wide">
@@ -48,6 +39,40 @@
       <div class="empty">暂无评测记录</div>
       {% endfor %}
     </div>
+  </section>
+
+  <section class="module">
+    <div class="panel-head">
+      <h2>分赛道排行榜</h2>
+    </div>
+    {% for track_entry in overview.track_leaderboards %}
+    <div class="track-block">
+      <div class="track-header">
+        <h3>赛道 {{ loop.index }}: {{ track_entry.track_label }}</h3>
+        <span class="track-info">策略: {{ track_entry.ranking_strategy }}</span>
+      </div>
+      <div class="table">
+        <div class="row head">
+          <span>Rank</span>
+          <span>Model</span>
+          <span>Metric</span>
+          <span>Latency</span>
+          <span>Tokens</span>
+        </div>
+        {% for entry in track_entry.entries %}
+        <div class="row">
+          <span>#{{ entry.rank }}</span>
+          <span>{{ entry.model_name }}</span>
+          <span>{{ entry.metric_value }}</span>
+          <span>{{ entry.mean_latency_ms }} ms</span>
+          <span>{{ entry.metric_snapshot.token_count }}</span>
+        </div>
+        {% else %}
+        <div class="empty">暂无记录</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
   </section>
 </section>
 {% endblock %}

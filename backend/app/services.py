@@ -125,6 +125,16 @@ class BenchmarkEngine:
         models = self.list_models()
         model_map = {model.model_id: model for model in models}
         overall = self.overall_leaderboard(metric_id=metric_id)
+        track_boards = [
+            TrackLeaderboard(
+                track=track.track_variant_id,
+                track_label=track.name,
+                metric_id=metric_id,
+                ranking_strategy=self.settings.benchmark.leaderboards.track_aggregation_strategy,
+                entries=self.track_leaderboard(track.track_variant_id, metric_id=metric_id),
+            )
+            for track in self.list_tracks()
+        ]
         return AdminDashboardOverview(
             tracks=self.list_tracks(),
             models=models,
@@ -133,6 +143,7 @@ class BenchmarkEngine:
             overall_leaderboard_strategy=self.settings.benchmark.leaderboards.overall_ranking_strategy,
             overall_metric_id=metric_id,
             leaderboard=overall[: ui.admin_leaderboard_limit],
+            track_leaderboards=track_boards,
         )
 
     def overview(self, metric_id: str = "mse") -> AdminDashboardOverview:
