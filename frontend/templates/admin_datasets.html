@@ -138,7 +138,9 @@
       {% for batch in overview.batches %}
       <article class="item">
         <header class="item-head">
-          <strong>{{ batch.batch_id }}</strong>
+          <a href="{{ url_for('admin_dataset_detail', batch_id=batch.batch_id) }}">
+            <strong>{{ batch.batch_id }}</strong>
+          </a>
           <span>{{ batch.track_variant_id or batch.track }}</span>
         </header>
         <p>samples={{ batch.sample_count }} / context={{ batch.context_length }} / horizon={{ batch.horizon }}</p>

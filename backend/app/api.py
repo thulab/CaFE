@@ -59,6 +59,13 @@ def create_api(engine: BenchmarkEngine) -> FastAPI:
     async def list_batches():
         return engine.list_batches()
 
+    @app.get("/api/v1/datasets/batches/{batch_id}")
+    async def get_batch(batch_id: str):
+        try:
+            return engine.get_batch(batch_id)
+        except Exception as exc:
+            _raise_http_error(exc)
+
     @app.post("/api/v1/datasets/generate")
     async def generate_batch(request: BatchGenerationRequest):
         try:

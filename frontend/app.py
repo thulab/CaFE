@@ -25,6 +25,9 @@ class BackendProvider(Protocol):
     def fetch_report(self, report_id: str) -> dict[str, Any]:
         ...
 
+    def fetch_batch(self, batch_id: str) -> dict[str, Any]:
+        ...
+
     def generate_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         ...
 
@@ -74,6 +77,9 @@ class HttpBackendProvider:
 
     def fetch_report(self, report_id: str) -> dict[str, Any]:
         return self._get(f"/api/v1/reports/{report_id}")
+
+    def fetch_batch(self, batch_id: str) -> dict[str, Any]:
+        return self._get(f"/api/v1/datasets/batches/{batch_id}")
 
     def generate_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/v1/datasets/generate", payload)
@@ -324,6 +330,18 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             )
         except Exception as exc:
             return redirect_to("admin_tasks", message=f"报告加载失败：{error_message(exc)}")
+
+    @app.get("/admin/datasets/<batch_id>")
+    def admin_dataset_detail(batch_id: str):
+        try:
+            batch = backend().fetch_batch(batch_id)
+            return render_admin_page(
+                "dataset_detail.html",
+                current_view="admin_datasets",
+                batch=batch,
+            )
+        except Exception as exc:
+            return redirect_to("admin_datasets", message=f"批次加载失败：{error_message(exc)}")
 
     @app.get("/reports/<report_id>")
     def report_detail(report_id: str):
