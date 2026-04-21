@@ -18,6 +18,10 @@
           <input type="radio" name="source_mode" value="csv" data-source-toggle>
           <span>CSV 直接加载</span>
         </label>
+        <label class="choice-tab">
+          <input type="radio" name="source_mode" value="benchmark_v1" data-source-toggle>
+          <span>V1 Benchmark</span>
+        </label>
       </div>
 
       <section class="source-panel dataset-card" data-source-panel="generate">
@@ -124,6 +128,70 @@
           <button type="submit">创建 CSV 批次</button>
         </form>
       </section>
+
+      <section class="source-panel dataset-card" data-source-panel="benchmark_v1" hidden>
+        <header class="dataset-card-head">
+          <div>
+            <h3>V1 Benchmark 数据构建</h3>
+            <p class="panel-copy">先构建 anchor stats，再生成 v1 parquet 数据集；默认写入 runtime/generated/benchmark_v1/。</p>
+          </div>
+        </header>
+        <section class="double">
+          <form method="post" action="{{ url_for('build_v1_anchor_stats_action') }}" class="compact-form">
+            <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
+            <div class="field-grid field-grid-two">
+              <label>输出名称
+                <input type="text" name="output_name" value="anchor_stats">
+              </label>
+              <label>随机种子
+                <input type="number" name="seed" value="{{ v1_defaults.random_seed }}">
+              </label>
+            </div>
+            <label>GIFT-Eval 本地目录
+              <input type="text" name="gift_root" placeholder="可选；留空则允许 bootstrap">
+            </label>
+            <label>TFB 本地目录
+              <input type="text" name="tfb_root" placeholder="可选；留空则允许 bootstrap">
+            </label>
+            <div class="field-grid field-grid-two">
+              <label>聚类数
+                <input type="number" name="n_clusters" min="2" value="{{ v1_defaults.n_anchor_clusters }}">
+              </label>
+              <label>Bootstrap 规模
+                <input type="number" name="bootstrap_size" min="32" value="{{ v1_defaults.bootstrap_corpus_size }}">
+              </label>
+            </div>
+            <button type="submit">Build Anchor Stats</button>
+          </form>
+
+          <form method="post" action="{{ url_for('build_v1_benchmark_action') }}" class="compact-form">
+            <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
+            <label>Anchor Stats 路径
+              <input type="text" name="anchor_stats_path" placeholder="留空使用默认 anchor_stats.parquet">
+            </label>
+            <div class="field-grid field-grid-two">
+              <label>输出名称
+                <input type="text" name="output_name" value="benchmark_v1">
+              </label>
+              <label>版本号
+                <input type="text" name="version" placeholder="可选">
+              </label>
+            </div>
+            <div class="field-grid field-grid-three">
+              <label>Anchor 数量
+                <input type="number" name="anchor_track_size" min="1" value="{{ v1_defaults.anchor_track_size }}">
+              </label>
+              <label>每格 Diagnostic
+                <input type="number" name="diagnostic_per_cell" min="1" value="{{ v1_defaults.diagnostic_per_cell }}">
+              </label>
+              <label>随机种子
+                <input type="number" name="seed" value="{{ v1_defaults.random_seed }}">
+              </label>
+            </div>
+            <button type="submit">Build Benchmark</button>
+          </form>
+        </section>
+      </section>
     </section>
   </section>
 
@@ -148,6 +216,29 @@
       </article>
       {% else %}
       <div class="empty">暂无批次</div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="module">
+    <div class="panel-head">
+      <div>
+        <h2>V1 数据产物</h2>
+        <p class="panel-copy">这里列出 anchor stats 和 benchmark parquet，后续可在任务页直接选择路径运行 v1 eval。</p>
+      </div>
+    </div>
+    <div class="stack">
+      {% for artifact in (v1_artifacts or []) if artifact.kind in ["anchor_stats", "benchmark"] %}
+      <article class="item">
+        <header class="item-head">
+          <strong>{{ artifact.kind }}</strong>
+          <span>{{ artifact.benchmark_version or '-' }}</span>
+        </header>
+        <p class="mono">{{ artifact.path }}</p>
+        <p class="mono">series={{ artifact.n_series if artifact.n_series is not none else '-' }} / anchor_mode={{ artifact.anchor_mode or '-' }}</p>
+      </article>
+      {% else %}
+      <div class="empty">暂无 v1 数据产物</div>
       {% endfor %}
     </div>
   </section>

@@ -326,9 +326,43 @@ class FrontendAppTest(unittest.TestCase):
         self.assertIn("数据集管理", body)
         self.assertIn("创建或加载数据集", body)
         self.assertIn("CSV 直接加载", body)
+        self.assertIn("V1 Benchmark", body)
+        self.assertIn("Build Anchor Stats", body)
         self.assertIn("最近批次", body)
         self.assertNotIn("模型模块", body)
         self.assertNotIn("按 task_id 查询", body)
+
+    def test_admin_datasets_v1_anchor_action_sends_payload(self) -> None:
+        provider = FakeBackendProvider()
+        app = create_app(provider=provider)
+        client = app.test_client()
+
+        response = client.post(
+            "/actions/benchmark-v1/anchor-stats",
+            data={
+                "output_name": "anchor_smoke",
+                "gift_root": "",
+                "tfb_root": "",
+                "n_clusters": "6",
+                "bootstrap_size": "48",
+                "seed": "7",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/datasets?message=", response.headers["Location"])
+        self.assertEqual(
+            provider.last_v1_anchor_payload,
+            {
+                "output_name": "anchor_smoke",
+                "gift_root": None,
+                "tfb_root": None,
+                "n_clusters": 6,
+                "bootstrap_size": 48,
+                "seed": 7,
+            },
+        )
 
     def test_admin_benchmark_v1_page_shows_artifacts_and_forms(self) -> None:
         app = create_app(provider=FakeBackendProvider())
@@ -361,7 +395,7 @@ class FrontendAppTest(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertIn("/admin/benchmark-v1?message=", response.headers["Location"])
+        self.assertIn("/admin/tasks?message=", response.headers["Location"])
         self.assertEqual(
             provider.last_v1_eval_payload,
             {"model": "last_value", "benchmark_path": None, "output_dir": None, "seeds": [0, 1]},
@@ -397,6 +431,8 @@ class FrontendAppTest(unittest.TestCase):
         self.assertIn("任务管理", body)
         self.assertIn("创建任务", body)
         self.assertIn("按 task_id 查询", body)
+        self.assertIn("V1 模型评测", body)
+        self.assertIn("Make V1 Report", body)
         self.assertIn("请选择模型", body)
         self.assertIn('name="runtime_param__integer__batch_size"', body)
         self.assertIn("最近任务", body)

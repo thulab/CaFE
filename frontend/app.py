@@ -264,6 +264,10 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
         return str(exc)
 
     def admin_template_context(selected_metric_id: str) -> dict[str, Any]:
+        try:
+            v1_artifacts = backend().fetch_v1_artifacts() or []
+        except Exception:
+            v1_artifacts = []
         return {
             "overview": backend().fetch_admin_overview(metric_id=selected_metric_id),
             "admin_defaults": settings().ui.admin_batch_generation,
@@ -272,6 +276,8 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             "leaderboard_metric_options": DEFAULT_EVALUATION_METRICS,
             "selected_metric_id": selected_metric_id,
             "message": request.args.get("message", ""),
+            "v1_defaults": settings().benchmark.v1,
+            "v1_artifacts": v1_artifacts,
         }
 
     def render_admin_page(template_name: str, *, current_view: str, **extra: Any) -> str:
@@ -351,15 +357,10 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
 
     @app.get("/admin/benchmark-v1")
     def admin_benchmark_v1():
-        try:
-            artifacts = backend().fetch_v1_artifacts()
-        except Exception:
-            artifacts = []
         return render_admin_page(
             "admin_benchmark_v1.html",
             current_view="admin_benchmark_v1",
-            artifacts=artifacts,
-            v1_defaults=settings().benchmark.v1,
+            artifacts=admin_template_context(request.args.get("metric_id", "mse"))["v1_artifacts"],
         )
 
     @app.get("/admin/leaderboard")
@@ -487,9 +488,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "seed": int(request.form["seed"]),
             }
             artifact = backend().build_v1_anchor_stats(payload)
-            return redirect_to("admin_benchmark_v1", message=f"v1 anchor stats 已生成：{artifact['path']}")
+            return redirect_to("admin_datasets", message=f"v1 anchor stats 已生成：{artifact['path']}")
         except Exception as exc:
-            return redirect_to("admin_benchmark_v1", message=f"v1 anchor stats 生成失败：{error_message(exc)}")
+            return redirect_to("admin_datasets", message=f"v1 anchor stats 生成失败：{error_message(exc)}")
 
     @app.post("/actions/benchmark-v1/dataset")
     def build_v1_benchmark_action():
@@ -503,9 +504,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "version": clean_optional_path(request.form.get("version")),
             }
             artifact = backend().build_v1_benchmark(payload)
-            return redirect_to("admin_benchmark_v1", message=f"v1 benchmark 已生成：{artifact['path']}")
+            return redirect_to("admin_datasets", message=f"v1 benchmark 已生成：{artifact['path']}")
         except Exception as exc:
-            return redirect_to("admin_benchmark_v1", message=f"v1 benchmark 生成失败：{error_message(exc)}")
+            return redirect_to("admin_datasets", message=f"v1 benchmark 生成失败：{error_message(exc)}")
 
     @app.post("/actions/benchmark-v1/eval")
     def run_v1_eval_action():
@@ -518,9 +519,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "seeds": seeds or [0],
             }
             artifact = backend().run_v1_eval(payload)
-            return redirect_to("admin_benchmark_v1", message=f"v1 eval 已完成：{artifact['path']}")
+            return redirect_to("admin_tasks", message=f"v1 eval 已完成：{artifact['path']}")
         except Exception as exc:
-            return redirect_to("admin_benchmark_v1", message=f"v1 eval 失败：{error_message(exc)}")
+            return redirect_to("admin_tasks", message=f"v1 eval 失败：{error_message(exc)}")
 
     @app.post("/actions/benchmark-v1/report")
     def make_v1_report_action():
@@ -532,9 +533,9 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
                 "real_eval_path": clean_optional_path(request.form.get("real_eval_path")),
             }
             artifact = backend().make_v1_report(payload)
-            return redirect_to("admin_benchmark_v1", message=f"v1 report 已生成：{artifact['path']}")
+            return redirect_to("admin_tasks", message=f"v1 report 已生成：{artifact['path']}")
         except Exception as exc:
-            return redirect_to("admin_benchmark_v1", message=f"v1 report 生成失败：{error_message(exc)}")
+            return redirect_to("admin_tasks", message=f"v1 report 生成失败：{error_message(exc)}")
 
     @app.post("/actions/run")
     def run_task():
