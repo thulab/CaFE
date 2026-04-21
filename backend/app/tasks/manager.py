@@ -167,11 +167,16 @@ class TaskManager:
         mse = self._mse(execution.prediction, sample.target)
         mae = self._mae(execution.prediction, sample.target)
         smape = self._smape(execution.prediction, sample.target)
+        mase = self._mase(execution.prediction, sample)
+        baseline_mase = self._baseline_mase(sample)
         return SampleOutcome(
             sample_id=sample.sample_id,
             mse=round(mse, 6),
             mae=round(mae, 6),
             smape=round(smape, 6),
+            mase=round(mase, 6),
+            baseline_mase=round(baseline_mase, 6),
+            relative_skill=round(1.0 - mase / (baseline_mase + 1e-8), 6),
             latency_ms=round(execution.latency_ms, 3),
             token_count=execution.token_count,
             prediction=execution.prediction,
@@ -182,11 +187,16 @@ class TaskManager:
         mse = self._mse(forecast.prediction, sample.target)
         mae = self._mae(forecast.prediction, sample.target)
         smape = self._smape(forecast.prediction, sample.target)
+        mase = self._mase(forecast.prediction, sample)
+        baseline_mase = self._baseline_mase(sample)
         return SampleOutcome(
             sample_id=sample.sample_id,
             mse=round(mse, 6),
             mae=round(mae, 6),
             smape=round(smape, 6),
+            mase=round(mase, 6),
+            baseline_mase=round(baseline_mase, 6),
+            relative_skill=round(1.0 - mase / (baseline_mase + 1e-8), 6),
             latency_ms=round(forecast.latency_ms, 3),
             token_count=forecast.token_count,
             prediction=forecast.prediction,
@@ -203,6 +213,10 @@ class TaskManager:
         mse = sum(item.mse for item in outcomes) / len(outcomes)
         mae = sum(item.mae for item in outcomes) / len(outcomes)
         smape = sum(item.smape for item in outcomes) / len(outcomes)
+        mase_values = [item.mase for item in outcomes if item.mase is not None]
+        skill_values = [item.relative_skill for item in outcomes if item.relative_skill is not None]
+        mase = sum(mase_values) / len(mase_values) if mase_values else None
+        relative_skill = sum(skill_values) / len(skill_values) if skill_values else None
         latency = sum(item.latency_ms for item in outcomes) / len(outcomes)
         tokens = sum(item.token_count for item in outcomes) / len(outcomes)
         composite = (
@@ -217,6 +231,10 @@ class TaskManager:
                 "mse_std": round(self._metric_std([item.mse for item in run_metrics]), 6),
                 "mae_std": round(self._metric_std([item.mae for item in run_metrics]), 6),
                 "smape_std": round(self._metric_std([item.smape for item in run_metrics]), 6),
+                "mase_std": round(self._metric_std([item.mase for item in run_metrics if item.mase is not None]), 6),
+                "relative_skill_std": round(
+                    self._metric_std([item.relative_skill for item in run_metrics if item.relative_skill is not None]), 6
+                ),
                 "latency_ms_std": round(self._metric_std([item.mean_latency_ms for item in run_metrics]), 6),
                 "token_count_std": round(self._metric_std([item.mean_token_count for item in run_metrics]), 6),
                 "composite_score_std": round(self._metric_std([item.composite_score for item in run_metrics]), 6),
@@ -225,6 +243,8 @@ class TaskManager:
             mse=round(mse, 6),
             mae=round(mae, 6),
             smape=round(smape, 6),
+            mase=round(mase, 6) if mase is not None else None,
+            relative_skill=round(relative_skill, 6) if relative_skill is not None else None,
             mean_latency_ms=round(latency, 3),
             mean_token_count=round(tokens, 3),
             composite_score=round(composite, 3),
@@ -246,6 +266,15 @@ class TaskManager:
                     mse=round(mean(item.mse for item in outcomes), 6),
                     mae=round(mean(item.mae for item in outcomes), 6),
                     smape=round(mean(item.smape for item in outcomes), 6),
+                    mase=round(mean(item.mase for item in outcomes if item.mase is not None), 6)
+                    if any(item.mase is not None for item in outcomes)
+                    else None,
+                    baseline_mase=round(mean(item.baseline_mase for item in outcomes if item.baseline_mase is not None), 6)
+                    if any(item.baseline_mase is not None for item in outcomes)
+                    else None,
+                    relative_skill=round(mean(item.relative_skill for item in outcomes if item.relative_skill is not None), 6)
+                    if any(item.relative_skill is not None for item in outcomes)
+                    else None,
                     latency_ms=round(mean(item.latency_ms for item in outcomes), 3),
                     token_count=int(round(mean(item.token_count for item in outcomes))),
                     prediction=self._mean_prediction([item.prediction for item in outcomes]),
@@ -306,6 +335,10 @@ class TaskManager:
             summary_metrics.append(f"MAE={metrics.mae:.4f}")
         if "smape" in evaluation_metrics:
             summary_metrics.append(f"sMAPE={metrics.smape:.4f}")
+        if "mase" in evaluation_metrics and metrics.mase is not None:
+            summary_metrics.append(f"MASE={metrics.mase:.4f}")
+        if "relative_skill" in evaluation_metrics and metrics.relative_skill is not None:
+            summary_metrics.append(f"RelativeSkill={metrics.relative_skill:.4f}")
         if "latency_ms" in evaluation_metrics:
             summary_metrics.append(f"平均延迟={metrics.mean_latency_ms:.2f}ms")
         if "token_count" in evaluation_metrics:
@@ -353,6 +386,29 @@ class TaskManager:
             denom = abs(pred) + abs(real) + 1e-6
             values.append(2.0 * abs(pred - real) / denom)
         return sum(values) / len(values)
+
+    def _mase(self, prediction: list[float], sample) -> float:
+        history = list(sample.history)
+        target = list(sample.target)
+        season_length = max(1, int(getattr(sample.truth, "dominant_period", 1) or 1))
+        if len(history) <= season_length:
+            diffs = [abs(history[index] - history[index - 1]) for index in range(1, len(history))]
+        else:
+            diffs = [abs(history[index] - history[index - season_length]) for index in range(season_length, len(history))]
+        scale = (sum(diffs) / len(diffs)) if diffs else 1.0
+        mae = self._mae(prediction, target)
+        return mae / (scale + 1e-8)
+
+    def _baseline_mase(self, sample) -> float:
+        history = list(sample.history)
+        horizon = len(sample.target)
+        season_length = max(1, int(getattr(sample.truth, "dominant_period", 1) or 1))
+        if season_length > 1 and len(history) >= season_length:
+            pattern = history[-season_length:]
+            prediction = [pattern[index % len(pattern)] for index in range(horizon)]
+        else:
+            prediction = [history[-1]] * horizon
+        return self._mase(prediction, sample)
 
     def _save_failed_task(self, running: EvaluationTask, error_message: str) -> None:
         failed = running.copy(update={"status": TaskStatus.FAILED, "error_message": error_message})

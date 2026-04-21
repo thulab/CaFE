@@ -4,6 +4,13 @@ from pathlib import Path
 
 from .config import AppSettings, get_settings
 from .datasets.manager import DataManager
+from .datasets.benchmark_v1.domain import (
+    BuildAnchorStatsRequest,
+    BuildBenchmarkV1Request,
+    MakeBenchmarkV1ReportRequest,
+    RunBenchmarkV1EvalRequest,
+)
+from .datasets.benchmark_v1.manager import BenchmarkV1Manager
 from .datasets.domain import TrackKind
 from .errors import BenchmarkError, NotFoundError
 from .leaderboards.domain import (
@@ -25,6 +32,7 @@ class BenchmarkEngine:
         self.settings = settings or get_settings()
         self.repo = FileRepository(runtime_root)
         self.data_manager = DataManager(runtime_root=runtime_root, settings=self.settings, repository=self.repo)
+        self.benchmark_v1_manager = BenchmarkV1Manager(runtime_root=runtime_root, settings=self.settings)
         self.model_manager = ModelManager(runtime_root=runtime_root, settings=self.settings, repository=self.repo)
         self.task_manager = TaskManager(
             runtime_root=runtime_root,
@@ -76,6 +84,21 @@ class BenchmarkEngine:
 
     def load_batch(self, request):
         return self.data_manager.load_batch(request)
+
+    def build_v1_anchor_stats(self, request: BuildAnchorStatsRequest):
+        return self.benchmark_v1_manager.build_anchor_stats(request)
+
+    def build_v1_benchmark(self, request: BuildBenchmarkV1Request):
+        return self.benchmark_v1_manager.build_benchmark(request)
+
+    def run_v1_eval(self, request: RunBenchmarkV1EvalRequest):
+        return self.benchmark_v1_manager.run_eval(request)
+
+    def make_v1_report(self, request: MakeBenchmarkV1ReportRequest):
+        return self.benchmark_v1_manager.make_report(request)
+
+    def list_v1_artifacts(self):
+        return self.benchmark_v1_manager.list_artifacts()
 
     def list_tasks(self):
         return self.task_manager.list_tasks()

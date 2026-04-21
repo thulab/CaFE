@@ -21,7 +21,18 @@ class ModelManagerTest(unittest.TestCase):
             manager = ModelManager(runtime_root)
             models = {model.model_id: model for model in manager.list_models()}
 
-        self.assertEqual(set(models), {"amazon-chronos-2", "thuml-sundial-base-128m"})
+        self.assertEqual(
+            set(models),
+            {
+                "amazon-chronos-2",
+                "thuml-sundial-base-128m",
+                "timesfm-2-5-200m",
+                "chronos-bolt-base",
+                "sundial-base-128m-v1",
+                "moirai-moe-base",
+                "lag-llama",
+            },
+        )
         self.assertEqual(models["amazon-chronos-2"].adapter, ModelAdapter.HUGGINGFACE_CHRONOS2)
         self.assertEqual(models["amazon-chronos-2"].huggingface.repo_id, "amazon/chronos-2")
         self.assertEqual(models["amazon-chronos-2"].spec.source.huggingface_url, "https://huggingface.co/amazon/chronos-2")
@@ -36,6 +47,9 @@ class ModelManagerTest(unittest.TestCase):
             [item.name for item in models["thuml-sundial-base-128m"].spec.runtime_parameter_definitions],
             ["batch_size", "do_sample", "temperature", "top_p"],
         )
+        self.assertEqual(models["timesfm-2-5-200m"].adapter, ModelAdapter.V1_TIMESFM_2_5_200M)
+        self.assertEqual(models["timesfm-2-5-200m"].runtime_status, ModelRuntimeStatus.READY)
+        self.assertIn("timesfm-2-5-200m", models["timesfm-2-5-200m"].spec.source.local_weight_path)
 
     def test_register_huggingface_model_normalizes_model_id(self) -> None:
         with temporary_runtime_dir(prefix="model-manager-") as runtime_root:

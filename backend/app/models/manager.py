@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -169,6 +170,26 @@ class ModelManager:
             latency = huggingface_result.latency_ms
             base_tokens = huggingface_result.token_count
             notes = huggingface_result.notes
+        elif model.adapter in {
+            ModelAdapter.V1_TIMESFM_2_5_200M,
+            ModelAdapter.V1_CHRONOS_BOLT_BASE,
+            ModelAdapter.V1_SUNDIAL_BASE_128M,
+            ModelAdapter.V1_MOIRAI_MOE_BASE,
+            ModelAdapter.V1_LAG_LLAMA,
+        }:
+            from ..datasets.benchmark_v1.adapters import build_model_adapter
+
+            started = time.perf_counter()
+            adapter = build_model_adapter(model.adapter.value)
+            forecast = adapter.predict(
+                context=history,
+                horizon=horizon,
+                season_length=dominant_period,
+                seed=int(model.metadata.get("seed", 0)) if model.metadata else 0,
+            )
+            prediction = [round(float(value), 4) for value in forecast[:horizon]]
+            latency = (time.perf_counter() - started) * 1000.0
+            notes = {"decision": "benchmark_v1_external_adapter", "adapter": model.adapter.value}
         else:
             raise BenchmarkError(f"unsupported model adapter {model.adapter}")
 
@@ -271,6 +292,16 @@ class ModelManager:
     def _build_builtin_record(self, builtin: BuiltinModelConfig) -> ModelRecord:
         huggingface = self._build_builtin_huggingface_config(builtin.model_id, builtin.huggingface) if builtin.huggingface else None
         runtime_status = ModelRuntimeStatus.REGISTERED if huggingface else ModelRuntimeStatus.READY
+        spec = (
+            self._build_huggingface_model_spec(
+                model_id=builtin.model_id,
+                repo_id=huggingface.repo_id,
+                revision=huggingface.revision,
+                task=huggingface.task,
+            )
+            if huggingface is not None
+            else self._build_v1_external_model_spec(builtin.model_id, builtin.adapter)
+        )
         return ModelRecord(
             model_id=builtin.model_id,
             name=builtin.name,
@@ -280,14 +311,7 @@ class ModelManager:
             capabilities=builtin.capabilities,
             runtime_status=runtime_status,
             huggingface=huggingface,
-            spec=self._build_huggingface_model_spec(
-                model_id=builtin.model_id,
-                repo_id=huggingface.repo_id,
-                revision=huggingface.revision,
-                task=huggingface.task,
-            )
-            if huggingface is not None
-            else ModelSpec(),
+            spec=spec,
         )
 
     def _build_builtin_huggingface_config(self, model_id: str, config: BuiltinHuggingFaceConfig) -> HuggingFaceConfig:
@@ -329,6 +353,22 @@ class ModelManager:
                 "revision": revision,
             },
             runtime_parameter_definitions=build_runtime_parameter_definitions(task),
+        )
+
+    def _build_v1_external_model_spec(self, model_id: str, adapter: str) -> ModelSpec:
+        if adapter not in {
+            ModelAdapter.V1_TIMESFM_2_5_200M.value,
+            ModelAdapter.V1_CHRONOS_BOLT_BASE.value,
+            ModelAdapter.V1_SUNDIAL_BASE_128M.value,
+            ModelAdapter.V1_MOIRAI_MOE_BASE.value,
+            ModelAdapter.V1_LAG_LLAMA.value,
+        }:
+            return ModelSpec()
+        return ModelSpec(
+            source={
+                "local_weight_path": self._weights_path_for_model(model_id),
+            },
+            runtime_parameter_definitions=[],
         )
 
     def _weights_path_for_model(self, model_id: str) -> str:

@@ -17,6 +17,7 @@
         <div class="admin-nav-shell">
           <nav class="switcher">
             <a href="{{ url_for('admin_datasets') }}" class="{{ 'active' if current_view == 'admin_datasets' else '' }}">数据集</a>
+            <a href="{{ url_for('admin_benchmark_v1') }}" class="{{ 'active' if current_view == 'admin_benchmark_v1' else '' }}">V1 Benchmark</a>
             <a href="{{ url_for('admin_models') }}" class="{{ 'active' if current_view == 'admin_models' else '' }}">模型</a>
             <a href="{{ url_for('admin_tasks') }}" class="{{ 'active' if current_view == 'admin_tasks' else '' }}">任务</a>
             <a href="{{ url_for('admin_leaderboard') }}" class="{{ 'active' if current_view == 'admin_leaderboard' else '' }}">榜单</a>

@@ -1,5 +1,19 @@
 # TSBenchmark Dynamic Benchmark Architecture
 
+## Benchmark v1 Extension
+
+`data-xmy` 分支以功能移植方式融合，而不是直接合并分支。现有在线系统继续负责服务生命周期、模型注册、任务执行、报告、榜单和管理台；v1 synthetic benchmark pipeline 独立实现于 `backend/app/datasets/benchmark_v1/`，并通过 `BenchmarkEngine` 暴露 API。
+
+v1 运行链路：
+
+- `BenchmarkV1Manager` 将所有产物写入 `runtime/generated/benchmark_v1/`。
+- Anchor stats 构建会扫描可选的 GIFT-Eval / TFB 本地目录；没有真实语料时回退到 bootstrap corpus，并写入 `anchor_mode=bootstrap`。
+- Benchmark 构建输出 parquet 样本、metadata、cached baseline MASE、calibration 数据和 validation summary。
+- v1 eval 一次运行一个模型，写入 eval parquet。
+- v1 report 聚合 MASE、sMAPE、relative skill、track/family 切片和 validation summary。
+
+当前 v1 保留 `data-xmy` 的研究性限制：Anchor Track 仍借用 diagnostic generators，Gaussian copula prior 尚未实现，真实性和难度约束仍为启发式。这些限制会写入生成的 metadata 与报告摘要。
+
 ## 设计映射
 
 该实现直接对应 `detail.pdf` 与 `paper.png` 中的四个后端核心模块和一个在线系统：

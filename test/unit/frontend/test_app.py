@@ -12,6 +12,10 @@ class FakeBackendProvider:
         self.last_csv_payload = None
         self.last_run_payload = None
         self.last_load_model_id = None
+        self.last_v1_anchor_payload = None
+        self.last_v1_benchmark_payload = None
+        self.last_v1_eval_payload = None
+        self.last_v1_report_payload = None
 
     def _track(self) -> dict[str, object]:
         return {
@@ -197,6 +201,34 @@ class FakeBackendProvider:
         self.last_csv_payload = payload
         return {"batch_id": "csv-1"}
 
+    def fetch_v1_artifacts(self):
+        return [
+            {
+                "kind": "benchmark",
+                "path": "/runtime/generated/benchmark_v1/benchmark_v1.parquet",
+                "benchmark_version": "v1-s7",
+                "anchor_mode": "bootstrap",
+                "n_series": 80,
+                "validation_summary": {"n_series": 80, "anchor_mode": "bootstrap"},
+            }
+        ]
+
+    def build_v1_anchor_stats(self, payload):
+        self.last_v1_anchor_payload = payload
+        return {"path": "/runtime/generated/benchmark_v1/anchor_stats.parquet"}
+
+    def build_v1_benchmark(self, payload):
+        self.last_v1_benchmark_payload = payload
+        return {"path": "/runtime/generated/benchmark_v1/benchmark_v1.parquet"}
+
+    def run_v1_eval(self, payload):
+        self.last_v1_eval_payload = payload
+        return {"path": "/runtime/generated/benchmark_v1/eval/last_value.parquet"}
+
+    def make_v1_report(self, payload):
+        self.last_v1_report_payload = payload
+        return {"path": "/runtime/generated/benchmark_v1/reports"}
+
     def run_task(self, payload):
         self.last_run_payload = payload
         return {"task_id": "task-created"}
@@ -297,6 +329,43 @@ class FrontendAppTest(unittest.TestCase):
         self.assertIn("最近批次", body)
         self.assertNotIn("模型模块", body)
         self.assertNotIn("按 task_id 查询", body)
+
+    def test_admin_benchmark_v1_page_shows_artifacts_and_forms(self) -> None:
+        app = create_app(provider=FakeBackendProvider())
+        client = app.test_client()
+
+        response = client.get("/admin/benchmark-v1")
+        body = response.get_data(as_text=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("V1 Benchmark", body)
+        self.assertIn("Build Anchor Stats", body)
+        self.assertIn("Run Eval", body)
+        self.assertIn("v1-s7", body)
+        self.assertIn("bootstrap", body)
+
+    def test_admin_benchmark_v1_eval_action_sends_payload(self) -> None:
+        provider = FakeBackendProvider()
+        app = create_app(provider=provider)
+        client = app.test_client()
+
+        response = client.post(
+            "/actions/benchmark-v1/eval",
+            data={
+                "model": "last_value",
+                "benchmark_path": "",
+                "output_dir": "",
+                "seeds": "0, 1",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/benchmark-v1?message=", response.headers["Location"])
+        self.assertEqual(
+            provider.last_v1_eval_payload,
+            {"model": "last_value", "benchmark_path": None, "output_dir": None, "seeds": [0, 1]},
+        )
 
     def test_admin_models_page_formats_models_card(self) -> None:
         app = create_app(provider=FakeBackendProvider())

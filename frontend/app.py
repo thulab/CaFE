@@ -34,6 +34,21 @@ class BackendProvider(Protocol):
     def load_csv_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         ...
 
+    def build_v1_anchor_stats(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def build_v1_benchmark(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def run_v1_eval(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def make_v1_report(self, payload: dict[str, Any]) -> dict[str, Any]:
+        ...
+
+    def fetch_v1_artifacts(self) -> list[dict[str, Any]]:
+        ...
+
     def run_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         ...
 
@@ -86,6 +101,21 @@ class HttpBackendProvider:
 
     def load_csv_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/v1/datasets/load/csv", payload)
+
+    def build_v1_anchor_stats(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/benchmarks/v1/anchor-stats", payload)
+
+    def build_v1_benchmark(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/benchmarks/v1/datasets", payload)
+
+    def run_v1_eval(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/benchmarks/v1/evaluations/run", payload)
+
+    def make_v1_report(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._post("/api/v1/benchmarks/v1/reports", payload)
+
+    def fetch_v1_artifacts(self) -> list[dict[str, Any]]:
+        return self._get("/api/v1/benchmarks/v1/artifacts")  # type: ignore[return-value]
 
     def run_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._post("/api/v1/tasks/run", payload)
@@ -215,6 +245,10 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             payload["track"] = request.form["track"]
         return payload
 
+    def clean_optional_path(raw_value: str | None) -> str | None:
+        value = (raw_value or "").strip()
+        return value or None
+
     def error_message(exc: Exception) -> str:
         response = getattr(exc, "response", None)
         if response is not None:
@@ -313,6 +347,19 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             task_lookup_id=task_lookup_id,
             task_lookup=task_lookup,
             task_lookup_error=task_lookup_error,
+        )
+
+    @app.get("/admin/benchmark-v1")
+    def admin_benchmark_v1():
+        try:
+            artifacts = backend().fetch_v1_artifacts()
+        except Exception:
+            artifacts = []
+        return render_admin_page(
+            "admin_benchmark_v1.html",
+            current_view="admin_benchmark_v1",
+            artifacts=artifacts,
+            v1_defaults=settings().benchmark.v1,
         )
 
     @app.get("/admin/leaderboard")
@@ -427,6 +474,67 @@ def create_app(provider: BackendProvider | None = None, settings: AppSettings | 
             return handle_dataset_create("csv")
         except Exception as exc:
             return redirect_to("admin_datasets", message=f"CSV 导入失败：{error_message(exc)}")
+
+    @app.post("/actions/benchmark-v1/anchor-stats")
+    def build_v1_anchor_stats_action():
+        try:
+            payload = {
+                "output_name": request.form.get("output_name") or "anchor_stats",
+                "gift_root": clean_optional_path(request.form.get("gift_root")),
+                "tfb_root": clean_optional_path(request.form.get("tfb_root")),
+                "n_clusters": int(request.form["n_clusters"]),
+                "bootstrap_size": int(request.form["bootstrap_size"]),
+                "seed": int(request.form["seed"]),
+            }
+            artifact = backend().build_v1_anchor_stats(payload)
+            return redirect_to("admin_benchmark_v1", message=f"v1 anchor stats 已生成：{artifact['path']}")
+        except Exception as exc:
+            return redirect_to("admin_benchmark_v1", message=f"v1 anchor stats 生成失败：{error_message(exc)}")
+
+    @app.post("/actions/benchmark-v1/dataset")
+    def build_v1_benchmark_action():
+        try:
+            payload = {
+                "anchor_stats_path": clean_optional_path(request.form.get("anchor_stats_path")),
+                "output_name": request.form.get("output_name") or "benchmark_v1",
+                "anchor_track_size": int(request.form["anchor_track_size"]),
+                "diagnostic_per_cell": int(request.form["diagnostic_per_cell"]),
+                "seed": int(request.form["seed"]),
+                "version": clean_optional_path(request.form.get("version")),
+            }
+            artifact = backend().build_v1_benchmark(payload)
+            return redirect_to("admin_benchmark_v1", message=f"v1 benchmark 已生成：{artifact['path']}")
+        except Exception as exc:
+            return redirect_to("admin_benchmark_v1", message=f"v1 benchmark 生成失败：{error_message(exc)}")
+
+    @app.post("/actions/benchmark-v1/eval")
+    def run_v1_eval_action():
+        try:
+            seeds = [int(item.strip()) for item in request.form.get("seeds", "0").split(",") if item.strip()]
+            payload = {
+                "model": request.form["model"],
+                "benchmark_path": clean_optional_path(request.form.get("benchmark_path")),
+                "output_dir": clean_optional_path(request.form.get("output_dir")),
+                "seeds": seeds or [0],
+            }
+            artifact = backend().run_v1_eval(payload)
+            return redirect_to("admin_benchmark_v1", message=f"v1 eval 已完成：{artifact['path']}")
+        except Exception as exc:
+            return redirect_to("admin_benchmark_v1", message=f"v1 eval 失败：{error_message(exc)}")
+
+    @app.post("/actions/benchmark-v1/report")
+    def make_v1_report_action():
+        try:
+            payload = {
+                "benchmark_path": clean_optional_path(request.form.get("benchmark_path")),
+                "eval_dir": clean_optional_path(request.form.get("eval_dir")),
+                "output_dir": clean_optional_path(request.form.get("output_dir")),
+                "real_eval_path": clean_optional_path(request.form.get("real_eval_path")),
+            }
+            artifact = backend().make_v1_report(payload)
+            return redirect_to("admin_benchmark_v1", message=f"v1 report 已生成：{artifact['path']}")
+        except Exception as exc:
+            return redirect_to("admin_benchmark_v1", message=f"v1 report 生成失败：{error_message(exc)}")
 
     @app.post("/actions/run")
     def run_task():

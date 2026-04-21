@@ -260,6 +260,59 @@ load_retries = 3
 # 模型加载失败后每轮退避的基础秒数。
 load_retry_backoff_seconds = 1.0
 
+[[benchmark.builtin_models]]
+model_id = "timesfm-2-5-200m"
+name = "TimesFM 2.5 200M"
+adapter = "timesfm_2_5_200m"
+source_type = "builtin_v1_external"
+manual = "TSBenchmark v1 official adapter. Runs in an external model environment and expects local TimesFM weights."
+capabilities = ["forecast", "benchmark_v1", "external_model"]
+
+[[benchmark.builtin_models]]
+model_id = "chronos-bolt-base"
+name = "Chronos-Bolt Base"
+adapter = "chronos_bolt_base"
+source_type = "builtin_v1_external"
+manual = "TSBenchmark v1 official adapter. Runs in an external model environment and expects local Chronos-Bolt weights."
+capabilities = ["forecast", "benchmark_v1", "external_model"]
+
+[[benchmark.builtin_models]]
+model_id = "sundial-base-128m-v1"
+name = "Sundial Base 128M (v1)"
+adapter = "sundial_base_128m"
+source_type = "builtin_v1_external"
+manual = "TSBenchmark v1 official adapter. Runs in an external model environment and expects local Sundial weights."
+capabilities = ["forecast", "benchmark_v1", "external_model"]
+
+[[benchmark.builtin_models]]
+model_id = "moirai-moe-base"
+name = "Moirai-MoE Base"
+adapter = "moirai_moe_base"
+source_type = "builtin_v1_external"
+manual = "TSBenchmark v1 official adapter. Runs in an external model environment and expects local Moirai-MoE weights."
+capabilities = ["forecast", "benchmark_v1", "external_model"]
+
+[[benchmark.builtin_models]]
+model_id = "lag-llama"
+name = "Lag-Llama"
+adapter = "lag_llama"
+source_type = "builtin_v1_external"
+manual = "TSBenchmark v1 official adapter. Runs in an external model environment and expects a local lag-llama.ckpt."
+capabilities = ["forecast", "benchmark_v1", "external_model"]
+
+[benchmark.v1]
+artifact_root = "benchmark_v1"
+anchor_track_size = 2000
+diagnostic_per_cell = 100
+n_anchor_clusters = 12
+anchor_tolerance_sigma = 1.5
+diagnostic_tolerance_sigma = 2.5
+bootstrap_corpus_size = 256
+calibration_candidates_per_family = 350
+random_seed = 20260407
+model_python = ".venv-models/bin/python"
+device = "cpu"
+
 [benchmark.synthetic_generation]
 # 自动生成数据集时最多尝试多少次，超过后视为失败。
 max_generation_attempts = 5

@@ -3,6 +3,12 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, Query
 
 from .datasets.domain import BatchGenerationRequest, CsvBatchLoadRequest
+from .datasets.benchmark_v1.domain import (
+    BuildAnchorStatsRequest,
+    BuildBenchmarkV1Request,
+    MakeBenchmarkV1ReportRequest,
+    RunBenchmarkV1EvalRequest,
+)
 from .errors import BenchmarkError, InternalBenchmarkError, NotFoundError
 from .models.domain import HuggingFaceModelRegistrationRequest, ModelRegistrationRequest
 from .services import BenchmarkEngine
@@ -66,6 +72,13 @@ def create_api(engine: BenchmarkEngine) -> FastAPI:
         except Exception as exc:
             _raise_http_error(exc)
 
+    @app.get("/api/v1/datasets/batches/{batch_id}")
+    async def get_batch(batch_id: str):
+        try:
+            return engine.get_batch(batch_id)
+        except Exception as exc:
+            _raise_http_error(exc)
+
     @app.post("/api/v1/datasets/generate")
     async def generate_batch(request: BatchGenerationRequest):
         try:
@@ -77,6 +90,41 @@ def create_api(engine: BenchmarkEngine) -> FastAPI:
     async def load_csv_batch(request: CsvBatchLoadRequest):
         try:
             return engine.load_batch(request)
+        except Exception as exc:
+            _raise_http_error(exc)
+
+    @app.post("/api/v1/benchmarks/v1/anchor-stats")
+    async def build_v1_anchor_stats(request: BuildAnchorStatsRequest):
+        try:
+            return engine.build_v1_anchor_stats(request)
+        except Exception as exc:
+            _raise_http_error(exc)
+
+    @app.post("/api/v1/benchmarks/v1/datasets")
+    async def build_v1_benchmark(request: BuildBenchmarkV1Request):
+        try:
+            return engine.build_v1_benchmark(request)
+        except Exception as exc:
+            _raise_http_error(exc)
+
+    @app.post("/api/v1/benchmarks/v1/evaluations/run")
+    async def run_v1_eval(request: RunBenchmarkV1EvalRequest):
+        try:
+            return engine.run_v1_eval(request)
+        except Exception as exc:
+            _raise_http_error(exc)
+
+    @app.post("/api/v1/benchmarks/v1/reports")
+    async def make_v1_report(request: MakeBenchmarkV1ReportRequest):
+        try:
+            return engine.make_v1_report(request)
+        except Exception as exc:
+            _raise_http_error(exc)
+
+    @app.get("/api/v1/benchmarks/v1/artifacts")
+    async def list_v1_artifacts():
+        try:
+            return engine.list_v1_artifacts()
         except Exception as exc:
             _raise_http_error(exc)
 

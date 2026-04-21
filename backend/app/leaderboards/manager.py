@@ -112,6 +112,8 @@ class LeaderboardManager:
                 "mse": task.metrics.mse,
                 "mae": task.metrics.mae,
                 "smape": task.metrics.smape,
+                "mase": task.metrics.mase if task.metrics.mase is not None else 0.0,
+                "relative_skill": task.metrics.relative_skill if task.metrics.relative_skill is not None else 0.0,
                 "latency_ms": task.metrics.mean_latency_ms,
                 "token_count": task.metrics.mean_token_count,
                 "composite_score": task.metrics.composite_score,
@@ -186,16 +188,20 @@ class LeaderboardManager:
             "mse": task.metrics.mse,
             "mae": task.metrics.mae,
             "smape": task.metrics.smape,
+            "mase": task.metrics.mase,
+            "relative_skill": task.metrics.relative_skill,
             "latency_ms": task.metrics.mean_latency_ms,
             "token_count": task.metrics.mean_token_count,
             "composite_score": task.metrics.composite_score,
         }
         if metric_id not in value_map:
             raise BenchmarkError(f"unsupported leaderboard metric {metric_id}")
+        if value_map[metric_id] is None:
+            raise BenchmarkError(f"metric {metric_id} is not available for task {task.task_id}")
         return float(value_map[metric_id])
 
     def _metric_direction(self, metric_id: str) -> str:
-        if metric_id in {"composite_score"}:
+        if metric_id in {"composite_score", "relative_skill"}:
             return "max"
         return "min"
 

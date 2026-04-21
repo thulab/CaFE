@@ -17,6 +17,11 @@ class ModelAdapter(str, Enum):
     HUGGINGFACE_TEXT_GENERATION = "huggingface_text_generation"
     HUGGINGFACE_CHRONOS2 = "huggingface_chronos2"
     HUGGINGFACE_SUNDIAL = "huggingface_sundial"
+    V1_TIMESFM_2_5_200M = "timesfm_2_5_200m"
+    V1_CHRONOS_BOLT_BASE = "chronos_bolt_base"
+    V1_SUNDIAL_BASE_128M = "sundial_base_128m"
+    V1_MOIRAI_MOE_BASE = "moirai_moe_base"
+    V1_LAG_LLAMA = "lag_llama"
 
 
 class ModelRuntimeStatus(str, Enum):

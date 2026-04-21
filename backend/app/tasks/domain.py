@@ -10,7 +10,7 @@ from ..datasets.domain import TrackKind
 from ..domain.common import utc_now
 
 DEFAULT_EXECUTION_REPEAT_COUNT = 3
-DEFAULT_EVALUATION_METRICS = ["mse", "mae", "smape", "latency_ms", "token_count", "composite_score"]
+DEFAULT_EVALUATION_METRICS = ["mse", "mae", "smape", "mase", "relative_skill", "latency_ms", "token_count", "composite_score"]
 
 
 class TaskStatus(str, Enum):
@@ -32,6 +32,9 @@ class SampleOutcome(BaseModel):
     mse: float
     mae: float
     smape: float
+    mase: float | None = None
+    baseline_mase: float | None = None
+    relative_skill: float | None = None
     latency_ms: float
     token_count: int
     prediction: list[float]
@@ -48,6 +51,8 @@ class AggregatedMetrics(BaseModel):
     mse: float
     mae: float
     smape: float
+    mase: float | None = None
+    relative_skill: float | None = None
     mean_latency_ms: float
     mean_token_count: float
     composite_score: float

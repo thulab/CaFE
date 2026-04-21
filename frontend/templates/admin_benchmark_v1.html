@@ -1,0 +1,144 @@
+{% extends "admin_base.html" %}
+
+{% block title %}管理台 · V1 Benchmark{% endblock %}
+{% block page_title %}V1 Benchmark{% endblock %}
+{% block page_description %}构建真实特征锚定、合成诊断数据、单模型评测和 v1 报告画像。{% endblock %}
+
+{% block content %}
+<section class="page-stack">
+  <section class="module">
+    <h2>构建 Anchor Stats</h2>
+    <form method="post" action="{{ url_for('build_v1_anchor_stats_action') }}" class="compact-form">
+      <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
+      <div class="field-grid field-grid-two">
+        <label>输出名称
+          <input type="text" name="output_name" value="anchor_stats">
+        </label>
+        <label>随机种子
+          <input type="number" name="seed" value="{{ v1_defaults.random_seed }}">
+        </label>
+      </div>
+      <div class="field-grid field-grid-two">
+        <label>GIFT-Eval 本地目录
+          <input type="text" name="gift_root" placeholder="可选">
+        </label>
+        <label>TFB 本地目录
+          <input type="text" name="tfb_root" placeholder="可选">
+        </label>
+      </div>
+      <div class="field-grid field-grid-two">
+        <label>聚类数
+          <input type="number" name="n_clusters" min="2" value="{{ v1_defaults.n_anchor_clusters }}">
+        </label>
+        <label>Bootstrap 规模
+          <input type="number" name="bootstrap_size" min="32" value="{{ v1_defaults.bootstrap_corpus_size }}">
+        </label>
+      </div>
+      <button type="submit">Build Anchor Stats</button>
+    </form>
+  </section>
+
+  <section class="module">
+    <h2>构建 Benchmark 数据</h2>
+    <form method="post" action="{{ url_for('build_v1_benchmark_action') }}" class="compact-form">
+      <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
+      <label>Anchor Stats 路径
+        <input type="text" name="anchor_stats_path" placeholder="留空使用 runtime/generated/benchmark_v1/anchor_stats.parquet">
+      </label>
+      <div class="field-grid field-grid-two">
+        <label>输出名称
+          <input type="text" name="output_name" value="benchmark_v1">
+        </label>
+        <label>版本号
+          <input type="text" name="version" placeholder="可选，默认 v1-s&lt;seed&gt;">
+        </label>
+      </div>
+      <div class="field-grid field-grid-three">
+        <label>Anchor 数量
+          <input type="number" name="anchor_track_size" min="1" value="{{ v1_defaults.anchor_track_size }}">
+        </label>
+        <label>Diagnostic 每格数量
+          <input type="number" name="diagnostic_per_cell" min="1" value="{{ v1_defaults.diagnostic_per_cell }}">
+        </label>
+        <label>随机种子
+          <input type="number" name="seed" value="{{ v1_defaults.random_seed }}">
+        </label>
+      </div>
+      <button type="submit">Build Benchmark</button>
+    </form>
+  </section>
+
+  <section class="double">
+    <section class="module">
+      <h2>运行单模型评测</h2>
+      <form method="post" action="{{ url_for('run_v1_eval_action') }}" class="compact-form">
+        <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
+        <label>模型
+          <select name="model">
+            <option value="last_value">last_value</option>
+            <option value="seasonal_naive">seasonal_naive</option>
+            <option value="auto_theta">auto_theta</option>
+            <option value="ridge_ar">ridge_ar</option>
+            <option value="timesfm_2_5_200m">timesfm_2_5_200m</option>
+            <option value="chronos_bolt_base">chronos_bolt_base</option>
+            <option value="sundial_base_128m">sundial_base_128m</option>
+            <option value="moirai_moe_base">moirai_moe_base</option>
+            <option value="lag_llama">lag_llama</option>
+          </select>
+        </label>
+        <label>Benchmark 路径
+          <input type="text" name="benchmark_path" placeholder="留空使用默认 benchmark_v1.parquet">
+        </label>
+        <label>输出目录
+          <input type="text" name="output_dir" placeholder="留空使用默认 eval/">
+        </label>
+        <label>seeds
+          <input type="text" name="seeds" value="0">
+        </label>
+        <button type="submit">Run Eval</button>
+      </form>
+    </section>
+
+    <section class="module">
+      <h2>生成报告</h2>
+      <form method="post" action="{{ url_for('make_v1_report_action') }}" class="compact-form">
+        <input type="hidden" name="current_metric_id" value="{{ selected_metric_id }}">
+        <label>Benchmark 路径
+          <input type="text" name="benchmark_path" placeholder="留空使用默认 benchmark_v1.parquet">
+        </label>
+        <label>Eval 目录
+          <input type="text" name="eval_dir" placeholder="留空使用默认 eval/">
+        </label>
+        <label>报告输出目录
+          <input type="text" name="output_dir" placeholder="留空使用默认 reports/">
+        </label>
+        <label>真实评测结果路径
+          <input type="text" name="real_eval_path" placeholder="可选">
+        </label>
+        <button type="submit">Make Report</button>
+      </form>
+    </section>
+  </section>
+
+  <section class="module">
+    <h2>Artifacts</h2>
+    <div class="stack">
+      {% for artifact in artifacts %}
+      <article class="item">
+        <header class="item-head">
+          <strong>{{ artifact.kind }}</strong>
+          <span>{{ artifact.benchmark_version or '-' }}</span>
+        </header>
+        <p class="mono">{{ artifact.path }}</p>
+        <p class="mono">series={{ artifact.n_series if artifact.n_series is not none else '-' }} / anchor_mode={{ artifact.anchor_mode or '-' }}</p>
+        {% if artifact.validation_summary %}
+        <p class="mono">validation={{ artifact.validation_summary }}</p>
+        {% endif %}
+      </article>
+      {% else %}
+      <div class="empty">暂无 v1 artifact。先构建 anchor stats。</div>
+      {% endfor %}
+    </div>
+  </section>
+</section>
+{% endblock %}

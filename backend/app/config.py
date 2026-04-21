@@ -254,6 +254,20 @@ class LeaderboardConfig(BaseModel):
     missing_track_rank_penalty: str
 
 
+class BenchmarkV1RuntimeConfig(BaseModel):
+    artifact_root: str = "benchmark_v1"
+    anchor_track_size: int = 2000
+    diagnostic_per_cell: int = 100
+    n_anchor_clusters: int = 12
+    anchor_tolerance_sigma: float = 1.5
+    diagnostic_tolerance_sigma: float = 2.5
+    bootstrap_corpus_size: int = 256
+    calibration_candidates_per_family: int = 350
+    random_seed: int = 20260407
+    model_python: str = ".venv-models/bin/python"
+    device: str = "cpu"
+
+
 class BenchmarkConfig(BaseModel):
     tracks: dict[str, TrackSpecConfig]
     builtin_models: list[BuiltinModelConfig] = Field(default_factory=list)
@@ -263,6 +277,7 @@ class BenchmarkConfig(BaseModel):
     stub_models: StubModelsConfig
     reporting: ReportingConfig
     leaderboards: LeaderboardConfig
+    v1: BenchmarkV1RuntimeConfig = Field(default_factory=BenchmarkV1RuntimeConfig)
 
 
 class DataInferenceConfig(BaseModel):

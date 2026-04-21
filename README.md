@@ -82,6 +82,26 @@ bash scripts/stopAndDestroy.sh
 
 数据验证模块位于 `backend/app/datasets/validators/`，负责在批次最终落盘前验证数据集是否有效。当前默认执行上下文长度、预测长度、有限值、低方差等校验；对于系统自动生成的数据，如果验证失败会自动重新生成，直到通过或超过重试上限。
 
+## V1 Synthetic Benchmark
+
+`data-xmy` 分支的离线 v1 benchmark pipeline 已按当前主分支结构融合到 `backend/app/datasets/benchmark_v1/`，不会替换现有后端、前端、脚本和测试体系。管理台新增 `V1 Benchmark` 页面，可执行：
+
+- 构建 anchor stats：`POST /api/v1/benchmarks/v1/anchor-stats`
+- 构建 benchmark parquet：`POST /api/v1/benchmarks/v1/datasets`
+- 运行单模型 v1 评测：`POST /api/v1/benchmarks/v1/evaluations/run`
+- 生成 v1 report：`POST /api/v1/benchmarks/v1/reports`
+- 查看 artifacts：`GET /api/v1/benchmarks/v1/artifacts`
+
+默认产物目录为 `runtime/generated/benchmark_v1/`。如果未提供 GIFT-Eval 或 TFB 本地目录，anchor stats 会使用 bootstrap corpus，并在 metadata 中写入 `anchor_mode=bootstrap`，避免被误解为真实外部有效性证据。
+
+可选依赖单独安装：
+
+```bash
+pip install -e .[benchmark_v1]
+```
+
+v1 官方模型 adapter 包括 `timesfm_2_5_200m`、`chronos_bolt_base`、`sundial_base_128m`、`moirai_moe_base`、`lag_llama`。这些 adapter 通过 `TSBENCHMARK_MODEL_PYTHON` 指向独立模型环境运行，主系统默认不下载权重，也不把重型模型依赖放入主依赖。相关算法说明见 `docs/benchmark_v1/`。
+
 CSV 批次加载 API：
 
 ```bash
