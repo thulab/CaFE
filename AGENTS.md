@@ -1,93 +1,92 @@
 # TSBenchmark Agents Guide
 
-## Scope
+## 范围与权限
 
-- 本文件只约束 `/Users/zhanghongyin/code/python/TSBenchmark` 目录内的工作。
-- 禁止读取、修改或创建本项目目录之外的任何文件，除非用户明确要求且已获得相应授权。
+- 本项目工作目录：`/root/tsbenchmark/TSBenchmark`
+- **禁止**对目录外的任何文件进行读写操作
+- **禁止**自行执行 git 操作（commit、push、pull、reset 等）
 
-## Default Role
+## 默认行为
 
-- 默认直接实现用户需求，而不是停留在方案讨论。
-- 是否先征求确认由风险决定：
-  - 低风险、局部改动：直接实现并验证。
-  - 中高风险、涉及接口变更或较大重构：先分析影响范围，再给出结论和实施理由，必要时再执行。
+**低风险局部改动**：直接实现，无需确认
+- 修复 bug、添加日志、重构内部实现
+- 不涉及 API 契约变更
 
-## Change Policy
+**中高风险改动**：先分析影响，再执行
+- 涉及 API 端点增减或参数变化
+- 涉及数据模型结构变更
+- 涉及前端路由或页面逻辑变更
 
-- 允许中等规模重构。
-- 在完成评审并说明收益、风险和迁移影响后，可以进行较大改动。
-- 优先保持目录结构清晰、模块职责清楚、命名可读。
-- 性能有限是本项目的重要约束；涉及数据处理、批量推理、序列转换、排行榜聚合时，优先避免明显低效实现。
-- 修改时优先复用现有模块边界：
-  - `backend/app/datasets/`
-  - `backend/app/models/`
-  - `backend/app/tasks/`
-  - `backend/app/leaderboards/`
-  - `frontend/`
+## 验证要求
 
-## Communication
+### 必须执行的验证
+```bash
+# 单元测试（每次代码改动后）
+python -m pytest test/unit/ -q
 
-- 给出较为详细的推理与解释，尤其是在以下场景：
-  - 选择实现方案时
-  - 做结构调整或重构时
-  - 判断风险、兼容性或性能影响时
-  - 无法完成验证或发现仓库缺口时
-- 先给结论，再给关键依据和后续动作。
-- 不要空泛表态；解释要落到文件、模块、接口或运行行为上。
+# 如改动涉及 V1 / benchmark_v1 模块
+python -m pytest test/unit/backend/app/datasets/test_benchmark_v1.py -q
+```
 
-## Validation
+### 可选验证（按需）
+```bash
+# 集成测试
+python -m pytest test/integration/ -q
 
-- 完成代码改动后，默认跑完与改动相关的验证，优先跑单元测试。
-- 当前仓库已经有标准测试目录 `test/`，新增或修改功能后应优先补充并执行对应的 `unit` / `integration` 测试，而不是继续把测试逻辑放回 `scripts/`。
-- 默认的测试发现入口：
-  - `python -m unittest discover -s test -t . -p 'test_*.py'`
-- 当前仓库可见的主要验证入口：
-  - `test/unit/`：模块级单元测试，优先覆盖 `datasets`、`models`、`tasks`、`leaderboards`、`frontend` 的局部行为。
-  - `test/integration/test_smoke_flow.py`
-  - `test/integration/test_verify_chronos2_e2e.py`（真实 Chronos2 端到端验证，依赖较重，默认受 `TSBENCHMARK_RUN_CHRONOS2_E2E=1` 控制，仅在改动涉及 Hugging Face/Chronos2 链路且环境允许时使用）
-- `scripts/smoke_test.py` 和 `scripts/verify_chronos2_e2e.py` 现在是兼容入口；如无特殊需要，优先直接运行 `test/` 下对应测试或统一的 `unittest discover` 命令。
-- 如果只做静态结构调整，至少补充最小导入或编译校验，并在结果中说明。
-- 不要声称运行了未实际执行的测试。
+# 前端语法校验
+python -c "from frontend.app import app"
+python -c "from backend.app.api import create_api"
+```
 
-## Git Rules
+### 危险行为警告
+- **禁止**跳过测试直接提交
+- **禁止**在未验证的情况下声称"测试通过"
+- **禁止**修改 `runtime/` 目录下的运行时生成物（它们是验证副产品）
+- **禁止**修改 `conf/system.toml` 中的生产配置默认值
 
-- 禁止自行执行任何 git 操作。
-- 包括但不限于：`git status`、`git diff`、`git add`、`git commit`、`git checkout`、`git reset`、`git restore`、`git clean`、`git rebase`。
-- 如需了解变更状态，应通过直接读取文件和运行项目级验证来判断，不依赖 git。
+## 变更策略
 
-## Project Conventions
+1. 优先保持模块边界清晰，不跨模块堆砌无关逻辑
+2. 涉及领域模型时，放入对应模块的 `domain.py`
+3. 涉及 V1 算法时，优先放入 `backend/app/datasets/benchmark_v1/`
+4. 文档/配置/脚本中的路径若因重构失效，必须一并更新
 
-- 后端入口：`python -m backend.app.main`
-- 前端入口：`python -m frontend.app`
-- 配置文件：`conf/system.toml`
-- 启停脚本：
-  - `bash scripts/start_system.sh`
-  - `bash scripts/stop_system.sh`
-- 如果修改配置读取、服务启动、端口、超时、运行目录等行为，必须同步检查 `conf/system.toml`、启动脚本和 README 是否仍一致。
+## 通信规范
 
-## Structure Expectations
+### 必须说明的内容
+- 做了什么修改
+- 为什么这样做
+- 运行了什么验证
+- 未覆盖的风险或已知缺口
 
-- 新增代码时，优先放入职责明确的模块中，不要把无关类型和逻辑重新堆回单一大文件。
-- 涉及领域模型时，优先放到对应模块下的 `domain` 中，而不是创建新的全局杂项文件。
-- 控制跨模块依赖方向，避免循环导入；若需要聚合导出，应采用清晰且低耦合的方式。
-- 文档、配置、脚本中的路径或命令若因重构失效，必须一并更新。
+### 输出格式
+```
+## 变更摘要
+[一句话描述]
 
-## Decision Heuristics
+## 变更详情
+[具体修改内容]
 
-- 先看现有实现，再动手改，不基于猜测重写。
-- 能局部修复时，不做无必要的大范围改造。
-- 需要重构时，先判断是否能显著改善以下至少一项：
-  - 可读性
-  - 模块边界
-  - 维护成本
-  - 性能
-  - 错误率
-- 若收益不明显，保持改动收敛。
+## 验证结果
+[测试输出摘要]
 
-## Output Requirements
+## 风险/缺口
+[如有]
+```
 
-- 结果说明中应包含：
-  - 做了什么
-  - 为什么这样做
-  - 跑了什么验证
-  - 未覆盖的风险或缺口
+## 项目约定
+
+| 约定 | 说明 |
+|------|------|
+| 后端入口 | `python -m backend.app.main` |
+| 前端入口 | `python -m frontend.app` |
+| 配置 | `conf/system.toml` |
+| 启停 | `bash scripts/start_system.sh` / `stop_system.sh` |
+| 测试发现 | `python -m pytest test/unit/ -q` |
+
+## 决策原则
+
+1. **先看现有实现，再动手改** - 不基于猜测重写
+2. **能局部修复，不做大规模改造** - 保持改动收敛
+3. **性能优先场景** - 避免数据处理、批量推理、序列转换中的明显低效实现
+4. **跨模块依赖** - 避免循环导入，保持依赖单向
