@@ -1,129 +1,736 @@
-# TSBenchmark
+# TSBenchmark 设计文档
 
-基于 `detail.pdf` 和 `paper.png` 实现的时序预测动态 Benchmark 系统原型。当前版本包含两个独立系统：
+## 文档概览
 
-- 后端：`FastAPI`，负责动态数据集、模型注册、任务执行、报告和排行榜。
-- 前端：`Flask`，拆分为用户页面与管理页面。
+- 整体介绍：TSBenchmark 是什么
+- 功能介绍：一般用户、管理员分别能干什么
+- 应用场景：为模型选型提供科学支撑，模型评估不停留在人工评估范围
 
-## 架构落地
+### 当前状态
 
-整体设计与讨论材料一一对应：
+- 1 个数据集（单变量）
+- 5 个模型：Timer 3.5、Timer 3.0、Chronos 2、Toto、TimesFM 2.5
+- 指标：MSE、MAE
+- 可视化页面：查看榜单、查看报告、进行测试
 
-- `Dataset Manager`：动态生成纯合成多周期数据，按赛道执行变换并校验。
-- `Model Manager`：管理模型元信息和 adapter；除内置桩模型外，支持通过 Hugging Face repo 提交、加载和执行模型，当前优先支持 `amazon/chronos-2`。
-- `Mission Manager / Executor`：把“模型 + 批次”组合为可回溯任务并执行。
-- `Reporter`：聚合 MSE、MAE、sMAPE、延迟、Token 成本，输出 bad case 与总结。
-- `Online System`：独立前端系统，仅通过 API 访问后端。
+---
 
-详细设计见 [docs/architecture.md](docs/architecture.md)。
+## 1. 核心功能
 
-## 目录
+### 1.1 一般用户
 
-```text
-backend/app/     FastAPI 后端
-frontend/        Flask 前端
-conf/            系统统一配置
-scripts/         启停与冒烟脚本
-runtime/         运行时生成内容
-docs/            架构说明
+**查看榜单**
+- 各个赛道榜单
+- 可以选择一列做排序
+
+**查看报告**
+- 查看赛道所有模型的对比报告
+- 查看自选模型间的对比报告（低优先级）
+
+**申请上传模型**
+- 表单内容：（TODO）
+
+**申请上传数据集**
+- 表单内容：（TODO）
+
+### 1.2 管理员
+
+#### 1.2.1 数据集相关
+- 加载本地数据集
+- 查看测试数据集
+- 删除测试数据集（低优先级）
+
+#### 1.2.2 模型相关
+- 查看可运行的模型有哪些
+- 能测的能力维度
+- 加载模型
+- 删除模型
+
+#### 1.2.3 赛道相关
+- 创建赛道：赛道名字、能力维度（多选）、参数
+  - 此处生成测试数据集
+  - 能力维度中包含一个维度叫做真实数据
+- 查看赛道
+- 删除赛道（低优先级）
+
+#### 1.2.4 评测相关
+- 创建评测：赛道、模型
+- 查看评测（得有进度）
+- 终止、删除评测
+
+#### 1.2.5 报告相关
+- 生成、查看报告
+  - 赛道的报告
+  - 评测的报告
+
+---
+
+## 2. 实体设计
+
+### Model
+```
+model_id
+name
+method
 ```
 
-## 配置
-
-系统的运行参数已经统一收敛到 `conf/system.toml`，包括：
-
-- 后端/前端 host、port、timeout
-- 启停脚本的 PID、日志、健康检查和关闭等待参数
-- 赛道默认参数、数据生成参数、评分阈值、报告阈值
-- 前端表单默认值和页面展示条目上限
-
-默认情况下，后端、前端和脚本都会读取 `conf/system.toml`。如果需要切换配置文件，可设置环境变量：
-
-```bash
-export TSBENCHMARK_CONF=/absolute/path/to/system.toml
+### Track
+```
+track_id
+name
+capability_ids
 ```
 
-## 启动
-
-后端：
-
-```bash
-python -m backend.app.main
+### Capability Block
+```
+capability_id
+type  # 真实数据的参数集对应真实数据的 shard
+track_id
+params -> shard_id
+metrics
 ```
 
-前端：
-
-```bash
-python -m frontend.app
+### Shard
+```
+shard_id
+capability_id
+url  # 生成数据集位置/真实数据集的位置
 ```
 
-也可以直接使用脚本后台启动/关闭整套系统：
-
-```bash
-bash scripts/start_system.sh
-bash scripts/stop_system.sh
+### Benchmarking (Eval)
+```
+benchmarking_id
+track_id
+unit_ids
 ```
 
-启动脚本会将 PID 和日志写入 `runtime/system/`。
-
-默认配置下：
-
-- 用户页面：`http://127.0.0.1:8501/`
-- 管理页面：`http://127.0.0.1:8501/admin`
-
-如果修改了 `conf/system.toml` 中的 host/port，启动地址会随配置变化。前端仍可通过环境变量 `TSBENCHMARK_BACKEND_URL` 额外覆盖后端地址。
-
-数据加载模块位于 `backend/app/data_management/data_loader/`，当前提供统一的 `DatasetLoader` 抽象，底层已实现 `CSV` 格式加载，后续可以按相同接口扩展更多来源。
-
-数据处理模块位于 `backend/app/data_management/processors/`，负责在数据被 loader 读入后做统一变换。当前内置 `identity`、`scale`、`clip`、`covariate_filter` 四种 processor，并通过通用接口支持按顺序串联处理。
-
-数据验证模块位于 `backend/app/data_management/validators/`，负责在批次最终落盘前验证数据集是否有效。当前默认执行上下文长度、预测长度、有限值、低方差等校验；对于系统自动生成的数据，如果验证失败会自动重新生成，直到通过或超过重试上限。
-
-CSV 批次加载 API：
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/datasets/load/csv \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source_type": "csv",
-    "csv_path": "/absolute/path/to/data.csv",
-    "track": "forecast_accuracy",
-    "context_length": 96,
-    "horizon": 24,
-    "sample_id_column": "sample_id",
-    "step_column": "step",
-    "target_column": "target",
-    "covariate_columns": ["calendar_signal"],
-    "processors": [
-      {"processor_type": "scale", "params": {"factor": 10}},
-      {"processor_type": "clip", "params": {"min_value": -20, "max_value": 20}}
-    ]
-  }'
+### Unit
+```
+unit_id
+benchmarking_id
+model_id
+task_ids
 ```
 
-如需启用 Hugging Face 模型加载，可安装可选依赖：
-
-```bash
-pip install -e .[huggingface]
+### Task
+```
+task_id
+unit_id
+capability_id
+predicate_result  # 是否全存（全存/抽样存/只存统计需要再重跑）
+metrics
 ```
 
-`amazon/chronos-2` 使用 `chronos-forecasting` 提供的 `Chronos2Pipeline` 进行推理，并透传 Hugging Face Transformers 的 `from_pretrained(...)` 参数。
-
-真实端到端验证脚本：
-
-```bash
-python scripts/verify_chronos2_e2e.py
+### Report
+```
+report_id
+unit_ids
 ```
 
-## 冒烟
+### Rank
+```
+ranklist
+report_id
+```
+---
 
-```bash
-python scripts/smoke_test.py
+## 3. 项目定位
+
+TSBenchmark 是一项针对时间序列预测模型的动态评测平台。该平台不以单一总分作为唯一评价标准，而是侧重于提供数据生成、赛道组合与模型评测的自主可控性，支持用户从赛道、能力维度、样本及指标等多个层级立体化地理解和评估模型效能。
+
+**核心问题**：随着时间序列基础模型越来越多、预训练数据越来越广，测试数据集静态的 benchmark 的可信度会下降。模型在固定的公开数据集上取得高分，不一定说明它具有真实泛化能力，也可能是因为预训练阶段见过相似数据。TSBenchmark 因此把评测数据设计成可动态生成、可复现、可追踪、可解释的对象，而不是一次性固定题库。
+
+**核心原则**：
+
+- **动态生成**：评测样本由不同的能力维度和参数配置依据统计机制动态生成
+- **能力拆解**：一条赛道由多个能力维度组成，例如趋势、季节性、多变量交互、lead-lag 依赖、regime shift、协变量响应等
+- **可回溯评测**：任何排行榜分数都能回溯到模型、赛道、能力测试块、task、sample、预测曲线和具体指标
+
+---
+
+## 4. 平台要解决什么问题
+
+从用户视角看，TSBenchmark 希望支持以下流程：
+
+1. 创建或选择一条评测赛道
+2. 创建赛道时选择要测试的能力维度
+3. 按每个能力维度中默认或自定义参数生成测试数据
+4. 选择一个或多个模型参与评测
+5. 启动一次 benchmarking run
+6. 查看赛道榜单
+7. 下钻查看某个模型、某个能力测试块、某个样本或某个指标
+8. 对比某个 sample 上不同模型的预测曲线与真实未来值
+
+**当前仓库已实现的命令行版本**：
+
+- 能力测试块与 track 生成
+- materialized benchmark parquet
+- 多变量真实数据结构锚定
+- 模型评测 runner
+- 汇总报告
+- 真实数据与合成数据可视化
+- sample 级预测结果可视化
+
+后续 web 平台的工作，是把这些概念进一步包装成后端实体、接口和交互页面。
+
+---
+
+## 5. 核心实体
+
+### 术语说明
+
+#### Shard
+
+Shard 是内部数据片，表示一组参数完全固定的数据单元。不直接暴露给普通用户。用于缓存、索引、复现和追踪。
+
+一个 shard 包含多条 sample，这些 sample 共享同一组固定生成参数：
+
+- 能力维度 (capability)
+- difficulty（生成机制下预期的预测难度）
+- horizon ratio（预测长度比例）
+- season length（数据主周期）
+- target dimension（预测变量维度）
+- sample 数量（每组参数生成多少条时间序列样本）
+- seed（随机种子）
+- real anchor profile（真实数据分布特征来源），如果启用真实锚定
+
+#### Sample
+
+Sample 是模型实际看到的一道预测题，是最小模型输入单元。
+
+单变量、多变量和协变量任务统一使用以下 row-oriented schema：
+
+```
+target_history: [context_length, target_dim]
+target_future:  [horizon, target_dim]
+history_cov:    [context_length, history_cov_dim]
+future_cov:     [horizon, future_cov_dim]
 ```
 
-该脚本使用临时目录存储运行数据，验证以下最小闭环，不污染正式 `runtime/` 目录：
+每个 sample 还会记录：
 
-- 用户页面提交 Hugging Face 模型
-- 管理页面加载模型
-- 管理页面生成批次与运行任务
-- 用户页面查看总榜与分赛道榜单
+- 生成配置（shard 的参数信息，用来复现 sample 的生成条件）
+- latent 参数（生成这条 sample 时采用的数学机制中的隐藏参数）
+- realized features（样本生成后实际测出来的统计特征）
+- real anchor 信息（样本参考了哪个真实数据结构来源）
+- baseline score（简单基线模型在这条 sample 上的分数，用来判断难度）
+- 所属 shard、能力测试块、track 与 benchmark version
+
+#### Capability Block（能力测试块）
+
+用户可操作的数据块，表示某个能力维度下的一组测试数据。
+
+例子：
+
+- `common_factor`：共享因子能力
+- `lead_lag_coupling`：跨通道滞后依赖
+- `coherent_regime_shift`：多通道同步状态切换
+- `covariate_response`：已知未来协变量响应
+- 单变量 trend、seasonal、regime-switching、long memory 等诊断能力维度
+
+能力测试块本身不直接保存所有样本，而是索引若干 shard。默认情况下，一个能力测试块会展开一组参数网格（多个 difficulty、horizon ratio、season length、target dimension 和 sample 数量）。用户也可以创建自定义能力测试块，只覆盖某个 difficulty 或某个输出长度。
+
+#### Track（赛道）
+
+Track 是一条评测赛道，由多个能力测试块组成。回答的问题是：这条评测想考察哪些能力？
+
+例子：
+
+- `multivariate_core`：common factor + lead-lag coupling + coherent regime shift
+- `covariate_aware`：known-future covariate response
+- `univariate_core`：多个单变量诊断能力维度
+- 用户自定义 track：从已有能力测试块中挑选组合
+
+#### Benchmarking Run
+
+表示一次评测执行。记录：
+
+- 选择了哪条 track
+- 选择了哪些模型
+- 使用哪个 benchmark version
+- 使用哪个数据版本
+- 运行时间
+- 每个模型的结果
+- 指标结果
+- 报告产物
+
+#### Unit
+
+表示某个模型在一次 benchmarking run 中的完整评测结果。如果一次 run 选择 5 个模型，会产生 5 个 unit。
+
+Unit 是模型级下钻的自然入口：模型元信息、track 总分、各能力测试块表现、runtime/cost 信息、失败样本、sample 级预测产物。
+
+#### Task
+
+表示一次 benchmarking run 中，某个模型针对某个能力测试块的评测结果。
+
+```
+benchmarking run + model + capability block
+```
+
+Task 用于回答能力维度问题：
+
+- 哪个模型最擅长 lead-lag coupling？
+- 某个模型是否容易在 coherent regime shift 上失败？
+- 某个模型是否只在短 horizon 上表现好？
+- difficulty 增加后模型退化速度如何？
+
+#### Metric
+
+定义 task 和 unit 如何被打分。当前指标包括 MASE、sMAPE、relative skill、runtime 等。
+
+未来可扩展：概率预测指标、calibration 指标、吞吐/延迟/显存/GPU 时间等成本指标、real support distance 等合成数据有效性指标。
+
+#### Model
+
+参与评测的预测后端。当前支持内置 baseline、本地 Python adapter 和 Timer REST Service adapter。
+
+最终平台中的 model 实体应包含：
+
+- model id、展示名称
+- 支持的 task type、输入格式
+- 是否原生支持多变量和协变量
+- 服务 endpoint 或执行环境
+- 模型版本、硬件约束、当前加载状态
+
+#### Ranking List（榜单）
+
+某条 track 的榜单，聚合该 track 下每个模型的最新有效结果。支持：
+
+- 总榜 / 按 metric 排名 / 按能力测试块排名
+- 每个模型的最新成绩及最佳成绩
+- 链接到所有历史 benchmarking run
+
+#### Report
+
+评测结果说明。消费 evaluation output，更新或支撑 ranking list。包含：
+
+- 总体模型表、能力维度级分数
+- difficulty 曲线、horizon 曲线
+- 雷达图或其他能力画像
+- sample 级预测曲线
+- 合成数据有效性诊断
+- 真实数据与合成数据对比
+---
+
+## 6. 数据生成层级
+
+TSBenchmark 的数据层级是：
+
+```
+sample -> shard -> capability_block -> track -> benchmark
+```
+
+用户主要操作能力测试块和 track：
+
+1. 选择能力维度
+2. 选择默认或自定义参数覆盖
+3. 生成能力测试块
+4. 组合 track
+5. 对 track 运行模型评测
+
+Shard 是内部层级，用于保证固定参数数据单元可复现、可缓存、可索引。
+
+---
+
+## 7. 统一预测数据格式
+
+TSBenchmark 使用统一格式表达单变量、多变量和协变量预测：
+
+```
+target_history: [context_length, target_dim]
+target_future:  [horizon, target_dim]
+history_cov:    [context_length, history_cov_dim]
+future_cov:     [horizon, future_cov_dim]
+```
+
+与当前本机推理服务的 target / history_cov / future_cov 形式一致。当前设计暂不引入 static covariate。
+
+统一格式的好处：
+
+- 单变量/多变量/协变量模型可以共享 benchmark 表结构
+- runner 不需要为每种任务维护不同的数据协议
+- web 页面可以用同一套组件展示 history、future、covariate 和 forecast
+- 后续接入服务模型时，数据转换逻辑更稳定
+
+---
+
+## 8. 真实数据如何被利用
+
+TSBenchmark 使用真实数据的目的不是把真实数据直接当固定题库，也不是从中复制片段作为测试样本。真实数据承担的是**结构参照系**的角色：帮助系统理解真实时间序列通常有哪些统计形态，再用这些形态约束和校验动态生成的数据。
+
+**基本判断**：完全脱离真实数据的纯随机合成序列很容易失去现实意义；但直接使用公开真实数据又容易受数据泄露和静态 benchmark 失效的影响。因此采用「结构/分布对齐，而不是数据点对齐」的策略。
+
+整体流程：
+
+```
+真实数据集 -> 数据集 manifest -> 清洗并抽取目标列矩阵 -> 提取结构特征
+-> 形成真实 anchor profile -> 指导合成数据生成 -> 生成后再次提取特征并做有效性诊断
+```
+
+### 8.1 真实数据先被转化为结构特征
+
+一个真实数据集进入系统时，通过 manifest 描述基本信息（数据集 ID、数据领域、时间频率、文件路径、时间列、target columns）。
+
+系统读取 target columns 后整理为 `[time, target_dim]` 的目标矩阵，然后提取结构特征：
+
+**单通道时间结构**：趋势强度、季节性强度、频谱熵、自相关半衰期、变点密度、方差漂移、间歇性、异常值比例
+
+**跨通道同期关系**：平均相关性、最大相关性、相关稀疏度、有效秩、第一主成分占比、通道尺度差异
+
+**跨通道时滞关系**：不同 lag 下通道之间的 lead-lag 强度，以及最大 lead-lag 强度对应的 lag
+
+**多通道共同事件**：多个通道是否会在相近时间同步发生均值或状态变化
+
+### 8.2 Anchor Profile 保存什么
+
+真实数据集被特征化后汇总成 anchor profile（真实数据结构分布的摘要）：
+
+- 每个结构特征的均值和标准差
+- 特征之间的协方差
+- 每个特征的 p05/p50/p95 支撑区间
+- 若干真实结构原型（prototype 或 medoid）
+- 每个 prototype 所在簇的权重
+- 原始真实数据集的 manifest
+
+### 8.3 Anchor Profile 如何指导生成
+
+生成合成样本时，系统从 anchor profile 中采样一个真实结构 prototype。不同能力维度读取其中不同目标特征并映射到生成器的 latent 参数：
+
+- **共享因子能力**：关注有效秩、第一主成分占比、通道相关强度
+- **Lead-lag 能力**：关注 lead-lag 强度、最大 lag、相关稀疏度
+- **同步状态切换能力**：关注 coherent shift rate 和通道相关强度
+- **协变量响应能力**：参考真实数据中的相关结构强度
+
+生成器仍然会产生新的序列、新的噪声、新的相位、新的局部形态。真实 anchor 只提供结构目标和合理范围。
+
+### 8.4 Anchor 固定了什么，不固定什么
+
+**固定或约束**：
+
+- 目标维度的大致规模
+- 趋势、季节、噪声、长记忆等边际结构的合理范围
+- 多变量通道之间相关性、有效秩、尺度差异等结构
+- lead-lag 和同步状态变化等跨通道行为
+- 合成样本是否落在真实结构支撑域附近
+
+**不固定**：
+
+- 原始真实数据点
+- 某个真实时间窗口
+- 真实时间戳
+- 真实未来值
+- 某个真实数据集中的具体曲线形状
+
+目标：「像真实数据，但不是那份真实数据」的评测样本。
+
+### 8.5 生成后如何检查有效性
+
+合成样本生成后，系统重新提取 realized features 并与真实 anchor profile 中的支撑区间比较：
+
+- `real_support_distance`：合成样本整体偏离真实结构均值的程度
+- `real_prototype_distance`：合成样本偏离所采样 prototype 的程度
+- `real_support_violation_rate`：有多少特征落在真实 p05-p95 支撑区间之外
+- `real_support_max_violation`：最大越界程度
+
+- `anchor_mode=sample`：系统主要做软对齐和事后记录
+- `anchor_mode=constrain`：系统会对明显偏离真实支撑域的样本进行重试
+
+后续还会引入 real probe track：让模型分别在真实 probe 数据和合成 anchor 数据上评测，观察模型排序是否保持大致一致。
+---
+
+## 9. 数据如何按能力维度生成
+
+TSBenchmark 的数据生成不是一次性生成一个大混合数据集，而是按能力维度生成能力测试块。
+
+通用生成流程：
+
+```
+选择能力维度 -> 确定参数组合 -> 选择随机种子和可选 anchor
+-> 生成完整时间序列矩阵 -> 切分 history / future / covariates
+-> 标准化 target -> 记录 latent_params 和 realized_features
+-> 写入 sample / shard / capability block / track
+```
+
+其中 difficulty 控制任务难度（噪声、结构强度、非线性程度、状态切换频率、滞后依赖强度等），horizon_ratio 控制预测长度相对于主导时间尺度的比例，season_length 控制主要周期和时间尺度。
+
+### 9.1 单变量数据如何生成
+
+单变量任务是 `target_dim = 1` 的预测任务，使用与多变量相同的 sample schema。
+
+当前单变量能力维度：
+
+| 能力维度 | 考察内容 |
+|---------|---------|
+| `trend` | 模型对趋势、趋势衰减和趋势变点的处理能力 |
+| `multi_seasonal` | 模型对多周期、相位漂移和振幅变化的处理能力 |
+| `regime_switching` | 模型对状态切换和分布突变的处理能力 |
+| `long_memory_nonlinear` | 模型对长依赖和非线性反馈结构的处理能力 |
+| `intermittent_heteroskedastic` | 模型对间歇性需求、突发值和异方差噪声的处理能力 |
+
+### 9.2 多变量数据如何生成
+
+多变量任务是 `target_dim >= 2` 的预测任务。生成器先产生完整矩阵 `[context_length + horizon, target_dim]`，然后切分为 `target_history` 和 `target_future`。
+
+当前多变量能力维度：
+
+| 能力维度 | 考察内容 |
+|---------|---------|
+| `common_factor` | 多个 target channel 由少数共享潜在因子共同驱动，测试模型能否识别跨通道共同变化 |
+| `lead_lag_coupling` | 不同 channel 之间存在延迟影响，测试模型能否利用某些通道的过去变化预测另一些通道的未来 |
+| `coherent_regime_shift` | 多个通道同步发生状态切换，测试模型能否处理共同冲击和 regime change |
+
+在启用 real anchor 时，多变量生成器会读取真实 profile 中的相关性、有效秩、lead-lag 强度、同步变化率等结构目标，调整潜在因子数量、通道 loading、滞后图结构等参数。
+
+### 9.3 协变量数据如何生成
+
+协变量任务使用统一 schema，额外包含 `history_cov` 和 `future_cov`。
+
+当前协变量能力维度：
+
+- `covariate_response`：target 受到已知未来协变量影响（天气型连续变量、事件型二值变量等）
+
+重点测试模型是否能正确利用 future covariate，而不仅是根据 target history 外推。
+
+### 9.4 每条样本会保存什么
+
+**模型评测必需的信息**：
+
+- `target_history`、`target_future`
+- `history_cov`、`future_cov`
+- `target_columns`、`history_cov_columns`、`future_cov_columns`
+- `context_length`、`horizon`、`target_dim`
+
+**分析和回溯需要的信息**：
+
+- `latent_params`：生成器使用的隐含参数（趋势斜率、周期、滞后强度、切换概率等）
+- `realized_features`：从最终样本中测得的统计结构
+- `real_anchor_*`：使用了哪个真实 anchor profile、cluster 或 dataset
+- `real_support_*`：合成样本相对真实支撑域的距离和越界情况
+- `baseline_mase`：内置基线在该样本上的表现
+
+---
+
+## 10. 评测与报告流程
+
+平台目标流程：
+
+```
+track -> materialized benchmark -> benchmarking run -> unit per model
+-> task per model-capability-block pair -> sample predictions
+-> metrics -> report -> ranking list
+```
+
+当前 CLI 对应关系：
+
+| CLI 命令 | 功能 |
+|---------|------|
+| `build-family-block` | 生成能力测试块和 shard |
+| `compose-track` | 组合 track 并物化 benchmark parquet |
+| `run-eval` | 评测一个模型并写出 eval parquet |
+| `make-report` | 聚合模型指标 |
+| `make-real-synth-viz` | 对比真实数据和合成数据 |
+| `make-sample-forecast-viz` | 查看 sample 级预测曲线 |
+
+后端平台应保留这些数据契约，但把它们封装成持久化实体和 API。
+---
+
+## 11. 用户界面目标
+
+### Track Builder（创建赛道）
+
+页面能力：
+
+- 选择 task type
+- 选择能力测试块
+- 设置 difficulty、horizon、season length、target dimension
+- 设置 sample 数量
+- 选择 real anchor mode
+- 预览生成数据的统计特征
+
+### Benchmarking Run Page（评测执行）
+
+页面能力：
+
+- 展示选定 track 和参与模型
+- 展示评测任务状态
+- 按 model 和能力测试块展示进度
+- 展示失败、跳过和错误原因
+
+### Track Ranking Page（赛道榜单）
+
+页面能力：
+
+- 展示模型总排名
+- 按 metric 切换榜单
+- 按能力测试块查看模型成绩
+- 按 difficulty 或 horizon 查看分布
+- 跳转到历史 benchmarking run 和 report
+
+### Report Page（报告页面）
+
+页面能力：
+
+- 总体得分表
+- 能力维度级能力画像
+- difficulty 曲线、horizon 曲线
+- 真实/合成数据有效性可视化
+- sample 级预测结果查看
+
+### Sample Forecast Page（样本预测页面）
+
+筛选维度：能力维度、参数组合、sample id、target channel、model
+
+页面展示：
+
+- history
+- ground truth
+- forecast
+- sample-level metric
+
+---
+
+## 12. 存储设计
+
+当前实现使用文件系统产物：
+
+```
+artifacts/family_blocks/
+artifacts/tracks/
+artifacts/eval/
+artifacts/reports/
+artifacts/viz/
+```
+
+最终平台需要持久化管理的实体：
+
+- dataset、shard
+- 能力测试块 manifest、track manifest
+- benchmarking run、unit、task、metric
+- model metadata
+- report artifact、ranking list snapshot
+
+从文件系统切换到 IoTDB、TsFile 或其他存储时，不应改变模型看到的 sample schema。存储系统应作为底层实现细节隐藏在相同逻辑实体后面。
+
+---
+
+## 13. 项目价值
+
+TSBenchmark 把三件事放在同一个系统里：
+
+1. 可控 benchmark 数据生成
+2. 真实数据结构锚定
+3. 模型结果解释与回放
+
+传统静态 benchmark 只能回答：哪个模型在固定数据集上平均分最高？
+
+TSBenchmark 希望回答更细的问题：
+
+- 哪个模型更擅长 regime shift？
+- 哪个模型能处理 lead-lag 关系？
+- 哪个模型真正利用了 future covariate？
+- 模型是否只在简单 difficulty 上好？
+- 合成数据是否仍处于真实数据结构支撑域内？
+- 动态生成不同批次后，模型排名是否稳定？
+- 某个模型具体在哪些 sample 上失败？
+
+---
+
+## 14. 当前实现状态
+
+### 已实现
+
+- v2 统一 sample schema
+- 单变量、多变量、协变量能力维度生成
+- shard、能力测试块、track、benchmark manifest
+- 真实多变量 anchor profile
+- anchor-aware multivariate generation
+- Timer REST Service adapter
+- 多变量模型评测 runner
+- 报告聚合
+- 真实/合成数据可视化
+- sample forecast viewer
+
+### 仍待实现
+
+- web UI
+- 围绕 track、model、run、unit、task、report、ranking list 的后端 API
+- 更大的真实数据池
+- real probe track 与合成 anchor track 的排序一致性验证
+- 更完整的 report-level validity diagnostics
+- GPU 时间、显存、吞吐等成本指标
+- 大规模存储接入
+
+---
+
+## 15. 总结
+
+TSBenchmark 是一个面向时间序列预测模型的动态、可控、可解释 benchmark 平台。
+
+核心抽象：评测数据由能力测试块生成，能力测试块组合成 track，track 被物化为 benchmark，模型通过 benchmarking run 参与评测，结果以 unit、task、metric 和 sample prediction 的形式保存，最后汇总成 report 和 ranking list。
+
+长期目标：用户可以直观操作平台——创建赛道、生成数据、选择模型、运行评测、查看榜单，并能从任意榜单分数回溯到产生该分数的具体样本和预测曲线。
+
+---
+
+## 16. TODO（任务分解）
+
+### 数据生成方面
+
+- 单变量/多变量/协变量的基于真实数据集提取特征锚定以及能力维度数据生成机制
+  - 形式化说明（单变量初版已完成，多变量代码已完成；TODO：详细设计与文献支撑）
+  - 过程可视化（目前有静态样例；TODO：完整流程可视化）
+  - 有效性验证（TODO：通过模型在真实/合成数据上的预测结果对比）
+- 大批量数据生成及存储
+  - 以 TimeBench_Tsfile 作为真实数据源
+  - 以 IoTDB 作为合成数据的存储方式
+
+### 模型评测方面
+
+- 在 timer 中接入 toto 与 timesfm 进行多变量推理，确定大批量评测的调用方式
+- 确定赛道、评测单元的元数据存储形式（IoTDB 建模）
+- 后端实现从创建赛道到获取评测结果的完整流程接口
+
+### 前端页面功能
+
+- 创建赛道、选择能力维度（capability）、生成对应数据集
+- 选择赛道与参与模型进行一次评测
+- 查看赛道榜单
+- 模型-能力维度得分雷达图（一维榜单可取各维度均值）
+- 选择某项指标，查看该指标下的模型得分榜单
+- 查看某样本下各模型的预测结果（曲线图、统计指标）
+  - 样本选定由 capability 选项、参数选项与 sample_id 选项组成
+
+---
+
+## 附录：能力测试块详细说明
+
+| 能力测试块 | 直观场景 | 主要考察能力 |
+|-----------|---------|------------|
+| `common_factor` 共享因子 | 多条序列背后受同一个或少数几个隐藏因素共同驱动 | 模型是否能利用跨通道的共同变化，而非把每个通道当独立单变量 |
+| `lead_lag_coupling` 跨通道滞后依赖 | 某些通道变化先发生，另一些通道延迟响应 | 模型是否能学习先后关系和滞后传播 |
+| `coherent_regime_shift` 多通道同步状态切换 | 系统从一种状态切到另一种时多通道同时改变 | 模型是否能识别共同冲击和分布突变 |
+| `covariate_response` 已知未来协变量响应 | 预测目标受未来已知外部变量影响 | 模型是否真正使用 future_cov |
+| `trend` 趋势 | 单条序列存在上升/下降/衰减/变点 | 模型能否区分短期波动和长期趋势 |
+| `multi_seasonal` 多周期季节性 | 序列同时包含多个周期，幅度或相位可能漂移 | 模型能否捕捉多时间尺度的周期结构 |
+| `regime_switching` 状态切换 | 序列在不同状态间跳转 | 模型能否在分布改变后快速适应新状态 |
+| `long_memory_nonlinear` 长记忆与非线性 | 当前值受较远历史影响且非线性 | 模型能否利用长距离依赖和非线性动态 |
+| `intermittent_heteroskedastic` 间歇性与异方差 | 大部分时间低值偶尔突发峰值，噪声强度变化 | 模型能否处理稀疏、突发和不稳定噪声 |
+
+---
+
+## 附录：术语对照表
+
+| 设计术语 | 中文表达 | 含义 |
+|---------|---------|------|
+| Capability | 能力维度 | 要考察的预测能力类型，如 lead-lag、common factor、regime shift |
+| Capability Block | 能力测试块 | 某个能力维度下，带一组参数覆盖和样本集合的数据块 |
+| Track | 赛道 | 多个能力测试块组合成的一条评测赛道 |
+| Task | 任务 | 某模型在某次评测中针对某个能力测试块的结果集合 |
+| Shard | 数据片 | 一组参数完全固定的内部数据单元 |
+| Sample | 样本 | 模型实际看到的一道预测题，最小模型输入单元 |
+| Unit | 评测单元 | 某个模型在一次 benchmarking run 中的完整评测结果 |
+| Benchmarking Run | 评测执行 | 一次完整的评测流程 |
+| Ranking List | 榜单 | 某条 track 的模型排名 |
+| Report | 报告 | 评测结果的解释性产物 |
+| Anchor Profile | 锚定画像 | 真实数据结构分布的摘要 |
