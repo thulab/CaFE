@@ -4,7 +4,7 @@
 
 **输入材料：** `README.md` 与 `TSBenchmark 设计文档.assets/TSBenchmark 设计文档-1_1.jpg`
 
-**设计结论：** 本文档采用“双层定义”：先定义 TSBenchmark 的完整目标平台，再单独定义首期 `MVP` 范围。目标平台用于保留 README 中的长期架构与能力愿景；`MVP` 用于约束近期交付边界，避免首期实现范围失控。
+**设计结论：** 本文档采用“双层定义”：先定义 TSBenchmark 的完整目标平台，再定义可运行评测闭环的 `MVP` 范围。目标平台用于保留 README 中的长期架构与能力愿景；`MVP` 合并真实数据集加载与最小评测运行能力，必须能够完成 `Dataset Manifest -> Shard(real) -> Capability Block(真实) -> Track -> Benchmarking Run -> Metric -> Report -> Ranking List` 的完整链路。
 
 ## 1. 平台定义
 
@@ -77,32 +77,49 @@ TSBenchmark 是一个面向时间序列预测模型的动态、可控、可解�
 
 设计口径：请求逻辑上由 `Frontend` 或 `CLI` 进入 `Gateway` / `REST API`，再进入 `Core Module`。架构图中 `Gateway` 与 `Restful Module` 的箭头按部署连接理解，不作为反向调用约束。
 
-### 3.2 数据集与 Real Anchor 管理
+### 3.2 真实数据集加载与 Real Anchor 管理
 
-数据集功能域负责管理真实数据，但真实数据在 TSBenchmark 中不是直接复制成固定公开题库，而是作为结构参照系使用。
+数据集功能域负责管理真实数据的加载、评测使用和结构参照。这里必须区分三个概念：
+
+- `Dataset Manifest`：真实数据源的元数据描述，不是评测输入单元。
+- `Shard`：评测数据单元。一个真实数据集加载进入 TSBenchmark 后，就是一个真实数据 `Shard`。
+- `Capability Block(真实)`：承载真实数据 `Shard` 的特殊 `Capability Block`，表示这部分评测数据来自真实数据集，而不是生成器动态合成。
+
+因此，真实数据集不是额外的顶层评测实体。它进入评测体系时应落在现有层级中：
+
+```text
+Real Dataset
+-> Dataset Manifest
+-> Shard(real)
+-> Capability Block(真实)
+-> Track
+```
 
 目标功能包括：
 
-- 注册数据集 `Manifest`，记录 dataset ID、数据领域、时间频率、文件路径、时间列和 target columns。
-- 加载和查看本地或托管数据集。
-- 从真实 target 矩阵中抽取时间序列结构特征。
-- 构建 `Anchor Profile`，总结真实数据的结构分布。
+- 注册 `Dataset Manifest`，记录 dataset ID、数据领域、时间频率、文件路径、时间列和 target columns。
+- 加载和查看本地或托管真实数据集。
+- 将一个真实数据集加载为一个 `Shard(real)`，并挂载到 `Capability Block(真实)`。
+- 从 `Shard(real)` 切分符合统一 schema 的 `Sample`。
+- 从 `Shard(real)` 的 target 矩阵中抽取时间序列结构特征。
+- 构建 `Anchor Profile`，总结真实数据结构分布。
 - 使用 `Anchor Profile` 指导合成数据生成。
 - 在合成数据生成后重新抽取 realized features。
 - 计算有效性诊断指标，例如 support distance、prototype distance、violation rate 和 max violation。
 - 后续支持 `real probe track`，用于检查 synthetic anchor 数据上的模型排序是否与真实 probe 数据上的排序大致一致。
 
-这个功能域的目标是让评测样本在结构上“像真实数据”，但不复用真实数据中的具体未来值。
+设计口径：当真实数据作为评测数据直接参与 `Track` 时，它是 `Capability Block(真实)` 下的 `Shard(real)`；当真实数据用于指导合成数据时，系统从 `Shard(real)` 派生 `Anchor Profile`。这两种用途共享真实数据加载流程，但评测实体仍以 `Shard` 和 `Capability Block` 为准。
 
 ### 3.3 Capability 与数据生成
 
-`Capability Block` 是用户可感知、可操作的 benchmark 数据单元。一个 `Capability Block` 表示某个预测能力维度下的一组参数覆盖，它索引底层生成的 `Shard`，而 `Shard` 内包含具体 `Sample`。
+`Capability Block` 是用户可感知、可操作的 benchmark 数据单元。一个 `Capability Block` 表示某个预测能力维度下的一组参数覆盖，它索引底层 `Shard`，而 `Shard` 内包含具体 `Sample`。`Shard` 可以来自动态生成，也可以来自真实数据集加载。
 
 目标功能包括：
 
 - 定义 `Capability` 维度。
 - 配置 `Capability Block` 参数，包括 difficulty、horizon ratio、season length 或 dominant scale、target dimension、sample count、random seed 和 anchor mode。
 - 为固定参数组合生成 `Shard`。
+- 为真实数据创建 `Capability Block(真实)`，并关联加载得到的 `Shard(real)`。
 - 在统一预测数据格式下生成 `Sample`：
 
 ```text
@@ -117,6 +134,7 @@ future_cov: [horizon, future_cov_dim]
 - 单变量：`trend`、`multi_seasonal`、`regime_switching`、`long_memory_nonlinear`、`intermittent_heteroskedastic`。
 - 多变量：`common_factor`、`lead_lag_coupling`、`coherent_regime_shift`。
 - 协变量：`covariate_response`。
+- 真实数据：`Capability Block(真实)`，用于承载真实数据集加载得到的 `Shard(real)`。
 
 每条 `Sample` 需要同时保存执行数据和解释数据：
 
@@ -131,11 +149,12 @@ future_cov: [horizon, future_cov_dim]
 
 - 从选定的 `Capability Block` 创建 `Track`。
 - 支持预置 `Track`，例如 univariate core、multivariate core 和 covariate-aware track。
+- 支持包含 `Capability Block(真实)` 的真实数据评测 `Track`。
 - 支持管理员组装自定义 `Track`。
 - 在模型运行前，将 `Track` 物化为 benchmark 数据。
 - 保存 `Track` version、benchmark version、data version 和生成配置。
 
-`Track` 创建应发生在 `Capability Block` 层级。`Shard` 保持为内部复现、缓存和索引单元。
+`Track` 创建应发生在 `Capability Block` 层级。无论数据来自生成器还是来自真实数据集加载，`Track` 都不直接引用原始数据集文件，而是通过 `Capability Block` 间接引用其下的 `Shard`。
 
 ### 3.5 Model 管理与推理服务
 
@@ -160,6 +179,7 @@ future_cov: [horizon, future_cov_dim]
 - 通过选择一条 `Track`、benchmark/data version 和一个或多个模型创建 run。
 - 将 run 展开为每个模型一个 `Unit`。
 - 将每个 `Unit` 展开为按模型和 `Capability Block` 划分的 `Task`。
+- 对 `Capability Block(真实)` 下的多个 `Shard(real)` 分别评测，再对 shard 级指标取平均，形成 capability block / task 级指标。
 - 对 `Sample` 执行模型推理。
 - 记录预测结果、指标、日志、错误、跳过原因和 run 状态。
 - 支持按模型和 `Capability Block` 查看进度。
@@ -169,11 +189,12 @@ run 状态模型至少应支持：
 
 ```text
 created -> queued -> running -> succeeded
+                         |-> partial_succeeded
                          |-> failed
                          |-> cancelled
 ```
 
-部分失败应记录在 `Task` 或 `Sample` 层级。这样即使部分模型或任务失败，run 仍然可以产出可用报告。
+如果全部模型成功，run 为 `succeeded`；如果至少一个模型成功且至少一个模型失败，run 为 `partial_succeeded`；如果全部模型失败，run 为 `failed`。失败模型的 `Unit` / `Task` 保留错误原因，成功模型结果仍可进入基础 `Report` 和 `Ranking List`。
 
 ### 3.7 Metric 与评分
 
@@ -188,7 +209,7 @@ created -> queued -> running -> succeeded
 - 后续支持成本指标，包括 GPU time、memory usage、latency 和 throughput。
 - 后续支持合成数据有效性与 real-anchor alignment 指标。
 
-设计口径：`MVP` 榜单使用 MSE 和 MAE，因为这是当前已确认的近期指标。目标平台保留 metric registry，使后续指标扩展不需要改变核心实体模型。
+设计口径：`MVP` 支持 MSE 和 MAE，默认榜单指标不固定，由创建 `Track` 时选择 `primary_metric_id`。平台保留 metric registry，使后续 MASE、sMAPE、relative skill、runtime、cost 和 validity metrics 扩展不需要改变核心实体模型。
 
 ### 3.8 Report、Ranking 与解释
 
@@ -213,7 +234,7 @@ created -> queued -> running -> succeeded
 - 将历史最佳结果作为次级视图。
 - 链接到历史 `Benchmarking Run` 和 `Report`。
 
-设计口径：`Ranking List` 默认语义是“每个模型最新一次有效结果”；“最佳结果”是筛选项或次级 tab，不是主榜默认规则。
+设计口径：每条 `Track` 维护一个 `Ranking List`。榜单同时支持 `latest_valid_result` 和 `best_result` 两种策略，默认策略为 `latest_valid_result`；`metric` 和 `policy` 作为榜单查询或视图参数，而不是为每个 metric/policy 组合创建独立 `Ranking List`。
 
 ### 3.9 Sample Forecast 检查
 
@@ -232,11 +253,12 @@ created -> queued -> running -> succeeded
 
 | Entity | 定义 | 主要职责 |
 | --- | --- | --- |
-| Dataset Manifest | 真实数据源描述 | 记录数据源身份、领域、频率、路径、时间列和 target columns |
-| Anchor Profile | 真实数据结构分布摘要 | 指导并验证生成的 benchmark 数据 |
+| Dataset Manifest | 真实数据源描述 | 记录数据源身份、领域、频率、路径、时间列和 target columns；不作为评测输入单元 |
+| Anchor Profile | 从真实 `Shard` 派生的结构分布摘要 | 指导并验证生成的 benchmark 数据 |
 | Capability | 预测能力类型 | 命名 benchmark 要测试的能力 |
 | Capability Block | 某个能力及其参数覆盖下的用户可操作数据块 | 组织 `Shard` 和适用 `Metric` |
-| Shard | 固定参数组合下生成的数据单元 | 缓存可复现的 `Sample` |
+| Capability Block(真实) | 承载真实数据的特殊 `Capability Block` | 组织真实数据集加载得到的 `Shard(real)` |
+| Shard | 固定参数组合下的数据单元 | 缓存可复现的 `Sample`；对真实数据而言，一个真实数据集加载后就是一个 `Shard(real)` |
 | Sample | 最小模型输入与答案单元 | 保存 history、future、covariates、latent parameters、realized features 和 metrics |
 | Track | 多个 `Capability Block` 的组合 | 定义一条评测赛道 |
 | Model | 预测后端 | 声明模型能力和推理 endpoint |
@@ -250,7 +272,10 @@ created -> queued -> running -> succeeded
 基数口径：
 
 - 一个 `Track` 包含一个或多个 `Capability Block`。
-- 一个 `Capability Block` 索引一个或多个 `Shard`。
+- 一个 `Capability Block` 属于且只属于一个 `Track`。
+- 一个 `Capability Block(真实)` 包含一个或多个 `Shard(real)`。
+- 一个真实数据集加载后对应且只对应一个 `Shard(real)`。
+- `Shard(real)` 必须归属于且只归属于一个 `Capability Block(真实)`，再通过该 `Capability Block` 进入 `Track`。
 - 一个 `Shard` 包含一个或多个 `Sample`。
 - 一个 `Benchmarking Run` 选择且只选择一条 `Track`，并选择一个或多个模型。
 - 一个 `Benchmarking Run` 为每个被选模型产生一个 `Unit`。
@@ -283,70 +308,86 @@ Frontend / CLI
 - `Timer/model service`：模型加载和推理执行。
 - `Storage layer`：元数据、生成数据、预测结果、报告和榜单快照。
 
-## 6. 首期 MVP 范围
+## 6. MVP 范围
 
-`MVP` 实现的是能够展示完整评测闭环的最小平台版本。
+`MVP` 必须能够完成真实数据集上的最小评测闭环：先将真实数据集加载为 `Shard(real)`，挂载到 `Capability Block(真实)` 并组成 `Track`；再选择模型创建 `Benchmarking Run`，执行推理，计算 MSE/MAE，生成基础 `Report`，并更新 `Ranking List`。
 
 ### 6.1 MVP 范围内
 
 `MVP` 功能范围：
 
-- 一个受管数据集或一个数据源家族。
-- 只支持单变量预测。
+- 注册一个真实数据集或一个数据源家族的 `Dataset Manifest`。
+- 校验真实数据集的基本结构，包括时间列、target columns、时间顺序、频率、缺失值和可切分长度。
+- 将一个真实数据集加载为一个 `Shard(real)`；同一个 `Dataset Manifest` 不允许重新加载，如需变更列配置、切分参数或文件内容，必须创建新的 `Dataset Manifest`。
+- 从 `Shard(real)` 切分符合统一 schema 的 `Sample`，至少包含 `target_history` 和 `target_future`；如果没有 covariate，则 `history_cov` 和 `future_cov` 为空维度。`MVP` 先物化每条 sample 的数组产物，同时保留 `SampleIndex` 的切片位置，后续可优化为按需读取。
+- 创建或选择 `Capability Block(真实)`。
+- 将 `Shard(real)` 挂载到 `Capability Block(真实)`。
+- 创建包含 `Capability Block(真实)` 的基础 `Track`。
 - 注册当前 README 确认范围中的 5 个模型。
-- 以 MSE 和 MAE 作为主指标。
-- 支持使用受限的单变量 `Capability Block` 创建 `Track`。
+- 5 个模型统一通过同一个 `Timer/model service` 接入；当前阶段可以先使用可复现 stub 模拟外部 API 服务，stub forecast 由 `model_id + sample_id + seed` 决定。
 - 支持选择一条 `Track` 和一个或多个模型创建 `Benchmarking Run`。
-- 支持查看 run 进度和结果状态。
-- 提供某条 `Track` 的 `Ranking List` 页面。
-- 提供 run 或 track 的 `Report` 页面。
-- 提供 `Sample Forecast` 页面，展示 history、ground truth、forecast 和 sample metric。
-- 提供围绕 track、model、run、unit、task、report、ranking list 的 `REST API`。
+- 支持 run 进度、成功/失败状态、错误原因和结果捕获。
+- 对 `Sample` 执行模型推理并保存 forecast。
+- 支持 MSE 和 MAE，并在创建 `Track` 时选择默认 `primary_metric_id`。
+- 生成 `Unit` 和 `Task`。
+- 生成基础 `Report`。
+- 更新某条 `Track` 的 `Ranking List`，默认使用每个模型最新一次有效结果。
+- 提供 `Sample Forecast Page`，展示 history、ground truth、forecast 和 sample metric。
+- 提供围绕 dataset manifest、shard、capability block、track、model、run、unit、task、metric、report、ranking list 和 sample forecast 的 `REST API`。
 
 `MVP` 页面范围：
 
-- `Track Builder`。
-- `Benchmarking Run Page`。
-- `Track Ranking Page`。
-- `Report Page`。
-- `Sample Forecast Page`。
+- `Dataset Manifest Page`：注册和查看真实数据源元数据。
+- `Real Shard Page`：查看 `Shard(real)` 的加载状态、行数、target columns、切分配置和样本数量。
+- `Capability Block(真实) Page`：查看真实能力块与其下 `Shard(real)` 的关系。
+- `Track Builder`：支持把 `Capability Block(真实)` 纳入 `Track`。
+- `Benchmarking Run Page`：选择 `Track` 与模型，启动 run，查看进度和错误。
+- `Track Ranking Page`：按 MSE 或 MAE 查看模型排名。
+- `Report Page`：展示基础模型指标表和任务结果摘要。
+- `Sample Forecast Page`：展示 `target_history`、`target_future`、forecast 和 sample-level MSE/MAE。
 
 `MVP` 后端范围：
 
-- 持久化 track、capability block、model、benchmarking run、unit、task、metric、report 和 ranking list 元数据。
-- 对生成数据、评测输出、报告和可视化使用现有文件产物结构，或增加一层轻量持久化封装。
+- 持久化 dataset manifest、shard、capability block、track、model、benchmarking run、unit、task、metric、report、ranking list 和 sample index 元数据。
+- 记录 `Shard(real)` 与 `Dataset Manifest`、`Capability Block(真实)` 的关系。
+- 记录 `Shard(real)` 的加载状态、校验结果、样本切分参数和 sample index。
+- 记录模型元数据、模型可用状态和推理 endpoint 或 adapter 标识。
+- 记录 run 状态、task 状态、forecast 产物引用、metric 结果、report 产物引用和 ranking snapshot。
+- 对真实数据文件、物化 sample、forecast、metric、报告和榜单快照使用现有文件产物结构，或增加一层轻量持久化封装。
 - 通过稳定逻辑实体隐藏底层存储实现。
 
 ### 6.2 MVP 范围外
 
 `MVP` 暂不包含：
 
+- 动态合成数据生成。
 - 面向产品使用的多变量 benchmark 生成与评测流程。
 - 面向产品使用的协变量 benchmark 生成与评测流程。
-- 完整的 real-anchor profile 管理 UI。
+- 完整的 real-anchor profile 管理 UI；`MVP` 只保留后续从 `Shard(real)` 派生 `Anchor Profile` 的接口边界。
 - `real probe track` 验证。
 - 将大规模 IoTDB 或 TsFile 存储迁移作为首期强依赖。
-- 除基础 runtime 之外的 GPU 成本指标。
+- GPU 时间、显存、吞吐等完整成本指标。
+- MASE、sMAPE、relative skill 等高级指标。
 - 公开自助式模型或数据集上传审批流程。
 - 多租户计费、配额管理和高级 SaaS 管理功能。
 
-这些排除项不否定目标平台能力，只用于明确首期实现边界。
+这些排除项不否定目标平台能力，只用于明确 `MVP` 实现边界。
 
 ## 7. 目标平台与 MVP 差异
 
 | 领域 | 目标平台 | MVP |
 | --- | --- | --- |
-| 用户 | 一般用户、管理员、CLI 操作者、系统集成方 | 一般用户和管理员 |
+| 用户 | 一般用户、管理员、CLI 操作者、系统集成方 | 管理员和一般用户 |
 | 接入 | Frontend、CLI、SaaS Gateway、REST API | Frontend 和 REST API；CLI 可以沿用现有本地能力 |
-| 数据源 | 多数据集、Manifest、Anchor Profile、real probe track | 一个数据集或一个数据源家族 |
-| 任务类型 | 单变量、多变量、协变量 | 单变量 |
-| Capability Block | 完整能力目录 | 受限单变量能力集合 |
-| 数据生成 | real anchor 指导的动态生成与有效性诊断 | 记录参数的单变量动态生成 |
+| 数据源 | 多数据集、`Dataset Manifest`、`Shard(real)`、Anchor Profile、real probe track | 一个真实数据集或数据源家族，加载为 `Shard(real)` |
+| 任务类型 | 单变量、多变量、协变量 | 单变量真实数据评测 |
+| Capability Block | 完整能力目录，包括 `Capability Block(真实)` | `Track 1 -> N Capability Block`，其中 `Capability Block(真实) 1 -> N Shard(real)` |
+| 数据生成与加载 | real anchor 指导的动态生成、真实数据集加载与有效性诊断 | 真实数据集加载、校验、切分、评测和 sample forecast |
 | 模型 | 多模型服务 adapter 注册体系 | 当前确认范围中的 5 个模型 |
-| Metric | MSE、MAE、MASE、sMAPE、relative skill、runtime、cost、validity metrics | MSE 和 MAE |
-| Run 编排 | 队列、取消、部分失败、日志、产物管理 | 创建 run、查看进度、成功/失败状态、结果捕获 |
-| Ranking | 默认最新有效结果，可切换最佳结果和历史记录 | 默认最新有效结果 |
-| Report | 能力、difficulty、horizon、validity、sample 级完整分析 | 汇总表、指标表、基础样本下钻 |
+| Metric | MSE、MAE、MASE、sMAPE、relative skill、runtime、cost、validity metrics | MSE 和 MAE；默认榜单指标由 `Track.primary_metric_id` 决定 |
+| Run 编排 | 队列、取消、部分失败、日志、产物管理 | 创建 run、查看进度、成功/失败状态、错误原因和结果捕获 |
+| Ranking | 默认最新有效结果，可切换最佳结果和历史记录 | 每条 `Track` 一个 `Ranking List`，支持最新有效结果和历史最好结果，默认最新有效结果 |
+| Report | 能力、difficulty、horizon、validity、sample 级完整分析 | 基础模型指标表、task 摘要和 sample forecast 链接 |
 | 存储 | 元数据存储 + 可扩展数据/产物存储，未来接入 IoTDB/TsFile | 文件产物或轻量持久化封装 |
 | 模型服务 | 通用推理服务抽象，Timer 作为首个实现 | 面向 5 个 MVP 模型的 Timer/model service 集成 |
 
@@ -356,28 +397,34 @@ Frontend / CLI
 
 ### 8.1 MVP 场景
 
-1. 管理员从可用 `Capability Block` 创建一条单变量 `Track`。
-2. 系统将该 `Track` 物化为 benchmark 数据。
-3. 管理员选择这条 `Track` 和 5 个已注册模型。
-4. 系统创建一个 `Benchmarking Run`。
-5. run 通过模型服务执行推理。
-6. 系统记录预测结果并计算 MSE 和 MAE。
-7. 系统生成 `Unit` 和 `Task` 结果。
-8. 系统生成 `Report`。
-9. 系统使用每个模型最新一次有效结果更新 `Track Ranking List`。
-10. 一般用户打开榜单页面，查看排序结果，进入报告，并下钻到 `Sample Forecast`。
+1. 管理员注册一个真实数据集 `Dataset Manifest`。
+2. 系统将该真实数据集加载为 `Shard(real)`。
+3. 系统校验时间列、target columns、时间顺序、频率、缺失值和可切分长度。
+4. 系统从 `Shard(real)` 切分出符合统一 schema 的 `Sample`，并物化 sample 数组产物。
+5. 管理员创建或选择 `Capability Block(真实)`，并关联该 `Shard(real)`。
+6. 管理员创建一条包含 `Capability Block(真实)` 的基础 `Track`。
+7. 管理员注册或选择当前支持的模型。
+8. 管理员基于该 `Track` 和模型集合创建 `Benchmarking Run`。
+9. 系统展开 `Unit` 和 `Task`。
+10. 系统对 `Sample` 执行模型推理并保存 forecast。
+11. 系统保存 sample/task/unit 粒度的 MSE 和 MAE；如果 `Capability Block(真实)` 下有多个 `Shard(real)`，先计算 shard 级结果，再对 shard 结果取平均形成 task/unit 聚合。
+12. 系统生成基础 `Report`。
+13. 系统使用每个模型最新一次有效结果更新 `Ranking List`。
+14. 一般用户打开 `Track Ranking Page` 查看榜单。
+15. 一般用户从榜单进入 `Report`，再下钻到 `Sample Forecast Page` 查看 history、ground truth、forecast 和 sample metric。
 
 ### 8.2 目标平台场景
 
-1. 管理员注册一个真实数据集 `Manifest`。
-2. 系统抽取结构特征并构建 `Anchor Profile`。
-3. 管理员创建一条覆盖单变量、多变量和协变量 `Capability Block` 的 `Track`。
-4. 系统生成 anchor-guided `Shard` 和 `Sample`。
-5. 管理员选择多个声明能力兼容的模型。
-6. 系统执行评测，记录预测结果、指标、runtime、错误和产物。
-7. `Report` 按模型、能力维度、difficulty、horizon、sample 和有效性诊断解释结果。
-8. `Ranking List` 更新最新有效成绩并链接到历史 run。
-9. 用户检查某个模型为什么在某个能力和样本上表现好或差。
+1. 管理员注册一个真实数据集 `Dataset Manifest`。
+2. 系统将真实数据集加载为 `Shard(real)`，并挂载到 `Capability Block(真实)`。
+3. 系统从 `Shard(real)` 抽取结构特征并构建 `Anchor Profile`。
+4. 管理员创建一条覆盖单变量、多变量、协变量和真实数据 `Capability Block` 的 `Track`。
+5. 系统生成 anchor-guided synthetic `Shard` 和 `Sample`，并保留可直接评测的 `Shard(real)`。
+6. 管理员选择多个声明能力兼容的模型。
+7. 系统执行评测，记录预测结果、指标、runtime、错误和产物。
+8. `Report` 按模型、能力维度、difficulty、horizon、sample 和有效性诊断解释结果。
+9. `Ranking List` 更新最新有效成绩并链接到历史 run。
+10. 用户检查某个模型为什么在某个能力和样本上表现好或差。
 
 ## 9. 架构约束
 
@@ -385,15 +432,16 @@ Frontend / CLI
 
 - `Capability Block`、`Track`、`Benchmarking Run`、`Unit`、`Task`、`Report` 和 `Ranking List` 应成为后端一等实体。
 - 即使物理存储改变，`Shard` 和 `Sample` 也应保持为稳定的数据概念。
+- 真实数据集加载后应建模为 `Shard(real)`，并归属于 `Capability Block(真实)`；不要把真实数据集作为绕过 `Capability Block` 的独立评测入口。同一个 `Dataset Manifest` 与 `Shard(real)` 在 `MVP` 中一对一，重新加载必须创建新的 `Dataset Manifest`。
 - 统一 `Sample` schema 必须在文件存储、`REST API` 和模型服务 adapter 之间保持稳定。
 - 模型推理边界应基于 adapter，而不是在领域模型中绑定到 `Timer Service`。
-- `Ranking List` 语义必须明确：默认使用最新有效结果，最佳结果作为可选视图。
-- `MVP` 在单变量端到端闭环完成前，不应提前建设多变量、协变量、real-anchor UI 或大规模存储迁移。
+- `Ranking List` 语义必须明确：每条 `Track` 一个榜单，支持最新有效结果和历史最好结果，默认使用最新有效结果；默认排序指标由 `Track.primary_metric_id` 决定。
+- `MVP` 必须包含真实数据加载、`Shard(real)`、`Capability Block(真实)`、基础 `Track`、模型评测、MSE/MAE、基础 `Report`、`Ranking List` 和 `Sample Forecast`；不要提前建设动态合成数据、多变量、协变量、real-anchor UI、高级指标或大规模存储迁移。
 
 ## 10. 自查
 
 - 文档没有遗留占位需求。
-- 文档已明确区分目标平台和 `MVP` 范围。
+- 文档已明确区分目标平台和合并后的 `MVP` 范围。
 - 来源材料中的歧义已转化为明确设计口径。
 - 功能模型保留了 README 中的核心概念和架构图中的模块。
-- `MVP` 范围足够小，可以作为下一步实施计划的输入。
+- `MVP` 范围足够明确，可以作为下一步实体结构设计和实施计划的输入。
