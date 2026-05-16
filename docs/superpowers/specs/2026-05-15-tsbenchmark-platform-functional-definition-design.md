@@ -356,6 +356,31 @@ Frontend / CLI
 - 对真实数据文件、物化 sample、forecast、metric、报告和榜单快照使用现有文件产物结构，或增加一层轻量持久化封装。
 - 通过稳定逻辑实体隐藏底层存储实现。
 
+`MVP` 工程实现口径：
+
+- 后端使用 `FastAPI + SQLite + SQLModel`。
+- 前端使用 `Vue + Vite`。
+- 代码目录按 `backend/`、`frontend/`、`docs/` 组织。
+- 所有主键 ID 使用 `UUID4`。
+- 真实数据集 `MVP` 只支持 `CSV` 文件；代码设计必须通过 `DatasetReader` 接口隔离读取逻辑，首个实现为 `CsvDatasetReader`，后续可以增加 `TsFileDatasetReader`。
+- `CSV` 数据集的 `time_column` 和 `target_columns` 必须由用户在 UI/API 中显式填写，不在 `MVP` 中自动猜测。
+- 浏览器上传真实数据文件，后端通过 `UploadFile` 接收并保存为平台托管文件；对应 `DatasetManifest.source_type = managed_file`。
+- 运行目录可配置，默认使用：
+
+```text
+runtime/
+  uploads/
+  samples/
+  forecasts/
+  reports/
+```
+
+- 上传文件默认保存到 `runtime/uploads/`。
+- 物化 sample 采用 `JSONL`，默认路径为 `runtime/samples/{shard_id}.jsonl`。
+- forecast 采用 `JSONL`，默认路径为 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`。
+- `BenchmarkingRun` 使用后端后台线程异步执行；`POST /benchmarking-runs` 返回 `run_id`，前端每 5 秒轮询状态。
+- 测试范围至少覆盖后端单元测试和 API 测试，包括 CSV 上传、`DatasetManifest` 创建、`Shard(real)` 加载、sample `JSONL` 物化、`Track` 创建、`BenchmarkingRun` 异步执行、可复现 stub forecast、MSE/MAE 计算、`RankingList` 更新和 `Sample Forecast` 查询。
+
 ### 6.2 MVP 范围外
 
 `MVP` 暂不包含：
@@ -379,16 +404,16 @@ Frontend / CLI
 | --- | --- | --- |
 | 用户 | 一般用户、管理员、CLI 操作者、系统集成方 | 管理员和一般用户 |
 | 接入 | Frontend、CLI、SaaS Gateway、REST API | Frontend 和 REST API；CLI 可以沿用现有本地能力 |
-| 数据源 | 多数据集、`Dataset Manifest`、`Shard(real)`、Anchor Profile、real probe track | 一个真实数据集或数据源家族，加载为 `Shard(real)` |
+| 数据源 | 多数据集、`Dataset Manifest`、`Shard(real)`、Anchor Profile、real probe track | 一个真实数据集或数据源家族，`CSV` 上传后加载为 `Shard(real)` |
 | 任务类型 | 单变量、多变量、协变量 | 单变量真实数据评测 |
 | Capability Block | 完整能力目录，包括 `Capability Block(真实)` | `Track 1 -> N Capability Block`，其中 `Capability Block(真实) 1 -> N Shard(real)` |
 | 数据生成与加载 | real anchor 指导的动态生成、真实数据集加载与有效性诊断 | 真实数据集加载、校验、切分、评测和 sample forecast |
 | 模型 | 多模型服务 adapter 注册体系 | 当前确认范围中的 5 个模型 |
 | Metric | MSE、MAE、MASE、sMAPE、relative skill、runtime、cost、validity metrics | MSE 和 MAE；默认榜单指标由 `Track.primary_metric_id` 决定 |
-| Run 编排 | 队列、取消、部分失败、日志、产物管理 | 创建 run、查看进度、成功/失败状态、错误原因和结果捕获 |
+| Run 编排 | 队列、取消、部分失败、日志、产物管理 | 后台线程异步执行，创建 run、查看进度、成功/失败状态、错误原因和结果捕获 |
 | Ranking | 默认最新有效结果，可切换最佳结果和历史记录 | 每条 `Track` 一个 `Ranking List`，支持最新有效结果和历史最好结果，默认最新有效结果 |
 | Report | 能力、difficulty、horizon、validity、sample 级完整分析 | 基础模型指标表、task 摘要和 sample forecast 链接 |
-| 存储 | 元数据存储 + 可扩展数据/产物存储，未来接入 IoTDB/TsFile | 文件产物或轻量持久化封装 |
+| 存储 | 元数据存储 + 可扩展数据/产物存储，未来接入 IoTDB/TsFile | SQLite 元数据 + runtime 文件产物，sample 和 forecast 使用 JSONL |
 | 模型服务 | 通用推理服务抽象，Timer 作为首个实现 | 面向 5 个 MVP 模型的 Timer/model service 集成 |
 
 ## 8. 功能验收标准
@@ -433,6 +458,10 @@ Frontend / CLI
 - `Capability Block`、`Track`、`Benchmarking Run`、`Unit`、`Task`、`Report` 和 `Ranking List` 应成为后端一等实体。
 - 即使物理存储改变，`Shard` 和 `Sample` 也应保持为稳定的数据概念。
 - 真实数据集加载后应建模为 `Shard(real)`，并归属于 `Capability Block(真实)`；不要把真实数据集作为绕过 `Capability Block` 的独立评测入口。同一个 `Dataset Manifest` 与 `Shard(real)` 在 `MVP` 中一对一，重新加载必须创建新的 `Dataset Manifest`。
+- `MVP` 后端实现边界为 `FastAPI + SQLite + SQLModel`，前端实现边界为 `Vue + Vite`，代码按 `backend/`、`frontend/`、`docs/` 组织。
+- `MVP` 只支持 `CSV` 真实数据集，但读取逻辑必须经过 `DatasetReader` 接口，后续通过增加 `TsFileDatasetReader` 支持 TsFile。
+- `MVP` 的上传、sample、forecast 和 report 产物默认使用 `runtime/` 下的资源类型目录，sample 和 forecast 采用 `JSONL`。
+- `Benchmarking Run` 在 `MVP` 中使用后台线程异步执行，前端按 5 秒轮询状态。
 - 统一 `Sample` schema 必须在文件存储、`REST API` 和模型服务 adapter 之间保持稳定。
 - 模型推理边界应基于 adapter，而不是在领域模型中绑定到 `Timer Service`。
 - `Ranking List` 语义必须明确：每条 `Track` 一个榜单，支持最新有效结果和历史最好结果，默认使用最新有效结果；默认排序指标由 `Track.primary_metric_id` 决定。
