@@ -189,6 +189,28 @@ TSBenchmark 是一项针对时间序列预测模型的动态评测平台。该�
 | Track | 赛道 | 多个能力测试块组合成的一条评测赛道。 |
 | Task | 任务 | 某模型在某次评测中针对某个能力测试块的结果集合。 |
 
+## 6. 本地启停
+
+当前 MVP 可以通过脚本统一启动、停止和查看前后端状态：
+
+```bash
+./scripts/start-system.sh
+./scripts/status-system.sh
+./scripts/stop-system.sh
+```
+
+默认端口：
+
+- 后端：`http://127.0.0.1:8000`
+- 前端：`http://127.0.0.1:5173`
+
+脚本会把 PID 和日志写到 `.tsbenchmark-system/`。可用环境变量覆盖默认行为：
+
+```bash
+TSBENCHMARK_BACKEND_PORT=8010 TSBENCHMARK_FRONTEND_PORT=5174 ./scripts/start-system.sh
+TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
+```
+
 ### Shard
 
 Shard 是内部数据片，表示一组参数完全固定的数据单元。Shard 不直接暴露给普通用户作为主要操作对象。它用于缓存、索引、复现和追踪。一个 shard 包含多条 sample，这些 sample 共享同一组固定生成参数，例如：

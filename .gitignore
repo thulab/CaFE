@@ -1,20 +1,12 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.coverage
-.venv/
-venv/
-.DS_Store
+*.DS_Store
 .idea/
-
-# Local design and discussion artifacts
-detail.pdf
-paper.png
-prompt.md
-
-# Runtime outputs
-runtime/generated/
-runtime/system/
+.tsbenchmark-system/
+backend/.venv/
+backend/.pytest_cache/
+backend/**/__pycache__/
+backend/runtime/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+runtime/

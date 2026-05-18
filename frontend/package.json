@@ -1,0 +1,25 @@
+{
+  "name": "tsbenchmark-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "test": "vitest run",
+    "test:e2e": "vitest run src/tests/e2e-smoke.test.ts"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "vite": "^7.0.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "@testing-library/vue": "^8.1.0",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^27.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0",
+    "vue-tsc": "^2.2.0"
+  }
+}
