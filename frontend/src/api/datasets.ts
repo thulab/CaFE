@@ -1,5 +1,14 @@
 import { apiRequest } from './client';
-import type { DatasetLoadJobCreateDTO, DatasetLoadJobDTO, DatasetManifestCreateDTO, UploadPreviewDTO } from './types';
+import type {
+  DatasetLoadJobCreateDTO,
+  DatasetLoadJobDetailDTO,
+  DatasetLoadJobDTO,
+  DatasetManifestCreateDTO,
+  DatasetManifestDTO,
+  ShardDTO,
+  ShardSamplesDTO,
+  UploadPreviewDTO
+} from './types';
 
 export function uploadDataset(file: File): Promise<UploadPreviewDTO> {
   const body = new FormData();
@@ -15,6 +24,18 @@ export function createLoadJob(payload: DatasetLoadJobCreateDTO): Promise<Dataset
   return apiRequest<DatasetLoadJobDTO>('/dataset-load-jobs', { method: 'POST', body: JSON.stringify(payload) });
 }
 
-export function getShardSamples(shardId: string) {
-  return apiRequest<{ items: Array<{ sample_id: string }> }>(`/shards/${shardId}/samples`);
+export function getDatasetManifest(datasetManifestId: string): Promise<DatasetManifestDTO> {
+  return apiRequest<DatasetManifestDTO>(`/dataset-manifests/${datasetManifestId}`);
+}
+
+export function getLoadJob(loadJobId: string): Promise<DatasetLoadJobDetailDTO> {
+  return apiRequest<DatasetLoadJobDetailDTO>(`/dataset-load-jobs/${loadJobId}`);
+}
+
+export function getShard(shardId: string): Promise<ShardDTO> {
+  return apiRequest<ShardDTO>(`/shards/${shardId}`);
+}
+
+export function getShardSamples(shardId: string): Promise<ShardSamplesDTO> {
+  return apiRequest<ShardSamplesDTO>(`/shards/${shardId}/samples`);
 }

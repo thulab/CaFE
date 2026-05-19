@@ -43,6 +43,43 @@ tsbenchmark_remove_stale_pid() {
   fi
 }
 
+tsbenchmark_node_version_supported() {
+  local version="${1#v}"
+  local major minor patch
+  IFS=. read -r major minor patch <<<"$version"
+
+  if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ ]]; then
+    return 1
+  fi
+
+  (( major == 20 && minor >= 19 )) || (( major == 22 && minor >= 12 )) || (( major > 22 ))
+}
+
+tsbenchmark_require_frontend_runtime() {
+  local node_version
+
+  if [[ -n "${TSBENCHMARK_FRONTEND_CMD:-}" ]]; then
+    return 0
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js 20.19+ or 22.12+ is required for the Vue/Vite frontend; node was not found." >&2
+    return 1
+  fi
+
+  node_version="$(node --version 2>/dev/null || true)"
+  if ! tsbenchmark_node_version_supported "$node_version"; then
+    echo "Node.js 20.19+ or 22.12+ is required for the Vue/Vite frontend; found ${node_version:-unknown}." >&2
+    echo "Install a supported Node.js version, then retry ./scripts/start-system.sh." >&2
+    return 1
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is required to install and run the Vue/Vite frontend; npm was not found." >&2
+    return 1
+  fi
+}
+
 tsbenchmark_backend_cmd() {
   if [[ -n "${TSBENCHMARK_BACKEND_CMD:-}" ]]; then
     printf '%s\n' "$TSBENCHMARK_BACKEND_CMD"

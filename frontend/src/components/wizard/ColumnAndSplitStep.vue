@@ -1,22 +1,38 @@
 <template>
-  <section>
-    <label>Time
-      <select v-model="timeColumn">
+  <section class="step-body">
+    <div class="field-stack">
+      <label for="time-column">Time</label>
+      <select id="time-column" v-model="timeColumn">
         <option v-for="column in columns" :key="column" :value="column">{{ column }}</option>
       </select>
-    </label>
-    <fieldset>
+      <p class="field-help">Use the column that orders observations over time.</p>
+    </div>
+
+    <fieldset class="field-stack">
       <legend>Target</legend>
-      <label v-for="column in columns" :key="column">
+      <div class="checkbox-grid">
+        <label v-for="column in columns" :key="column" class="checkbox-row">
         <input v-model="targets" type="checkbox" :value="column" />
         {{ column }}
-      </label>
+        </label>
+      </div>
     </fieldset>
-    <label>Context <input v-model.number="context" aria-label="Context" type="number" min="1" /></label>
-    <label>Horizon <input v-model.number="horizon" aria-label="Horizon" type="number" min="1" /></label>
-    <label>Stride <input v-model.number="stride" aria-label="Stride" type="number" min="1" /></label>
-    <p v-if="error" role="alert">{{ error }}</p>
-    <button @click="load">Load shard</button>
+
+    <div class="form-grid">
+      <label>Context <input v-model.number="context" aria-label="Context" type="number" min="1" /></label>
+      <label>Horizon <input v-model.number="horizon" aria-label="Horizon" type="number" min="1" /></label>
+      <label>Stride <input v-model.number="stride" aria-label="Stride" type="number" min="1" /></label>
+    </div>
+
+    <p v-if="error" class="alert" role="alert">{{ error }}</p>
+    <div class="action-row">
+      <button @click="load">Load shard</button>
+      <p class="status-line">{{ wizardState.shardId ? 'Shard configuration saved' : 'Ready to create dataset shard' }}</p>
+    </div>
+    <div v-if="wizardState.manifestId || wizardState.loadJobId" class="resource-links" aria-label="Dataset view links">
+      <a v-if="wizardState.manifestId" class="text-link" :href="`#/datasets/${wizardState.manifestId}`">Dataset manifest</a>
+      <a v-if="wizardState.loadJobId" class="text-link" :href="`#/load-jobs/${wizardState.loadJobId}`">Load job</a>
+    </div>
   </section>
 </template>
 
@@ -56,6 +72,7 @@ async function load() {
       dataset_manifest_id: manifest.dataset_manifest_id,
       split_config: { context_length: context.value, horizon: horizon.value, stride: stride.value }
     });
+    wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';
     error.value = '';
   } catch (caught) {

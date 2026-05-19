@@ -1,6 +1,9 @@
 <template>
-  <section>
-    <p>{{ status }}</p>
+  <section class="step-body">
+    <p class="status-line">{{ status }}</p>
+    <div v-if="wizardState.shardId" class="resource-links" aria-label="Shard view links">
+      <a class="text-link" :href="`#/shards/${wizardState.shardId}`">Shard</a>
+    </div>
   </section>
 </template>
 

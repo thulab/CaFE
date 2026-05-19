@@ -1,11 +1,20 @@
 <template>
-  <section>
-    <label v-for="model in models" :key="model.model_id">
-      <input v-model="selectedIds" type="checkbox" :value="model.model_id" />
-      {{ model.name }}
-    </label>
-    <button :disabled="selectedIds.length === 0" @click="run">Run</button>
-    <p>{{ status }}</p>
+  <section class="step-body">
+    <div class="model-list" aria-label="Available models">
+      <label v-for="model in models" :key="model.model_id" class="model-row">
+        <input v-model="selectedIds" type="checkbox" :value="model.model_id" />
+        {{ model.name }}
+      </label>
+      <p v-if="models.length === 0" class="empty-state">Loading model adapters...</p>
+    </div>
+
+    <div class="action-row">
+      <button :disabled="selectedIds.length === 0 || !wizardState.trackId" @click="run">Run</button>
+      <p class="status-line">{{ status }}</p>
+    </div>
+    <div v-if="wizardState.runId" class="resource-links" aria-label="Run view links">
+      <a class="text-link" :href="`#/runs/${wizardState.runId}`">Run</a>
+    </div>
   </section>
 </template>
 
@@ -27,6 +36,7 @@ onMounted(async () => {
 onBeforeUnmount(() => stopPolling());
 
 async function run() {
+  stopPolling();
   const created = await createRun({ track_id: wizardState.trackId, model_ids: selectedIds.value });
   wizardState.runId = created.benchmarking_run_id;
   status.value = created.status;

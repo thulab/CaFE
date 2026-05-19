@@ -193,6 +193,8 @@ TSBenchmark 是一项针对时间序列预测模型的动态评测平台。该�
 
 当前 MVP 可以通过脚本统一启动、停止和查看前后端状态：
 
+前置要求：已安装 `uv`、`npm`，且 Node.js 版本为 `20.19+` 或 `22.12+`。
+
 ```bash
 ./scripts/start-system.sh
 ./scripts/status-system.sh

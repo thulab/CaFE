@@ -5,6 +5,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/system-common.sh"
 
 mkdir -p "$TSBENCHMARK_SYSTEM_DIR"
 
+tsbenchmark_require_frontend_runtime
+
 start_service() {
   local service="$1"
   local command="$2"
@@ -20,7 +22,7 @@ start_service() {
   log_file="$(tsbenchmark_log_file "$service")"
   : >"$log_file"
 
-  nohup bash -lc "$command" >>"$log_file" 2>&1 &
+  nohup bash -c "$command" >>"$log_file" 2>&1 &
   pid="$!"
   echo "$pid" >"$pid_file"
 

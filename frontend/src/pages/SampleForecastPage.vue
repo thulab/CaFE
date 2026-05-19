@@ -1,8 +1,25 @@
 <template>
-  <main v-if="sample">
-    <ForecastChart :sample="sample" />
-    <SampleMetricTable :models="sample.models" />
-    <p v-for="model in failedModels" :key="model.model_id">Error: {{ model.error_message || model.status }}</p>
+  <main class="page-shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Sample forecast</p>
+        <h1>Forecast comparison</h1>
+        <p class="page-subtitle">Inspect target history, ground truth, model forecasts, and per-sample metrics.</p>
+      </div>
+    </header>
+
+    <p v-if="!sample" class="status-line">Loading sample forecast...</p>
+    <section v-if="sample" class="report-sections">
+      <div class="page-card">
+        <ForecastChart :sample="sample" />
+      </div>
+      <div class="page-card">
+        <SampleMetricTable :models="sample.models" />
+      </div>
+      <p v-for="model in failedModels" :key="model.model_id" class="alert">
+        {{ model.model_name || model.model_id }}: {{ model.error_message || model.status }}
+      </p>
+    </section>
   </main>
 </template>
 

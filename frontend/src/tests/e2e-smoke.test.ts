@@ -9,11 +9,13 @@ describe('frontend smoke flow', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders the evaluation wizard shell and model-backed run controls', async () => {
+  it('renders the guided workbench shell and model-backed run controls', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [{ model_id: 'm1', name: 'Timer 3.5', adapter_type: 'timer_service' }] }), { status: 200 }));
 
     render(App);
 
+    expect(screen.getByRole('heading', { name: 'Guided benchmark workbench' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Upload CSV' })).toBeTruthy();
     expect(screen.getByLabelText('CSV file')).toBeTruthy();
     expect(await screen.findByText('Timer 3.5')).toBeTruthy();
   });

@@ -28,6 +28,77 @@ export interface DatasetLoadJobDTO {
   output_shard_id?: string;
 }
 
+export interface DatasetManifestDTO {
+  dataset_manifest_id: string;
+  name: string;
+  domain: string;
+  source_uri: string;
+  file_format: string;
+  time_column: string;
+  target_columns: string[];
+  frequency?: string | null;
+  timezone?: string | null;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DatasetLoadJobDetailDTO extends DatasetLoadJobDTO {
+  dataset_manifest_id: string;
+  current_step?: string | null;
+  validation_summary?: Record<string, unknown>;
+  split_config: Record<string, unknown>;
+  seed?: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ShardDTO {
+  shard_id: string;
+  shard_type?: string;
+  dataset_manifest_id: string;
+  load_job_id?: string | null;
+  capability_block_id?: string | null;
+  source_uri: string;
+  storage_uri?: string | null;
+  time_range_start?: string | null;
+  time_range_end?: string | null;
+  row_count: number;
+  target_columns: string[];
+  target_dim: number;
+  frequency?: string | null;
+  context_length: number;
+  horizon: number;
+  stride: number;
+  sample_count: number;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SampleIndexDTO {
+  sample_id: string;
+  sample_index?: number;
+  context_start?: number;
+  context_end?: number;
+  horizon_start?: number;
+  horizon_end?: number;
+  target_columns?: string[];
+  context_length?: number;
+  horizon?: number;
+}
+
+export interface ShardSamplesDTO {
+  items: SampleIndexDTO[];
+  total?: number;
+  limit?: number;
+  offset?: number;
+}
+
 export interface RunProgressDTO {
   benchmarking_run_id: string;
   status: string;
@@ -54,5 +125,12 @@ export interface SampleForecastDTO {
   sample_id: string;
   target_history: number[][];
   target_future: number[][];
-  models: Array<{ model_id: string; model_name?: string; status: string; forecast?: number[][]; metrics: Record<string, number> }>;
+  models: Array<{
+    model_id: string;
+    model_name?: string;
+    status: string;
+    forecast?: number[][] | null;
+    metrics: Record<string, number>;
+    error_message?: string;
+  }>;
 }

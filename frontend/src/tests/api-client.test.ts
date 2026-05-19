@@ -25,6 +25,14 @@ describe('api client', () => {
     );
   });
 
+  it('reports empty non-json API failures without JSON parse errors', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500, headers: { 'content-type': 'text/plain' } }));
+
+    await expect(uploadDataset(new File(['time,target\n'], 'data.csv'))).rejects.toMatchObject(
+      new ApiError('api_error', 'Request failed with status 500', { status: 500 })
+    );
+  });
+
   it('passes through ISO datetimes and typed response shapes', async () => {
     vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(jsonResponse({ benchmarking_run_id: 'r1', status: 'running', created_at: '2026-01-01T00:00:00Z' }))

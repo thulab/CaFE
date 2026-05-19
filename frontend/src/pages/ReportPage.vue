@@ -1,5 +1,13 @@
 <template>
-  <main>
+  <main class="page-shell">
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Report</p>
+        <h1>Benchmark report</h1>
+        <p class="page-subtitle">Review model metrics, task outcomes, and sample-level forecast links.</p>
+      </div>
+    </header>
+    <p v-if="!report" class="status-line">Loading report...</p>
     <ReportSummary v-if="report" :report="report" />
   </main>
 </template>

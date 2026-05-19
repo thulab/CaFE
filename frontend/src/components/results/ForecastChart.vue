@@ -1,7 +1,7 @@
 <template>
-  <figure>
-    <figcaption>History</figcaption>
-    <svg width="320" height="120" viewBox="0 0 320 120" role="img" aria-label="Forecast chart">
+  <figure class="chart-frame">
+    <figcaption class="chart-title">History</figcaption>
+    <svg class="forecast-svg" width="640" height="220" viewBox="0 0 320 120" role="img" aria-label="Forecast chart">
       <polyline :points="historyPoints" fill="none" stroke="#2563eb" stroke-width="2" />
       <polyline :points="truthPoints" fill="none" stroke="#111827" stroke-width="2" />
       <polyline
@@ -13,7 +13,12 @@
         stroke-width="2"
       />
     </svg>
-    <figcaption>Ground truth</figcaption>
+    <div class="chart-legend" aria-label="Chart legend">
+      <span class="legend-item"><span class="legend-swatch history"></span>Past context</span>
+      <span class="legend-item"><span class="legend-swatch truth"></span>Observed future</span>
+      <span class="legend-item"><span class="legend-swatch forecast"></span>Model forecast</span>
+    </div>
+    <figcaption class="field-help">Ground truth</figcaption>
   </figure>
 </template>
 
