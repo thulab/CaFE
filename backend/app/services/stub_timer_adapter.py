@@ -10,10 +10,11 @@ class StubTimerAdapter:
         del timeout_seconds
         sample_id = str(sample["sample_id"])
         model_id = str(model["model_id"])
+        seed = model.get("stub_seed", self.seed)
         target_history = sample["target_history"]
         horizon = len(sample["target_future"])
         target_dim = len(target_history[-1])
-        digest = hashlib.sha256(f"{model_id}:{sample_id}:{self.seed}".encode("utf-8")).hexdigest()
+        digest = hashlib.sha256(f"{model_id}:{sample_id}:{seed}".encode("utf-8")).hexdigest()
         rng = random.Random(int(digest[:16], 16))
         model_bias = ((int(hashlib.sha256(model_id.encode("utf-8")).hexdigest()[:4], 16) % 21) - 10) / 100.0
         forecast: list[list[float]] = []

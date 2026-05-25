@@ -281,7 +281,45 @@ rm -rf runtime .tsbenchmark-system
 ./scripts/start-system.sh
 ```
 
-## 9. 开发者验证命令
+## 9. 模型推理服务与本地桩程序
+
+评测的实际推理通过外部 **timer-rest-service** 的 REST API 完成（契约见 [`docs/reference/rest-api.md`](../reference/rest-api.md)）。服务地址被抽象成配置项，本地无真实服务时可启动桩程序顶上。
+
+### 9.1 配置项
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TSBENCHMARK_TIMER_SERVICE_BASE_URL` | `http://127.0.0.1:10810` | 服务前缀 `http://<host>:<port>` |
+| `TSBENCHMARK_TIMER_SERVICE_API_PREFIX` | `/ai/api/v1` | 文档约定的统一路径前缀 |
+| `TSBENCHMARK_MODEL_ADAPTER` | `rest` | `rest`=走 HTTP；`stub`=进程内确定性桩，无需网络 |
+
+### 9.2 本地启动桩服务
+
+桩程序实现了文档的精简子集（`/forecast`、`/models/list`、`/health/*`），默认监听 `127.0.0.1:10810`，与 `base_url` 默认值一致，因此后端开箱即用：
+
+```bash
+./scripts/stub-service.sh start     # 启动（日志写入 .tsbenchmark-system/stub-service.log）
+./scripts/stub-service.sh status
+./scripts/stub-service.sh stop
+```
+
+桩的预测是确定性的（last-value + 按 model_id 计算的偏置 + 固定种子噪声），便于可复现演示。
+
+### 9.3 离线 / 不起 HTTP
+
+无需启动桩服务时，可让后端使用进程内桩：
+
+```bash
+TSBENCHMARK_MODEL_ADAPTER=stub ./scripts/start-system.sh
+```
+
+### 9.4 指向真实服务
+
+```bash
+TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-system.sh
+```
+
+## 10. 开发者验证命令
 
 后端测试：
 

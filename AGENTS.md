@@ -2,13 +2,14 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a TSBenchmark MVP with a FastAPI backend and Vue frontend. `backend/app/` holds backend code: `api/routes/`, `models/`, `schemas/`, `services/`, and `workers/`. `backend/tests/` contains pytest suites in `unit/`, `api/`, `e2e/`, and `fixtures/`. `frontend/src/` holds Vue code: `api/`, `components/wizard/`, `components/results/`, `pages/`, `stores/`, and `tests/`. `docs/` contains specs, plans, and `docs/manual/README.md`. `scripts/` contains local start/stop/status scripts and script tests.
+This repository contains a TSBenchmark MVP with a FastAPI backend and Vue frontend. `backend/app/` holds backend code: `api/routes/`, `models/`, `schemas/`, `services/`, and `workers/`. `backend/tests/` contains pytest suites in `unit/`, `api/`, `e2e/`, and `fixtures/`. `frontend/src/` holds Vue code: `api/`, `components/wizard/`, `components/results/`, `pages/`, `stores/`, and `tests/`. `docs/` contains specs, plans, `docs/manual/README.md`, and `docs/reference/` (external reference docs synced from Feishu via `scripts/sync-feishu-docs.py`). `scripts/` contains local start/stop/status scripts and script tests.
 
 ## Build, Test, and Development Commands
 
 - `./scripts/start-system.sh`: start backend and frontend locally.
 - `./scripts/status-system.sh`: show service PID/log status.
 - `./scripts/stop-system.sh`: stop both services.
+- `./scripts/stub-service.sh {start|stop|status}`: run the local timer-rest-service stub (`backend/stub_service/`) on `127.0.0.1:10810` for offline inference; the backend reaches it via `TSBENCHMARK_TIMER_SERVICE_BASE_URL` (set `TSBENCHMARK_MODEL_ADAPTER=stub` for the in-process stub instead).
 - `cd backend && uv run pytest`: run all backend tests.
 - `cd frontend && npm test`: run frontend Vitest suite.
 - `cd frontend && npm run test:e2e`: run frontend smoke test.

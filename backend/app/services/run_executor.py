@@ -9,10 +9,11 @@ from app.models.dataset import Shard
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
 from app.models.sample import SampleIndex
+from app.core.config import get_settings
 from app.services.forecast_store import ForecastStore
 from app.services.metric_service import aggregate_metric, compute_sample_metrics
+from app.services.model_adapter import ModelAdapter, get_model_adapter, remote_model_id
 from app.services.sample_store import SampleStore
-from app.services.stub_timer_adapter import StubTimerAdapter
 
 
 def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str]) -> BenchmarkingRun:
@@ -103,9 +104,10 @@ def execute_run(session: Session, run_id: str, runtime_dir: Path) -> Benchmarkin
     session.add(run)
     session.commit()
 
+    adapter = get_model_adapter(get_settings())
     units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all()
     for unit in units:
-        _execute_unit(session, run, unit, Path(runtime_dir))
+        _execute_unit(session, run, unit, Path(runtime_dir), adapter)
 
     succeeded = len([unit for unit in units if unit.status == "succeeded"])
     failed = len([unit for unit in units if unit.status == "failed"])
@@ -131,7 +133,7 @@ def execute_run(session: Session, run_id: str, runtime_dir: Path) -> Benchmarkin
     return run
 
 
-def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_dir: Path) -> None:
+def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_dir: Path, adapter: ModelAdapter) -> None:
     model = session.get(Model, unit.model_id)
     unit.status = "running"
     unit.started_at = utc_now()
@@ -144,7 +146,7 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
     tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
     task_metrics: list[dict[str, float] | None] = []
     for task in tasks:
-        task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir))
+        task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
     mse = aggregate_metric(task_metrics, "mse")
     mae = aggregate_metric(task_metrics, "mae")
     if mse:
@@ -171,7 +173,7 @@ def _fail_unit(session: Session, unit: Unit, code: str, message: str) -> None:
     session.commit()
 
 
-def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, runtime_dir: Path) -> dict[str, float] | None:
+def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
     task.status = "running"
     task.started_at = utc_now()
     session.add(task)
@@ -180,7 +182,7 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
     shards = session.exec(select(Shard).where(Shard.capability_block_id == block.capability_block_id)).all()
     shard_metrics: list[dict[str, float] | None] = []
     for shard in shards:
-        shard_metrics.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir))
+        shard_metrics.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir, adapter))
     mse = aggregate_metric(shard_metrics, "mse")
     mae = aggregate_metric(shard_metrics, "mae")
     if mse:
@@ -194,15 +196,20 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
     return {"mse": mse["value"], "mae": mae["value"]} if mse and mae else None
 
 
-def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, shard: Shard, runtime_dir: Path) -> dict[str, float] | None:
+def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, shard: Shard, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
     samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard.shard_id).order_by(SampleIndex.sample_index)).all()
     store = SampleStore(runtime_dir / "samples")
-    adapter = StubTimerAdapter(seed=model.stub_seed if model else 0)
+    model_payload = {
+        "model_id": model.model_id,
+        "remote_model_id": remote_model_id(model),
+        "stub_seed": model.stub_seed if model else 0,
+    }
+    timeout_seconds = get_settings().sample_forecast_timeout_seconds
     rows = []
     sample_metrics = []
     for sample_index in samples:
         sample = store.read_by_ref(sample_index.materialized_sample_uri, sample_index.storage_ref)
-        forecast = adapter.forecast(sample, {"model_id": model.model_id}, timeout_seconds=300)
+        forecast = adapter.forecast(sample, model_payload, timeout_seconds=timeout_seconds)
         metrics = compute_sample_metrics(sample["target_future"], forecast)
         for metric_name, value in metrics.items():
             session.add(_metric(metric_name, "sample", run, unit, task, model.model_id, value, shard.shard_id, sample_index.sample_id, task.capability_block_id))
