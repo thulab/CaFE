@@ -1,5 +1,52 @@
 # 学习问答日志（SpriCoder）
 
+## 2026-05-25 ｜ 讲讲 L9（run_executor 编排 + 队列 + 状态机）
+
+- **答案核心**：
+  - 派发：`POST /benchmarking-runs` → `create_benchmarking_run`（建 Run+Units+Tasks 骨架）→ `queue.submit` → **仅当 "running" 才起 daemon 线程** `_execute_in_background`（开独立 Session → `execute_run` → `queue.complete`）→ 立即返回。
+  - `RunQueue`（内存单并发）：submit 占位/入队；complete 推进指针。execute_run：入口查取消 → running → 四层循环 → 终态 → 报告+刷榜。
+  - **坑（从重到轻）**：
+    - (G) ⚠️ **`adapter.forecast` 无 try/except**（`run_executor.py:212`）→ 真实 REST 失败会崩 run，且 `queue.complete` 不被调用 → **队列永久卡死、后续 run 不跑**；forecast.v1 的 failed 行/error_code 设计未落地（与 spec §8.5 不符）。接真实推理前必补，建议 P1。
+    - (A) ⚠️ **排队 run 不自动执行**：线程只在 create_run 起，`complete` 只推指针不起线程 → 并发第二个 run 永远 queued 到重启。
+    - (B) 终态只数 succeeded/failed unit、**忽略 partial_succeeded**：`[1成功+1partial]`→run 判 succeeded（掩盖）；`[全 partial]`→run 判 failed（夸大）。
+    - (C) 取消入口-only（执行中不停）；排队中取消的 run 卡住到重启。(D) 重启把 queued/running/cancel_requested 全判 failed。(E) progress 的 sample 计数恒 0。
+  - **存储无关**：pivot 不动 L9（仅 _execute_shard 的 read_by_ref 被 SampleStore 挡着）。
+- **相关引用**：`backend/app/services/run_executor.py:94,116-123,212`；`backend/app/workers/run_queue.py`；`backend/app/api/routes/benchmarking_runs.py:22,40`。
+
+## 2026-05-25 ｜ 讲讲 L8（回看层：report + sample forecast 视图）
+
+- **答案核心**：
+  - 职责：把分数还原成曲线，解释模型为什么赢/输。两产物：`report`（run 级汇总）+ `sample forecast`（样本级，真值+各模型预测画一张图）。
+  - `generate_run_report`（`report_service.py:12`）：execute_run 收尾时捞 units/tasks/metrics/artifacts → 写 `reports/{run_id}.json` + Report 行；`model_metrics` 现自带 mase/mse/mae 三指标；`_sample_links` 全量扫每个 forecast 文件每行。
+  - `build_sample_forecast`（`sample_forecast_service.py:11`）：`read_by_ref` 读真值（含 target_future，**供画图，非模型输入，合法**）+ 查 (run,shard) 的 ForecastArtifacts 过滤本 sample_id → 组 models[]。
+  - 存在意义：真值在 sample.v1、预测在 forecast.v1，两边不存对方（forecast.v1 故意不存 ground truth）→ 回看时按 sample_id 重拼。
+  - 观察：(a) report sample 链接全量扫；(b) sample view 每模型整文件读再过滤；(c) **回看链接 `links.report/ranking` 恒 None**（前端跳不回报告/榜单）；(d) report 不显式标注 mase 缺席（#14 影子）；(e) `ForecastStore(".")` 目录参无意义 smell。
+  - **与存储 pivot 几乎无关**：sample view 经 read_by_ref 被 SampleStore 抽象挡着；report 只读 SQLite + forecast JSONL，不碰 TsFile。
+- **相关引用**：`backend/app/services/report_service.py:12,82`；`backend/app/services/sample_forecast_service.py:11,18,52`。
+
+## 2026-05-25 ｜ 讲讲 L7（榜单计算）
+
+- **答案核心**：
+  - 两半：`execute_run` 收尾对 METRIC_NAMES 每个调 `refresh_ranking`（写快照）；`GET /tracks/{id}/ranking → query_ranking`（读快照）。**榜单是持久化 RankingEntry 快照，run 完成时刷一次，查询只读不算。**
+  - 算法（`ranking_service.py:8`）：取 RankingList → 收有效 unit 行 → 两 policy 各「删旧 entry → 选 → 按 value 升序 → 写 rank 1..N」。一次 run = 3 指标 × 2 策略 = 重建 6 套。
+  - 进榜三道闸（`:53`）：`result_level=unit` + metric 匹配；run 属本 track 且 status∈{succeeded,partial_succeeded}；**unit.status==succeeded**。partial/failed unit 不进任何榜。
+  - 两策略：latest=按 `run.created_at` 最新；best=value 最小。查询默认 metric=primary(mase)、policy=latest_valid_result（`ranking_lists.py:14`）。
+  - 观察：(a) **排序硬编码升序，`MetricDefinition.direction` 没被用** → 未来加 higher-is-better 指标会排反；(b) L6 #14 榜单侧复现：flat-history 的 succeeded unit 无 mase MetricResult → 主榜静默缺席；(c) 每次全量 delete+重建（非增量）；(d) latest 用创建时刻非完成时刻。
+  - **L7 本就全在 SQLite**（读 MetricResult、写 RankingEntry），从不碰 TsFile → 存储 pivot 不动它。
+- **相关引用**：`backend/app/services/ranking_service.py:8,21,53`；`backend/app/api/routes/ranking_lists.py:14`；`backend/app/services/run_executor.py:134`。
+
+## 2026-05-25 ｜ 聊一聊 L5（输入/答案分离）
+
+- **答案核心**：
+  - 职责：让模型只拿题面、拿不到答案；`target_future`（真值）只在服务端算分用，绝不进模型输入。
+  - 心脏在 `run_executor._execute_shard`（`:213-216`）：一次样本读出后分两路——`build_model_input(sample)` 给 adapter（无答案），`sample["target_future"]+target_history` 给 `compute_sample_metrics`（服务端打分）。
+  - `build_model_input`（`model_input.py:24`）：拷输入键 + 加 `horizon=len(target_future)`，**故意排除 target_future**。构造器读 target_future 只为取长度，产出 dict 不含它 → 泄露堵在"模型边界"。
+  - 两 adapter：`horizon = sample.get("horizon") if not None else len(target_future)`，回退分支实为死代码（model_input 必有 horizon）；请求只用输入字段不碰答案值。
+  - 价值：从"承诺不看"变成"看不到"——零样本基准可信度的地基。`test_model_input_no_leak.py` 做回归断言。
+  - 与存储无关：操作 `read_by_ref` 拼出的 sample.v1，TsFile/SQLite 皆同 → SQLite pivot 不碰 L5。
+  - 此前 ⚠️「run_executor 未接 build_model_input」**已解除**：`run_executor.py:214` 已接。小命名漂：adapter 形参仍叫 `sample`，实收 model_input。
+- **相关引用**：`backend/app/services/run_executor.py:213-216`；`backend/app/services/model_input.py:24`；`backend/app/services/stub_timer_adapter.py:15`；`backend/app/services/timer_rest_adapter.py:31`。
+
 ## 2026-05-25 ｜ 给我讲讲 L4（TsFileStore + TsFileSlicer 存取引擎）
 
 - **答案核心**：
