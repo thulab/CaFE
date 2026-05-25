@@ -979,7 +979,7 @@ Expected: PASS.
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-05-16-tsbenchmark-mvp-entity-structure-design.md` only if implementation discovers a documented contradiction.
-- Modify: `docs/superpowers/plans/2026-05-16-tsbenchmark-mvp-tdd-implementation-plan.md` only if task order needs correction before implementation begins.
+- Modify: `docs/superpowers/done/2026-05-16-tsbenchmark-mvp-tdd-implementation-plan.md` only if task order needs correction before implementation begins.
 
 - [ ] **Step 13.1: Backend full suite**
 
