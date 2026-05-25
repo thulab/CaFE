@@ -16,13 +16,13 @@ def test_mvp_benchmarking_flow_from_csv_upload_to_sample_forecast():
 
     manifest = client.post(
         "/dataset-manifests",
-        json={"name": "valid hourly", "domain": "energy", "source_uri": source_uri, "file_format": "csv", "time_column": "time", "target_columns": ["target"]},
+        json={"name": "valid hourly", "domain": "energy", "source_uri": source_uri, "file_format": "csv", "time_column": "time", "value_columns": ["target"]},
     )
     assert manifest.status_code == 200
 
     job = client.post(
         "/dataset-load-jobs",
-        json={"dataset_manifest_id": manifest.json()["dataset_manifest_id"], "split_config": {"context_length": 6, "horizon": 3, "stride": 3}},
+        json={"dataset_manifest_id": manifest.json()["dataset_manifest_id"], "split_config": {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]}},
     )
     assert job.status_code == 200
     shard_id = job.json()["output_shard_id"]

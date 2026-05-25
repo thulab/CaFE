@@ -25,7 +25,7 @@ function mockFetch() {
         source_uri: '/tmp/hourly.csv',
         file_format: 'csv',
         time_column: 'time',
-        target_columns: ['target'],
+        value_columns: ['target'],
         status: 'ready_to_load'
       }));
     }
@@ -73,7 +73,7 @@ function mockFetch() {
         ranking_list_id: 'rank-1'
       }));
     }
-    if (url === '/api/tracks/track-1/ranking?metric=mse&policy=latest_valid_result') {
+    if (url === '/api/tracks/track-1/ranking?metric=mase&policy=latest_valid_result') {
       return Promise.resolve(jsonResponse({ items: [{ model_id: 'model-1', rank: 1, metric_value: 0.2 }] }));
     }
     return Promise.resolve(jsonResponse({}));

@@ -29,7 +29,7 @@ def test_utf8_bom_is_supported(tmp_path):
         ("2026-01-01 00:00:00,1\n2026-01-01 01:00:00,2\n", "time", ["target"], "csv_missing_header"),
         ("time,target,target\n2026-01-01 00:00:00,1,2\n2026-01-01 01:00:00,3,4\n", "time", ["target"], "csv_duplicate_columns"),
         ("timestamp,target\n2026-01-01 00:00:00,1\n2026-01-01 01:00:00,2\n", "time", ["target"], "csv_time_column_missing"),
-        ("time,value\n2026-01-01 00:00:00,1\n2026-01-01 01:00:00,2\n", "time", ["target"], "csv_target_column_missing"),
+        ("time,value\n2026-01-01 00:00:00,1\n2026-01-01 01:00:00,2\n", "time", ["target"], "csv_value_column_missing"),
     ],
 )
 def test_format_validation_errors(tmp_path, content, time_column, target_columns, code):

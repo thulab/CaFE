@@ -11,7 +11,7 @@ router = APIRouter(prefix="/wizard", tags=["wizard"])
 class RealDatasetTrackCreate(BaseModel):
     name: str
     shard_ids: list[str]
-    primary_metric_id: str = "mse"
+    primary_metric_id: str = "mase"
 
 
 @router.post("/real-dataset-track")

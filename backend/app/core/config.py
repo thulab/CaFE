@@ -40,6 +40,11 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
+    def tsfiles_dir(self) -> Path:
+        return self.runtime_dir / "tsfiles"
+
+    @computed_field
+    @property
     def forecasts_dir(self) -> Path:
         return self.runtime_dir / "forecasts"
 

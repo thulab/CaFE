@@ -21,7 +21,7 @@ class DatasetManifestCreate(BaseModel):
     source_uri: str
     file_format: str = "csv"
     time_column: str
-    target_columns: list[str]
+    value_columns: list[str] = []
     frequency: str | None = None
     timezone: str | None = None
 

@@ -11,11 +11,11 @@ def create_track(client: TestClient) -> tuple[str, str]:
         upload = client.post("/dataset-manifests/upload", files={"file": ("valid_hourly_20.csv", file, "text/csv")}).json()
     manifest = client.post(
         "/dataset-manifests",
-        json={"name": "valid hourly", "domain": "energy", "source_uri": upload["source_uri"], "file_format": "csv", "time_column": "time", "target_columns": ["target"]},
+        json={"name": "valid hourly", "domain": "energy", "source_uri": upload["source_uri"], "file_format": "csv", "time_column": "time", "value_columns": ["target"]},
     ).json()
     job = client.post(
         "/dataset-load-jobs",
-        json={"dataset_manifest_id": manifest["dataset_manifest_id"], "split_config": {"context_length": 6, "horizon": 3, "stride": 3}},
+        json={"dataset_manifest_id": manifest["dataset_manifest_id"], "split_config": {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]}},
     ).json()
     wizard = client.post("/wizard/real-dataset-track", json={"name": "real track", "shard_ids": [job["output_shard_id"]], "primary_metric_id": "mse"}).json()
     model = client.get("/models").json()["items"][0]

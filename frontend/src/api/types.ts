@@ -13,12 +13,12 @@ export interface DatasetManifestCreateDTO {
   source_uri: string;
   file_format: 'csv';
   time_column: string;
-  target_columns: string[];
+  value_columns: string[];
 }
 
 export interface DatasetLoadJobCreateDTO {
   dataset_manifest_id: string;
-  split_config: { context_length: number; horizon: number; stride?: number };
+  split_config: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number };
   seed?: number;
 }
 
@@ -35,7 +35,7 @@ export interface DatasetManifestDTO {
   source_uri: string;
   file_format: string;
   time_column: string;
-  target_columns: string[];
+  value_columns: string[];
   frequency?: string | null;
   timezone?: string | null;
   status: string;
@@ -69,6 +69,7 @@ export interface ShardDTO {
   time_range_end?: string | null;
   row_count: number;
   target_columns: string[];
+  value_columns: string[];
   target_dim: number;
   frequency?: string | null;
   context_length: number;

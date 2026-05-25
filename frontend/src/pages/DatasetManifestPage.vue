@@ -14,7 +14,7 @@
       <div class="metric-strip">
         <span class="stat-pill">{{ manifest.status }}</span>
         <span class="stat-pill">{{ manifest.file_format }}</span>
-        <span class="stat-pill">{{ manifest.target_columns.length }} target</span>
+        <span class="stat-pill">{{ manifest.value_columns.length }} value columns</span>
       </div>
 
       <article class="page-card">
@@ -37,8 +37,8 @@
             <dd>{{ manifest.time_column }}</dd>
           </div>
           <div class="detail-item">
-            <dt>Target columns</dt>
-            <dd>{{ manifest.target_columns.join(', ') }}</dd>
+            <dt>Value columns</dt>
+            <dd>{{ manifest.value_columns.join(', ') }}</dd>
           </div>
           <div class="detail-item">
             <dt>Frequency</dt>

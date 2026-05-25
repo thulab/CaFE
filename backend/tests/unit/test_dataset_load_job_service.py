@@ -22,7 +22,7 @@ def create_manifest(session: Session, source_uri: str) -> DatasetManifest:
         domain="energy",
         source_uri=source_uri,
         time_column="time",
-        target_columns=["target"],
+        value_columns=["target"],
     )
     session.add(manifest)
     session.commit()
@@ -36,12 +36,12 @@ def test_successful_manifest_cannot_reload(tmp_path):
         manifest = create_manifest(session, str(source))
         service = DatasetLoadService(tmp_path / "runtime")
 
-        job = service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 6, "horizon": 3, "stride": 3})
+        job = service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]})
 
         assert job.status == "succeeded"
         assert session.exec(select(SampleIndex).where(SampleIndex.shard_id == job.output_shard_id)).all()
         with pytest.raises(ApiError) as exc:
-            service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 6, "horizon": 3, "stride": 3})
+            service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]})
         assert exc.value.error_code == "dataset_manifest_already_loaded"
 
 
@@ -51,12 +51,12 @@ def test_failed_load_cleans_intermediate_artifacts_and_can_retry(tmp_path):
         manifest = create_manifest(session, str(source))
         service = DatasetLoadService(tmp_path / "runtime")
 
-        failed = service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 30, "horizon": 3, "stride": 3})
+        failed = service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 30, "horizon": 3, "stride": 3, "target_columns": ["target"]})
 
         assert failed.status == "failed"
-        assert not list((tmp_path / "runtime" / "samples").glob("*.jsonl"))
+        assert not list((tmp_path / "runtime" / "tsfiles").glob("*.tsfile"))
 
-        retried = service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 6, "horizon": 3, "stride": 3})
+        retried = service.create_load_job(session, manifest.dataset_manifest_id, {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]})
 
         assert retried.status == "succeeded"
         assert retried.output_shard_id is not None

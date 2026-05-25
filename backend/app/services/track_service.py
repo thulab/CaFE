@@ -51,7 +51,7 @@ def create_track_with_blocks(
     session: Session,
     name: str,
     capability_block_ids: list[str],
-    primary_metric_id: str = "mse",
+    primary_metric_id: str = "mase",
 ) -> tuple[Track, RankingList]:
     if not capability_block_ids:
         raise ApiError("track_requires_block", "track requires at least one capability block")

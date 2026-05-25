@@ -9,19 +9,29 @@
     </div>
 
     <fieldset class="field-stack">
-      <legend>Target</legend>
+      <legend>Value columns</legend>
       <div class="checkbox-grid">
-        <label v-for="column in columns" :key="column" class="checkbox-row">
-        <input v-model="targets" type="checkbox" :value="column" />
-        {{ column }}
+        <label v-for="column in nonTimeColumns" :key="column" class="checkbox-row">
+          <input v-model="valueColumns" type="checkbox" :value="column" :aria-label="column" />
+          {{ column }}
         </label>
       </div>
     </fieldset>
+
+    <div class="field-stack">
+      <label for="target-select">Target</label>
+      <select id="target-select" v-model="target" aria-label="Target">
+        <option value="">-- select target --</option>
+        <option v-for="column in valueColumns" :key="column" :value="column">{{ column }}</option>
+      </select>
+      <p class="field-help">Select exactly one target from the checked value columns.</p>
+    </div>
 
     <div class="form-grid">
       <label>Context <input v-model.number="context" aria-label="Context" type="number" min="1" /></label>
       <label>Horizon <input v-model.number="horizon" aria-label="Horizon" type="number" min="1" /></label>
       <label>Stride <input v-model.number="stride" aria-label="Stride" type="number" min="1" /></label>
+      <label>Max samples <input v-model.number="maxSamples" aria-label="Max samples" type="number" min="1" placeholder="No cap" /></label>
     </div>
 
     <p v-if="error" class="alert" role="alert">{{ error }}</p>
@@ -37,20 +47,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
 import { wizardState } from '../../stores/wizard';
 
 const columns = computed(() => wizardState.preview?.columns.map((column) => column.name) || []);
+const nonTimeColumns = computed(() => columns.value.filter((c) => c !== timeColumn.value));
+
 const timeColumn = ref('time');
-const targets = ref<string[]>([]);
+const valueColumns = ref<string[]>([]);
+const target = ref('');
 const context = ref(6);
 const horizon = ref(3);
 const stride = ref(3);
+const maxSamples = ref<number | undefined>(undefined);
 const error = ref('');
 
+// Default all non-time columns as value columns when columns become available
+watch(nonTimeColumns, (cols) => {
+  if (cols.length > 0 && valueColumns.value.length === 0) {
+    valueColumns.value = [...cols];
+  }
+}, { immediate: true });
+
 async function load() {
-  if (targets.value.length !== 1) {
+  if (!target.value || !valueColumns.value.includes(target.value)) {
     error.value = 'Select exactly one target';
     return;
   }
@@ -65,12 +86,21 @@ async function load() {
       source_uri: wizardState.sourceUri,
       file_format: 'csv',
       time_column: timeColumn.value,
-      target_columns: targets.value
+      value_columns: valueColumns.value
     });
     wizardState.manifestId = manifest.dataset_manifest_id;
+    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number } = {
+      context_length: context.value,
+      horizon: horizon.value,
+      stride: stride.value,
+      target_columns: [target.value]
+    };
+    if (maxSamples.value != null && maxSamples.value > 0) {
+      splitConfig.max_samples = maxSamples.value;
+    }
     const job = await createLoadJob({
       dataset_manifest_id: manifest.dataset_manifest_id,
-      split_config: { context_length: context.value, horizon: horizon.value, stride: stride.value }
+      split_config: splitConfig
     });
     wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';

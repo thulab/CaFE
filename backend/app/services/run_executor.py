@@ -13,7 +13,11 @@ from app.core.config import get_settings
 from app.services.forecast_store import ForecastStore
 from app.services.metric_service import aggregate_metric, compute_sample_metrics
 from app.services.model_adapter import ModelAdapter, get_model_adapter, remote_model_id
+from app.services.model_input import build_model_input
 from app.services.sample_store import SampleStore
+
+# 计算并入榜的指标集合：mase 为主排名，mse/mae 为诊断。
+METRIC_NAMES = ["mase", "mse", "mae"]
 
 
 def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str]) -> BenchmarkingRun:
@@ -127,7 +131,7 @@ def execute_run(session: Session, run_id: str, runtime_dir: Path) -> Benchmarkin
     report = generate_run_report(session, run_id, runtime_dir)
     run.report_id = report.report_id
     if run.status != "cancelled":
-        for metric_id in ["mse", "mae"]:
+        for metric_id in METRIC_NAMES:
             refresh_ranking(session, run.track_id, metric_id)
     session.refresh(run)
     return run
@@ -147,12 +151,10 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
     task_metrics: list[dict[str, float] | None] = []
     for task in tasks:
         task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
-    mse = aggregate_metric(task_metrics, "mse")
-    mae = aggregate_metric(task_metrics, "mae")
-    if mse:
-        session.add(_metric("mse", "unit", run, unit, None, model.model_id, mse["value"]))
-    if mae:
-        session.add(_metric("mae", "unit", run, unit, None, model.model_id, mae["value"]))
+    for metric_name in METRIC_NAMES:
+        aggregated = aggregate_metric(task_metrics, metric_name)
+        if aggregated:
+            session.add(_metric(metric_name, "unit", run, unit, None, model.model_id, aggregated["value"]))
     unit.status = "succeeded" if all(metric is not None for metric in task_metrics) else "partial_succeeded"
     unit.finished_at = utc_now()
     session.add(unit)
@@ -183,22 +185,22 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
     shard_metrics: list[dict[str, float] | None] = []
     for shard in shards:
         shard_metrics.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir, adapter))
-    mse = aggregate_metric(shard_metrics, "mse")
-    mae = aggregate_metric(shard_metrics, "mae")
-    if mse:
-        session.add(_metric("mse", "task", run, unit, task, model.model_id, mse["value"], capability_block_id=block.capability_block_id))
-    if mae:
-        session.add(_metric("mae", "task", run, unit, task, model.model_id, mae["value"], capability_block_id=block.capability_block_id))
+    task_result: dict[str, float] = {}
+    for metric_name in METRIC_NAMES:
+        aggregated = aggregate_metric(shard_metrics, metric_name)
+        if aggregated:
+            session.add(_metric(metric_name, "task", run, unit, task, model.model_id, aggregated["value"], capability_block_id=block.capability_block_id))
+            task_result[metric_name] = aggregated["value"]
     task.status = "succeeded" if all(metric is not None for metric in shard_metrics) else "partial_succeeded"
     task.finished_at = utc_now()
     session.add(task)
     session.commit()
-    return {"mse": mse["value"], "mae": mae["value"]} if mse and mae else None
+    return task_result or None
 
 
 def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, shard: Shard, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
     samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard.shard_id).order_by(SampleIndex.sample_index)).all()
-    store = SampleStore(runtime_dir / "samples")
+    store = SampleStore()
     model_payload = {
         "model_id": model.model_id,
         "remote_model_id": remote_model_id(model),
@@ -209,8 +211,9 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
     sample_metrics = []
     for sample_index in samples:
         sample = store.read_by_ref(sample_index.materialized_sample_uri, sample_index.storage_ref)
-        forecast = adapter.forecast(sample, model_payload, timeout_seconds=timeout_seconds)
-        metrics = compute_sample_metrics(sample["target_future"], forecast)
+        model_input = build_model_input(sample)
+        forecast = adapter.forecast(model_input, model_payload, timeout_seconds=timeout_seconds)
+        metrics = compute_sample_metrics(sample["target_future"], forecast, sample["target_history"])
         for metric_name, value in metrics.items():
             session.add(_metric(metric_name, "sample", run, unit, task, model.model_id, value, shard.shard_id, sample_index.sample_id, task.capability_block_id))
         rows.append(
@@ -232,14 +235,14 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
     )
     artifact.unit_id = unit.unit_id
     session.add(artifact)
-    mse = aggregate_metric(sample_metrics, "mse")
-    mae = aggregate_metric(sample_metrics, "mae")
-    if mse:
-        session.add(_metric("mse", "shard", run, unit, task, model.model_id, mse["value"], shard.shard_id, capability_block_id=task.capability_block_id))
-    if mae:
-        session.add(_metric("mae", "shard", run, unit, task, model.model_id, mae["value"], shard.shard_id, capability_block_id=task.capability_block_id))
+    shard_result: dict[str, float] = {}
+    for metric_name in METRIC_NAMES:
+        aggregated = aggregate_metric(sample_metrics, metric_name)
+        if aggregated:
+            session.add(_metric(metric_name, "shard", run, unit, task, model.model_id, aggregated["value"], shard.shard_id, capability_block_id=task.capability_block_id))
+            shard_result[metric_name] = aggregated["value"]
     session.commit()
-    return {"mse": mse["value"], "mae": mae["value"]} if mse and mae else None
+    return shard_result or None
 
 
 def _metric(

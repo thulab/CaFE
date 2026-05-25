@@ -17,12 +17,12 @@ def loaded_shard_id(client: TestClient) -> str:
             "source_uri": upload["source_uri"],
             "file_format": "csv",
             "time_column": "time",
-            "target_columns": ["target"],
+            "value_columns": ["target"],
         },
     ).json()
     job = client.post(
         "/dataset-load-jobs",
-        json={"dataset_manifest_id": manifest["dataset_manifest_id"], "split_config": {"context_length": 6, "horizon": 3, "stride": 3}},
+        json={"dataset_manifest_id": manifest["dataset_manifest_id"], "split_config": {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]}},
     ).json()
     return job["output_shard_id"]
 

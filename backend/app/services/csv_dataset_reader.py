@@ -15,34 +15,38 @@ class CsvDatasetReader:
         self,
         path: Path,
         time_column: str,
-        target_columns: list[str],
+        value_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
-        if len(target_columns) != 1:
-            raise ApiError("csv_single_target_only", "MVP supports exactly one target column")
-
         text, encoding = self._read_text(path)
         delimiter = self._detect_delimiter(text)
         rows = list(csv.reader(text.splitlines(), delimiter=delimiter))
         if not rows:
             raise ApiError("csv_missing_header", "CSV must include a header row")
 
-        columns = [name.strip().removeprefix("\ufeff") for name in rows[0]]
+        columns = [name.strip().removeprefix("﻿") for name in rows[0]]
         if self._looks_like_data_row(columns):
             raise ApiError("csv_missing_header", "CSV must include a header row")
         if len(set(columns)) != len(columns):
             raise ApiError("csv_duplicate_columns", "CSV column names must be unique")
         if time_column not in columns:
             raise ApiError("csv_time_column_missing", "time_column was not found", {"time_column": time_column})
-        for target_column in target_columns:
-            if target_column not in columns:
-                raise ApiError("csv_target_column_missing", "target column was not found", {"target_column": target_column})
+
+        # 全列摄入：未显式声明 value_columns 时，除时间列外的所有列都作为数值列。
+        if value_columns:
+            for value_column in value_columns:
+                if value_column not in columns:
+                    raise ApiError("csv_value_column_missing", "value column was not found", {"value_column": value_column})
+            selected = list(value_columns)
+        else:
+            selected = [column for column in columns if column != time_column]
+        if not selected:
+            raise ApiError("csv_no_value_columns", "CSV must contain at least one value column besides the time column")
 
         dict_rows: list[dict[str, str]] = []
         timestamps: list[datetime] = []
-        target_values: list[list[float]] = []
+        value_matrix: list[list[float]] = []
         seen_times: set[datetime] = set()
-        target_column = target_columns[0]
 
         for row_index, row in enumerate(rows[1:], start=2):
             if not row or all(not value.strip() for value in row):
@@ -56,18 +60,21 @@ class CsvDatasetReader:
             seen_times.add(parsed_time)
             timestamps.append(parsed_time)
 
-            raw_target = values.get(target_column, "")
-            if raw_target == "":
-                raise ApiError("csv_target_missing", "target value is missing", {"row_index": row_index, "target_column": target_column})
-            try:
-                target = float(raw_target)
-            except ValueError as exc:
-                raise ApiError("csv_target_not_float", "target value must be numeric", {"row_index": row_index}) from exc
-            if not math.isfinite(target):
-                raise ApiError("csv_target_not_finite", "target value must be finite", {"row_index": row_index})
+            row_values: list[float] = []
+            for value_column in selected:
+                raw_value = values.get(value_column, "")
+                if raw_value == "":
+                    raise ApiError("csv_value_missing", "value is missing", {"row_index": row_index, "column": value_column})
+                try:
+                    parsed_value = float(raw_value)
+                except ValueError as exc:
+                    raise ApiError("csv_value_not_float", "value must be numeric", {"row_index": row_index, "column": value_column}) from exc
+                if not math.isfinite(parsed_value):
+                    raise ApiError("csv_value_not_finite", "value must be finite", {"row_index": row_index, "column": value_column})
+                row_values.append(parsed_value)
 
             dict_rows.append(values)
-            target_values.append([target])
+            value_matrix.append(row_values)
 
         inferred_frequency = self._infer_frequency(timestamps)
         if frequency is not None and frequency != inferred_frequency:
@@ -81,7 +88,8 @@ class CsvDatasetReader:
             columns=columns,
             rows=dict_rows,
             timestamps=timestamps,
-            target_values=target_values,
+            value_columns=selected,
+            values=value_matrix,
             frequency=inferred_frequency,
             encoding=encoding,
             delimiter=delimiter,

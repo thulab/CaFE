@@ -24,7 +24,7 @@ def test_dataset_load_flow_uploads_manifest_loads_shard_and_previews_samples():
             "source_uri": upload_body["source_uri"],
             "file_format": "csv",
             "time_column": "time",
-            "target_columns": ["target"],
+            "value_columns": ["target"],
         },
     )
     assert manifest.status_code == 200
@@ -32,7 +32,7 @@ def test_dataset_load_flow_uploads_manifest_loads_shard_and_previews_samples():
 
     job = client.post(
         "/dataset-load-jobs",
-        json={"dataset_manifest_id": manifest_id, "split_config": {"context_length": 6, "horizon": 3, "stride": 3}, "seed": 7},
+        json={"dataset_manifest_id": manifest_id, "split_config": {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]}, "seed": 7},
     )
     assert job.status_code == 200
     job_body = job.json()

@@ -98,9 +98,10 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 真正的物化在创建 load job 时同步发生（`routes/dataset_load_jobs.py:20` → `DatasetLoadService.create_load_job`，`services/dataset_load_service.py:63`）：
 
 - 前置幂等校验：`assert_manifest_can_succeed_load` 与 `assert_manifest_can_create_successful_real_shard`（`db/init_db.py:18,33`）——一个 manifest 只能有一个成功 load job / 一个 ready 的 real shard。
-- `_execute_job`（`dataset_load_service.py:102`）用 `CsvDatasetReader.read` 读取并**严格校验** CSV：单目标列（`csv_single_target_only`）、表头存在、列名唯一、时间列与目标列存在、时间戳严格递增且不重复、等间隔、目标可解析为有限 float、频率推断与 manifest 声明一致（`services/csv_dataset_reader.py:14-126`）。
+- `_execute_job`（`dataset_load_service.py`）用 `CsvDatasetReader.read` 读取并**严格校验** CSV（**2026-05-25 重构为全列摄入**）：除时间列外的**所有数值列**（manifest `value_columns`；为空则自动全取）逐列校验为有限 float（`csv_value_missing`/`csv_value_not_float`/`csv_value_not_finite`），表头存在、列名唯一、时间列存在、时间戳严格递增且不重复、等间隔、频率推断与 manifest 声明一致（`services/csv_dataset_reader.py`）。随后从 `split_config.target_columns` 选**恰好 1 个**目标列（必须 ⊆ `value_columns`，否则 `load_target_columns_invalid`）。
 - `build_windows`（`dataset_load_service.py:26`）按 `context_length / horizon / stride`（stride 默认等于 horizon）滑窗。每窗给出 context 区间 `[context_start, context_end]` 与 horizon 区间 `[horizon_start, horizon_end]`。校验：参数为正、`context_length + horizon ≤ row_count`、至少产出一个窗口。
-- 创建 `Shard`（status=`ready`），再由 `SampleStore.write_samples`（`services/sample_store.py:27`）把每个窗口物化为一行 canonical JSON（`sample.v1` schema）写入 `runtime/samples/{shard_id}.jsonl`，并为每行建 `SampleIndex`（带 `storage_ref={"line": n}`、sha256 `checksum`）。
+- `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现）。
+- 创建 `Shard`（status=`ready`），用 `TsFileStore.write` 把**全列数值矩阵**落成 per-dataset TsFile `runtime/tsfiles/{shard_id}.tsfile`（表模型 `tsbench.<dataset_id>.<列>`）；再由 `SampleStore.write_samples`（`services/sample_store.py`）为每个窗口建一条 `SampleIndex`——**指针化**，`storage_ref` 记录行号区间而非物化值，`checksum` 为「切片器现切出的 canonical sample」的 sha256。读取时按行号从 TsFile 现切（单一真值源）。
 - 成功时回填 `shard.storage_uri`、`manifest.status="loaded"`、`job.status="succeeded"` 及 `validation_summary`。任一 `ApiError` 会触发 `_cleanup_job_artifacts` 删除半成品 JSONL，并把 job 落为 `failed` + `error_code/error_message`（`dataset_load_service.py:90-100`）。
 
 ```mermaid
@@ -181,9 +182,9 @@ flowchart LR
 
 - `_execute_unit`（`run_executor.py:136`）：置 unit `running`；**失败注入**——若该 model 的 `endpoint_uri == "stub://fail"`，调 `_fail_unit` 把它名下所有 Task 与该 Unit 全标 `failed`（`error_code="adapter_error"`）并返回。否则逐 Task 调 `_execute_task`，再用 `aggregate_metric` 求 unit 级 mse/mae 写 `MetricResult(result_level="unit")`。
 - `_execute_task`（`run_executor.py:176`）：取 block 下所有 `Shard`，逐 shard 调 `_execute_shard`，聚合出 task 级 mse/mae（`result_level="task"`，带 `capability_block_id`）。
-- `_execute_shard`（`run_executor.py:199`）：取 shard 全部 `SampleIndex`（按 `sample_index` 排序），逐 sample：`SampleStore.read_by_ref` 读出物化样本 → `adapter.forecast(sample, model_payload, timeout)` → `compute_sample_metrics(target_future, forecast)` 算 mse/mae（`services/metric_service.py:8`）→ 每个 sample 指标写 `MetricResult(result_level="sample", aggregation="raw")`。所有 sample 的预测行经 `ForecastStore.write_forecasts` 落到 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`（`forecast.v1` schema，带 sha256 checksum）并建 `ForecastArtifact`。最后聚合 shard 级 mse/mae（`result_level="shard"`）。
+- `_execute_shard`（`run_executor.py`）：取 shard 全部 `SampleIndex`（按 `sample_index` 排序），逐 sample：`SampleStore.read_by_ref` 经 `TsFileSlicer` 按行号**现切**出样本 → **`build_model_input(sample)`** 构造**不含 `target_future`、带 `horizon`** 的输入视图（输入/答案分离，`services/model_input.py`）→ `adapter.forecast(model_input, model_payload, timeout)` → `compute_sample_metrics(target_future, forecast, target_history)` 算 **mse/mae/mase**（`services/metric_service.py`，`target_future` 仅服务端用于算分）→ 每个 sample 指标写 `MetricResult(result_level="sample", aggregation="raw")`。所有 sample 的预测行经 `ForecastStore.write_forecasts` 落到 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`（`forecast.v1` schema，带 sha256 checksum）并建 `ForecastArtifact`。最后对 `METRIC_NAMES=["mase","mse","mae"]` 逐指标聚合 shard 级（`result_level="shard"`）。
 
-指标聚合 `aggregate_metric`（`metric_service.py:20`）对一组 `{mse, mae}` 取均值，并统计 `success_count / failure_count`；某层只要有一个 None 子项即算部分失败。`MetricResult` 由 `_metric`（`run_executor.py:245`）统一构造，`aggregation` 字段在 sample 级为 `raw`，其余为 `mean_over_{level}s`。
+指标聚合 `aggregate_metric`（`metric_service.py`）对一组 `{mase, mse, mae}` 逐指标取均值，并统计 `success_count / failure_count`；某层只要有一个 None 子项即算部分失败。某指标缺失（如平稳历史无 mase）只影响该指标，不影响 mse/mae 的成功判定。`MetricResult` 由 `_metric`（`run_executor.py:245`）统一构造，`aggregation` 字段在 sample 级为 `raw`，其余为 `mean_over_{level}s`。
 
 #### 状态机与判定
 
@@ -244,7 +245,7 @@ sequenceDiagram
 
 #### TimerRestAdapter（`services/timer_rest_adapter.py`）
 
-- **请求构造** `_build_request`（`timer_rest_adapter.py:50`）：把内部 sample 转成 `/forecast` 契约——以固定列名 `time` 为时间列，`columns = [time, *target_column_names]`，`data` 为 `[[history_ts, *row], ...]`，`output_length = [len(target_future)]`，`time_col = ["time"]`，`model_id` 取 `model["remote_model_id"]`。
+- **请求构造** `_build_request`（`timer_rest_adapter.py:50`）：把内部 sample 转成 `/forecast` 契约——以固定列名 `time` 为时间列，`columns = [time, *target_column_names]`，`data` 为 `[[history_ts, *row], ...]`，`output_length = [horizon]`（**2026-05-25 起取 `model_input["horizon"]`，不再读 `target_future` 的长度**，与桩适配器同步改造），`time_col = ["time"]`，`model_id` 取 `model["remote_model_id"]`。
 - **请求发送** `_post`（`timer_rest_adapter.py:65`）：默认用 `httpx.Client(timeout=..., trust_env=False)`——**`trust_env=False`** 是关键：推理服务是内网服务，绕开系统 HTTP/SOCKS 代理。非 200 抛 `TimerServiceError`（含响应 `message`）。
 - **响应解析** `_parse_response`（`timer_rest_adapter.py:91`）：从 `data.results[0]` 取 `columns/data`，剔除 `time` 列只留数值列，截断到 `horizon`。形状不符抛 `TimerServiceError`。
 - **错误归一**：所有 `httpx.HTTPError`、非 200、契约不符都收敛为 `TimerServiceError`（`timer_rest_adapter.py:12`）。
@@ -278,7 +279,7 @@ flowchart TB
    - `best_result`（`_select_best`，`ranking_service.py:81`）：每个 model 取 `value` 最小的有效结果。
 3. **排序策略**：按 `metric_value` 升序（`sorted(..., key=lambda item: item["value"])`），即 **lower is better**（mse / mae 越小排名越靠前），`rank` 从 1 起。
 
-`execute_run` 默认对 `["mse", "mae"]` 都刷新（`run_executor.py:130`）。`query_ranking`（`ranking_service.py:40`）按 `(metric_id, policy)` 取条目并按 `rank` 返回；路由默认 `metric=mse`、`policy=latest_valid_result`。
+`execute_run` 默认对 `METRIC_NAMES=["mase", "mse", "mae"]` 都刷新（`run_executor.py`）。`query_ranking`（`ranking_service.py`）按 `(metric_id, policy)` 取条目并按 `rank` 返回；**路由默认 `metric` 跟随 `Track.primary_metric_id`（即 `mase`）、`policy` 跟随 `default_ranking_policy`**（`routes/ranking_lists.py`，2026-05-25 起）。
 
 ### 2.f 样本预测视图
 

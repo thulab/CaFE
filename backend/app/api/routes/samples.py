@@ -12,7 +12,7 @@ router = APIRouter(prefix="/samples", tags=["samples"])
 @router.get("/{sample_id}/preview")
 def get_sample_preview(sample_id: str, session: Session = Depends(get_db_session)) -> dict:
     sample = session.get(SampleIndex, sample_id)
-    record = SampleStore(".").read_by_ref(sample.materialized_sample_uri, sample.storage_ref)
+    record = SampleStore().read_by_ref(sample.materialized_sample_uri, sample.storage_ref)
     return record
 
 

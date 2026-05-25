@@ -15,7 +15,7 @@ def create_loaded_track_with_models(session: Session, runtime_dir: Path, model_c
         domain="energy",
         source_uri=str(source),
         time_column="time",
-        target_columns=["target"],
+        value_columns=["target"],
     )
     session.add(manifest)
     session.commit()
@@ -23,10 +23,10 @@ def create_loaded_track_with_models(session: Session, runtime_dir: Path, model_c
     job = DatasetLoadService(runtime_dir).create_load_job(
         session,
         manifest.dataset_manifest_id,
-        {"context_length": 6, "horizon": 3, "stride": 3},
+        {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]},
     )
     block = create_real_capability_block(session, "real block", [job.output_shard_id])
-    track, ranking = create_track_with_blocks(session, "real track", [block.capability_block_id], "mse")
+    track, ranking = create_track_with_blocks(session, "real track", [block.capability_block_id], "mase")
     models = []
     for index in range(model_count):
         model = Model(name=f"Model {index}", model_family="Timer", model_version=str(index), endpoint_uri=f"stub://{index}")

@@ -10,7 +10,7 @@ from app.services.sample_store import SampleStore
 
 def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict:
     sample_index = session.get(SampleIndex, sample_id)
-    sample = SampleStore(".").read_by_ref(sample_index.materialized_sample_uri, sample_index.storage_ref)
+    sample = SampleStore().read_by_ref(sample_index.materialized_sample_uri, sample_index.storage_ref)
     shard = session.get(Shard, sample_index.shard_id)
     artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id, ForecastArtifact.shard_id == shard.shard_id)).all()
     models = []

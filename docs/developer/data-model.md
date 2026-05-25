@@ -138,7 +138,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `source_uri` | `str` | 必填 | 原始数据位置（`runtime/uploads/` 下） |
 | `file_format` | `str` | `"csv"` | MVP 仅 csv |
 | `time_column` | `str` | 必填 | 时间列列名 |
-| `target_columns` | `list[str]` | `[]`，**JSON 列** | 目标列；MVP 实际只允许 1 个（见 §6.3） |
+| `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入的数值列；为空时 reader 自动取除时间列外全部列。目标列的选择移到 load-job（见 §2.2 split_config）。<br>**2026-05-25 重构**：原 `target_columns` 字段更名为 `value_columns`（语义：全列摄入），目标选择不再绑定在 manifest。 |
 | `frequency` | `str \| None` | `None` | 时间频率；load 成功后由推断结果回填 |
 | `timezone` | `str \| None` | `None` | 仅作元数据，不做时区转换 |
 | `schema_version` | `str` | `"dataset_manifest.v1"` | manifest schema 版本 |
@@ -188,10 +188,12 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 
 > spec §4.2 的状态机额外提到 `validating`、`materializing_samples`，但它们在代码里落在 `current_step` 字段，而非 `status`。`status` 实际未写入独立的 `validating` / `materializing_samples` 值。
 
-**`split_config` 结构**（service 读取的 key，`dataset_load_service.py:104-115`）：
+**`split_config` 结构**（service 读取的 key，`dataset_load_service.py`）：
 - `context_length`（int，必填）
 - `horizon`（int，必填）
 - `stride`（int，可选；缺省取 `horizon`）
+- `target_columns`（list[str]，**必填且恰好 1 个**；必须 ⊆ manifest 的 `value_columns`，否则 `load_target_columns_invalid`）——**2026-05-25 重构**：目标列选择从 manifest 移到此处。
+- `max_samples`（int，可选）：窗口数超过它时沿序列均匀采样（含首尾，可复现）。
 
 **`validation_summary` 结构**（成功时写入，`dataset_load_service.py:155-160`）：
 ```json
@@ -199,7 +201,9 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
   "row_count": 20,
   "sample_count": 4,
   "frequency": "1h",
-  "columns": ["time", "value"]
+  "columns": ["time", "target", "extra"],
+  "value_columns": ["target"],
+  "target_columns": ["target"]
 }
 ```
 
@@ -215,12 +219,15 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `load_job_id` | `str \| None` | `None`，`index=True`（逻辑外键 → DatasetLoadJob） | 产生该 shard 的 job |
 | `capability_block_id` | `str \| None` | `None`，`index=True`（逻辑外键 → CapabilityBlock） | 所属能力块；归属前为 None |
 | `source_uri` | `str` | 必填 | 原始数据位置 |
-| `storage_uri` | `str \| None` | `None` | 规范化产物位置（指向 `samples/{shard_id}.jsonl`） |
+| `storage_uri` | `str \| None` | `None` | 规范化产物位置（**2026-05-25 起指向 `tsfiles/{shard_id}.tsfile`**） |
+| `tsfile_uri` | `str \| None` | `None` | per-dataset TsFile 路径（单一真值源）；与 `storage_uri` 同值 |
+| `dataset_id` | `str \| None` | `None` | TsFile 表模型标签值（= `shard_id` 去连字符）；序列名 `tsbench.<dataset_id>.<列>` |
 | `checksum` | `str \| None` | `None` | 校验值 |
 | `time_range_start` | `str \| None` | `None` | 时间范围起（ISO 8601 字符串） |
 | `time_range_end` | `str \| None` | `None` | 时间范围止（ISO 8601 字符串） |
 | `row_count` | `int` | `0` | 行数 |
-| `target_columns` | `list[str]` | `[]`，**JSON 列** | 目标列 |
+| `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入到 TsFile 的全部数值列 |
+| `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列（⊆ `value_columns`，MVP 恰好 1 个） |
 | `target_dim` | `int` | `1` | 目标维度 |
 | `frequency` | `str \| None` | `None` | 时间频率 |
 | `context_length` | `int` | `0` | 样本历史长度 |
@@ -255,7 +262,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `target_columns` | `list[str]` | `[]`，**JSON 列** | 目标列 |
 | `context_length` | `int` | `0` | history 长度 |
 | `horizon` | `int` | `0` | future 长度 |
-| `storage_ref` | `dict[str, Any]` | `{}`，**JSON 列** | 读取引用，形如 `{"line": <行号>}` |
+| `storage_ref` | `dict[str, Any]` | `{}`，**JSON 列** | **指针化切片引用**：`{dataset_id, shard_id, sample_id, sample_index, target_columns, context:[s,e], horizon:[s,e]}`（行号区间，左闭右含） |
 | `materialized` | `bool` | `True` | MVP 固定物化 |
 | `materialized_sample_uri` | `str \| None` | `None` | 物化产物文件路径 |
 | `checksum` | `str \| None` | `None` | 该 sample canonical JSON 的 sha256 |
@@ -263,7 +270,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `created_at` | `datetime` | `utc_now` | |
 | `updated_at` | `datetime` | `utc_now` | |
 
-写入逻辑见 `services/sample_store.py:38-55`：`storage_ref={"line": line_number}`，`materialized=True`，`materialized_sample_uri` 指向 `samples/{shard_id}.jsonl`，`checksum` 为该行 canonical JSON 的 sha256。
+写入逻辑见 `services/sample_store.py`（**2026-05-25 重构为指针化切片器**）：样本不再逐窗物化为 JSONL，`storage_ref` 记录行号区间指针；`materialized_sample_uri` 指向 `tsfiles/{shard_id}.tsfile`；`checksum` 为「切片器现切出的 canonical sample」的 sha256。读取时 `SampleStore.read_by_ref` 经 `TsFileSlicer` 按行号现切出 `sample.v1` 视图（值与时间戳均来自 TsFile）。
 
 > 注意字段名为 `sample_metadata`（不是 `metadata`，后者与 SQLAlchemy 保留名冲突）。spec §4.4 写作「metadata」，以代码为准。
 
@@ -304,7 +311,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `name` | `str` | 必填 | 赛道名 |
 | `track_type` | `str` | `"real_dataset"` | MVP 固定 |
 | `description` | `str \| None` | `None` | 描述 |
-| `primary_metric_id` | `str` | `"mse"` | 默认榜单指标 |
+| `primary_metric_id` | `str` | `"mase"` | 默认榜单指标（**2026-05-25 起切为 mase 主排名**；mse/mae 降为诊断） |
 | `default_ranking_policy` | `str` | `"latest_valid_result"` | 默认榜单策略 |
 | `benchmark_version` | `str` | `"mvp"` | benchmark 版本 |
 | `data_version` | `str` | `"v1"` | 数据版本 |
@@ -363,7 +370,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `model_count` | `int` | `0` | 模型数 |
 | `task_count` | `int` | `0` | task 数 |
 | `sample_count` | `int` | `0` | 样本数 |
-| `metric_set` | `list[str]` | `["mse", "mae"]`，**JSON 列** | 计算的指标集 |
+| `metric_set` | `list[str]` | `["mase", "mse", "mae"]`，**JSON 列** | 计算的指标集（mase 主排名，mse/mae 诊断） |
 | `report_id` | `str \| None` | `None`（逻辑外键 → Report） | 关联报告 |
 | `ranking_list_id` | `str \| None` | `None`（逻辑外键 → RankingList） | 关联榜单 |
 | `started_at` | `datetime \| None` | `None` | |
@@ -495,7 +502,7 @@ run/unit/task 过程事件与日志。源文件 `backend/app/models/benchmark.py
 | 字段 | 类型 | 默认值/约束 | 说明 |
 | --- | --- | --- | --- |
 | `metric_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
-| `name` | `str` | 必填 | 指标名（`mse` / `mae`） |
+| `name` | `str` | 必填 | 指标名（`mase` / `mse` / `mae`；mase 为主排名） |
 | `display_name` | `str` | 必填 | 展示名 |
 | `direction` | `str` | `"lower_is_better"` | 优劣方向 |
 | `supported_levels` | `list[str]` | `["sample","shard","task","unit","run","ranking"]`，**JSON 列** | 支持层级 |
@@ -546,7 +553,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 > 这是一个**值得注意的命名细节**：聚合标签描述的是「在该层级内对下层求平均后落到该层」，但字面用了该层级自身的复数（如 task 级写 `mean_over_tasks`），与直觉上的「mean_over_shards 才得到 task 值」略有出入——以代码为准。
 
 **指标计算与聚合**（`services/metric_service.py`）：
-- sample 级：把 `target_future` 与 `forecast` 各自 flatten 后逐元素求误差，`mse = mean(err²)`、`mae = mean(|err|)`（`metric_service.py:8-17`）。
+- sample 级：把 `target_future` 与 `forecast` 各自 flatten 后逐元素求误差，`mse = mean(err²)`、`mae = mean(|err|)`；**`mase = mae / scale`**，其中 `scale` 为 `target_history` 的 naive（last-value，m=1）尺度 `mean_t|h[t]-h[t-1]|`。`scale==0`（平稳历史）或历史 <2 行时**不产出 mase 键**（聚合时按缺失/失败处理，避免 NaN 污染）。见 `metric_service.py`。
 - 上层聚合：`aggregate_metric` 对下层成功项取算术平均，并返回 `success_count` / `failure_count`；若全部失败返回 `None`（`metric_service.py:20-34`）。
 
 ### 5.3 Report
@@ -614,9 +621,9 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 这些结构不进入 SQLite，而是以文件形式存于 `runtime/` 目录，DB 实体只保存其 `storage_uri` / `storage_ref`。
 
-### 6.1 物化样本（sample.v1）
+### 6.1 样本视图（sample.v1）
 
-每个 shard 对应一个 JSONL 文件 `runtime/samples/{shard_id}.jsonl`，每行一个 sample。结构来自 `services/sample_store.py:75-89`（`_record_for_sample`）。
+**2026-05-25 重构**：样本不再逐窗物化为 `samples/{shard_id}.jsonl`。每个 shard 的全列数值落在一个 **per-dataset TsFile**（`runtime/tsfiles/{shard_id}.tsfile`，表模型 `tsbench.<dataset_id>.<列>`，见 §6.4）。`sample.v1` 是 `SampleStore.read_by_ref` 用 `TsFileSlicer` 按 `SampleIndex.storage_ref` 的行号区间**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。注意 `target_history`/`target_future` 只切 `target_columns`；其余 `value_columns`（如协变量）已在 TsFile 中，但 MVP 不进 sample 视图（`history_cov`/`future_cov` 仍为空）。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -689,6 +696,19 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 `sample_forecast_links[*]`（`_sample_links`，`report_service.py:82-89`）：逐个读取 ForecastArtifact 文件，每行产出 `{"sample_id":..,"run_id":..,"forecast_artifact_id":..}`。
 
 > 报告 DB 实体（`Report`）的 `summary` 字段与此 JSON 不同：`summary` 只存 `{status, model_count, task_count}`（§5.3），完整内容落在 `storage_uri` 指向的 JSON 文件里。
+
+---
+
+### 6.4 per-dataset TsFile（单一真值源，2026-05-25 新增）
+
+每个 shard 的全列数值落在一个 TsFile：`runtime/tsfiles/{shard_id}.tsfile`，**表模型**命名 `tsbench.<dataset_id>.<列>`（`dataset_id` = `shard_id` 去连字符）。写入/读取封装在 `services/tsfile_store.py`：
+
+- `TsFileStore.write(shard_id, dataset_id, timestamps, value_columns, values)`：把 `time`(ms epoch) + 各 `value_columns` + `dataset_id` 标签列组成 pandas DataFrame，调 `tsfile.dataframe_to_tsfile(df, path, table_name="tsbench", time_column="time", tag_column=["dataset_id"])` 落盘。
+- `TsFileSlicer(path).slice(dataset_id, columns, row_start, row_end)`：`TsFileDataFrame(path)["tsbench.<id>.<列>"][a:b]` → 行主序 `list[list[float]]`（半开区间）。`slice_timestamps(...)` 取 ms epoch。
+
+时间戳往返：`write` 用 `int(dt.timestamp()*1000)`，读回用 `datetime.fromtimestamp(ms/1000)`（同机本地时区往返恒等），`sample.v1` 的 ISO 时间戳由此重建。
+
+> **决策边界**：forecast 输出仍为 JSONL（§6.2 不变）；本次只把**样本（真值）侧**从 JSONL 改为 TsFile 单一真值源。依赖 `tsfile==2.3.0` + numpy/pandas/pyarrow（`requires-python>=3.14`）。
 
 ---
 

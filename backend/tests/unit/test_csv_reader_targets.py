@@ -5,28 +5,36 @@ from app.services.csv_dataset_reader import CsvDatasetReader
 from tests.fixtures.csv_factory import write_csv
 
 
-def test_string_target_values_are_converted_to_float(tmp_path):
+def test_string_values_are_converted_to_float(tmp_path):
     path = write_csv(tmp_path, 'time,target\n2026-01-01 00:00:00,"1.25"\n2026-01-01 01:00:00,"2.5"\n')
 
     result = CsvDatasetReader().read(path, "time", ["target"])
 
-    assert result.target_values == [[1.25], [2.5]]
+    assert result.column_matrix(["target"]) == [[1.25], [2.5]]
+
+
+def test_multiple_value_columns_are_allowed(tmp_path):
+    path = write_csv(tmp_path, "time,a,b\n2026-01-01 00:00:00,1,2\n2026-01-01 01:00:00,3,4\n")
+
+    result = CsvDatasetReader().read(path, "time", ["a", "b"])
+
+    assert result.value_columns == ["a", "b"]
+    assert result.values == [[1.0, 2.0], [3.0, 4.0]]
 
 
 @pytest.mark.parametrize(
-    ("content", "target_columns", "code"),
+    ("content", "value_columns", "code"),
     [
-        ("time,a,b\n2026-01-01 00:00:00,1,2\n2026-01-01 01:00:00,3,4\n", ["a", "b"], "csv_single_target_only"),
-        ("time,target\n2026-01-01 00:00:00,\n2026-01-01 01:00:00,2\n", ["target"], "csv_target_missing"),
-        ("time,target\n2026-01-01 00:00:00,nope\n2026-01-01 01:00:00,2\n", ["target"], "csv_target_not_float"),
-        ("time,target\n2026-01-01 00:00:00,NaN\n2026-01-01 01:00:00,2\n", ["target"], "csv_target_not_finite"),
-        ("time,target\n2026-01-01 00:00:00,Inf\n2026-01-01 01:00:00,2\n", ["target"], "csv_target_not_finite"),
+        ("time,target\n2026-01-01 00:00:00,\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_missing"),
+        ("time,target\n2026-01-01 00:00:00,nope\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_not_float"),
+        ("time,target\n2026-01-01 00:00:00,NaN\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_not_finite"),
+        ("time,target\n2026-01-01 00:00:00,Inf\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_not_finite"),
     ],
 )
-def test_target_validation_errors(tmp_path, content, target_columns, code):
+def test_value_validation_errors(tmp_path, content, value_columns, code):
     path = write_csv(tmp_path, content)
 
     with pytest.raises(ApiError) as exc:
-        CsvDatasetReader().read(path, "time", target_columns)
+        CsvDatasetReader().read(path, "time", value_columns)
 
     assert exc.value.error_code == code

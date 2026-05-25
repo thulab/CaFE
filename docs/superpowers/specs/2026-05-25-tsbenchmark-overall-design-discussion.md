@@ -131,3 +131,4 @@ Layer 2/3/5/6 不依赖 TsFile，可独立推进；Layer 4 才用上 `dataframe_
 ### 更新记录
 
 - 2026-05-25：创建。取代窄范围 csv-ingestion spec；落入现状事实核查、TsFile 写入 spike 验证（PASS）、两条 track 步骤计划、路线决策，并列出整体设计待讨论议题。
+- 2026-05-25：细化为执行计划 [`../plans/2026-05-25-tsbenchmark-overall-design-implementation-plan.md`](../plans/2026-05-25-tsbenchmark-overall-design-implementation-plan.md)（Track A 基线脚本化 + Track B 7 层 TDD 任务）。锁定三项决策：本轮文档先行待评审、forecast 输出维持 JSONL（§6 #1）、切 MASE 主排名（§6 #5）。

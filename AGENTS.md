@@ -10,6 +10,7 @@ This repository contains a TSBenchmark MVP with a FastAPI backend and Vue fronte
 - `./scripts/status-system.sh`: show service PID/log status.
 - `./scripts/stop-system.sh`: stop both services.
 - `./scripts/stub-service.sh {start|stop|status}`: run the local timer-rest-service stub (`backend/stub_service/`) on `127.0.0.1:10810` for offline inference; the backend reaches it via `TSBENCHMARK_TIMER_SERVICE_BASE_URL` (set `TSBENCHMARK_MODEL_ADAPTER=stub` for the in-process stub instead).
+- `./scripts/baseline-run.sh [csv]`: spin up an isolated live backend (in-process deterministic stub), walk the full API chain with a real CSV (default `test/flow_template.csv`), and write a dated baseline record under `docs/superpowers/baselines/`; tears the backend down on exit.
 - `cd backend && uv run pytest`: run all backend tests.
 - `cd frontend && npm test`: run frontend Vitest suite.
 - `cd frontend && npm run test:e2e`: run frontend smoke test.

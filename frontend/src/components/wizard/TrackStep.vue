@@ -17,7 +17,7 @@ import { createRealDatasetTrack } from '../../api/tracks';
 import { wizardState } from '../../stores/wizard';
 
 async function createTrack() {
-  const result = await createRealDatasetTrack({ name: 'Real dataset track', shard_ids: [wizardState.shardId], primary_metric_id: 'mse' });
+  const result = await createRealDatasetTrack({ name: 'Real dataset track', shard_ids: [wizardState.shardId], primary_metric_id: 'mase' });
   wizardState.trackId = result.track_id;
   wizardState.capabilityBlockId = result.capability_block_id;
   wizardState.rankingListId = result.ranking_list_id;

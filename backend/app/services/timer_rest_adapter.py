@@ -28,12 +28,13 @@ class TimerRestAdapter:
         self._client = client
 
     def forecast(self, sample: dict, model: dict, timeout_seconds: int) -> list[list[float]]:
-        body = self._build_request(sample, model)
+        horizon: int = sample.get("horizon") if sample.get("horizon") is not None else len(sample["target_future"])
+        body = self._build_request(sample, model, horizon=horizon)
         try:
             response = self._post(f"{self._base}/forecast", body, timeout_seconds)
         except httpx.HTTPError as exc:
             raise TimerServiceError(f"forecast request failed: {exc}") from exc
-        return self._parse_response(response, horizon=len(sample["target_future"]))
+        return self._parse_response(response, horizon=horizon)
 
     def list_models(self, timeout_seconds: int = 10) -> list[dict]:
         """GET /models/list → 返回模型列表（data.models）。"""
@@ -47,7 +48,7 @@ class TimerRestAdapter:
             raise TimerServiceError(f"unexpected models/list response shape: {response}") from exc
 
     # -- 内部实现 ------------------------------------------------------------ #
-    def _build_request(self, sample: dict, model: dict) -> dict:
+    def _build_request(self, sample: dict, model: dict, horizon: int) -> dict:
         history = sample["target_history"]
         history_ts = sample.get("history_timestamps") or list(range(len(history)))
         value_cols = sample.get("target_column_names") or [
@@ -58,7 +59,7 @@ class TimerRestAdapter:
         return {
             "model_id": model.get("remote_model_id") or str(model["model_id"]),
             "targets": [{"columns": columns, "data": data}],
-            "output_length": [len(sample["target_future"])],
+            "output_length": [horizon],
             "time_col": [self._TIME_COL],
         }
 

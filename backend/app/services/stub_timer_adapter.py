@@ -12,7 +12,7 @@ class StubTimerAdapter:
         model_id = str(model["model_id"])
         seed = model.get("stub_seed", self.seed)
         target_history = sample["target_history"]
-        horizon = len(sample["target_future"])
+        horizon = sample.get("horizon") if sample.get("horizon") is not None else len(sample["target_future"])
         target_dim = len(target_history[-1])
         digest = hashlib.sha256(f"{model_id}:{sample_id}:{seed}".encode("utf-8")).hexdigest()
         rng = random.Random(int(digest[:16], 16))

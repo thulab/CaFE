@@ -29,7 +29,7 @@ class Track(SQLModel, table=True):
     name: str
     track_type: str = "real_dataset"
     description: str | None = None
-    primary_metric_id: str = "mse"
+    primary_metric_id: str = "mase"
     default_ranking_policy: str = "latest_valid_result"
     benchmark_version: str = "mvp"
     data_version: str = "v1"
@@ -51,7 +51,7 @@ class BenchmarkingRun(SQLModel, table=True):
     model_count: int = 0
     task_count: int = 0
     sample_count: int = 0
-    metric_set: list[str] = Field(default_factory=lambda: ["mse", "mae"], sa_column=Column(JSON))
+    metric_set: list[str] = Field(default_factory=lambda: ["mase", "mse", "mae"], sa_column=Column(JSON))
     report_id: str | None = None
     ranking_list_id: str | None = None
     started_at: datetime | None = None

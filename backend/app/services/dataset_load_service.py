@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from sqlmodel import Session, select
 
 from app.core.errors import ApiError
@@ -9,6 +10,7 @@ from app.db.init_db import assert_manifest_can_create_successful_real_shard, ass
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
 from app.models.sample import SampleIndex
 from app.services.csv_dataset_reader import CsvDatasetReader
+from app.services.tsfile_store import TsFileStore
 
 
 @dataclass(frozen=True)
@@ -54,11 +56,20 @@ def build_windows(row_count: int, context_length: int, horizon: int, stride: int
     return windows
 
 
+def subsample_windows(windows: list[SampleWindow], max_samples: int | None) -> list[SampleWindow]:
+    """超量时沿序列均匀采样（含首尾，索引近似等距），可复现。max_samples 缺省或不小于窗数时全取。"""
+    if not max_samples or max_samples >= len(windows):
+        return windows
+    positions = np.linspace(0, len(windows) - 1, max_samples)
+    picked = sorted({int(round(position)) for position in positions})
+    return [windows[index] for index in picked]
+
+
 class DatasetLoadService:
     def __init__(self, runtime_dir: Path):
         self.runtime_dir = Path(runtime_dir)
-        self.samples_dir = self.runtime_dir / "samples"
-        self.samples_dir.mkdir(parents=True, exist_ok=True)
+        self.tsfiles_dir = self.runtime_dir / "tsfiles"
+        self.tsfiles_dir.mkdir(parents=True, exist_ok=True)
 
     def create_load_job(
         self,
@@ -104,15 +115,33 @@ class DatasetLoadService:
         read_result = CsvDatasetReader().read(
             Path(manifest.source_uri),
             time_column=manifest.time_column,
-            target_columns=manifest.target_columns,
+            value_columns=manifest.value_columns or None,
             frequency=manifest.frequency,
         )
+
+        target_columns = list(config.get("target_columns") or [])
+        if len(target_columns) != 1:
+            raise ApiError(
+                "load_target_columns_invalid",
+                "exactly one target column must be selected",
+                {"target_columns": target_columns},
+            )
+        for target_column in target_columns:
+            if target_column not in read_result.value_columns:
+                raise ApiError(
+                    "load_target_columns_invalid",
+                    "target column must be among the dataset value columns",
+                    {"target_column": target_column, "value_columns": read_result.value_columns},
+                )
+
         windows = build_windows(
             read_result.row_count,
             context_length=int(config["context_length"]),
             horizon=int(config["horizon"]),
             stride=int(config.get("stride") or config["horizon"]),
         )
+        max_samples = config.get("max_samples")
+        windows = subsample_windows(windows, int(max_samples) if max_samples else None)
 
         job.status = "loading"
         job.current_step = "materializing_samples"
@@ -123,12 +152,12 @@ class DatasetLoadService:
             dataset_manifest_id=manifest.dataset_manifest_id,
             load_job_id=job.load_job_id,
             source_uri=manifest.source_uri,
-            storage_uri=str(self.samples_dir / "placeholder.jsonl"),
             time_range_start=read_result.timestamps[0].isoformat(),
             time_range_end=read_result.timestamps[-1].isoformat(),
             row_count=read_result.row_count,
-            target_columns=manifest.target_columns,
-            target_dim=len(manifest.target_columns),
+            value_columns=read_result.value_columns,
+            target_columns=target_columns,
+            target_dim=len(target_columns),
             frequency=read_result.frequency,
             context_length=int(config["context_length"]),
             horizon=int(config["horizon"]),
@@ -136,16 +165,34 @@ class DatasetLoadService:
             sample_count=len(windows),
             status="ready",
         )
+        dataset_id = shard.shard_id.replace("-", "")
+        shard.dataset_id = dataset_id
         session.add(shard)
         session.commit()
         session.refresh(shard)
 
+        tsfile_path = TsFileStore(self.tsfiles_dir).write(
+            shard.shard_id,
+            dataset_id,
+            read_result.timestamps,
+            read_result.value_columns,
+            read_result.values,
+        )
+
         from app.services.sample_store import SampleStore
 
-        sample_indexes = SampleStore(self.samples_dir).write_samples(shard.shard_id, read_result, windows, manifest.target_columns)
+        sample_indexes = SampleStore().write_samples(
+            shard.shard_id,
+            dataset_id,
+            tsfile_path,
+            windows,
+            target_columns,
+        )
         for sample_index in sample_indexes:
             session.add(sample_index)
-        shard.storage_uri = str(self.samples_dir / f"{shard.shard_id}.jsonl")
+
+        shard.tsfile_uri = str(tsfile_path)
+        shard.storage_uri = str(tsfile_path)
         manifest.status = "loaded"
         manifest.frequency = read_result.frequency
         manifest.updated_at = utc_now()
@@ -157,6 +204,8 @@ class DatasetLoadService:
             "sample_count": len(windows),
             "frequency": read_result.frequency,
             "columns": read_result.columns,
+            "value_columns": read_result.value_columns,
+            "target_columns": target_columns,
         }
         job.finished_at = utc_now()
         job.updated_at = utc_now()
@@ -169,7 +218,7 @@ class DatasetLoadService:
 
     def _cleanup_job_artifacts(self, job: DatasetLoadJob) -> None:
         if job.output_shard_id:
-            path = self.samples_dir / f"{job.output_shard_id}.jsonl"
+            path = self.tsfiles_dir / f"{job.output_shard_id}.tsfile"
             if path.exists():
                 path.unlink()
 

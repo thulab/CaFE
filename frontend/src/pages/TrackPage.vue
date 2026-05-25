@@ -32,6 +32,7 @@
         <div class="filters">
           <label>Metric
             <select v-model="metric" aria-label="Metric" @change="load">
+              <option value="mase">mase</option>
               <option value="mse">mse</option>
               <option value="mae">mae</option>
             </select>
@@ -56,7 +57,7 @@ import { getRanking } from '../api/results';
 import RankingTable from '../components/results/RankingTable.vue';
 
 const props = defineProps<{ trackId: string }>();
-const metric = ref('mse');
+const metric = ref('mase');
 const policy = ref('latest_valid_result');
 const items = ref<Array<{ model_id: string; rank: number; metric_value: number }>>([]);
 const loading = ref(true);

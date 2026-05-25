@@ -20,7 +20,7 @@ describe('api client', () => {
   it('parses unified API errors', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ error_code: 'bad_input', message: 'Bad input', details: { field: 'name' } }, 400));
 
-    await expect(createLoadJob({ dataset_manifest_id: 'm1', split_config: { context_length: 6, horizon: 3 } })).rejects.toMatchObject(
+    await expect(createLoadJob({ dataset_manifest_id: 'm1', split_config: { context_length: 6, horizon: 3, target_columns: ['value'] } })).rejects.toMatchObject(
       new ApiError('bad_input', 'Bad input', { field: 'name' })
     );
   });
