@@ -38,14 +38,15 @@ def utc_now() -> datetime:
 
 ## 1. 总览
 
-### 1.1 SQLModel 表实体清单（17 个）
+### 1.1 SQLModel 表实体清单（18 个）
 
 | 实体 | 文件 | 职责 |
 | --- | --- | --- |
-| `DatasetManifest` | `backend/app/models/dataset.py:11` | 描述真实数据源（CSV 文件、列配置） |
+| `DatasetManifest` | `backend/app/models/dataset.py:11` | 描述真实数据源（**CSV 或 TsFile** 文件、列配置） |
 | `DatasetLoadJob` | `backend/app/models/dataset.py:28` | 一次数据加载/校验/切分/索引任务 |
 | `Shard` | `backend/app/models/dataset.py:47` | 统一数据单元；MVP 用 `shard_type=real` |
-| `SampleIndex` | `backend/app/models/sample.py:11` | 样本切片位置 + 物化产物引用 |
+| `SeriesPoint` | `backend/app/models/series_point.py:11` | per-shard 原始序列逐点行存储（**SQLite 单一真值源**） |
+| `SampleIndex` | `backend/app/models/sample.py:11` | 样本切片位置（行号区间指针，值在 `SeriesPoint`） |
 | `CapabilityBlock` | `backend/app/models/benchmark.py:11` | 统一能力块；MVP 用 `block_type=real` |
 | `Track` | `backend/app/models/benchmark.py:27` | 评测赛道 |
 | `Model` | `backend/app/models/model_registry.py:10` | 可评测模型 + adapter 配置 |
@@ -68,6 +69,7 @@ erDiagram
     DatasetManifest ||--o| Shard : "dataset_manifest_id (real 唯一)"
     DatasetLoadJob ||--o| Shard : "load_job_id / output_shard_id"
     CapabilityBlock ||--o{ Shard : "capability_block_id"
+    Shard ||--o{ SeriesPoint : "shard_id"
     Shard ||--o{ SampleIndex : "shard_id"
 
     Track ||--o{ CapabilityBlock : "track_id"
@@ -105,8 +107,8 @@ erDiagram
 数据侧（数据集 → 样本）：
 
 ```text
-DatasetManifest → DatasetLoadJob → Shard(real) → SampleIndex
-                                         ↓
+DatasetManifest → DatasetLoadJob → Shard(real) → SeriesPoint（逐点真值）
+                                         ↓        ↘ SampleIndex（行号区间指针 → 现切自 SeriesPoint）
 Track → CapabilityBlock → Shard → SampleIndex
 ```
 
@@ -183,7 +185,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 
 **current_step 取值**（来自同文件）：
 - `"validating"`：创建 job 时（`dataset_load_service.py:82`）。
-- `"materializing_samples"`：物化样本时（`dataset_load_service.py:118`）。
+- `"materializing_samples"`：写序列（SeriesPoint）与样本指针时的 `current_step`（保留历史步名；实际不再物化文件）。
 - `"succeeded"`：成功收尾时（`dataset_load_service.py:153`）。
 
 > spec §4.2 的状态机额外提到 `validating`、`materializing_samples`，但它们在代码里落在 `current_step` 字段，而非 `status`。`status` 实际未写入独立的 `validating` / `materializing_samples` 值。
@@ -218,15 +220,13 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `dataset_manifest_id` | `str` | `index=True`（逻辑外键 → DatasetManifest） | 数据来源 |
 | `load_job_id` | `str \| None` | `None`，`index=True`（逻辑外键 → DatasetLoadJob） | 产生该 shard 的 job |
 | `capability_block_id` | `str \| None` | `None`，`index=True`（逻辑外键 → CapabilityBlock） | 所属能力块；归属前为 None |
-| `source_uri` | `str` | 必填 | 原始数据位置 |
-| `storage_uri` | `str \| None` | `None` | 规范化产物位置（**2026-05-25 起指向 `tsfiles/{shard_id}.tsfile`**） |
-| `tsfile_uri` | `str \| None` | `None` | per-dataset TsFile 路径（单一真值源）；与 `storage_uri` 同值 |
-| `dataset_id` | `str \| None` | `None` | TsFile 表模型标签值（= `shard_id` 去连字符）；序列名 `tsbench.<dataset_id>.<列>` |
+| `source_uri` | `str` | 必填 | 原始数据位置（CSV 或 TsFile 输入文件） |
+| `storage_uri` | `str \| None` | `None` | 规范化产物位置（**2026-05-25 SQLite pivot 后不再写**；真值在 `SeriesPoint`） |
 | `checksum` | `str \| None` | `None` | 校验值 |
 | `time_range_start` | `str \| None` | `None` | 时间范围起（ISO 8601 字符串） |
 | `time_range_end` | `str \| None` | `None` | 时间范围止（ISO 8601 字符串） |
 | `row_count` | `int` | `0` | 行数 |
-| `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入到 TsFile 的全部数值列 |
+| `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入的全部数值列（每行作为 `SeriesPoint.values_json` 的键集） |
 | `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列（⊆ `value_columns`，MVP 恰好 1 个） |
 | `target_dim` | `int` | `1` | 目标维度 |
 | `frequency` | `str \| None` | `None` | 时间频率 |
@@ -248,7 +248,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 
 ### 2.4 SampleIndex
 
-记录样本切片位置和物化产物引用。源文件 `backend/app/models/sample.py:11`。
+记录样本切片位置（**行号区间指针**，值现切自 `SeriesPoint`，不再物化产物）。源文件 `backend/app/models/sample.py:11`。
 
 | 字段 | 类型 | 默认值/约束 | 说明 |
 | --- | --- | --- | --- |
@@ -262,17 +262,32 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `target_columns` | `list[str]` | `[]`，**JSON 列** | 目标列 |
 | `context_length` | `int` | `0` | history 长度 |
 | `horizon` | `int` | `0` | future 长度 |
-| `storage_ref` | `dict[str, Any]` | `{}`，**JSON 列** | **指针化切片引用**：`{dataset_id, shard_id, sample_id, sample_index, target_columns, context:[s,e], horizon:[s,e]}`（行号区间，左闭右含） |
-| `materialized` | `bool` | `True` | MVP 固定物化 |
-| `materialized_sample_uri` | `str \| None` | `None` | 物化产物文件路径 |
-| `checksum` | `str \| None` | `None` | 该 sample canonical JSON 的 sha256 |
+| `storage_ref` | `dict[str, Any]` | `{}`，**JSON 列** | **指针化切片引用**：`{shard_id, sample_id, sample_index, target_columns, context:[s,e], horizon:[s,e]}`（行号区间，**闭区间**；切片走 `SeriesPoint`） |
+| `materialized` | `bool` | `False` | 指针化：值在 `SeriesPoint`，样本不物化为产物 |
+| `materialized_sample_uri` | `str \| None` | `None` | 兼容旧 `read_by_ref` 签名的遗留字段，已不使用 |
+| `checksum` | `str \| None` | `None` | 样本**内容**（值/时间戳/列名/行范围）的 sha256，**排除随机 ID** → 同数据跨加载相等（#7） |
 | `sample_metadata` | `dict[str, Any]` | `{}`，**JSON 列** | 可选样本摘要 |
 | `created_at` | `datetime` | `utc_now` | |
 | `updated_at` | `datetime` | `utc_now` | |
 
-写入逻辑见 `services/sample_store.py`（**2026-05-25 重构为指针化切片器**）：样本不再逐窗物化为 JSONL，`storage_ref` 记录行号区间指针；`materialized_sample_uri` 指向 `tsfiles/{shard_id}.tsfile`；`checksum` 为「切片器现切出的 canonical sample」的 sha256。读取时 `SampleStore.read_by_ref` 经 `TsFileSlicer` 按行号现切出 `sample.v1` 视图（值与时间戳均来自 TsFile）。
+写入逻辑见 `services/sample_store.py`（**2026-05-25 SQLite pivot**）：样本不物化为产物，`storage_ref` 只记录行号区间指针；`checksum` 对样本内容算（排除随机 `sample_id`/`shard_id`，跨加载可比，#7）。读取时 `SampleStore.read_by_ref(session, storage_ref)` 用**调用方的 session** 调 `SeriesStore.slice(...)` 按 `(shard_id, row_index)` 范围查询 `SeriesPoint`，现拼出 `sample.v1` 视图（值与时间戳均来自 SQLite）。
 
 > 注意字段名为 `sample_metadata`（不是 `metadata`，后者与 SQLAlchemy 保留名冲突）。spec §4.4 写作「metadata」，以代码为准。
+
+### 2.5 SeriesPoint
+
+per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真值源。源文件 `backend/app/models/series_point.py:11`。
+
+| 字段 | 类型 | 默认值/约束 | 说明 |
+| --- | --- | --- | --- |
+| `series_point_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
+| `shard_id` | `str` | `index=True`（逻辑外键 → Shard） | 所属 shard |
+| `row_index` | `int` | 必填 | shard 内行号（从 0 起，等距） |
+| `ts` | `str` | 必填 | ISO 8601 时间戳**原文**（保留原始 offset，不经 ms-epoch 往返，#8） |
+| `values_json` | `dict[str, Any]` | `{}`，**JSON 列** | 该点各 value 列的 `{列名: 值}`，自描述、不依赖列序 |
+| `created_at` | `datetime` | `utc_now` | |
+
+复合索引 `ix_seriespoint_shard_row (shard_id, row_index)` 支撑样本切片的范围查询。写入见 `services/series_store.py` 的 `SeriesStore.write`（批量插）/ `slice` / `slice_timestamps`（**闭区间**范围查询）。
 
 ---
 
@@ -623,7 +638,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 ### 6.1 样本视图（sample.v1）
 
-**2026-05-25 重构**：样本不再逐窗物化为 `samples/{shard_id}.jsonl`。每个 shard 的全列数值落在一个 **per-dataset TsFile**（`runtime/tsfiles/{shard_id}.tsfile`，表模型 `tsbench.<dataset_id>.<列>`，见 §6.4）。`sample.v1` 是 `SampleStore.read_by_ref` 用 `TsFileSlicer` 按 `SampleIndex.storage_ref` 的行号区间**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。注意 `target_history`/`target_future` 只切 `target_columns`；其余 `value_columns`（如协变量）已在 TsFile 中，但 MVP 不进 sample 视图（`history_cov`/`future_cov` 仍为空）。
+**2026-05-25 SQLite pivot**：样本不物化为文件。每个 shard 的全列数值逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。注意 `target_history`/`target_future` 只切 `target_columns`；其余 `value_columns`（如协变量）已在 `SeriesPoint.values_json` 中，但 MVP 不进 sample 视图（`history_cov`/`future_cov` 仍为空）。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -699,16 +714,13 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 ---
 
-### 6.4 per-dataset TsFile（单一真值源，2026-05-25 新增）
+### 6.4 序列真值存储：SQLite SeriesPoint（2026-05-25 SQLite pivot）
 
-每个 shard 的全列数值落在一个 TsFile：`runtime/tsfiles/{shard_id}.tsfile`，**表模型**命名 `tsbench.<dataset_id>.<列>`（`dataset_id` = `shard_id` 去连字符）。写入/读取封装在 `services/tsfile_store.py`：
+序列真值**不再落盘**为 per-dataset TsFile，而是逐点行存进 SQLite `SeriesPoint`（DB 表，见 §2.5）。`SeriesStore`（`services/series_store.py`）封装存取：
+- `SeriesStore.write(session, shard_id, timestamps, value_columns, values)`：把全列矩阵逐点插入 `SeriesPoint`（`values_json={列:值}`、`ts` 存 ISO 原文，**不经 ms-epoch 往返**，规避 #8 的本地时区漂移）。
+- `SeriesStore.slice(session, shard_id, columns, row_start, row_end)` / `slice_timestamps(...)`：按 `(shard_id, row_index)` **闭区间**范围查询，返回行主序 `list[list[float]]` / ISO 时间戳。`sample.v1` 的视图由此现切。
 
-- `TsFileStore.write(shard_id, dataset_id, timestamps, value_columns, values)`：把 `time`(ms epoch) + 各 `value_columns` + `dataset_id` 标签列组成 pandas DataFrame，调 `tsfile.dataframe_to_tsfile(df, path, table_name="tsbench", time_column="time", tag_column=["dataset_id"])` 落盘。
-- `TsFileSlicer(path).slice(dataset_id, columns, row_start, row_end)`：`TsFileDataFrame(path)["tsbench.<id>.<列>"][a:b]` → 行主序 `list[list[float]]`（半开区间）。`slice_timestamps(...)` 取 ms epoch。
-
-时间戳往返：`write` 用 `int(dt.timestamp()*1000)`，读回用 `datetime.fromtimestamp(ms/1000)`（同机本地时区往返恒等），`sample.v1` 的 ISO 时间戳由此重建。
-
-> **决策边界**：forecast 输出仍为 JSONL（§6.2 不变）；本次只把**样本（真值）侧**从 JSONL 改为 TsFile 单一真值源。依赖 `tsfile==2.3.0` + numpy/pandas/pyarrow（`requires-python>=3.14`）。
+> **TsFile 现在是输入格式之一**（不再是存储）：`tsfile_dataset_reader.py` 的 `TsFileDatasetReader` 把单设备表模型 TsFile 读成 `DatasetReadResult`，与 CSV 走同一存储/校验通路（`get_dataset_reader(file_format)` 工厂选 reader）。`tsfile==2.3.0` 依赖因此保留（`requires-python>=3.14`）；旧的 `services/tsfile_store.py`（`TsFileStore`/`TsFileSlicer`）已不在数据通路中使用。forecast 输出仍为 JSONL（§6.2 不变）。
 
 ---
 
@@ -774,8 +786,8 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 `refresh_ranking`（`ranking_service.py:8-37`）：对 `latest_valid_result` 与 `best_result` 两种 policy 各重建一套 entry。
 - **有效 unit 过滤**（`_valid_unit_metric_rows`，`ranking_service.py:53-69`）：只取 `result_level=="unit"` 的指标，且 run 属于该 track、`run.status ∈ {succeeded, partial_succeeded}`、`unit.status == "succeeded"`。即 `partial_succeeded`/`failed` 的 unit **不进榜**（spec §8.4-48）。
 - `latest_valid_result`：每模型取 `run.created_at` 最新的有效 unit（`_select_latest`）。
-- `best_result`：每模型取 metric 值最小的有效 unit（`_select_best`，因 `direction=lower_is_better`）。
-- 排名按 value 升序，`rank` 从 1 起。
+- `best_result`：每模型取 metric 值最优的有效 unit（`_select_best`，按 `direction` 取 min/max）。
+- 排序按 `MetricDefinition.direction`（`lower_is_better → 升序`、`higher_is_better → 降序`），`rank` 从 1 起（#15：不再硬编码升序）。
 
 ### 8.9 指标聚合命名
 
@@ -799,4 +811,17 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 6. **聚合标签命名**：task 级写 `mean_over_tasks`、unit 级写 `mean_over_units`（即「本层级复数」），而非直觉上的「下层复数」；spec §4.13 仅举例 `mean_over_samples/mean_over_shards`，未覆盖这两个值。
 7. **`BenchmarkingRun.model_ids`、`Shard` 大量物理切分字段（context_length/horizon/stride 等）** 在 spec 字段表中未逐一列出，代码中确有这些列。
 8. **`SampleForecastDTO` / `RunProgressDTO` 没有独立 schema 类**：service 直接返回 dict（`build_sample_forecast` / `build_run_progress`）。
-9. **adapter 选择由全局配置 `settings.model_adapter` 决定**（`stub` vs REST），`Model.adapter_type` 字段当前不参与运行期分支判断；spec §4.7 偏向把 adapter 绑在 Model 上。
+9. **adapter 选择由全局配置 `settings.model_adapter` 决定**（`stub` vs REST），`Model.adapter_type` 字段当前不参与运行期分支判断；spec §4.7 偏向把 adapter 绑在 Model 上（清理项 #22，接真实推理时再议按模型路由）。
+
+---
+
+## 10. 已知约束与边界（2026-05-25 SQLite pivot 登记）
+
+数据通路 review（清理 plan 24 项）沉淀的、当前**有意保留**的约束，便于后续接续：
+
+1. **存储已 pivot 为 SQLite**：内部真值源是 `SeriesPoint`（逐点行），TsFile 由「存储格式」降为「输入格式」之一。输入支持 **CSV 或 TsFile**，经 `get_dataset_reader(file_format)` 各自 reader → 统一 `DatasetReadResult` → 写入 `SeriesPoint`。
+2. **单序列 / 单设备边界**（#10，本轮明确排除）：一个 CSV = 一条序列（时间轴严格递增不重复）；TsFile 输入要求**恰好一个设备**（多设备 → `tsfile_multiple_devices`）。多序列/面板需单列一轮设计。
+3. **等间隔校验挡掉日历型频率**（#11）：`_infer_frequency` 要求相邻间隔严格相等，月/季/年（天数不齐）会被 `csv_time_not_equidistant` 拒。连带 MASE 季节 `monthly→12` 现实不可达。本轮按「接受现状 + 文档登记」，未放宽为日历等间隔。
+4. **MASE 季节项 `m=1`**（#13）：`_mase_scale` 用 last-value naive（`m=1`），未按频率推季节 `m`。与 #11 一致（季节 m 大半不可达），m=1 为务实简化，登记为最终决策。
+5. **MASE 缺席可见化**（#14，已实现）：平稳历史（in-sample `scale==0`）下该样本 MASE 无定义。现不再静默缺席——`compute_sample_metrics` 经 `SampleMetrics` 暴露 `mase_unavailable_reason`（`flat_history` / `no_history_diffs`），report 在该 unit 显式标注 `metrics.mase=null` + `mase_unavailable_reason`；榜单仍正确跳过（无 `mase` MetricResult 行即不进 MASE 榜）。
+6. **max_samples 抽稀与 stride 的相互作用**（#9）：`subsample_windows` 沿窗序均匀抽稀（含首尾、可复现）。若先用小 stride 多产窗再抽稀，被选窗的有效间距可能 < horizon → 答案段重叠、指标对重叠区重复计权，且样本集随 max_samples 变化而不可比。要「每点考一次 + 封顶」更稳的做法是直接调 `stride` 让答案段铺满，而非小 stride 再抽稀。

@@ -87,42 +87,43 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 
 ## 2. 关键流程
 
-### 2.a 数据集接入与样本物化
+### 2.a 数据集接入与样本存储（SQLite 逐点行）
 
 **入口**：`POST /dataset-manifests/upload` → `POST /dataset-manifests` → `POST /dataset-load-jobs`
-**服务**：`CsvDatasetReader` → `DatasetLoadService` → `build_windows` → `SampleStore`
-**产物实体**：`DatasetManifest` → `DatasetLoadJob` → `Shard` + 多条 `SampleIndex` + `runtime/samples/{shard_id}.jsonl`
+**服务**：`get_dataset_reader`（CSV / TsFile）→ `DatasetLoadService` → `build_windows` → `SeriesStore` + `SampleStore`
+**产物实体**：`DatasetManifest` → `DatasetLoadJob` → `Shard` + N×`SeriesPoint`（逐点真值）+ N×`SampleIndex`（行号区间指针）
 
-上传（`routes/dataset_manifests.py:29`）只做嗅探：把文件落到 `uploads/`，用 `CsvDatasetReader._read_text/_detect_delimiter` 给出分隔符、编码、列名、预览行，不入库。创建 manifest（`dataset_manifests.py:59`）把元数据写入 `DatasetManifest`。
+> **2026-05-25 SQLite pivot**：序列真值从「per-dataset TsFile」改为 SQLite `SeriesPoint`（逐点行）。TsFile 由存储格式降为**输入格式之一**——输入支持 **CSV 或 TsFile**，由 `get_dataset_reader(manifest.file_format)` 选 reader，二者产出统一的 `DatasetReadResult`。
 
-真正的物化在创建 load job 时同步发生（`routes/dataset_load_jobs.py:20` → `DatasetLoadService.create_load_job`，`services/dataset_load_service.py:63`）：
+上传（`routes/dataset_manifests.py:29`）只做嗅探，把文件落到 `uploads/`，不入库（#3 已改为按扩展名分支）：CSV 用 `CsvDatasetReader` 给出分隔符/编码/列名/预览，`has_header`（`_looks_like_data_row` 真判）与 per-列 `inferred_type`（numeric/string 真推断）；`.tsfile` 则用 `tsfile.TsFileDataFrame` 给出设备名与物理量列。创建 manifest（`dataset_manifests.py:59`）把元数据（含 `file_format`）写入 `DatasetManifest`。
+
+真正的存储在创建 load job 时同步发生（`routes/dataset_load_jobs.py:20` → `DatasetLoadService.create_load_job`）：
 
 - 前置幂等校验：`assert_manifest_can_succeed_load` 与 `assert_manifest_can_create_successful_real_shard`（`db/init_db.py:18,33`）——一个 manifest 只能有一个成功 load job / 一个 ready 的 real shard。
-- `_execute_job`（`dataset_load_service.py`）用 `CsvDatasetReader.read` 读取并**严格校验** CSV（**2026-05-25 重构为全列摄入**）：除时间列外的**所有数值列**（manifest `value_columns`；为空则自动全取）逐列校验为有限 float（`csv_value_missing`/`csv_value_not_float`/`csv_value_not_finite`），表头存在、列名唯一、时间列存在、时间戳严格递增且不重复、等间隔、频率推断与 manifest 声明一致（`services/csv_dataset_reader.py`）。随后从 `split_config.target_columns` 选**恰好 1 个**目标列（必须 ⊆ `value_columns`，否则 `load_target_columns_invalid`）。
-- `build_windows`（`dataset_load_service.py:26`）按 `context_length / horizon / stride`（stride 默认等于 horizon）滑窗。每窗给出 context 区间 `[context_start, context_end]` 与 horizon 区间 `[horizon_start, horizon_end]`。校验：参数为正、`context_length + horizon ≤ row_count`、至少产出一个窗口。
-- `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现）。
-- 创建 `Shard`（status=`ready`），用 `TsFileStore.write` 把**全列数值矩阵**落成 per-dataset TsFile `runtime/tsfiles/{shard_id}.tsfile`（表模型 `tsbench.<dataset_id>.<列>`）；再由 `SampleStore.write_samples`（`services/sample_store.py`）为每个窗口建一条 `SampleIndex`——**指针化**，`storage_ref` 记录行号区间而非物化值，`checksum` 为「切片器现切出的 canonical sample」的 sha256。读取时按行号从 TsFile 现切（单一真值源）。
-- 成功时回填 `shard.storage_uri`、`manifest.status="loaded"`、`job.status="succeeded"` 及 `validation_summary`。任一 `ApiError` 会触发 `_cleanup_job_artifacts` 删除半成品 JSONL，并把 job 落为 `failed` + `error_code/error_message`（`dataset_load_service.py:90-100`）。
+- `_execute_job` 用 `get_dataset_reader(manifest.file_format).read(...)` 读取并**严格校验**（**全列摄入**）：除时间列外的**所有数值列**（manifest `value_columns`；为空则全取）逐列校验为有限 float，时间轴经共享的 `validate_time_axis`（递增/不重复/等间隔 + 时区一致性 + 频率按**时长**比较）。TsFile 输入要求**恰好一个设备**（多设备 → `tsfile_multiple_devices`），时间为内建轴。随后从 `split_config.target_columns` 选**恰好 1 个**目标列（必须 ⊆ `value_columns`，否则 `load_target_columns_invalid`）。
+- `build_windows`（`dataset_load_service.py`）按 `context_length / horizon / stride`（stride 默认等于 horizon）滑窗。每窗给出 context 区间 `[context_start, context_end]` 与 horizon 区间 `[horizon_start, horizon_end]`。校验：参数为正、`context_length + horizon ≤ row_count`、至少产出一个窗口。
+- `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现；与 stride 的相互作用见 data-model §10.6）。
+- 创建 `Shard`（status=`ready`），用 `SeriesStore.write` 把**全列数值矩阵**逐点写入 `SeriesPoint`（一行一时间点，`values_json={列:值}`，`ts` 存 ISO 原文）；再由 `SampleStore.write_samples` 为每窗建一条 `SampleIndex`——**指针化**，`storage_ref` 只记录行号区间，`checksum` 对样本**内容**算（排除随机 ID，跨加载可比，#7）。读取时按 `(shard_id, row_index)` 范围查询 `SeriesPoint` 现切（单一真值源）。
+- **原子加载**：`Shard` + 全部 `SeriesPoint` + 全部 `SampleIndex` 同处一个事务。成功时回填 `manifest.status="loaded"`、`job.status="succeeded"` 及 `validation_summary`；任一 `ApiError` 触发 `session.rollback()` 丢弃半成品，再把 job 落为 `failed` + `error_code/error_message`（替代旧的删 `.tsfile` 文件清理）。
 
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant R as routes/dataset_load_jobs
     participant DLS as DatasetLoadService
-    participant CSV as CsvDatasetReader
-    participant SS as SampleStore
-    participant DB as SQLite + samples/
+    participant RD as get_dataset_reader (CSV/TsFile)
+    participant SS as SeriesStore + SampleStore
+    participant DB as SQLite
 
     C->>R: POST /dataset-load-jobs {manifest_id, split_config, seed}
     R->>DLS: create_load_job(...)
     DLS->>DB: 幂等校验 + 建 DatasetLoadJob(status=created→validating)
-    DLS->>CSV: read(source_uri, time_col, targets, freq)
-    CSV-->>DLS: DatasetReadResult（校验通过）
-    DLS->>DLS: build_windows(context/horizon/stride)
-    DLS->>DB: 建 Shard(status=ready)
-    DLS->>SS: write_samples(shard_id, result, windows)
-    SS->>DB: 写 samples/{shard_id}.jsonl + N×SampleIndex
-    DLS->>DB: manifest.status=loaded, job.status=succeeded
+    DLS->>RD: read(source_uri, time_col, value_columns, freq)
+    RD-->>DLS: DatasetReadResult（校验通过）
+    DLS->>DLS: build_windows(context/horizon/stride) + subsample
+    DLS->>SS: SeriesStore.write(SeriesPoint) + SampleStore.write_samples(指针)
+    SS->>DB: N×SeriesPoint + N×SampleIndex（同一事务）
+    DLS->>DB: 建 Shard(ready) + manifest.loaded + job.succeeded（一次提交）
     DLS-->>C: DatasetLoadJob
 ```
 
@@ -182,7 +183,7 @@ flowchart LR
 
 - `_execute_unit`（`run_executor.py:136`）：置 unit `running`；**失败注入**——若该 model 的 `endpoint_uri == "stub://fail"`，调 `_fail_unit` 把它名下所有 Task 与该 Unit 全标 `failed`（`error_code="adapter_error"`）并返回。否则逐 Task 调 `_execute_task`，再用 `aggregate_metric` 求 unit 级 mse/mae 写 `MetricResult(result_level="unit")`。
 - `_execute_task`（`run_executor.py:176`）：取 block 下所有 `Shard`，逐 shard 调 `_execute_shard`，聚合出 task 级 mse/mae（`result_level="task"`，带 `capability_block_id`）。
-- `_execute_shard`（`run_executor.py`）：取 shard 全部 `SampleIndex`（按 `sample_index` 排序），逐 sample：`SampleStore.read_by_ref` 经 `TsFileSlicer` 按行号**现切**出样本 → **`build_model_input(sample)`** 构造**不含 `target_future`、带 `horizon`** 的输入视图（输入/答案分离，`services/model_input.py`）→ `adapter.forecast(model_input, model_payload, timeout)` → `compute_sample_metrics(target_future, forecast, target_history)` 算 **mse/mae/mase**（`services/metric_service.py`，`target_future` 仅服务端用于算分）→ 每个 sample 指标写 `MetricResult(result_level="sample", aggregation="raw")`。所有 sample 的预测行经 `ForecastStore.write_forecasts` 落到 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`（`forecast.v1` schema，带 sha256 checksum）并建 `ForecastArtifact`。最后对 `METRIC_NAMES=["mase","mse","mae"]` 逐指标聚合 shard 级（`result_level="shard"`）。
+- `_execute_shard`（`run_executor.py`）：取 shard 全部 `SampleIndex`（按 `sample_index` 排序），逐 sample：`SampleStore.read_by_ref(session, storage_ref)` 经 `SeriesStore.slice` 按 `(shard_id, row_index)` 范围**现切**出样本 → **`build_model_input(sample)`** 构造**不含 `target_future`、带 `horizon`** 的输入视图（输入/答案分离，`services/model_input.py`）→ `adapter.forecast(model_input, model_payload, timeout)` → `compute_sample_metrics(target_future, forecast, target_history)` 算 **mse/mae/mase**（`services/metric_service.py`，`target_future` 仅服务端用于算分）→ 每个 sample 指标写 `MetricResult(result_level="sample", aggregation="raw")`。所有 sample 的预测行经 `ForecastStore.write_forecasts` 落到 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`（`forecast.v1` schema，带 sha256 checksum）并建 `ForecastArtifact`。最后对 `METRIC_NAMES=["mase","mse","mae"]` 逐指标聚合 shard 级（`result_level="shard"`）。
 
 指标聚合 `aggregate_metric`（`metric_service.py`）对一组 `{mase, mse, mae}` 逐指标取均值，并统计 `success_count / failure_count`；某层只要有一个 None 子项即算部分失败。某指标缺失（如平稳历史无 mase）只影响该指标，不影响 mse/mae 的成功判定。`MetricResult` 由 `_metric`（`run_executor.py:245`）统一构造，`aggregation` 字段在 sample 级为 `raw`，其余为 `mean_over_{level}s`。
 
@@ -360,10 +361,10 @@ export TSBENCHMARK_MODEL_ADAPTER=rest    # 或 stub（完全进程内，连桩�
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| POST | `/dataset-manifests/upload` | 上传 CSV，返回嗅探（列、预览、分隔符、编码） |
+| POST | `/dataset-manifests/upload` | 上传 CSV 或 TsFile，返回嗅探（CSV：列/预览/分隔符/编码/has_header/类型；TsFile：设备/物理量列） |
 | POST | `/dataset-manifests` | 创建数据集 manifest |
 | GET | `/dataset-manifests/{dataset_manifest_id}` | 取 manifest |
-| POST | `/dataset-load-jobs` | 创建并同步执行 load job（切窗 + 物化样本） |
+| POST | `/dataset-load-jobs` | 创建并同步执行 load job（读取 → 切窗 → 写 SeriesPoint + 样本指针） |
 | GET | `/dataset-load-jobs/{load_job_id}` | 取 load job |
 | GET | `/shards/{shard_id}` | 取 shard |
 | GET | `/shards/{shard_id}/samples` | 分页列 shard 的样本索引 |

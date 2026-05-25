@@ -26,7 +26,7 @@ flowchart LR
 - **后端**：FastAPI + SQLModel + SQLite。分层边界——`api/routes/` 只做校验与委派，`services/` 承载业务行为，`models/` 仅持久化，`workers/` 跑后台执行。
 - **前端**：Vue 3 + Vite 7，经 `/api` 代理访问后端。
 - **推理**：通过 `ModelAdapter` 协议接出，由配置 `TSBENCHMARK_MODEL_ADAPTER` 选择 `rest`（HTTP 调 timer-rest-service / 本地桩）或 `stub`（进程内确定性桩）。
-- **产物**：评测中间产物（物化样本、预测、报告）落在 `runtime/` 下的 JSONL / JSON 文件；元数据进 SQLite。
+- **产物**：序列真值与样本存进 SQLite（`SeriesPoint` 逐点行 + `SampleIndex` 指针）；评测产物（预测、报告）落在 `runtime/` 下的 JSONL / JSON 文件；元数据进 SQLite。
 
 ## 核心数据层级
 
@@ -36,6 +36,18 @@ Track → CapabilityBlock → Shard → SampleIndex                     （组�
 BenchmarkingRun → Unit(按模型) → Task(按能力块) → Shard → Sample  （执行侧）
 MetricResult：单表多层级（sample / shard / task / unit）
 ```
+
+## 前端结构
+
+前端在 `frontend/src/`（Vue 3 `<script setup>` + Vite 7），经 `/api` 代理访问后端，**刻意不引入 vue-router / pinia**，保持轻依赖：
+
+- **应用外壳** `App.vue`：左侧栏导航（概览 / 新建评测 / 数据集 / 运行）+ 顶栏（面包屑 + 亮暗主题切换）+ 自写 hash 路由（`#/`、`#/new`、`#/datasets[/:id]`、`#/load-jobs/:id`、`#/shards/:id`、`#/runs[/:id]`、`#/tracks/:id[/ranking]`、`#/reports/:id`、`#/samples/:id?run_id=`），未匹配回落到概览。工作流（向导）是子页面 `#/new`，首页 `#/` 是概览。
+- **页面** `pages/`：`HomePage`（概览）、`EvaluationWizardPage`（分步门禁向导）、`DatasetsPage` / `RunsPage`（列表）、各详情页（DatasetManifest / LoadJob / Shard / RunDetail / Track / Ranking / Report / SampleForecast）。
+- **组件**：`components/wizard/`（6 个向导步骤）、`components/results/`（`ForecastChart` 交互式折线图、`RankingChart` 条形、`RankingTable` / `ReportSummary` / `SampleMetricTable`）、`components/ui/`（`Icon` 内联 SVG、`StatusBadge`、`StateBlock` 统一 loading/empty/error+重试）。
+- **设计系统** `styles.css`：CSS tokens，亮 + 暗双主题经 `[data-theme]` 切换（`composables/useTheme.ts`，默认跟随系统）。
+- **状态 / 工具**：`stores/wizard.ts`（向导状态 + 分步控制）、`stores/recents.ts`（**localStorage 记录用户产物**，驱动列表/概览——这是「后端无列表接口」的前端取舍）、`composables/useAsync.ts`、`composables/useModels.ts`（缓存模型目录把 `model_id` 解析为名字）、`lib/format.ts`。
+- **API 客户端** `api/`：`client.ts` 统一加 `/api` 前缀并解析错误信封，其余按域分模块。
+- 测试 `tests/`（Vitest + Testing Library）：`cd frontend && npm test`。
 
 ## 本地开发常用命令
 

@@ -91,9 +91,9 @@ def _write_record(out_path, base_url, csv_path, columns, shard, split_config, mo
     lines.append(f"- **数据**：`{csv_path}`，列 = {columns}")
     lines.append(f"- **后端**：`{base_url}`（隔离 runtime + 进程内确定性桩适配器 `TSBENCHMARK_MODEL_ADAPTER=stub`）")
     lines.append(f"- **切分**：{split_config}")
-    lines.append(f"- **Shard**：value_columns={shard['value_columns']}，target_columns={shard['target_columns']}，sample_count={shard['sample_count']}，tsfile=`{shard.get('tsfile_uri')}`")
+    lines.append(f"- **Shard**：value_columns={shard['value_columns']}，target_columns={shard['target_columns']}，sample_count={shard['sample_count']}（序列真值存 SQLite SeriesPoint）")
     lines.append("")
-    lines.append("> 通路：CSV → 全列摄入 → per-dataset TsFile → 指针切片 → ModelInput(无 target_future) → 桩推理 → MSE/MAE/MASE → 榜单。")
+    lines.append("> 通路：CSV/TsFile 输入 → 全列摄入 → SQLite SeriesPoint(逐点行) → 指针切片 → ModelInput(无 target_future) → 桩推理 → MSE/MAE/MASE → 榜单。")
     lines.append("> **桩确定性**：同一次 load 内，相同 (model, sample, seed) 必得相同 forecast；但 `sample_id` 为随机 UUID，故**绝对预测值不跨重载可比**（既有特性）。")
     lines.append("")
 
