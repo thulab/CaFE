@@ -1,22 +1,23 @@
 # TSBenchmark 用户手册
 
-本文档面向本地 MVP 使用者，说明如何启动 TSBenchmark、加载真实 CSV 数据集、运行模型评测、查看榜单/报告/样本预测结果，以及如何排查常见问题。
+本文档面向本地 MVP 使用者，说明如何启动 TSBenchmark、加载真实 CSV 数据集、运行模型评测、查看榜单/报告/样本预测结果，以及如何排查常见问题。所有命令默认在项目根目录执行。
 
-## 1. 适用范围
+## 1. 适用范围与能力边界
 
-当前手册覆盖仓库内的 MVP Web 平台：
+当前手册覆盖仓库内的 MVP Web 平台，请先了解它能做什么、不能做什么：
 
 - 后端：FastAPI + SQLModel + SQLite。
-- 前端：Vue + Vite。
+- 前端：Vue 3 + Vite 7。
 - 数据集：仅支持 CSV。
-- 目标列：仅支持单变量单 target column。
-- 模型：内置 5 个可复现 stub 模型，分别是 Timer 3.5、Timer 3.0、Chronos 2、toto、TimesFM 2.5。
-- 指标：MSE、MAE。
-- 使用场景：本地可信环境，不包含登录、权限管理或生产模型服务接入。
+- 目标列：仅支持单变量单 target column（一次评测必须且只能选 1 个 target）。
+- 模型：内置 5 个可复现模型，分别是 `Timer 3.5`、`Timer 3.0`、`Chronos 2`、`toto`、`TimesFM 2.5`。
+- 指标：MSE、MAE，均为 lower is better。
+- 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
+- 使用场景：本地可信环境，不包含登录、权限管理或生产级访问控制。
 
 ## 2. 环境准备
 
-在项目根目录执行命令。建议先确认以下工具可用：
+建议先确认以下工具可用：
 
 ```bash
 uv --version
@@ -24,9 +25,12 @@ node --version
 npm --version
 ```
 
-前端依赖 Vite 7，Node.js 必须为 `20.19+` 或 `22.12+`。如果 `node --version` 显示 `v15.14.0`、`v16` 或 `v18`，请先切换到受支持版本。
+版本要求：
 
-首次运行时，启动脚本会自动准备后端虚拟环境和前端依赖。如果需要手动安装，也可以执行：
+- 后端：Python `>=3.12`（由 `uv` 管理虚拟环境）。
+- 前端：Node.js 必须为 `20.19+` 或 `22.12+`（前端依赖 Vite 7）。如果 `node --version` 显示更低版本，启动脚本会直接拒绝并提示，请先切换到受支持版本。
+
+首次运行时，启动脚本会自动准备后端虚拟环境和前端依赖（即检测不到 `.venv/bin/uvicorn` 或 `node_modules/.bin/vite` 时分别执行 `uv sync` 与 `npm install`）。如需手动预装：
 
 ```bash
 cd backend && uv sync
@@ -48,45 +52,104 @@ cd ../frontend && npm install
 - 前端页面：`http://127.0.0.1:5173`
 - 后端 API：`http://127.0.0.1:8000`
 
-脚本会在 `.tsbenchmark-system/` 下写入：
+脚本会在运行目录（默认 `.tsbenchmark-system/`）下写入：
 
 - `backend.pid` / `frontend.pid`：进程 ID。
 - `backend.log` / `frontend.log`：启动日志和运行日志。
+- （若启动了桩服务）`stub-service.pid` / `stub-service.log`。
 
-常用端口覆盖方式：
+### 3.1 端口与主机覆盖
 
 ```bash
 TSBENCHMARK_BACKEND_PORT=8010 TSBENCHMARK_FRONTEND_PORT=5174 ./scripts/start-system.sh
 ```
 
-常用运行目录覆盖方式：
+支持的相关环境变量：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TSBENCHMARK_BACKEND_HOST` | `127.0.0.1` | 后端监听地址 |
+| `TSBENCHMARK_BACKEND_PORT` | `8000` | 后端端口 |
+| `TSBENCHMARK_FRONTEND_HOST` | `127.0.0.1` | 前端监听地址 |
+| `TSBENCHMARK_FRONTEND_PORT` | `5173` | 前端端口 |
+| `TSBENCHMARK_SYSTEM_DIR` | `.tsbenchmark-system` | pid / 日志的存放目录 |
+
+> 注意：前端默认通过 `/api` 代理到 `http://127.0.0.1:8000`（见 `frontend/vite.config.ts`）。如果用 `TSBENCHMARK_BACKEND_PORT` 改了后端端口，需要同步调整该代理目标，否则前端调不通后端。
+
+### 3.2 运行目录覆盖
 
 ```bash
 TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 ```
 
-停止系统：
+`status-system.sh` 会把过期（进程已不存在）的 pid 文件自动清理掉，再报告 `running` / `stopped`。
+
+## 4. 模型推理服务与本地桩程序
+
+评测的实际推理通过外部 **timer-rest-service** 的 REST API 完成（契约见 [`docs/reference/rest-api.md`](../reference/rest-api.md)）。服务地址被抽象成配置项，本地无真实服务时可启动桩程序顶上。
+
+### 4.1 配置项
+
+所有配置都用 `TSBENCHMARK_` 前缀的环境变量覆盖：
+
+| 环境变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `TSBENCHMARK_TIMER_SERVICE_BASE_URL` | `http://127.0.0.1:10810` | 服务前缀 `http://<host>:<port>` |
+| `TSBENCHMARK_TIMER_SERVICE_API_PREFIX` | `/ai/api/v1` | 文档约定的统一路径前缀 |
+| `TSBENCHMARK_MODEL_ADAPTER` | `rest` | `rest`=走 HTTP；`stub`=进程内确定性桩，无需网络 |
+| `TSBENCHMARK_SAMPLE_FORECAST_TIMEOUT_SECONDS` | `300` | 单个样本调用推理服务的超时秒数 |
+| `TSBENCHMARK_RUNTIME_DIR` | `runtime` | 运行产物根目录（见第 8 节） |
+| `TSBENCHMARK_DATABASE_URL` | `sqlite:///runtime/tsbenchmark.db` | SQLite 数据库地址 |
+
+`base_url` 与 `api_prefix` 会拼成业务端点根地址，例如默认值拼出 `http://127.0.0.1:10810/ai/api/v1`。
+
+### 4.2 三种接入模式
+
+**模式 A：本地桩服务（默认开箱即用）**
+
+桩程序实现了文档的精简子集（`/forecast`、`/models/list`、`/health/*`），默认监听 `127.0.0.1:10810`，与 `base_url` 默认值一致，因此后端无需额外配置即可调用：
 
 ```bash
-./scripts/stop-system.sh
+./scripts/stub-service.sh start     # 启动（日志写入 <运行目录>/stub-service.log）
+./scripts/stub-service.sh status
+./scripts/stub-service.sh stop
 ```
 
-## 4. 数据文件要求
+桩的预测是确定性的（last-value + 按 model_id 计算的偏置 + 固定种子噪声），便于可复现演示。桩监听地址可用 `TSBENCHMARK_STUB_HOST` / `TSBENCHMARK_STUB_PORT` 覆盖（覆盖后需同步设置后端的 `TSBENCHMARK_TIMER_SERVICE_BASE_URL`）。
 
-上传的 CSV 必须满足以下规则：
+**模式 B：进程内桩（不起任何 HTTP 服务）**
 
-- 编码为 UTF-8 或 UTF-8 BOM。
-- 必须有 header row。
-- 列名必须唯一。
-- 分隔符支持逗号、制表符和分号，系统会自动识别。
-- 必须显式选择时间列和 target 列。
-- 时间格式支持 ISO 8601、`YYYY-MM-DD`、`YYYY-MM-DD HH:mm:ss`。
+完全离线、不想额外起进程时，让后端使用进程内桩：
+
+```bash
+TSBENCHMARK_MODEL_ADAPTER=stub ./scripts/start-system.sh
+```
+
+此模式下后端不会去查询 timer-rest-service，模型列表里的「实时加载状态」会显示为未知。
+
+**模式 C：指向真实服务**
+
+```bash
+TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-system.sh
+```
+
+模型列表（`GET /models`）会用真实服务的 `/models/list` 标注每个模型是否已加载；服务不可达时该状态降级为未知，不影响其它功能。
+
+## 5. 数据文件要求
+
+上传的 CSV 必须满足以下规则（每条都对应后端真实校验）：
+
+- 编码为 UTF-8 或 UTF-8 BOM，其它编码会被拒绝。
+- 必须有 header row，且首行不能看起来像数据行。
+- 列名必须唯一（去掉首列可能的 BOM 后判断）。
+- 分隔符支持逗号 `,`、制表符 `\t`、分号 `;`，系统按首行出现次数自动识别。
+- 必须显式选择时间列和 target 列；二者都要真实存在于列名中。
+- 时间格式必须能被 ISO 8601 解析（如 `YYYY-MM-DD`、`YYYY-MM-DD HH:mm:ss`，末尾 `Z` 会按 UTC 处理）。
 - 时间列必须严格单调递增，不允许重复时间戳。
-- 时间间隔必须等距，系统会自动推断 frequency。
-- MVP 只允许选择 1 个 target column。
-- target 值必须能安全转换为有限浮点数，不允许缺失、NaN 或 Inf。
-- `context_length + horizon` 不能超过数据行数。
-- `stride` 默认等于 `horizon`，且必须为正数。
+- 时间间隔必须等距，系统据此推断 frequency（如 `1h`、`1d`）；推断需要至少 2 个时间戳。
+- MVP 只允许选择 **1 个** target column。
+- target 值必须能转换为有限浮点数，不允许缺失、非数字、NaN 或 Inf。
+- 切分约束：`context_length + horizon` 不能超过数据行数；`context_length`、`horizon`、`stride` 都必须为正数；`stride` 缺省时等于 `horizon`。
 
 仓库中有一个可用于试跑的示例文件：
 
@@ -94,7 +157,9 @@ TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 backend/tests/fixtures/valid_hourly_20.csv
 ```
 
-## 5. 完成一次评测
+它有 20 行、列名为 `time,target,extra`，时间为整点（1 小时间隔），target 为 `10.0`～`29.0`。
+
+## 6. 完成一次评测
 
 打开前端页面：
 
@@ -102,55 +167,58 @@ backend/tests/fixtures/valid_hourly_20.csv
 http://127.0.0.1:5173
 ```
 
-按以下步骤操作：
+主页面是「Guided benchmark workbench」向导，左侧是步骤进度（Upload CSV → Configure split → Confirm shard → Create track → Run models → Open report），右侧是逐步操作卡片。完整流程如下：
 
-1. 在上传区域选择 CSV 文件。
-2. 确认页面展示了预览行和列名。
-3. 选择时间列，通常为 `time`。
-4. 选择唯一 target 列，通常为 `target`。
-5. 配置切分参数：
-   - `Context`：历史窗口长度，例如 `6`。
-   - `Horizon`：预测长度，例如 `3`。
-   - `Stride`：窗口滑动步长，例如 `3`。
-6. 点击 `Load shard`，等待页面显示 sample 数量。
-7. 点击 `Create track`，系统会基于真实数据 shard 创建真实数据评测赛道。
-8. 在模型列表中选择一个或多个模型。
-9. 点击 `Run`，系统会创建 benchmarking run 并轮询进度。
-10. 运行完成后，页面会出现 Report 链接。
+1. **Upload CSV**：在 `CSV file` 文件选择框中选择 CSV 文件。上传成功后页面会显示预览表（列名表头 + 前几行数据），`Next` 按钮变为可用。
+2. **Configure split**：
+   - 在 `Time` 下拉框选择时间列（默认填好 `time`）。
+   - 在 `Target` 复选框组中**勾选唯一一个** target 列（示例 CSV 选 `target`；勾选多个会提示 “Select exactly one target”）。
+   - 填写切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（窗口滑动步长，默认 `3`）。
+   - 点击 `Load shard`。系统会依次创建 dataset manifest、提交 load job 并物化样本；成功后向导记录 shard。
+3. **Confirm shard**：该步骤自动展示 shard 的样本数量（形如 `N samples`），并提供 `Shard` 链接，便于确认评测集已就绪。
+4. **Create track**：点击 `Create track`，系统基于已加载的 shard 创建「真实数据评测赛道」（主指标 MSE），并给出 `Track` 与 `Ranking` 链接。
+5. **Run models**：在 `Available models` 列表中勾选一个或多个模型，点击 `Run`。系统创建 benchmarking run，并每 5 秒轮询一次进度，状态在卡片上实时刷新。
+6. **Open report**：当 run 达到终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）且生成了 report 后，会出现 `Report` 链接，可跳转到报告页。
 
-使用示例 CSV 和参数 `context=6 / horizon=3 / stride=3` 时，应生成 4 个 sample。
+使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。
 
-## 6. 查看结果
+## 7. 查看结果
 
-### 6.1 榜单
+下列接口为后端真实路径，挂载在后端根路径下（不带 `/api` 前缀）。前端访问时通过 Vite 的 `/api` 代理转发，代理会自动去掉 `/api` 前缀。直接用 `curl` 调试请使用后端地址，例如 `http://127.0.0.1:8000/...`。
 
-榜单按 Track 维度展示模型成绩。后端接口支持：
+### 7.1 榜单（ranking）
+
+榜单按 Track 维度展示模型成绩：
 
 ```text
 GET /tracks/{track_id}/ranking?metric=mse&policy=latest_valid_result
 ```
 
-可选参数：
+可选查询参数：
 
-- `metric=mse|mae`
-- `policy=latest_valid_result|best_result`
+- `metric`：`mse`（默认）或 `mae`。
+- `policy`：`latest_valid_result`（默认）或 `best_result`。
+
+返回结构：
+
+```json
+{
+  "track_id": "...",
+  "metric": "mse",
+  "policy": "latest_valid_result",
+  "items": [{ "model_id": "...", "rank": 1, "metric_value": 0.12 }]
+}
+```
 
 排序方向为 lower is better。
 
-### 6.2 报告
+### 7.2 报告（report）
 
-报告按 run 生成，保存为 JSON 产物，默认在：
+报告按 run 生成，保存为 JSON 产物，默认位置：
 
 ```text
 runtime/reports/{run_id}.json
 ```
-
-报告包含：
-
-- 模型级指标表。
-- task 摘要。
-- sample forecast 链接。
-- 取消运行时的取消原因。
 
 接口：
 
@@ -158,29 +226,35 @@ runtime/reports/{run_id}.json
 GET /reports/{report_id}
 ```
 
-### 6.3 样本预测
+返回字段包括：
 
-样本预测视图用于检查单个 sample 上多个模型的预测曲线和指标。
+- `model_metrics`：模型（unit）级指标表。
+- `task_summaries`：task 摘要（含 task 级指标、`error_code`、`error_message`）。
+- `sample_forecast_links`：样本预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id`。
+- `status`：run 终态。
+- `cancellation_reason`：取消运行时为 `cancel_requested`，否则为 `null`。
+- `benchmarking_run_id`、`track_id`、`report_id`。
 
-接口：
+### 7.3 样本预测（sample forecast）
+
+样本预测视图用于检查单个 sample 上多个模型的预测曲线和指标：
 
 ```text
 GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
 ```
 
-返回内容包括：
+`run_id` 为必填查询参数。返回内容包括：
 
-- history timestamps。
-- future timestamps。
-- target history。
-- target future。
-- 每个模型的 forecast。
-- 每个模型的 sample-level MSE/MAE。
-- 模型失败时的错误信息。
+- `sample_id`。
+- `target_history`：历史 target 值。
+- `target_future`：未来真值。
+- `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MSE/MAE），失败时附 `error_message`。
 
-## 7. 运行产物
+前端样本预测页会绘制对比曲线、列出每模型指标表，并把非 `succeeded` 的模型以告警形式列出。
 
-默认运行目录是 `runtime/`，主要结构如下：
+## 8. 运行产物
+
+默认运行目录是 `runtime/`（可用 `TSBENCHMARK_RUNTIME_DIR` 覆盖），主要结构如下：
 
 ```text
 runtime/
@@ -193,13 +267,13 @@ runtime/
 
 说明：
 
-- `uploads/` 保存上传后的 CSV 文件。
-- `samples/` 保存 materialized sample JSONL。
-- `forecasts/` 保存模型预测 JSONL。
-- `reports/` 保存 run summary JSON。
-- `tsbenchmark.db` 保存 SQLite 元数据。
+- `uploads/`：保存上传后的 CSV 文件。
+- `samples/`：保存物化后的 sample JSONL。
+- `forecasts/`：保存模型预测 JSONL。
+- `reports/`：保存 run summary JSON（即 `{run_id}.json`）。
+- `tsbenchmark.db`：SQLite 元数据库。
 
-如需使用隔离运行目录：
+如需使用隔离的运行目录（注意运行目录与数据库地址要一起改）：
 
 ```bash
 TSBENCHMARK_RUNTIME_DIR=/tmp/tsbenchmark-runtime \
@@ -207,117 +281,87 @@ TSBENCHMARK_DATABASE_URL=sqlite:////tmp/tsbenchmark-runtime/tsbenchmark.db \
 ./scripts/start-system.sh
 ```
 
-## 8. 常见问题
+## 9. 常见问题排查
 
-### 8.1 启动失败
+### 9.1 启动失败
 
-先查看状态：
+先查看状态，再看日志：
 
 ```bash
 ./scripts/status-system.sh
-```
-
-再查看日志：
-
-```bash
 sed -n '1,160p' .tsbenchmark-system/backend.log
 sed -n '1,160p' .tsbenchmark-system/frontend.log
 ```
 
 常见原因：
 
-- 端口已被占用。
-- `uv`、`node` 或 `npm` 未安装。
+- 端口已被占用（用第 3.1 节的端口覆盖换一个端口）。
+- `uv`、`node` 或 `npm` 未安装，或 Node.js 版本低于 `20.19` / `22.12`。
 - 依赖安装被网络或权限限制阻止。
-- 上一次异常退出留下了 stale PID；再次执行 `stop-system.sh` 后重试。
+- 上一次异常退出留下了 stale pid；再执行一次 `stop-system.sh` 后重试。
 
-### 8.2 页面能打开但 API 请求失败
+### 9.2 页面能打开但 API 请求失败
 
-确认后端是否运行：
+确认后端是否运行（注意后端接口在根路径，不带 `/api`）：
 
 ```bash
 curl http://127.0.0.1:8000/models
 ```
 
-确认前端代理配置仍指向后端：
+确认前端代理仍指向后端：
 
 ```text
 frontend/vite.config.ts
 ```
 
-默认前端通过 `/api` 代理到 `http://127.0.0.1:8000`。
+默认前端通过 `/api` 代理到 `http://127.0.0.1:8000`，并在转发时去掉 `/api` 前缀。若改过后端端口，需同步改这里。
 
-### 8.3 CSV 上传后加载失败
+### 9.3 CSV 加载失败
 
-检查错误响应中的 `error_code` 和 `details`。常见错误包括：
+后端错误响应统一为 JSON：`{ "error_code": ..., "message": ..., "details": {...} }`。前端会把 `message` 显示在告警条上。常见 `error_code`：
 
-- `csv_time_parse_failed`：时间列无法解析。
+CSV 结构 / 编码类：
+
+- `csv_encoding_unsupported`：编码不是 UTF-8。
+- `csv_missing_header`：缺少 header row，或首行被识别为数据行。
+- `csv_duplicate_columns`：列名重复。
+- `csv_time_column_missing`：选择的时间列不存在。
+- `csv_target_column_missing`：选择的 target 列不存在。
+- `csv_single_target_only`：选择了多于 1 个 target。
+
+时间列类：
+
+- `csv_time_parse_failed`：时间值无法解析。
 - `csv_duplicate_timestamp`：时间戳重复。
 - `csv_time_not_monotonic`：时间列不是严格递增。
 - `csv_time_not_equidistant`：时间间隔不等距。
-- `csv_single_target_only`：选择了多个 target。
+- `csv_frequency_not_inferable`：时间戳不足 2 个，无法推断 frequency。
+- `csv_frequency_mismatch`：显式提供的 frequency 与推断结果不一致。
+
+target 值类：
+
 - `csv_target_missing`：target 值缺失。
 - `csv_target_not_float`：target 无法转换为浮点数。
 - `csv_target_not_finite`：target 是 NaN 或 Inf。
-- `split_length_exceeds_rows`：切分窗口长度超过数据行数。
 
-### 8.4 想重新开始一次干净测试
+切分 / 样本类：
 
-先停止服务：
+- `split_config_invalid`：`context_length`、`horizon` 或 `stride` 非正数。
+- `split_length_exceeds_rows`：`context_length + horizon` 超过数据行数。
+- `sample_count_empty`：切分配置没有产生任何样本。
+- `dataset_manifest_not_found`：load job 指向的 dataset manifest 不存在。
+
+### 9.4 想重新开始一次干净测试
+
+先停止服务，再清理运行产物，然后重启：
 
 ```bash
 ./scripts/stop-system.sh
-```
-
-再清理运行产物：
-
-```bash
 rm -rf runtime .tsbenchmark-system
-```
-
-然后重新启动：
-
-```bash
 ./scripts/start-system.sh
 ```
 
-## 9. 模型推理服务与本地桩程序
-
-评测的实际推理通过外部 **timer-rest-service** 的 REST API 完成（契约见 [`docs/reference/rest-api.md`](../reference/rest-api.md)）。服务地址被抽象成配置项，本地无真实服务时可启动桩程序顶上。
-
-### 9.1 配置项
-
-| 环境变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `TSBENCHMARK_TIMER_SERVICE_BASE_URL` | `http://127.0.0.1:10810` | 服务前缀 `http://<host>:<port>` |
-| `TSBENCHMARK_TIMER_SERVICE_API_PREFIX` | `/ai/api/v1` | 文档约定的统一路径前缀 |
-| `TSBENCHMARK_MODEL_ADAPTER` | `rest` | `rest`=走 HTTP；`stub`=进程内确定性桩，无需网络 |
-
-### 9.2 本地启动桩服务
-
-桩程序实现了文档的精简子集（`/forecast`、`/models/list`、`/health/*`），默认监听 `127.0.0.1:10810`，与 `base_url` 默认值一致，因此后端开箱即用：
-
-```bash
-./scripts/stub-service.sh start     # 启动（日志写入 .tsbenchmark-system/stub-service.log）
-./scripts/stub-service.sh status
-./scripts/stub-service.sh stop
-```
-
-桩的预测是确定性的（last-value + 按 model_id 计算的偏置 + 固定种子噪声），便于可复现演示。
-
-### 9.3 离线 / 不起 HTTP
-
-无需启动桩服务时，可让后端使用进程内桩：
-
-```bash
-TSBENCHMARK_MODEL_ADAPTER=stub ./scripts/start-system.sh
-```
-
-### 9.4 指向真实服务
-
-```bash
-TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-system.sh
-```
+如果之前用桩服务（模式 A），别忘了一并 `./scripts/stub-service.sh stop`。
 
 ## 10. 开发者验证命令
 
@@ -327,19 +371,19 @@ TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-syst
 cd backend && uv run pytest
 ```
 
-前端测试：
+前端单元测试：
 
 ```bash
 cd frontend && npm test
 ```
 
-前端 smoke 测试：
+前端 e2e smoke 测试：
 
 ```bash
 cd frontend && npm run test:e2e
 ```
 
-脚本测试：
+启停脚本测试：
 
 ```bash
 bash scripts/tests/test_system_scripts.sh

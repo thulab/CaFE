@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository contains a TSBenchmark MVP with a FastAPI backend and Vue frontend. `backend/app/` holds backend code: `api/routes/`, `models/`, `schemas/`, `services/`, and `workers/`. `backend/tests/` contains pytest suites in `unit/`, `api/`, `e2e/`, and `fixtures/`. `frontend/src/` holds Vue code: `api/`, `components/wizard/`, `components/results/`, `pages/`, `stores/`, and `tests/`. `docs/` contains specs, plans, `docs/manual/README.md`, and `docs/reference/` (external reference docs synced from Feishu via `scripts/sync-feishu-docs.py`). `scripts/` contains local start/stop/status scripts and script tests.
+This repository contains a TSBenchmark MVP with a FastAPI backend and Vue frontend. `backend/app/` holds backend code: `api/routes/`, `models/`, `schemas/`, `services/`, and `workers/`. `backend/tests/` contains pytest suites in `unit/`, `api/`, `e2e/`, and `fixtures/`. `frontend/src/` holds Vue code: `api/`, `components/wizard/`, `components/results/`, `pages/`, `stores/`, and `tests/`. `docs/` contains specs, plans, the user manual (`docs/manual/README.md`), the developer manual (`docs/developer/` — `README.md` index, `data-model.md`, `key-flows.md`), and `docs/reference/` (external reference docs synced from Feishu via `scripts/sync-feishu-docs.py`). `scripts/` contains local start/stop/status scripts and script tests.
 
 ## Build, Test, and Development Commands
 
