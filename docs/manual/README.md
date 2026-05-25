@@ -11,7 +11,7 @@
 - 数据集：仅支持 CSV。
 - 目标列：仅支持单变量单 target column（一次评测必须且只能选 1 个 target）。
 - 模型：内置 5 个可复现模型，分别是 `Timer 3.5`、`Timer 3.0`、`Chronos 2`、`toto`、`TimesFM 2.5`。
-- 指标：MSE、MAE，均为 lower is better。
+- 指标：MASE、MSE、MAE，均为 lower is better；榜单主指标为 **MASE**（赛道 `primary_metric_id`）。
 - 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
 - 使用场景：本地可信环境，不包含登录、权限管理或生产级访问控制。
 
@@ -159,7 +159,7 @@ backend/tests/fixtures/valid_hourly_20.csv
 
 它有 20 行、列名为 `time,target,extra`，时间为整点（1 小时间隔），target 为 `10.0`～`29.0`。
 
-## 6. 完成一次评测
+## 6. 界面导航与完成一次评测
 
 打开前端页面：
 
@@ -167,18 +167,33 @@ backend/tests/fixtures/valid_hourly_20.csv
 http://127.0.0.1:5173
 ```
 
-主页面是「Guided benchmark workbench」向导，左侧是步骤进度（Upload CSV → Configure split → Confirm shard → Create track → Run models → Open report），右侧是逐步操作卡片。完整流程如下：
+### 6.1 界面布局
 
-1. **Upload CSV**：在 `CSV file` 文件选择框中选择 CSV 文件。上传成功后页面会显示预览表（列名表头 + 前几行数据），`Next` 按钮变为可用。
+页面是一个带左侧边栏的工作台：
+
+- **左侧边栏**：四个入口——**概览（Overview）**、**新建评测（New evaluation）**、**数据集（Datasets）**、**运行（Runs）**。
+- **顶栏**：左侧是面包屑（当前位置），右侧有「New evaluation」快捷按钮和**主题切换**按钮（亮色 → 暗色 → 跟随系统，三态循环；偏好记在浏览器本地）。
+- **概览（首页 `#/`）**：统计卡（数据集 / 运行 / 赛道 / 报告数量）+「最近活动」列表 + 上手引导。
+
+> ⚠️ 关于列表数据：后端只提供「按 ID 查询」的接口，没有列表接口。因此「数据集」「运行」列表与概览的「最近活动」都由**浏览器本地（localStorage）记录**驱动，反映的是**当前浏览器创建过的产物**；清空浏览器存储或换浏览器/设备后这些列表会清空（但后端数据仍在，可用 URL 深链或 API 访问）。
+
+详情页（数据集清单 / 加载任务 / shard / 赛道 / 排行 / 报告 / 样本预测）通过列表、面包屑或向导右侧的「Created artifacts」面板进入，也可直接用 URL 哈希深链访问（如 `#/reports/<id>`）。
+
+### 6.2 走查向导
+
+点侧边栏「新建评测」（`#/new`）。向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
+
+1. **Upload CSV**：把 CSV **拖入**虚线框，或点「Choose file」选择（文件输入的无障碍标签为 `CSV file`）。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），点「Next」继续。
 2. **Configure split**：
-   - 在 `Time` 下拉框选择时间列（默认填好 `time`）。
-   - 在 `Target` 复选框组中**勾选唯一一个** target 列（示例 CSV 选 `target`；勾选多个会提示 “Select exactly one target”）。
-   - 填写切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（窗口滑动步长，默认 `3`）。
-   - 点击 `Load shard`。系统会依次创建 dataset manifest、提交 load job 并物化样本；成功后向导记录 shard。
-3. **Confirm shard**：该步骤自动展示 shard 的样本数量（形如 `N samples`），并提供 `Shard` 链接，便于确认评测集已就绪。
-4. **Create track**：点击 `Create track`，系统基于已加载的 shard 创建「真实数据评测赛道」（主指标 MSE），并给出 `Track` 与 `Ranking` 链接。
-5. **Run models**：在 `Available models` 列表中勾选一个或多个模型，点击 `Run`。系统创建 benchmarking run，并每 5 秒轮询一次进度，状态在卡片上实时刷新。
-6. **Open report**：当 run 达到终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）且生成了 report 后，会出现 `Report` 链接，可跳转到报告页。
+   - `Time column` 下拉选时间列（默认 `time`）。
+   - `Value columns` 复选框组：勾选要纳入的数值列（默认全选非时间列）。
+   - `Target column` **下拉单选**目标列（必须是已勾选的 value column 之一；不选会提示 “Select exactly one target”）。
+   - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
+   - 点「Load shard」：依次创建 dataset manifest、提交 load job 并物化样本，成功后自动进入下一步。
+3. **Confirm shard**：展示样本数量（形如 `N samples`）等统计，并提供「Inspect shard」链接；点「Continue」继续。
+4. **Create track**：点「Create track」，基于已加载的 shard 创建「真实数据评测赛道」（**主指标 MASE**），给出「View track」「View ranking」链接后自动进入下一步。
+5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。运行期间可点「Cancel」请求取消。
+6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
 
 使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。
 
@@ -196,8 +211,10 @@ GET /tracks/{track_id}/ranking?metric=mse&policy=latest_valid_result
 
 可选查询参数：
 
-- `metric`：`mse`（默认）或 `mae`。
+- `metric`：`mase` / `mse` / `mae`（缺省跟随赛道主指标，当前为 `mase`）。
 - `policy`：`latest_valid_result`（默认）或 `best_result`。
+
+> 前端在「赛道详情」内嵌榜单与独立「排行（Ranking）」页都提供 `metric` / `policy` 下拉，并用**条形图 + 榜单表**（冠军高亮、奖牌序号、数值格式化）展示，模型 ID 会解析为模型名。
 
 返回结构：
 
@@ -250,7 +267,7 @@ GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
 - `target_future`：未来真值。
 - `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MSE/MAE），失败时附 `error_message`。
 
-前端样本预测页会绘制对比曲线、列出每模型指标表，并把非 `succeeded` 的模型以告警形式列出。
+前端「样本预测对比」页把历史、真值与各模型预测画在同一张**交互式折线图**上（按真实数据缩放、带坐标轴与网格，各模型用不同颜色、预测用虚线，悬浮显示对应步数值，图例可点选开关各序列，多维目标可切换维度），并列出每模型指标表（最优值高亮）；非 `succeeded` 的模型以告警条单独列出。
 
 ## 8. 运行产物
 

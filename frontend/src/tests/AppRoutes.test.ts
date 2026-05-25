@@ -108,7 +108,7 @@ describe('App routes and artifact links', () => {
     window.location.hash = '#/load-jobs/load-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(await screen.findByRole('heading', { name: 'Dataset load job' })).toBeTruthy();
-    expect(await screen.findByText('succeeded')).toBeTruthy();
+    expect(await screen.findByText('Succeeded')).toBeTruthy();
 
     window.location.hash = '#/shards/shard-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
@@ -145,7 +145,9 @@ describe('App routes and artifact links', () => {
 
     render(EvaluationWizardPage);
 
-    await screen.findByText('Timer 3.5');
+    // The wizard keeps a persistent "Created artifacts" panel with deep links,
+    // independent of which step is currently active.
+    await screen.findByRole('link', { name: 'Dataset manifest' });
     await waitFor(() => {
       expect(screen.getByRole('link', { name: 'Dataset manifest' }).getAttribute('href')).toBe('#/datasets/manifest-1');
       expect(screen.getByRole('link', { name: 'Load job' }).getAttribute('href')).toBe('#/load-jobs/load-1');

@@ -1,60 +1,80 @@
 <template>
   <section class="step-body">
-    <div class="field-stack">
-      <label for="time-column">Time</label>
-      <select id="time-column" v-model="timeColumn">
-        <option v-for="column in columns" :key="column" :value="column">{{ column }}</option>
-      </select>
-      <p class="field-help">Use the column that orders observations over time.</p>
+    <div class="grid-2">
+      <div class="field">
+        <label class="label" for="time-column">Time column</label>
+        <select id="time-column" v-model="timeColumn">
+          <option v-for="column in columns" :key="column" :value="column">{{ column }}</option>
+        </select>
+        <p class="hint">The column that orders observations over time.</p>
+      </div>
+
+      <div class="field">
+        <label class="label" for="target-select">Target column</label>
+        <select id="target-select" v-model="target" aria-label="Target">
+          <option value="">— select target —</option>
+          <option v-for="column in valueColumns" :key="column" :value="column">{{ column }}</option>
+        </select>
+        <p class="hint">Exactly one target from the checked value columns.</p>
+      </div>
     </div>
 
-    <fieldset class="field-stack">
-      <legend>Value columns</legend>
-      <div class="checkbox-grid">
-        <label v-for="column in nonTimeColumns" :key="column" class="checkbox-row">
+    <fieldset class="field" style="border:0;padding:0;margin:0">
+      <legend class="label" style="padding:0;margin-bottom:6px">Value columns</legend>
+      <div class="choice-grid">
+        <label v-for="column in nonTimeColumns" :key="column" class="choice">
           <input v-model="valueColumns" type="checkbox" :value="column" :aria-label="column" />
           {{ column }}
         </label>
       </div>
     </fieldset>
 
-    <div class="field-stack">
-      <label for="target-select">Target</label>
-      <select id="target-select" v-model="target" aria-label="Target">
-        <option value="">-- select target --</option>
-        <option v-for="column in valueColumns" :key="column" :value="column">{{ column }}</option>
-      </select>
-      <p class="field-help">Select exactly one target from the checked value columns.</p>
+    <div class="grid-auto">
+      <div class="field">
+        <label class="label">Context</label>
+        <input v-model.number="context" aria-label="Context" type="number" min="1" />
+        <p class="hint">Look-back window length.</p>
+      </div>
+      <div class="field">
+        <label class="label">Horizon</label>
+        <input v-model.number="horizon" aria-label="Horizon" type="number" min="1" />
+        <p class="hint">Steps to forecast.</p>
+      </div>
+      <div class="field">
+        <label class="label">Stride</label>
+        <input v-model.number="stride" aria-label="Stride" type="number" min="1" />
+        <p class="hint">Gap between sample windows.</p>
+      </div>
+      <div class="field">
+        <label class="label">Max samples</label>
+        <input v-model.number="maxSamples" aria-label="Max samples" type="number" min="1" placeholder="No cap" />
+        <p class="hint">Optional cap on generated samples.</p>
+      </div>
     </div>
 
-    <div class="form-grid">
-      <label>Context <input v-model.number="context" aria-label="Context" type="number" min="1" /></label>
-      <label>Horizon <input v-model.number="horizon" aria-label="Horizon" type="number" min="1" /></label>
-      <label>Stride <input v-model.number="stride" aria-label="Stride" type="number" min="1" /></label>
-      <label>Max samples <input v-model.number="maxSamples" aria-label="Max samples" type="number" min="1" placeholder="No cap" /></label>
-    </div>
+    <p v-if="error" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ error }}</p>
+    <p v-if="wizardState.shardId" class="note-success"><Icon name="checkCircle" :size="16" />Shard ready — continue to confirm it.</p>
 
-    <p v-if="error" class="alert" role="alert">{{ error }}</p>
-    <div class="action-row">
-      <button @click="load">Load shard</button>
-      <p class="status-line">{{ wizardState.shardId ? 'Shard configuration saved' : 'Ready to create dataset shard' }}</p>
-    </div>
-    <div v-if="wizardState.manifestId || wizardState.loadJobId" class="resource-links" aria-label="Dataset view links">
-      <a v-if="wizardState.manifestId" class="text-link" :href="`#/datasets/${wizardState.manifestId}`">Dataset manifest</a>
-      <a v-if="wizardState.loadJobId" class="text-link" :href="`#/load-jobs/${wizardState.loadJobId}`">Load job</a>
+    <div class="wizard-foot" style="padding:0;border:0">
+      <span class="status-line">Window: {{ context }} context → {{ horizon }} horizon, stride {{ stride }}.</span>
+      <button class="btn" type="button" :disabled="busy" @click="load">
+        <span v-if="busy" class="spinner" /> {{ wizardState.shardId ? 'Re-load shard' : 'Load shard' }}
+      </button>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import Icon from '../ui/Icon.vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
-import { wizardState } from '../../stores/wizard';
+import { goNext, wizardState } from '../../stores/wizard';
+import { recordRecent } from '../../stores/recents';
 
 const columns = computed(() => wizardState.preview?.columns.map((column) => column.name) || []);
+const timeColumn = ref('time');
 const nonTimeColumns = computed(() => columns.value.filter((c) => c !== timeColumn.value));
 
-const timeColumn = ref('time');
 const valueColumns = ref<string[]>([]);
 const target = ref('');
 const context = ref(6);
@@ -62,8 +82,8 @@ const horizon = ref(3);
 const stride = ref(3);
 const maxSamples = ref<number | undefined>(undefined);
 const error = ref('');
+const busy = ref(false);
 
-// Default all non-time columns as value columns when columns become available
 watch(nonTimeColumns, (cols) => {
   if (cols.length > 0 && valueColumns.value.length === 0) {
     valueColumns.value = [...cols];
@@ -79,6 +99,7 @@ async function load() {
     error.value = 'Split values must be positive';
     return;
   }
+  busy.value = true;
   try {
     const manifest = await createDatasetManifest({
       name: 'Uploaded dataset',
@@ -89,6 +110,11 @@ async function load() {
       value_columns: valueColumns.value
     });
     wizardState.manifestId = manifest.dataset_manifest_id;
+    recordRecent({
+      kind: 'dataset', id: manifest.dataset_manifest_id, title: 'Uploaded dataset',
+      subtitle: wizardState.preview?.filename || wizardState.sourceUri, href: `#/datasets/${manifest.dataset_manifest_id}`
+    });
+
     const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number } = {
       context_length: context.value,
       horizon: horizon.value,
@@ -98,15 +124,21 @@ async function load() {
     if (maxSamples.value != null && maxSamples.value > 0) {
       splitConfig.max_samples = maxSamples.value;
     }
-    const job = await createLoadJob({
-      dataset_manifest_id: manifest.dataset_manifest_id,
-      split_config: splitConfig
-    });
+    const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });
     wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';
+    if (wizardState.shardId) {
+      recordRecent({
+        kind: 'shard', id: wizardState.shardId, title: `Shard · ${target.value}`,
+        subtitle: `ctx ${context.value} · hor ${horizon.value}`, href: `#/shards/${wizardState.shardId}`
+      });
+    }
     error.value = '';
+    goNext();
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : 'Load failed';
+  } finally {
+    busy.value = false;
   }
 }
 </script>

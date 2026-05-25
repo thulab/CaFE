@@ -1,104 +1,98 @@
 <template>
-  <main class="page-shell">
-    <header class="page-header">
+  <main class="page">
+    <header class="page-head">
       <div>
         <p class="eyebrow">Dataset</p>
         <h1>Shard detail</h1>
-        <p class="page-subtitle">Review the materialized evaluation shard, split parameters, and sample index.</p>
+        <p class="page-sub">The materialized evaluation shard, split parameters, and sample index.</p>
       </div>
-      <a class="button-link secondary" :href="shard?.dataset_manifest_id ? `#/datasets/${shard.dataset_manifest_id}` : '#/'">Open dataset</a>
+      <div class="head-actions">
+        <a class="btn secondary sm" :href="shard?.dataset_manifest_id ? `#/datasets/${shard.dataset_manifest_id}` : '#/datasets'">
+          <Icon name="database" :size="15" /> Open dataset
+        </a>
+      </div>
     </header>
 
-    <p v-if="!shard" class="status-line">Loading shard...</p>
-    <section v-else class="report-sections">
-      <div class="metric-strip">
-        <span class="stat-pill">{{ shard.status }}</span>
-        <span class="stat-pill">{{ shard.sample_count }} samples</span>
-        <span class="stat-pill">{{ shard.row_count }} rows</span>
-      </div>
-
-      <article class="page-card">
-        <h2 class="section-title">Shard configuration</h2>
-        <dl class="detail-grid">
-          <div class="detail-item">
-            <dt>Shard ID</dt>
-            <dd class="mono-text">{{ shard.shard_id }}</dd>
-          </div>
-          <div class="detail-item">
-            <dt>Manifest</dt>
-            <dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shard.dataset_manifest_id }}</a></dd>
-          </div>
-          <div class="detail-item">
-            <dt>Load job</dt>
-            <dd>
-              <a v-if="shard.load_job_id" class="text-link" :href="`#/load-jobs/${shard.load_job_id}`">{{ shard.load_job_id }}</a>
-              <span v-else>Not recorded</span>
-            </dd>
-          </div>
-          <div class="detail-item">
-            <dt>Split</dt>
-            <dd>{{ shard.context_length }} context / {{ shard.horizon }} horizon / {{ shard.stride }} stride</dd>
-          </div>
-          <div class="detail-item">
-            <dt>Targets</dt>
-            <dd>{{ shard.target_columns.join(', ') }}</dd>
-          </div>
-          <div class="detail-item wide">
-            <dt>Source URI</dt>
-            <dd class="mono-text">{{ shard.source_uri }}</dd>
-          </div>
-        </dl>
-      </article>
-
-      <article class="page-card">
-        <h2 class="section-title">Shard samples</h2>
-        <p v-if="!samples" class="status-line">Loading sample index...</p>
-        <div v-else class="table-scroll">
-          <table class="data-table">
-            <caption>{{ samples.total ?? samples.items.length }} indexed samples</caption>
-            <thead>
-              <tr>
-                <th>Sample</th>
-                <th>Index</th>
-                <th>Context</th>
-                <th>Horizon</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="sample in samples.items" :key="sample.sample_id">
-                <td class="mono-text">{{ sample.sample_id }}</td>
-                <td>{{ sample.sample_index ?? '-' }}</td>
-                <td>{{ rangeText(sample.context_start, sample.context_end) }}</td>
-                <td>{{ rangeText(sample.horizon_start, sample.horizon_end) }}</td>
-              </tr>
-            </tbody>
-          </table>
+    <StateBlock :loading="loading" :error="error" @retry="run">
+      <section v-if="shard" class="stack">
+        <div class="grid-auto">
+          <div class="stat-tile"><span class="stat-label">Status</span><span class="stat-value" style="font-size:1.1rem"><StatusBadge :status="shard.status" big /></span></div>
+          <div class="stat-tile"><span class="stat-label">Samples</span><span class="stat-value">{{ formatInt(shard.sample_count) }}</span></div>
+          <div class="stat-tile"><span class="stat-label">Rows</span><span class="stat-value">{{ formatInt(shard.row_count) }}</span></div>
+          <div class="stat-tile"><span class="stat-label">Window</span><span class="stat-value" style="font-size:1.1rem">{{ shard.context_length }}→{{ shard.horizon }}</span><span class="stat-foot">context → horizon</span></div>
         </div>
-      </article>
-    </section>
+
+        <article class="card">
+          <header class="card-head"><h2 class="card-title">Shard configuration</h2></header>
+          <div class="card-body">
+            <dl class="detail-grid">
+              <div class="detail-item"><dt>Shard ID</dt><dd class="mono">{{ shard.shard_id }}</dd></div>
+              <div class="detail-item"><dt>Manifest</dt><dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shortId(shard.dataset_manifest_id) }}</a></dd></div>
+              <div class="detail-item"><dt>Load job</dt><dd><a v-if="shard.load_job_id" class="text-link" :href="`#/load-jobs/${shard.load_job_id}`">{{ shortId(shard.load_job_id) }}</a><span v-else class="faint">Not recorded</span></dd></div>
+              <div class="detail-item"><dt>Split</dt><dd>{{ shard.context_length }} context · {{ shard.horizon }} horizon · {{ shard.stride }} stride</dd></div>
+              <div class="detail-item"><dt>Targets</dt><dd>{{ shard.target_columns.join(', ') }}</dd></div>
+              <div class="detail-item wide"><dt>Source URI</dt><dd class="mono">{{ shard.source_uri }}</dd></div>
+            </dl>
+          </div>
+        </article>
+
+        <article class="card">
+          <header class="card-head"><h2 class="card-title">Shard samples</h2><span v-if="samples" class="badge">{{ samples.total ?? samples.items.length }}</span></header>
+          <div class="card-body">
+            <div v-if="samples" class="table-wrap">
+              <table class="data">
+                <thead><tr><th>Sample</th><th class="num">Index</th><th>Context</th><th>Horizon</th></tr></thead>
+                <tbody>
+                  <tr v-for="s in samples.items" :key="s.sample_id">
+                    <td class="mono">{{ s.sample_id }}</td>
+                    <td class="num">{{ s.sample_index ?? '—' }}</td>
+                    <td>{{ range(s.context_start, s.context_end) }}</td>
+                    <td>{{ range(s.horizon_start, s.horizon_end) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p v-else class="empty-state">No sample index loaded.</p>
+          </div>
+        </article>
+      </section>
+    </StateBlock>
   </main>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
+import Icon from '../components/ui/Icon.vue';
+import StateBlock from '../components/ui/StateBlock.vue';
+import StatusBadge from '../components/ui/StatusBadge.vue';
 import { getShard, getShardSamples } from '../api/datasets';
 import type { ShardDTO, ShardSamplesDTO } from '../api/types';
+import { formatInt, shortId } from '../lib/format';
 
 const props = defineProps<{ shardId: string }>();
 const shard = ref<ShardDTO | null>(null);
 const samples = ref<ShardSamplesDTO | null>(null);
+const loading = ref(true);
+const error = ref<string | null>(null);
 
-onMounted(async () => {
-  const [loadedShard, loadedSamples] = await Promise.all([
-    getShard(props.shardId),
-    getShardSamples(props.shardId)
-  ]);
-  shard.value = loadedShard;
-  samples.value = loadedSamples;
-});
+onMounted(run);
 
-function rangeText(start?: number, end?: number) {
-  if (start === undefined || end === undefined) return '-';
-  return `${start} to ${end}`;
+async function run() {
+  loading.value = true;
+  error.value = null;
+  try {
+    const [s, sx] = await Promise.all([getShard(props.shardId), getShardSamples(props.shardId)]);
+    shard.value = s;
+    samples.value = sx;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to load shard';
+  } finally {
+    loading.value = false;
+  }
+}
+
+function range(start?: number, end?: number) {
+  if (start === undefined || end === undefined) return '—';
+  return `${start} → ${end}`;
 }
 </script>

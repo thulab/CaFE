@@ -1,8 +1,8 @@
 import { reactive } from 'vue';
 import type { UploadPreviewDTO } from '../api/types';
-import type { ModelDTO } from '../api/models';
 
 export const wizardState = reactive({
+  step: 0,
   preview: null as UploadPreviewDTO | null,
   sourceUri: '',
   manifestId: '',
@@ -13,11 +13,25 @@ export const wizardState = reactive({
   rankingListId: '',
   runId: '',
   reportId: '',
-  selectedModels: [] as ModelDTO[],
   error: ''
 });
 
+export const STEP_COUNT = 6;
+
+export function goToStep(index: number) {
+  wizardState.step = Math.max(0, Math.min(STEP_COUNT - 1, index));
+}
+
+export function goNext() {
+  goToStep(wizardState.step + 1);
+}
+
+export function goPrev() {
+  goToStep(wizardState.step - 1);
+}
+
 export function resetWizard() {
+  wizardState.step = 0;
   wizardState.preview = null;
   wizardState.sourceUri = '';
   wizardState.manifestId = '';
@@ -28,6 +42,5 @@ export function resetWizard() {
   wizardState.rankingListId = '';
   wizardState.runId = '';
   wizardState.reportId = '';
-  wizardState.selectedModels = [];
   wizardState.error = '';
 }

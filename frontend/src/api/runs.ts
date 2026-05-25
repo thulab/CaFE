@@ -11,3 +11,9 @@ export function createRun(payload: { track_id: string; model_ids: string[] }) {
 export function getRunProgress(runId: string): Promise<RunProgressDTO> {
   return apiRequest<RunProgressDTO>(`/benchmarking-runs/${runId}/progress`);
 }
+
+export function cancelRun(runId: string) {
+  return apiRequest<{ benchmarking_run_id: string; status: string }>(`/benchmarking-runs/${runId}/cancel`, {
+    method: 'POST'
+  });
+}

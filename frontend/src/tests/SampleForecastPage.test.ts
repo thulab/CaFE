@@ -18,7 +18,8 @@ describe('SampleForecastPage', () => {
 
     render(SampleForecastPage, { props: { sampleId: 's1', runId: 'r1' } });
 
-    await screen.findByText('Timer');
+    // "Timer" appears both in the chart legend and the metric table.
+    expect((await screen.findAllByText('Timer')).length).toBeGreaterThan(0);
     expect(screen.getByText('Ground truth')).toBeTruthy();
     expect(screen.getByText('History')).toBeTruthy();
     expect(screen.getByText('Chronos')).toBeTruthy();

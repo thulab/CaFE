@@ -1,54 +1,149 @@
 <template>
   <section class="step-body">
-    <div class="model-list" aria-label="Available models">
-      <label v-for="model in models" :key="model.model_id" class="model-row">
-        <input v-model="selectedIds" type="checkbox" :value="model.model_id" />
-        {{ model.name }}
-      </label>
-      <p v-if="models.length === 0" class="empty-state">Loading model adapters...</p>
+    <div class="field" style="gap:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+        <span class="label">Model adapters</span>
+        <button v-if="models.length" class="btn ghost sm" type="button" @click="toggleAll">
+          {{ allSelected ? 'Clear all' : 'Select all' }}
+        </button>
+      </div>
+      <div v-if="models.length" class="choice-grid" aria-label="Available models">
+        <label v-for="model in models" :key="model.model_id" class="choice">
+          <input v-model="selectedIds" type="checkbox" :value="model.model_id" :aria-label="model.name" />
+          <span style="display:grid;gap:1px;min-width:0">
+            <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ model.name }}</span>
+            <span class="faint" style="font-size:0.74rem">{{ model.adapter_type }}</span>
+          </span>
+        </label>
+      </div>
+      <p v-else class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />Loading model adapters…</p>
     </div>
 
-    <div class="action-row">
-      <button :disabled="selectedIds.length === 0 || !wizardState.trackId" @click="run">Run</button>
-      <p class="status-line">{{ status }}</p>
+    <!-- Live progress -->
+    <div v-if="runId" class="card pad" style="display:grid;gap:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <StatusBadge :status="status" big />
+        <span class="status-line">{{ runningPct }}% complete</span>
+      </div>
+      <div class="progress" :class="progressVariant"><span :style="{ width: runningPct + '%' }" /></div>
+      <div v-if="progress" class="pill-row">
+        <span class="badge"><Icon name="layers" :size="13" />{{ progress.progress.completed_models ?? 0 }}/{{ progress.progress.total_models ?? selectedIds.length }} models</span>
+        <span class="badge"><Icon name="list" :size="13" />{{ progress.progress.completed_tasks ?? 0 }}/{{ progress.progress.total_tasks ?? 0 }} tasks</span>
+        <span class="badge"><Icon name="gauge" :size="13" />{{ progress.progress.completed_samples ?? 0 }}/{{ progress.progress.total_samples ?? 0 }} samples</span>
+      </div>
     </div>
-    <div v-if="wizardState.runId" class="resource-links" aria-label="Run view links">
-      <a class="text-link" :href="`#/runs/${wizardState.runId}`">Run</a>
+
+    <p v-if="error" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ error }}</p>
+
+    <div class="wizard-foot" style="padding:0;border:0">
+      <div class="pill-row">
+        <a v-if="runId" class="btn secondary sm" :href="`#/runs/${runId}`"><Icon name="external" :size="15" /> Open run</a>
+        <button v-if="isRunning" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> Cancel</button>
+      </div>
+      <button class="btn" type="button" :disabled="selectedIds.length === 0 || !wizardState.trackId || isRunning" @click="run">
+        <span v-if="isRunning" class="spinner" /> <Icon v-else name="play" :size="16" /> Run
+      </button>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import Icon from '../ui/Icon.vue';
+import StatusBadge from '../ui/StatusBadge.vue';
 import { listModels, type ModelDTO } from '../../api/models';
-import { createRun, getRunProgress } from '../../api/runs';
-import { wizardState } from '../../stores/wizard';
+import { cancelRun, createRun, getRunProgress } from '../../api/runs';
+import { goNext, wizardState } from '../../stores/wizard';
+import { recordRecent } from '../../stores/recents';
+import type { RunProgressDTO } from '../../api/types';
+import { percent } from '../../lib/format';
+
+const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 
 const models = ref<ModelDTO[]>([]);
 const selectedIds = ref<string[]>([]);
-const status = ref('Idle');
+const status = ref('idle');
+const error = ref('');
+const progress = ref<RunProgressDTO | null>(null);
 let timer: ReturnType<typeof setInterval> | undefined;
 
+const runId = computed(() => wizardState.runId);
+const isRunning = computed(() => !TERMINAL.includes(status.value) && Boolean(runId.value));
+const allSelected = computed(() => models.value.length > 0 && selectedIds.value.length === models.value.length);
+
+const runningPct = computed(() => {
+  if (status.value === 'succeeded') return 100;
+  const p = progress.value?.progress;
+  if (!p) return isRunning.value ? 8 : 0;
+  return percent(Number(p.completed_tasks ?? 0), Number(p.total_tasks ?? 0));
+});
+
+const progressVariant = computed(() => {
+  if (status.value === 'failed' || status.value === 'cancelled') return 'danger';
+  if (status.value === 'succeeded') return 'success';
+  return isRunning.value ? 'striped' : '';
+});
+
 onMounted(async () => {
-  models.value = (await listModels()).items;
+  try {
+    models.value = (await listModels()).items;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to load models';
+  }
 });
 
 onBeforeUnmount(() => stopPolling());
 
+function toggleAll() {
+  selectedIds.value = allSelected.value ? [] : models.value.map((m) => m.model_id);
+}
+
 async function run() {
   stopPolling();
-  const created = await createRun({ track_id: wizardState.trackId, model_ids: selectedIds.value });
-  wizardState.runId = created.benchmarking_run_id;
-  status.value = created.status;
-  timer = setInterval(poll, 5000);
+  error.value = '';
+  progress.value = null;
+  try {
+    const created = await createRun({ track_id: wizardState.trackId, model_ids: selectedIds.value });
+    wizardState.runId = created.benchmarking_run_id;
+    status.value = created.status;
+    recordRecent({
+      kind: 'run', id: created.benchmarking_run_id,
+      title: `Run · ${selectedIds.value.length} model${selectedIds.value.length === 1 ? '' : 's'}`,
+      subtitle: created.status, href: `#/runs/${created.benchmarking_run_id}`
+    });
+    timer = setInterval(poll, 5000);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to start run';
+  }
 }
 
 async function poll() {
-  const progress = await getRunProgress(wizardState.runId);
-  status.value = progress.status;
-  if (progress.report_id) wizardState.reportId = progress.report_id;
-  if (['succeeded', 'partial_succeeded', 'failed', 'cancelled'].includes(progress.status)) {
+  try {
+    const p = await getRunProgress(wizardState.runId);
+    progress.value = p;
+    status.value = p.status;
+    if (p.report_id) {
+      wizardState.reportId = p.report_id;
+      recordRecent({ kind: 'report', id: p.report_id, title: 'Benchmark report', subtitle: p.status, href: `#/reports/${p.report_id}` });
+    }
+    if (p.ranking_list_id) wizardState.rankingListId = p.ranking_list_id;
+    if (TERMINAL.includes(p.status)) {
+      stopPolling();
+      if (wizardState.reportId) goNext();
+    }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to read progress';
     stopPolling();
+  }
+}
+
+async function onCancel() {
+  try {
+    const res = await cancelRun(wizardState.runId);
+    status.value = res.status;
+    stopPolling();
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to cancel run';
   }
 }
 
