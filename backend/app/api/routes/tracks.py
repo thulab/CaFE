@@ -11,7 +11,7 @@ router = APIRouter(prefix="/tracks", tags=["tracks"])
 class TrackCreate(BaseModel):
     name: str
     capability_block_ids: list[str]
-    primary_metric_id: str = "mse"
+    primary_metric_id: str = "mase"
 
 
 @router.post("")

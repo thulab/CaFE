@@ -59,6 +59,9 @@ def create_track_with_blocks(
     missing = [block_id for block_id, block in zip(capability_block_ids, blocks, strict=True) if block is None]
     if missing:
         raise ApiError("capability_block_not_found", "capability block not found", {"capability_block_ids": missing}, 404)
+    assigned = [block.capability_block_id for block in blocks if block.track_id]
+    if assigned:
+        raise ApiError("capability_block_already_assigned", "capability block already belongs to a track", {"capability_block_ids": assigned})
 
     track = Track(name=name, primary_metric_id=primary_metric_id)
     session.add(track)
