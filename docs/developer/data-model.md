@@ -568,7 +568,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 > 这是一个**值得注意的命名细节**：聚合标签描述的是「在该层级内对下层求平均后落到该层」，但字面用了该层级自身的复数（如 task 级写 `mean_over_tasks`），与直觉上的「mean_over_shards 才得到 task 值」略有出入——以代码为准。
 
 **指标计算与聚合**（`services/metric_service.py`）：
-- sample 级：把 `target_future` 与 `forecast` 各自 flatten 后逐元素求误差，`mse = mean(err²)`、`mae = mean(|err|)`；**`mase = mae / scale`**，其中 `scale` 为 `target_history` 的 naive（last-value，m=1）尺度 `mean_t|h[t]-h[t-1]|`。`scale==0`（平稳历史）或历史 <2 行时**不产出 mase 键**（聚合时按缺失/失败处理，避免 NaN 污染）。见 `metric_service.py`。
+- sample 级：把 `target_future` 与 `forecast` 各自 flatten 后逐元素求误差，`mse = mean(err²)`、`mae = mean(|err|)`；**`mase = mae / scale`**，其中 `scale` 为 `target_history` 的 naive（last-value，m=1）尺度 `mean_t|h[t]-h[t-1]|`。`scale==0`（平稳历史）或历史 <2 行时**不在 metrics dict 产出 mase 键**（聚合时按缺失/失败处理，避免 NaN 污染），但**缺席不再静默**（#14）：`compute_sample_metrics` 返回 `SampleMetrics` 子类，经 `mase_unavailable_reason`（`flat_history` / `no_history_diffs`）暴露原因，report 在该 unit 标注 `metrics.mase=null` + 原因（不能往 dict 放 None——`run_executor` 把每键当非空 float 持久化）。见 `metric_service.py` 与 §10.5。
 - 上层聚合：`aggregate_metric` 对下层成功项取算术平均，并返回 `success_count` / `failure_count`；若全部失败返回 `None`（`metric_service.py:20-34`）。
 
 ### 5.3 Report
