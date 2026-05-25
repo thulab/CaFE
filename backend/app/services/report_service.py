@@ -7,6 +7,9 @@ from app.models.benchmark import BenchmarkingRun, ForecastArtifact, Task, Unit
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
 from app.models.report import Report
+from app.models.sample import SampleIndex
+from app.services.metric_service import _mase_scale
+from app.services.sample_store import SampleStore
 
 
 def generate_run_report(session: Session, run_id: str, runtime_dir: Path) -> Report:
@@ -49,17 +52,71 @@ def read_report(report: Report) -> dict:
 
 def _unit_metrics(session: Session, unit: Unit, metrics: list[MetricResult]) -> dict:
     model = session.get(Model, unit.model_id)
-    return {
+    unit_metrics = {
+        metric.metric_id: metric.value
+        for metric in metrics
+        if metric.result_level == "unit" and metric.unit_id == unit.unit_id
+    }
+    entry = {
         "unit_id": unit.unit_id,
         "model_id": unit.model_id,
         "model_name": model.name if model else unit.model_id,
         "status": unit.status,
-        "metrics": {
-            metric.metric_id: metric.value
-            for metric in metrics
-            if metric.result_level == "unit" and metric.unit_id == unit.unit_id
-        },
+        "metrics": unit_metrics,
     }
+    # Item #14: a succeeded unit whose samples are all flat (stationary) produces
+    # no MASE at all. Rather than letting the primary metric silently vanish from
+    # the report, surface that MASE is unavailable and WHY.
+    if unit.status == "succeeded" and "mase" not in unit_metrics:
+        reason = _mase_unavailable_reason_for_unit(session, unit, metrics)
+        if reason is not None:
+            entry["metrics"]["mase"] = None
+            entry["mase_unavailable_reason"] = reason
+    return entry
+
+
+def _mase_unavailable_reason_for_unit(session: Session, unit: Unit, metrics: list[MetricResult]) -> str | None:
+    """Why does this succeeded unit have no MASE? Returns a reason code or None.
+
+    A unit can legitimately lack a MASE unit-metric for reasons unrelated to flat
+    history (e.g. it never produced any sample at all). We only report a reason
+    when the unit has succeeded samples (mse rows exist) yet not a single MASE
+    sample row — then we recompute the cause from one sample's history.
+    """
+    has_sample_metric = any(m.result_level == "sample" and m.unit_id == unit.unit_id for m in metrics)
+    has_sample_mase = any(
+        m.result_level == "sample" and m.unit_id == unit.unit_id and m.metric_id == "mase" for m in metrics
+    )
+    if not has_sample_metric or has_sample_mase:
+        return None
+
+    store = SampleStore()
+    for sample_id in _unit_sample_ids(session, unit):
+        sample_index = session.get(SampleIndex, sample_id)
+        if sample_index is None:
+            continue
+        sample = store.read_by_ref(session, sample_index.storage_ref)
+        _scale, reason = _mase_scale(sample["target_history"])
+        if reason is not None:
+            return reason
+    return None
+
+
+def _unit_sample_ids(session: Session, unit: Unit) -> list[str]:
+    shard_ids = {
+        metric.shard_id
+        for metric in session.exec(
+            select(MetricResult).where(
+                MetricResult.result_level == "sample",
+                MetricResult.unit_id == unit.unit_id,
+            )
+        ).all()
+        if metric.shard_id is not None
+    }
+    if not shard_ids:
+        return []
+    samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(shard_ids))).all()
+    return [sample.sample_id for sample in samples]
 
 
 def _task_summary(task: Task, metrics: list[MetricResult]) -> dict:

@@ -9,8 +9,8 @@ from app.core.time import utc_now
 from app.db.init_db import assert_manifest_can_create_successful_real_shard, assert_manifest_can_succeed_load
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
 from app.models.sample import SampleIndex
-from app.services.csv_dataset_reader import CsvDatasetReader
-from app.services.tsfile_store import TsFileStore
+from app.services.dataset_reader import get_dataset_reader
+from app.services.series_store import SeriesStore
 
 
 @dataclass(frozen=True)
@@ -68,8 +68,6 @@ def subsample_windows(windows: list[SampleWindow], max_samples: int | None) -> l
 class DatasetLoadService:
     def __init__(self, runtime_dir: Path):
         self.runtime_dir = Path(runtime_dir)
-        self.tsfiles_dir = self.runtime_dir / "tsfiles"
-        self.tsfiles_dir.mkdir(parents=True, exist_ok=True)
 
     def create_load_job(
         self,
@@ -96,10 +94,12 @@ class DatasetLoadService:
         session.commit()
         session.refresh(job)
 
+        job_id = job.load_job_id
         try:
             return self._execute_job(session, manifest, job)
         except ApiError as exc:
-            self._cleanup_job_artifacts(job)
+            session.rollback()  # 丢弃未提交的 shard / SeriesPoint / SampleIndex（原子加载）
+            job = session.get(DatasetLoadJob, job_id)
             job.status = "failed"
             job.error_code = exc.error_code
             job.error_message = exc.message
@@ -112,7 +112,7 @@ class DatasetLoadService:
 
     def _execute_job(self, session: Session, manifest: DatasetManifest, job: DatasetLoadJob) -> DatasetLoadJob:
         config = job.split_config
-        read_result = CsvDatasetReader().read(
+        read_result = get_dataset_reader(manifest.file_format).read(
             Path(manifest.source_uri),
             time_column=manifest.time_column,
             value_columns=manifest.value_columns or None,
@@ -165,34 +165,18 @@ class DatasetLoadService:
             sample_count=len(windows),
             status="ready",
         )
-        dataset_id = shard.shard_id.replace("-", "")
-        shard.dataset_id = dataset_id
-        session.add(shard)
-        session.commit()
-        session.refresh(shard)
-
-        tsfile_path = TsFileStore(self.tsfiles_dir).write(
-            shard.shard_id,
-            dataset_id,
-            read_result.timestamps,
-            read_result.value_columns,
-            read_result.values,
-        )
-
+        # 序列真值写入 SQLite（SeriesPoint），样本只存行号指针。
+        # shard + 序列 + 样本同处一个事务，失败由 create_load_job 的 except 回滚。
         from app.services.sample_store import SampleStore
 
-        sample_indexes = SampleStore().write_samples(
-            shard.shard_id,
-            dataset_id,
-            tsfile_path,
-            windows,
-            target_columns,
+        SeriesStore().write(
+            session, shard.shard_id, read_result.timestamps, read_result.value_columns, read_result.values
         )
+        sample_indexes = SampleStore().write_samples(shard.shard_id, windows, target_columns, read_result)
+        session.add(shard)
         for sample_index in sample_indexes:
             session.add(sample_index)
 
-        shard.tsfile_uri = str(tsfile_path)
-        shard.storage_uri = str(tsfile_path)
         manifest.status = "loaded"
         manifest.frequency = read_result.frequency
         manifest.updated_at = utc_now()
@@ -215,13 +199,6 @@ class DatasetLoadService:
         session.commit()
         session.refresh(job)
         return job
-
-    def _cleanup_job_artifacts(self, job: DatasetLoadJob) -> None:
-        if job.output_shard_id:
-            path = self.tsfiles_dir / f"{job.output_shard_id}.tsfile"
-            if path.exists():
-                path.unlink()
-
 
 def sample_count_for_shard(session: Session, shard_id: str) -> int:
     return len(session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard_id)).all())

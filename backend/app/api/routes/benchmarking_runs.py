@@ -38,9 +38,19 @@ def create_run(payload: BenchmarkingRunCreate, request: Request, session: Sessio
 
 
 def _execute_in_background(engine, run_id: str, runtime_dir: Path, queue: RunQueue) -> None:
-    with Session(engine) as session:
-        execute_run(session, run_id, runtime_dir)
-    queue.complete(run_id)
+    try:
+        with Session(engine) as session:
+            execute_run(session, run_id, runtime_dir)
+    finally:
+        # complete() 必须执行，否则队列永久卡死；它返回下一个待执行 run，
+        # 即便本次 run 异常退出也要把下一个排队 run 起起来。
+        next_run_id = queue.complete(run_id)
+        if next_run_id is not None:
+            threading.Thread(
+                target=_execute_in_background,
+                args=(engine, next_run_id, runtime_dir, queue),
+                daemon=True,
+            ).start()
 
 
 @router.get("/{benchmarking_run_id}/progress")
@@ -49,5 +59,10 @@ def get_run_progress(benchmarking_run_id: str, session: Session = Depends(get_db
 
 
 @router.post("/{benchmarking_run_id}/cancel")
-def cancel_benchmarking_run(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> BenchmarkingRun:
+def cancel_benchmarking_run(benchmarking_run_id: str, request: Request, session: Session = Depends(get_db_session)) -> BenchmarkingRun:
+    queue: RunQueue = request.app.state.run_queue
+    # 取消一个仍在排队（非当前运行）的 run 时，必须把它从队列里摘掉，
+    # 否则 complete 会把指针推进到它，但没人起线程执行 → 队列永久卡死。
+    if queue.running_run_id != benchmarking_run_id:
+        queue.remove(benchmarking_run_id)
     return cancel_run(session, benchmarking_run_id)

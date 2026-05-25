@@ -52,8 +52,6 @@ class Shard(SQLModel, table=True):
     capability_block_id: str | None = Field(default=None, index=True)
     source_uri: str
     storage_uri: str | None = None
-    tsfile_uri: str | None = None
-    dataset_id: str | None = None
     checksum: str | None = None
     time_range_start: str | None = None
     time_range_end: str | None = None

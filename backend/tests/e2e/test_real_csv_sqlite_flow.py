@@ -1,22 +1,24 @@
-"""真实 CSV 走新通路端到端（plan Task B7.3）：全列摄入 → TsFile → 指针切片 → ModelInput → MASE。
+"""真实 CSV 走新通路端到端：全列摄入 → SQLite SeriesPoint → 指针切片 → ModelInput → MASE。
 
 用仓库根 test/flow_template.csv（time,target,extra 三列全数值），验证：
-- extra 列被摄入到 per-dataset TsFile（不再像旧 reader 那样被丢弃）；
+- extra 列被摄入到 SQLite 的 SeriesPoint（不再像旧 reader 那样被丢弃，也不再走 TsFile）；
 - 仍只用 target 作预测目标；
 - run 终态 succeeded，默认榜单指标为 mase。
 """
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlmodel import Session, select
 
 from app.main import create_app
-from app.services.tsfile_store import TsFileSlicer
+from app.models.series_point import SeriesPoint
 
 FLOW_TEMPLATE = Path(__file__).parents[3] / "test" / "flow_template.csv"
 
 
-def test_real_csv_full_column_ingest_tsfile_and_mase_ranking():
-    client = TestClient(create_app())
+def test_real_csv_full_column_ingest_sqlite_and_mase_ranking():
+    app = create_app()
+    client = TestClient(app)
 
     with FLOW_TEMPLATE.open("rb") as file:
         upload = client.post("/dataset-manifests/upload", files={"file": ("flow_template.csv", file, "text/csv")})
@@ -43,18 +45,19 @@ def test_real_csv_full_column_ingest_tsfile_and_mase_ranking():
     shard_id = job.json()["output_shard_id"]
 
     shard = client.get(f"/shards/{shard_id}").json()
-    # 全列摄入：extra 进了 TsFile；目标仍是 target。
+    # 全列摄入：extra 进了存储；目标仍是 target。
     assert set(shard["value_columns"]) == {"target", "extra"}
     assert shard["target_columns"] == ["target"]
     assert shard["sample_count"] == 3
 
-    # 直接读 TsFile 证明 extra 列真的落盘且值与 CSV 一致（前 3 行 20.0/20.4/20.8）。
-    slicer = TsFileSlicer(shard["tsfile_uri"])
-    try:
-        extra_head = slicer.slice(shard["dataset_id"], ["extra"], 0, 3)
-    finally:
-        slicer.close()
-    assert extra_head == [[20.0], [20.4], [20.8]]
+    # 直接查 SQLite SeriesPoint 证明 extra 列真的入库且值与 CSV 一致（前 3 行 20.0/20.4/20.8）。
+    with Session(app.state.engine) as session:
+        rows = session.exec(
+            select(SeriesPoint)
+            .where(SeriesPoint.shard_id == shard_id, SeriesPoint.row_index < 3)
+            .order_by(SeriesPoint.row_index)
+        ).all()
+    assert [row.values_json["extra"] for row in rows] == [20.0, 20.4, 20.8]
 
     track = client.post("/wizard/real-dataset-track", json={"name": "real track", "shard_ids": [shard_id]})
     assert track.status_code == 200

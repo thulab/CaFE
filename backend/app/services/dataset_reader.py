@@ -34,3 +34,14 @@ class DatasetReader(Protocol):
         frequency: str | None = None,
     ) -> DatasetReadResult:
         ...
+
+
+def get_dataset_reader(file_format: str) -> DatasetReader:
+    """按 manifest.file_format 选输入读取器：csv（默认）或 tsfile。"""
+    if file_format == "tsfile":
+        from app.services.tsfile_dataset_reader import TsFileDatasetReader
+
+        return TsFileDatasetReader()
+    from app.services.csv_dataset_reader import CsvDatasetReader
+
+    return CsvDatasetReader()

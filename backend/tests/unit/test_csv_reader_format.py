@@ -39,3 +39,18 @@ def test_format_validation_errors(tmp_path, content, time_column, target_columns
         CsvDatasetReader().read(path, time_column, target_columns)
 
     assert exc.value.error_code == code
+
+
+def test_mixed_timezone_raises_api_error_not_typeerror(tmp_path):
+    # First row naive, second row carries a +08:00 offset. Comparing aware vs
+    # naive datetimes would raise TypeError and bypass the error envelope; the
+    # reader must detect the mix and raise a controlled ApiError instead.
+    path = write_csv(
+        tmp_path,
+        "time,target\n2026-01-01 00:00:00,1\n2026-01-01 01:00:00+08:00,2\n",
+    )
+
+    with pytest.raises(ApiError) as exc:
+        CsvDatasetReader().read(path, "time", ["target"])
+
+    assert exc.value.error_code == "csv_mixed_timezone"

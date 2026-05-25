@@ -1,8 +1,9 @@
 from sqlmodel import Session, select
 
-from app.models.benchmark import CapabilityBlock, ForecastArtifact, Task, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, Task, Unit
 from app.models.dataset import Shard
 from app.models.model_registry import Model
+from app.models.ranking import RankingList
 from app.models.sample import SampleIndex
 from app.services.forecast_store import ForecastStore
 from app.services.sample_store import SampleStore
@@ -10,8 +11,12 @@ from app.services.sample_store import SampleStore
 
 def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict:
     sample_index = session.get(SampleIndex, sample_id)
-    sample = SampleStore().read_by_ref(sample_index.materialized_sample_uri, sample_index.storage_ref)
+    sample = SampleStore().read_by_ref(session, sample_index.storage_ref)
     shard = session.get(Shard, sample_index.shard_id)
+    run = session.get(BenchmarkingRun, run_id)
+    ranking_list = (
+        session.exec(select(RankingList).where(RankingList.track_id == run.track_id)).first() if run else None
+    )
     artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id, ForecastArtifact.shard_id == shard.shard_id)).all()
     models = []
     for artifact in artifacts:
@@ -49,5 +54,9 @@ def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict
         "target_history": sample["target_history"],
         "target_future": sample["target_future"],
         "models": models,
-        "links": {"run": run_id, "report": None, "ranking": None},
+        "links": {
+            "run": run_id,
+            "report": run.report_id if run else None,
+            "ranking": ranking_list.ranking_list_id if ranking_list else None,
+        },
     }

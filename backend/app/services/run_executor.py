@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 
 from app.core.errors import ApiError
 from app.core.time import utc_now
-from app.models.benchmark import BenchmarkingRun, CapabilityBlock, RunEvent, Task, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, RunEvent, Task, Unit
 from app.models.dataset import Shard
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
@@ -113,26 +113,32 @@ def execute_run(session: Session, run_id: str, runtime_dir: Path) -> Benchmarkin
     for unit in units:
         _execute_unit(session, run, unit, Path(runtime_dir), adapter)
 
-    succeeded = len([unit for unit in units if unit.status == "succeeded"])
-    failed = len([unit for unit in units if unit.status == "failed"])
-    if succeeded and failed:
-        run.status = "partial_succeeded"
-    elif succeeded:
-        run.status = "succeeded"
+    statuses = [unit.status for unit in units]
+    succeeded = len([status for status in statuses if status == "succeeded"])
+    partial = len([status for status in statuses if status == "partial_succeeded"])
+    if succeeded == len(statuses):
+        terminal_status = "succeeded"
+    elif succeeded or partial:
+        # 既有成功（或部分成功），又有未完全成功的 unit → 部分成功。
+        terminal_status = "partial_succeeded"
     else:
-        run.status = "failed"
-    run.finished_at = utc_now()
-    run.updated_at = utc_now()
-    session.add(RunEvent(benchmarking_run_id=run_id, message=f"run {run.status}"))
-    session.add(run)
+        terminal_status = "failed"
+
     from app.services.ranking_service import refresh_ranking
     from app.services.report_service import generate_run_report
 
-    report = generate_run_report(session, run_id, runtime_dir)
-    run.report_id = report.report_id
-    if run.status != "cancelled":
-        for metric_id in METRIC_NAMES:
-            refresh_ranking(session, run.track_id, metric_id)
+    # 竞态防护：终态 status / report_id / 三张榜单必须在同一次提交里一起对外可见，
+    # 否则轮询可能看到 run 已 succeeded、却查不到榜单。先在内存里置终态（refresh_ranking
+    # 经 session 标识映射即可读到，用于筛选 valid rows），各榜单 commit=False 只挂起不提交，
+    # 最后由 generate_run_report 的提交一次性落盘 status + report_id + 全部榜单。
+    run.status = terminal_status
+    run.finished_at = utc_now()
+    run.updated_at = utc_now()
+    session.add(RunEvent(benchmarking_run_id=run_id, message=f"run {terminal_status}"))
+    session.add(run)
+    for metric_id in METRIC_NAMES:
+        refresh_ranking(session, run.track_id, metric_id, commit=False)
+    generate_run_report(session, run_id, runtime_dir)  # 记录终态、置 report_id，并一次性提交（含挂起的榜单）
     session.refresh(run)
     return run
 
@@ -210,9 +216,26 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
     rows = []
     sample_metrics = []
     for sample_index in samples:
-        sample = store.read_by_ref(sample_index.materialized_sample_uri, sample_index.storage_ref)
+        sample = store.read_by_ref(session, sample_index.storage_ref)
         model_input = build_model_input(sample)
-        forecast = adapter.forecast(model_input, model_payload, timeout_seconds=timeout_seconds)
+        try:
+            forecast = adapter.forecast(model_input, model_payload, timeout_seconds=timeout_seconds)
+        except Exception as error:  # noqa: BLE001 — adapter failure must not crash the run
+            # 单样本预测失败：写一条 forecast 失败行、该样本计为失败，但不崩整 run。
+            rows.append(
+                {
+                    "sample_id": sample_index.sample_id,
+                    "unit_id": unit.unit_id,
+                    "status": "failed",
+                    "forecast": None,
+                    "future_timestamps": sample["future_timestamps"],
+                    "metrics": {},
+                    "error_code": "adapter_error",
+                    "error_message": str(error),
+                }
+            )
+            sample_metrics.append(None)
+            continue
         metrics = compute_sample_metrics(sample["target_future"], forecast, sample["target_history"])
         for metric_name, value in metrics.items():
             session.add(_metric(metric_name, "sample", run, unit, task, model.model_id, value, shard.shard_id, sample_index.sample_id, task.capability_block_id))
@@ -220,6 +243,7 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
             {
                 "sample_id": sample_index.sample_id,
                 "unit_id": unit.unit_id,
+                "status": "succeeded",
                 "forecast": forecast,
                 "future_timestamps": sample["future_timestamps"],
                 "metrics": metrics,
@@ -272,11 +296,39 @@ def _metric(
     )
 
 
+def _sample_counts(session: Session, run_id: str) -> tuple[int, int, dict[str, int]]:
+    """Count per-sample forecast rows actually written for a run.
+
+    Returns ``(completed, failed, completed_by_task)`` where completed = rows
+    with status ``succeeded`` and failed = rows with status ``failed``, read
+    back from the JSONL forecast artifacts produced during ``_execute_shard``.
+    """
+    from app.services.forecast_store import ForecastStore
+
+    artifacts = session.exec(
+        select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)
+    ).all()
+    completed = 0
+    failed = 0
+    completed_by_task: dict[str, int] = {}
+    for artifact in artifacts:
+        try:
+            rows = ForecastStore(Path(artifact.storage_uri).parent).read_forecasts(artifact.storage_uri)
+        except FileNotFoundError:
+            continue
+        artifact_completed = sum(1 for row in rows if row.get("status") == "succeeded")
+        completed += artifact_completed
+        failed += sum(1 for row in rows if row.get("status") == "failed")
+        completed_by_task[artifact.task_id] = completed_by_task.get(artifact.task_id, 0) + artifact_completed
+    return completed, failed, completed_by_task
+
+
 def build_run_progress(session: Session, run_id: str) -> dict:
     run = session.get(BenchmarkingRun, run_id)
     units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all()
     tasks = session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).all()
     events = session.exec(select(RunEvent).where(RunEvent.benchmarking_run_id == run_id).order_by(RunEvent.created_at.desc()).limit(20)).all()
+    completed_samples, failed_samples, completed_by_task = _sample_counts(session, run_id)
     return {
         "benchmarking_run_id": run.benchmarking_run_id,
         "status": run.status,
@@ -286,8 +338,8 @@ def build_run_progress(session: Session, run_id: str) -> dict:
             "total_tasks": run.task_count,
             "completed_tasks": len([task for task in tasks if task.status in {"succeeded", "failed", "partial_succeeded", "cancelled"}]),
             "total_samples": run.sample_count,
-            "completed_samples": 0,
-            "failed_samples": 0,
+            "completed_samples": completed_samples,
+            "failed_samples": failed_samples,
         },
         "units": [
             {
@@ -311,7 +363,7 @@ def build_run_progress(session: Session, run_id: str) -> dict:
                 "status": task.status,
                 "shard_count": task.shard_count,
                 "sample_count": task.sample_count,
-                "completed_sample_count": 0,
+                "completed_sample_count": completed_by_task.get(task.task_id, 0),
                 "metrics": {},
                 "error_code": task.error_code,
                 "error_message": task.error_message,

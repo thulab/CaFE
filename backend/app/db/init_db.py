@@ -8,6 +8,7 @@ from app.models.model_registry import Model
 from app.models.ranking import RankingEntry, RankingList
 from app.models.report import Report
 from app.models.sample import SampleIndex
+from app.models.series_point import SeriesPoint
 
 
 def init_db(engine) -> None:

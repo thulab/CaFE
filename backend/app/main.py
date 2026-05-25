@@ -18,7 +18,6 @@ def create_app() -> FastAPI:
     settings.runtime_dir.mkdir(parents=True, exist_ok=True)
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
     settings.samples_dir.mkdir(parents=True, exist_ok=True)
-    settings.tsfiles_dir.mkdir(parents=True, exist_ok=True)
     settings.forecasts_dir.mkdir(parents=True, exist_ok=True)
     settings.reports_dir.mkdir(parents=True, exist_ok=True)
     app.state.engine = create_db_engine(settings.database_url)

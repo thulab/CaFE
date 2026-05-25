@@ -20,8 +20,8 @@ class SampleIndex(SQLModel, table=True):
     context_length: int = 0
     horizon: int = 0
     storage_ref: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
-    materialized: bool = True
-    materialized_sample_uri: str | None = None
+    materialized: bool = False  # 指针化：值在 SQLite SeriesPoint，样本不物化为产物
+    materialized_sample_uri: str | None = None  # 兼容旧 read_by_ref 签名，已不使用
     checksum: str | None = None
     sample_metadata: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utc_now)

@@ -24,3 +24,8 @@ def test_sample_forecast_api_returns_history_truth_forecasts_and_metrics():
     assert body["target_future"]
     assert body["models"][0]["model_id"] == model_id
     assert "mse" in body["models"][0]["metrics"]
+    # 回看链接：前端要能从样本预测跳回报告与榜单，report/ranking 必须是真实 id 而非 None。
+    links = body["links"]
+    assert links["run"] == run["benchmarking_run_id"]
+    assert links["report"] == report["report_id"]
+    assert links["ranking"]
