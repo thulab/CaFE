@@ -12,6 +12,14 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///runtime/tsbenchmark.db"
     sample_forecast_timeout_seconds: int = 300
 
+    # Authentication / RBAC
+    # auth_secret 必填用于签发与验证 JWT；缺省时启动时 main.py 拒绝启动。
+    # 测试态由 conftest.py 注入固定值。
+    auth_secret: str | None = None
+    auth_ttl_seconds: int = 28800
+    # 首次启动若 User 表为空，会自动建 admin；密码取该 env，否则随机生成并打印一次。
+    admin_password: str | None = None
+
     # 推理/模型服务（timer-rest-service）的接入配置。
     # base_url 是 REST API 参考文档里的 `http://<host>:<port>` 前缀，
     # api_prefix 是文档约定的统一路径前缀；两者拼出业务端点根地址。
