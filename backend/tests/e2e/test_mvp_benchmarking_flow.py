@@ -5,8 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 
 
-def test_mvp_benchmarking_flow_from_csv_upload_to_sample_forecast():
-    client = TestClient(create_app())
+def test_mvp_benchmarking_flow_from_csv_upload_to_sample_forecast(client):
     source = Path(__file__).parents[1] / "fixtures" / "valid_hourly_20.csv"
 
     with source.open("rb") as file:

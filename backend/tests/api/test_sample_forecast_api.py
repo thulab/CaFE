@@ -4,8 +4,7 @@ from app.main import create_app
 from tests.api.test_benchmarking_run_create import create_track
 
 
-def test_sample_forecast_api_returns_history_truth_forecasts_and_metrics():
-    client = TestClient(create_app())
+def test_sample_forecast_api_returns_history_truth_forecasts_and_metrics(client):
     track_id, model_id = create_track(client)
     run = client.post("/benchmarking-runs", json={"track_id": track_id, "model_ids": [model_id]}).json()
     for _ in range(20):

@@ -4,8 +4,7 @@ from app.main import create_app
 from tests.api.test_benchmarking_run_create import create_track
 
 
-def test_ranking_list_api_returns_policy_view():
-    client = TestClient(create_app())
+def test_ranking_list_api_returns_policy_view(client):
     track_id, model_id = create_track(client)
     run = client.post("/benchmarking-runs", json={"track_id": track_id, "model_ids": [model_id]}).json()
     for _ in range(20):

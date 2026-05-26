@@ -29,8 +29,7 @@ def test_track_contains_blocks_without_referencing_manifest_and_creates_ranking_
         assert session.exec(select(RankingList).where(RankingList.track_id == track.track_id)).one().ranking_list_id == ranking.ranking_list_id
 
 
-def test_create_track_route_defaults_primary_metric_to_mase():
-    client = TestClient(create_app())
+def test_create_track_route_defaults_primary_metric_to_mase(client):
     with Session(client.app.state.engine) as session:
         block = CapabilityBlock(name="block", block_type="real", shard_count=1)
         session.add(block)

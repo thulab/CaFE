@@ -19,9 +19,8 @@ def _write_tsfile(path, devices=("dev1",), n=8):
     )
 
 
-def test_sniff_headerless_csv_reports_has_header_false(tmp_path):
+def test_sniff_headerless_csv_reports_has_header_false(client, tmp_path):
     """首行即数据（无表头）的 CSV，validation_summary.has_header 应为 False。"""
-    client = TestClient(create_app())
     # 首行就是数据行：第一列可解析为时间，第二列可解析为数值。
     csv_text = "2026-01-01 00:00:00,10.0,a\n2026-01-01 01:00:00,11.0,b\n"
     file = (tmp_path / "headerless.csv")
@@ -35,9 +34,8 @@ def test_sniff_headerless_csv_reports_has_header_false(tmp_path):
     assert body["validation_summary"]["has_header"] is False
 
 
-def test_sniff_csv_infers_numeric_vs_string_per_column(tmp_path):
+def test_sniff_csv_infers_numeric_vs_string_per_column(client, tmp_path):
     """带表头的 CSV，inferred_type 应按列真正区分 numeric / string。"""
-    client = TestClient(create_app())
     csv_text = "time,target,extra\n2026-01-01 00:00:00,10.0,a\n2026-01-01 01:00:00,11.0,b\n"
     file = (tmp_path / "withheader.csv")
     file.write_text(csv_text)
@@ -53,9 +51,8 @@ def test_sniff_csv_infers_numeric_vs_string_per_column(tmp_path):
     assert by_name["extra"]["inferred_type"] == "string"
 
 
-def test_sniff_tsfile_reports_device_and_measurements(tmp_path):
+def test_sniff_tsfile_reports_device_and_measurements(client, tmp_path):
     """上传 .tsfile 时，sniff 应返回设备 / 物理量名与行数，且不崩溃。"""
-    client = TestClient(create_app())
     path = tmp_path / "in.tsfile"
     _write_tsfile(path, n=8)
 

@@ -3,9 +3,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 
 
-def test_models_api_lists_five_mvp_stub_models():
-    client = TestClient(create_app())
-
+def test_models_api_lists_five_mvp_stub_models(client):
     response = client.get("/models")
 
     assert response.status_code == 200

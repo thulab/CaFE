@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_db_session
+from app.api.router_factory import make_router
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.models.model_registry import Model
 from app.services.model_adapter import remote_model_id, service_loaded_model_ids
 
-router = APIRouter(prefix="/models", tags=["models"])
+router = make_router(prefix="/models", tags=["models"])
 
 
 class ModelCreate(BaseModel):
@@ -17,7 +18,7 @@ class ModelCreate(BaseModel):
     model_version: str
 
 
-@router.get("")
+@router.get("", tier="authed")
 def list_models(session: Session = Depends(get_db_session)) -> dict:
     # name 在 create_model 处已保证唯一，存储即展示，无需再去重。
     models = session.exec(select(Model).order_by(Model.created_at)).all()
@@ -33,7 +34,7 @@ def list_models(session: Session = Depends(get_db_session)) -> dict:
     return {"items": items}
 
 
-@router.post("")
+@router.post("", tier="perm", perm="model.register")
 def create_model(payload: ModelCreate, session: Session = Depends(get_db_session)) -> Model:
     existing = session.exec(select(Model).where(Model.name == payload.name)).first()
     if existing is not None:

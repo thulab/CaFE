@@ -1,18 +1,19 @@
 import csv
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import Depends, File, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.api.deps import get_db_session
+from app.api.router_factory import make_router
 from app.core.config import get_settings
 from app.core.ids import new_id
 from app.core.time import utc_now
 from app.models.dataset import DatasetManifest
 from app.services.csv_dataset_reader import CsvDatasetReader
 
-router = APIRouter(prefix="/dataset-manifests", tags=["dataset-manifests"])
+router = make_router(prefix="/dataset-manifests", tags=["dataset-manifests"])
 
 
 class DatasetManifestCreate(BaseModel):
@@ -75,7 +76,7 @@ def _sniff_tsfile(upload_id: str, target: Path, filename: str | None, file_size:
     }
 
 
-@router.post("/upload")
+@router.post("/upload", tier="perm", perm="dataset.write")
 async def upload_dataset_manifest(file: UploadFile = File(...)) -> dict:
     settings = get_settings()
     settings.uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -131,7 +132,7 @@ async def upload_dataset_manifest(file: UploadFile = File(...)) -> dict:
     }
 
 
-@router.post("")
+@router.post("", tier="perm", perm="dataset.write")
 def create_dataset_manifest(payload: DatasetManifestCreate, session: Session = Depends(get_db_session)) -> DatasetManifest:
     manifest = DatasetManifest(**payload.model_dump())
     session.add(manifest)
@@ -140,6 +141,6 @@ def create_dataset_manifest(payload: DatasetManifestCreate, session: Session = D
     return manifest
 
 
-@router.get("/{dataset_manifest_id}")
+@router.get("/{dataset_manifest_id}", tier="authed")
 def get_dataset_manifest(dataset_manifest_id: str, session: Session = Depends(get_db_session)) -> DatasetManifest:
     return session.get(DatasetManifest, dataset_manifest_id)

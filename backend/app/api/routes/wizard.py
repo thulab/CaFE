@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import Depends
 from sqlmodel import Session, select
 from pydantic import BaseModel
 
 from app.api.deps import get_db_session
+from app.api.router_factory import make_router
 from app.models.benchmark import CapabilityBlock
 from app.models.dataset import Shard
 from app.services.track_service import create_real_capability_block, create_track_with_blocks
 
-router = APIRouter(prefix="/wizard", tags=["wizard"])
+router = make_router(prefix="/wizard", tags=["wizard"])
 
 
 class RealDatasetTrackCreate(BaseModel):
@@ -27,7 +28,7 @@ def _delete_capability_block(session: Session, capability_block_id: str) -> None
     session.commit()
 
 
-@router.post("/real-dataset-track")
+@router.post("/real-dataset-track", tier="perm", perm="run.execute")
 def create_real_dataset_track(payload: RealDatasetTrackCreate, session: Session = Depends(get_db_session)) -> dict:
     block = create_real_capability_block(session, f"{payload.name} real data", payload.shard_ids)
     # Step 1 commits on its own (other callers rely on that), so if step 2 fails we

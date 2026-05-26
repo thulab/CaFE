@@ -22,8 +22,7 @@ def create_track(client: TestClient) -> tuple[str, str]:
     return wizard["track_id"], model["model_id"]
 
 
-def test_create_run_returns_immediately_with_queued_or_running_status():
-    client = TestClient(create_app())
+def test_create_run_returns_immediately_with_queued_or_running_status(client):
     track_id, model_id = create_track(client)
 
     response = client.post("/benchmarking-runs", json={"track_id": track_id, "model_ids": [model_id]})

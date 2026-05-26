@@ -39,9 +39,7 @@ def loaded_shard_id(client: TestClient) -> str:
     return job["output_shard_id"]
 
 
-def test_wizard_step2_failure_leaves_no_orphan_block_or_assigned_shard(monkeypatch: pytest.MonkeyPatch):
-    app = create_app()
-    client = TestClient(app)
+def test_wizard_step2_failure_leaves_no_orphan_block_or_assigned_shard(app, client, monkeypatch: pytest.MonkeyPatch):
     shard_id = loaded_shard_id(client)
 
     def boom(*args, **kwargs):
@@ -65,10 +63,7 @@ def test_wizard_step2_failure_leaves_no_orphan_block_or_assigned_shard(monkeypat
         assert shard.capability_block_id is None, "shard must be freed so it can be reused"
 
 
-def test_wizard_step1_failure_creates_nothing(monkeypatch: pytest.MonkeyPatch):
-    app = create_app()
-    client = TestClient(app)
-
+def test_wizard_step1_failure_creates_nothing(app, client, monkeypatch: pytest.MonkeyPatch):
     response = client.post(
         "/wizard/real-dataset-track",
         json={"name": "real track", "shard_ids": ["does-not-exist"], "primary_metric_id": "mse"},

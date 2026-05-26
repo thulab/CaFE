@@ -5,8 +5,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 
 
-def test_dataset_load_flow_uploads_manifest_loads_shard_and_previews_samples():
-    client = TestClient(create_app())
+def test_dataset_load_flow_uploads_manifest_loads_shard_and_previews_samples(client):
     source = Path(__file__).parents[1] / "fixtures" / "valid_hourly_20.csv"
 
     with source.open("rb") as file:

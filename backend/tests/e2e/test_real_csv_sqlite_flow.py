@@ -16,10 +16,7 @@ from app.models.series_point import SeriesPoint
 FLOW_TEMPLATE = Path(__file__).parents[3] / "test" / "flow_template.csv"
 
 
-def test_real_csv_full_column_ingest_sqlite_and_mase_ranking():
-    app = create_app()
-    client = TestClient(app)
-
+def test_real_csv_full_column_ingest_sqlite_and_mase_ranking(app, client):
     with FLOW_TEMPLATE.open("rb") as file:
         upload = client.post("/dataset-manifests/upload", files={"file": ("flow_template.csv", file, "text/csv")})
     assert upload.status_code == 200

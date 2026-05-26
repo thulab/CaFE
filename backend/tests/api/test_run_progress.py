@@ -4,8 +4,7 @@ from app.main import create_app
 from tests.api.test_benchmarking_run_create import create_track
 
 
-def test_run_progress_dto_contains_run_units_tasks_counts_and_events():
-    client = TestClient(create_app())
+def test_run_progress_dto_contains_run_units_tasks_counts_and_events(client):
     track_id, model_id = create_track(client)
     run = client.post("/benchmarking-runs", json={"track_id": track_id, "model_ids": [model_id]}).json()
 

@@ -27,8 +27,7 @@ def loaded_shard_id(client: TestClient) -> str:
     return job["output_shard_id"]
 
 
-def test_wizard_real_dataset_track_returns_track_block_and_ranking_ids():
-    client = TestClient(create_app())
+def test_wizard_real_dataset_track_returns_track_block_and_ranking_ids(client):
     shard_id = loaded_shard_id(client)
 
     response = client.post(

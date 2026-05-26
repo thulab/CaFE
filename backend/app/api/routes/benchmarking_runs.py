@@ -1,17 +1,18 @@
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import Depends, Request
 from pydantic import BaseModel
 from sqlmodel import Session
 
 from app.api.deps import get_db_session
+from app.api.router_factory import make_router
 from app.core.config import get_settings
 from app.models.benchmark import BenchmarkingRun
 from app.services.run_executor import build_run_progress, cancel_run, create_benchmarking_run, execute_run
 from app.workers.run_queue import RunQueue
 
-router = APIRouter(prefix="/benchmarking-runs", tags=["benchmarking-runs"])
+router = make_router(prefix="/benchmarking-runs", tags=["benchmarking-runs"])
 
 
 class BenchmarkingRunCreate(BaseModel):
@@ -19,7 +20,7 @@ class BenchmarkingRunCreate(BaseModel):
     model_ids: list[str]
 
 
-@router.post("")
+@router.post("", tier="perm", perm="run.execute")
 def create_run(payload: BenchmarkingRunCreate, request: Request, session: Session = Depends(get_db_session)) -> BenchmarkingRun:
     run = create_benchmarking_run(session, payload.track_id, payload.model_ids)
     queue: RunQueue = request.app.state.run_queue
@@ -53,12 +54,12 @@ def _execute_in_background(engine, run_id: str, runtime_dir: Path, queue: RunQue
             ).start()
 
 
-@router.get("/{benchmarking_run_id}/progress")
+@router.get("/{benchmarking_run_id}/progress", tier="authed")
 def get_run_progress(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
     return build_run_progress(session, benchmarking_run_id)
 
 
-@router.post("/{benchmarking_run_id}/cancel")
+@router.post("/{benchmarking_run_id}/cancel", tier="perm", perm="run.cancel")
 def cancel_benchmarking_run(benchmarking_run_id: str, request: Request, session: Session = Depends(get_db_session)) -> BenchmarkingRun:
     queue: RunQueue = request.app.state.run_queue
     # 取消一个仍在排队（非当前运行）的 run 时，必须把它从队列里摘掉，
