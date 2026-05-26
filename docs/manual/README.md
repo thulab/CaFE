@@ -8,12 +8,12 @@
 
 - 后端：FastAPI + SQLModel + SQLite。
 - 前端：Vue 3 + Vite 7。
-- 数据集：仅支持 CSV。
+- 数据集：支持 CSV 和单设备表模型 TsFile 输入；内部统一存成 SQLite `SeriesPoint`。
 - 目标列：仅支持单变量单 target column（一次评测必须且只能选 1 个 target）。
 - 模型：内置 5 个可复现模型，分别是 `Timer 3.5`、`Timer 3.0`、`Chronos 2`、`toto`、`TimesFM 2.5`。
 - 指标：MASE、MSE、MAE，均为 lower is better；榜单主指标为 **MASE**（赛道 `primary_metric_id`）。
 - 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
-- 使用场景：本地可信环境，不包含登录、权限管理或生产级访问控制。
+- 访问控制：公开榜单可匿名浏览；工作台页面需要登录；写操作、运行评测和用户/角色管理受 RBAC 权限控制。
 
 ## 2. 环境准备
 
@@ -73,6 +73,8 @@ TSBENCHMARK_BACKEND_PORT=8010 TSBENCHMARK_FRONTEND_PORT=5174 ./scripts/start-sys
 | `TSBENCHMARK_FRONTEND_HOST` | `127.0.0.1` | 前端监听地址 |
 | `TSBENCHMARK_FRONTEND_PORT` | `5173` | 前端端口 |
 | `TSBENCHMARK_SYSTEM_DIR` | `.tsbenchmark-system` | pid / 日志的存放目录 |
+| `TSBENCHMARK_AUTH_SECRET` | 启动脚本默认注入开发密钥 | JWT 签名密钥；直接运行后端时必须显式设置 |
+| `TSBENCHMARK_ADMIN_PASSWORD` | 启动脚本默认 `admin` | 首次初始化 admin 用户的密码；User 表已存在时不覆盖 |
 
 > 注意：前端默认通过 `/api` 代理到 `http://127.0.0.1:8000`（见 `frontend/vite.config.ts`）。如果用 `TSBENCHMARK_BACKEND_PORT` 改了后端端口，需要同步调整该代理目标，否则前端调不通后端。
 
@@ -105,9 +107,9 @@ TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 
 ### 4.2 三种接入模式
 
-**模式 A：本地桩服务（默认开箱即用）**
+**模式 A：本地/真实 REST 服务（默认开箱即用）**
 
-桩程序实现了文档的精简子集（`/forecast`、`/models/list`、`/health/*`），默认监听 `127.0.0.1:10810`，与 `base_url` 默认值一致，因此后端无需额外配置即可调用：
+后端默认以 REST 方式调用 `127.0.0.1:10810`。如果这台机器上已经部署真实 timer-rest-service，直接使用即可；没有真实服务时，可用仓库内桩程序占用同一地址：
 
 ```bash
 ./scripts/stub-service.sh start     # 启动（日志写入 <运行目录>/stub-service.log）
@@ -171,11 +173,12 @@ http://127.0.0.1:5173
 
 页面是一个带左侧边栏的工作台：
 
-- **左侧边栏**：四个入口——**概览（Overview）**、**新建评测（New evaluation）**、**数据集（Datasets）**、**运行（Runs）**。
-- **顶栏**：左侧是面包屑（当前位置），右侧有「New evaluation」快捷按钮和**主题切换**按钮（亮色 → 暗色 → 跟随系统，三态循环；偏好记在浏览器本地）。
-- **概览（首页 `#/`）**：统计卡（数据集 / 运行 / 赛道 / 报告数量）+「最近活动」列表 + 上手引导。
+- **匿名状态**：默认进入 `#/leaderboards`，只能看到公开榜单与登录入口。
+- **登录后侧边栏**：**概览（Overview）**、**新建评测（New evaluation）**、**数据集（Datasets）**、**运行（Runs）**、**榜单（Leaderboards）**；具备管理权限时额外显示 Users / Roles / My profile。
+- **顶栏**：左侧是面包屑（当前位置），右侧有「New evaluation」快捷按钮（需 `run.execute`）和**主题切换**按钮（亮色 → 暗色 → 跟随系统，三态循环；偏好记在浏览器本地）。
+- **概览（首页 `#/`）**：登录后的工作台首页，展示统计卡与上手引导。
 
-> ⚠️ 关于列表数据：后端只提供「按 ID 查询」的接口，没有列表接口。因此「数据集」「运行」列表与概览的「最近活动」都由**浏览器本地（localStorage）记录**驱动，反映的是**当前浏览器创建过的产物**；清空浏览器存储或换浏览器/设备后这些列表会清空（但后端数据仍在，可用 URL 深链或 API 访问）。
+> ⚠️ 关于登录：`./scripts/start-system.sh` 会用开发默认值启动，首次初始化的 admin 用户密码默认为 `admin`。直接运行后端时必须设置 `TSBENCHMARK_AUTH_SECRET`；生产或共享环境应同时设置强随机 `TSBENCHMARK_ADMIN_PASSWORD`。
 
 详情页（数据集清单 / 加载任务 / shard / 赛道 / 排行 / 报告 / 样本预测）通过列表、面包屑或向导右侧的「Created artifacts」面板进入，也可直接用 URL 哈希深链访问（如 `#/reports/<id>`）。
 

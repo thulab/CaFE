@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import httpx
 
 from app.services.timer_rest_adapter import TimerRestAdapter, TimerServiceError
 from stub_service.main import create_app
@@ -44,6 +45,29 @@ def test_adapter_raises_on_service_error():
     try:
         adapter.forecast(_sample(), {"model_id": "x"}, timeout_seconds=1)
     except TimerServiceError:
+        return
+    raise AssertionError("expected TimerServiceError")
+
+
+def test_adapter_raises_on_business_error_envelope():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "code": 400,
+                "message": "Model is not available",
+                "service_info": {},
+                "data": {"results": []},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    adapter = TimerRestAdapter(base_url=str(client.base_url), api_prefix="/ai/api/v1", client=client)
+
+    try:
+        adapter.forecast(_sample(), {"model_id": "x", "remote_model_id": "Timer-3.0"}, timeout_seconds=30)
+    except TimerServiceError as exc:
+        assert "service code 400" in str(exc)
         return
     raise AssertionError("expected TimerServiceError")
 

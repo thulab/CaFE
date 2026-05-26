@@ -75,6 +75,7 @@ class TimerRestAdapter:
         if resp.status_code != 200:
             message = payload.get("message") if isinstance(payload, dict) else resp.text
             raise TimerServiceError(f"{url} returned {resp.status_code}: {message}")
+        self._raise_for_service_envelope(url, payload)
         return payload
 
     def _get(self, url: str, timeout_seconds: int) -> dict:
@@ -87,7 +88,15 @@ class TimerRestAdapter:
         if resp.status_code != 200:
             message = payload.get("message") if isinstance(payload, dict) else resp.text
             raise TimerServiceError(f"{url} returned {resp.status_code}: {message}")
+        self._raise_for_service_envelope(url, payload)
         return payload
+
+    def _raise_for_service_envelope(self, url: str, payload: dict) -> None:
+        """timer-rest-service reports some business errors as HTTP 200 + code != 200."""
+        code = payload.get("code") if isinstance(payload, dict) else None
+        if code is not None and code != 200:
+            message = payload.get("message") if isinstance(payload, dict) else payload
+            raise TimerServiceError(f"{url} returned service code {code}: {message}")
 
     def _parse_response(self, payload: dict, horizon: int) -> list[list[float]]:
         try:

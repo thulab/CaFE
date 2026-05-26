@@ -61,15 +61,16 @@ flowchart LR
 
 ### 应用装配
 
-`create_app()`（`backend/app/main.py:14`）一次性完成装配：
+`create_app()`（`backend/app/main.py:15`）一次性完成装配：
 
 1. 注册全局错误处理器 `api_error_handler`（`main.py:16`）。
-2. 创建 `runtime/` 下五个子目录：`uploads / samples / forecasts / reports`（`main.py:18-22`，目录路径由 `Settings` 的 computed_field 派生，见 `core/config.py:31-49`）。
-3. 建 DB 引擎并存到 `app.state.engine`（`main.py:23`，`db/session.py:8`）。
-4. 建进程内运行队列 `RunQueue` 存到 `app.state.run_queue`（`main.py:24`）。
-5. `init_db` 通过 `SQLModel.metadata.create_all` 建表（`db/init_db.py:13`）。
-6. `seed_mvp_models` 注入 5 个内置桩模型（`main.py:27`，`services/track_service.py:79`）。
-7. 注册全部路由器（`main.py:28-38`）。
+2. 校验 `TSBENCHMARK_AUTH_SECRET`：缺省时直接拒绝启动，避免静默使用弱 JWT 密钥（`main.py:19-22`）。
+3. 创建 `runtime/` 下子目录：`uploads / samples / forecasts / reports`（`main.py:23-27`，目录路径由 `Settings` 的 computed_field 派生）。
+4. 建 DB 引擎并存到 `app.state.engine`（`main.py:28`，`db/session.py:8`）。
+5. 建进程内运行队列 `RunQueue` 存到 `app.state.run_queue`（`main.py:29`）。
+6. `init_db` 通过 `SQLModel.metadata.create_all` 建表（`db/init_db.py:13`）。
+7. 启动 seed：权限码、系统角色、首个 admin 用户，以及 5 个内置模型（`main.py:31-35`）。
+8. 注册全部路由器（含 auth/users/roles 与业务路由，`main.py:36-49`）。
 
 > 注意：DB session 依赖 `get_db_session` 用 `request.app.state.engine`（`api/deps.py:7`），而 `db/session.py:14` 的 `get_session()` 会临时新建引擎——后者仅供脱离 request 的场景使用。
 
@@ -81,7 +82,17 @@ flowchart LR
 { "error_code": "...", "message": "...", "details": { } }
 ```
 
-service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_exception_handler` 自动捕获。`main.py:40` 的 `/__test__/error-contract` 探针专门用于验证该信封形状。
+service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_exception_handler` 自动捕获。`main.py:51` 的 `/__test__/error-contract` 探针专门用于验证该信封形状。
+
+### 访问控制
+
+所有业务路由使用 `make_router()` 创建，最终由 `TieredRoute` 统一切面处理认证与授权：
+
+- **Tier 0 public**：匿名可访问，例如 `/auth/login`、`/ranking-lists`、`/tracks/{id}/ranking`。
+- **Tier 1 authed**：需要任意有效 Bearer token，例如数据集/运行/报告读取接口。
+- **Tier 2 perm**：需要 token 加权限码，例如 `dataset.write`、`run.execute`、`user.manage`。
+
+`User` / `Role` / `Permission` / `UserRole` / `RolePermission` 在启动时自动建表并 seed。`admin` 是 superuser，`viewer` 只拿 `*.read` 权限。前端 `useAuthGuard.ts` 镜像同一套 Tier 规则，用于 hash 路由跳转到登录页或 forbidden 页。
 
 ---
 
@@ -247,7 +258,7 @@ sequenceDiagram
 #### TimerRestAdapter（`services/timer_rest_adapter.py`）
 
 - **请求构造** `_build_request`（`timer_rest_adapter.py:50`）：把内部 sample 转成 `/forecast` 契约——以固定列名 `time` 为时间列，`columns = [time, *target_column_names]`，`data` 为 `[[history_ts, *row], ...]`，`output_length = [horizon]`（**2026-05-25 起取 `model_input["horizon"]`，不再读 `target_future` 的长度**，与桩适配器同步改造），`time_col = ["time"]`，`model_id` 取 `model["remote_model_id"]`。
-- **请求发送** `_post`（`timer_rest_adapter.py:65`）：默认用 `httpx.Client(timeout=..., trust_env=False)`——**`trust_env=False`** 是关键：推理服务是内网服务，绕开系统 HTTP/SOCKS 代理。非 200 抛 `TimerServiceError`（含响应 `message`）。
+- **请求发送** `_post`（`timer_rest_adapter.py:65`）：默认用 `httpx.Client(timeout=..., trust_env=False)`——**`trust_env=False`** 是关键：推理服务是内网服务，绕开系统 HTTP/SOCKS 代理。HTTP 非 200 或业务信封 `code != 200` 均抛 `TimerServiceError`（真实服务会把「模型未加载」这类业务错误包装成 HTTP 200 + `code=400`）。
 - **响应解析** `_parse_response`（`timer_rest_adapter.py:91`）：从 `data.results[0]` 取 `columns/data`，剔除 `time` 列只留数值列，截断到 `horizon`。形状不符抛 `TimerServiceError`。
 - **错误归一**：所有 `httpx.HTTPError`、非 200、契约不符都收敛为 `TimerServiceError`（`timer_rest_adapter.py:12`）。
 - 另有 `list_models`（GET `/models/list`，取 `data.models`），供 `/models` 路由标注每个模型的实时加载状态（`service_loaded_model_ids`，`model_adapter.py:32`；服务不可达或桩模式降级为 `None`/未知，见 `routes/models.py:27`）。

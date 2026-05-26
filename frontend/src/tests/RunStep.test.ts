@@ -20,14 +20,24 @@ describe('RunStep', () => {
   });
 
   it('starts five-second polling and stops on terminal status', async () => {
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ model_id: 'm1', name: 'Timer 3.5', adapter_type: 'timer_service' }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'running' }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'succeeded', progress: {}, units: [], tasks: [], recent_events: [], report_id: 'rep1' }), { status: 200 }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/models') {
+        return Promise.resolve(new Response(JSON.stringify({ items: [{ model_id: 'm1', name: 'Timer 3.5', adapter_type: 'timer_service' }] }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs') {
+        return Promise.resolve(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'running' }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs/r1/progress') {
+        return Promise.resolve(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'succeeded', progress: {}, units: [], tasks: [], recent_events: [], report_id: 'rep1' }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
+    });
     render(RunStep);
 
     await fireEvent.click(await screen.findByLabelText('Timer 3.5'));
     await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await waitFor(() => expect(wizardState.runId).toBe('r1'));
     await vi.advanceTimersByTimeAsync(5000);
 
     await waitFor(() => expect(wizardState.reportId).toBe('rep1'));

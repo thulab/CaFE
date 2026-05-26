@@ -38,7 +38,7 @@ def utc_now() -> datetime:
 
 ## 1. 总览
 
-### 1.1 SQLModel 表实体清单（18 个）
+### 1.1 SQLModel 表实体清单（23 个）
 
 | 实体 | 文件 | 职责 |
 | --- | --- | --- |
@@ -60,6 +60,11 @@ def utc_now() -> datetime:
 | `Report` | `backend/app/models/report.py:11` | 基础评测报告 |
 | `RankingList` | `backend/app/models/ranking.py:10` | 每条 Track 一个的榜单定义 |
 | `RankingEntry` | `backend/app/models/ranking.py:21` | 榜单中的模型成绩行 |
+| `User` | `backend/app/models/auth.py:9` | 登录用户；用于 JWT subject 与启停账号 |
+| `Role` | `backend/app/models/auth.py:20` | 角色；MVP 内置 `admin` / `viewer` |
+| `Permission` | `backend/app/models/auth.py:28` | 权限码字典；启动时由 `core/permissions.py` seed |
+| `UserRole` | `backend/app/models/auth.py:34` | 用户-角色关联表 |
+| `RolePermission` | `backend/app/models/auth.py:39` | 角色-权限关联表 |
 
 ### 1.2 ER 图
 
@@ -100,6 +105,11 @@ erDiagram
     Unit ||--o{ RankingEntry : "unit_id"
     BenchmarkingRun ||--o{ RankingEntry : "benchmarking_run_id"
     Model ||--o{ RankingEntry : "model_id"
+
+    User ||--o{ UserRole : "user_id"
+    Role ||--o{ UserRole : "role_id"
+    Role ||--o{ RolePermission : "role_id"
+    Permission ||--o{ RolePermission : "permission_id"
 ```
 
 ### 1.3 核心层级速览

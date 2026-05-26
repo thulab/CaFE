@@ -9,7 +9,7 @@
 | 篇目 | 内容 |
 | --- | --- |
 | [架构与关键流程](./key-flows.md) | 系统分层架构、错误信封、六大关键流程（数据集接入与样本物化 / 赛道与能力块 / **评测运行执行** / 模型推理接入 / 榜单计算 / 样本预测视图）、本地桩服务行为、API 端点速查表、扩展指引 |
-| [数据模型](./data-model.md) | 全部 17 个 SQLModel 实体设计（字段表 + 状态枚举 + ER 图）、3 类落盘产物（sample.v1 / forecast.v1 / report JSON）、传输层 DTO、关键不变量与生命周期 |
+| [数据模型](./data-model.md) | 全部 23 个 SQLModel 实体设计（字段表 + 状态枚举 + ER 图）、3 类落盘产物（sample.v1 / forecast.v1 / report JSON）、传输层 DTO、关键不变量与生命周期 |
 
 ## 系统速览
 
@@ -45,7 +45,7 @@ MetricResult：单表多层级（sample / shard / task / unit）
 - **页面** `pages/`：`HomePage`（概览）、`EvaluationWizardPage`（分步门禁向导）、`DatasetsPage` / `RunsPage`（列表）、各详情页（DatasetManifest / LoadJob / Shard / RunDetail / Track / Ranking / Report / SampleForecast）。
 - **组件**：`components/wizard/`（6 个向导步骤）、`components/results/`（`ForecastChart` 交互式折线图、`RankingChart` 条形、`RankingTable` / `ReportSummary` / `SampleMetricTable`）、`components/ui/`（`Icon` 内联 SVG、`StatusBadge`、`StateBlock` 统一 loading/empty/error+重试）。
 - **设计系统** `styles.css`：CSS tokens，亮 + 暗双主题经 `[data-theme]` 切换（`composables/useTheme.ts`，默认跟随系统）。
-- **状态 / 工具**：`stores/wizard.ts`（向导状态 + 分步控制）、`stores/recents.ts`（**localStorage 记录用户产物**，驱动列表/概览——这是「后端无列表接口」的前端取舍）、`composables/useAsync.ts`、`composables/useModels.ts`（缓存模型目录把 `model_id` 解析为名字）、`lib/format.ts`。
+- **状态 / 工具**：`stores/wizard.ts`（向导状态 + 分步控制）、`stores/auth.ts`（JWT token、当前用户与权限码）、`composables/useAuthGuard.ts`（前端镜像 Tier 0/1/2 路由守卫）、`composables/useResourceCounts.ts`（列表总数角标）、`composables/useModels.ts`（缓存模型目录把 `model_id` 解析为名字）、`lib/format.ts`。
 - **API 客户端** `api/`：`client.ts` 统一加 `/api` 前缀并解析错误信封，其余按域分模块。
 - 测试 `tests/`（Vitest + Testing Library）：`cd frontend && npm test`。
 
