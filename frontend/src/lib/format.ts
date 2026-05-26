@@ -1,55 +1,61 @@
 // Display formatting helpers shared across views. Pure functions, no deps.
 
 /** Format a metric/number compactly with sensible precision. */
-export function formatNumber(value: unknown, digits = 4): string {
+export function formatNumber(value: unknown, digits = 4, locale?: string): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return String(value);
   if (n === 0) return '0';
   const abs = Math.abs(n);
   if (abs >= 1e6 || abs < 1e-4) return n.toExponential(2);
-  if (Number.isInteger(n)) return n.toLocaleString();
-  return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+  if (Number.isInteger(n)) return n.toLocaleString(locale);
+  return n.toLocaleString(locale, { maximumFractionDigits: digits });
 }
 
 /** Integer with thousands separators. */
-export function formatInt(value: unknown): string {
+export function formatInt(value: unknown, locale?: string): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
-  return Number.isFinite(n) ? n.toLocaleString() : String(value);
+  return Number.isFinite(n) ? n.toLocaleString(locale) : String(value);
 }
 
 /** Absolute timestamp, locale-aware. */
-export function formatDateTime(value?: string | null): string {
+export function formatDateTime(value?: string | null, locale?: string): string {
   if (!value) return '—';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString(locale, {
     year: 'numeric', month: 'short', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   });
 }
 
-/** Human "time ago" string. */
-export function timeAgo(value?: string | null): string {
+/** Human relative time string. */
+export function timeAgo(value?: string | null, locale?: string): string {
   if (!value) return '';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  const secs = Math.round((Date.now() - d.getTime()) / 1000);
-  if (secs < 0) return 'just now';
-  const units: Array<[number, string]> = [
-    [60, 'second'], [60, 'minute'], [24, 'hour'], [7, 'day'], [4.345, 'week'], [12, 'month'], [Infinity, 'year']
+  const seconds = Math.round((d.getTime() - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
+  const abs = Math.abs(seconds);
+  if (abs < 5) return rtf.format(0, 'second');
+  const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+    ['second', 60],
+    ['minute', 60],
+    ['hour', 24],
+    ['day', 7],
+    ['week', 4.345],
+    ['month', 12],
+    ['year', Infinity],
   ];
-  let n = secs;
-  for (let i = 0; i < units.length; i += 1) {
-    const [step, label] = units[i];
-    if (n < step) {
-      const r = Math.max(1, Math.floor(n));
-      return `${r} ${label}${r === 1 ? '' : 's'} ago`;
+  let valueInUnit = seconds;
+  for (const [unit, step] of units) {
+    if (Math.abs(valueInUnit) < step) {
+      return rtf.format(Math.round(valueInUnit), unit);
     }
-    n /= step;
+    valueInUnit /= step;
   }
-  return formatDateTime(value);
+  return formatDateTime(value, locale);
 }
 
 /** Compact short id for display (keeps prefix + tail). */
@@ -65,7 +71,7 @@ export function percent(done: number, total: number): number {
   return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
 }
 
-/** Title-case a snake/kebab status string for display. */
+/** Title-case a snake/kebab status string for display fallback. */
 export function humanize(value?: string | null): string {
   if (!value) return '';
   return value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
