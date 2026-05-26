@@ -213,6 +213,45 @@ TSBENCHMARK_BACKEND_PORT=8010 TSBENCHMARK_FRONTEND_PORT=5174 ./scripts/start-sys
 TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 ```
 
+## 6.x Docker 一键起
+
+前置：本机安装 Docker Desktop（含 `docker compose` v2）。仓库根目录已提供 `docker-compose.yml`、`backend/Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf`。
+
+```bash
+docker compose up --build       # 首次构建并启动
+docker compose down             # 停止；想清掉 sqlite/上传文件加 -v
+```
+
+启动后访问：
+
+- 前端（nginx 提供静态产物 + 反代 `/api/*`）：`http://localhost:5173`
+- 后端 OpenAPI：`http://localhost:8000/docs`
+
+三个服务：
+
+- `stub`：`timer-rest-service` 桩（与后端共享同一镜像，只是换启动命令），仅集群内部 `10810` 端口可达。
+- `backend`：FastAPI 后端；运行时数据写在命名卷 `runtime`（容器内 `/data`），sqlite/上传 CSV/样本/报告都在里面。
+- `frontend`：Vite 构建的静态资源，由 nginx 服务。
+
+切换到真实推理服务：把 `backend` 的环境变量 `TSBENCHMARK_TIMER_SERVICE_BASE_URL` 指向外部地址，并去掉 `stub` 服务即可（`docker compose up backend frontend`）。
+
+发布镜像（按需）：
+
+```bash
+# 单平台
+docker compose build
+docker tag tsbenchmark-backend:latest  <registry>/tsbenchmark-backend:<tag>
+docker tag tsbenchmark-frontend:latest <registry>/tsbenchmark-frontend:<tag>
+docker push <registry>/tsbenchmark-backend:<tag>
+docker push <registry>/tsbenchmark-frontend:<tag>
+
+# 多平台（buildx）
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f backend/Dockerfile  -t <registry>/tsbenchmark-backend:<tag>  --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f frontend/Dockerfile -t <registry>/tsbenchmark-frontend:<tag> --push .
+```
+
 ### Shard
 
 Shard 是内部数据片，表示一组参数完全固定的数据单元。Shard 不直接暴露给普通用户作为主要操作对象。它用于缓存、索引、复现和追踪。一个 shard 包含多条 sample，这些 sample 共享同一组固定生成参数，例如：

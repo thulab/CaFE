@@ -1,0 +1,56 @@
+# TSBenchmark 一键起 —— `docker compose up --build` 后访问 http://localhost:5173
+#
+# 三个服务：
+#   - stub      timer-rest-service 的进程外桩（与 backend 复用同一镜像）
+#   - backend   FastAPI 后端，sqlite 与上传文件持久化在 `runtime` 卷
+#   - frontend  Vite 构建出的静态资源，由 nginx 提供并把 /api/* 反代到 backend
+#
+# 切换到真实推理服务：把 TSBENCHMARK_TIMER_SERVICE_BASE_URL 指向外部地址，
+# 并把 stub 服务从 `docker compose up` 命令里去掉即可。
+
+x-backend-image: &backend-image
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  image: tsbenchmark-backend:latest
+
+services:
+  stub:
+    <<: *backend-image
+    container_name: tsbenchmark-stub
+    command: ["uvicorn", "stub_service.main:app", "--host", "0.0.0.0", "--port", "10810"]
+    expose:
+      - "10810"
+    restart: unless-stopped
+
+  backend:
+    <<: *backend-image
+    container_name: tsbenchmark-backend
+    environment:
+      TSBENCHMARK_RUNTIME_DIR: /data
+      TSBENCHMARK_DATABASE_URL: sqlite:////data/tsbenchmark.db
+      TSBENCHMARK_MODEL_ADAPTER: rest
+      TSBENCHMARK_TIMER_SERVICE_BASE_URL: http://stub:10810
+      TSBENCHMARK_TIMER_SERVICE_API_PREFIX: /ai/api/v1
+    volumes:
+      - runtime:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - stub
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: tsbenchmark-frontend:latest
+    container_name: tsbenchmark-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  runtime:
