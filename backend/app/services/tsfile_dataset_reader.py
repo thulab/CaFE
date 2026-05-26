@@ -31,33 +31,15 @@ class TsFileDatasetReader:
             series = list(tf.list_timeseries())
             if not series:
                 raise ApiError("tsfile_empty", "tsfile contains no timeseries", {"path": str(path)})
-            # series 形如 "<table>.<device>.<measurement>"；device 维 = 去掉最后一段。
-            devices = {".".join(name.split(".")[:-1]) for name in series}
-            if len(devices) != 1:
-                raise ApiError(
-                    "tsfile_multiple_devices",
-                    "MVP supports exactly one device per tsfile",
-                    {"devices": sorted(devices)},
-                )
-            prefix = next(iter(devices))
-            discovered = [name.split(".")[-1] for name in series if name.startswith(prefix + ".")]
+            selected_series, columns = _resolve_series_selection(series, value_columns)
 
-            if value_columns:
-                missing = [column for column in value_columns if column not in discovered]
-                if missing:
-                    raise ApiError(
-                        "tsfile_value_column_missing",
-                        "requested value column not found in tsfile",
-                        {"missing": missing, "available": discovered},
-                    )
-                columns = list(value_columns)
-            else:
-                columns = discovered
-
-            ts_ms = [int(value) for value in tf[f"{prefix}.{columns[0]}"].timestamps[:]]
+            ts_ms = [int(value) for value in tf[selected_series[0]].timestamps[:]]
             row_count = len(ts_ms)
             timestamps = [datetime.fromtimestamp(ms / 1000) for ms in ts_ms]
-            column_arrays = {col: [float(v) for v in tf[f"{prefix}.{col}"][0:row_count]] for col in columns}
+            column_arrays = {
+                col: [float(v) for v in tf[series_name][0:row_count]]
+                for col, series_name in zip(columns, selected_series, strict=True)
+            }
         finally:
             tf.__exit__(None, None, None)
 
@@ -73,3 +55,54 @@ class TsFileDatasetReader:
             encoding="tsfile",
             delimiter="",
         )
+
+
+def tsfile_device_path(series_name: str) -> str:
+    return ".".join(series_name.split(".")[:-1])
+
+
+def tsfile_field_name(series_name: str) -> str:
+    return series_name.split(".")[-1]
+
+
+def _resolve_series_selection(series: list[str], value_columns: list[str] | None) -> tuple[list[str], list[str]]:
+    """Resolve manifest value_columns to concrete TsFile series paths.
+
+    For ordinary single-device files, value_columns are measurement names. For
+    TimeBench table-model shards that contain many timeseries_id tag values,
+    callers may pass full series paths (e.g. ``table.device.value``) to select
+    one device from a multi-device file.
+    """
+    if value_columns and all(column in series for column in value_columns):
+        selected_series = list(value_columns)
+        devices = {tsfile_device_path(name) for name in selected_series}
+        if len(devices) != 1:
+            raise ApiError(
+                "tsfile_multiple_devices",
+                "MVP supports exactly one selected device per tsfile",
+                {"devices": sorted(devices)},
+            )
+        return selected_series, list(value_columns)
+
+    devices = {tsfile_device_path(name) for name in series}
+    if len(devices) != 1:
+        raise ApiError(
+            "tsfile_multiple_devices",
+            "MVP supports exactly one device per tsfile unless value_columns selects full series paths",
+            {"devices": sorted(devices)[:50], "device_count": len(devices)},
+        )
+    prefix = next(iter(devices))
+    discovered = [tsfile_field_name(name) for name in series if name.startswith(prefix + ".")]
+
+    if value_columns:
+        missing = [column for column in value_columns if column not in discovered]
+        if missing:
+            raise ApiError(
+                "tsfile_value_column_missing",
+                "requested value column not found in tsfile",
+                {"missing": missing, "available": discovered},
+            )
+        columns = list(value_columns)
+    else:
+        columns = discovered
+    return [f"{prefix}.{column}" for column in columns], columns

@@ -10,7 +10,7 @@
 - 前端：Vue 3 + Vite 7。
 - 数据集：支持 CSV 和单设备表模型 TsFile 输入；内部统一存成 SQLite `SeriesPoint`。
 - 目标列：仅支持单变量单 target column（一次评测必须且只能选 1 个 target）。
-- 模型：内置 5 个可复现模型，分别是 `Timer 3.5`、`Timer 3.0`、`Chronos 2`、`toto`、`TimesFM 2.5`。
+- 模型：REST 模式下以 timer-rest-service 的 `/models/list` 为准；进程内桩模式保留 5 个本地可复现模型。
 - 指标：MASE、MSE、MAE，均为 lower is better；榜单主指标为 **MASE**（赛道 `primary_metric_id`）。
 - 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
 - 访问控制：公开榜单可匿名浏览；工作台页面需要登录；写操作、运行评测和用户/角色管理受 RBAC 权限控制。
@@ -135,7 +135,7 @@ TSBENCHMARK_MODEL_ADAPTER=stub ./scripts/start-system.sh
 TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-system.sh
 ```
 
-模型列表（`GET /models`）会用真实服务的 `/models/list` 标注每个模型是否已加载；服务不可达时该状态降级为未知，不影响其它功能。
+模型列表（`GET /models`）直接读取真实服务的 `/models/list` 并同步到本地模型镜像。服务不可达时模型列表会返回错误；前端点击 Run 后会先对未加载的已选模型调用后端 `POST /models/{model_id}/load`，后端执行期也会再次兜底确认 loaded。加载失败会写入 run/task 错误而不是卡住后台执行线程。
 
 ## 5. 数据文件要求
 
@@ -152,6 +152,7 @@ TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-syst
 - MVP 只允许选择 **1 个** target column。
 - target 值必须能转换为有限浮点数，不允许缺失、非数字、NaN 或 Inf。
 - 切分约束：`context_length + horizon` 不能超过数据行数；`context_length`、`horizon`、`stride` 都必须为正数；`stride` 缺省时等于 `horizon`。
+- TsFile 输入只支持表模型。单设备文件可直接选择物理量列；多 `timeseries_id` 文件需要选择完整 series path（形如 `table.device.value`），每次 load 仍只允许一个设备。
 
 仓库中有一个可用于试跑的示例文件：
 
@@ -195,7 +196,7 @@ http://127.0.0.1:5173
    - 点「Load shard」：依次创建 dataset manifest、提交 load job 并物化样本，成功后自动进入下一步。
 3. **Confirm shard**：展示样本数量（形如 `N samples`）等统计，并提供「Inspect shard」链接；点「Continue」继续。
 4. **Create track**：点「Create track」，基于已加载的 shard 创建「真实数据评测赛道」（**主指标 MASE**），给出「View track」「View ranking」链接后自动进入下一步。
-5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。运行期间可点「Cancel」请求取消。
+5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
 6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
 
 使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。

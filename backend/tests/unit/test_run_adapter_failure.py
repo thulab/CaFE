@@ -10,7 +10,7 @@ When ``adapter.forecast`` raises for a sample, the executor must:
 from sqlmodel import Session, create_engine, select
 
 from app.db.init_db import init_db
-from app.models.benchmark import ForecastArtifact
+from app.models.benchmark import ForecastArtifact, Task, Unit
 from app.services.forecast_store import ForecastStore
 from app.services.run_executor import create_benchmarking_run, execute_run
 from app.workers.run_queue import RunQueue
@@ -24,6 +24,14 @@ class _AlwaysRaisingAdapter:
 
     def forecast(self, sample, model, timeout_seconds):  # noqa: ANN001, ANN201
         raise RuntimeError("adapter boom")
+
+
+class _LoadFailingAdapter:
+    def ensure_model_loaded(self, model, timeout_seconds):  # noqa: ANN001, ANN201
+        raise RuntimeError("load boom")
+
+    def forecast(self, sample, model, timeout_seconds):  # noqa: ANN001, ANN201
+        raise AssertionError("forecast should not be called when model load fails")
 
 
 def _all_forecast_rows(forecasts_dir, artifacts: list[ForecastArtifact]) -> list[dict]:
@@ -60,6 +68,31 @@ def test_adapter_failure_does_not_crash_run_and_marks_sample_failed(tmp_path, mo
         assert rows, "expected forecast rows to be written even on adapter failure"
         assert all(row["status"] == "failed" for row in rows)
         assert all(row["error_code"] for row in rows)
+
+
+def test_model_load_failure_marks_unit_failed_without_forecast(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: _LoadFailingAdapter(),
+        )
+
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        session.refresh(run)
+        assert run.status == "failed"
+        unit = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).one()
+        task = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).one()
+        assert unit.status == "failed"
+        assert task.status == "failed"
+        assert task.error_code == "model_load_error"
+        assert "load boom" in task.error_message
+        assert not session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)).all()
 
 
 def test_queue_drains_after_adapter_failure_so_next_run_completes(tmp_path, monkeypatch):

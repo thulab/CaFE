@@ -6,6 +6,8 @@ TSBENCHMARK_TIMER_SERVICE_BASE_URL 指向它。
 """
 from __future__ import annotations
 
+import time
+
 import httpx
 
 
@@ -46,6 +48,47 @@ class TimerRestAdapter:
             return response["data"]["models"]
         except (KeyError, TypeError) as exc:
             raise TimerServiceError(f"unexpected models/list response shape: {response}") from exc
+
+    def load_model(self, model_id: str, timeout_seconds: int = 600, replicas_per_device: int | None = None) -> dict:
+        """POST /models/load → 加载已注册模型；timer-rest-service 端保证幂等。"""
+        body: dict = {"model_id": model_id}
+        if replicas_per_device is not None:
+            body["replicas_per_device"] = replicas_per_device
+        try:
+            response = self._post(f"{self._base}/models/load", body, timeout_seconds)
+        except httpx.HTTPError as exc:
+            raise TimerServiceError(f"models/load request failed: {exc}") from exc
+        try:
+            return response["data"] or {}
+        except (KeyError, TypeError) as exc:
+            raise TimerServiceError(f"unexpected models/load response shape: {response}") from exc
+
+    def ensure_model_loaded(self, model: dict, timeout_seconds: int = 600) -> None:
+        """确保 forecast 前模型已加载；未加载则调用 /models/load。"""
+        model_id = model.get("remote_model_id") or model.get("model_id")
+        if not model_id:
+            raise TimerServiceError("model_id is required before loading model")
+        model_id = str(model_id)
+        deadline = time.monotonic() + timeout_seconds
+        service_model = self._find_service_model(model_id)
+        if service_model.get("loaded"):
+            return
+        remaining = max(1, int(deadline - time.monotonic()))
+        self.load_model(model_id, timeout_seconds=remaining)
+        while True:
+            service_model = self._find_service_model(model_id)
+            if service_model.get("loaded"):
+                return
+            remaining_seconds = deadline - time.monotonic()
+            if remaining_seconds <= 0:
+                raise TimerServiceError(f"timed out waiting for model [{model_id}] to load")
+            time.sleep(min(2.0, remaining_seconds))
+
+    def _find_service_model(self, model_id: str) -> dict:
+        service_model = next((item for item in self.list_models() if item.get("model_id") == model_id), None)
+        if service_model is None:
+            raise TimerServiceError(f"model [{model_id}] is not registered in timer-rest-service")
+        return service_model
 
     # -- 内部实现 ------------------------------------------------------------ #
     def _build_request(self, sample: dict, model: dict, horizon: int) -> dict:

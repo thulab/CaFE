@@ -12,6 +12,7 @@ from app.core.ids import new_id
 from app.core.time import utc_now
 from app.models.dataset import DatasetManifest
 from app.services.csv_dataset_reader import CsvDatasetReader
+from app.services.tsfile_dataset_reader import tsfile_device_path, tsfile_field_name
 
 router = make_router(prefix="/dataset-manifests", tags=["dataset-manifests"])
 
@@ -42,10 +43,11 @@ def _sniff_tsfile(upload_id: str, target: Path, filename: str | None, file_size:
     tf = tsfile.TsFileDataFrame(str(target))
     try:
         series = list(tf.list_timeseries())
-        # series \u5f62\u5982 "<table>.<device>.<measurement>"\uff1bdevice \u7ef4 = \u53bb\u6389\u6700\u540e\u4e00\u6bb5\u3002
-        devices = sorted({".".join(name.split(".")[:-1]).split(".")[-1] for name in series})
-        device = devices[0] if len(devices) == 1 else None
-        measurements = [name.split(".")[-1] for name in series]
+        # series 形如 "<table>.<device>.<measurement>"；device 维 = 去掉最后一段。
+        devices = sorted({tsfile_device_path(name) for name in series})
+        device = devices[0].split(".")[-1] if len(devices) == 1 else None
+        measurements = [tsfile_field_name(name) for name in series]
+        column_names = measurements if len(devices) == 1 and len(set(measurements)) == len(measurements) else series
         row_count = 0
         if series:
             row_count = len(tf[series[0]].timestamps[:])
@@ -61,14 +63,14 @@ def _sniff_tsfile(upload_id: str, target: Path, filename: str | None, file_size:
         "device": device,
         "devices": devices,
         "columns": [
-            {"name": measurement, "inferred_type": "numeric", "nullable": False, "sample_values": []}
-            for measurement in measurements
+            {"name": column, "inferred_type": "numeric", "nullable": False, "sample_values": []}
+            for column in column_names
         ],
         "preview_rows": [],
         "row_count_estimate": row_count,
         "validation_summary": {
             "has_header": True,
-            "duplicate_columns": len(set(measurements)) != len(measurements),
+            "duplicate_columns": len(set(column_names)) != len(column_names),
             "multiple_devices": len(devices) != 1,
             "parse_warnings": [],
         },

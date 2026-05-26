@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.services.forecast_store import ForecastStore
 from app.services.metric_service import aggregate_metric, compute_sample_metrics
 from app.services.model_adapter import ModelAdapter, get_model_adapter, remote_model_id
+from app.services.model_catalog import ensure_catalog_models_exist
 from app.services.model_input import build_model_input
 from app.services.sample_store import SampleStore
 
@@ -23,6 +24,7 @@ METRIC_NAMES = ["mase", "mse", "mae"]
 def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str]) -> BenchmarkingRun:
     if not model_ids:
         raise ApiError("run_requires_model", "benchmarking run requires at least one model")
+    ensure_catalog_models_exist(session, get_settings(), model_ids)
     blocks = session.exec(select(CapabilityBlock).where(CapabilityBlock.track_id == track_id)).all()
     if not blocks:
         raise ApiError("track_has_no_blocks", "track has no capability blocks", {"track_id": track_id})
@@ -161,9 +163,36 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
     unit.started_at = utc_now()
     session.add(unit)
     session.commit()
+    if model is None:
+        _fail_unit(session, unit, "model_not_found", f"model not found: {unit.model_id}")
+        return
     if model and model.endpoint_uri == "stub://fail":
         _fail_unit(session, unit, "adapter_error", "stub failure")
         return
+    model_payload = {
+        "model_id": model.model_id,
+        "remote_model_id": remote_model_id(model),
+        "stub_seed": model.stub_seed,
+    }
+    ensure_model_loaded = getattr(adapter, "ensure_model_loaded", None)
+    if ensure_model_loaded is not None:
+        try:
+            ensure_model_loaded(
+                model_payload,
+                timeout_seconds=get_settings().timer_service_model_load_timeout_seconds,
+            )
+        except Exception as error:  # noqa: BLE001 — load failure is recorded on the unit, not raised out of the run
+            _fail_unit(session, unit, "model_load_error", str(error))
+            session.add(
+                RunEvent(
+                    benchmarking_run_id=run.benchmarking_run_id,
+                    level="error",
+                    event_type="model_load_failed",
+                    message=f"model load failed for {model_payload['remote_model_id']}: {error}",
+                )
+            )
+            session.commit()
+            return
 
     tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
     task_metrics: list[dict[str, float] | None] = []

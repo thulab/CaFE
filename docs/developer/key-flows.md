@@ -43,7 +43,7 @@ flowchart LR
     end
 
     UI -->|HTTP JSON| R
-    ADP -->|HTTP /forecast, /models/list| REAL
+    ADP -->|HTTP /forecast, /models/list, /models/load| REAL
     ADP -->|HTTP（本地默认）| STUB
     M --> DB
     S --> FS
@@ -111,7 +111,7 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 真正的存储在创建 load job 时同步发生（`routes/dataset_load_jobs.py:20` → `DatasetLoadService.create_load_job`）：
 
 - 前置幂等校验：`assert_manifest_can_succeed_load` 与 `assert_manifest_can_create_successful_real_shard`（`db/init_db.py:18,33`）——一个 manifest 只能有一个成功 load job / 一个 ready 的 real shard。
-- `_execute_job` 用 `get_dataset_reader(manifest.file_format).read(...)` 读取并**严格校验**（**全列摄入**）：除时间列外的**所有数值列**（manifest `value_columns`；为空则全取）逐列校验为有限 float，时间轴经共享的 `validate_time_axis`（递增/不重复/等间隔 + 时区一致性 + 频率按**时长**比较）。TsFile 输入要求**恰好一个设备**（多设备 → `tsfile_multiple_devices`），时间为内建轴。随后从 `split_config.target_columns` 选**恰好 1 个**目标列（必须 ⊆ `value_columns`，否则 `load_target_columns_invalid`）。
+- `_execute_job` 用 `get_dataset_reader(manifest.file_format).read(...)` 读取并**严格校验**（**全列摄入**）：除时间列外的**所有数值列**（manifest `value_columns`；为空则全取）逐列校验为有限 float，时间轴经共享的 `validate_time_axis`（递增/不重复/等间隔 + 时区一致性 + 频率按**时长**比较）。TsFile 输入只支持表模型；默认要求**恰好一个设备**，但对 TimeBench 这类多 `timeseries_id` 分片，manifest 可用完整 series path（`table.device.value`）从文件中选定一个设备。随后从 `split_config.target_columns` 选**恰好 1 个**目标列（必须 ⊆ `value_columns`，否则 `load_target_columns_invalid`）。
 - `build_windows`（`dataset_load_service.py`）按 `context_length / horizon / stride`（stride 默认等于 horizon）滑窗。每窗给出 context 区间 `[context_start, context_end]` 与 horizon 区间 `[horizon_start, horizon_end]`。校验：参数为正、`context_length + horizon ≤ row_count`、至少产出一个窗口。
 - `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现；与 stride 的相互作用见 data-model §10.6）。
 - 创建 `Shard`（status=`ready`），用 `SeriesStore.write` 把**全列数值矩阵**逐点写入 `SeriesPoint`（一行一时间点，`values_json={列:值}`，`ts` 存 ISO 原文）；再由 `SampleStore.write_samples` 为每窗建一条 `SampleIndex`——**指针化**，`storage_ref` 只记录行号区间，`checksum` 对样本**内容**算（排除随机 ID，跨加载可比，#7）。读取时按 `(shard_id, row_index)` 范围查询 `SeriesPoint` 现切（单一真值源）。
@@ -244,14 +244,14 @@ sequenceDiagram
 
 ### 2.d 模型推理接入
 
-**协议**：`ModelAdapter`（`services/model_adapter.py:8`）只定义一个方法 `forecast(sample, model, timeout_seconds) -> list[list[float]]`。
+**协议**：`ModelAdapter`（`services/model_adapter.py:8`）定义两个方法：`ensure_model_loaded(model, timeout_seconds)` 与 `forecast(sample, model, timeout_seconds) -> list[list[float]]`。
 
 **工厂**：`get_model_adapter(settings)`（`model_adapter.py:13`）按 `settings.model_adapter` 选择：
 
 - `"stub"` → 进程内 `StubTimerAdapter`（无网络，单测/离线）。
 - 其它（默认 `"rest"`）→ `TimerRestAdapter(base_url, api_prefix)`。
 
-**remote_model_id 映射**：`remote_model_id(model)`（`model_adapter.py:23`）把本地 `Model` 映射为远端 ID：有 `model_family` 与 `model_version` 则拼成 `"{family}-{version}"`（如 `Timer-3.5`），否则退化为 `name` 或 `model_id`。运行时 `_execute_shard` 把它放进 `model_payload`（`run_executor.py:202`），由适配器使用。
+**remote_model_id 映射**：`remote_model_id(model)`（`model_adapter.py:23`）把本地 `Model` 映射为远端 ID：REST 同步的模型使用 `endpoint_uri="timer://<remote_id>"`，优先取该远端 ID；否则按历史规则用 `model_family + model_version` 拼出 `"{family}-{version}"`（如 `Timer-3.5`），再退化为 `name` 或 `model_id`。运行时 `_execute_unit` / `_execute_shard` 把它放进 `model_payload`，由适配器使用。
 
 **配置与契约关系**：`Settings`（`core/config.py:18-29`）的 `timer_service_base_url`（默认 `http://127.0.0.1:10810`）+ `timer_service_api_prefix`（默认 `/ai/api/v1`）拼成 `timer_service_url`，对应 [rest-api.md](../reference/rest-api.md) 约定的 `http://<host>:<port>` 前缀 + `/ai/api/v1` 路径前缀。
 
@@ -261,7 +261,8 @@ sequenceDiagram
 - **请求发送** `_post`（`timer_rest_adapter.py:65`）：默认用 `httpx.Client(timeout=..., trust_env=False)`——**`trust_env=False`** 是关键：推理服务是内网服务，绕开系统 HTTP/SOCKS 代理。HTTP 非 200 或业务信封 `code != 200` 均抛 `TimerServiceError`（真实服务会把「模型未加载」这类业务错误包装成 HTTP 200 + `code=400`）。
 - **响应解析** `_parse_response`（`timer_rest_adapter.py:91`）：从 `data.results[0]` 取 `columns/data`，剔除 `time` 列只留数值列，截断到 `horizon`。形状不符抛 `TimerServiceError`。
 - **错误归一**：所有 `httpx.HTTPError`、非 200、契约不符都收敛为 `TimerServiceError`（`timer_rest_adapter.py:12`）。
-- 另有 `list_models`（GET `/models/list`，取 `data.models`），供 `/models` 路由标注每个模型的实时加载状态（`service_loaded_model_ids`，`model_adapter.py:32`；服务不可达或桩模式降级为 `None`/未知，见 `routes/models.py:27`）。
+- 另有 `list_models`（GET `/models/list`，取 `data.models`）和 `load_model`（POST `/models/load`）。REST 模式下 `/models` 路由直接以 `/models/list` 为权威来源，并通过 `model_catalog.py` 把远端模型同步成本地 `Model(model_id=<remote_id>, endpoint_uri="timer://<remote_id>")` 镜像，供 run/unit/metric 继续用本地外键串联。`POST /models/{model_id}/load` 供前端在创建 run 前主动加载已选模型。
+- `_execute_unit` 在进入 task 前调用 `adapter.ensure_model_loaded(...)` 兜底确认。未加载模型会先 POST `/models/load` 并轮询 `/models/list` 直到 `loaded=true`；加载失败会把该 unit 和其 tasks 标记为 `failed` / `model_load_error`，写入 `RunEvent`，然后让 run 正常进入终态。
 
 #### StubTimerAdapter（`services/stub_timer_adapter.py`）
 
@@ -385,7 +386,8 @@ export TSBENCHMARK_MODEL_ADAPTER=rest    # 或 stub（完全进程内，连桩�
 | POST | `/tracks` | 创建赛道（同时建榜单） |
 | GET | `/tracks/{track_id}/ranking` | 查榜（`metric` / `policy` 可选） |
 | POST | `/models` | 创建模型 |
-| GET | `/models` | 列模型（含远端实时加载状态标注） |
+| GET | `/models` | REST 模式列 timer-rest-service 模型目录并同步本地镜像；stub 模式列本地模型 |
+| POST | `/models/{model_id}/load` | REST 模式调用 timer-rest-service `/models/load` 并等待 loaded |
 | POST | `/wizard/real-dataset-track` | 一步建能力块 + 赛道 + 榜单 |
 | POST | `/benchmarking-runs` | 创建并调度评测运行 |
 | GET | `/benchmarking-runs/{benchmarking_run_id}/progress` | 查运行进度 |

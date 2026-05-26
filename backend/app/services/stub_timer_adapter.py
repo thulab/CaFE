@@ -6,6 +6,9 @@ class StubTimerAdapter:
     def __init__(self, seed: int = 0):
         self.seed = seed
 
+    def ensure_model_loaded(self, model: dict, timeout_seconds: int) -> None:
+        del model, timeout_seconds
+
     def forecast(self, sample: dict, model: dict, timeout_seconds: int) -> list[list[float]]:
         del timeout_seconds
         sample_id = str(sample["sample_id"])

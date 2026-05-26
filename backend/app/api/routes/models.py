@@ -7,7 +7,7 @@ from app.api.router_factory import make_router
 from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.models.model_registry import Model
-from app.services.model_adapter import remote_model_id, service_loaded_model_ids
+from app.services.model_catalog import list_models_for_backend, load_model_for_backend
 
 router = make_router(prefix="/models", tags=["models"])
 
@@ -20,18 +20,12 @@ class ModelCreate(BaseModel):
 
 @router.get("", tier="authed")
 def list_models(session: Session = Depends(get_db_session)) -> dict:
-    # name 在 create_model 处已保证唯一，存储即展示，无需再去重。
-    models = session.exec(select(Model).order_by(Model.created_at)).all()
+    return {"items": list_models_for_backend(session, get_settings())}
 
-    # 用 timer-rest-service 的 /models/list 标注每个模型的实时加载状态；
-    # 服务不可达或处于桩模式时降级为 None（未知）。
-    loaded_ids = service_loaded_model_ids(get_settings())
-    items = []
-    for model in models:
-        item = model.model_dump()
-        item["loaded"] = None if loaded_ids is None else (remote_model_id(model) in loaded_ids)
-        items.append(item)
-    return {"items": items}
+
+@router.post("/{model_id}/load", tier="perm", perm="run.execute")
+def load_model(model_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return load_model_for_backend(session, get_settings(), model_id)
 
 
 @router.post("", tier="perm", perm="model.register")

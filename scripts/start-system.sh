@@ -41,7 +41,13 @@ start_service() {
 # 要接真实推理服务时，设 TSBENCHMARK_START_STUB=0 跳过桩，并按需 export
 # TSBENCHMARK_TIMER_SERVICE_BASE_URL=... 指向真实服务。
 if [[ "${TSBENCHMARK_START_STUB:-1}" != "0" ]]; then
-  start_service stub-service "$(tsbenchmark_stub_cmd)"
+  stub_host="${TSBENCHMARK_STUB_HOST:-127.0.0.1}"
+  stub_port="${TSBENCHMARK_STUB_PORT:-10810}"
+  if curl -fsS "http://$stub_host:$stub_port/health/readiness" >/dev/null 2>&1; then
+    echo "stub-service skipped; timer service already responding on http://$stub_host:$stub_port"
+  else
+    start_service stub-service "$(tsbenchmark_stub_cmd)"
+  fi
 fi
 start_service backend "$(tsbenchmark_backend_cmd)"
 start_service frontend "$(tsbenchmark_frontend_cmd)"

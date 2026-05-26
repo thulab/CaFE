@@ -6,6 +6,9 @@ from app.services.timer_rest_adapter import TimerRestAdapter, TimerServiceError
 
 
 class ModelAdapter(Protocol):
+    def ensure_model_loaded(self, model: dict, timeout_seconds: int) -> None:
+        ...
+
     def forecast(self, sample: dict, model: dict, timeout_seconds: int) -> list[list[float]]:
         ...
 
@@ -22,6 +25,9 @@ def get_model_adapter(settings: Settings) -> ModelAdapter:
 
 def remote_model_id(model) -> str:
     """把本地 Model 映射为 REST 服务使用的 model_id（如 "Timer-3.5"）。"""
+    endpoint = (getattr(model, "endpoint_uri", None) or "").strip()
+    if endpoint.startswith("timer://"):
+        return endpoint.removeprefix("timer://")
     family = (getattr(model, "model_family", None) or "").strip()
     version = (getattr(model, "model_version", None) or "").strip()
     if family and version:

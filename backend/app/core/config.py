@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # api_prefix 是文档约定的统一路径前缀；两者拼出业务端点根地址。
     timer_service_base_url: str = "http://127.0.0.1:10810"
     timer_service_api_prefix: str = "/ai/api/v1"
+    timer_service_model_load_timeout_seconds: int = 600
     # 模型适配器选择：
     #   "rest" —— 通过 HTTP 调用 timer-rest-service（生产默认，本地指向桩服务）。
     #   "stub" —— 进程内确定性桩，无需网络（单测 / 离线）。

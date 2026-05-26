@@ -53,6 +53,27 @@ def test_multiple_devices_rejected(tmp_path):
     assert exc.value.error_code == "tsfile_multiple_devices"
 
 
+def test_full_series_path_selects_one_device_from_multi_device_tsfile(tmp_path):
+    path = tmp_path / "multi.tsfile"
+    _write_tsfile(path, devices=("dev1", "dev2"), n=4)
+
+    result = TsFileDatasetReader().read(path, "time", value_columns=["tsbench.dev2.target"])
+
+    assert result.value_columns == ["tsbench.dev2.target"]
+    assert result.row_count == 4
+    assert result.values[0] == [100.0]
+
+
+def test_full_series_paths_must_share_one_device(tmp_path):
+    path = tmp_path / "multi.tsfile"
+    _write_tsfile(path, devices=("dev1", "dev2"), n=4)
+
+    with pytest.raises(ApiError) as exc:
+        TsFileDatasetReader().read(path, "time", value_columns=["tsbench.dev1.target", "tsbench.dev2.target"])
+
+    assert exc.value.error_code == "tsfile_multiple_devices"
+
+
 def test_tsfile_input_load_flow_stores_into_sqlite(tmp_path):
     path = tmp_path / "flow.tsfile"
     _write_tsfile(path, n=20)

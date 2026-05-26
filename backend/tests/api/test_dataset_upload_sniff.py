@@ -68,3 +68,18 @@ def test_sniff_tsfile_reports_device_and_measurements(client, tmp_path):
     # 设备名应被报告。
     assert body["device"] == "dev1"
     assert body["row_count_estimate"] == 8
+
+
+def test_sniff_multi_device_tsfile_reports_full_series_paths(client, tmp_path):
+    path = tmp_path / "multi.tsfile"
+    _write_tsfile(path, devices=("dev1", "dev2"), n=4)
+
+    with path.open("rb") as handle:
+        resp = client.post("/dataset-manifests/upload", files={"file": ("multi.tsfile", handle, "application/octet-stream")})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["device"] is None
+    assert body["validation_summary"]["multiple_devices"] is True
+    column_names = {column["name"] for column in body["columns"]}
+    assert {"tsbench.dev1.target", "tsbench.dev2.target"} <= column_names

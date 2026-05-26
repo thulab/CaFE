@@ -78,3 +78,96 @@ def test_adapter_list_models_returns_loaded_builtins():
     ids = [m["model_id"] for m in models]
     assert "Timer-3.5" in ids
     assert all(m["loaded"] for m in models if m["model_id"].startswith("Timer"))
+
+
+def test_adapter_loads_unloaded_model_before_forecast():
+    calls: list[tuple[str, str]] = []
+    list_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal list_calls
+        calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/models/list"):
+            list_calls += 1
+            return httpx.Response(
+                200,
+                json={
+                    "code": 200,
+                    "message": "Success",
+                    "data": {
+                        "models": [
+                            {
+                                "model_id": "Timer-3.0",
+                                "model_type": "sundial",
+                                "category": "builtin",
+                                "state": "active",
+                                "loaded": list_calls > 1,
+                                "base_model_id": None,
+                            }
+                        ]
+                    },
+                },
+            )
+        if request.url.path.endswith("/models/load"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 200,
+                    "message": "loaded",
+                    "data": {"model_id": "Timer-3.0", "devices": ["cpu"]},
+                },
+            )
+        return httpx.Response(404, json={"code": 404, "message": "not found", "data": None})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    adapter = TimerRestAdapter(base_url=str(client.base_url), api_prefix="/ai/api/v1", client=client)
+
+    adapter.ensure_model_loaded({"model_id": "local", "remote_model_id": "Timer-3.0"}, timeout_seconds=30)
+
+    assert calls == [
+        ("GET", "/ai/api/v1/models/list"),
+        ("POST", "/ai/api/v1/models/load"),
+        ("GET", "/ai/api/v1/models/list"),
+    ]
+
+
+def test_adapter_surfaces_model_load_errors():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models/list"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 200,
+                    "message": "Success",
+                    "data": {
+                        "models": [
+                            {
+                                "model_id": "Timer-3.0",
+                                "model_type": "sundial",
+                                "category": "builtin",
+                                "state": "active",
+                                "loaded": False,
+                                "base_model_id": None,
+                            }
+                        ]
+                    },
+                },
+            )
+        return httpx.Response(
+            503,
+            json={
+                "code": 503,
+                "message": "Failed to load model: Failed to spawn ModelWorker",
+                "data": None,
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    adapter = TimerRestAdapter(base_url=str(client.base_url), api_prefix="/ai/api/v1", client=client)
+
+    try:
+        adapter.ensure_model_loaded({"model_id": "local", "remote_model_id": "Timer-3.0"}, timeout_seconds=30)
+    except TimerServiceError as exc:
+        assert "Failed to spawn ModelWorker" in str(exc)
+        return
+    raise AssertionError("expected TimerServiceError")
