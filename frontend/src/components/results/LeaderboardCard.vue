@@ -15,7 +15,7 @@
       <li v-for="row in sorted" :key="row.model_id" style="display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center">
         <span class="rank-badge" :class="medal(row.rank)">{{ row.rank }}</span>
         <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
-          <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ modelName(row.model_id) }}</span>
+          <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.model_name ?? modelName(row.model_id) }}</span>
           <span class="bar-cell">
             <span class="bar-track">
               <span class="bar-fill" :class="{ 'is-winner': row.rank === 1 }" :style="{ width: barWidth(row.metric_value) + '%' }" />

@@ -1,5 +1,26 @@
 # 学习问答日志（SpriCoder）
 
+## 2026-05-26 ｜ 默认启动现在是桩程序吗
+
+- **答案核心**：
+  - **不是**。`Settings.model_adapter` 默认 `"rest"`（`config.py:31`），走 HTTP；进程内桩需要显式 `TSBENCHMARK_MODEL_ADAPTER=stub`。
+  - **但** `timer_service_base_url` 默认 `http://127.0.0.1:10810`（`config.py:26`）—— 正好是桩服务的默认端口，意图是"本地指向桩服务"。
+  - **`start-system.sh:40-41` 只起 backend + frontend，不会自动起 stub-service**，也不覆盖 adapter 环境变量。于是直接 `start-system` 跑 run → `TimerRestAdapter.forecast` 连不上 10810 → `TimerServiceError`（配合 L9 那条记录：run_executor 无 try/except → 队列卡死）。
+  - **三种跑通方式**：(1) `start-system.sh` 之外再 `./scripts/stub-service.sh start`；(2) `TSBENCHMARK_MODEL_ADAPTER=stub ./scripts/start-system.sh` 切进程内桩；(3) 指向真实推理服务 `TSBENCHMARK_TIMER_SERVICE_BASE_URL=...`。
+  - **边界**：直接读了 `config.py` / `start-system.sh` / `system-common.sh`（未在 start-system 找到 stub/adapter/10810 关键字），未实跑验证 "默认启动 → 跑 run 会失败"。
+- **相关引用**：`backend/app/core/config.py:26-31`；`scripts/start-system.sh:40-41`；`scripts/stub-service.sh`。
+
+## 2026-05-26 ｜ 所以现在是如何实现 stub 桩程序 service
+
+- **答案核心**：
+  - 项目里有**两层桩并存**，靠 `Settings.model_adapter` 在工厂 `get_model_adapter`（`model_adapter.py:13`）二选一：
+    - **(1) 进程内桩 `StubTimerAdapter`**（`stub_timer_adapter.py:5`，~30 行）：不走 HTTP；用 `sha256(model_id:sample_id:seed)` 取 16 hex 做 `random.Random` 种子，对 (model, sample, seed) **确定性**；预测 = `target_history[-1] + model_bias + noise`，`model_bias` 由 `sha256(model_id)` 前 4 位映射到 ±0.10 让不同模型有可分偏差；输出形状严格 `horizon × target_dim`。
+    - **(2) 独立 HTTP 桩服务 `backend/stub_service/main.py`**：完整 FastAPI app，覆盖 rest-api.md 全部端点 —— `health/{startup,liveness,readiness}` / `reboot`（安全桩不发 SIGTERM）/ `metrics`（Prometheus 文本）/ `forecast` / `models/{list,list_loaded,register,load,unload,delete}` / `dataset/{evaluate,govern}/execute` / `list_dimensions`；内存模型注册表（每 app 实例独立 → 测试隔离），内置 5 个模型默认 loaded；统一 `_envelope(code,message,data)` 返回；forecast 同样的 sha256→Random 套路，`_future_timestamps` 从末两个时间戳推断节奏外推（int/float 或 ISO 字符串，失败退化序号）；evaluate/govern 维度**真算**（完整度/谱熵桩/皮尔逊；causal_mean_imputation/zscore/clipping/flat_series_removal/timestamp_repair=no-op）；TsFile 输入退化为占位结果。
+  - **价值差**：(1) 单测/单进程演示用；(2) 顺带能验真实路径 `TimerRestAdapter` 的请求/响应解析、超时、错误信封。
+  - **启动**：`./scripts/stub-service.sh start`（默认 127.0.0.1:10810）或 `uv run uvicorn stub_service.main:app --host 127.0.0.1 --port 10810`；`TSBENCHMARK_TIMER_SERVICE_BASE_URL` 默认就指向 10810。
+  - **边界**：以上是直接读 `stub_timer_adapter.py` / `model_adapter.py` / `stub_service/main.py` / `stub-service.sh` 全文得出，**本次未实跑桩服务**。
+- **相关引用**：`backend/app/services/stub_timer_adapter.py:5`；`backend/app/services/model_adapter.py:13`；`backend/app/services/timer_rest_adapter.py:1-6`（注释指向桩）；`backend/stub_service/main.py:1-26,278-348`；`scripts/stub-service.sh`。
+
 ## 2026-05-25 ｜ 讲讲 L9（run_executor 编排 + 队列 + 状态机）
 
 - **答案核心**：

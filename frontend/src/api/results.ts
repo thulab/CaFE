@@ -1,9 +1,12 @@
 import { apiRequest } from './client';
-import type { RankingDTO, ReportDTO, SampleForecastDTO } from './types';
+import { type ListParams, buildListQuery } from './shared';
+import type { ListResponse, RankingDTO, ReportDTO, ReportSummaryDTO, SampleForecastDTO } from './types';
 
 export interface LeaderboardTopEntry {
   rank: number;
   model_id: string;
+  /** Backend 已在 /ranking-lists 内嵌解析后的名字，匿名访问也能拿到。 */
+  model_name?: string;
   metric_value: number;
 }
 
@@ -38,4 +41,13 @@ export function getSampleForecast(sampleId: string, runId: string): Promise<Samp
 
 export function listRankingLists(): Promise<LeaderboardListDTO> {
   return apiRequest<LeaderboardListDTO>('/ranking-lists');
+}
+
+export function listReports(
+  params: ListParams & { benchmarkingRunId?: string; trackId?: string } = {}
+): Promise<ListResponse<ReportSummaryDTO>> {
+  const { benchmarkingRunId, trackId, ...rest } = params;
+  return apiRequest<ListResponse<ReportSummaryDTO>>(
+    `/reports${buildListQuery({ ...rest, benchmarking_run_id: benchmarkingRunId, track_id: trackId })}`
+  );
 }

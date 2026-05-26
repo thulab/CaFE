@@ -13,10 +13,13 @@
 
     <section class="card pad">
       <StateBlock
-        :empty="items.length === 0"
+        :loading="loading"
+        :error="error || ''"
+        :empty="!loading && !error && items.length === 0"
         empty-icon="activity"
         empty-title="No runs yet"
         empty-desc="Create a track and execute model adapters in a new evaluation to see runs here."
+        @retry="load"
       >
         <template #empty-action>
           <a class="btn sm" href="#/new"><Icon name="play" :size="15" /> Start a run</a>
@@ -25,16 +28,16 @@
           <table class="data">
             <thead><tr><th>Run</th><th>Last status</th><th>Created</th><th></th></tr></thead>
             <tbody>
-              <tr v-for="item in items" :key="item.id">
+              <tr v-for="run in items" :key="run.benchmarking_run_id">
                 <td>
-                  <a class="text-link" :href="item.href">
-                    <Icon name="activity" :size="14" style="vertical-align:-2px;margin-right:6px" />{{ item.title }}
+                  <a class="text-link" :href="`#/runs/${run.benchmarking_run_id}`">
+                    <Icon name="activity" :size="14" style="vertical-align:-2px;margin-right:6px" />Run · {{ run.model_count || run.model_ids?.length || 0 }} models
                   </a>
-                  <div class="faint mono" style="font-size:0.74rem">{{ shortId(item.id) }}</div>
+                  <div class="faint mono" style="font-size:0.74rem">{{ shortId(run.benchmarking_run_id) }}</div>
                 </td>
-                <td><StatusBadge :status="item.subtitle" /></td>
-                <td class="muted nowrap" :title="formatDateTime(item.createdAt)">{{ timeAgo(item.createdAt) }}</td>
-                <td style="text-align:right"><a class="btn secondary sm" :href="item.href">Open <Icon name="arrowRight" :size="14" /></a></td>
+                <td><StatusBadge :status="run.status" /></td>
+                <td class="muted nowrap" :title="run.created_at ? formatDateTime(run.created_at) : ''">{{ run.created_at ? timeAgo(run.created_at) : '—' }}</td>
+                <td style="text-align:right"><a class="btn secondary sm" :href="`#/runs/${run.benchmarking_run_id}`">Open <Icon name="arrowRight" :size="14" /></a></td>
               </tr>
             </tbody>
           </table>
@@ -45,12 +48,31 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
-import { listRecents } from '../stores/recents';
+import { listRuns } from '../api/runs';
+import type { BenchmarkingRunSummaryDTO } from '../api/types';
 import { formatDateTime, shortId, timeAgo } from '../lib/format';
 
-const items = computed(() => listRecents('run'));
+const items = ref<BenchmarkingRunSummaryDTO[]>([]);
+const loading = ref(true);
+const error = ref<string | null>(null);
+
+async function load() {
+  loading.value = true;
+  error.value = null;
+  try {
+    const res = await listRuns({ limit: 200 });
+    items.value = res.items;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to load runs';
+    items.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(load);
 </script>

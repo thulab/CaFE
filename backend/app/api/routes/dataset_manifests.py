@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import Depends, File, UploadFile
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
@@ -139,6 +139,20 @@ def create_dataset_manifest(payload: DatasetManifestCreate, session: Session = D
     session.commit()
     session.refresh(manifest)
     return manifest
+
+
+@router.get("", tier="authed")
+def list_dataset_manifests(
+    limit: int = 50, offset: int = 0, session: Session = Depends(get_db_session)
+) -> dict:
+    total = len(session.exec(select(DatasetManifest)).all())
+    items = session.exec(
+        select(DatasetManifest)
+        .order_by(DatasetManifest.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{dataset_manifest_id}", tier="authed")

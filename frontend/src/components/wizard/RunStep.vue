@@ -54,7 +54,7 @@ import StatusBadge from '../ui/StatusBadge.vue';
 import { listModels, type ModelDTO } from '../../api/models';
 import { cancelRun, createRun, getRunProgress } from '../../api/runs';
 import { goNext, wizardState } from '../../stores/wizard';
-import { recordRecent } from '../../stores/recents';
+import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import type { RunProgressDTO } from '../../api/types';
 import { percent } from '../../lib/format';
 
@@ -106,11 +106,7 @@ async function run() {
     const created = await createRun({ track_id: wizardState.trackId, model_ids: selectedIds.value });
     wizardState.runId = created.benchmarking_run_id;
     status.value = created.status;
-    recordRecent({
-      kind: 'run', id: created.benchmarking_run_id,
-      title: `Run · ${selectedIds.value.length} model${selectedIds.value.length === 1 ? '' : 's'}`,
-      subtitle: created.status, href: `#/runs/${created.benchmarking_run_id}`
-    });
+    void refreshResourceCounts();
     timer = setInterval(poll, 5000);
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to start run';
@@ -124,7 +120,7 @@ async function poll() {
     status.value = p.status;
     if (p.report_id) {
       wizardState.reportId = p.report_id;
-      recordRecent({ kind: 'report', id: p.report_id, title: 'Benchmark report', subtitle: p.status, href: `#/reports/${p.report_id}` });
+      void refreshResourceCounts();
     }
     if (p.ranking_list_id) wizardState.rankingListId = p.ranking_list_id;
     if (TERMINAL.includes(p.status)) {

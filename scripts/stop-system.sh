@@ -36,3 +36,6 @@ stop_service() {
 
 stop_service backend
 stop_service frontend
+# stub-service 放最后停：让 backend 先释放任何 in-flight forecast 调用。
+# 未被 start-system 拉起时 pid 文件不存在，stop_service 会安静 no-op。
+stop_service stub-service

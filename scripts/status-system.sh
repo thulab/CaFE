@@ -13,5 +13,6 @@ status_service() {
   fi
 }
 
+status_service stub-service
 status_service backend
 status_service frontend

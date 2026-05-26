@@ -83,7 +83,13 @@
 
     <div class="app-main">
       <header class="app-topbar">
-        <button class="icon-btn menu-toggle" type="button" aria-label="Toggle navigation" @click="navOpen = !navOpen">
+        <button
+          v-if="route.navKey"
+          class="icon-btn menu-toggle"
+          type="button"
+          aria-label="Toggle navigation"
+          @click="navOpen = !navOpen"
+        >
           <Icon name="menu" :size="18" />
         </button>
 
@@ -142,7 +148,7 @@ import UsersPage from './pages/admin/UsersPage.vue';
 import RolesPage from './pages/admin/RolesPage.vue';
 import ProfilePage from './pages/admin/ProfilePage.vue';
 import { useTheme } from './composables/useTheme';
-import { countRecents } from './stores/recents';
+import { useResourceCounts } from './composables/useResourceCounts';
 import { shortId } from './lib/format';
 import { authState, has, logout } from './stores/auth';
 import { evaluateGuard, type Tier } from './composables/useAuthGuard';
@@ -164,11 +170,22 @@ const user = computed(() => authState.user);
 const hasRunExecute = computed(() => has('run.execute'));
 const isAdmin = computed(() => !!user.value && (user.value.is_superuser || user.value.roles.includes('admin')));
 
+const { state: countsState, refresh: refreshCounts } = useResourceCounts();
+
+// 在 /datasets、/runs、/ 之间切换时刷新角标，保证用户回到列表前看到的就是最新数；
+// 单独的 New evaluation 提交后会自己 refresh，这里只兜底全局导航场景。
+watch(routeHash, (next) => {
+  const [path] = next.split('?');
+  if (path === '/' || path === '/datasets' || path === '/runs') {
+    void refreshCounts();
+  }
+});
+
 const navItems = computed(() => [
   { key: 'home', label: 'Overview', icon: 'dashboard', href: '#/', count: 0 },
   { key: 'new', label: 'New evaluation', icon: 'sparkles', href: '#/new', count: 0 },
-  { key: 'datasets', label: 'Datasets', icon: 'database', href: '#/datasets', count: countRecents(['dataset', 'shard']) },
-  { key: 'runs', label: 'Runs', icon: 'activity', href: '#/runs', count: countRecents('run') },
+  { key: 'datasets', label: 'Datasets', icon: 'database', href: '#/datasets', count: countsState.counts.datasets + countsState.counts.shards },
+  { key: 'runs', label: 'Runs', icon: 'activity', href: '#/runs', count: countsState.counts.runs },
   { key: 'leaderboards', label: 'Leaderboards', icon: 'trophy', href: '#/leaderboards', count: 0 }
 ]);
 

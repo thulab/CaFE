@@ -4,7 +4,7 @@
       <div>
         <p class="eyebrow">Workspace</p>
         <h1>Datasets</h1>
-        <p class="page-sub">Dataset manifests and evaluation shards created in this workspace.</p>
+        <p class="page-sub">Dataset manifests and evaluation shards stored in this workspace.</p>
       </div>
       <div class="head-actions">
         <a class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> New evaluation</a>
@@ -13,10 +13,13 @@
 
     <section class="card pad">
       <StateBlock
-        :empty="items.length === 0"
+        :loading="loading"
+        :error="error || ''"
+        :empty="!loading && !error && items.length === 0"
         empty-icon="database"
         empty-title="No datasets yet"
         empty-desc="Upload a CSV in a new evaluation to create your first dataset manifest and shard."
+        @retry="load"
       >
         <template #empty-action>
           <a class="btn sm" href="#/new"><Icon name="upload" :size="15" /> Upload a CSV</a>
@@ -34,7 +37,7 @@
                 </td>
                 <td><span class="badge" :class="item.kind === 'shard' ? 'primary' : ''">{{ humanize(item.kind) }}</span></td>
                 <td class="muted">{{ item.subtitle || '—' }}</td>
-                <td class="muted nowrap" :title="formatDateTime(item.createdAt)">{{ timeAgo(item.createdAt) }}</td>
+                <td class="muted nowrap" :title="item.createdAt ? formatDateTime(item.createdAt) : ''">{{ item.createdAt ? timeAgo(item.createdAt) : '—' }}</td>
               </tr>
             </tbody>
           </table>
@@ -45,13 +48,72 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
-import { listRecents, type RecentKind } from '../stores/recents';
+import { listDatasetManifests, listShards } from '../api/datasets';
 import { formatDateTime, humanize, shortId, timeAgo } from '../lib/format';
 
-const items = computed(() => listRecents(['dataset', 'shard']));
-const ICONS: Record<string, string> = { dataset: 'database', shard: 'layers' };
-const kindIcon = (k: RecentKind) => ICONS[k] || 'file';
+type Kind = 'dataset' | 'shard';
+interface Row {
+  kind: Kind;
+  id: string;
+  title: string;
+  subtitle?: string;
+  href: string;
+  createdAt?: string;
+}
+
+const items = ref<Row[]>([]);
+const loading = ref(true);
+const error = ref<string | null>(null);
+
+const ICONS: Record<Kind, string> = { dataset: 'database', shard: 'layers' };
+const kindIcon = (k: Kind) => ICONS[k] || 'file';
+
+function shardSubtitle(targetColumns: string[], rowCount: number): string {
+  const cols = targetColumns.length ? targetColumns.join(', ') : 'shard';
+  return rowCount ? `${cols} · ${rowCount} rows` : cols;
+}
+
+async function load() {
+  loading.value = true;
+  error.value = null;
+  try {
+    const [manifests, shards] = await Promise.all([
+      listDatasetManifests({ limit: 200 }),
+      listShards({ limit: 200 })
+    ]);
+    const rows: Row[] = [];
+    for (const m of manifests.items) {
+      rows.push({
+        kind: 'dataset',
+        id: m.dataset_manifest_id,
+        title: m.name,
+        subtitle: m.domain,
+        href: `#/datasets/${m.dataset_manifest_id}`,
+        createdAt: m.created_at
+      });
+    }
+    for (const s of shards.items) {
+      rows.push({
+        kind: 'shard',
+        id: s.shard_id,
+        title: `Shard · ${s.target_columns?.[0] ?? 'target'}`,
+        subtitle: shardSubtitle(s.target_columns ?? [], s.row_count ?? 0),
+        href: `#/shards/${s.shard_id}`,
+        createdAt: s.created_at
+      });
+    }
+    rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    items.value = rows;
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : 'Failed to load datasets';
+    items.value = [];
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(load);
 </script>

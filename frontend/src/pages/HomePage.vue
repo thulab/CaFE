@@ -18,8 +18,8 @@
       <div class="grid-auto">
         <a class="stat-tile card interactive" href="#/datasets" style="text-decoration:none">
           <span class="stat-label"><Icon name="database" :size="14" style="vertical-align:-2px" /> Datasets</span>
-          <span class="stat-value">{{ counts.datasets }}</span>
-          <span class="stat-foot">manifests &amp; shards created here</span>
+          <span class="stat-value">{{ counts.datasets + counts.shards }}</span>
+          <span class="stat-foot">manifests &amp; shards</span>
         </a>
         <a class="stat-tile card interactive" href="#/runs" style="text-decoration:none">
           <span class="stat-label"><Icon name="activity" :size="14" style="vertical-align:-2px" /> Runs</span>
@@ -28,7 +28,7 @@
         </a>
         <div class="stat-tile">
           <span class="stat-label"><Icon name="target" :size="14" style="vertical-align:-2px" /> Tracks</span>
-          <span class="stat-value">{{ counts.tracks }}</span>
+          <span class="stat-value">—</span>
           <span class="stat-foot">benchmark targets</span>
         </div>
         <div class="stat-tile">
@@ -40,16 +40,16 @@
 
       <div class="grid-2">
         <article class="card">
-          <header class="card-head">
-            <h2 class="card-title">Recent activity</h2>
-            <button v-if="recents.length" class="btn ghost sm" type="button" @click="onClear">Clear</button>
-          </header>
+          <header class="card-head"><h2 class="card-title">Recent activity</h2></header>
           <div class="card-body">
             <StateBlock
-              :empty="recents.length === 0"
+              :loading="activityLoading"
+              :error="activityError || ''"
+              :empty="!activityLoading && !activityError && recents.length === 0"
               empty-icon="inbox"
               empty-title="No activity yet"
               empty-desc="Artifacts you create appear here for quick access."
+              @retry="loadActivity"
             >
               <template #empty-action>
                 <a class="btn sm" href="#/new"><Icon name="plus" :size="15" /> New evaluation</a>
@@ -88,19 +88,30 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
-import { clearRecents, listRecents, type RecentKind } from '../stores/recents';
+import { listDatasetManifests, listShards } from '../api/datasets';
+import { listReports } from '../api/results';
+import { listRuns } from '../api/runs';
+import { useResourceCounts } from '../composables/useResourceCounts';
 import { humanize, timeAgo } from '../lib/format';
 
-const recents = computed(() => listRecents());
-const counts = computed(() => ({
-  datasets: listRecents(['dataset', 'shard']).length,
-  runs: listRecents('run').length,
-  tracks: listRecents('track').length,
-  reports: listRecents('report').length
-}));
+type Kind = 'dataset' | 'shard' | 'run' | 'report';
+interface ActivityItem {
+  kind: Kind;
+  id: string;
+  title: string;
+  href: string;
+  createdAt: string;
+}
+
+const { state: countsState, refresh: refreshCounts } = useResourceCounts();
+const counts = computed(() => countsState.counts);
+
+const recents = ref<ActivityItem[]>([]);
+const activityLoading = ref(true);
+const activityError = ref<string | null>(null);
 
 const steps = [
   { t: 'Upload & configure', d: 'Pick a CSV, choose target columns, and set the context/horizon split.' },
@@ -109,12 +120,47 @@ const steps = [
   { t: 'Review results', d: 'Compare ranked metrics and inspect per-sample forecasts.' }
 ];
 
-const ICONS: Record<RecentKind, string> = {
-  dataset: 'database', shard: 'layers', track: 'target', run: 'activity', report: 'barChart'
+const ICONS: Record<Kind, string> = {
+  dataset: 'database', shard: 'layers', run: 'activity', report: 'barChart'
 };
-const kindIcon = (k: RecentKind) => ICONS[k] || 'file';
+const kindIcon = (k: Kind) => ICONS[k] || 'file';
 
-function onClear() {
-  clearRecents();
+async function loadActivity() {
+  activityLoading.value = true;
+  activityError.value = null;
+  try {
+    // 各类只拉 top 8 就够混排出 8 条最新；4 路并行避免顺序等待。
+    const [d, s, r, p] = await Promise.all([
+      listDatasetManifests({ limit: 8 }),
+      listShards({ limit: 8 }),
+      listRuns({ limit: 8 }),
+      listReports({ limit: 8 })
+    ]);
+    const merged: ActivityItem[] = [];
+    for (const m of d.items) {
+      merged.push({ kind: 'dataset', id: m.dataset_manifest_id, title: m.name, href: `#/datasets/${m.dataset_manifest_id}`, createdAt: m.created_at ?? '' });
+    }
+    for (const sh of s.items) {
+      merged.push({ kind: 'shard', id: sh.shard_id, title: `Shard · ${sh.target_columns?.[0] ?? 'target'}`, href: `#/shards/${sh.shard_id}`, createdAt: sh.created_at ?? '' });
+    }
+    for (const run of r.items) {
+      merged.push({ kind: 'run', id: run.benchmarking_run_id, title: `Run · ${run.model_count || run.model_ids?.length || 0} models`, href: `#/runs/${run.benchmarking_run_id}`, createdAt: run.created_at ?? '' });
+    }
+    for (const rep of p.items) {
+      merged.push({ kind: 'report', id: rep.report_id, title: 'Benchmark report', href: `#/reports/${rep.report_id}`, createdAt: rep.created_at ?? '' });
+    }
+    merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    recents.value = merged;
+  } catch (e) {
+    activityError.value = e instanceof Error ? e.message : 'Failed to load activity';
+    recents.value = [];
+  } finally {
+    activityLoading.value = false;
+  }
 }
+
+onMounted(() => {
+  void refreshCounts();
+  void loadActivity();
+});
 </script>

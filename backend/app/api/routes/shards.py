@@ -9,6 +9,23 @@ from app.models.sample import SampleIndex
 router = make_router(prefix="/shards", tags=["shards"])
 
 
+@router.get("", tier="authed")
+def list_shards(
+    dataset_manifest_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    base = select(Shard)
+    if dataset_manifest_id:
+        base = base.where(Shard.dataset_manifest_id == dataset_manifest_id)
+    total = len(session.exec(base).all())
+    items = session.exec(
+        base.order_by(Shard.created_at.desc()).offset(offset).limit(limit)
+    ).all()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
 @router.get("/{shard_id}", tier="authed")
 def get_shard(shard_id: str, session: Session = Depends(get_db_session)) -> Shard:
     return session.get(Shard, shard_id)

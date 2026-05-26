@@ -28,7 +28,6 @@ import { ref } from 'vue';
 import Icon from '../ui/Icon.vue';
 import { createRealDatasetTrack } from '../../api/tracks';
 import { goNext, wizardState } from '../../stores/wizard';
-import { recordRecent } from '../../stores/recents';
 
 const error = ref('');
 const busy = ref(false);
@@ -45,7 +44,6 @@ async function createTrack() {
     wizardState.trackId = result.track_id;
     wizardState.capabilityBlockId = result.capability_block_id;
     wizardState.rankingListId = result.ranking_list_id;
-    recordRecent({ kind: 'track', id: result.track_id, title: 'Real dataset track', subtitle: 'MASE primary', href: `#/tracks/${result.track_id}` });
     goNext();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to create track';

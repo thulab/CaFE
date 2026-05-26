@@ -67,8 +67,20 @@ def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str
     return run
 
 
+_TERMINAL_RUN_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}
+
+
 def cancel_run(session: Session, run_id: str) -> BenchmarkingRun:
     run = session.get(BenchmarkingRun, run_id)
+    if run.status in _TERMINAL_RUN_STATUSES:
+        raise ApiError(
+            "run_in_terminal_state",
+            f"run already finished with status '{run.status}'",
+            {"run_id": run_id, "status": run.status},
+            status_code=409,
+        )
+    if run.status == "cancel_requested":
+        return run
     run.cancel_requested = True
     run.cancel_requested_at = utc_now()
     run.status = "cancel_requested"

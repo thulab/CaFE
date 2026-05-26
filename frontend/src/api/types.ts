@@ -122,6 +122,40 @@ export interface ReportDTO {
   sample_forecast_links: Array<{ sample_id: string; run_id: string }>;
 }
 
+export interface ListResponse<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface BenchmarkingRunSummaryDTO {
+  benchmarking_run_id: string;
+  track_id: string;
+  model_ids: string[];
+  status: string;
+  model_count: number;
+  task_count: number;
+  sample_count: number;
+  report_id?: string | null;
+  ranking_list_id?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ReportSummaryDTO {
+  report_id: string;
+  report_type: string;
+  benchmarking_run_id: string;
+  track_id: string;
+  status: string;
+  storage_uri?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface SampleForecastDTO {
   sample_id: string;
   target_history: number[][];

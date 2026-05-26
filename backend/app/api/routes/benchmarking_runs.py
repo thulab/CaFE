@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import Depends, Request
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
@@ -52,6 +52,23 @@ def _execute_in_background(engine, run_id: str, runtime_dir: Path, queue: RunQue
                 args=(engine, next_run_id, runtime_dir, queue),
                 daemon=True,
             ).start()
+
+
+@router.get("", tier="authed")
+def list_runs(
+    track_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    base = select(BenchmarkingRun)
+    if track_id:
+        base = base.where(BenchmarkingRun.track_id == track_id)
+    total = len(session.exec(base).all())
+    items = session.exec(
+        base.order_by(BenchmarkingRun.created_at.desc()).offset(offset).limit(limit)
+    ).all()
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/{benchmarking_run_id}/progress", tier="authed")

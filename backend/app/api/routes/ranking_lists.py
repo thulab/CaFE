@@ -4,6 +4,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
 from app.models.benchmark import Track
+from app.models.model_registry import Model
 from app.models.ranking import RankingEntry, RankingList
 from app.services.ranking_service import query_ranking
 
@@ -28,6 +29,12 @@ def list_ranking_lists(session: Session = Depends(get_db_session)) -> dict:
     ranking_lists = session.exec(
         select(RankingList).where(RankingList.status == "active").order_by(RankingList.updated_at.desc())
     ).all()
+
+    # 匿名用户也走这个端点（tier=public），无法再调 tier=authed 的 /models 拿名字，
+    # 所以在这里就把 top 项里出现的 model_id 一次性解析成 model_name 内嵌返回。
+    model_name_by_id: dict[str, str] = {
+        m.model_id: m.name for m in session.exec(select(Model)).all()
+    }
 
     items: list[dict] = []
     for rl in ranking_lists:
@@ -60,7 +67,12 @@ def list_ranking_lists(session: Session = Depends(get_db_session)) -> dict:
                 "model_count": model_count,
                 "run_count": run_count,
                 "top": [
-                    {"rank": e.rank, "model_id": e.model_id, "metric_value": e.metric_value}
+                    {
+                        "rank": e.rank,
+                        "model_id": e.model_id,
+                        "model_name": model_name_by_id.get(e.model_id, e.model_id),
+                        "metric_value": e.metric_value,
+                    }
                     for e in entries[:3]
                 ],
             }

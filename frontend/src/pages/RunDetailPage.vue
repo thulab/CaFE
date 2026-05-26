@@ -8,7 +8,8 @@
       </div>
       <div class="head-actions">
         <StatusBadge v-if="progress" :status="progress.status" big />
-        <button v-if="isRunning" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> Cancel</button>
+        <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> Cancel</button>
+        <button v-else-if="isCancelling" class="btn sm" type="button" disabled><Icon name="ban" :size="15" /> Cancelling…</button>
         <a v-if="progress?.report_id" class="btn" :href="`#/reports/${progress.report_id}`"><Icon name="barChart" :size="16" /> Open report</a>
       </div>
     </header>
@@ -101,6 +102,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
+import { ApiError } from '../api/client';
 import { cancelRun, getRunProgress } from '../api/runs';
 import type { RunProgressDTO } from '../api/types';
 import { formatDateTime, percent, shortId, timeAgo } from '../lib/format';
@@ -114,7 +116,11 @@ const error = ref<string | null>(null);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const p = computed(() => progress.value?.progress ?? {});
-const isRunning = computed(() => Boolean(progress.value) && !TERMINAL.includes(progress.value!.status));
+// 仍需轮询：非终态都要继续刷（含 cancel_requested → cancelled 的过渡）。
+const isPolling = computed(() => Boolean(progress.value) && !TERMINAL.includes(progress.value!.status));
+// 可发起取消：仅 queued / running；cancel_requested 已经请求过了，不再可点。
+const canCancel = computed(() => progress.value?.status === 'queued' || progress.value?.status === 'running');
+const isCancelling = computed(() => progress.value?.status === 'cancel_requested');
 
 onMounted(load);
 onBeforeUnmount(stopPolling);
@@ -124,8 +130,8 @@ async function load() {
   error.value = null;
   try {
     progress.value = await getRunProgress(props.runId);
-    if (isRunning.value && !timer) timer = setInterval(load, 4000);
-    if (!isRunning.value) stopPolling();
+    if (isPolling.value && !timer) timer = setInterval(load, 4000);
+    if (!isPolling.value) stopPolling();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load run progress';
     stopPolling();
@@ -139,6 +145,11 @@ async function onCancel() {
     await cancelRun(props.runId);
     await load();
   } catch (e) {
+    // 后端 409：run 已是终态——按钮显示是因为本地状态过期，刷一下就同步了。
+    if (e instanceof ApiError && e.status === 409) {
+      await load();
+      return;
+    }
     error.value = e instanceof Error ? e.message : 'Failed to cancel run';
   }
 }

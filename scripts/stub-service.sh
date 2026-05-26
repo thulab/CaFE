@@ -10,11 +10,6 @@ SERVICE="stub-service"
 HOST="${TSBENCHMARK_STUB_HOST:-127.0.0.1}"
 PORT="${TSBENCHMARK_STUB_PORT:-10810}"
 
-stub_cmd() {
-  printf 'cd "%s/backend" && { [[ -x .venv/bin/uvicorn ]] || uv sync --quiet; } && exec .venv/bin/uvicorn stub_service.main:app --host "%s" --port "%s"\n' \
-    "$TSBENCHMARK_ROOT_DIR" "$HOST" "$PORT"
-}
-
 start() {
   mkdir -p "$TSBENCHMARK_SYSTEM_DIR"
   tsbenchmark_remove_stale_pid "$SERVICE"
@@ -28,7 +23,7 @@ start() {
   log_file="$(tsbenchmark_log_file "$SERVICE")"
   : >"$log_file"
 
-  nohup bash -c "$(stub_cmd)" >>"$log_file" 2>&1 &
+  nohup bash -c "$(tsbenchmark_stub_cmd)" >>"$log_file" 2>&1 &
   pid="$!"
   echo "$pid" >"$pid_file"
 

@@ -25,7 +25,15 @@ export function configureAuth(opts: {
   onUnauthorized = opts.onUnauthorized;
 }
 
-export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+export interface ApiRequestOptions {
+  /**
+   * 背景型 / best-effort 调用（如目录预取）即使 401 也不要触发全局跳转——
+   * 把 401 当普通错误抛给调用方处理。用于：公开页面的可选探针、调用方自己有降级路径。
+   */
+  skipAuthRedirect?: boolean;
+}
+
+export async function apiRequest<T>(path: string, init: RequestInit = {}, options: ApiRequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {
     ...(init.body instanceof FormData ? {} : { 'content-type': 'application/json' }),
     ...((init.headers as Record<string, string>) || {})
@@ -44,7 +52,7 @@ export async function apiRequest<T>(path: string, init: RequestInit = {}): Promi
     const code = typeof errorBody.error_code === 'string' ? errorBody.error_code : 'api_error';
     // 401 on a non-login route means the stored token is invalid or expired.
     // Wipe state and bounce to login (caller of the page also gets the rejection).
-    if (response.status === 401 && path !== '/auth/login') {
+    if (response.status === 401 && path !== '/auth/login' && !options.skipAuthRedirect) {
       onUnauthorized();
     }
     throw new ApiError(

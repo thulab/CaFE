@@ -11,7 +11,9 @@ let inflight: Promise<void> | null = null;
 async function ensureLoaded() {
   if (loaded) return;
   if (!inflight) {
-    inflight = listModels()
+    // 公共页面（如 LeaderboardsPage）也会触发这个目录预取——/models 是 authed，
+    // 匿名命中 401 时不要把用户从公开页面踢去登录，调用方已在 catch 里降级。
+    inflight = listModels({ skipAuthRedirect: true })
       .then((res) => {
         models.value = res.items;
         byId.value = Object.fromEntries(res.items.map((m) => [m.model_id, m]));

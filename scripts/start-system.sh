@@ -37,6 +37,12 @@ start_service() {
   echo "started $service (pid $pid, log $log_file)"
 }
 
+# stub-service 默认随系统一起拉起，使 model_adapter=rest（默认值）能就地跑通。
+# 要接真实推理服务时，设 TSBENCHMARK_START_STUB=0 跳过桩，并按需 export
+# TSBENCHMARK_TIMER_SERVICE_BASE_URL=... 指向真实服务。
+if [[ "${TSBENCHMARK_START_STUB:-1}" != "0" ]]; then
+  start_service stub-service "$(tsbenchmark_stub_cmd)"
+fi
 start_service backend "$(tsbenchmark_backend_cmd)"
 start_service frontend "$(tsbenchmark_frontend_cmd)"
 echo "system state: $TSBENCHMARK_SYSTEM_DIR"

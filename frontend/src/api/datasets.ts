@@ -1,10 +1,12 @@
 import { apiRequest } from './client';
+import { type ListParams, buildListQuery } from './shared';
 import type {
   DatasetLoadJobCreateDTO,
   DatasetLoadJobDetailDTO,
   DatasetLoadJobDTO,
   DatasetManifestCreateDTO,
   DatasetManifestDTO,
+  ListResponse,
   ShardDTO,
   ShardSamplesDTO,
   UploadPreviewDTO
@@ -38,4 +40,17 @@ export function getShard(shardId: string): Promise<ShardDTO> {
 
 export function getShardSamples(shardId: string): Promise<ShardSamplesDTO> {
   return apiRequest<ShardSamplesDTO>(`/shards/${shardId}/samples`);
+}
+
+export function listDatasetManifests(params: ListParams = {}): Promise<ListResponse<DatasetManifestDTO>> {
+  return apiRequest<ListResponse<DatasetManifestDTO>>(`/dataset-manifests${buildListQuery(params)}`);
+}
+
+export function listShards(
+  params: ListParams & { datasetManifestId?: string } = {}
+): Promise<ListResponse<ShardDTO>> {
+  const { datasetManifestId, ...rest } = params;
+  return apiRequest<ListResponse<ShardDTO>>(
+    `/shards${buildListQuery({ ...rest, dataset_manifest_id: datasetManifestId })}`
+  );
 }

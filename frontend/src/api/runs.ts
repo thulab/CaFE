@@ -1,5 +1,6 @@
 import { apiRequest } from './client';
-import type { RunProgressDTO } from './types';
+import { type ListParams, buildListQuery } from './shared';
+import type { BenchmarkingRunSummaryDTO, ListResponse, RunProgressDTO } from './types';
 
 export function createRun(payload: { track_id: string; model_ids: string[] }) {
   return apiRequest<{ benchmarking_run_id: string; status: string; created_at?: string }>('/benchmarking-runs', {
@@ -16,4 +17,13 @@ export function cancelRun(runId: string) {
   return apiRequest<{ benchmarking_run_id: string; status: string }>(`/benchmarking-runs/${runId}/cancel`, {
     method: 'POST'
   });
+}
+
+export function listRuns(
+  params: ListParams & { trackId?: string } = {}
+): Promise<ListResponse<BenchmarkingRunSummaryDTO>> {
+  const { trackId, ...rest } = params;
+  return apiRequest<ListResponse<BenchmarkingRunSummaryDTO>>(
+    `/benchmarking-runs${buildListQuery({ ...rest, track_id: trackId })}`
+  );
 }

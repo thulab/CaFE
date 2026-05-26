@@ -105,3 +105,16 @@ tsbenchmark_frontend_cmd() {
     "${TSBENCHMARK_FRONTEND_HOST:-127.0.0.1}" \
     "${TSBENCHMARK_FRONTEND_PORT:-5173}"
 }
+
+# 桩服务（backend/stub_service）的启动命令。host/port 默认与
+# TSBENCHMARK_TIMER_SERVICE_BASE_URL 的默认值（127.0.0.1:10810）保持一致。
+tsbenchmark_stub_cmd() {
+  if [[ -n "${TSBENCHMARK_STUB_CMD:-}" ]]; then
+    printf '%s\n' "$TSBENCHMARK_STUB_CMD"
+    return
+  fi
+  printf 'cd "%s/backend" && { [[ -x .venv/bin/uvicorn ]] || uv sync --quiet; } && exec .venv/bin/uvicorn stub_service.main:app --host "%s" --port "%s"\n' \
+    "$TSBENCHMARK_ROOT_DIR" \
+    "${TSBENCHMARK_STUB_HOST:-127.0.0.1}" \
+    "${TSBENCHMARK_STUB_PORT:-10810}"
+}

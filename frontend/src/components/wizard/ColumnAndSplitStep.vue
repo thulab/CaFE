@@ -69,7 +69,7 @@ import { computed, ref, watch } from 'vue';
 import Icon from '../ui/Icon.vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
 import { goNext, wizardState } from '../../stores/wizard';
-import { recordRecent } from '../../stores/recents';
+import { refreshResourceCounts } from '../../composables/useResourceCounts';
 
 const columns = computed(() => wizardState.preview?.columns.map((column) => column.name) || []);
 const timeColumn = ref('time');
@@ -110,10 +110,6 @@ async function load() {
       value_columns: valueColumns.value
     });
     wizardState.manifestId = manifest.dataset_manifest_id;
-    recordRecent({
-      kind: 'dataset', id: manifest.dataset_manifest_id, title: 'Uploaded dataset',
-      subtitle: wizardState.preview?.filename || wizardState.sourceUri, href: `#/datasets/${manifest.dataset_manifest_id}`
-    });
 
     const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number } = {
       context_length: context.value,
@@ -127,12 +123,7 @@ async function load() {
     const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });
     wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';
-    if (wizardState.shardId) {
-      recordRecent({
-        kind: 'shard', id: wizardState.shardId, title: `Shard · ${target.value}`,
-        subtitle: `ctx ${context.value} · hor ${horizon.value}`, href: `#/shards/${wizardState.shardId}`
-      });
-    }
+    void refreshResourceCounts();
     error.value = '';
     goNext();
   } catch (caught) {
