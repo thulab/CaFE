@@ -21,7 +21,7 @@ describe('api client', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ error_code: 'bad_input', message: 'Bad input', details: { field: 'name' } }, 400));
 
     await expect(createLoadJob({ dataset_manifest_id: 'm1', split_config: { context_length: 6, horizon: 3, target_columns: ['value'] } })).rejects.toMatchObject(
-      new ApiError('bad_input', 'Bad input', { field: 'name' })
+      new ApiError('bad_input', 'Bad input', { field: 'name' }, 400)
     );
   });
 
@@ -29,7 +29,7 @@ describe('api client', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('', { status: 500, headers: { 'content-type': 'text/plain' } }));
 
     await expect(uploadDataset(new File(['time,target\n'], 'data.csv'))).rejects.toMatchObject(
-      new ApiError('api_error', 'Request failed with status 500', { status: 500 })
+      new ApiError('api_error', 'Request failed with status 500', { status: 500 }, 500)
     );
   });
 
