@@ -1,10 +1,10 @@
 # TSBenchmark 基线记录（Track A · plan A0）
 
-- **生成时间**：2026-05-25T16:32:58.741263+00:00
-- **数据**：`templates/hourly_trend.csv`，列 = ['time', 'target', 'temperature']
+- **生成时间**：2026-05-26T02:07:06.123288+00:00
+- **数据**：`/Users/zhanghongyin/code/python/TSBenchmark/test/flow_template.csv`，列 = ['time', 'target', 'extra']
 - **后端**：`http://127.0.0.1:18900`（隔离 runtime + 进程内确定性桩适配器 `TSBENCHMARK_MODEL_ADAPTER=stub`）
 - **切分**：{'context_length': 12, 'horizon': 6, 'stride': 6, 'target_columns': ['target']}
-- **Shard**：value_columns=['target', 'temperature']，target_columns=['target']，sample_count=38（序列真值存 SQLite SeriesPoint）
+- **Shard**：value_columns=['target', 'extra']，target_columns=['target']，sample_count=3（序列真值存 SQLite SeriesPoint）
 
 > 通路：CSV/TsFile 输入 → 全列摄入 → SQLite SeriesPoint(逐点行) → 指针切片 → ModelInput(无 target_future) → 桩推理 → MSE/MAE/MASE → 榜单。
 > **桩确定性**：同一次 load 内，相同 (model, sample, seed) 必得相同 forecast；但 `sample_id` 为随机 UUID，故**绝对预测值不跨重载可比**（既有特性）。
@@ -13,32 +13,32 @@
 
 | rank | model | value |
 | --- | --- | --- |
-| 1 | Timer 3.5 | 1.826004 |
-| 2 | Timer 3.0 | 1.832259 |
+| 1 | Timer 3.0 | 3.536933 |
+| 2 | Timer 3.5 | 3.538125 |
 
 ## 榜单 · mse
 
 | rank | model | value |
 | --- | --- | --- |
-| 1 | Timer 3.5 | 5.710683 |
-| 2 | Timer 3.0 | 5.753713 |
+| 1 | Timer 3.0 | 24.137166 |
+| 2 | Timer 3.5 | 24.183551 |
 
 ## 榜单 · mae
 
 | rank | model | value |
 | --- | --- | --- |
-| 1 | Timer 3.5 | 2.016720 |
-| 2 | Timer 3.0 | 2.023537 |
+| 1 | Timer 3.0 | 4.412555 |
+| 2 | Timer 3.5 | 4.413949 |
 
 ## 样本预测视图（首个样本）
 
-- sample_id：`bf959ce2-2dc7-4962-ab6c-bdbdbe25757d`
-- 真值 target_future：['105.0706', '105.0902', '106.8216', '107.5574', '107.9993', '108.3720']
+- sample_id：`70817d47-1347-4a82-a5f7-de1fb4631e5d`
+- 真值 target_future：['115.2000', '116.1000', '117.5000', '118.7000', '119.8000', '121.2000']
 
 | model | forecast (h=1..n) | mase | mse | mae |
 | --- | --- | --- | --- | --- |
-| Timer 3.5 | ['105.4894', '105.5475', '105.5611', '105.4883', '105.5021', '105.4927'] | 1.318091 | 3.463479 | 1.597023 |
-| Timer 3.0 | ['105.4999', '105.5156', '105.5551', '105.4820', '105.5198', '105.5178'] | 1.310948 | 3.428446 | 1.588368 |
+| Timer 3.5 | ['113.8943', '113.8747', '113.8523', '113.8775', '113.9082', '113.8826'] | 3.325106 | 21.912683 | 4.201725 |
+| Timer 3.0 | ['113.9029', '113.8585', '113.8633', '113.8928', '113.8458', '113.8822'] | 3.330941 | 22.007455 | 4.209099 |
 
 ---
 

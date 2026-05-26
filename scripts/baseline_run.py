@@ -3,6 +3,7 @@
 由 scripts/baseline-run.sh 调起（用隔离 runtime + 进程内确定性桩适配器）。
 用法：baseline_run.py <base_url> <csv_path> <record_out.md>
 """
+import os
 import sys
 import time
 from datetime import UTC, datetime
@@ -18,6 +19,13 @@ def _fmt(value: float, digits: int = 6) -> str:
 def main() -> int:
     base_url, csv_path, out_path = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
     client = httpx.Client(base_url=base_url, timeout=30.0, trust_env=False)
+
+    # 鉴权重构后所有写操作都要 admin token。baseline-run.sh 已注入 admin 密码到 env。
+    admin_password = os.environ.get("TSBENCHMARK_ADMIN_PASSWORD", "baseline-admin-pw")
+    login = client.post("/auth/login", json={"username": "admin", "password": admin_password})
+    if login.status_code != 200:
+        raise SystemExit(f"[login] HTTP {login.status_code}: {login.text}")
+    client.headers["Authorization"] = f"Bearer {login.json()['access_token']}"
 
     def expect(response: httpx.Response, label: str) -> dict:
         if response.status_code != 200:
