@@ -85,7 +85,11 @@ tsbenchmark_backend_cmd() {
     printf '%s\n' "$TSBENCHMARK_BACKEND_CMD"
     return
   fi
-  printf 'cd "%s/backend" && { [[ -x .venv/bin/uvicorn ]] || uv sync --quiet; } && exec .venv/bin/uvicorn app.main:create_app --factory --host "%s" --port "%s"\n' \
+  # 鉴权重构后 create_app() 强校验 TSBENCHMARK_AUTH_SECRET；本地一键启动注入一个
+  # 32 字节默认 dev secret 和 admin 密码（用户已 export 的会覆盖默认）。
+  # 注：format string 是 single-quoted，${VAR:-...} 不会被 printf 时展开，
+  # 是在 nohup bash -c 运行时才展开 —— 这是我们想要的运行时绑定。
+  printf 'cd "%s/backend" && { [[ -x .venv/bin/uvicorn ]] || uv sync --quiet; } && TSBENCHMARK_AUTH_SECRET="${TSBENCHMARK_AUTH_SECRET:-tsbenchmark-dev-secret-32bytes-padding}" TSBENCHMARK_ADMIN_PASSWORD="${TSBENCHMARK_ADMIN_PASSWORD:-admin}" exec .venv/bin/uvicorn app.main:create_app --factory --host "%s" --port "%s"\n' \
     "$TSBENCHMARK_ROOT_DIR" \
     "${TSBENCHMARK_BACKEND_HOST:-127.0.0.1}" \
     "${TSBENCHMARK_BACKEND_PORT:-8000}"
