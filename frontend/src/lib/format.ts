@@ -51,7 +51,8 @@ export function timeAgo(value?: string | null, locale?: string): string {
   let valueInUnit = seconds;
   for (const [unit, step] of units) {
     if (Math.abs(valueInUnit) < step) {
-      return rtf.format(Math.round(valueInUnit), unit);
+      const rounded = Math.sign(valueInUnit) * Math.round(Math.abs(valueInUnit));
+      return rtf.format(rounded, unit);
     }
     valueInUnit /= step;
   }

@@ -16,9 +16,23 @@ describe('locale-aware format helpers', () => {
   it('formats relative time without English-only string assembly', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-26T12:00:10Z'));
-    expect(timeAgo('2026-05-26T12:00:00Z', 'en-US')).toContain('second');
+    const pastEnglish = timeAgo('2026-05-26T12:00:00Z', 'en-US');
+    const futureEnglish = timeAgo('2026-05-26T12:00:20Z', 'en-US');
+    const futureChinese = timeAgo('2026-05-26T12:00:20Z', 'zh-CN');
+
+    expect(pastEnglish).toContain('second');
     expect(timeAgo('2026-05-26T12:00:00Z', 'zh-CN')).toMatch(/秒|10/);
     expect(timeAgo('2026-05-26T12:00:00Z', 'zh-CN')).not.toContain('ago');
+    expect(futureEnglish.includes('in') || futureEnglish !== pastEnglish).toBe(true);
+    expect(futureChinese).not.toBe('');
+    expect(futureChinese).not.toContain('ago');
+    vi.useRealTimers();
+  });
+
+  it('rounds negative half relative-time values symmetrically', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-26T12:01:30Z'));
+    expect(timeAgo('2026-05-26T12:00:00Z', 'en-US')).toContain('2 minutes');
     vi.useRealTimers();
   });
 });
