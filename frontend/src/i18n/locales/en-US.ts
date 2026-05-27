@@ -23,6 +23,13 @@ const enUS = {
     dark: 'dark',
     light: 'light',
   },
+  a11y: {
+    primaryNavigation: 'Primary navigation',
+    sectionNavigation: 'Sections',
+    toggleNavigation: 'Toggle navigation',
+    breadcrumb: 'Breadcrumb',
+    languageSwitcher: 'Language switcher',
+  },
   nav: {
     workspace: 'Workspace',
     administration: 'Administration',

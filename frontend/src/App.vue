@@ -1,6 +1,6 @@
 <template>
   <div class="app-shell" :class="{ 'nav-open': navOpen }">
-    <aside class="app-sidebar" aria-label="Primary">
+    <aside class="app-sidebar" :aria-label="t('a11y.primaryNavigation')">
       <a class="brand" href="#/" @click="closeNav">
         <span class="brand-mark"><Icon name="gauge" :size="20" /></span>
         <span>
@@ -11,7 +11,7 @@
 
       <template v-if="user">
         <p class="nav-group-label">{{ t('nav.workspace') }}</p>
-        <nav aria-label="Sections">
+        <nav :aria-label="t('a11y.sectionNavigation')">
           <a
             v-for="item in navItems"
             :key="item.key"
@@ -87,13 +87,13 @@
           v-if="route.navKey"
           class="icon-btn menu-toggle"
           type="button"
-          aria-label="Toggle navigation"
+          :aria-label="t('a11y.toggleNavigation')"
           @click="navOpen = !navOpen"
         >
           <Icon name="menu" :size="18" />
         </button>
 
-        <nav class="breadcrumb" aria-label="Breadcrumb">
+        <nav class="breadcrumb" :aria-label="t('a11y.breadcrumb')">
           <template v-for="(crumb, i) in route.crumbs" :key="i">
             <a v-if="crumb.href" :href="crumb.href">{{ crumb.label }}</a>
             <span v-else class="current" aria-current="page">{{ crumb.label }}</span>
@@ -109,7 +109,7 @@
           >
             <Icon name="plus" :size="16" /> {{ t('nav.newEvaluation') }}
           </a>
-          <div class="locale-switch" :aria-label="t('common.switchLanguage')">
+          <div class="locale-switch" role="group" :aria-label="t('a11y.languageSwitcher')">
             <button
               v-for="option in localeOptions"
               :key="option.code"

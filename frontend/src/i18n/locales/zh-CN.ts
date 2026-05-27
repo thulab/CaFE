@@ -23,6 +23,13 @@ const zhCN = {
     dark: '深色',
     light: '浅色',
   },
+  a11y: {
+    primaryNavigation: '主导航',
+    sectionNavigation: '栏目导航',
+    toggleNavigation: '切换导航',
+    breadcrumb: '面包屑导航',
+    languageSwitcher: '语言切换',
+  },
   nav: {
     workspace: '工作区',
     administration: '管理',
