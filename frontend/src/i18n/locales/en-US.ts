@@ -191,7 +191,6 @@ const enUS = {
       maxSamples: 'Max samples',
       noCap: 'No cap',
       maxSamplesHint: 'Optional cap on generated samples.',
-      generatedManifestName: 'Uploaded dataset',
       shardReady: 'Shard ready — continue to confirm it.',
       windowStatus: 'Window: {context} context → {horizon} horizon, stride {stride}.',
       reloadShard: 'Re-load shard',
@@ -222,7 +221,6 @@ const enUS = {
       viewTrack: 'View track',
       viewRanking: 'View ranking',
       primaryMetric: 'Primary metric: {metric}',
-      generatedTrackName: 'Real dataset track',
       recreateTrack: 'Recreate track',
       createTrack: 'Create track',
       errors: {

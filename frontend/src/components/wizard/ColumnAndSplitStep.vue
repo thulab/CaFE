@@ -105,7 +105,7 @@ async function load() {
   busy.value = true;
   try {
     const manifest = await createDatasetManifest({
-      name: t('wizard.columnAndSplitStep.generatedManifestName'),
+      name: 'Uploaded dataset',
       domain: 'general',
       source_uri: wizardState.sourceUri,
       file_format: 'csv',

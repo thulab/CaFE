@@ -56,7 +56,7 @@ describe('ColumnAndSplitStep', () => {
     expect(loadJobBody.split_config.target_columns).toEqual(['target']);
   });
 
-  it('uses the active locale for the generated manifest name', async () => {
+  it('keeps the generated manifest payload name stable under Chinese UI', async () => {
     setLocale('zh-CN');
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))
@@ -68,7 +68,7 @@ describe('ColumnAndSplitStep', () => {
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
     const manifestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
-    expect(manifestBody.name).toBe('已上传数据集');
+    expect(manifestBody.name).toBe('Uploaded dataset');
   });
 
   it('renders split labels and window status in Chinese', () => {

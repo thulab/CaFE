@@ -12,7 +12,7 @@ describe('TrackStep', () => {
     vi.restoreAllMocks();
   });
 
-  it('uses the active locale for the generated track name', async () => {
+  it('keeps the generated track payload name stable under Chinese UI', async () => {
     setLocale('zh-CN');
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       track_id: 'track-1',
@@ -26,6 +26,6 @@ describe('TrackStep', () => {
 
     await waitFor(() => expect(wizardState.trackId).toBe('track-1'));
     const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
-    expect(body.name).toBe('真实数据集赛道');
+    expect(body.name).toBe('Real dataset track');
   });
 });

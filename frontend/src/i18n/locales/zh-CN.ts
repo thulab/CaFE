@@ -191,7 +191,6 @@ const zhCN = {
       maxSamples: '最大样本数',
       noCap: '不限制',
       maxSamplesHint: '生成样本数量的可选上限。',
-      generatedManifestName: '已上传数据集',
       shardReady: '分片已就绪，请继续确认。',
       windowStatus: '窗口：{context} 个上下文点 → {horizon} 个预测点，滑窗步长 {stride}。',
       reloadShard: '重新加载分片',
@@ -222,7 +221,6 @@ const zhCN = {
       viewTrack: '查看赛道',
       viewRanking: '查看排行榜',
       primaryMetric: '主指标：{metric}',
-      generatedTrackName: '真实数据集赛道',
       recreateTrack: '重新创建赛道',
       createTrack: '创建赛道',
       errors: {
