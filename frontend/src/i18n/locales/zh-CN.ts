@@ -113,7 +113,7 @@ const zhCN = {
       configureSplit: {
         title: '配置切分',
         kicker: '数据集清单',
-        description: '选择时间列和目标列，并设置 context、horizon 与 stride。',
+        description: '选择时间列和目标列，并设置上下文窗口、预测步长与滑窗步长。',
       },
       confirmShard: {
         title: '确认分片',
