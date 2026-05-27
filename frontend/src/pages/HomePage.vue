@@ -94,8 +94,8 @@ import { listDatasetManifests, listShards } from '../api/datasets';
 import { listReports } from '../api/results';
 import { listRuns } from '../api/runs';
 import { useResourceCounts } from '../composables/useResourceCounts';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
-import { displayError } from '../lib/errors';
 import { useI18n } from 'vue-i18n';
 
 type Kind = 'dataset' | 'shard' | 'run' | 'report';
@@ -111,12 +111,12 @@ interface ActivityItem {
 
 const { state: countsState, refresh: refreshCounts } = useResourceCounts();
 const counts = computed(() => countsState.counts);
-const { t, te } = useI18n();
+const { t } = useI18n();
 const { formatInt, timeAgo } = useFormat();
 
 const recents = ref<ActivityItem[]>([]);
 const activityLoading = ref(true);
-const activityError = ref<string | null>(null);
+const { text: activityError, clear: clearActivityError, setError: setActivityError } = useDisplayMessage();
 
 const steps = computed(() => [
   { t: t('home.steps.upload.title'), d: t('home.steps.upload.desc') },
@@ -142,7 +142,7 @@ function activityTitle(item: ActivityItem): string {
 
 async function loadActivity() {
   activityLoading.value = true;
-  activityError.value = null;
+  clearActivityError();
   try {
     // 各类只拉 top 8 就够混排出 8 条最新；4 路并行避免顺序等待。
     const [d, s, r, p] = await Promise.all([
@@ -167,7 +167,7 @@ async function loadActivity() {
     merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     recents.value = merged;
   } catch (e) {
-    activityError.value = displayError(e, t, te, 'errors.failedToLoadActivity');
+    setActivityError(e, 'errors.failedToLoadActivity');
     recents.value = [];
   } finally {
     activityLoading.value = false;

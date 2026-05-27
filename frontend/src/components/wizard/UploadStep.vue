@@ -20,7 +20,7 @@
     </label>
 
     <p v-if="uploading" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.uploadStep.parsingCsv') }}</p>
-    <p v-if="wizardState.error" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ wizardState.error }}</p>
+    <p v-if="wizardError" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ wizardError }}</p>
 
     <div v-if="preview" class="stack">
       <div class="pill-row">
@@ -63,13 +63,14 @@ import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { uploadDataset } from '../../api/datasets';
 import { goNext, wizardState } from '../../stores/wizard';
-import { displayError } from '../../lib/errors';
+import { messageFromError, renderMessage } from '../../lib/errors';
 
 const { t, te } = useI18n();
 const dragging = ref(false);
 const uploading = ref(false);
 const fileName = ref('');
 const preview = computed(() => wizardState.preview);
+const wizardError = computed(() => renderMessage(wizardState.error, t));
 
 async function onChange(event: Event) {
   const input = event.target as HTMLInputElement;
@@ -88,9 +89,9 @@ async function handle(file?: File) {
   try {
     wizardState.preview = await uploadDataset(file);
     wizardState.sourceUri = wizardState.preview.source_uri;
-    wizardState.error = '';
+    wizardState.error = null;
   } catch (error) {
-    wizardState.error = displayError(error, t, te, 'wizard.uploadStep.errors.uploadFailed');
+    wizardState.error = messageFromError(error, te, 'wizard.uploadStep.errors.uploadFailed');
   } finally {
     uploading.value = false;
   }

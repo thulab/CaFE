@@ -70,10 +70,10 @@ import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
 import { goNext, wizardState } from '../../stores/wizard';
+import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
-import { displayError } from '../../lib/errors';
 
-const { t, te } = useI18n();
+const { t } = useI18n();
 const columns = computed(() => wizardState.preview?.columns.map((column) => column.name) || []);
 const timeColumn = ref('time');
 const nonTimeColumns = computed(() => columns.value.filter((c) => c !== timeColumn.value));
@@ -84,7 +84,7 @@ const context = ref(6);
 const horizon = ref(3);
 const stride = ref(3);
 const maxSamples = ref<number | undefined>(undefined);
-const error = ref('');
+const { text: error, clear: clearError, setKey: setErrorKey, setError } = useDisplayMessage();
 const busy = ref(false);
 
 watch(nonTimeColumns, (cols) => {
@@ -95,11 +95,11 @@ watch(nonTimeColumns, (cols) => {
 
 async function load() {
   if (!target.value || !valueColumns.value.includes(target.value)) {
-    error.value = t('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
+    setErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
     return;
   }
   if (context.value <= 0 || horizon.value <= 0 || stride.value <= 0) {
-    error.value = t('wizard.columnAndSplitStep.errors.positiveSplitValues');
+    setErrorKey('wizard.columnAndSplitStep.errors.positiveSplitValues');
     return;
   }
   busy.value = true;
@@ -127,10 +127,10 @@ async function load() {
     wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';
     void refreshResourceCounts();
-    error.value = '';
+    clearError();
     goNext();
   } catch (caught) {
-    error.value = displayError(caught, t, te, 'wizard.columnAndSplitStep.errors.loadFailed');
+    setError(caught, 'wizard.columnAndSplitStep.errors.loadFailed');
   } finally {
     busy.value = false;
   }

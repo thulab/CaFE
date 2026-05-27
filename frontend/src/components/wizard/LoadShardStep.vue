@@ -36,12 +36,12 @@ import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { getShardSamples } from '../../api/datasets';
 import { goNext, wizardState } from '../../stores/wizard';
+import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { shortId } from '../../lib/format';
-import { displayError } from '../../lib/errors';
 
-const { t, te } = useI18n();
+const { t } = useI18n();
 const loading = ref(true);
-const error = ref('');
+const { text: error, clear: clearError, setError } = useDisplayMessage();
 const count = ref(0);
 const short = computed(() => shortId(wizardState.shardId));
 
@@ -54,12 +54,12 @@ async function loadSamples() {
     return;
   }
   loading.value = true;
-  error.value = '';
+  clearError();
   try {
     const samples = await getShardSamples(wizardState.shardId);
     count.value = samples.total ?? samples.items.length;
   } catch (e) {
-    error.value = displayError(e, t, te, 'wizard.loadShardStep.errors.failedToLoadSamples');
+    setError(e, 'wizard.loadShardStep.errors.failedToLoadSamples');
   } finally {
     loading.value = false;
   }

@@ -52,8 +52,8 @@ import { computed, onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import { listDatasetManifests, listShards } from '../api/datasets';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
-import { displayError } from '../lib/errors';
 import { shortId } from '../lib/format';
 import { useI18n } from 'vue-i18n';
 
@@ -72,8 +72,8 @@ interface Row {
 
 const items = ref<Row[]>([]);
 const loading = ref(true);
-const error = ref<string | null>(null);
-const { t, te } = useI18n();
+const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
 
 const ICONS: Record<Kind, string> = { dataset: 'database', shard: 'layers' };
@@ -104,7 +104,7 @@ function shardSubtitle(targetColumns: string[], rowCount: number): string {
 
 async function load() {
   loading.value = true;
-  error.value = null;
+  clearError();
   try {
     const [manifests, shards] = await Promise.all([
       listDatasetManifests({ limit: 200 }),
@@ -134,7 +134,7 @@ async function load() {
     rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     items.value = rows;
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToLoadDatasets');
+    setError(e, 'errors.failedToLoadDatasets');
     items.value = [];
   } finally {
     loading.value = false;

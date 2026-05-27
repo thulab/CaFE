@@ -77,9 +77,9 @@ import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import StateBlock from '../../components/ui/StateBlock.vue';
 import { listRoles, listPermissions, type RoleDTO, type PermissionDTO } from '../../api/auth';
-import { displayError } from '../../lib/errors';
+import { useDisplayMessage } from '../../composables/useDisplayMessage';
 
-const { t, te } = useI18n();
+const { t } = useI18n();
 
 const tabs = computed(() => [
   { key: 'users', label: t('admin.tabs.users'), href: '#/admin/users' },
@@ -119,7 +119,7 @@ function roleItemStyle(active: boolean): Record<string, string> {
 const roles = ref<RoleDTO[]>([]);
 const permissions = ref<PermissionDTO[]>([]);
 const loading = ref(true);
-const loadError = ref<string | null>(null);
+const { text: loadError, clear: clearLoadError, setError: setLoadError } = useDisplayMessage();
 const selectedId = ref<string | null>(null);
 
 const selected = computed<RoleDTO | null>(() =>
@@ -173,7 +173,7 @@ onMounted(refresh);
 
 async function refresh(): Promise<void> {
   loading.value = true;
-  loadError.value = null;
+  clearLoadError();
   try {
     const [r, p] = await Promise.all([listRoles(), listPermissions()]);
     roles.value = r.items;
@@ -182,7 +182,7 @@ async function refresh(): Promise<void> {
       selectedId.value = roles.value[0].role_id;
     }
   } catch (e) {
-    loadError.value = displayError(e, t, te, 'admin.roles.errors.failedToLoad');
+    setLoadError(e, 'admin.roles.errors.failedToLoad');
   } finally {
     loading.value = false;
   }

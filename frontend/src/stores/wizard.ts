@@ -1,5 +1,6 @@
 import { reactive } from 'vue';
 import type { UploadPreviewDTO } from '../api/types';
+import type { MessageState } from '../lib/errors';
 
 export const wizardState = reactive({
   step: 0,
@@ -13,7 +14,7 @@ export const wizardState = reactive({
   rankingListId: '',
   runId: '',
   reportId: '',
-  error: ''
+  error: null as MessageState
 });
 
 export const STEP_COUNT = 6;
@@ -42,5 +43,5 @@ export function resetWizard() {
   wizardState.rankingListId = '';
   wizardState.runId = '';
   wizardState.reportId = '';
-  wizardState.error = '';
+  wizardState.error = null;
 }

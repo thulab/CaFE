@@ -105,8 +105,8 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import { ApiError } from '../api/client';
 import { cancelRun, getRunProgress } from '../api/runs';
 import type { RunProgressDTO } from '../api/types';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
-import { displayError } from '../lib/errors';
 import { percent, shortId } from '../lib/format';
 import { useI18n } from 'vue-i18n';
 
@@ -115,9 +115,9 @@ const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 
 const progress = ref<RunProgressDTO | null>(null);
 const loading = ref(true);
-const error = ref<string | null>(null);
+const { text: error, clear: clearError, setError } = useDisplayMessage();
 let timer: ReturnType<typeof setInterval> | undefined;
-const { t, te } = useI18n();
+const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
 
 const p = computed(() => progress.value?.progress ?? {});
@@ -132,13 +132,13 @@ onBeforeUnmount(stopPolling);
 
 async function load() {
   loading.value = true;
-  error.value = null;
+  clearError();
   try {
     progress.value = await getRunProgress(props.runId);
     if (isPolling.value && !timer) timer = setInterval(load, 4000);
     if (!isPolling.value) stopPolling();
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToLoadRunProgress');
+    setError(e, 'errors.failedToLoadRunProgress');
     stopPolling();
   } finally {
     loading.value = false;
@@ -155,7 +155,7 @@ async function onCancel() {
       await load();
       return;
     }
-    error.value = displayError(e, t, te, 'errors.failedToCancelRun');
+    setError(e, 'errors.failedToCancelRun');
   }
 }
 

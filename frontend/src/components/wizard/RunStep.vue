@@ -56,18 +56,18 @@ import StatusBadge from '../ui/StatusBadge.vue';
 import { listModels, loadModel, type ModelDTO } from '../../api/models';
 import { cancelRun, createRun, getRunProgress } from '../../api/runs';
 import { goNext, wizardState } from '../../stores/wizard';
+import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import type { RunProgressDTO } from '../../api/types';
 import { percent } from '../../lib/format';
-import { displayError } from '../../lib/errors';
 
 const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 
-const { t, te } = useI18n();
+const { t } = useI18n();
 const models = ref<ModelDTO[]>([]);
 const selectedIds = ref<string[]>([]);
 const status = ref('idle');
-const error = ref('');
+const { text: error, clear: clearError, setError } = useDisplayMessage();
 const progress = ref<RunProgressDTO | null>(null);
 const isPreparingModels = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -93,7 +93,7 @@ onMounted(async () => {
   try {
     models.value = (await listModels()).items;
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToLoadModels');
+    setError(e, 'errors.failedToLoadModels');
   }
 });
 
@@ -105,7 +105,7 @@ function toggleAll() {
 
 async function run() {
   stopPolling();
-  error.value = '';
+  clearError();
   progress.value = null;
   isPreparingModels.value = true;
   try {
@@ -116,7 +116,7 @@ async function run() {
     void refreshResourceCounts();
     timer = setInterval(poll, 5000);
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToStartRun');
+    setError(e, 'errors.failedToStartRun');
   } finally {
     isPreparingModels.value = false;
   }
@@ -155,7 +155,7 @@ async function poll() {
       if (wizardState.reportId) goNext();
     }
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToReadProgress');
+    setError(e, 'errors.failedToReadProgress');
     stopPolling();
   }
 }
@@ -166,7 +166,7 @@ async function onCancel() {
     status.value = res.status;
     stopPolling();
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToCancelRun');
+    setError(e, 'errors.failedToCancelRun');
   }
 }
 

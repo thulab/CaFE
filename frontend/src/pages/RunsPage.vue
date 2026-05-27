@@ -54,15 +54,15 @@ import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import { listRuns } from '../api/runs';
 import type { BenchmarkingRunSummaryDTO } from '../api/types';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
-import { displayError } from '../lib/errors';
 import { shortId } from '../lib/format';
 import { useI18n } from 'vue-i18n';
 
 const items = ref<BenchmarkingRunSummaryDTO[]>([]);
 const loading = ref(true);
-const error = ref<string | null>(null);
-const { t, te } = useI18n();
+const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
 
 function runTitle(run: BenchmarkingRunSummaryDTO): string {
@@ -72,12 +72,12 @@ function runTitle(run: BenchmarkingRunSummaryDTO): string {
 
 async function load() {
   loading.value = true;
-  error.value = null;
+  clearError();
   try {
     const res = await listRuns({ limit: 200 });
     items.value = res.items;
   } catch (e) {
-    error.value = displayError(e, t, te, 'errors.failedToLoadRuns');
+    setError(e, 'errors.failedToLoadRuns');
     items.value = [];
   } finally {
     loading.value = false;

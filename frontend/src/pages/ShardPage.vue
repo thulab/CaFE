@@ -68,29 +68,29 @@ import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import { getShard, getShardSamples } from '../api/datasets';
 import type { ShardDTO, ShardSamplesDTO } from '../api/types';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
-import { displayError } from '../lib/errors';
 import { shortId } from '../lib/format';
 
 const props = defineProps<{ shardId: string }>();
 const shard = ref<ShardDTO | null>(null);
 const samples = ref<ShardSamplesDTO | null>(null);
 const loading = ref(true);
-const error = ref<string | null>(null);
-const { t, te } = useI18n();
+const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { t } = useI18n();
 const { formatInt } = useFormat();
 
 onMounted(run);
 
 async function run() {
   loading.value = true;
-  error.value = null;
+  clearError();
   try {
     const [s, sx] = await Promise.all([getShard(props.shardId), getShardSamples(props.shardId)]);
     shard.value = s;
     samples.value = sx;
   } catch (e) {
-    error.value = displayError(e, t, te, 'shard.errors.failedToLoad');
+    setError(e, 'shard.errors.failedToLoad');
   } finally {
     loading.value = false;
   }

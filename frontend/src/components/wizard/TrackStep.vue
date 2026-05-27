@@ -27,16 +27,16 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { createRealDatasetTrack } from '../../api/tracks';
+import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { goNext, wizardState } from '../../stores/wizard';
-import { displayError } from '../../lib/errors';
 
-const { t, te } = useI18n();
-const error = ref('');
+const { t } = useI18n();
+const { text: error, clear: clearError, setError } = useDisplayMessage();
 const busy = ref(false);
 
 async function createTrack() {
   busy.value = true;
-  error.value = '';
+  clearError();
   try {
     const result = await createRealDatasetTrack({
       name: 'Real dataset track',
@@ -48,7 +48,7 @@ async function createTrack() {
     wizardState.rankingListId = result.ranking_list_id;
     goNext();
   } catch (e) {
-    error.value = displayError(e, t, te, 'wizard.trackStep.errors.failedToCreateTrack');
+    setError(e, 'wizard.trackStep.errors.failedToCreateTrack');
   } finally {
     busy.value = false;
   }

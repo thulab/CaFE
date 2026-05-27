@@ -74,6 +74,21 @@ describe('workspace pages', () => {
     expect(screen.getByText('target · 20 行')).toBeTruthy();
   });
 
+  it('DatasetsPage keeps visible load errors reactive after locale changes', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({
+      error_code: 'forbidden',
+      message: 'raw forbidden'
+    }, 403));
+
+    render(DatasetsPage, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('You do not have permission to perform this action.')).toBeTruthy();
+
+    setLocale('zh-CN');
+
+    expect(await screen.findByText('你没有执行此操作的权限。')).toBeTruthy();
+  });
+
   it('RunsPage starts empty then surfaces server-returned runs', async () => {
     stubBackend({});
     const empty = render(RunsPage, { global: { plugins: [i18n] } });

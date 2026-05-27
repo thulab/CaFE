@@ -49,14 +49,14 @@ import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import LeaderboardCard from '../components/results/LeaderboardCard.vue';
 import { listRankingLists, type LeaderboardItem } from '../api/results';
-import { displayError } from '../lib/errors';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 
 const items = ref<LeaderboardItem[]>([]);
 const loading = ref(true);
-const error = ref<string | null>(null);
+const { text: error, clear: clearError, setError } = useDisplayMessage();
 const query = ref('');
 const typeFilter = ref('');
-const { t, te } = useI18n();
+const { t } = useI18n();
 
 const trackTypes = computed(() => Array.from(new Set(items.value.map((i) => i.track_type))).sort());
 
@@ -76,11 +76,11 @@ onMounted(load);
 
 async function load() {
   loading.value = true;
-  error.value = null;
+  clearError();
   try {
     items.value = (await listRankingLists()).items;
   } catch (e) {
-    error.value = displayError(e, t, te, 'leaderboards.errors.failedToLoad');
+    setError(e, 'leaderboards.errors.failedToLoad');
   } finally {
     loading.value = false;
   }

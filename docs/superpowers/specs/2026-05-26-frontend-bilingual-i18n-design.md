@@ -512,4 +512,3 @@ cd frontend && npm run test:e2e
 - 已迁移文件。
 - 新增/修改的 locale key。
 - 执行过的测试命令。
-

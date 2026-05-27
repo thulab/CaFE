@@ -58,15 +58,15 @@ import StateBlock from '../components/ui/StateBlock.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';
 import { getRanking } from '../api/results';
-import { displayError } from '../lib/errors';
+import { useDisplayMessage } from '../composables/useDisplayMessage';
 
 const props = defineProps<{ trackId: string }>();
 const metric = ref('mase');
 const policy = ref('latest_valid_result');
 const items = ref<Array<{ model_id: string; rank: number; metric_value: number }>>([]);
 const loading = ref(true);
-const error = ref<string | null>(null);
-const { t, te } = useI18n();
+const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { t } = useI18n();
 const rankedCountLabel = computed(() =>
   t(items.value.length === 1 ? 'ranking.modelsRankedOne' : 'ranking.modelsRankedOther', { count: items.value.length })
 );
@@ -75,11 +75,11 @@ onMounted(load);
 
 async function load() {
   loading.value = true;
-  error.value = null;
+  clearError();
   try {
     items.value = (await getRanking(props.trackId, metric.value, policy.value)).items;
   } catch (e) {
-    error.value = displayError(e, t, te, 'ranking.errors.failedToLoad');
+    setError(e, 'ranking.errors.failedToLoad');
   } finally {
     loading.value = false;
   }
