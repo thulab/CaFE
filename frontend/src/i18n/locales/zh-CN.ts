@@ -96,7 +96,8 @@ const zhCN = {
     report: '报告',
     createdArtifacts: '已创建产物',
     shardTitle: '分片 · {target}',
-    runTitle: '运行 · {count} 个模型',
+    runTitleOne: '运行 · {count} 个模型',
+    runTitleOther: '运行 · {count} 个模型',
   },
   wizard: {
     eyebrow: '引导流程',
@@ -277,7 +278,8 @@ const zhCN = {
     type: '类型',
     detail: '详情',
     created: '创建时间',
-    rows: '{count} 行',
+    rowCountOne: '{count} 行',
+    rowCountOther: '{count} 行',
     kind: {
       dataset: '数据集',
       shard: '分片',

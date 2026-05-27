@@ -52,6 +52,28 @@ describe('workspace pages', () => {
     expect(await screen.findByText('Shard · target')).toBeTruthy();
   });
 
+  it('DatasetsPage keeps loaded shard labels reactive after locale changes', async () => {
+    stubBackend({
+      '/dataset-manifests': {
+        items: [],
+        total: 0, limit: 200, offset: 0
+      },
+      '/shards': {
+        items: [{ shard_id: 'shard-9', dataset_manifest_id: 'manifest-9', target_columns: ['target'], row_count: 20, created_at: '2026-05-26T12:01:00Z' }],
+        total: 1, limit: 200, offset: 0
+      }
+    });
+    render(DatasetsPage, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Shard · target')).toBeTruthy();
+    expect(screen.getByText('target · 20 rows')).toBeTruthy();
+
+    setLocale('zh-CN');
+
+    expect(await screen.findByText('分片 · target')).toBeTruthy();
+    expect(screen.getByText('target · 20 行')).toBeTruthy();
+  });
+
   it('RunsPage starts empty then surfaces server-returned runs', async () => {
     stubBackend({});
     const empty = render(RunsPage, { global: { plugins: [i18n] } });
@@ -62,12 +84,16 @@ describe('workspace pages', () => {
 
     stubBackend({
       '/benchmarking-runs': {
-        items: [{ benchmarking_run_id: 'run-9', track_id: 't1', model_ids: ['m1', 'm2'], status: 'running', model_count: 2, task_count: 2, sample_count: 4, created_at: '2026-05-26T13:00:00Z' }],
-        total: 1, limit: 200, offset: 0
+        items: [
+          { benchmarking_run_id: 'run-9', track_id: 't1', model_ids: ['m1', 'm2'], status: 'running', model_count: 2, task_count: 2, sample_count: 4, created_at: '2026-05-26T13:00:00Z' },
+          { benchmarking_run_id: 'run-10', track_id: 't1', model_ids: ['m1'], status: 'queued', model_count: 1, task_count: 1, sample_count: 2, created_at: '2026-05-26T12:00:00Z' }
+        ],
+        total: 2, limit: 200, offset: 0
       }
     });
     render(RunsPage, { global: { plugins: [i18n] } });
     expect((await screen.findAllByText('Run · 2 models')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('Run · 1 model')).length).toBeGreaterThan(0);
   });
 
   it('RunDetailPage renders progress details from the backend', async () => {

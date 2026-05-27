@@ -58,7 +58,7 @@
                   <a :href="item.href">
                     <Icon class="art-ico" :name="kindIcon(item.kind)" :size="16" />
                     <span style="min-width:0">
-                      <span class="nowrap" style="display:block;overflow:hidden;text-overflow:ellipsis;font-weight:600">{{ item.title }}</span>
+                      <span class="nowrap" style="display:block;overflow:hidden;text-overflow:ellipsis;font-weight:600">{{ activityTitle(item) }}</span>
                       <span class="faint" style="font-size:0.76rem">{{ t(`home.kind.${item.kind}`) }} · {{ timeAgo(item.createdAt) }}</span>
                     </span>
                     <Icon name="arrowRight" :size="14" style="margin-left:auto;opacity:.5" />
@@ -102,7 +102,9 @@ type Kind = 'dataset' | 'shard' | 'run' | 'report';
 interface ActivityItem {
   kind: Kind;
   id: string;
-  title: string;
+  title?: string;
+  target?: string;
+  count?: number;
   href: string;
   createdAt: string;
 }
@@ -110,7 +112,7 @@ interface ActivityItem {
 const { state: countsState, refresh: refreshCounts } = useResourceCounts();
 const counts = computed(() => countsState.counts);
 const { t, te } = useI18n();
-const { timeAgo } = useFormat();
+const { formatInt, timeAgo } = useFormat();
 
 const recents = ref<ActivityItem[]>([]);
 const activityLoading = ref(true);
@@ -128,6 +130,16 @@ const ICONS: Record<Kind, string> = {
 };
 const kindIcon = (k: Kind) => ICONS[k] || 'file';
 
+function activityTitle(item: ActivityItem): string {
+  if (item.kind === 'dataset') return item.title ?? '';
+  if (item.kind === 'shard') return t('artifacts.shardTitle', { target: item.target ?? 'target' });
+  if (item.kind === 'run') {
+    const count = item.count ?? 0;
+    return t(count === 1 ? 'artifacts.runTitleOne' : 'artifacts.runTitleOther', { count: formatInt(count) });
+  }
+  return t('artifacts.report');
+}
+
 async function loadActivity() {
   activityLoading.value = true;
   activityError.value = null;
@@ -144,13 +156,13 @@ async function loadActivity() {
       merged.push({ kind: 'dataset', id: m.dataset_manifest_id, title: m.name, href: `#/datasets/${m.dataset_manifest_id}`, createdAt: m.created_at ?? '' });
     }
     for (const sh of s.items) {
-      merged.push({ kind: 'shard', id: sh.shard_id, title: t('artifacts.shardTitle', { target: sh.target_columns?.[0] ?? 'target' }), href: `#/shards/${sh.shard_id}`, createdAt: sh.created_at ?? '' });
+      merged.push({ kind: 'shard', id: sh.shard_id, target: sh.target_columns?.[0] ?? 'target', href: `#/shards/${sh.shard_id}`, createdAt: sh.created_at ?? '' });
     }
     for (const run of r.items) {
-      merged.push({ kind: 'run', id: run.benchmarking_run_id, title: t('artifacts.runTitle', { count: run.model_count || run.model_ids?.length || 0 }), href: `#/runs/${run.benchmarking_run_id}`, createdAt: run.created_at ?? '' });
+      merged.push({ kind: 'run', id: run.benchmarking_run_id, count: run.model_count || run.model_ids?.length || 0, href: `#/runs/${run.benchmarking_run_id}`, createdAt: run.created_at ?? '' });
     }
     for (const rep of p.items) {
-      merged.push({ kind: 'report', id: rep.report_id, title: t('artifacts.report'), href: `#/reports/${rep.report_id}`, createdAt: rep.created_at ?? '' });
+      merged.push({ kind: 'report', id: rep.report_id, href: `#/reports/${rep.report_id}`, createdAt: rep.created_at ?? '' });
     }
     merged.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     recents.value = merged;

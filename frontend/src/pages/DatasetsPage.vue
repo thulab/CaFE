@@ -28,7 +28,7 @@
           <table class="data">
             <thead><tr><th>{{ t('datasets.artifact') }}</th><th>{{ t('datasets.type') }}</th><th>{{ t('datasets.detail') }}</th><th>{{ t('datasets.created') }}</th></tr></thead>
             <tbody>
-              <tr v-for="item in items" :key="`${item.kind}-${item.id}`">
+              <tr v-for="item in displayItems" :key="`${item.kind}-${item.id}`">
                 <td>
                   <a class="text-link" :href="item.href">
                     <Icon :name="kindIcon(item.kind)" :size="14" style="vertical-align:-2px;margin-right:6px" />{{ item.title }}
@@ -48,7 +48,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import { listDatasetManifests, listShards } from '../api/datasets';
@@ -61,7 +61,10 @@ type Kind = 'dataset' | 'shard';
 interface Row {
   kind: Kind;
   id: string;
-  title: string;
+  name?: string;
+  targetColumns?: string[];
+  rowCount?: number;
+  title?: string;
   subtitle?: string;
   href: string;
   createdAt?: string;
@@ -76,9 +79,27 @@ const { formatDateTime, formatInt, timeAgo } = useFormat();
 const ICONS: Record<Kind, string> = { dataset: 'database', shard: 'layers' };
 const kindIcon = (k: Kind) => ICONS[k] || 'file';
 
+const displayItems = computed(() => items.value.map((item) => ({
+  ...item,
+  title: rowTitle(item),
+  subtitle: rowSubtitle(item),
+})));
+
+function rowTitle(item: Row): string {
+  if (item.kind === 'dataset') return item.name ?? '';
+  return t('artifacts.shardTitle', { target: item.targetColumns?.[0] ?? 'target' });
+}
+
+function rowSubtitle(item: Row): string | undefined {
+  if (item.kind === 'dataset') return item.subtitle;
+  return shardSubtitle(item.targetColumns ?? [], item.rowCount ?? 0);
+}
+
 function shardSubtitle(targetColumns: string[], rowCount: number): string {
   const cols = targetColumns.length ? targetColumns.join(', ') : t('artifacts.shard');
-  return rowCount ? `${cols} · ${t('datasets.rows', { count: formatInt(rowCount) })}` : cols;
+  if (!rowCount) return cols;
+  const key = rowCount === 1 ? 'datasets.rowCountOne' : 'datasets.rowCountOther';
+  return `${cols} · ${t(key, { count: formatInt(rowCount) })}`;
 }
 
 async function load() {
@@ -94,7 +115,7 @@ async function load() {
       rows.push({
         kind: 'dataset',
         id: m.dataset_manifest_id,
-        title: m.name,
+        name: m.name,
         subtitle: m.domain,
         href: `#/datasets/${m.dataset_manifest_id}`,
         createdAt: m.created_at
@@ -104,8 +125,8 @@ async function load() {
       rows.push({
         kind: 'shard',
         id: s.shard_id,
-        title: t('artifacts.shardTitle', { target: s.target_columns?.[0] ?? 'target' }),
-        subtitle: shardSubtitle(s.target_columns ?? [], s.row_count ?? 0),
+        targetColumns: s.target_columns ?? [],
+        rowCount: s.row_count ?? 0,
         href: `#/shards/${s.shard_id}`,
         createdAt: s.created_at
       });

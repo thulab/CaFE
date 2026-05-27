@@ -96,7 +96,8 @@ const enUS = {
     report: 'Report',
     createdArtifacts: 'Created artifacts',
     shardTitle: 'Shard · {target}',
-    runTitle: 'Run · {count} models',
+    runTitleOne: 'Run · {count} model',
+    runTitleOther: 'Run · {count} models',
   },
   wizard: {
     eyebrow: 'Guided workflow',
@@ -277,7 +278,8 @@ const enUS = {
     type: 'Type',
     detail: 'Detail',
     created: 'Created',
-    rows: '{count} rows',
+    rowCountOne: '{count} row',
+    rowCountOther: '{count} rows',
     kind: {
       dataset: 'Dataset',
       shard: 'Shard',

@@ -31,7 +31,7 @@
               <tr v-for="run in items" :key="run.benchmarking_run_id">
                 <td>
                   <a class="text-link" :href="`#/runs/${run.benchmarking_run_id}`">
-                    <Icon name="activity" :size="14" style="vertical-align:-2px;margin-right:6px" />{{ t('artifacts.runTitle', { count: run.model_count || run.model_ids?.length || 0 }) }}
+                    <Icon name="activity" :size="14" style="vertical-align:-2px;margin-right:6px" />{{ runTitle(run) }}
                   </a>
                   <div class="faint mono" style="font-size:0.74rem">{{ shortId(run.benchmarking_run_id) }}</div>
                 </td>
@@ -63,7 +63,12 @@ const items = ref<BenchmarkingRunSummaryDTO[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const { t, te } = useI18n();
-const { formatDateTime, timeAgo } = useFormat();
+const { formatDateTime, formatInt, timeAgo } = useFormat();
+
+function runTitle(run: BenchmarkingRunSummaryDTO): string {
+  const count = run.model_count || run.model_ids?.length || 0;
+  return t(count === 1 ? 'artifacts.runTitleOne' : 'artifacts.runTitleOther', { count: formatInt(count) });
+}
 
 async function load() {
   loading.value = true;
