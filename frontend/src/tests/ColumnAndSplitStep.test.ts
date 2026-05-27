@@ -55,4 +55,15 @@ describe('ColumnAndSplitStep', () => {
     const loadJobBody = JSON.parse(loadJobCall[1].body as string);
     expect(loadJobBody.split_config.target_columns).toEqual(['target']);
   });
+
+  it('renders split labels and window status in Chinese', () => {
+    setLocale('zh-CN');
+
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    expect(screen.getByText('上下文')).toBeTruthy();
+    expect(screen.getByText('预测步长')).toBeTruthy();
+    expect(screen.getByText('滑窗步长')).toBeTruthy();
+    expect(screen.getByText('窗口：6 个上下文点 → 3 个预测点，滑窗步长 3。')).toBeTruthy();
+  });
 });
