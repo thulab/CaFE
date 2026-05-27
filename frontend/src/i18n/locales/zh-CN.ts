@@ -307,6 +307,12 @@ const zhCN = {
     finished: '完成时间',
     splitConfig: '切分配置',
     error: '错误',
+    steps: {
+      validating_csv: '正在校验 CSV',
+      creating_manifest: '正在创建清单',
+      materializing_samples: '正在物化样本',
+      creating_shard: '正在创建分片',
+    },
   },
   datasetManifest: {
     eyebrow: '数据集',
@@ -479,6 +485,7 @@ const zhCN = {
     lowerIsBetter: '越低越好',
     model: '模型',
     rank: '排名',
+    metric: '指标',
     relative: '相对值',
     taskOutcomes: '任务结果',
     noTasks: '未记录任务。',

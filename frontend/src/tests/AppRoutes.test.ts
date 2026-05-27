@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App.vue';
 import { i18n, setLocale } from '../i18n';
 import EvaluationWizardPage from '../pages/EvaluationWizardPage.vue';
+import LoadJobPage from '../pages/LoadJobPage.vue';
 import { resetWizard, wizardState } from '../stores/wizard';
 
 function jsonResponse(body: unknown) {
@@ -35,6 +36,7 @@ function mockFetch() {
         load_job_id: 'load-1',
         dataset_manifest_id: 'manifest-1',
         status: 'succeeded',
+        current_step: 'materializing_samples',
         split_config: { context_length: 6, horizon: 3, stride: 3 },
         output_shard_id: 'shard-1'
       }));
@@ -181,5 +183,15 @@ describe('App routes and artifact links', () => {
     expect(screen.getByLabelText('面包屑导航')).toBeTruthy();
     expect(within(breadcrumb).getByText('赛道 · 排行榜')).toBeTruthy();
     expect(window.location.hash).toBe('#/tracks/track-1/ranking');
+  });
+
+  it('localizes load job current step labels without changing backend step values', async () => {
+    setLocale('zh-CN');
+    mockFetch();
+
+    render(LoadJobPage, { props: { loadJobId: 'load-1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('正在物化样本')).toBeTruthy();
+    expect(screen.queryByText('Materializing samples')).toBeNull();
   });
 });

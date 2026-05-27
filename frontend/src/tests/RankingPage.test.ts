@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { i18n, setLocale } from '../i18n';
+import RankingTable from '../components/results/RankingTable.vue';
 import RankingPage from '../pages/RankingPage.vue';
 
 function jsonResponse(body: unknown) {
@@ -43,5 +44,18 @@ describe('RankingPage', () => {
     render(RankingPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
 
     expect(await screen.findByRole('heading', { name: '赛道排名' })).toBeTruthy();
+  });
+
+  it('uses a localized metric header when RankingTable metric label is omitted', async () => {
+    setLocale('zh-CN');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [] }));
+
+    render(RankingTable, {
+      props: { items: [{ model_id: 'm1', rank: 1, metric_value: 0.2 }] },
+      global: { plugins: [i18n] }
+    });
+
+    expect(await screen.findByRole('columnheader', { name: '指标' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Metric' })).toBeNull();
   });
 });

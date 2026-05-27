@@ -307,6 +307,12 @@ const enUS = {
     finished: 'Finished',
     splitConfig: 'Split config',
     error: 'Error',
+    steps: {
+      validating_csv: 'Validating CSV',
+      creating_manifest: 'Creating manifest',
+      materializing_samples: 'Materializing samples',
+      creating_shard: 'Creating shard',
+    },
   },
   datasetManifest: {
     eyebrow: 'Dataset',
@@ -479,6 +485,7 @@ const enUS = {
     lowerIsBetter: 'Lower is better',
     model: 'Model',
     rank: 'Rank',
+    metric: 'Metric',
     relative: 'Relative',
     taskOutcomes: 'Task outcomes',
     noTasks: 'No tasks recorded.',

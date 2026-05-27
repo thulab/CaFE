@@ -18,7 +18,7 @@
         <div class="grid-auto">
           <div class="stat-tile"><span class="stat-label">{{ t('loadJob.status') }}</span><span class="stat-value" style="font-size:1.1rem"><StatusBadge :status="job.status" big /></span></div>
           <div class="stat-tile"><span class="stat-label">{{ t('loadJob.seed') }}</span><span class="stat-value">{{ formatInt(job.seed ?? 0) }}</span></div>
-          <div v-if="job.current_step" class="stat-tile"><span class="stat-label">{{ t('loadJob.currentStep') }}</span><span class="stat-value" style="font-size:1.1rem">{{ humanize(job.current_step) }}</span></div>
+          <div v-if="job.current_step" class="stat-tile"><span class="stat-label">{{ t('loadJob.currentStep') }}</span><span class="stat-value" style="font-size:1.1rem">{{ currentStepLabel(job.current_step) }}</span></div>
         </div>
 
         <article class="card">
@@ -50,11 +50,11 @@ import { getLoadJob } from '../api/datasets';
 import type { DatasetLoadJobDetailDTO } from '../api/types';
 import { useAsyncData } from '../composables/useAsync';
 import { useFormat } from '../composables/useFormat';
-import { humanize, shortId } from '../lib/format';
+import { shortId } from '../lib/format';
 
 const props = defineProps<{ loadJobId: string }>();
 const { data: job, loading, error, run } = useAsyncData<DatasetLoadJobDetailDTO>(() => getLoadJob(props.loadJobId));
-const { t } = useI18n();
+const { t, te } = useI18n();
 const { formatDateTime, formatInt } = useFormat();
 
 onMounted(run);
@@ -65,5 +65,10 @@ function pretty(value: Record<string, unknown>) {
   } catch {
     return String(value);
   }
+}
+
+function currentStepLabel(step: string) {
+  const key = `loadJob.steps.${step}`;
+  return te(key) ? t(key) : step;
 }
 </script>

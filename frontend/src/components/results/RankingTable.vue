@@ -6,7 +6,7 @@
         <tr>
           <th style="width:64px">{{ t('results.rank') }}</th>
           <th>{{ t('results.model') }}</th>
-          <th class="num" style="width:140px">{{ metricLabel }}</th>
+          <th class="num" style="width:140px">{{ resolvedMetricLabel }}</th>
           <th style="width:34%">{{ t('results.relative') }}</th>
         </tr>
       </thead>
@@ -42,14 +42,15 @@ import { useModels } from '../../composables/useModels';
 import { useFormat } from '../../composables/useFormat';
 import { shortId } from '../../lib/format';
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   items: Array<{ model_id: string; rank: number; metric_value: number }>;
   metricLabel?: string;
-}>(), { metricLabel: 'Metric' });
+}>();
 
 const { modelName } = useModels();
 const { t } = useI18n();
 const { formatNumber } = useFormat();
+const resolvedMetricLabel = computed(() => props.metricLabel ?? t('results.metric'));
 
 const sorted = computed(() => [...props.items].sort((a, b) => a.rank - b.rank));
 const maxValue = computed(() => Math.max(...props.items.map((i) => Math.abs(i.metric_value)), 1e-9));
