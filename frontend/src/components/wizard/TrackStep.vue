@@ -39,7 +39,7 @@ async function createTrack() {
   error.value = '';
   try {
     const result = await createRealDatasetTrack({
-      name: 'Real dataset track',
+      name: t('wizard.trackStep.generatedTrackName'),
       shard_ids: [wizardState.shardId],
       primary_metric_id: 'mase'
     });

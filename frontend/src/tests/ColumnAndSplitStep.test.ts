@@ -56,6 +56,21 @@ describe('ColumnAndSplitStep', () => {
     expect(loadJobBody.split_config.target_columns).toEqual(['target']);
   });
 
+  it('uses the active locale for the generated manifest name', async () => {
+    setLocale('zh-CN');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.update(screen.getByLabelText('目标'), 'target');
+    await fireEvent.click(screen.getByRole('button', { name: '加载分片' }));
+
+    await waitFor(() => expect(wizardState.shardId).toBe('s1'));
+    const manifestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    expect(manifestBody.name).toBe('已上传数据集');
+  });
+
   it('renders split labels and window status in Chinese', () => {
     setLocale('zh-CN');
 

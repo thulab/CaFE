@@ -256,9 +256,14 @@ const hoverHeading = computed(() => {
   return t(step >= histLen.value ? 'results.stepHorizon' : 'results.stepContext', { step });
 });
 
-const ariaLabel = computed(() =>
-  t('results.forecastAria', { history: histLen.value, truth: future.value.length, models: successfulModels.value.length })
-);
+const ariaLabel = computed(() => {
+  const models = successfulModels.value.length;
+  return t(models === 1 ? 'results.forecastAriaOne' : 'results.forecastAriaOther', {
+    history: histLen.value,
+    truth: future.value.length,
+    models,
+  });
+});
 
 function onMove(e: MouseEvent) {
   const el = svgEl.value;

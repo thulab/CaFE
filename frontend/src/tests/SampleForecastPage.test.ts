@@ -24,6 +24,7 @@ describe('SampleForecastPage', () => {
 
     // "Timer" appears both in the chart legend and the metric table.
     expect((await screen.findAllByText('Timer')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('img', { name: 'Forecast chart with 2 history steps, 2 ground-truth steps and 1 model forecast.' })).toBeTruthy();
     expect(screen.getByText('Ground truth')).toBeTruthy();
     expect(screen.getByText('History')).toBeTruthy();
     expect(screen.getByText('Chronos')).toBeTruthy();
