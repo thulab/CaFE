@@ -148,7 +148,7 @@ describe('App routes and artifact links', () => {
     wizardState.runId = 'run-1';
     wizardState.reportId = 'rep-1';
 
-    render(EvaluationWizardPage);
+    render(EvaluationWizardPage, { global: { plugins: [i18n] } });
 
     // The wizard keeps a persistent "Created artifacts" panel with deep links,
     // independent of which step is currently active.

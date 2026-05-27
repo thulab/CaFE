@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/vue';
+import { nextTick } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App.vue';
 import RunStep from '../components/wizard/RunStep.vue';
@@ -37,7 +38,19 @@ describe('frontend smoke flow', () => {
     expect(screen.getByRole('heading', { name: 'New evaluation' })).toBeTruthy();
     rendered.unmount();
 
-    render(RunStep);
+    render(RunStep, { global: { plugins: [i18n] } });
     expect(await screen.findByText('Timer 3.5')).toBeTruthy();
+  });
+
+  it('updates guided wizard step labels when switching to Chinese', async () => {
+    const rendered = render(App, { global: { plugins: [i18n] } });
+
+    expect(screen.getAllByText('Upload CSV').length).toBeGreaterThan(0);
+
+    setLocale('zh-CN');
+    await nextTick();
+
+    expect(screen.getAllByText('上传 CSV').length).toBeGreaterThan(0);
+    rendered.unmount();
   });
 });

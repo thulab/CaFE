@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import UploadStep from '../components/wizard/UploadStep.vue';
+import { i18n, setLocale } from '../i18n';
 import { resetWizard } from '../stores/wizard';
 
 describe('UploadStep', () => {
   beforeEach(() => {
     resetWizard();
+    setLocale('en-US');
     vi.restoreAllMocks();
   });
 
@@ -16,7 +18,7 @@ describe('UploadStep', () => {
       columns: [{ name: 'time' }, { name: 'target' }],
       preview_rows: [{ time: '2026-01-01', target: '1' }]
     }), { status: 200 }));
-    render(UploadStep);
+    render(UploadStep, { global: { plugins: [i18n] } });
 
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [new File(['x'], 'data.csv')] } });
@@ -28,7 +30,7 @@ describe('UploadStep', () => {
 
   it('displays API errors', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error_code: 'bad', message: 'Bad CSV', details: {} }), { status: 400 }));
-    render(UploadStep);
+    render(UploadStep, { global: { plugins: [i18n] } });
 
     await fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [new File(['x'], 'bad.csv')] } });
 

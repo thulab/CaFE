@@ -2,25 +2,25 @@
   <section class="step-body">
     <div class="grid-2">
       <div class="field">
-        <label class="label" for="time-column">Time column</label>
+        <label class="label" for="time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
         <select id="time-column" v-model="timeColumn">
           <option v-for="column in columns" :key="column" :value="column">{{ column }}</option>
         </select>
-        <p class="hint">The column that orders observations over time.</p>
+        <p class="hint">{{ t('wizard.columnAndSplitStep.timeColumnHint') }}</p>
       </div>
 
       <div class="field">
-        <label class="label" for="target-select">Target column</label>
-        <select id="target-select" v-model="target" aria-label="Target">
-          <option value="">— select target —</option>
+        <label class="label" for="target-select">{{ t('wizard.columnAndSplitStep.targetColumn') }}</label>
+        <select id="target-select" v-model="target" :aria-label="t('wizard.columnAndSplitStep.target')">
+          <option value="">{{ t('wizard.columnAndSplitStep.selectTarget') }}</option>
           <option v-for="column in valueColumns" :key="column" :value="column">{{ column }}</option>
         </select>
-        <p class="hint">Exactly one target from the checked value columns.</p>
+        <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
       </div>
     </div>
 
     <fieldset class="field" style="border:0;padding:0;margin:0">
-      <legend class="label" style="padding:0;margin-bottom:6px">Value columns</legend>
+      <legend class="label" style="padding:0;margin-bottom:6px">{{ t('wizard.columnAndSplitStep.valueColumns') }}</legend>
       <div class="choice-grid">
         <label v-for="column in nonTimeColumns" :key="column" class="choice">
           <input v-model="valueColumns" type="checkbox" :value="column" :aria-label="column" />
@@ -31,34 +31,34 @@
 
     <div class="grid-auto">
       <div class="field">
-        <label class="label">Context</label>
-        <input v-model.number="context" aria-label="Context" type="number" min="1" />
-        <p class="hint">Look-back window length.</p>
+        <label class="label">{{ t('wizard.columnAndSplitStep.context') }}</label>
+        <input v-model.number="context" :aria-label="t('wizard.columnAndSplitStep.context')" type="number" min="1" />
+        <p class="hint">{{ t('wizard.columnAndSplitStep.contextHint') }}</p>
       </div>
       <div class="field">
-        <label class="label">Horizon</label>
-        <input v-model.number="horizon" aria-label="Horizon" type="number" min="1" />
-        <p class="hint">Steps to forecast.</p>
+        <label class="label">{{ t('wizard.columnAndSplitStep.horizon') }}</label>
+        <input v-model.number="horizon" :aria-label="t('wizard.columnAndSplitStep.horizon')" type="number" min="1" />
+        <p class="hint">{{ t('wizard.columnAndSplitStep.horizonHint') }}</p>
       </div>
       <div class="field">
-        <label class="label">Stride</label>
-        <input v-model.number="stride" aria-label="Stride" type="number" min="1" />
-        <p class="hint">Gap between sample windows.</p>
+        <label class="label">{{ t('wizard.columnAndSplitStep.stride') }}</label>
+        <input v-model.number="stride" :aria-label="t('wizard.columnAndSplitStep.stride')" type="number" min="1" />
+        <p class="hint">{{ t('wizard.columnAndSplitStep.strideHint') }}</p>
       </div>
       <div class="field">
-        <label class="label">Max samples</label>
-        <input v-model.number="maxSamples" aria-label="Max samples" type="number" min="1" placeholder="No cap" />
-        <p class="hint">Optional cap on generated samples.</p>
+        <label class="label">{{ t('wizard.columnAndSplitStep.maxSamples') }}</label>
+        <input v-model.number="maxSamples" :aria-label="t('wizard.columnAndSplitStep.maxSamples')" type="number" min="1" :placeholder="t('wizard.columnAndSplitStep.noCap')" />
+        <p class="hint">{{ t('wizard.columnAndSplitStep.maxSamplesHint') }}</p>
       </div>
     </div>
 
     <p v-if="error" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ error }}</p>
-    <p v-if="wizardState.shardId" class="note-success"><Icon name="checkCircle" :size="16" />Shard ready — continue to confirm it.</p>
+    <p v-if="wizardState.shardId" class="note-success"><Icon name="checkCircle" :size="16" />{{ t('wizard.columnAndSplitStep.shardReady') }}</p>
 
     <div class="wizard-foot" style="padding:0;border:0">
-      <span class="status-line">Window: {{ context }} context → {{ horizon }} horizon, stride {{ stride }}.</span>
+      <span class="status-line">{{ t('wizard.columnAndSplitStep.windowStatus', { context, horizon, stride }) }}</span>
       <button class="btn" type="button" :disabled="busy" @click="load">
-        <span v-if="busy" class="spinner" /> {{ wizardState.shardId ? 'Re-load shard' : 'Load shard' }}
+        <span v-if="busy" class="spinner" /> {{ wizardState.shardId ? t('wizard.columnAndSplitStep.reloadShard') : t('wizard.columnAndSplitStep.loadShard') }}
       </button>
     </div>
   </section>
@@ -66,11 +66,14 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
 import { goNext, wizardState } from '../../stores/wizard';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
+import { displayError } from '../../lib/errors';
 
+const { t, te } = useI18n();
 const columns = computed(() => wizardState.preview?.columns.map((column) => column.name) || []);
 const timeColumn = ref('time');
 const nonTimeColumns = computed(() => columns.value.filter((c) => c !== timeColumn.value));
@@ -92,11 +95,11 @@ watch(nonTimeColumns, (cols) => {
 
 async function load() {
   if (!target.value || !valueColumns.value.includes(target.value)) {
-    error.value = 'Select exactly one target';
+    error.value = t('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
     return;
   }
   if (context.value <= 0 || horizon.value <= 0 || stride.value <= 0) {
-    error.value = 'Split values must be positive';
+    error.value = t('wizard.columnAndSplitStep.errors.positiveSplitValues');
     return;
   }
   busy.value = true;
@@ -127,7 +130,7 @@ async function load() {
     error.value = '';
     goNext();
   } catch (caught) {
-    error.value = caught instanceof Error ? caught.message : 'Load failed';
+    error.value = displayError(caught, t, te, 'wizard.columnAndSplitStep.errors.loadFailed');
   } finally {
     busy.value = false;
   }

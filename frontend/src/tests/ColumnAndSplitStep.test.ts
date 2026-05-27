@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import ColumnAndSplitStep from '../components/wizard/ColumnAndSplitStep.vue';
+import { i18n, setLocale } from '../i18n';
 import { resetWizard, wizardState } from '../stores/wizard';
 
 describe('ColumnAndSplitStep', () => {
   beforeEach(() => {
     resetWizard();
+    setLocale('en-US');
     wizardState.preview = {
       upload_id: 'u1',
       source_uri: '/tmp/data.csv',
@@ -17,7 +19,7 @@ describe('ColumnAndSplitStep', () => {
   });
 
   it('enforces single target and positive split values', async () => {
-    render(ColumnAndSplitStep);
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     // Value columns default all checked; context=0 triggers split validation
     await fireEvent.update(screen.getByLabelText('Context'), '0');
@@ -31,7 +33,7 @@ describe('ColumnAndSplitStep', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
-    render(ColumnAndSplitStep);
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     // Select a target from the single-select dropdown
     const targetSelect = screen.getByLabelText('Target');

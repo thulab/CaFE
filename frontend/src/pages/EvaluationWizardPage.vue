@@ -2,16 +2,15 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Guided workflow</p>
-        <h1>New evaluation</h1>
+        <p class="eyebrow">{{ t('wizard.eyebrow') }}</p>
+        <h1>{{ t('wizard.title') }}</h1>
         <p class="page-sub">
-          Take a time-series CSV from upload to a published benchmark report — configure the split,
-          materialize an evaluation shard, run model adapters, and review results.
+          {{ t('wizard.subtitle') }}
         </p>
       </div>
       <div class="head-actions">
         <button class="btn ghost sm" type="button" @click="onReset">
-          <Icon name="refresh" :size="15" /> Reset
+          <Icon name="refresh" :size="15" /> {{ t('common.reset') }}
         </button>
       </div>
     </header>
@@ -19,7 +18,7 @@
     <div class="wizard-layout">
       <aside class="wizard-aside">
         <div class="card pad">
-          <p class="nav-group-label" style="margin:0 0 8px">Progress · {{ completedCount }}/{{ steps.length }}</p>
+          <p class="nav-group-label" style="margin:0 0 8px">{{ t('wizard.progress', { done: completedCount, total: steps.length }) }}</p>
           <div class="progress" style="margin-bottom:14px"><span :style="{ width: progressPct + '%' }" /></div>
           <ol class="stepper">
             <li
@@ -42,7 +41,7 @@
         </div>
 
         <div v-if="artifacts.length" class="card pad">
-          <p class="nav-group-label" style="margin:0 0 10px">Created artifacts</p>
+          <p class="nav-group-label" style="margin:0 0 10px">{{ t('artifacts.createdArtifacts') }}</p>
           <ul class="artifact-list">
             <li v-for="art in artifacts" :key="art.name">
               <a :href="art.href">
@@ -63,14 +62,14 @@
             <h2 class="step-title">{{ active.title }}</h2>
             <p class="step-desc">{{ active.description }}</p>
           </div>
-          <StatusBadge :status="active.complete ? 'complete' : 'pending'" :label="active.complete ? 'Done' : 'In progress'" />
+          <StatusBadge :status="active.complete ? 'complete' : 'pending'" :label="active.complete ? t('common.done') : t('common.inProgress')" />
         </header>
 
         <component :is="active.component" />
 
         <footer class="wizard-foot">
           <button class="btn secondary" type="button" :disabled="current === 0" @click="goPrev">
-            <Icon name="chevronLeft" :size="16" /> Back
+            <Icon name="chevronLeft" :size="16" /> {{ t('common.back') }}
           </button>
           <p class="status-line">{{ footHint }}</p>
         </footer>
@@ -81,6 +80,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import UploadStep from '../components/wizard/UploadStep.vue';
@@ -91,23 +91,25 @@ import RunStep from '../components/wizard/RunStep.vue';
 import ResultStep from '../components/wizard/ResultStep.vue';
 import { goPrev, goToStep, resetWizard, wizardState } from '../stores/wizard';
 
-const stepDefs = [
-  { title: 'Upload CSV', kicker: 'Data source', description: 'Pick a local CSV and inspect detected columns before configuring a benchmark.', component: UploadStep, complete: () => Boolean(wizardState.preview) },
-  { title: 'Configure split', kicker: 'Dataset manifest', description: 'Choose the time and target columns, then set context, horizon, and stride.', component: ColumnAndSplitStep, complete: () => Boolean(wizardState.shardId) },
-  { title: 'Confirm shard', kicker: 'Sample load', description: 'Review the materialized shard so the run starts from a known evaluation set.', component: LoadShardStep, complete: () => Boolean(wizardState.shardId) },
-  { title: 'Create track', kicker: 'Benchmark target', description: 'Bind the shard to a real-dataset track with MASE as the primary metric.', component: TrackStep, complete: () => Boolean(wizardState.trackId) },
-  { title: 'Run models', kicker: 'Execution', description: 'Select model adapters and start the run; progress updates until completion.', component: RunStep, complete: () => Boolean(wizardState.reportId) },
-  { title: 'Open report', kicker: 'Results', description: 'Jump into the generated report once the run publishes its identifier.', component: ResultStep, complete: () => Boolean(wizardState.reportId) }
-];
+const { t } = useI18n();
+
+const stepDefs = computed(() => [
+  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, complete: () => Boolean(wizardState.preview) },
+  { title: t('wizard.steps.configureSplit.title'), kicker: t('wizard.steps.configureSplit.kicker'), description: t('wizard.steps.configureSplit.description'), component: ColumnAndSplitStep, complete: () => Boolean(wizardState.shardId) },
+  { title: t('wizard.steps.confirmShard.title'), kicker: t('wizard.steps.confirmShard.kicker'), description: t('wizard.steps.confirmShard.description'), component: LoadShardStep, complete: () => Boolean(wizardState.shardId) },
+  { title: t('wizard.steps.createTrack.title'), kicker: t('wizard.steps.createTrack.kicker'), description: t('wizard.steps.createTrack.description'), component: TrackStep, complete: () => Boolean(wizardState.trackId) },
+  { title: t('wizard.steps.runModels.title'), kicker: t('wizard.steps.runModels.kicker'), description: t('wizard.steps.runModels.description'), component: RunStep, complete: () => Boolean(wizardState.reportId) },
+  { title: t('wizard.steps.openReport.title'), kicker: t('wizard.steps.openReport.kicker'), description: t('wizard.steps.openReport.description'), component: ResultStep, complete: () => Boolean(wizardState.reportId) }
+]);
 
 const current = computed(() => wizardState.step);
 
 const steps = computed(() => {
-  const flags = stepDefs.map((s) => s.complete());
-  return stepDefs.map((s, i) => {
+  const flags = stepDefs.value.map((s) => s.complete());
+  return stepDefs.value.map((s, i) => {
     const complete = flags[i];
     const reachable = i === 0 || flags[i - 1];
-    const stateLabel = complete ? 'Done' : i === current.value ? 'Current' : reachable ? 'Ready' : 'Locked';
+    const stateLabel = complete ? t('common.done') : i === current.value ? t('common.current') : reachable ? t('common.ready') : t('common.locked');
     return { ...s, complete, reachable, stateLabel };
   });
 });
@@ -117,18 +119,18 @@ const completedCount = computed(() => steps.value.filter((s) => s.complete).leng
 const progressPct = computed(() => Math.round((completedCount.value / steps.value.length) * 100));
 
 const footHint = computed(() => {
-  if (active.value.complete) return 'Step complete — pick the next step on the left.';
-  return 'Finish this step to unlock the next one.';
+  if (active.value.complete) return t('wizard.footComplete');
+  return t('wizard.footIncomplete');
 });
 
 const artifacts = computed(() => {
   const out: Array<{ name: string; href: string; icon: string }> = [];
-  if (wizardState.manifestId) out.push({ name: 'Dataset manifest', href: `#/datasets/${wizardState.manifestId}`, icon: 'database' });
-  if (wizardState.loadJobId) out.push({ name: 'Load job', href: `#/load-jobs/${wizardState.loadJobId}`, icon: 'file' });
-  if (wizardState.shardId) out.push({ name: 'Shard', href: `#/shards/${wizardState.shardId}`, icon: 'layers' });
-  if (wizardState.trackId) out.push({ name: 'Track', href: `#/tracks/${wizardState.trackId}`, icon: 'target' });
-  if (wizardState.runId) out.push({ name: 'Run', href: `#/runs/${wizardState.runId}`, icon: 'activity' });
-  if (wizardState.reportId) out.push({ name: 'Report', href: `#/reports/${wizardState.reportId}`, icon: 'barChart' });
+  if (wizardState.manifestId) out.push({ name: t('artifacts.datasetManifest'), href: `#/datasets/${wizardState.manifestId}`, icon: 'database' });
+  if (wizardState.loadJobId) out.push({ name: t('artifacts.loadJob'), href: `#/load-jobs/${wizardState.loadJobId}`, icon: 'file' });
+  if (wizardState.shardId) out.push({ name: t('artifacts.shard'), href: `#/shards/${wizardState.shardId}`, icon: 'layers' });
+  if (wizardState.trackId) out.push({ name: t('artifacts.track'), href: `#/tracks/${wizardState.trackId}`, icon: 'target' });
+  if (wizardState.runId) out.push({ name: t('artifacts.run'), href: `#/runs/${wizardState.runId}`, icon: 'activity' });
+  if (wizardState.reportId) out.push({ name: t('artifacts.report'), href: `#/reports/${wizardState.reportId}`, icon: 'barChart' });
   return out;
 });
 

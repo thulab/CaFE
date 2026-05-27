@@ -1,11 +1,13 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import RunStep from '../components/wizard/RunStep.vue';
+import { i18n, setLocale } from '../i18n';
 import { resetWizard, wizardState } from '../stores/wizard';
 
 describe('RunStep', () => {
   beforeEach(() => {
     resetWizard();
+    setLocale('en-US');
     wizardState.trackId = 'track-1';
     vi.useFakeTimers();
     vi.restoreAllMocks();
@@ -13,7 +15,7 @@ describe('RunStep', () => {
 
   it('requires at least one selected model', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [{ model_id: 'm1', name: 'Timer 3.5', adapter_type: 'timer_service' }] }), { status: 200 }));
-    render(RunStep);
+    render(RunStep, { global: { plugins: [i18n] } });
 
     await screen.findByText('Timer 3.5');
     expect((screen.getByRole('button', { name: 'Run' }) as HTMLButtonElement).disabled).toBe(true);
@@ -33,7 +35,7 @@ describe('RunStep', () => {
       }
       return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
     });
-    render(RunStep);
+    render(RunStep, { global: { plugins: [i18n] } });
 
     await fireEvent.click(await screen.findByLabelText('Timer 3.5'));
     await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
@@ -59,7 +61,7 @@ describe('RunStep', () => {
       }
       return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
     });
-    render(RunStep);
+    render(RunStep, { global: { plugins: [i18n] } });
 
     await fireEvent.click(await screen.findByLabelText('Timer 3.0'));
     await fireEvent.click(screen.getByRole('button', { name: 'Run' }));

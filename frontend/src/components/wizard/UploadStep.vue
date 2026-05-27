@@ -10,27 +10,27 @@
     >
       <Icon class="dz-icon" name="upload" :size="28" />
       <div>
-        <strong>{{ fileName || 'Drop a CSV here or browse' }}</strong>
-        <p class="field-help" style="margin-top:4px">One time column and at least one numeric target column.</p>
+        <strong>{{ fileName || t('wizard.uploadStep.dropOrBrowse') }}</strong>
+        <p class="field-help" style="margin-top:4px">{{ t('wizard.uploadStep.help') }}</p>
       </div>
-      <input id="csv-file" aria-label="CSV file" type="file" accept=".csv,text/csv" style="display:none" @change="onChange" />
+      <input id="csv-file" :aria-label="t('wizard.uploadStep.csvFile')" type="file" accept=".csv,text/csv" style="display:none" @change="onChange" />
       <span class="btn secondary sm" style="justify-self:center;pointer-events:none">
-        <Icon name="file" :size="15" /> Choose file
+        <Icon name="file" :size="15" /> {{ t('wizard.uploadStep.chooseFile') }}
       </span>
     </label>
 
-    <p v-if="uploading" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />Parsing CSV…</p>
+    <p v-if="uploading" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.uploadStep.parsingCsv') }}</p>
     <p v-if="wizardState.error" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ wizardState.error }}</p>
 
     <div v-if="preview" class="stack">
       <div class="pill-row">
-        <span class="badge primary"><Icon name="table" :size="13" />{{ preview.columns.length }} columns</span>
-        <span class="badge"><Icon name="list" :size="13" />{{ preview.preview_rows.length }} preview rows</span>
-        <span v-if="preview.detected_delimiter" class="badge">Delimiter “{{ preview.detected_delimiter }}”</span>
+        <span class="badge primary"><Icon name="table" :size="13" />{{ t('wizard.uploadStep.columns', { count: preview.columns.length }) }}</span>
+        <span class="badge"><Icon name="list" :size="13" />{{ t('wizard.uploadStep.previewRows', { count: preview.preview_rows.length }) }}</span>
+        <span v-if="preview.detected_delimiter" class="badge">{{ t('wizard.uploadStep.delimiter', { delimiter: preview.detected_delimiter }) }}</span>
       </div>
       <div class="table-wrap">
         <table class="data">
-          <caption>Preview from {{ preview.filename || 'uploaded CSV' }}</caption>
+          <caption>{{ t('wizard.uploadStep.previewFrom', { filename: preview.filename || t('wizard.uploadStep.uploadedCsv') }) }}</caption>
           <thead>
             <tr>
               <th v-for="col in preview.columns" :key="col.name">
@@ -49,9 +49,9 @@
     </div>
 
     <div class="wizard-foot" style="padding:0;border:0">
-      <span class="status-line">{{ preview ? 'Preview loaded — continue to configure the split.' : 'Waiting for a CSV.' }}</span>
+      <span class="status-line">{{ preview ? t('wizard.uploadStep.previewLoaded') : t('wizard.uploadStep.waitingForCsv') }}</span>
       <button class="btn" type="button" :disabled="!preview" @click="goNext">
-        Next <Icon name="arrowRight" :size="16" />
+        {{ t('wizard.uploadStep.next') }} <Icon name="arrowRight" :size="16" />
       </button>
     </div>
   </section>
@@ -59,10 +59,13 @@
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { uploadDataset } from '../../api/datasets';
 import { goNext, wizardState } from '../../stores/wizard';
+import { displayError } from '../../lib/errors';
 
+const { t, te } = useI18n();
 const dragging = ref(false);
 const uploading = ref(false);
 const fileName = ref('');
@@ -87,7 +90,7 @@ async function handle(file?: File) {
     wizardState.sourceUri = wizardState.preview.source_uri;
     wizardState.error = '';
   } catch (error) {
-    wizardState.error = error instanceof Error ? error.message : 'Upload failed';
+    wizardState.error = displayError(error, t, te, 'wizard.uploadStep.errors.uploadFailed');
   } finally {
     uploading.value = false;
   }
