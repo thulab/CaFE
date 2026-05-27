@@ -5,7 +5,7 @@
         <span class="brand-mark"><Icon name="gauge" :size="20" /></span>
         <span>
           <span class="brand-name">TSBenchmark</span>
-          <span class="brand-sub">Workbench</span>
+          <span class="brand-sub">{{ t('common.workbench') }}</span>
         </span>
       </a>
 

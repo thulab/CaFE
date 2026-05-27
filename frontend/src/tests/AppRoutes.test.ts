@@ -177,6 +177,7 @@ describe('App routes and artifact links', () => {
     await fireEvent.click(zhButton);
 
     expect((await screen.findAllByText('排行榜')).length).toBeGreaterThan(0);
+    expect(screen.getByText('工作台')).toBeTruthy();
     expect(screen.getByLabelText('面包屑导航')).toBeTruthy();
     expect(within(breadcrumb).getByText('赛道 · 排行榜')).toBeTruthy();
     expect(window.location.hash).toBe('#/tracks/track-1/ranking');

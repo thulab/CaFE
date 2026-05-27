@@ -1,6 +1,7 @@
 const zhCN = {
   common: {
     appName: 'TSBenchmark',
+    workbench: '工作台',
     loading: '加载中...',
     retry: '重试',
     cancel: '取消',

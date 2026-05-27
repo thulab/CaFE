@@ -1,6 +1,7 @@
 const enUS = {
   common: {
     appName: 'TSBenchmark',
+    workbench: 'Workbench',
     loading: 'Loading...',
     retry: 'Try again',
     cancel: 'Cancel',
