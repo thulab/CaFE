@@ -259,7 +259,7 @@ const zhCN = {
       report: '报告',
     },
     steps: {
-      upload: { title: '上传并配置', desc: '选择 CSV、目标列，并设置 context/horizon 切分。' },
+      upload: { title: '上传并配置', desc: '选择 CSV、目标列，并设置上下文窗口/预测步长切分。' },
       shard: { title: '物化分片', desc: '生成确定性的预测样本评测集。' },
       run: { title: '运行模型适配器', desc: '将分片绑定到赛道，并执行已选择的模型。' },
       review: { title: '查看结果', desc: '比较排名指标，并检查逐样本预测。' },
