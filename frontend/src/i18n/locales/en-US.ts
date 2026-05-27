@@ -85,6 +85,7 @@ const enUS = {
     failedToLoadActivity: 'Failed to load activity',
     failedToLoadDatasets: 'Failed to load datasets',
     failedToLoadRuns: 'Failed to load runs',
+    failedToLoadRunProgress: 'Failed to load run progress',
   },
   artifacts: {
     datasetManifest: 'Dataset manifest',
@@ -277,6 +278,10 @@ const enUS = {
     detail: 'Detail',
     created: 'Created',
     rows: '{count} rows',
+    kind: {
+      dataset: 'Dataset',
+      shard: 'Shard',
+    },
   },
   runs: {
     eyebrow: 'Workspace',
@@ -288,6 +293,28 @@ const enUS = {
     run: 'Run',
     lastStatus: 'Last status',
     created: 'Created',
+    detail: {
+      eyebrow: 'Evaluation',
+      title: 'Benchmarking run',
+      subtitle: 'Live execution progress, unit and task status, recent events, and report links.',
+      cancelling: 'Cancelling...',
+      openReport: 'Open report',
+      models: 'Models',
+      tasks: 'Tasks',
+      samples: 'Samples',
+      failedSamples: 'Failed samples',
+      acrossAllModels: 'across all models',
+      units: 'Units',
+      unit: 'Unit',
+      model: 'Model',
+      status: 'Status',
+      noUnits: 'No units yet.',
+      capability: 'Capability',
+      task: 'Task',
+      noTasks: 'No tasks yet.',
+      recentEvents: 'Recent events',
+      noEvents: 'No events recorded.',
+    },
   },
 };
 

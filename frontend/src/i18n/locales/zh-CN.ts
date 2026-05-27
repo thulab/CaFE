@@ -85,6 +85,7 @@ const zhCN = {
     failedToLoadActivity: '加载最近活动失败',
     failedToLoadDatasets: '加载数据集失败',
     failedToLoadRuns: '加载运行失败',
+    failedToLoadRunProgress: '加载运行进度失败',
   },
   artifacts: {
     datasetManifest: '数据集清单',
@@ -277,6 +278,10 @@ const zhCN = {
     detail: '详情',
     created: '创建时间',
     rows: '{count} 行',
+    kind: {
+      dataset: '数据集',
+      shard: '分片',
+    },
   },
   runs: {
     eyebrow: '工作区',
@@ -288,6 +293,28 @@ const zhCN = {
     run: '运行',
     lastStatus: '最新状态',
     created: '创建时间',
+    detail: {
+      eyebrow: '评测',
+      title: '评测运行',
+      subtitle: '查看实时执行进度、单元与任务状态、最近事件和报告链接。',
+      cancelling: '正在取消...',
+      openReport: '打开报告',
+      models: '模型',
+      tasks: '任务',
+      samples: '样本',
+      failedSamples: '失败样本',
+      acrossAllModels: '覆盖全部模型',
+      units: '单元',
+      unit: '单元',
+      model: '模型',
+      status: '状态',
+      noUnits: '暂无单元。',
+      capability: '能力',
+      task: '任务',
+      noTasks: '暂无任务。',
+      recentEvents: '最近事件',
+      noEvents: '暂无事件记录。',
+    },
   },
 };
 

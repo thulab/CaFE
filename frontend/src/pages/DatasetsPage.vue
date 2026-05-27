@@ -2,12 +2,12 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Workspace</p>
-        <h1>Datasets</h1>
-        <p class="page-sub">Dataset manifests and evaluation shards stored in this workspace.</p>
+        <p class="eyebrow">{{ t('nav.workspace') }}</p>
+        <h1>{{ t('datasets.title') }}</h1>
+        <p class="page-sub">{{ t('datasets.subtitle') }}</p>
       </div>
       <div class="head-actions">
-        <a class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> New evaluation</a>
+        <a class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> {{ t('nav.newEvaluation') }}</a>
       </div>
     </header>
 
@@ -17,16 +17,16 @@
         :error="error || ''"
         :empty="!loading && !error && items.length === 0"
         empty-icon="database"
-        empty-title="No datasets yet"
-        empty-desc="Upload a CSV in a new evaluation to create your first dataset manifest and shard."
+        :empty-title="t('datasets.noDatasets')"
+        :empty-desc="t('datasets.noDatasetsDesc')"
         @retry="load"
       >
         <template #empty-action>
-          <a class="btn sm" href="#/new"><Icon name="upload" :size="15" /> Upload a CSV</a>
+          <a class="btn sm" href="#/new"><Icon name="upload" :size="15" /> {{ t('datasets.uploadCsv') }}</a>
         </template>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>Artifact</th><th>Type</th><th>Detail</th><th>Created</th></tr></thead>
+            <thead><tr><th>{{ t('datasets.artifact') }}</th><th>{{ t('datasets.type') }}</th><th>{{ t('datasets.detail') }}</th><th>{{ t('datasets.created') }}</th></tr></thead>
             <tbody>
               <tr v-for="item in items" :key="`${item.kind}-${item.id}`">
                 <td>
@@ -35,9 +35,9 @@
                   </a>
                   <div class="faint mono" style="font-size:0.74rem">{{ shortId(item.id) }}</div>
                 </td>
-                <td><span class="badge" :class="item.kind === 'shard' ? 'primary' : ''">{{ humanize(item.kind) }}</span></td>
-                <td class="muted">{{ item.subtitle || '—' }}</td>
-                <td class="muted nowrap" :title="item.createdAt ? formatDateTime(item.createdAt) : ''">{{ item.createdAt ? timeAgo(item.createdAt) : '—' }}</td>
+                <td><span class="badge" :class="item.kind === 'shard' ? 'primary' : ''">{{ t(`datasets.kind.${item.kind}`) }}</span></td>
+                <td class="muted">{{ item.subtitle || t('common.notAvailable') }}</td>
+                <td class="muted nowrap" :title="item.createdAt ? formatDateTime(item.createdAt) : ''">{{ item.createdAt ? timeAgo(item.createdAt) : t('common.notAvailable') }}</td>
               </tr>
             </tbody>
           </table>
@@ -52,7 +52,10 @@ import { onMounted, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import { listDatasetManifests, listShards } from '../api/datasets';
-import { formatDateTime, humanize, shortId, timeAgo } from '../lib/format';
+import { useFormat } from '../composables/useFormat';
+import { displayError } from '../lib/errors';
+import { shortId } from '../lib/format';
+import { useI18n } from 'vue-i18n';
 
 type Kind = 'dataset' | 'shard';
 interface Row {
@@ -67,13 +70,15 @@ interface Row {
 const items = ref<Row[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
+const { t, te } = useI18n();
+const { formatDateTime, formatInt, timeAgo } = useFormat();
 
 const ICONS: Record<Kind, string> = { dataset: 'database', shard: 'layers' };
 const kindIcon = (k: Kind) => ICONS[k] || 'file';
 
 function shardSubtitle(targetColumns: string[], rowCount: number): string {
-  const cols = targetColumns.length ? targetColumns.join(', ') : 'shard';
-  return rowCount ? `${cols} · ${rowCount} rows` : cols;
+  const cols = targetColumns.length ? targetColumns.join(', ') : t('artifacts.shard');
+  return rowCount ? `${cols} · ${t('datasets.rows', { count: formatInt(rowCount) })}` : cols;
 }
 
 async function load() {
@@ -99,7 +104,7 @@ async function load() {
       rows.push({
         kind: 'shard',
         id: s.shard_id,
-        title: `Shard · ${s.target_columns?.[0] ?? 'target'}`,
+        title: t('artifacts.shardTitle', { target: s.target_columns?.[0] ?? 'target' }),
         subtitle: shardSubtitle(s.target_columns ?? [], s.row_count ?? 0),
         href: `#/shards/${s.shard_id}`,
         createdAt: s.created_at
@@ -108,7 +113,7 @@ async function load() {
     rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
     items.value = rows;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load datasets';
+    error.value = displayError(e, t, te, 'errors.failedToLoadDatasets');
     items.value = [];
   } finally {
     loading.value = false;

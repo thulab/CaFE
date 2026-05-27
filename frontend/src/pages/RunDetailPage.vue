@@ -2,15 +2,15 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Evaluation</p>
-        <h1>Benchmarking run</h1>
-        <p class="page-sub">Live execution progress, unit and task status, recent events, and report links.</p>
+        <p class="eyebrow">{{ t('runs.detail.eyebrow') }}</p>
+        <h1>{{ t('runs.detail.title') }}</h1>
+        <p class="page-sub">{{ t('runs.detail.subtitle') }}</p>
       </div>
       <div class="head-actions">
         <StatusBadge v-if="progress" :status="progress.status" big />
-        <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> Cancel</button>
-        <button v-else-if="isCancelling" class="btn sm" type="button" disabled><Icon name="ban" :size="15" /> Cancelling…</button>
-        <a v-if="progress?.report_id" class="btn" :href="`#/reports/${progress.report_id}`"><Icon name="barChart" :size="16" /> Open report</a>
+        <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>
+        <button v-else-if="isCancelling" class="btn sm" type="button" disabled><Icon name="ban" :size="15" /> {{ t('runs.detail.cancelling') }}</button>
+        <a v-if="progress?.report_id" class="btn" :href="`#/reports/${progress.report_id}`"><Icon name="barChart" :size="16" /> {{ t('runs.detail.openReport') }}</a>
       </div>
     </header>
 
@@ -18,41 +18,41 @@
       <section v-if="progress" class="stack">
         <div class="grid-auto">
           <div class="stat-tile">
-            <span class="stat-label">Models</span>
-            <span class="stat-value">{{ p.completed_models ?? 0 }}<span class="faint" style="font-size:1rem"> / {{ p.total_models ?? 0 }}</span></span>
+            <span class="stat-label">{{ t('runs.detail.models') }}</span>
+            <span class="stat-value">{{ formatInt(p.completed_models ?? 0) }}<span class="faint" style="font-size:1rem"> / {{ formatInt(p.total_models ?? 0) }}</span></span>
             <div class="progress" style="margin-top:8px"><span :style="{ width: pct(p.completed_models, p.total_models) + '%' }" /></div>
           </div>
           <div class="stat-tile">
-            <span class="stat-label">Tasks</span>
-            <span class="stat-value">{{ p.completed_tasks ?? 0 }}<span class="faint" style="font-size:1rem"> / {{ p.total_tasks ?? 0 }}</span></span>
+            <span class="stat-label">{{ t('runs.detail.tasks') }}</span>
+            <span class="stat-value">{{ formatInt(p.completed_tasks ?? 0) }}<span class="faint" style="font-size:1rem"> / {{ formatInt(p.total_tasks ?? 0) }}</span></span>
             <div class="progress" style="margin-top:8px"><span :style="{ width: pct(p.completed_tasks, p.total_tasks) + '%' }" /></div>
           </div>
           <div class="stat-tile">
-            <span class="stat-label">Samples</span>
-            <span class="stat-value">{{ p.completed_samples ?? 0 }}<span class="faint" style="font-size:1rem"> / {{ p.total_samples ?? 0 }}</span></span>
+            <span class="stat-label">{{ t('runs.detail.samples') }}</span>
+            <span class="stat-value">{{ formatInt(p.completed_samples ?? 0) }}<span class="faint" style="font-size:1rem"> / {{ formatInt(p.total_samples ?? 0) }}</span></span>
             <div class="progress" style="margin-top:8px"><span :style="{ width: pct(p.completed_samples, p.total_samples) + '%' }" /></div>
           </div>
           <div class="stat-tile">
-            <span class="stat-label">Failed samples</span>
-            <span class="stat-value" :style="(p.failed_samples ?? 0) > 0 ? 'color:var(--danger-text)' : ''">{{ p.failed_samples ?? 0 }}</span>
-            <span class="stat-foot">across all models</span>
+            <span class="stat-label">{{ t('runs.detail.failedSamples') }}</span>
+            <span class="stat-value" :style="(p.failed_samples ?? 0) > 0 ? 'color:var(--danger-text)' : ''">{{ formatInt(p.failed_samples ?? 0) }}</span>
+            <span class="stat-foot">{{ t('runs.detail.acrossAllModels') }}</span>
           </div>
         </div>
 
         <article class="card">
-          <header class="card-head"><h2 class="card-title">Units</h2><span class="badge">{{ progress.units.length }}</span></header>
+          <header class="card-head"><h2 class="card-title">{{ t('runs.detail.units') }}</h2><span class="badge">{{ formatInt(progress.units.length) }}</span></header>
           <div class="card-body">
             <div class="table-wrap">
               <table class="data">
-                <thead><tr><th>Model</th><th>Status</th><th class="num">Tasks</th><th>Unit</th></tr></thead>
+                <thead><tr><th>{{ t('runs.detail.model') }}</th><th>{{ t('runs.detail.status') }}</th><th class="num">{{ t('runs.detail.tasks') }}</th><th>{{ t('runs.detail.unit') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="unit in progress.units" :key="String(unit.unit_id)">
                     <td style="font-weight:600">{{ unit.model_name || unit.model_id }}</td>
                     <td><StatusBadge :status="String(unit.status)" /></td>
-                    <td class="num">{{ unit.completed_task_count ?? 0 }} / {{ unit.task_count ?? 0 }}</td>
+                    <td class="num">{{ formatInt(unit.completed_task_count ?? 0) }} / {{ formatInt(unit.task_count ?? 0) }}</td>
                     <td class="mono faint">{{ shortId(String(unit.unit_id)) }}</td>
                   </tr>
-                  <tr v-if="!progress.units.length"><td colspan="4" class="empty-state">No units yet.</td></tr>
+                  <tr v-if="!progress.units.length"><td colspan="4" class="empty-state">{{ t('runs.detail.noUnits') }}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -60,19 +60,19 @@
         </article>
 
         <article class="card">
-          <header class="card-head"><h2 class="card-title">Tasks</h2><span class="badge">{{ progress.tasks.length }}</span></header>
+          <header class="card-head"><h2 class="card-title">{{ t('runs.detail.tasks') }}</h2><span class="badge">{{ formatInt(progress.tasks.length) }}</span></header>
           <div class="card-body">
             <div class="table-wrap">
               <table class="data">
-                <thead><tr><th>Capability</th><th>Status</th><th class="num">Samples</th><th>Task</th></tr></thead>
+                <thead><tr><th>{{ t('runs.detail.capability') }}</th><th>{{ t('runs.detail.status') }}</th><th class="num">{{ t('runs.detail.samples') }}</th><th>{{ t('runs.detail.task') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="task in progress.tasks" :key="String(task.task_id)">
                     <td>{{ task.capability_block_name || task.capability_block_id }}</td>
                     <td><StatusBadge :status="String(task.status)" /></td>
-                    <td class="num">{{ task.completed_sample_count ?? 0 }} / {{ task.sample_count ?? 0 }}</td>
+                    <td class="num">{{ formatInt(task.completed_sample_count ?? 0) }} / {{ formatInt(task.sample_count ?? 0) }}</td>
                     <td class="mono faint">{{ shortId(String(task.task_id)) }}</td>
                   </tr>
-                  <tr v-if="!progress.tasks.length"><td colspan="4" class="empty-state">No tasks yet.</td></tr>
+                  <tr v-if="!progress.tasks.length"><td colspan="4" class="empty-state">{{ t('runs.detail.noTasks') }}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -80,7 +80,7 @@
         </article>
 
         <article class="card">
-          <header class="card-head"><h2 class="card-title">Recent events</h2></header>
+          <header class="card-head"><h2 class="card-title">{{ t('runs.detail.recentEvents') }}</h2></header>
           <div class="card-body">
             <ul v-if="progress.recent_events.length" class="timeline">
               <li v-for="(event, i) in progress.recent_events" :key="`${event.created_at}-${i}`">
@@ -89,7 +89,7 @@
                 <time :datetime="event.created_at" :title="formatDateTime(event.created_at)">{{ timeAgo(event.created_at) }}</time>
               </li>
             </ul>
-            <p v-else class="empty-state">No events recorded.</p>
+            <p v-else class="empty-state">{{ t('runs.detail.noEvents') }}</p>
           </div>
         </article>
       </section>
@@ -105,7 +105,10 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import { ApiError } from '../api/client';
 import { cancelRun, getRunProgress } from '../api/runs';
 import type { RunProgressDTO } from '../api/types';
-import { formatDateTime, percent, shortId, timeAgo } from '../lib/format';
+import { useFormat } from '../composables/useFormat';
+import { displayError } from '../lib/errors';
+import { percent, shortId } from '../lib/format';
+import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{ runId: string }>();
 const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
@@ -114,6 +117,8 @@ const progress = ref<RunProgressDTO | null>(null);
 const loading = ref(true);
 const error = ref<string | null>(null);
 let timer: ReturnType<typeof setInterval> | undefined;
+const { t, te } = useI18n();
+const { formatDateTime, formatInt, timeAgo } = useFormat();
 
 const p = computed(() => progress.value?.progress ?? {});
 // 仍需轮询：非终态都要继续刷（含 cancel_requested → cancelled 的过渡）。
@@ -133,7 +138,7 @@ async function load() {
     if (isPolling.value && !timer) timer = setInterval(load, 4000);
     if (!isPolling.value) stopPolling();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load run progress';
+    error.value = displayError(e, t, te, 'errors.failedToLoadRunProgress');
     stopPolling();
   } finally {
     loading.value = false;
@@ -150,7 +155,7 @@ async function onCancel() {
       await load();
       return;
     }
-    error.value = e instanceof Error ? e.message : 'Failed to cancel run';
+    error.value = displayError(e, t, te, 'errors.failedToCancelRun');
   }
 }
 
