@@ -29,7 +29,7 @@
 
         <template v-if="adminItems.length">
           <p class="nav-group-label" style="margin-top:18px">{{ t('nav.administration') }}</p>
-          <nav aria-label="Administration">
+          <nav :aria-label="t('nav.administration')">
             <a
               v-for="item in adminItems"
               :key="item.key"
@@ -48,7 +48,7 @@
 
       <template v-else>
         <p class="nav-group-label">{{ t('nav.public') }}</p>
-        <nav aria-label="Public">
+        <nav :aria-label="t('nav.public')">
           <a class="nav-link" :class="{ 'is-active': route.navKey === 'leaderboards' }" href="#/leaderboards" @click="closeNav">
             <Icon class="nav-ico" name="trophy" :size="18" />
             <span>{{ t('nav.leaderboards') }}</span>
