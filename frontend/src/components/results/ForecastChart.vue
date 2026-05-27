@@ -258,10 +258,11 @@ const hoverHeading = computed(() => {
 
 const ariaLabel = computed(() => {
   const models = successfulModels.value.length;
-  return t(models === 1 ? 'results.forecastAriaOne' : 'results.forecastAriaOther', {
-    history: histLen.value,
-    truth: future.value.length,
-    models,
+  const truth = future.value.length;
+  return t('results.forecastAria', {
+    history: t(histLen.value === 1 ? 'results.forecastAriaHistoryOne' : 'results.forecastAriaHistoryOther', { count: histLen.value }),
+    truth: t(truth === 1 ? 'results.forecastAriaTruthOne' : 'results.forecastAriaTruthOther', { count: truth }),
+    models: t(models === 1 ? 'results.forecastAriaModelOne' : 'results.forecastAriaModelOther', { count: models }),
   });
 });
 

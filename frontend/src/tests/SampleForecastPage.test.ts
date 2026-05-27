@@ -31,4 +31,19 @@ describe('SampleForecastPage', () => {
     expect(screen.getByText('failed')).toBeTruthy();
     expect(screen.getByText('0.01')).toBeTruthy();
   });
+
+  it('uses singular labels for one history step and one ground-truth step', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      sample_id: 's1',
+      target_history: [[1]],
+      target_future: [[2]],
+      models: [
+        { model_id: 'm1', model_name: 'Timer', status: 'succeeded', forecast: [[2.1]], metrics: {} }
+      ]
+    }), { status: 200 }));
+
+    render(SampleForecastPage, { props: { sampleId: 's1', runId: 'r1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('img', { name: 'Forecast chart with 1 history step, 1 ground-truth step and 1 model forecast.' })).toBeTruthy();
+  });
 });

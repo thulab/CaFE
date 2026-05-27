@@ -87,7 +87,7 @@ const displayItems = computed(() => items.value.map((item) => ({
 
 function rowTitle(item: Row): string {
   if (item.kind === 'dataset') return item.name ?? '';
-  return t('artifacts.shardTitle', { target: item.targetColumns?.[0] ?? 'target' });
+  return t('artifacts.shardTitle', { target: item.targetColumns?.[0] ?? t('artifacts.unknownTarget') });
 }
 
 function rowSubtitle(item: Row): string | undefined {

@@ -74,6 +74,44 @@ describe('workspace pages', () => {
     expect(screen.getByText('target · 20 行')).toBeTruthy();
   });
 
+  it('DatasetsPage localizes the missing shard target fallback', async () => {
+    stubBackend({
+      '/dataset-manifests': {
+        items: [],
+        total: 0, limit: 200, offset: 0
+      },
+      '/shards': {
+        items: [{ shard_id: 'shard-9', dataset_manifest_id: 'manifest-9', target_columns: [], row_count: 20, created_at: '2026-05-26T12:01:00Z' }],
+        total: 1, limit: 200, offset: 0
+      }
+    });
+    render(DatasetsPage, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Shard · No target')).toBeTruthy();
+    expect(screen.getByText('Shard · 20 rows')).toBeTruthy();
+
+    setLocale('zh-CN');
+
+    expect(await screen.findByText('分片 · 未知目标')).toBeTruthy();
+    expect(screen.getByText('分片 · 20 行')).toBeTruthy();
+  });
+
+  it('HomePage localizes the missing shard target fallback', async () => {
+    stubBackend({
+      '/shards': {
+        items: [{ shard_id: 'shard-9', target_columns: [], created_at: '2026-05-26T12:01:00Z' }],
+        total: 1, limit: 8, offset: 0
+      }
+    });
+    render(HomePage, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Shard · No target')).toBeTruthy();
+
+    setLocale('zh-CN');
+
+    expect(await screen.findByText('分片 · 未知目标')).toBeTruthy();
+  });
+
   it('DatasetsPage keeps visible load errors reactive after locale changes', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => jsonResponse({
       error_code: 'forbidden',
