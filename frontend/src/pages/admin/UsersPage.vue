@@ -29,7 +29,7 @@
         </button>
       </div>
 
-      <div v-if="formError" role="alert" :style="bannerStyle">{{ formError }}</div>
+      <div v-if="displayFormError" role="alert" :style="bannerStyle">{{ displayFormError }}</div>
 
       <form class="stack" style="display:grid; gap:12px" @submit.prevent="onCreate">
         <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:12px">
@@ -67,8 +67,8 @@
     <section class="card pad">
       <StateBlock
         :loading="loading"
-        :error="loadError"
-        :empty="!loading && !loadError && users.length === 0"
+        :error="displayLoadError"
+        :empty="!loading && !displayLoadError && users.length === 0"
         empty-icon="users"
         :empty-title="t('admin.users.noUsers')"
         :empty-desc="t('admin.users.noUsersDesc')"
@@ -135,8 +135,8 @@
         </button>
       </div>
 
-      <div v-if="editError" role="alert" :style="bannerStyle">{{ editError }}</div>
-      <div v-if="editInfo" role="status" :style="successBannerStyle">{{ editInfo }}</div>
+      <div v-if="displayEditError" role="alert" :style="bannerStyle">{{ displayEditError }}</div>
+      <div v-if="displayEditInfo" role="status" :style="successBannerStyle">{{ displayEditInfo }}</div>
 
       <div style="display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:14px; margin-top:6px">
         <div class="field">
@@ -207,8 +207,10 @@ import {
 } from '../../api/auth';
 import { authState } from '../../stores/auth';
 import { useFormat } from '../../composables/useFormat';
-import { displayError } from '../../lib/errors';
+import { ApiError } from '../../api/client';
 import { shortId } from '../../lib/format';
+
+type MessageState = { key: string; params?: Record<string, unknown> } | { raw: string } | null;
 
 const { t, te } = useI18n();
 const { formatDateTime } = useFormat();
@@ -239,7 +241,8 @@ const successBannerStyle =
 const users = ref<UserDTO[]>([]);
 const roles = ref<RoleDTO[]>([]);
 const loading = ref(true);
-const loadError = ref<string | null>(null);
+const loadError = ref<MessageState>(null);
+const displayLoadError = computed(() => renderMessage(loadError.value));
 
 const selectedId = ref<string | null>(null);
 const selected = computed<UserDTO | null>(() =>
@@ -252,8 +255,10 @@ const editForm = reactive<{ email: string; is_active: boolean; role_id: string }
   is_active: true,
   role_id: ''
 });
-const editError = ref<string | null>(null);
-const editInfo = ref<string | null>(null);
+const editError = ref<MessageState>(null);
+const editInfo = ref<MessageState>(null);
+const displayEditError = computed(() => renderMessage(editError.value));
+const displayEditInfo = computed(() => renderMessage(editInfo.value));
 
 const createOpen = ref(false);
 const createForm = reactive<{ username: string; email: string; password: string; role_id: string; is_active: boolean }>({
@@ -263,7 +268,8 @@ const createForm = reactive<{ username: string; email: string; password: string;
   role_id: '',
   is_active: true
 });
-const formError = ref<string | null>(null);
+const formError = ref<MessageState>(null);
+const displayFormError = computed(() => renderMessage(formError.value));
 
 const busy = ref(false);
 
@@ -329,7 +335,7 @@ function closeCreate(): void {
 
 async function onCreate(): Promise<void> {
   if (!createForm.username.trim() || createForm.password.length < 6) {
-    formError.value = t('admin.users.errors.invalidCreate');
+    formError.value = { key: 'admin.users.errors.invalidCreate' };
     return;
   }
   busy.value = true;
@@ -372,7 +378,7 @@ async function onSave(): Promise<void> {
     if (currentRoles !== nextRoles) {
       await setUserRoles(cur.user_id, desiredRoles);
     }
-    editInfo.value = t('admin.users.saved');
+    editInfo.value = { key: 'admin.users.saved' };
     await refresh();
   } catch (e) {
     editError.value = errorMessage(e, 'admin.users.errors.failedToSave');
@@ -386,7 +392,7 @@ async function onResetPassword(): Promise<void> {
   const next = window.prompt(t('admin.users.resetPrompt', { username: selected.value.username }));
   if (next === null) return;
   if (next.length < 6) {
-    editError.value = t('admin.users.errors.passwordTooShort');
+    editError.value = { key: 'admin.users.errors.passwordTooShort' };
     return;
   }
   busy.value = true;
@@ -394,7 +400,7 @@ async function onResetPassword(): Promise<void> {
   editInfo.value = null;
   try {
     await resetUserPassword(selected.value.user_id, next);
-    editInfo.value = t('admin.users.passwordReset');
+    editInfo.value = { key: 'admin.users.passwordReset' };
   } catch (e) {
     editError.value = errorMessage(e, 'admin.users.errors.failedToReset');
   } finally {
@@ -418,8 +424,20 @@ async function onDelete(): Promise<void> {
   }
 }
 
-function errorMessage(e: unknown, fallbackKey: string): string {
-  return displayError(e, t, te, fallbackKey);
+function renderMessage(message: MessageState): string {
+  if (!message) return '';
+  if ('raw' in message) return message.raw;
+  return t(message.key, message.params);
+}
+
+function errorMessage(error: unknown, fallbackKey: string): MessageState {
+  if (error instanceof ApiError) {
+    const key = `errors.${error.error_code}`;
+    if (te(key)) return { key };
+    return error.message ? { raw: error.message } : { key: fallbackKey };
+  }
+  if (error instanceof Error && error.message) return { raw: error.message };
+  return { key: fallbackKey };
 }
 </script>
 

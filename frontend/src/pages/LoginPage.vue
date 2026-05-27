@@ -16,8 +16,8 @@
         <input id="login-password" v-model="password" type="password" autocomplete="current-password" required />
       </div>
 
-      <div v-if="errorMessage" class="banner danger" role="alert" style="padding:10px 12px; border-radius:8px; background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger-border)">
-        {{ errorMessage }}
+      <div v-if="displayErrorMessage" class="banner danger" role="alert" style="padding:10px 12px; border-radius:8px; background:var(--danger-bg); color:var(--danger); border:1px solid var(--danger-border)">
+        {{ displayErrorMessage }}
       </div>
 
       <div class="head-actions" style="justify-content:space-between; align-items:center">
@@ -34,18 +34,20 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import { login } from '../stores/auth';
 import { ApiError } from '../api/client';
-import { displayError } from '../lib/errors';
+
+type MessageState = { key: string; params?: Record<string, unknown> } | { raw: string } | null;
 
 const username = ref('');
 const password = ref('');
 const busy = ref(false);
-const errorMessage = ref<string | null>(null);
+const errorMessage = ref<MessageState>(null);
 const { t, te } = useI18n();
+const displayErrorMessage = computed(() => renderMessage(errorMessage.value));
 
 async function onSubmit() {
   errorMessage.value = null;
@@ -57,11 +59,11 @@ async function onSubmit() {
     window.location.hash = next || '/';
   } catch (e) {
     if (e instanceof ApiError && e.error_code === 'invalid_credentials') {
-      errorMessage.value = t('login.invalidCredentials');
+      errorMessage.value = { key: 'login.invalidCredentials' };
     } else if (e instanceof ApiError) {
-      errorMessage.value = displayError(e, t, te, 'login.failed');
+      errorMessage.value = messageFromError(e, 'login.failed');
     } else {
-      errorMessage.value = displayError(e, t, te, 'login.failed');
+      errorMessage.value = messageFromError(e, 'login.failed');
     }
   } finally {
     busy.value = false;
@@ -82,5 +84,21 @@ function readNext(): string | null {
   } catch {
     return null;
   }
+}
+
+function renderMessage(message: MessageState): string {
+  if (!message) return '';
+  if ('raw' in message) return message.raw;
+  return t(message.key, message.params);
+}
+
+function messageFromError(error: unknown, fallbackKey: string): MessageState {
+  if (error instanceof ApiError) {
+    const key = `errors.${error.error_code}`;
+    if (te(key)) return { key };
+    return error.message ? { raw: error.message } : { key: fallbackKey };
+  }
+  if (error instanceof Error && error.message) return { raw: error.message };
+  return { key: fallbackKey };
 }
 </script>

@@ -48,8 +48,8 @@
     <section class="card pad">
       <h2 style="margin:0 0 12px; font-size:1.05rem">{{ t('admin.profile.changePassword') }}</h2>
 
-      <div v-if="successMessage" role="status" :style="successBannerStyle">{{ successMessage }}</div>
-      <div v-if="errorMessage" role="alert" :style="errorBannerStyle">{{ errorMessage }}</div>
+      <div v-if="displaySuccessMessage" role="status" :style="successBannerStyle">{{ displaySuccessMessage }}</div>
+      <div v-if="displayErrorMessage" role="alert" :style="errorBannerStyle">{{ displayErrorMessage }}</div>
 
       <form class="stack" style="display:grid; gap:12px; max-width:420px" @submit.prevent="onSubmit">
         <div class="field">
@@ -80,7 +80,9 @@ import { computed, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { authState } from '../../stores/auth';
 import { changePassword } from '../../api/auth';
-import { displayError } from '../../lib/errors';
+import { ApiError } from '../../api/client';
+
+type MessageState = { key: string; params?: Record<string, unknown> } | { raw: string } | null;
 
 const { t, te } = useI18n();
 
@@ -116,31 +118,49 @@ const form = reactive<{ current: string; next: string; confirm: string }>({
 });
 
 const busy = ref(false);
-const successMessage = ref<string | null>(null);
-const errorMessage = ref<string | null>(null);
+const successMessage = ref<MessageState>(null);
+const errorMessage = ref<MessageState>(null);
+const displaySuccessMessage = computed(() => renderMessage(successMessage.value));
+const displayErrorMessage = computed(() => renderMessage(errorMessage.value));
 
 async function onSubmit(): Promise<void> {
   successMessage.value = null;
   errorMessage.value = null;
   if (form.next.length < 6) {
-    errorMessage.value = t('admin.profile.errors.passwordTooShort');
+    errorMessage.value = { key: 'admin.profile.errors.passwordTooShort' };
     return;
   }
   if (form.next !== form.confirm) {
-    errorMessage.value = t('admin.profile.errors.passwordMismatch');
+    errorMessage.value = { key: 'admin.profile.errors.passwordMismatch' };
     return;
   }
   busy.value = true;
   try {
     await changePassword(form.current, form.next);
-    successMessage.value = t('admin.profile.passwordUpdated');
+    successMessage.value = { key: 'admin.profile.passwordUpdated' };
     form.current = '';
     form.next = '';
     form.confirm = '';
   } catch (e) {
-    errorMessage.value = displayError(e, t, te, 'admin.profile.errors.failedToUpdate');
+    errorMessage.value = messageFromError(e, 'admin.profile.errors.failedToUpdate');
   } finally {
     busy.value = false;
   }
+}
+
+function renderMessage(message: MessageState): string {
+  if (!message) return '';
+  if ('raw' in message) return message.raw;
+  return t(message.key, message.params);
+}
+
+function messageFromError(error: unknown, fallbackKey: string): MessageState {
+  if (error instanceof ApiError) {
+    const key = `errors.${error.error_code}`;
+    if (te(key)) return { key };
+    return error.message ? { raw: error.message } : { key: fallbackKey };
+  }
+  if (error instanceof Error && error.message) return { raw: error.message };
+  return { key: fallbackKey };
 }
 </script>
