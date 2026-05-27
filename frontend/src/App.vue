@@ -10,7 +10,7 @@
       </a>
 
       <template v-if="user">
-        <p class="nav-group-label">Workspace</p>
+        <p class="nav-group-label">{{ t('nav.workspace') }}</p>
         <nav aria-label="Sections">
           <a
             v-for="item in navItems"
@@ -28,7 +28,7 @@
         </nav>
 
         <template v-if="adminItems.length">
-          <p class="nav-group-label" style="margin-top:18px">Administration</p>
+          <p class="nav-group-label" style="margin-top:18px">{{ t('nav.administration') }}</p>
           <nav aria-label="Administration">
             <a
               v-for="item in adminItems"
@@ -47,11 +47,11 @@
       </template>
 
       <template v-else>
-        <p class="nav-group-label">Public</p>
+        <p class="nav-group-label">{{ t('nav.public') }}</p>
         <nav aria-label="Public">
           <a class="nav-link" :class="{ 'is-active': route.navKey === 'leaderboards' }" href="#/leaderboards" @click="closeNav">
             <Icon class="nav-ico" name="trophy" :size="18" />
-            <span>Leaderboards</span>
+            <span>{{ t('nav.leaderboards') }}</span>
           </a>
         </nav>
       </template>
@@ -65,15 +65,15 @@
           </div>
           <div class="faint" style="font-size:0.74rem; margin-bottom:8px">
             <span v-for="(role, i) in user.roles" :key="role" class="badge sm" :class="role === 'admin' ? 'accent' : 'neutral'" style="margin-right:4px">{{ role }}</span>
-            <span v-if="!user.roles.length">no role</span>
+            <span v-if="!user.roles.length">{{ t('auth.noRole') }}</span>
           </div>
           <button class="btn ghost sm" type="button" style="width:100%; justify-content:center" @click="onLogout">
-            <Icon name="logOut" :size="14" /> Sign out
+            <Icon name="logOut" :size="14" /> {{ t('auth.signOut') }}
           </button>
         </template>
         <template v-else>
           <a class="btn accent sm" href="#/login" style="width:100%; justify-content:center" @click="closeNav">
-            <Icon name="logIn" :size="14" /> Sign in
+            <Icon name="logIn" :size="14" /> {{ t('auth.signIn') }}
           </a>
         </template>
       </div>
@@ -107,13 +107,26 @@
             class="btn accent sm"
             href="#/new"
           >
-            <Icon name="plus" :size="16" /> New evaluation
+            <Icon name="plus" :size="16" /> {{ t('nav.newEvaluation') }}
           </a>
+          <div class="locale-switch" :aria-label="t('common.switchLanguage')">
+            <button
+              v-for="option in localeOptions"
+              :key="option.code"
+              type="button"
+              :class="{ 'is-active': locale === option.code }"
+              :aria-pressed="locale === option.code"
+              :title="t(option.labelKey)"
+              @click="changeLocale(option.code)"
+            >
+              {{ option.short }}
+            </button>
+          </div>
           <button
             class="icon-btn"
             type="button"
-            :aria-label="`Theme: ${pref}. Click to change.`"
-            :title="`Theme: ${pref}`"
+            :aria-label="t('common.theme', { theme: t(`common.${pref}`) })"
+            :title="t('common.theme', { theme: t(`common.${pref}`) })"
             @click="cycleTheme"
           >
             <Icon :name="themeIcon" :size="18" />
@@ -128,6 +141,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from './components/ui/Icon.vue';
 import HomePage from './pages/HomePage.vue';
 import DatasetsPage from './pages/DatasetsPage.vue';
@@ -149,11 +163,23 @@ import RolesPage from './pages/admin/RolesPage.vue';
 import ProfilePage from './pages/admin/ProfilePage.vue';
 import { useTheme } from './composables/useTheme';
 import { useResourceCounts } from './composables/useResourceCounts';
+import { setLocale } from './i18n';
+import { LOCALES, type LocaleCode } from './i18n/keys';
 import { shortId } from './lib/format';
 import { authState, has, logout } from './stores/auth';
 import { evaluateGuard, type Tier } from './composables/useAuthGuard';
 
 const { pref, resolvedTheme, cycleTheme } = useTheme();
+const { t, locale } = useI18n();
+
+const localeOptions: Array<{ code: LocaleCode; labelKey: string; short: string }> = [
+  { code: 'en-US', labelKey: 'common.english', short: 'EN' },
+  { code: 'zh-CN', labelKey: 'common.chinese', short: '中' },
+];
+
+function changeLocale(next: LocaleCode) {
+  if ((LOCALES as readonly string[]).includes(next)) setLocale(next);
+}
 
 const routeHash = ref(currentHash());
 const navOpen = ref(false);
@@ -182,19 +208,19 @@ watch(routeHash, (next) => {
 });
 
 const navItems = computed(() => [
-  { key: 'home', label: 'Overview', icon: 'dashboard', href: '#/', count: 0 },
-  { key: 'new', label: 'New evaluation', icon: 'sparkles', href: '#/new', count: 0 },
-  { key: 'datasets', label: 'Datasets', icon: 'database', href: '#/datasets', count: countsState.counts.datasets + countsState.counts.shards },
-  { key: 'runs', label: 'Runs', icon: 'activity', href: '#/runs', count: countsState.counts.runs },
-  { key: 'leaderboards', label: 'Leaderboards', icon: 'trophy', href: '#/leaderboards', count: 0 }
+  { key: 'home', label: t('nav.overview'), icon: 'dashboard', href: '#/', count: 0 },
+  { key: 'new', label: t('nav.newEvaluation'), icon: 'sparkles', href: '#/new', count: 0 },
+  { key: 'datasets', label: t('nav.datasets'), icon: 'database', href: '#/datasets', count: countsState.counts.datasets + countsState.counts.shards },
+  { key: 'runs', label: t('nav.runs'), icon: 'activity', href: '#/runs', count: countsState.counts.runs },
+  { key: 'leaderboards', label: t('nav.leaderboards'), icon: 'trophy', href: '#/leaderboards', count: 0 }
 ]);
 
 const adminItems = computed(() => {
   if (!user.value) return [];
   const items: { key: string; label: string; icon: string; href: string }[] = [];
-  if (has('user.manage')) items.push({ key: 'admin-users', label: 'Users', icon: 'users', href: '#/admin/users' });
-  if (has('role.manage')) items.push({ key: 'admin-roles', label: 'Roles', icon: 'shield', href: '#/admin/roles' });
-  items.push({ key: 'profile', label: 'My profile', icon: 'user', href: '#/profile' });
+  if (has('user.manage')) items.push({ key: 'admin-users', label: t('nav.users'), icon: 'users', href: '#/admin/users' });
+  if (has('role.manage')) items.push({ key: 'admin-roles', label: t('nav.roles'), icon: 'shield', href: '#/admin/roles' });
+  items.push({ key: 'profile', label: t('nav.profile'), icon: 'user', href: '#/profile' });
   return items;
 });
 
@@ -207,7 +233,9 @@ interface RouteView {
   crumbs: Array<{ label: string; href?: string }>;
 }
 
-const HOME_CRUMB = { label: 'Overview', href: '#/' };
+const HOME_CRUMB = computed(() => ({ label: t('nav.overview'), href: '#/' }));
+
+const trackRankingCrumb = computed(() => `${t('artifacts.track')} · ${t('nav.leaderboards')}`);
 
 function resolveRoute(): RouteView {
   // Strip query before splitting path.
@@ -217,19 +245,19 @@ function resolveRoute(): RouteView {
 
   // ----- public (Tier 0) -----
   if (parts[0] === 'login') {
-    return { component: LoginPage, props: {}, navKey: '', tier: 'public', crumbs: [{ label: 'Sign in' }] };
+    return { component: LoginPage, props: {}, navKey: '', tier: 'public', crumbs: [{ label: t('auth.signIn') }] };
   }
   if (parts[0] === 'leaderboards') {
-    return { component: LeaderboardsPage, props: {}, navKey: 'leaderboards', tier: 'public', crumbs: [{ label: 'Leaderboards' }] };
+    return { component: LeaderboardsPage, props: {}, navKey: 'leaderboards', tier: 'public', crumbs: [{ label: t('nav.leaderboards') }] };
   }
   if (parts[0] === 'tracks' && id && parts[2] === 'ranking') {
     return {
       component: RankingPage, props: { trackId: id }, navKey: 'leaderboards', tier: 'public',
-      crumbs: [{ label: 'Leaderboards', href: '#/leaderboards' }, { label: 'Ranking' }]
+      crumbs: [{ label: t('nav.leaderboards'), href: '#/leaderboards' }, { label: trackRankingCrumb.value }]
     };
   }
   if (parts[0] === 'rankings' && id) {
-    return { component: RankingPage, props: { trackId: id }, navKey: 'leaderboards', tier: 'public', crumbs: [{ label: 'Leaderboards', href: '#/leaderboards' }, { label: 'Ranking' }] };
+    return { component: RankingPage, props: { trackId: id }, navKey: 'leaderboards', tier: 'public', crumbs: [{ label: t('nav.leaderboards'), href: '#/leaderboards' }, { label: trackRankingCrumb.value }] };
   }
   if (parts[0] === 'forbidden') {
     return { component: ForbiddenPage, props: {}, navKey: '', tier: 'public', crumbs: [{ label: '403' }] };
@@ -239,63 +267,63 @@ function resolveRoute(): RouteView {
   if (parts[0] === 'admin' && parts[1] === 'users') {
     return {
       component: UsersPage, props: {}, navKey: 'admin-users', tier: 'perm', perm: 'user.manage',
-      crumbs: [HOME_CRUMB, { label: 'Administration' }, { label: 'Users' }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.administration') }, { label: t('nav.users') }]
     };
   }
   if (parts[0] === 'admin' && parts[1] === 'roles') {
     return {
       component: RolesPage, props: {}, navKey: 'admin-roles', tier: 'perm', perm: 'role.manage',
-      crumbs: [HOME_CRUMB, { label: 'Administration' }, { label: 'Roles' }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.administration') }, { label: t('nav.roles') }]
     };
   }
   if (parts[0] === 'profile') {
     return {
       component: ProfilePage, props: {}, navKey: 'profile', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'My profile' }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.profile') }]
     };
   }
 
   // ----- workbench (Tier 1) -----
   if (parts[0] === 'new') {
-    return { component: EvaluationWizardPage, props: {}, navKey: 'new', tier: 'perm', perm: 'run.execute', crumbs: [HOME_CRUMB, { label: 'New evaluation' }] };
+    return { component: EvaluationWizardPage, props: {}, navKey: 'new', tier: 'perm', perm: 'run.execute', crumbs: [HOME_CRUMB.value, { label: t('nav.newEvaluation') }] };
   }
   if (parts[0] === 'datasets' && id) {
     return {
       component: DatasetManifestPage, props: { datasetManifestId: id }, navKey: 'datasets', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'Datasets', href: '#/datasets' }, { label: shortId(id) }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.datasets'), href: '#/datasets' }, { label: shortId(id) }]
     };
   }
   if (parts[0] === 'datasets') {
-    return { component: DatasetsPage, props: {}, navKey: 'datasets', tier: 'authed', crumbs: [HOME_CRUMB, { label: 'Datasets' }] };
+    return { component: DatasetsPage, props: {}, navKey: 'datasets', tier: 'authed', crumbs: [HOME_CRUMB.value, { label: t('nav.datasets') }] };
   }
   if (parts[0] === 'load-jobs' && id) {
     return {
       component: LoadJobPage, props: { loadJobId: id }, navKey: 'datasets', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'Datasets', href: '#/datasets' }, { label: 'Load job' }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.datasets'), href: '#/datasets' }, { label: t('artifacts.loadJob') }]
     };
   }
   if (parts[0] === 'shards' && id) {
     return {
       component: ShardPage, props: { shardId: id }, navKey: 'datasets', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'Datasets', href: '#/datasets' }, { label: 'Shard' }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.datasets'), href: '#/datasets' }, { label: t('artifacts.shard') }]
     };
   }
   if (parts[0] === 'tracks' && id) {
-    return { component: TrackPage, props: { trackId: id }, navKey: 'runs', tier: 'authed', crumbs: [HOME_CRUMB, { label: 'Track' }] };
+    return { component: TrackPage, props: { trackId: id }, navKey: 'runs', tier: 'authed', crumbs: [HOME_CRUMB.value, { label: t('artifacts.track') }] };
   }
   if (parts[0] === 'runs' && id) {
     return {
       component: RunDetailPage, props: { runId: id }, navKey: 'runs', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'Runs', href: '#/runs' }, { label: shortId(id) }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.runs'), href: '#/runs' }, { label: shortId(id) }]
     };
   }
   if (parts[0] === 'runs') {
-    return { component: RunsPage, props: {}, navKey: 'runs', tier: 'authed', crumbs: [HOME_CRUMB, { label: 'Runs' }] };
+    return { component: RunsPage, props: {}, navKey: 'runs', tier: 'authed', crumbs: [HOME_CRUMB.value, { label: t('nav.runs') }] };
   }
   if (parts[0] === 'reports' && id) {
     return {
       component: ReportPage, props: { reportId: id }, navKey: 'runs', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'Runs', href: '#/runs' }, { label: 'Report' }]
+      crumbs: [HOME_CRUMB.value, { label: t('nav.runs'), href: '#/runs' }, { label: t('nav.report') }]
     };
   }
   if (parts[0] === 'samples' && id) {
@@ -303,13 +331,14 @@ function resolveRoute(): RouteView {
     const params = new URLSearchParams(qIdx >= 0 ? routeHash.value.slice(qIdx + 1) : '');
     return {
       component: SampleForecastPage, props: { sampleId: id, runId: params.get('run_id') || '' }, navKey: 'runs', tier: 'authed',
-      crumbs: [HOME_CRUMB, { label: 'Sample forecast' }]
+      crumbs: [HOME_CRUMB.value, { label: t('home.steps.review.title') }]
     };
   }
-  return { component: HomePage, props: {}, navKey: 'home', tier: 'authed', crumbs: [{ label: 'Overview' }] };
+  return { component: HomePage, props: {}, navKey: 'home', tier: 'authed', crumbs: [HOME_CRUMB.value] };
 }
 
 const route = computed<RouteView>(() => {
+  void locale.value;
   const candidate = resolveRoute();
   const [path] = routeHash.value.split('?');
 

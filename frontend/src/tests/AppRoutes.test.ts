@@ -1,6 +1,7 @@
-import { render, screen, waitFor } from '@testing-library/vue';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App.vue';
+import { i18n, setLocale } from '../i18n';
 import EvaluationWizardPage from '../pages/EvaluationWizardPage.vue';
 import { resetWizard, wizardState } from '../stores/wizard';
 
@@ -76,6 +77,9 @@ function mockFetch() {
     if (url === '/api/tracks/track-1/ranking?metric=mase&policy=latest_valid_result') {
       return Promise.resolve(jsonResponse({ items: [{ model_id: 'model-1', rank: 1, metric_value: 0.2 }] }));
     }
+    if (url === '/api/ranking-lists') {
+      return Promise.resolve(jsonResponse({ items: [] }));
+    }
     return Promise.resolve(jsonResponse({}));
   });
 }
@@ -84,6 +88,7 @@ describe('App routes and artifact links', () => {
   beforeEach(() => {
     resetWizard();
     vi.restoreAllMocks();
+    setLocale('en-US');
     window.location.hash = '#/';
   });
 
@@ -91,7 +96,7 @@ describe('App routes and artifact links', () => {
     const fetchMock = mockFetch();
     window.location.hash = '#/reports/rep-1';
 
-    render(App);
+    render(App, { global: { plugins: [i18n] } });
 
     expect(await screen.findByRole('heading', { name: 'Benchmark report' })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith('/api/reports/rep-1', expect.any(Object));
@@ -101,7 +106,7 @@ describe('App routes and artifact links', () => {
     mockFetch();
 
     window.location.hash = '#/datasets/manifest-1';
-    const rendered = render(App);
+    const rendered = render(App, { global: { plugins: [i18n] } });
     expect(await screen.findByRole('heading', { name: 'Dataset manifest' })).toBeTruthy();
     expect(await screen.findByText('/tmp/hourly.csv')).toBeTruthy();
 
@@ -156,5 +161,23 @@ describe('App routes and artifact links', () => {
       expect(screen.getByRole('link', { name: 'Run' }).getAttribute('href')).toBe('#/runs/run-1');
       expect(screen.getByRole('link', { name: 'Report' }).getAttribute('href')).toBe('#/reports/rep-1');
     });
+  });
+
+  it('switches app shell navigation language without changing the route', async () => {
+    mockFetch();
+    window.location.hash = '#/tracks/track-1/ranking';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect((await screen.findAllByText('Leaderboards')).length).toBeGreaterThan(0);
+    const breadcrumb = screen.getByLabelText('Breadcrumb');
+    expect(within(breadcrumb).getByText('Track · Leaderboards')).toBeTruthy();
+
+    const zhButton = await screen.findByTitle('中文');
+    await fireEvent.click(zhButton);
+
+    expect((await screen.findAllByText('排行榜')).length).toBeGreaterThan(0);
+    expect(within(breadcrumb).getByText('赛道 · 排行榜')).toBeTruthy();
+    expect(window.location.hash).toBe('#/tracks/track-1/ranking');
   });
 });

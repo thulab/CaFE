@@ -2,12 +2,14 @@ import { render, screen } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App.vue';
 import RunStep from '../components/wizard/RunStep.vue';
+import { i18n, setLocale } from '../i18n';
 import { authState } from '../stores/auth';
 import { resetWizard, wizardState } from '../stores/wizard';
 
 describe('frontend smoke flow', () => {
   beforeEach(() => {
     resetWizard();
+    setLocale('en-US');
     authState.user = {
       user_id: 'admin-test',
       username: 'admin',
@@ -28,7 +30,7 @@ describe('frontend smoke flow', () => {
     wizardState.trackId = 'track-1';
     wizardState.step = 4;
 
-    const rendered = render(App);
+    const rendered = render(App, { global: { plugins: [i18n] } });
 
     // App shell + wizard sub-page
     expect(screen.getByText('TSBenchmark')).toBeTruthy();

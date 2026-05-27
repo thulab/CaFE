@@ -501,6 +501,41 @@ a.btn {
   border-color: var(--border-strong);
 }
 
+.locale-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 32px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.locale-switch button {
+  min-width: 42px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.locale-switch button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.locale-switch button.is-active {
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+
 /* ======================= Forms ============================================ */
 .field {
   display: grid;
