@@ -2,12 +2,12 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Administration</p>
-        <h1>Roles</h1>
+        <p class="eyebrow">{{ t('admin.roles.eyebrow') }}</p>
+        <h1>{{ t('admin.roles.title') }}</h1>
       </div>
     </header>
 
-    <nav class="admin-tabs" aria-label="Administration sections" style="display:flex; gap:18px; margin: -6px 0 14px; border-bottom:1px solid var(--border)">
+    <nav class="admin-tabs" :aria-label="t('admin.sectionsLabel')" style="display:flex; gap:18px; margin: -6px 0 14px; border-bottom:1px solid var(--border)">
       <a
         v-for="tab in tabs"
         :key="tab.href"
@@ -22,11 +22,11 @@
         :error="loadError"
         :empty="!loading && !loadError && roles.length === 0"
         empty-icon="shield"
-        empty-title="No roles"
+        :empty-title="t('admin.roles.noRoles')"
         @retry="refresh"
       >
         <div style="display:grid; grid-template-columns: 240px 1fr; gap:24px">
-          <aside aria-label="Roles">
+          <aside :aria-label="t('admin.roles.rolesLabel')">
             <ul style="list-style:none; padding:0; margin:0; display:grid; gap:4px">
               <li v-for="r in roles" :key="r.role_id">
                 <button
@@ -35,7 +35,7 @@
                   @click="selectedId = r.role_id"
                 >
                   <span>{{ r.name }}</span>
-                  <span v-if="r.is_system" class="badge sm neutral" style="margin-left:6px">sys</span>
+                  <span v-if="r.is_system" class="badge sm neutral" style="margin-left:6px">{{ t('admin.roles.systemShort') }}</span>
                 </button>
               </li>
             </ul>
@@ -43,15 +43,15 @@
 
           <section v-if="selected">
             <header style="display:flex; align-items:baseline; gap:10px; margin-bottom:6px">
-              <h2 style="margin:0; font-size:1.05rem">Permissions for “{{ selected.name }}”</h2>
-              <span v-if="selected.is_system" class="badge sm neutral">system</span>
+              <h2 style="margin:0; font-size:1.05rem">{{ t('admin.roles.permissionsFor', { role: selected.name }) }}</h2>
+              <span v-if="selected.is_system" class="badge sm neutral">{{ t('admin.roles.system') }}</span>
             </header>
             <p v-if="selected.description" class="faint" style="margin:0 0 12px">{{ selected.description }}</p>
             <p v-if="selected.is_system" class="faint" style="margin: 0 0 14px; font-size:0.86rem">
-              System role — managed by the platform, not editable here.
+              {{ t('admin.roles.systemManaged') }}
             </p>
 
-            <div v-if="selected.permission_codes.length === 0" class="faint">No permissions assigned.</div>
+            <div v-if="selected.permission_codes.length === 0" class="faint">{{ t('admin.roles.noPermissions') }}</div>
 
             <div v-for="group in groupedPerms" :key="group.title" style="margin-bottom:14px">
               <h3 style="margin:0 0 6px; font-size:0.86rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted)">
@@ -74,15 +74,18 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import StateBlock from '../../components/ui/StateBlock.vue';
 import { listRoles, listPermissions, type RoleDTO, type PermissionDTO } from '../../api/auth';
-import { ApiError } from '../../api/client';
+import { displayError } from '../../lib/errors';
 
-const tabs = [
-  { key: 'users', label: 'Users', href: '#/admin/users' },
-  { key: 'roles', label: 'Roles', href: '#/admin/roles' },
-  { key: 'profile', label: 'My profile', href: '#/profile' }
-];
+const { t, te } = useI18n();
+
+const tabs = computed(() => [
+  { key: 'users', label: t('admin.tabs.users'), href: '#/admin/users' },
+  { key: 'roles', label: t('admin.tabs.roles'), href: '#/admin/roles' },
+  { key: 'profile', label: t('admin.tabs.profile'), href: '#/profile' }
+]);
 
 function tabStyle(active: boolean): Record<string, string> {
   return {
@@ -129,16 +132,6 @@ const permMap = computed<Map<string, PermissionDTO>>(() => {
   return m;
 });
 
-const GROUP_TITLES: Record<string, string> = {
-  dataset: 'Dataset',
-  run: 'Run',
-  report: 'Report',
-  user: 'Administration',
-  role: 'Administration',
-  permission: 'Administration',
-  audit: 'Administration'
-};
-
 interface PermGroup {
   title: string;
   codes: string[];
@@ -150,7 +143,7 @@ const groupedPerms = computed<PermGroup[]>(() => {
   const order: string[] = [];
   for (const code of [...selected.value.permission_codes].sort()) {
     const seg = code.split('.')[0] || 'other';
-    const title = GROUP_TITLES[seg] ?? cap(seg);
+    const title = groupTitle(seg);
     if (!bins.has(title)) {
       bins.set(title, []);
       order.push(title);
@@ -162,6 +155,14 @@ const groupedPerms = computed<PermGroup[]>(() => {
 
 function permDesc(code: string): string {
   return permMap.value.get(code)?.description ?? '';
+}
+
+function groupTitle(segment: string): string {
+  if (segment === 'dataset') return t('admin.roles.groups.dataset');
+  if (segment === 'run') return t('admin.roles.groups.run');
+  if (segment === 'report') return t('admin.roles.groups.report');
+  if (['user', 'role', 'permission', 'audit'].includes(segment)) return t('admin.roles.groups.administration');
+  return cap(segment);
 }
 
 function cap(s: string): string {
@@ -181,7 +182,7 @@ async function refresh(): Promise<void> {
       selectedId.value = roles.value[0].role_id;
     }
   } catch (e) {
-    loadError.value = e instanceof ApiError ? e.message : e instanceof Error ? e.message : 'Failed to load roles.';
+    loadError.value = displayError(e, t, te, 'admin.roles.errors.failedToLoad');
   } finally {
     loading.value = false;
   }

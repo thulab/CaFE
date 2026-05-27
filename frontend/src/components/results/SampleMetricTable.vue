@@ -1,11 +1,11 @@
 <template>
   <div class="table-wrap">
     <table class="data">
-      <caption>Per-model metrics for this sample · best highlighted</caption>
+      <caption>{{ t('results.sampleMetricCaption') }}</caption>
       <thead>
         <tr>
-          <th>Model</th>
-          <th>Status</th>
+          <th>{{ t('results.model') }}</th>
+          <th>{{ t('results.status') }}</th>
           <th v-for="key in metricKeys" :key="key" class="num">{{ key.toUpperCase() }}</th>
         </tr>
       </thead>
@@ -24,11 +24,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import StatusBadge from '../ui/StatusBadge.vue';
 import type { SampleForecastDTO } from '../../api/types';
-import { formatNumber } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
 
 const props = defineProps<{ models: SampleForecastDTO['models'] }>();
+const { t } = useI18n();
+const { formatNumber } = useFormat();
 
 const KNOWN_ORDER = ['mase', 'mse', 'rmse', 'mae', 'smape', 'mape'];
 

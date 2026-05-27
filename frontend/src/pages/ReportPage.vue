@@ -2,9 +2,9 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Report</p>
-        <h1>Benchmark report</h1>
-        <p class="page-sub">Model metrics, task outcomes, and per-sample forecast links for this run.</p>
+        <p class="eyebrow">{{ t('report.eyebrow') }}</p>
+        <h1>{{ t('report.title') }}</h1>
+        <p class="page-sub">{{ t('report.subtitle') }}</p>
       </div>
       <div v-if="report" class="head-actions">
         <span class="badge primary mono">{{ shortId(reportId) }}</span>
@@ -19,6 +19,7 @@
 
 <script setup lang="ts">
 import { onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ReportSummary from '../components/results/ReportSummary.vue';
 import { getReport } from '../api/results';
@@ -28,6 +29,7 @@ import { shortId } from '../lib/format';
 
 const props = defineProps<{ reportId: string }>();
 const { data: report, loading, error, run } = useAsyncData<ReportDTO>(() => getReport(props.reportId));
+const { t } = useI18n();
 
 onMounted(run);
 </script>

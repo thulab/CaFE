@@ -2,17 +2,17 @@
   <div class="stack">
     <article class="card">
       <header class="card-head">
-        <h2 class="card-title"><Icon name="barChart" :size="18" style="vertical-align:-3px;margin-right:6px" />Model metrics</h2>
-        <span class="badge">{{ report.model_metrics.length }} models</span>
+        <h2 class="card-title"><Icon name="barChart" :size="18" style="vertical-align:-3px;margin-right:6px" />{{ t('results.modelMetrics') }}</h2>
+        <span class="badge">{{ modelCountLabel }}</span>
       </header>
       <div class="card-body">
-        <div v-if="!report.model_metrics.length" class="empty-state">No model metrics recorded.</div>
+        <div v-if="!report.model_metrics.length" class="empty-state">{{ t('results.noModelMetrics') }}</div>
         <div v-else class="table-wrap">
           <table class="data">
-            <caption>Lower is better · best per metric highlighted</caption>
+            <caption>{{ t('results.lowerIsBetterBest') }}</caption>
             <thead>
               <tr>
-                <th>Model</th>
+                <th>{{ t('results.model') }}</th>
                 <th v-for="key in metricKeys" :key="key" class="num">{{ key.toUpperCase() }}</th>
               </tr>
             </thead>
@@ -35,9 +35,9 @@
 
     <div class="grid-2">
       <article class="card">
-        <header class="card-head"><h2 class="card-title">Task outcomes</h2><span class="badge">{{ report.task_summaries.length }}</span></header>
+        <header class="card-head"><h2 class="card-title">{{ t('results.taskOutcomes') }}</h2><span class="badge">{{ formatInt(report.task_summaries.length) }}</span></header>
         <div class="card-body stack">
-          <div v-if="!report.task_summaries.length" class="empty-state">No tasks recorded.</div>
+          <div v-if="!report.task_summaries.length" class="empty-state">{{ t('results.noTasks') }}</div>
           <div v-for="task in report.task_summaries" :key="String(task.task_id)" class="detail-item" style="display:grid;gap:8px">
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
               <span class="mono faint" style="font-size:0.78rem">{{ shortId(String(task.task_id)) }}</span>
@@ -49,10 +49,10 @@
       </article>
 
       <article class="card">
-        <header class="card-head"><h2 class="card-title">Sample forecasts</h2><span class="badge">{{ report.sample_forecast_links.length }}</span></header>
+        <header class="card-head"><h2 class="card-title">{{ t('results.sampleForecasts') }}</h2><span class="badge">{{ formatInt(report.sample_forecast_links.length) }}</span></header>
         <div class="card-body">
-          <p v-if="!report.sample_forecast_links.length" class="empty-state">No per-sample forecasts available.</p>
-          <nav v-else class="pill-row" aria-label="Sample forecast links">
+          <p v-if="!report.sample_forecast_links.length" class="empty-state">{{ t('results.noSampleForecasts') }}</p>
+          <nav v-else class="pill-row" :aria-label="t('results.sampleForecastLinks')">
             <a
               v-for="link in report.sample_forecast_links"
               :key="link.sample_id"
@@ -70,14 +70,21 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import StatusBadge from '../ui/StatusBadge.vue';
 import type { ReportDTO } from '../../api/types';
 import { useModels } from '../../composables/useModels';
-import { formatNumber, shortId } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
+import { shortId } from '../../lib/format';
 
 const props = defineProps<{ report: ReportDTO }>();
 const { modelName } = useModels();
+const { t } = useI18n();
+const { formatNumber, formatInt } = useFormat();
+const modelCountLabel = computed(() =>
+  t(props.report.model_metrics.length === 1 ? 'results.modelCountOne' : 'results.modelCountOther', { count: props.report.model_metrics.length })
+);
 
 const KNOWN_ORDER = ['mase', 'mse', 'rmse', 'mae', 'smape', 'mape'];
 

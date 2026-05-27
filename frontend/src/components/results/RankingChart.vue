@@ -16,10 +16,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useModels } from '../../composables/useModels';
-import { formatNumber } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
 
 const props = defineProps<{ items: Array<{ model_id: string; rank: number; metric_value: number }> }>();
 const { modelName } = useModels();
+const { formatNumber } = useFormat();
 
 const sorted = computed(() => [...props.items].sort((a, b) => a.rank - b.rank));
 const maxValue = computed(() => Math.max(...props.items.map((i) => Math.abs(i.metric_value)), 1e-9));

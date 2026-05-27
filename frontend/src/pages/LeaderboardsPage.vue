@@ -2,27 +2,27 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Results</p>
-        <h1>Leaderboards</h1>
-        <p class="page-sub">Compare model performance across all benchmark tracks.</p>
+        <p class="eyebrow">{{ t('leaderboards.eyebrow') }}</p>
+        <h1>{{ t('leaderboards.title') }}</h1>
+        <p class="page-sub">{{ t('leaderboards.subtitle') }}</p>
       </div>
     </header>
 
     <section class="card pad">
       <div class="toolbar">
         <div class="field">
-          <label class="label" for="lb-search">Search</label>
-          <input id="lb-search" v-model="query" type="search" placeholder="Filter by track name…" />
+          <label class="label" for="lb-search">{{ t('leaderboards.search') }}</label>
+          <input id="lb-search" v-model="query" type="search" :placeholder="t('leaderboards.searchPlaceholder')" />
         </div>
         <div class="field">
-          <label class="label" for="lb-type">Track type</label>
+          <label class="label" for="lb-type">{{ t('leaderboards.trackType') }}</label>
           <select id="lb-type" v-model="typeFilter">
-            <option value="">All types</option>
+            <option value="">{{ t('leaderboards.allTypes') }}</option>
             <option v-for="t in trackTypes" :key="t" :value="t">{{ t }}</option>
           </select>
         </div>
         <span class="spacer" />
-        <span v-if="!loading && !error" class="badge"><Icon name="trophy" :size="13" /> {{ filtered.length }} board{{ filtered.length === 1 ? '' : 's' }}</span>
+        <span v-if="!loading && !error" class="badge"><Icon name="trophy" :size="13" /> {{ boardCountLabel }}</span>
       </div>
 
       <StateBlock
@@ -30,8 +30,8 @@
         :error="error"
         :empty="!loading && !error && filtered.length === 0"
         empty-icon="trophy"
-        empty-title="No leaderboards yet"
-        empty-desc="Run models on a track to populate one."
+        :empty-title="t('leaderboards.noLeaderboards')"
+        :empty-desc="t('leaderboards.noLeaderboardsDesc')"
         @retry="load"
       >
         <div class="grid-auto">
@@ -44,16 +44,19 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import LeaderboardCard from '../components/results/LeaderboardCard.vue';
 import { listRankingLists, type LeaderboardItem } from '../api/results';
+import { displayError } from '../lib/errors';
 
 const items = ref<LeaderboardItem[]>([]);
 const loading = ref(true);
 const error = ref<string | null>(null);
 const query = ref('');
 const typeFilter = ref('');
+const { t, te } = useI18n();
 
 const trackTypes = computed(() => Array.from(new Set(items.value.map((i) => i.track_type))).sort());
 
@@ -65,6 +68,9 @@ const filtered = computed(() => {
     return true;
   });
 });
+const boardCountLabel = computed(() =>
+  t(filtered.value.length === 1 ? 'leaderboards.boardCountOne' : 'leaderboards.boardCountOther', { count: filtered.value.length })
+);
 
 onMounted(load);
 
@@ -74,7 +80,7 @@ async function load() {
   try {
     items.value = (await listRankingLists()).items;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load leaderboards';
+    error.value = displayError(e, t, te, 'leaderboards.errors.failedToLoad');
   } finally {
     loading.value = false;
   }

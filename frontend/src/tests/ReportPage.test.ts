@@ -1,9 +1,13 @@
 import { render, screen } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { i18n, setLocale } from '../i18n';
 import ReportPage from '../pages/ReportPage.vue';
 
 describe('ReportPage', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setLocale('en-US');
+  });
 
   it('shows model metrics, task errors, and sample forecast links', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
@@ -13,7 +17,7 @@ describe('ReportPage', () => {
       sample_forecast_links: [{ sample_id: 's1', run_id: 'r1' }]
     }), { status: 200 }));
 
-    render(ReportPage, { props: { reportId: 'rep1' } });
+    render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
 
     await screen.findByText('m1');
     expect(screen.getByText('boom')).toBeTruthy();

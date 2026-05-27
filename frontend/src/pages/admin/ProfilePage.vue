@@ -2,12 +2,12 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Account</p>
-        <h1>My profile</h1>
+        <p class="eyebrow">{{ t('admin.profile.eyebrow') }}</p>
+        <h1>{{ t('admin.profile.title') }}</h1>
       </div>
     </header>
 
-    <nav class="admin-tabs" aria-label="Administration sections" style="display:flex; gap:18px; margin: -6px 0 14px; border-bottom:1px solid var(--border)">
+    <nav class="admin-tabs" :aria-label="t('admin.sectionsLabel')" style="display:flex; gap:18px; margin: -6px 0 14px; border-bottom:1px solid var(--border)">
       <a
         v-for="tab in tabs"
         :key="tab.href"
@@ -17,17 +17,17 @@
     </nav>
 
     <section v-if="user" class="card pad" style="margin-bottom:16px">
-      <h2 style="margin:0 0 12px; font-size:1.05rem">Account details</h2>
+      <h2 style="margin:0 0 12px; font-size:1.05rem">{{ t('admin.profile.accountDetails') }}</h2>
       <dl style="display:grid; grid-template-columns: 140px 1fr; row-gap:10px; column-gap:16px; margin:0">
-        <dt class="muted">Username</dt>
+        <dt class="muted">{{ t('admin.profile.username') }}</dt>
         <dd style="margin:0; font-weight:600">{{ user.username }}</dd>
 
-        <dt class="muted">Email</dt>
-        <dd style="margin:0">{{ user.email || '—' }}</dd>
+        <dt class="muted">{{ t('admin.profile.email') }}</dt>
+        <dd style="margin:0">{{ user.email || t('common.notAvailable') }}</dd>
 
-        <dt class="muted">Roles</dt>
+        <dt class="muted">{{ t('admin.profile.roles') }}</dt>
         <dd style="margin:0; display:flex; flex-wrap:wrap; gap:6px">
-          <span v-if="user.roles.length === 0" class="faint">No role</span>
+          <span v-if="user.roles.length === 0" class="faint">{{ t('admin.profile.noRole') }}</span>
           <span
             v-for="r in user.roles"
             :key="r"
@@ -37,37 +37,37 @@
         </dd>
 
         <template v-if="user.is_superuser">
-          <dt class="muted">Privileges</dt>
+          <dt class="muted">{{ t('admin.profile.privileges') }}</dt>
           <dd style="margin:0">
-            <span class="badge sm primary">Superuser</span>
+            <span class="badge sm primary">{{ t('admin.profile.superuser') }}</span>
           </dd>
         </template>
       </dl>
     </section>
 
     <section class="card pad">
-      <h2 style="margin:0 0 12px; font-size:1.05rem">Change password</h2>
+      <h2 style="margin:0 0 12px; font-size:1.05rem">{{ t('admin.profile.changePassword') }}</h2>
 
       <div v-if="successMessage" role="status" :style="successBannerStyle">{{ successMessage }}</div>
       <div v-if="errorMessage" role="alert" :style="errorBannerStyle">{{ errorMessage }}</div>
 
       <form class="stack" style="display:grid; gap:12px; max-width:420px" @submit.prevent="onSubmit">
         <div class="field">
-          <label class="label" for="pw-current">Current password</label>
+          <label class="label" for="pw-current">{{ t('admin.profile.currentPassword') }}</label>
           <input id="pw-current" v-model="form.current" type="password" autocomplete="current-password" required />
         </div>
         <div class="field">
-          <label class="label" for="pw-new">New password</label>
+          <label class="label" for="pw-new">{{ t('admin.profile.newPassword') }}</label>
           <input id="pw-new" v-model="form.next" type="password" autocomplete="new-password" required />
-          <p class="field-help">Minimum 6 characters.</p>
+          <p class="field-help">{{ t('admin.users.minPassword') }}</p>
         </div>
         <div class="field">
-          <label class="label" for="pw-confirm">Confirm new password</label>
+          <label class="label" for="pw-confirm">{{ t('admin.profile.confirmNewPassword') }}</label>
           <input id="pw-confirm" v-model="form.confirm" type="password" autocomplete="new-password" required />
         </div>
         <div class="head-actions" style="justify-content:flex-end">
           <button class="btn accent sm" type="submit" :disabled="busy">
-            {{ busy ? 'Updating…' : 'Update password' }}
+            {{ busy ? t('admin.profile.updating') : t('admin.profile.updatePassword') }}
           </button>
         </div>
       </form>
@@ -77,15 +77,18 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { authState } from '../../stores/auth';
 import { changePassword } from '../../api/auth';
-import { ApiError } from '../../api/client';
+import { displayError } from '../../lib/errors';
 
-const tabs = [
-  { key: 'users', label: 'Users', href: '#/admin/users' },
-  { key: 'roles', label: 'Roles', href: '#/admin/roles' },
-  { key: 'profile', label: 'My profile', href: '#/profile' }
-];
+const { t, te } = useI18n();
+
+const tabs = computed(() => [
+  { key: 'users', label: t('admin.tabs.users'), href: '#/admin/users' },
+  { key: 'roles', label: t('admin.tabs.roles'), href: '#/admin/roles' },
+  { key: 'profile', label: t('admin.tabs.profile'), href: '#/profile' }
+]);
 
 function tabStyle(active: boolean): Record<string, string> {
   return {
@@ -120,24 +123,22 @@ async function onSubmit(): Promise<void> {
   successMessage.value = null;
   errorMessage.value = null;
   if (form.next.length < 6) {
-    errorMessage.value = 'New password must be at least 6 characters.';
+    errorMessage.value = t('admin.profile.errors.passwordTooShort');
     return;
   }
   if (form.next !== form.confirm) {
-    errorMessage.value = 'New password and confirmation do not match.';
+    errorMessage.value = t('admin.profile.errors.passwordMismatch');
     return;
   }
   busy.value = true;
   try {
     await changePassword(form.current, form.next);
-    successMessage.value = 'Password updated.';
+    successMessage.value = t('admin.profile.passwordUpdated');
     form.current = '';
     form.next = '';
     form.confirm = '';
   } catch (e) {
-    if (e instanceof ApiError) errorMessage.value = e.message || 'Failed to update password.';
-    else if (e instanceof Error) errorMessage.value = e.message || 'Failed to update password.';
-    else errorMessage.value = 'Failed to update password.';
+    errorMessage.value = displayError(e, t, te, 'admin.profile.errors.failedToUpdate');
   } finally {
     busy.value = false;
   }

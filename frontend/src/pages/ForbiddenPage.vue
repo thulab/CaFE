@@ -1,19 +1,19 @@
 <template>
   <main class="page" style="max-width: 600px; margin: 5vh auto">
     <header class="page-head" style="text-align:center; display:block">
-      <p class="eyebrow">403</p>
-      <h1>Access denied</h1>
+      <p class="eyebrow">{{ t('forbidden.eyebrow') }}</p>
+      <h1>{{ t('forbidden.title') }}</h1>
       <p class="page-sub">
-        You are signed in but lack the required permission to view this page.
-        <span v-if="needCode"> Required: <code class="mono">{{ needCode }}</code></span>
+        {{ t('forbidden.message') }}
+        <span v-if="needCode"> {{ t('forbidden.required') }} <code class="mono">{{ needCode }}</code></span>
       </p>
     </header>
     <div class="head-actions" style="justify-content:center">
       <a class="btn secondary" href="#/">
-        <Icon name="dashboard" :size="16" /> Back to overview
+        <Icon name="dashboard" :size="16" /> {{ t('forbidden.backToOverview') }}
       </a>
       <a class="btn ghost" href="#/leaderboards">
-        <Icon name="trophy" :size="16" /> Browse leaderboards
+        <Icon name="trophy" :size="16" /> {{ t('forbidden.browseLeaderboards') }}
       </a>
     </div>
   </main>
@@ -21,7 +21,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
+const { t } = useI18n();
 
 const needCode = computed(() => {
   const hash = window.location.hash.replace(/^#/, '');

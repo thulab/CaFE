@@ -1,13 +1,13 @@
 <template>
   <div class="table-wrap">
     <table class="data">
-      <caption>Lower is better</caption>
+      <caption>{{ t('results.lowerIsBetter') }}</caption>
       <thead>
         <tr>
-          <th style="width:64px">Rank</th>
-          <th>Model</th>
+          <th style="width:64px">{{ t('results.rank') }}</th>
+          <th>{{ t('results.model') }}</th>
           <th class="num" style="width:140px">{{ metricLabel }}</th>
-          <th style="width:34%">Relative</th>
+          <th style="width:34%">{{ t('results.relative') }}</th>
         </tr>
       </thead>
       <tbody>
@@ -36,9 +36,11 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { useModels } from '../../composables/useModels';
-import { formatNumber, shortId } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
+import { shortId } from '../../lib/format';
 
 const props = withDefaults(defineProps<{
   items: Array<{ model_id: string; rank: number; metric_value: number }>;
@@ -46,6 +48,8 @@ const props = withDefaults(defineProps<{
 }>(), { metricLabel: 'Metric' });
 
 const { modelName } = useModels();
+const { t } = useI18n();
+const { formatNumber } = useFormat();
 
 const sorted = computed(() => [...props.items].sort((a, b) => a.rank - b.rank));
 const maxValue = computed(() => Math.max(...props.items.map((i) => Math.abs(i.metric_value)), 1e-9));

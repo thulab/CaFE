@@ -1,18 +1,18 @@
 <template>
   <main class="page" style="max-width: 460px; margin: 5vh auto">
     <header class="page-head" style="text-align:center; display:block">
-      <p class="eyebrow">TSBenchmark</p>
-      <h1>Sign in</h1>
-      <p class="page-sub">Sign in to access the workbench. Anonymous visitors can still browse leaderboards.</p>
+      <p class="eyebrow">{{ t('login.eyebrow') }}</p>
+      <h1>{{ t('login.title') }}</h1>
+      <p class="page-sub">{{ t('login.subtitle') }}</p>
     </header>
 
     <form class="card pad stack" @submit.prevent="onSubmit">
       <div class="field">
-        <label class="label" for="login-username">Username</label>
+        <label class="label" for="login-username">{{ t('login.username') }}</label>
         <input id="login-username" v-model="username" type="text" autocomplete="username" autofocus required />
       </div>
       <div class="field">
-        <label class="label" for="login-password">Password</label>
+        <label class="label" for="login-password">{{ t('login.password') }}</label>
         <input id="login-password" v-model="password" type="password" autocomplete="current-password" required />
       </div>
 
@@ -22,11 +22,11 @@
 
       <div class="head-actions" style="justify-content:space-between; align-items:center">
         <a class="btn ghost sm" href="#/leaderboards">
-          <Icon name="trophy" :size="14" /> Browse leaderboards
+          <Icon name="trophy" :size="14" /> {{ t('login.browseLeaderboards') }}
         </a>
         <button class="btn accent" type="submit" :disabled="busy">
           <Icon v-if="!busy" name="arrowRight" :size="16" />
-          {{ busy ? 'Signing in…' : 'Sign in' }}
+          {{ busy ? t('login.signingIn') : t('login.signIn') }}
         </button>
       </div>
     </form>
@@ -35,14 +35,17 @@
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import { login } from '../stores/auth';
 import { ApiError } from '../api/client';
+import { displayError } from '../lib/errors';
 
 const username = ref('');
 const password = ref('');
 const busy = ref(false);
 const errorMessage = ref<string | null>(null);
+const { t, te } = useI18n();
 
 async function onSubmit() {
   errorMessage.value = null;
@@ -54,11 +57,11 @@ async function onSubmit() {
     window.location.hash = next || '/';
   } catch (e) {
     if (e instanceof ApiError && e.error_code === 'invalid_credentials') {
-      errorMessage.value = 'Invalid username or password.';
+      errorMessage.value = t('login.invalidCredentials');
     } else if (e instanceof ApiError) {
-      errorMessage.value = e.message;
+      errorMessage.value = displayError(e, t, te, 'login.failed');
     } else {
-      errorMessage.value = 'Sign-in failed. Please try again.';
+      errorMessage.value = displayError(e, t, te, 'login.failed');
     }
   } finally {
     busy.value = false;

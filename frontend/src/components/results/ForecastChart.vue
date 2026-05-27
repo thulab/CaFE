@@ -1,19 +1,19 @@
 <template>
   <div class="chart-card">
     <div class="chart-toolbar">
-      <strong>Forecast vs. ground truth</strong>
+      <strong>{{ t('results.forecastTitle') }}</strong>
       <span class="spacer" />
       <label v-if="dimCount > 1" class="field" style="flex-direction:row;align-items:center;gap:8px">
-        <span class="faint" style="font-size:0.82rem">Dimension</span>
-        <select v-model.number="dim" aria-label="Target dimension" style="min-height:32px;width:auto">
-          <option v-for="d in dimCount" :key="d" :value="d - 1">dim {{ d - 1 }}</option>
+        <span class="faint" style="font-size:0.82rem">{{ t('results.dimension') }}</span>
+        <select v-model.number="dim" :aria-label="t('results.targetDimension')" style="min-height:32px;width:auto">
+          <option v-for="d in dimCount" :key="d" :value="d - 1">{{ t('results.dim', { index: d - 1 }) }}</option>
         </select>
       </label>
     </div>
 
     <div v-if="!valid" class="state-block">
       <span class="state-icon"><Icon name="lineChart" :size="24" /></span>
-      <p class="state-desc">No numeric series to plot for this sample.</p>
+      <p class="state-desc">{{ t('results.noNumericSeries') }}</p>
     </div>
 
     <div v-else class="chart-svg-wrap" style="position:relative">
@@ -38,7 +38,7 @@
         <!-- forecast region shading + boundary -->
         <rect class="band" :x="boundaryX" :y="M.top" :width="(W - M.right) - boundaryX" :height="innerH" />
         <line class="chart-hover-x" :x1="boundaryX" :y1="M.top" :x2="boundaryX" :y2="M.top + innerH" />
-        <text class="tick" :x="boundaryX + 6" :y="M.top + 14" fill="var(--text-faint)">forecast →</text>
+        <text class="tick" :x="boundaryX + 6" :y="M.top + 14" fill="var(--text-faint)">{{ t('results.forecastRegion') }}</text>
 
         <!-- x ticks -->
         <g class="axis tick">
@@ -79,7 +79,7 @@
         class="chart-tooltip"
         :style="{ left: tooltipLeft, top: tooltipTop }"
       >
-        <div class="tt-head">step {{ hoverIndex }}{{ hoverIndex >= histLen ? ' · horizon' : ' · context' }}</div>
+        <div class="tt-head">{{ hoverHeading }}</div>
         <div v-for="pt in hoverPoints" :key="pt.key" class="tt-row">
           <span class="tt-label"><span class="tt-swatch" :style="{ background: pt.color }" />{{ pt.label }}</span>
           <span class="tt-val">{{ format(pt.v) }}</span>
@@ -87,7 +87,7 @@
       </div>
     </div>
 
-    <div v-if="valid" class="legend" role="group" aria-label="Series legend">
+    <div v-if="valid" class="legend" role="group" :aria-label="t('results.seriesLegend')">
       <button
         v-for="s in series"
         :key="s.key"
@@ -106,11 +106,14 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import type { SampleForecastDTO } from '../../api/types';
-import { formatNumber } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
 
 const props = defineProps<{ sample: SampleForecastDTO }>();
+const { t } = useI18n();
+const { formatNumber } = useFormat();
 
 // internal coordinate space (CSS scales it responsively)
 const W = 760;
@@ -160,7 +163,7 @@ const series = computed<Series[]>(() => {
     const v = at(h, i);
     if (v !== undefined) histPts.push({ i, v });
   }
-  out.push({ key: 'history', label: 'History', color: 'var(--chart-actual)', points: histPts });
+  out.push({ key: 'history', label: t('results.history'), color: 'var(--chart-actual)', points: histPts });
 
   const connector = histPts.length ? histPts[histPts.length - 1] : undefined;
 
@@ -170,7 +173,7 @@ const series = computed<Series[]>(() => {
     const v = at(future.value, j);
     if (v !== undefined) truthPts.push({ i: hl + j, v });
   }
-  if (truthPts.length > 1) out.push({ key: 'truth', label: 'Ground truth', color: 'var(--chart-truth)', width: 2.4, points: truthPts });
+  if (truthPts.length > 1) out.push({ key: 'truth', label: t('results.groundTruth'), color: 'var(--chart-truth)', width: 2.4, points: truthPts });
 
   successfulModels.value.forEach((m, idx) => {
     const pts: Array<{ i: number; v: number }> = [];
@@ -248,9 +251,13 @@ const tooltipTop = computed(() => {
   const y = ys.length ? Math.min(...ys) : M.top;
   return `${(y / H) * 100}%`;
 });
+const hoverHeading = computed(() => {
+  const step = hoverIndex.value ?? 0;
+  return t(step >= histLen.value ? 'results.stepHorizon' : 'results.stepContext', { step });
+});
 
 const ariaLabel = computed(() =>
-  `Forecast chart with ${histLen.value} history steps, ${future.value.length} ground-truth steps and ${successfulModels.value.length} model forecast${successfulModels.value.length === 1 ? '' : 's'}.`
+  t('results.forecastAria', { history: histLen.value, truth: future.value.length, models: successfulModels.value.length })
 );
 
 function onMove(e: MouseEvent) {

@@ -2,17 +2,17 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Administration</p>
-        <h1>Users</h1>
+        <p class="eyebrow">{{ t('admin.users.eyebrow') }}</p>
+        <h1>{{ t('admin.users.title') }}</h1>
       </div>
       <div class="head-actions">
         <button class="btn accent sm" type="button" @click="openCreate">
-          <Icon name="plus" :size="15" /> New user
+          <Icon name="plus" :size="15" /> {{ t('admin.users.newUser') }}
         </button>
       </div>
     </header>
 
-    <nav class="admin-tabs" aria-label="Administration sections" style="display:flex; gap:18px; margin: -6px 0 14px; border-bottom:1px solid var(--border)">
+    <nav class="admin-tabs" :aria-label="t('admin.sectionsLabel')" style="display:flex; gap:18px; margin: -6px 0 14px; border-bottom:1px solid var(--border)">
       <a
         v-for="tab in tabs"
         :key="tab.href"
@@ -23,9 +23,9 @@
 
     <section v-if="createOpen" class="card pad" style="margin-bottom:14px">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
-        <h2 style="margin:0; font-size:1.05rem">Create user</h2>
+        <h2 style="margin:0; font-size:1.05rem">{{ t('admin.users.createUser') }}</h2>
         <button class="btn ghost sm" type="button" @click="closeCreate">
-          <Icon name="x" :size="14" /> Close
+          <Icon name="x" :size="14" /> {{ t('admin.users.close') }}
         </button>
       </div>
 
@@ -34,20 +34,20 @@
       <form class="stack" style="display:grid; gap:12px" @submit.prevent="onCreate">
         <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:12px">
           <div class="field">
-            <label class="label" for="new-username">Username</label>
+            <label class="label" for="new-username">{{ t('admin.users.username') }}</label>
             <input id="new-username" v-model="createForm.username" type="text" required autocomplete="off" />
           </div>
           <div class="field">
-            <label class="label" for="new-email">Email <span class="faint">(optional)</span></label>
+            <label class="label" for="new-email">{{ t('admin.users.email') }} <span class="faint">({{ t('admin.users.optional') }})</span></label>
             <input id="new-email" v-model="createForm.email" type="text" autocomplete="off" />
           </div>
           <div class="field">
-            <label class="label" for="new-password">Password</label>
+            <label class="label" for="new-password">{{ t('admin.users.password') }}</label>
             <input id="new-password" v-model="createForm.password" type="password" required autocomplete="new-password" />
-            <p class="field-help">Minimum 6 characters.</p>
+            <p class="field-help">{{ t('admin.users.minPassword') }}</p>
           </div>
           <div class="field">
-            <label class="label" for="new-role">Role</label>
+            <label class="label" for="new-role">{{ t('admin.users.role') }}</label>
             <select id="new-role" v-model="createForm.role_id">
               <option v-for="r in roles" :key="r.role_id" :value="r.role_id">{{ r.name }}</option>
             </select>
@@ -55,11 +55,11 @@
         </div>
         <label style="display:flex; align-items:center; gap:8px">
           <input v-model="createForm.is_active" type="checkbox" style="width:auto; min-height:0" />
-          <span>Active</span>
+          <span>{{ t('admin.users.active') }}</span>
         </label>
         <div class="head-actions" style="justify-content:flex-end">
-          <button class="btn ghost sm" type="button" @click="closeCreate">Cancel</button>
-          <button class="btn accent sm" type="submit" :disabled="busy">{{ busy ? 'Creating…' : 'Create user' }}</button>
+          <button class="btn ghost sm" type="button" @click="closeCreate">{{ t('admin.users.cancel') }}</button>
+          <button class="btn accent sm" type="submit" :disabled="busy">{{ busy ? t('admin.users.creating') : t('admin.users.createUser') }}</button>
         </div>
       </form>
     </section>
@@ -70,19 +70,19 @@
         :error="loadError"
         :empty="!loading && !loadError && users.length === 0"
         empty-icon="users"
-        empty-title="No users"
-        empty-desc="Use “New user” to add the first account."
+        :empty-title="t('admin.users.noUsers')"
+        :empty-desc="t('admin.users.noUsersDesc')"
         @retry="refresh"
       >
         <div class="table-wrap">
           <table class="data">
             <thead>
               <tr>
-                <th>Username</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th style="width:48px" aria-label="Actions"></th>
+                <th>{{ t('admin.users.username') }}</th>
+                <th>{{ t('admin.users.email') }}</th>
+                <th>{{ t('admin.users.role') }}</th>
+                <th>{{ t('admin.users.status') }}</th>
+                <th style="width:48px" :aria-label="t('admin.users.actions')"></th>
               </tr>
             </thead>
             <tbody>
@@ -95,21 +95,21 @@
               >
                 <td>
                   <span style="font-weight:600">{{ u.username }}</span>
-                  <span v-if="u.is_superuser" class="badge sm primary" style="margin-left:6px">superuser</span>
+                  <span v-if="u.is_superuser" class="badge sm primary" style="margin-left:6px">{{ t('admin.users.superuser') }}</span>
                   <div class="faint mono" style="font-size:0.74rem">{{ shortId(u.user_id) }}</div>
                 </td>
-                <td class="muted">{{ u.email || '—' }}</td>
-                <td class="muted">{{ u.role_names.join(', ') || '—' }}</td>
+                <td class="muted">{{ u.email || t('common.notAvailable') }}</td>
+                <td class="muted">{{ u.role_names.join(', ') || t('common.notAvailable') }}</td>
                 <td>
                   <span class="badge sm" :class="u.is_active ? 'success' : 'neutral'">
-                    {{ u.is_active ? 'Active' : 'Disabled' }}
+                    {{ u.is_active ? t('admin.users.active') : t('admin.users.disabled') }}
                   </span>
                 </td>
                 <td>
                   <button
                     class="icon-btn"
                     type="button"
-                    aria-label="Edit user"
+                    :aria-label="t('admin.users.editUser')"
                     @click.stop="selectUser(u)"
                   >
                     <Icon name="settings" :size="16" />
@@ -125,13 +125,13 @@
     <section v-if="selected" class="card pad" style="margin-top:16px">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px">
         <div>
-          <h2 style="margin:0; font-size:1.05rem">Edit user — {{ selected.username }}</h2>
+          <h2 style="margin:0; font-size:1.05rem">{{ t('admin.users.editUserTitle', { username: selected.username }) }}</h2>
           <p class="faint" style="margin:4px 0 0; font-size:0.78rem">
-            Created {{ formatDateTime(selected.created_at) }} · ID {{ shortId(selected.user_id) }}
+            {{ t('admin.users.createdAndId', { created: formatDateTime(selected.created_at), id: shortId(selected.user_id) }) }}
           </p>
         </div>
         <button class="btn ghost sm" type="button" @click="closeEditor">
-          <Icon name="x" :size="14" /> Close
+          <Icon name="x" :size="14" /> {{ t('admin.users.close') }}
         </button>
       </div>
 
@@ -140,28 +140,28 @@
 
       <div style="display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:14px; margin-top:6px">
         <div class="field">
-          <span class="label">Username</span>
+          <span class="label">{{ t('admin.users.username') }}</span>
           <input type="text" :value="selected.username" disabled />
-          <p class="field-help">Username cannot be changed.</p>
+          <p class="field-help">{{ t('admin.users.usernameLocked') }}</p>
         </div>
         <div class="field">
-          <label class="label" for="edit-email">Email</label>
+          <label class="label" for="edit-email">{{ t('admin.users.email') }}</label>
           <input id="edit-email" v-model="editForm.email" type="text" />
         </div>
         <div class="field">
-          <label class="label" for="edit-role">Role</label>
+          <label class="label" for="edit-role">{{ t('admin.users.role') }}</label>
           <select id="edit-role" v-model="editForm.role_id">
             <option v-for="r in roles" :key="r.role_id" :value="r.role_id">{{ r.name }}</option>
           </select>
           <p v-if="selected.role_ids.length > 1" class="field-help">
-            This user has multiple roles in the backend; the UI assigns a single role. Saving will replace the role set.
+            {{ t('admin.users.multipleRoles') }}
           </p>
         </div>
         <div class="field">
-          <span class="label">Active</span>
+          <span class="label">{{ t('admin.users.active') }}</span>
           <label style="display:flex; align-items:center; gap:8px; min-height:40px">
             <input v-model="editForm.is_active" type="checkbox" style="width:auto; min-height:0" />
-            <span class="muted">User can sign in</span>
+            <span class="muted">{{ t('admin.users.userCanSignIn') }}</span>
           </label>
         </div>
       </div>
@@ -169,20 +169,20 @@
       <div class="head-actions" style="margin-top:16px; justify-content:space-between">
         <div style="display:flex; gap:8px; flex-wrap:wrap">
           <button class="btn sm" type="button" :disabled="busy" @click="onResetPassword">
-            <Icon name="key" :size="14" /> Reset password
+            <Icon name="key" :size="14" /> {{ t('admin.users.resetPassword') }}
           </button>
           <button
             class="btn danger sm"
             type="button"
             :disabled="busy || isSelf"
-            :title="isSelf ? 'You cannot delete your own account' : undefined"
+            :title="isSelf ? t('admin.users.cannotDeleteSelf') : undefined"
             @click="onDelete"
           >
-            <Icon name="ban" :size="14" /> Delete user
+            <Icon name="ban" :size="14" /> {{ t('admin.users.deleteUser') }}
           </button>
         </div>
         <button class="btn accent sm" type="button" :disabled="busy" @click="onSave">
-          {{ busy ? 'Saving…' : 'Save changes' }}
+          {{ busy ? t('admin.users.saving') : t('admin.users.saveChanges') }}
         </button>
       </div>
     </section>
@@ -191,6 +191,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../../components/ui/Icon.vue';
 import StateBlock from '../../components/ui/StateBlock.vue';
 import {
@@ -204,15 +205,19 @@ import {
   type UserDTO,
   type RoleDTO
 } from '../../api/auth';
-import { ApiError } from '../../api/client';
 import { authState } from '../../stores/auth';
-import { formatDateTime, shortId } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
+import { displayError } from '../../lib/errors';
+import { shortId } from '../../lib/format';
 
-const tabs = [
-  { key: 'users', label: 'Users', href: '#/admin/users' },
-  { key: 'roles', label: 'Roles', href: '#/admin/roles' },
-  { key: 'profile', label: 'My profile', href: '#/profile' }
-];
+const { t, te } = useI18n();
+const { formatDateTime } = useFormat();
+
+const tabs = computed(() => [
+  { key: 'users', label: t('admin.tabs.users'), href: '#/admin/users' },
+  { key: 'roles', label: t('admin.tabs.roles'), href: '#/admin/roles' },
+  { key: 'profile', label: t('admin.tabs.profile'), href: '#/profile' }
+]);
 
 function tabStyle(active: boolean): Record<string, string> {
   return {
@@ -281,7 +286,7 @@ async function refresh(): Promise<void> {
       else selectedId.value = null;
     }
   } catch (e) {
-    loadError.value = errorMessage(e, 'Failed to load users.');
+    loadError.value = errorMessage(e, 'admin.users.errors.failedToLoad');
   } finally {
     loading.value = false;
   }
@@ -324,7 +329,7 @@ function closeCreate(): void {
 
 async function onCreate(): Promise<void> {
   if (!createForm.username.trim() || createForm.password.length < 6) {
-    formError.value = 'Username is required and password must be at least 6 characters.';
+    formError.value = t('admin.users.errors.invalidCreate');
     return;
   }
   busy.value = true;
@@ -340,7 +345,7 @@ async function onCreate(): Promise<void> {
     closeCreate();
     await refresh();
   } catch (e) {
-    formError.value = errorMessage(e, 'Failed to create user.');
+    formError.value = errorMessage(e, 'admin.users.errors.failedToCreate');
   } finally {
     busy.value = false;
   }
@@ -367,10 +372,10 @@ async function onSave(): Promise<void> {
     if (currentRoles !== nextRoles) {
       await setUserRoles(cur.user_id, desiredRoles);
     }
-    editInfo.value = 'Saved.';
+    editInfo.value = t('admin.users.saved');
     await refresh();
   } catch (e) {
-    editError.value = errorMessage(e, 'Failed to save changes.');
+    editError.value = errorMessage(e, 'admin.users.errors.failedToSave');
   } finally {
     busy.value = false;
   }
@@ -378,10 +383,10 @@ async function onSave(): Promise<void> {
 
 async function onResetPassword(): Promise<void> {
   if (!selected.value) return;
-  const next = window.prompt(`Set a new password for ${selected.value.username} (≥6 characters):`);
+  const next = window.prompt(t('admin.users.resetPrompt', { username: selected.value.username }));
   if (next === null) return;
   if (next.length < 6) {
-    editError.value = 'Password must be at least 6 characters.';
+    editError.value = t('admin.users.errors.passwordTooShort');
     return;
   }
   busy.value = true;
@@ -389,9 +394,9 @@ async function onResetPassword(): Promise<void> {
   editInfo.value = null;
   try {
     await resetUserPassword(selected.value.user_id, next);
-    editInfo.value = 'Password reset.';
+    editInfo.value = t('admin.users.passwordReset');
   } catch (e) {
-    editError.value = errorMessage(e, 'Failed to reset password.');
+    editError.value = errorMessage(e, 'admin.users.errors.failedToReset');
   } finally {
     busy.value = false;
   }
@@ -399,7 +404,7 @@ async function onResetPassword(): Promise<void> {
 
 async function onDelete(): Promise<void> {
   if (!selected.value || isSelf.value) return;
-  const ok = window.confirm(`Delete user "${selected.value.username}"? This cannot be undone.`);
+  const ok = window.confirm(t('admin.users.deleteConfirm', { username: selected.value.username }));
   if (!ok) return;
   busy.value = true;
   editError.value = null;
@@ -408,15 +413,13 @@ async function onDelete(): Promise<void> {
     closeEditor();
     await refresh();
   } catch (e) {
-    editError.value = errorMessage(e, 'Failed to delete user.');
+    editError.value = errorMessage(e, 'admin.users.errors.failedToDelete');
     busy.value = false;
   }
 }
 
-function errorMessage(e: unknown, fallback: string): string {
-  if (e instanceof ApiError) return e.message || fallback;
-  if (e instanceof Error) return e.message || fallback;
-  return fallback;
+function errorMessage(e: unknown, fallbackKey: string): string {
+  return displayError(e, t, te, fallbackKey);
 }
 </script>
 

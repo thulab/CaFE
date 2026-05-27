@@ -4,12 +4,12 @@
       <h3 style="margin:0;font-size:1.05rem;font-weight:700">{{ item.track_name }}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
         <span class="badge neutral">{{ item.track_type }} · {{ item.primary_metric_id.toUpperCase() }}</span>
-        <span class="faint" style="font-size:0.78rem">updated {{ timeAgo(item.updated_at) }}</span>
+        <span class="faint" style="font-size:0.78rem">{{ t('results.updated', { time: timeAgo(item.updated_at) }) }}</span>
       </div>
     </header>
 
     <div v-if="item.top.length === 0" class="faint" style="padding:14px 0;text-align:center;font-size:0.88rem">
-      No ranked results yet
+      {{ t('results.noRankedResults') }}
     </div>
     <ul v-else style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px">
       <li v-for="row in sorted" :key="row.model_id" style="display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center">
@@ -27,28 +27,37 @@
     </ul>
 
     <div class="faint" style="font-size:0.78rem">
-      {{ item.model_count }} model{{ item.model_count === 1 ? '' : 's' }} · {{ item.run_count }} run{{ item.run_count === 1 ? '' : 's' }}
+      {{ t('results.modelRunCount', { models: modelCountLabel, runs: runCountLabel }) }}
     </div>
 
     <a class="btn secondary sm" :href="`#/tracks/${item.track_id}/ranking`" style="align-self:flex-start">
-      View full board <Icon name="arrowRight" :size="14" />
+      {{ t('results.viewFullBoard') }} <Icon name="arrowRight" :size="14" />
     </a>
   </article>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { useModels } from '../../composables/useModels';
-import { formatNumber, timeAgo } from '../../lib/format';
+import { useFormat } from '../../composables/useFormat';
 import type { LeaderboardItem } from '../../api/results';
 
 const props = defineProps<{ item: LeaderboardItem }>();
 
 const { modelName } = useModels();
+const { t } = useI18n();
+const { formatNumber, timeAgo } = useFormat();
 
 const sorted = computed(() => [...props.item.top].sort((a, b) => a.rank - b.rank));
 const maxValue = computed(() => Math.max(...props.item.top.map((t) => Math.abs(t.metric_value)), 1e-9));
+const modelCountLabel = computed(() =>
+  t(props.item.model_count === 1 ? 'results.modelCountInlineOne' : 'results.modelCountInlineOther', { count: props.item.model_count })
+);
+const runCountLabel = computed(() =>
+  t(props.item.run_count === 1 ? 'results.runCountInlineOne' : 'results.runCountInlineOther', { count: props.item.run_count })
+);
 
 function barWidth(v: number): number {
   return Math.max(4, Math.min(100, (Math.abs(v) / maxValue.value) * 100));

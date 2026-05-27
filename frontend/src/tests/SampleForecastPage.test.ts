@@ -1,9 +1,13 @@
 import { render, screen } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { i18n, setLocale } from '../i18n';
 import SampleForecastPage from '../pages/SampleForecastPage.vue';
 
 describe('SampleForecastPage', () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setLocale('en-US');
+  });
 
   it('shows history, ground truth, multiple forecasts, failed status, and metrics', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
@@ -16,7 +20,7 @@ describe('SampleForecastPage', () => {
       ]
     }), { status: 200 }));
 
-    render(SampleForecastPage, { props: { sampleId: 's1', runId: 'r1' } });
+    render(SampleForecastPage, { props: { sampleId: 's1', runId: 'r1' }, global: { plugins: [i18n] } });
 
     // "Timer" appears both in the chart legend and the metric table.
     expect((await screen.findAllByText('Timer')).length).toBeGreaterThan(0);

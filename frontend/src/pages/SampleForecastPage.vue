@@ -2,9 +2,9 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">Sample forecast</p>
-        <h1>Forecast comparison</h1>
-        <p class="page-sub">Target history, ground truth, model forecasts, and per-sample metrics.</p>
+        <p class="eyebrow">{{ t('sampleForecast.eyebrow') }}</p>
+        <h1>{{ t('sampleForecast.title') }}</h1>
+        <p class="page-sub">{{ t('sampleForecast.subtitle') }}</p>
       </div>
       <div class="head-actions">
         <span class="badge mono">{{ shortId(sampleId) }}</span>
@@ -17,7 +17,7 @@
           <ForecastChart :sample="sample" />
         </div>
         <div class="card">
-          <header class="card-head"><h2 class="card-title">Per-sample metrics</h2></header>
+          <header class="card-head"><h2 class="card-title">{{ t('sampleForecast.perSampleMetrics') }}</h2></header>
           <div class="card-body">
             <SampleMetricTable :models="sample.models" />
           </div>
@@ -35,6 +35,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ForecastChart from '../components/results/ForecastChart.vue';
@@ -47,6 +48,7 @@ import { shortId } from '../lib/format';
 const props = defineProps<{ sampleId: string; runId: string }>();
 const { data: sample, loading, error, run } = useAsyncData<SampleForecastDTO>(() => getSampleForecast(props.sampleId, props.runId));
 const failedModels = computed(() => sample.value?.models.filter((m) => m.status !== 'succeeded') || []);
+const { t } = useI18n();
 
 onMounted(run);
 </script>
