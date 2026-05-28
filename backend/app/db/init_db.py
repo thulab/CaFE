@@ -2,7 +2,7 @@ from sqlmodel import Session, SQLModel, select
 
 from app.core.errors import ApiError
 from app.models.auth import Permission, Role, RolePermission, User, UserRole
-from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, RunEvent, Task, Track, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, CapabilityBlockShard, ForecastArtifact, RunEvent, Task, Track, Unit
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
 from app.models.metric import MetricDefinition, MetricResult
 from app.models.model_registry import Model

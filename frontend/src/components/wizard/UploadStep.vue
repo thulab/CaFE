@@ -3,7 +3,7 @@
     <label
       class="dropzone"
       :class="{ 'is-drag': dragging }"
-      for="csv-file"
+      for="data-file"
       @dragover.prevent="dragging = true"
       @dragleave.prevent="dragging = false"
       @drop.prevent="onDrop"
@@ -13,24 +13,25 @@
         <strong>{{ fileName || t('wizard.uploadStep.dropOrBrowse') }}</strong>
         <p class="field-help" style="margin-top:4px">{{ t('wizard.uploadStep.help') }}</p>
       </div>
-      <input id="csv-file" :aria-label="t('wizard.uploadStep.csvFile')" type="file" accept=".csv,text/csv" style="display:none" @change="onChange" />
+      <input id="data-file" :aria-label="t('wizard.uploadStep.dataFile')" type="file" accept=".csv,.tsfile,text/csv,application/octet-stream" style="display:none" @change="onChange" />
       <span class="btn secondary sm" style="justify-self:center;pointer-events:none">
         <Icon name="file" :size="15" /> {{ t('wizard.uploadStep.chooseFile') }}
       </span>
     </label>
 
-    <p v-if="uploading" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.uploadStep.parsingCsv') }}</p>
+    <p v-if="uploading" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.uploadStep.parsingFile') }}</p>
     <p v-if="wizardError" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ wizardError }}</p>
 
     <div v-if="preview" class="stack">
       <div class="pill-row">
         <span class="badge primary"><Icon name="table" :size="13" />{{ t('wizard.uploadStep.columns', { count: preview.columns.length }) }}</span>
         <span class="badge"><Icon name="list" :size="13" />{{ t('wizard.uploadStep.previewRows', { count: preview.preview_rows.length }) }}</span>
+        <span v-if="preview.file_format" class="badge">{{ preview.file_format }}</span>
         <span v-if="preview.detected_delimiter" class="badge">{{ t('wizard.uploadStep.delimiter', { delimiter: preview.detected_delimiter }) }}</span>
       </div>
       <div class="table-wrap">
         <table class="data">
-          <caption>{{ t('wizard.uploadStep.previewFrom', { filename: preview.filename || t('wizard.uploadStep.uploadedCsv') }) }}</caption>
+          <caption>{{ t('wizard.uploadStep.previewFrom', { filename: preview.filename || t('wizard.uploadStep.uploadedFile') }) }}</caption>
           <thead>
             <tr>
               <th v-for="col in preview.columns" :key="col.name">
@@ -49,7 +50,7 @@
     </div>
 
     <div class="wizard-foot" style="padding:0;border:0">
-      <span class="status-line">{{ preview ? t('wizard.uploadStep.previewLoaded') : t('wizard.uploadStep.waitingForCsv') }}</span>
+      <span class="status-line">{{ preview ? t('wizard.uploadStep.previewLoaded') : t('wizard.uploadStep.waitingForFile') }}</span>
       <button class="btn" type="button" :disabled="!preview" @click="goNext">
         {{ t('wizard.uploadStep.next') }} <Icon name="arrowRight" :size="16" />
       </button>

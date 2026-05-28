@@ -178,9 +178,7 @@ flowchart LR
 
 #### 调度与后台执行
 
-路由层（`benchmarking_runs.py:23`）把 run 提交给进程内 `RunQueue`（`workers/run_queue.py`）：队列**单并发**——`submit` 若当前无运行则置为 `running` 并返回 `"running"`，否则入队返回 `"queued"`。仅当拿到 `running` 才起一个 `daemon` 后台线程 `_execute_in_background`（`benchmarking_runs.py:40`），用独立 `Session` 调 `execute_run`，结束后 `queue.complete(run_id)` 让下一个出队。
-
-> 注意：当前实现中 `complete` 只是把队列指针推进，**并不会自动拉起**下一个 queued run 的执行线程；queued run 的真正驱动依赖后续提交或重启恢复路径。
+路由层（`benchmarking_runs.py:23`）把 run 提交给进程内 `RunQueue`（`workers/run_queue.py`）：队列**单并发**——`submit` 若当前无运行则置为 `running` 并返回 `"running"`，否则入队返回 `"queued"`。仅当拿到 `running` 才起一个 `daemon` 后台线程 `_execute_in_background`（`benchmarking_runs.py:40`），用独立 `Session` 调 `execute_run`。后台线程在 `finally` 中调用 `queue.complete(run_id)`；若返回下一个 queued run_id，会立即启动新的后台线程继续 drain 队列。因此 adapter 异常也不会把队列卡死，排队中的 run 会在前一个 run 收尾后自动执行。
 
 #### 逐层执行与指标聚合
 
@@ -192,8 +190,8 @@ flowchart LR
 
 各层逻辑：
 
-- `_execute_unit`（`run_executor.py:136`）：置 unit `running`；**失败注入**——若该 model 的 `endpoint_uri == "stub://fail"`，调 `_fail_unit` 把它名下所有 Task 与该 Unit 全标 `failed`（`error_code="adapter_error"`）并返回。否则逐 Task 调 `_execute_task`，再用 `aggregate_metric` 求 unit 级 mse/mae 写 `MetricResult(result_level="unit")`。
-- `_execute_task`（`run_executor.py:176`）：取 block 下所有 `Shard`，逐 shard 调 `_execute_shard`，聚合出 task 级 mse/mae（`result_level="task"`，带 `capability_block_id`）。
+- `_execute_unit`（`run_executor.py:136`）：置 unit `running`；**失败注入**——若该 model 的 `endpoint_uri == "stub://fail"`，调 `_fail_unit` 把它名下所有 Task 与该 Unit 全标 `failed`（`error_code="adapter_error"`）并返回。否则先通过 `ensure_model_loaded` 兜底加载模型，再逐 Task 调 `_execute_task`，并对 `METRIC_NAMES=["mase","mse","mae"]` 聚合 unit 级指标写 `MetricResult(result_level="unit")`。
+- `_execute_task`（`run_executor.py:176`）：取 block 下所有 `Shard`，逐 shard 调 `_execute_shard`，并对 `METRIC_NAMES=["mase","mse","mae"]` 聚合 task 级指标（`result_level="task"`，带 `capability_block_id`）。
 - `_execute_shard`（`run_executor.py`）：取 shard 全部 `SampleIndex`（按 `sample_index` 排序），逐 sample：`SampleStore.read_by_ref(session, storage_ref)` 经 `SeriesStore.slice` 按 `(shard_id, row_index)` 范围**现切**出样本 → **`build_model_input(sample)`** 构造**不含 `target_future`、带 `horizon`** 的输入视图（输入/答案分离，`services/model_input.py`）→ `adapter.forecast(model_input, model_payload, timeout)` → `compute_sample_metrics(target_future, forecast, target_history)` 算 **mse/mae/mase**（`services/metric_service.py`，`target_future` 仅服务端用于算分）→ 每个 sample 指标写 `MetricResult(result_level="sample", aggregation="raw")`。所有 sample 的预测行经 `ForecastStore.write_forecasts` 落到 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`（`forecast.v1` schema，带 sha256 checksum）并建 `ForecastArtifact`。最后对 `METRIC_NAMES=["mase","mse","mae"]` 逐指标聚合 shard 级（`result_level="shard"`）。
 
 指标聚合 `aggregate_metric`（`metric_service.py`）对一组 `{mase, mse, mae}` 逐指标取均值，并统计 `success_count / failure_count`；某层只要有一个 None 子项即算部分失败。某指标缺失（如平稳历史无 mase）只影响该指标，不影响 mse/mae 的成功判定。`MetricResult` 由 `_metric`（`run_executor.py:245`）统一构造，`aggregation` 字段在 sample 级为 `raw`，其余为 `mean_over_{level}s`。
@@ -223,18 +221,18 @@ sequenceDiagram
             AD-->>EX: forecast 预测
             EX->>EX: compute_sample_metrics + 落盘 + 聚合
         end
-        EX->>EX: 按 unit succeeded/failed 判定 run 终态
-        EX->>RPT: generate_run_report → Report
-        EX->>RNK: refresh_ranking(mse, mae)（非 cancelled）
-        TH->>Q: complete(run_id)
+        EX->>EX: 按 unit succeeded/partial/failed 判定 run 终态
+        EX->>RNK: refresh_ranking(mase, mse, mae, commit=false)
+        EX->>RPT: generate_run_report → Report（同次 commit 暴露终态/报告/榜单）
+        TH->>Q: complete(run_id) → 如有下一个 run，启动新线程
     end
     RT-->>C: BenchmarkingRun
 ```
 
-- **run 终态判定**（`run_executor.py:112-119`）：统计 unit 中 succeeded / failed 数量——`succeeded && failed → partial_succeeded`；`succeeded（无 failed）→ succeeded`；否则 `failed`。
+- **run 终态判定**（`run_executor.py:112-119`）：统计 unit 状态——全部 succeeded → `succeeded`；只要存在 succeeded 或 partial_succeeded 但未全部成功 → `partial_succeeded`；否则 `failed`。
 - **unit 终态**（`run_executor.py:156`）：所有 task_metric 非 None → `succeeded`，否则 `partial_succeeded`（`stub://fail` 路径直接 `failed`）。
 - **task 终态**（`run_executor.py:192`）：所有 shard_metric 非 None → `succeeded`，否则 `partial_succeeded`。
-- **收尾**（`run_executor.py:120-132`）：无论终态都生成报告并回填 `report_id`；只要 `status != "cancelled"` 就对 `mse / mae` 刷新榜单。
+- **收尾**（`run_executor.py:120-132`）：无论终态都生成报告并回填 `report_id`；`mase / mse / mae` 三张榜单与 run 终态、report_id 在同一次提交中对外可见，避免轮询看到 run 已完成但榜单尚未写入的竞态窗口。
 
 **取消（cancel_requested）**：`POST /benchmarking-runs/{id}/cancel`（`benchmarking_runs.py:51` → `cancel_run`，`run_executor.py:66`）把 `cancel_requested=True`、status 置 `cancel_requested` 并发 warning 事件。`execute_run` 仅在**入口**检查该标志：若线程尚未启动/尚未进入执行就取消，run 落 `cancelled`；若已在执行中，本实现不在逐 sample 处轮询取消（属当前 MVP 的已知边界）。
 

@@ -27,7 +27,7 @@ npm --version
 
 版本要求：
 
-- 后端：Python `>=3.12`（由 `uv` 管理虚拟环境）。
+- 后端：Python `>=3.14`（由 `uv` 管理虚拟环境；当前后端依赖栈在 `backend/pyproject.toml` 中声明该下限）。
 - 前端：Node.js 必须为 `20.19+` 或 `22.12+`（前端依赖 Vite 7）。如果 `node --version` 显示更低版本，启动脚本会直接拒绝并提示，请先切换到受支持版本。
 
 首次运行时，启动脚本会自动准备后端虚拟环境和前端依赖（即检测不到 `.venv/bin/uvicorn` 或 `node_modules/.bin/vite` 时分别执行 `uv sync` 与 `npm install`）。如需手动预装：
@@ -269,7 +269,7 @@ GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
 - `sample_id`。
 - `target_history`：历史 target 值。
 - `target_future`：未来真值。
-- `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MSE/MAE），失败时附 `error_message`。
+- `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MASE/MSE/MAE；MASE 在平稳历史等场景下可能无定义），失败时附 `error_message`。
 
 前端「样本预测对比」页把历史、真值与各模型预测画在同一张**交互式折线图**上（按真实数据缩放、带坐标轴与网格，各模型用不同颜色、预测用虚线，悬浮显示对应步数值，图例可点选开关各序列，多维目标可切换维度），并列出每模型指标表（最优值高亮）；非 `succeeded` 的模型以告警条单独列出。
 
@@ -288,11 +288,11 @@ runtime/
 
 说明：
 
-- `uploads/`：保存上传后的 CSV 文件。
-- `samples/`：保存物化后的 sample JSONL。
+- `uploads/`：保存上传后的 CSV / TsFile 输入文件。
+- `samples/`：遗留兼容目录；当前样本真值不再写成 JSONL，而是写入 SQLite `SeriesPoint`，`SampleIndex` 只保存行号区间指针。
 - `forecasts/`：保存模型预测 JSONL。
 - `reports/`：保存 run summary JSON（即 `{run_id}.json`）。
-- `tsbenchmark.db`：SQLite 元数据库。
+- `tsbenchmark.db`：SQLite 数据库，包含元数据、`SeriesPoint` 序列真值和 `SampleIndex` 样本指针。
 
 如需使用隔离的运行目录（注意运行目录与数据库地址要一起改）：
 
@@ -347,8 +347,8 @@ CSV 结构 / 编码类：
 - `csv_missing_header`：缺少 header row，或首行被识别为数据行。
 - `csv_duplicate_columns`：列名重复。
 - `csv_time_column_missing`：选择的时间列不存在。
-- `csv_target_column_missing`：选择的 target 列不存在。
-- `csv_single_target_only`：选择了多于 1 个 target。
+- `csv_value_column_missing`：选择的 value column 不存在。
+- `csv_no_value_columns`：除时间列外没有可摄入的 value column。
 
 时间列类：
 
@@ -359,14 +359,15 @@ CSV 结构 / 编码类：
 - `csv_frequency_not_inferable`：时间戳不足 2 个，无法推断 frequency。
 - `csv_frequency_mismatch`：显式提供的 frequency 与推断结果不一致。
 
-target 值类：
+value 值类：
 
-- `csv_target_missing`：target 值缺失。
-- `csv_target_not_float`：target 无法转换为浮点数。
-- `csv_target_not_finite`：target 是 NaN 或 Inf。
+- `csv_value_missing`：value 值缺失。
+- `csv_value_not_float`：value 无法转换为浮点数。
+- `csv_value_not_finite`：value 是 NaN 或 Inf。
 
 切分 / 样本类：
 
+- `load_target_columns_invalid`：load job 未选择 target、选择多于 1 个 target，或 target 不在 value columns 中。
 - `split_config_invalid`：`context_length`、`horizon` 或 `stride` 非正数。
 - `split_length_exceeds_rows`：`context_length + horizon` 超过数据行数。
 - `sample_count_empty`：切分配置没有产生任何样本。

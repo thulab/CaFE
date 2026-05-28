@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
 from app.core.errors import ApiError
-from app.models.benchmark import CapabilityBlock, Track
+from app.models.benchmark import CapabilityBlock, CapabilityBlockShard, Track
 from app.models.dataset import Shard
 from app.models.model_registry import Model
 from app.models.ranking import RankingList
@@ -19,13 +19,11 @@ MVP_STUB_MODELS = [
 def create_real_capability_block(session: Session, name: str, shard_ids: list[str]) -> CapabilityBlock:
     if not shard_ids:
         raise ApiError("capability_block_requires_shard", "real capability block requires at least one shard")
-    shards = [session.get(Shard, shard_id) for shard_id in shard_ids]
-    missing = [shard_id for shard_id, shard in zip(shard_ids, shards, strict=True) if shard is None]
+    unique_shard_ids = list(dict.fromkeys(shard_ids))
+    shards = [session.get(Shard, shard_id) for shard_id in unique_shard_ids]
+    missing = [shard_id for shard_id, shard in zip(unique_shard_ids, shards, strict=True) if shard is None]
     if missing:
         raise ApiError("shard_not_found", "shard not found", {"shard_ids": missing}, 404)
-    assigned = [shard.shard_id for shard in shards if shard.capability_block_id]
-    if assigned:
-        raise ApiError("shard_already_assigned", "shard already belongs to a capability block", {"shard_ids": assigned})
 
     block = CapabilityBlock(
         name=name,
@@ -40,11 +38,40 @@ def create_real_capability_block(session: Session, name: str, shard_ids: list[st
     session.refresh(block)
 
     for shard in shards:
-        shard.capability_block_id = block.capability_block_id
-        session.add(shard)
+        session.add(CapabilityBlockShard(capability_block_id=block.capability_block_id, shard_id=shard.shard_id))
     session.commit()
     session.refresh(block)
     return block
+
+
+def shards_for_capability_block(session: Session, capability_block_id: str) -> list[Shard]:
+    links = session.exec(
+        select(CapabilityBlockShard).where(CapabilityBlockShard.capability_block_id == capability_block_id)
+    ).all()
+    if links:
+        shards = [session.get(Shard, link.shard_id) for link in links]
+        return [shard for shard in shards if shard is not None]
+    return list(session.exec(select(Shard).where(Shard.capability_block_id == capability_block_id)).all())
+
+
+def track_summary(session: Session, track: Track) -> dict:
+    blocks = session.exec(select(CapabilityBlock).where(CapabilityBlock.track_id == track.track_id)).all()
+    shards_by_id: dict[str, Shard] = {}
+    for block in blocks:
+        shards = shards_for_capability_block(session, block.capability_block_id)
+        for shard in shards:
+            shards_by_id.setdefault(shard.shard_id, shard)
+    shard_ids = list(shards_by_id)
+    data = track.model_dump()
+    data.update(
+        {
+            "capability_block_ids": [block.capability_block_id for block in blocks],
+            "shard_ids": shard_ids,
+            "shard_count": len(shard_ids),
+            "sample_count": sum(shard.sample_count for shard in shards_by_id.values()),
+        }
+    )
+    return data
 
 
 def create_track_with_blocks(

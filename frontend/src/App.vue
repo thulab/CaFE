@@ -19,7 +19,7 @@
             :class="{ 'is-active': item.key === route.navKey }"
             :href="item.href"
             :aria-current="item.key === route.navKey ? 'page' : undefined"
-            @click="closeNav"
+            @click="onNavItemClick(item.key, $event)"
           >
             <Icon class="nav-ico" :name="item.icon" :size="18" />
             <span>{{ item.label }}</span>
@@ -106,6 +106,7 @@
             v-if="user && hasRunExecute"
             class="btn accent sm"
             href="#/new"
+            @click.prevent="startNewEvaluation"
           >
             <Icon name="plus" :size="16" /> {{ t('nav.newEvaluation') }}
           </a>
@@ -155,6 +156,7 @@ import RunDetailPage from './pages/RunDetailPage.vue';
 import SampleForecastPage from './pages/SampleForecastPage.vue';
 import ShardPage from './pages/ShardPage.vue';
 import TrackPage from './pages/TrackPage.vue';
+import TracksPage from './pages/TracksPage.vue';
 import LoginPage from './pages/LoginPage.vue';
 import ForbiddenPage from './pages/ForbiddenPage.vue';
 import LeaderboardsPage from './pages/LeaderboardsPage.vue';
@@ -167,6 +169,7 @@ import { setLocale } from './i18n';
 import { LOCALES, type LocaleCode } from './i18n/keys';
 import { shortId } from './lib/format';
 import { authState, has, logout } from './stores/auth';
+import { resetWizard } from './stores/wizard';
 import { evaluateGuard, type Tier } from './composables/useAuthGuard';
 
 const { pref, resolvedTheme, cycleTheme } = useTheme();
@@ -211,6 +214,7 @@ const navItems = computed(() => [
   { key: 'home', label: t('nav.overview'), icon: 'dashboard', href: '#/', count: 0 },
   { key: 'new', label: t('nav.newEvaluation'), icon: 'sparkles', href: '#/new', count: 0 },
   { key: 'datasets', label: t('nav.datasets'), icon: 'database', href: '#/datasets', count: countsState.counts.datasets + countsState.counts.shards },
+  { key: 'tracks', label: t('nav.tracks'), icon: 'target', href: '#/tracks', count: 0 },
   { key: 'runs', label: t('nav.runs'), icon: 'activity', href: '#/runs', count: countsState.counts.runs },
   { key: 'leaderboards', label: t('nav.leaderboards'), icon: 'trophy', href: '#/leaderboards', count: 0 }
 ]);
@@ -309,7 +313,13 @@ function resolveRoute(): RouteView {
     };
   }
   if (parts[0] === 'tracks' && id) {
-    return { component: TrackPage, props: { trackId: id }, navKey: 'runs', tier: 'authed', crumbs: [HOME_CRUMB.value, { label: t('artifacts.track') }] };
+    return {
+      component: TrackPage, props: { trackId: id }, navKey: 'tracks', tier: 'authed',
+      crumbs: [HOME_CRUMB.value, { label: t('nav.tracks'), href: '#/tracks' }, { label: shortId(id) }]
+    };
+  }
+  if (parts[0] === 'tracks') {
+    return { component: TracksPage, props: {}, navKey: 'tracks', tier: 'authed', crumbs: [HOME_CRUMB.value, { label: t('nav.tracks') }] };
   }
   if (parts[0] === 'runs' && id) {
     return {
@@ -370,6 +380,23 @@ function syncRoute() {
 
 function closeNav() {
   navOpen.value = false;
+}
+
+function onNavItemClick(key: string, event: MouseEvent) {
+  if (key === 'new') {
+    startNewEvaluation(event);
+    return;
+  }
+  closeNav();
+}
+
+function startNewEvaluation(event?: Event) {
+  event?.preventDefault();
+  resetWizard();
+  closeNav();
+  const next = `/new?session=${Date.now()}`;
+  window.location.hash = next;
+  routeHash.value = next;
 }
 
 function currentHash() {

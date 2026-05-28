@@ -1,6 +1,6 @@
 from sqlmodel import Session, select
 
-from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, Task, Unit
+from app.models.benchmark import BenchmarkingRun, ForecastArtifact, Task, Unit
 from app.models.dataset import Shard
 from app.models.model_registry import Model
 from app.models.ranking import RankingList
@@ -19,6 +19,7 @@ def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict
     )
     artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id, ForecastArtifact.shard_id == shard.shard_id)).all()
     models = []
+    capability_block_id = shard.capability_block_id
     for artifact in artifacts:
         matching = [row for row in ForecastStore(".").read_forecasts(artifact.storage_uri) if row["sample_id"] == sample_id]
         if not matching:
@@ -27,6 +28,7 @@ def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict
         model = session.get(Model, artifact.model_id)
         unit = session.get(Unit, artifact.unit_id)
         task = session.get(Task, artifact.task_id)
+        capability_block_id = task.capability_block_id if task else capability_block_id
         models.append(
             {
                 "model_id": artifact.model_id,
@@ -47,7 +49,7 @@ def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict
         "sample_id": sample_id,
         "benchmarking_run_id": run_id,
         "shard_id": shard.shard_id,
-        "capability_block_id": shard.capability_block_id,
+        "capability_block_id": capability_block_id,
         "history_timestamps": sample["history_timestamps"],
         "future_timestamps": sample["future_timestamps"],
         "target_column_names": sample["target_column_names"],

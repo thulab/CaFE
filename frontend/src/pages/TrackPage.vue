@@ -25,6 +25,15 @@
 
       <article class="card">
         <header class="card-head">
+          <h2 class="card-title">{{ t('runPanel.startFromTrack') }}</h2>
+        </header>
+        <div class="card-body">
+          <TrackRunPanel :track-id="trackId" />
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
           <h2 class="card-title">{{ t('track.ranking') }}</h2>
         </header>
         <div class="card-body">
@@ -73,6 +82,7 @@ import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';
+import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getRanking } from '../api/results';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 

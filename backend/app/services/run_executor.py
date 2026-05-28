@@ -16,6 +16,7 @@ from app.services.model_adapter import ModelAdapter, get_model_adapter, remote_m
 from app.services.model_catalog import ensure_catalog_models_exist
 from app.services.model_input import build_model_input
 from app.services.sample_store import SampleStore
+from app.services.track_service import shards_for_capability_block
 
 # 计算并入榜的指标集合：mase 为主排名，mse/mae 为诊断。
 METRIC_NAMES = ["mase", "mse", "mae"]
@@ -228,7 +229,7 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
     session.add(task)
     session.commit()
     block = session.get(CapabilityBlock, task.capability_block_id)
-    shards = session.exec(select(Shard).where(Shard.capability_block_id == block.capability_block_id)).all()
+    shards = shards_for_capability_block(session, block.capability_block_id)
     shard_metrics: list[dict[str, float] | None] = []
     for shard in shards:
         shard_metrics.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir, adapter))

@@ -20,7 +20,7 @@
 - 1个数据集
 - 单变量
 - 5个模型（Timer 3.5、Timer 3.0、Chronous 2，toto，timesfm2.5，5个）
-- 指标：mse、mae
+- 指标：MASE、MSE、MAE（默认主榜指标为 MASE）
 - 可视化页面（查看榜单，查看报告，进行测试）
 
 ## 目录结构
@@ -165,18 +165,17 @@ TSBenchmark 是一项针对时间序列预测模型的动态评测平台。该�
 7. 下钻查看某个模型、某个能力测试块、某个样本或某个指标。
 8. 对比某个 sample 上不同模型的预测曲线与真实未来值。
 
-当前仓库已经实现了这个流程的命令行版本：
+当前仓库已经实现了这个流程的 Web MVP 与 API 闭环：
 
-- 能力测试块与 track 生成；
-- materialized benchmark parquet；
-- 多变量真实数据结构锚定；
-- 模型评测 runner；
-- 汇总报告；
-- 真实数据与合成数据可视化；
-
+- CSV / 单设备表模型 TsFile 输入；
+- 全列数值摄入，目标列在 load job 阶段单选；
+- SQLite `SeriesPoint` 逐点行存储作为样本真值源，`SampleIndex` 保存切片指针；
+- 真实数据 shard、能力测试块与 track 生成；
+- 通过 timer-rest-service 或本地桩执行模型评测；
+- MASE / MSE / MAE 指标聚合、报告生成与榜单刷新；
 - sample 级预测结果可视化。
 
-后续 web 平台的工作，是把这些概念进一步包装成后端实体、接口和交互页面。
+后续平台工作的重点，是继续扩展多序列/面板数据、协变量/多目标、合成数据与 real-anchor 相关能力。
 
 ## 5. 核心实体
 
@@ -254,7 +253,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ### Shard
 
-Shard 是内部数据片，表示一组参数完全固定的数据单元。Shard 不直接暴露给普通用户作为主要操作对象。它用于缓存、索引、复现和追踪。一个 shard 包含多条 sample，这些 sample 共享同一组固定生成参数，例如：
+Shard 是可复用数据切片，表示一组参数完全固定的数据单元。它用于缓存、索引、复现和追踪；前端数据集页会把 shard 作为可选择资产展示，赛道可以复用同一 shard。一个 shard 包含多条 sample，这些 sample 共享同一组固定生成参数，例如：
 
 - 能力维度 (capability)；
 - difficulty（生成机制下预期的预测难度）；
@@ -428,7 +427,7 @@ Report 是评测结果说明。
 TSBenchmark 的数据层级是：
 
 ```text
-sample -> shard -> capability_block -> track -> benchmark
+sample -> shard -> capability_block_shard -> capability_block -> track -> benchmark
 ```
 
 用户主要操作能力测试块和 track：
@@ -439,7 +438,7 @@ sample -> shard -> capability_block -> track -> benchmark
 - 组合 track；
 - 对 track 运行模型评测。
 
-Shard 是内部层级，用于保证固定参数数据单元可复现、可缓存、可索引。
+Shard 是可复用切片层级，用于保证固定参数数据单元可复现、可缓存、可索引；同一 shard 可以被多条赛道通过不同 capability block 复用。
 
 ## 7. 统一预测数据格式
 

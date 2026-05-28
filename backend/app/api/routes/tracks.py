@@ -6,7 +6,7 @@ from app.api.deps import get_db_session
 from app.api.router_factory import make_router
 from app.core.errors import ApiError
 from app.models.benchmark import Track
-from app.services.track_service import create_track_with_blocks
+from app.services.track_service import create_track_with_blocks, track_summary
 
 router = make_router(prefix="/tracks", tags=["tracks"])
 
@@ -20,7 +20,7 @@ class TrackCreate(BaseModel):
 @router.get("", tier="public")
 def list_tracks(session: Session = Depends(get_db_session)) -> dict:
     tracks = session.exec(select(Track).order_by(Track.created_at)).all()
-    return {"items": [t.model_dump() for t in tracks]}
+    return {"items": [track_summary(session, t) for t in tracks]}
 
 
 @router.get("/{track_id}", tier="public")
@@ -28,7 +28,7 @@ def get_track(track_id: str, session: Session = Depends(get_db_session)) -> dict
     track = session.get(Track, track_id)
     if track is None:
         raise ApiError("track_not_found", "track not found", {"track_id": track_id}, 404)
-    return track.model_dump()
+    return track_summary(session, track)
 
 
 @router.post("", tier="perm", perm="track.manage")

@@ -15,6 +15,8 @@
       </div>
     </header>
 
+    <ExistingTrackRunPanel />
+
     <div class="wizard-layout">
       <aside class="wizard-aside">
         <div class="card pad">
@@ -83,6 +85,7 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
+import ExistingTrackRunPanel from '../components/tracks/ExistingTrackRunPanel.vue';
 import UploadStep from '../components/wizard/UploadStep.vue';
 import ColumnAndSplitStep from '../components/wizard/ColumnAndSplitStep.vue';
 import LoadShardStep from '../components/wizard/LoadShardStep.vue';

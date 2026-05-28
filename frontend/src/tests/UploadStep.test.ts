@@ -21,7 +21,7 @@ describe('UploadStep', () => {
     render(UploadStep, { global: { plugins: [i18n] } });
 
     expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true);
-    await fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [new File(['x'], 'data.csv')] } });
+    await fireEvent.change(screen.getByLabelText('Data file'), { target: { files: [new File(['x'], 'data.csv')] } });
 
     await screen.findByText('target');
     expect(screen.getByText('2026-01-01')).toBeTruthy();
@@ -32,7 +32,7 @@ describe('UploadStep', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ error_code: 'bad', message: 'Bad CSV', details: {} }), { status: 400 }));
     render(UploadStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.change(screen.getByLabelText('CSV file'), { target: { files: [new File(['x'], 'bad.csv')] } });
+    await fireEvent.change(screen.getByLabelText('Data file'), { target: { files: [new File(['x'], 'bad.csv')] } });
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bad CSV'));
   });

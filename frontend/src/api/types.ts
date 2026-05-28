@@ -2,7 +2,10 @@ export interface UploadPreviewDTO {
   upload_id: string;
   source_uri: string;
   filename?: string;
+  file_format?: string;
   detected_delimiter?: string;
+  device?: string | null;
+  devices?: string[];
   columns: Array<{ name: string; inferred_type?: string; nullable?: boolean; sample_values?: string[] }>;
   preview_rows: Array<Record<string, string>>;
 }
@@ -11,7 +14,7 @@ export interface DatasetManifestCreateDTO {
   name: string;
   domain: string;
   source_uri: string;
-  file_format: 'csv';
+  file_format: 'csv' | 'tsfile' | string;
   time_column: string;
   value_columns: string[];
 }
@@ -113,6 +116,24 @@ export interface RunProgressDTO {
 
 export interface RankingDTO {
   items: Array<{ model_id: string; rank: number; metric_value: number }>;
+}
+
+export interface TrackDTO {
+  track_id: string;
+  name: string;
+  track_type?: string;
+  description?: string | null;
+  primary_metric_id: string;
+  default_ranking_policy?: string;
+  benchmark_version?: string;
+  data_version?: string;
+  status: string;
+  capability_block_ids?: string[];
+  shard_ids?: string[];
+  shard_count?: number;
+  sample_count?: number;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface ReportDTO {

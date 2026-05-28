@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/vue';
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { i18n, setLocale } from '../i18n';
 import DatasetsPage from '../pages/DatasetsPage.vue';
@@ -50,6 +50,49 @@ describe('workspace pages', () => {
     expect(screen.getByRole('heading', { name: 'Datasets' })).toBeTruthy();
     expect(await screen.findByText('Uploaded dataset')).toBeTruthy();
     expect(await screen.findByText('Shard · target')).toBeTruthy();
+  });
+
+  it('DatasetsPage uploads a data file and materializes a reusable shard', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = url.replace(/^\/api/, '').split('?')[0];
+      if (path === '/dataset-manifests/upload') {
+        return jsonResponse({
+          upload_id: 'upload-9',
+          source_uri: '/tmp/data.tsfile',
+          file_format: 'tsfile',
+          columns: [{ name: 'temperature' }, { name: 'pressure' }],
+          preview_rows: []
+        });
+      }
+      if (path === '/dataset-manifests' && init?.method === 'POST') {
+        return jsonResponse({ dataset_manifest_id: 'manifest-9' });
+      }
+      if (path === '/dataset-load-jobs' && init?.method === 'POST') {
+        return jsonResponse({ load_job_id: 'load-9', status: 'succeeded', output_shard_id: 'shard-9' });
+      }
+      if (path === '/dataset-manifests') {
+        return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
+      }
+      if (path === '/shards') {
+        return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
+      }
+      return jsonResponse({});
+    });
+
+    render(DatasetsPage, { global: { plugins: [i18n] } });
+
+    await fireEvent.change(await screen.findByLabelText('Data file'), {
+      target: { files: [new File(['tsfile'], 'data.tsfile')] }
+    });
+    expect((await screen.findAllByText('temperature')).length).toBeGreaterThan(0);
+    await fireEvent.update(screen.getByLabelText('Target'), 'temperature');
+    await fireEvent.click(screen.getByRole('button', { name: 'Create shard' }));
+
+    await waitFor(() => expect(screen.getByText('Shard ready: shard-9')).toBeTruthy());
+    const manifestBody = JSON.parse(fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/dataset-manifests')![1]!.body as string);
+    expect(manifestBody.file_format).toBe('tsfile');
+    expect(manifestBody.value_columns).toEqual(['temperature', 'pressure']);
   });
 
   it('DatasetsPage keeps loaded shard labels reactive after locale changes', async () => {

@@ -7,9 +7,112 @@
         <p class="page-sub">{{ t('datasets.subtitle') }}</p>
       </div>
       <div class="head-actions">
-        <a class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> {{ t('nav.newEvaluation') }}</a>
+        <a class="btn secondary sm" href="#/tracks"><Icon name="target" :size="15" /> {{ t('nav.tracks') }}</a>
       </div>
     </header>
+
+    <section class="card pad" style="display:grid;gap:16px">
+      <header class="card-head" style="padding:0;border:0">
+        <div>
+          <h2 class="card-title">{{ t('datasets.uploadTitle') }}</h2>
+          <p class="muted" style="margin:4px 0 0">{{ t('datasets.uploadDesc') }}</p>
+        </div>
+      </header>
+
+      <label
+        class="dropzone"
+        :class="{ 'is-drag': uploadDragging }"
+        for="dataset-file"
+        @dragover.prevent="uploadDragging = true"
+        @dragleave.prevent="uploadDragging = false"
+        @drop.prevent="onUploadDrop"
+      >
+        <Icon class="dz-icon" name="upload" :size="26" />
+        <div>
+          <strong>{{ uploadFileName || t('datasets.dropOrBrowse') }}</strong>
+          <p class="field-help" style="margin-top:4px">{{ t('datasets.fileHelp') }}</p>
+        </div>
+        <input id="dataset-file" :aria-label="t('datasets.dataFile')" type="file" accept=".csv,.tsfile,text/csv,application/octet-stream" style="display:none" @change="onUploadChange" />
+        <span class="btn secondary sm" style="justify-self:center;pointer-events:none">
+          <Icon name="file" :size="15" /> {{ t('wizard.uploadStep.chooseFile') }}
+        </span>
+      </label>
+
+      <p v-if="uploading" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.uploadStep.parsingFile') }}</p>
+      <p v-if="uploadError" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ uploadError }}</p>
+      <p v-if="createdShardId" class="note-success">
+        <Icon name="checkCircle" :size="16" />{{ t('datasets.shardReady', { id: createdShardId }) }}
+        <a class="text-link" :href="`#/shards/${createdShardId}`">{{ t('datasets.openShard') }}</a>
+      </p>
+
+      <div v-if="uploadPreview" class="stack">
+        <div class="pill-row">
+          <span class="badge primary"><Icon name="table" :size="13" />{{ t('wizard.uploadStep.columns', { count: uploadPreview.columns.length }) }}</span>
+          <span class="badge">{{ uploadFileFormat }}</span>
+          <span v-if="uploadPreview.detected_delimiter" class="badge">{{ t('wizard.uploadStep.delimiter', { delimiter: uploadPreview.detected_delimiter }) }}</span>
+        </div>
+
+        <div class="grid-2">
+          <div v-if="!uploadIsTsFile" class="field">
+            <label class="label" for="dataset-time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
+            <select id="dataset-time-column" v-model="uploadTimeColumn">
+              <option v-for="column in uploadColumns" :key="column" :value="column">{{ column }}</option>
+            </select>
+            <p class="hint">{{ t('wizard.columnAndSplitStep.timeColumnHint') }}</p>
+          </div>
+          <div v-else class="field">
+            <span class="label">{{ t('wizard.columnAndSplitStep.timeColumn') }}</span>
+            <p class="status-line">{{ t('wizard.columnAndSplitStep.tsfileTimeColumn') }}</p>
+            <p class="hint">{{ t('wizard.columnAndSplitStep.tsfileHint') }}</p>
+          </div>
+
+          <div class="field">
+            <label class="label" for="dataset-target">{{ t('wizard.columnAndSplitStep.targetColumn') }}</label>
+            <select id="dataset-target" v-model="uploadTarget" :aria-label="t('wizard.columnAndSplitStep.target')">
+              <option value="">{{ t('wizard.columnAndSplitStep.selectTarget') }}</option>
+              <option v-for="column in uploadValueColumns" :key="column" :value="column">{{ column }}</option>
+            </select>
+            <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
+          </div>
+        </div>
+
+        <fieldset class="field" style="border:0;padding:0;margin:0">
+          <legend class="label" style="padding:0;margin-bottom:6px">{{ t('wizard.columnAndSplitStep.valueColumns') }}</legend>
+          <div class="choice-grid">
+            <label v-for="column in uploadNonTimeColumns" :key="column" class="choice">
+              <input v-model="uploadValueColumns" type="checkbox" :value="column" :aria-label="column" />
+              {{ column }}
+            </label>
+          </div>
+        </fieldset>
+
+        <div class="grid-auto">
+          <div class="field">
+            <label class="label" for="dataset-context">{{ t('wizard.columnAndSplitStep.context') }}</label>
+            <input id="dataset-context" v-model.number="uploadContext" type="number" min="1" />
+          </div>
+          <div class="field">
+            <label class="label" for="dataset-horizon">{{ t('wizard.columnAndSplitStep.horizon') }}</label>
+            <input id="dataset-horizon" v-model.number="uploadHorizon" type="number" min="1" />
+          </div>
+          <div class="field">
+            <label class="label" for="dataset-stride">{{ t('wizard.columnAndSplitStep.stride') }}</label>
+            <input id="dataset-stride" v-model.number="uploadStride" type="number" min="1" />
+          </div>
+          <div class="field">
+            <label class="label" for="dataset-max-samples">{{ t('wizard.columnAndSplitStep.maxSamples') }}</label>
+            <input id="dataset-max-samples" v-model.number="uploadMaxSamples" type="number" min="1" :placeholder="t('wizard.columnAndSplitStep.noCap')" />
+          </div>
+        </div>
+
+        <div class="wizard-foot" style="padding:0;border:0">
+          <span class="status-line">{{ t('wizard.columnAndSplitStep.windowStatus', { context: uploadContext, horizon: uploadHorizon, stride: uploadStride }) }}</span>
+          <button class="btn" type="button" :disabled="sliceBusy" @click="createShard">
+            <span v-if="sliceBusy" class="spinner" /> <Icon v-else name="layers" :size="16" /> {{ t('datasets.createShard') }}
+          </button>
+        </div>
+      </div>
+    </section>
 
     <section class="card pad">
       <StateBlock
@@ -22,7 +125,7 @@
         @retry="load"
       >
         <template #empty-action>
-          <a class="btn sm" href="#/new"><Icon name="upload" :size="15" /> {{ t('datasets.uploadCsv') }}</a>
+          <span class="status-line">{{ t('datasets.emptyUploadHint') }}</span>
         </template>
         <div class="table-wrap">
           <table class="data">
@@ -48,10 +151,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
-import { listDatasetManifests, listShards } from '../api/datasets';
+import { createDatasetManifest, createLoadJob, listDatasetManifests, listShards, uploadDataset } from '../api/datasets';
+import type { UploadPreviewDTO } from '../api/types';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { shortId } from '../lib/format';
@@ -73,8 +177,27 @@ interface Row {
 const items = ref<Row[]>([]);
 const loading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { text: uploadError, clear: clearUploadError, setKey: setUploadErrorKey, setError: setUploadError } = useDisplayMessage();
 const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
+const uploadDragging = ref(false);
+const uploading = ref(false);
+const sliceBusy = ref(false);
+const uploadFileName = ref('');
+const uploadPreview = ref<UploadPreviewDTO | null>(null);
+const createdShardId = ref('');
+const uploadTimeColumn = ref('time');
+const uploadValueColumns = ref<string[]>([]);
+const uploadTarget = ref('');
+const uploadContext = ref(6);
+const uploadHorizon = ref(3);
+const uploadStride = ref(3);
+const uploadMaxSamples = ref<number | undefined>(undefined);
+
+const uploadColumns = computed(() => uploadPreview.value?.columns.map((column) => column.name) || []);
+const uploadFileFormat = computed(() => uploadPreview.value?.file_format === 'tsfile' ? 'tsfile' : 'csv');
+const uploadIsTsFile = computed(() => uploadFileFormat.value === 'tsfile');
+const uploadNonTimeColumns = computed(() => uploadIsTsFile.value ? uploadColumns.value : uploadColumns.value.filter((column) => column !== uploadTimeColumn.value));
 
 const ICONS: Record<Kind, string> = { dataset: 'database', shard: 'layers' };
 const kindIcon = (k: Kind) => ICONS[k] || 'file';
@@ -84,6 +207,18 @@ const displayItems = computed(() => items.value.map((item) => ({
   title: rowTitle(item),
   subtitle: rowSubtitle(item),
 })));
+
+watch(uploadNonTimeColumns, (cols) => {
+  if (cols.length > 0 && uploadValueColumns.value.length === 0) {
+    uploadValueColumns.value = [...cols];
+  }
+}, { immediate: true });
+
+watch(uploadValueColumns, (cols) => {
+  if (uploadTarget.value && !cols.includes(uploadTarget.value)) {
+    uploadTarget.value = '';
+  }
+});
 
 function rowTitle(item: Row): string {
   if (item.kind === 'dataset') return item.name ?? '';
@@ -138,6 +273,72 @@ async function load() {
     items.value = [];
   } finally {
     loading.value = false;
+  }
+}
+
+async function onUploadChange(event: Event) {
+  const input = event.target as HTMLInputElement;
+  await handleUpload(input.files?.[0]);
+}
+
+async function onUploadDrop(event: DragEvent) {
+  uploadDragging.value = false;
+  await handleUpload(event.dataTransfer?.files?.[0]);
+}
+
+async function handleUpload(file?: File) {
+  if (!file) return;
+  uploadFileName.value = file.name;
+  uploading.value = true;
+  createdShardId.value = '';
+  clearUploadError();
+  try {
+    uploadPreview.value = await uploadDataset(file);
+    uploadTimeColumn.value = uploadColumns.value.includes('time') ? 'time' : uploadColumns.value[0] ?? 'time';
+    uploadValueColumns.value = [...uploadNonTimeColumns.value];
+    uploadTarget.value = '';
+  } catch (caught) {
+    setUploadError(caught, 'wizard.uploadStep.errors.uploadFailed');
+  } finally {
+    uploading.value = false;
+  }
+}
+
+async function createShard() {
+  if (!uploadPreview.value) return;
+  if (!uploadTarget.value || !uploadValueColumns.value.includes(uploadTarget.value)) {
+    setUploadErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
+    return;
+  }
+  if (uploadContext.value <= 0 || uploadHorizon.value <= 0 || uploadStride.value <= 0) {
+    setUploadErrorKey('wizard.columnAndSplitStep.errors.positiveSplitValues');
+    return;
+  }
+  sliceBusy.value = true;
+  clearUploadError();
+  try {
+    const manifest = await createDatasetManifest({
+      name: uploadPreview.value.filename || uploadFileName.value || 'Uploaded dataset',
+      domain: 'general',
+      source_uri: uploadPreview.value.source_uri,
+      file_format: uploadFileFormat.value,
+      time_column: uploadIsTsFile.value ? 'time' : uploadTimeColumn.value,
+      value_columns: uploadValueColumns.value
+    });
+    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number } = {
+      context_length: uploadContext.value,
+      horizon: uploadHorizon.value,
+      stride: uploadStride.value,
+      target_columns: [uploadTarget.value]
+    };
+    if (uploadMaxSamples.value != null && uploadMaxSamples.value > 0) splitConfig.max_samples = uploadMaxSamples.value;
+    const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });
+    createdShardId.value = job.output_shard_id || '';
+    await load();
+  } catch (caught) {
+    setUploadError(caught, 'wizard.columnAndSplitStep.errors.loadFailed');
+  } finally {
+    sliceBusy.value = false;
   }
 }
 

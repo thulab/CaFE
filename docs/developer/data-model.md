@@ -38,7 +38,7 @@ def utc_now() -> datetime:
 
 ## 1. 总览
 
-### 1.1 SQLModel 表实体清单（23 个）
+### 1.1 SQLModel 表实体清单（24 个）
 
 | 实体 | 文件 | 职责 |
 | --- | --- | --- |
@@ -48,7 +48,8 @@ def utc_now() -> datetime:
 | `SeriesPoint` | `backend/app/models/series_point.py:11` | per-shard 原始序列逐点行存储（**SQLite 单一真值源**） |
 | `SampleIndex` | `backend/app/models/sample.py:11` | 样本切片位置（行号区间指针，值在 `SeriesPoint`） |
 | `CapabilityBlock` | `backend/app/models/benchmark.py:11` | 统一能力块；MVP 用 `block_type=real` |
-| `Track` | `backend/app/models/benchmark.py:27` | 评测赛道 |
+| `CapabilityBlockShard` | `backend/app/models/benchmark.py:27` | 能力块与可复用 shard 的多对多关联 |
+| `Track` | `backend/app/models/benchmark.py:33` | 评测赛道 |
 | `Model` | `backend/app/models/model_registry.py:10` | 可评测模型 + adapter 配置 |
 | `BenchmarkingRun` | `backend/app/models/benchmark.py:41` | 一次评测执行 |
 | `Unit` | `backend/app/models/benchmark.py:63` | 某模型在某次 run 中的完整结果 |
@@ -73,7 +74,8 @@ erDiagram
     DatasetManifest ||--o{ DatasetLoadJob : "dataset_manifest_id"
     DatasetManifest ||--o| Shard : "dataset_manifest_id (real 唯一)"
     DatasetLoadJob ||--o| Shard : "load_job_id / output_shard_id"
-    CapabilityBlock ||--o{ Shard : "capability_block_id"
+    CapabilityBlock ||--o{ CapabilityBlockShard : "capability_block_id"
+    Shard ||--o{ CapabilityBlockShard : "shard_id"
     Shard ||--o{ SeriesPoint : "shard_id"
     Shard ||--o{ SampleIndex : "shard_id"
 
@@ -119,7 +121,7 @@ erDiagram
 ```text
 DatasetManifest → DatasetLoadJob → Shard(real) → SeriesPoint（逐点真值）
                                          ↓        ↘ SampleIndex（行号区间指针 → 现切自 SeriesPoint）
-Track → CapabilityBlock → Shard → SampleIndex
+Track → CapabilityBlock → CapabilityBlockShard → Shard → SampleIndex
 ```
 
 执行侧（评测 → 结果）：
@@ -229,7 +231,7 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `shard_type` | `str` | `"real"` | MVP 固定 real |
 | `dataset_manifest_id` | `str` | `index=True`（逻辑外键 → DatasetManifest） | 数据来源 |
 | `load_job_id` | `str \| None` | `None`，`index=True`（逻辑外键 → DatasetLoadJob） | 产生该 shard 的 job |
-| `capability_block_id` | `str \| None` | `None`，`index=True`（逻辑外键 → CapabilityBlock） | 所属能力块；归属前为 None |
+| `capability_block_id` | `str \| None` | `None`，`index=True`（逻辑外键 → CapabilityBlock） | 兼容旧数据的单归属字段；新链路通过 `CapabilityBlockShard` 关联，可为 None |
 | `source_uri` | `str` | 必填 | 原始数据位置（CSV 或 TsFile 输入文件） |
 | `storage_uri` | `str \| None` | `None` | 规范化产物位置（**2026-05-25 SQLite pivot 后不再写**；真值在 `SeriesPoint`） |
 | `checksum` | `str \| None` | `None` | 校验值 |
@@ -249,6 +251,8 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 | `updated_at` | `datetime` | `utc_now` | |
 
 **shard_type 取值**：`"real"`（默认值；`init_db.py:37` 的唯一性断言也按 `shard_type=="real"` 过滤）。spec §2.2 预留 `synthetic`，当前代码未写入。
+
+> 2026-05-28 起，Shard 是可复用数据切片；同一 shard 可以通过多条 `CapabilityBlockShard` 记录挂到不同 capability block / track。`Shard.capability_block_id` 仅用于旧数据 fallback。
 
 **status 取值**：
 - `"created"`：默认初始值（`models/dataset.py:66`）。
@@ -325,6 +329,18 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 
 `block_type`/`capability_type` 在 `services/track_service.py:32-33` 创建时显式赋为 `"real"` / `"real_data"`。
 **status 取值**：仅 `"ready"`（默认值，`models/benchmark.py:22`），代码无其它写入。spec §4.5 预留 `draft / disabled`。
+
+### 3.1.1 CapabilityBlockShard
+
+能力块与 shard 的关联表。源文件 `backend/app/models/benchmark.py:27`。
+
+| 字段 | 类型 | 默认值/约束 | 说明 |
+| --- | --- | --- | --- |
+| `capability_block_id` | `str` | **联合主键**（逻辑外键 → CapabilityBlock） | 能力块 |
+| `shard_id` | `str` | **联合主键**（逻辑外键 → Shard） | 可复用切片 |
+| `created_at` | `datetime` | `utc_now` | |
+
+该表允许同一个 shard 被多条 track 复用：复用时为新 track 创建新的 capability block，再插入指向同一 shard 的 `CapabilityBlockShard` 记录。
 
 ### 3.2 Track
 
@@ -740,7 +756,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 | DTO | 文件 | 字段 |
 | --- | --- | --- |
-| `RealDatasetTrackCreateDTO` | `schemas/benchmark.py:4` | `name: str`、`shard_ids: list[str]`、`primary_metric_id: str = "mse"` |
+| `RealDatasetTrackCreateDTO` | `api/routes/wizard.py:13` | `name: str`、`shard_ids: list[str]`、`primary_metric_id: str = "mase"` |
 | `DatasetLoadJobCreateDTO` | `schemas/dataset.py:4` | `dataset_manifest_id: str`、`split_config: dict`、`seed: int = 0` |
 | `ModelDTO` | `schemas/model_registry.py:4` | `model_id: str`、`name: str`、`adapter_type: str` |
 | `RankingRowDTO` | `schemas/ranking.py:4` | `model_id: str`、`metric_value: float`、`rank: int` |
@@ -769,13 +785,15 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 `build_windows`（`dataset_load_service.py:26-54`）：`stride` 缺省取 `horizon`；要求 `context_length/horizon/stride` 均为正；`context_length + horizon` 超过行数抛 `split_length_exceeds_rows`；窗口为空抛 `sample_count_empty`。窗口左闭右含，`source_row_start..source_row_end` 即原始（校验后）数据行范围。
 
-### 8.5 capability block 与 shard 归属
+### 8.5 capability block 与 shard 复用
 
-`create_real_capability_block`（`track_service.py:19-47`）：要求至少一个 shard；shard 不存在抛 `shard_not_found`；已归属其它 block 的 shard 抛 `shard_already_assigned`（保证 shard 只属于一个 block）。block 的 `shard_count`/`sample_count`/`target_dim` 由所含 shard 汇总。
+`create_real_capability_block`（`track_service.py:15-43`）：要求至少一个 shard；shard 不存在抛 `shard_not_found`；输入 shard id 会去重。新建 block 后通过 `CapabilityBlockShard` 写入 block → shard 关联，不再写 `Shard.capability_block_id`，因此同一 shard 可以被多个 block / track 复用。block 的 `shard_count`/`sample_count`/`target_dim` 由所含 shard 汇总。
+
+`shards_for_capability_block` 先读 `CapabilityBlockShard`；若旧数据没有关联表记录，则 fallback 到 `Shard.capability_block_id`。
 
 ### 8.6 track 与 ranking 同生
 
-`create_track_with_blocks`（`track_service.py:50-76`）：把指定 capability block 挂到新 track（`block.track_id = track.track_id`），并为该 track 创建唯一 `RankingList`（`default_metric_id = primary_metric_id`）。即 Track ↔ RankingList 一对一（spec §1.1）。
+`create_track_with_blocks`（`track_service.py:64-88`）：把指定 capability block 挂到新 track（`block.track_id = track.track_id`），并为该 track 创建唯一 `RankingList`（`default_metric_id = primary_metric_id`）。即 Track ↔ RankingList 一对一（spec §1.1）。一个 capability block 仍只属于一条 track；切片复用通过为另一条 track 新建 block 并关联同一批 shard 实现。
 
 ### 8.7 run 执行生命周期
 

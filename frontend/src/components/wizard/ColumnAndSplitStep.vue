@@ -1,12 +1,17 @@
 <template>
   <section class="step-body">
     <div class="grid-2">
-      <div class="field">
+      <div v-if="!isTsFile" class="field">
         <label class="label" for="time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
         <select id="time-column" v-model="timeColumn">
           <option v-for="column in columns" :key="column" :value="column">{{ column }}</option>
         </select>
         <p class="hint">{{ t('wizard.columnAndSplitStep.timeColumnHint') }}</p>
+      </div>
+      <div v-else class="field">
+        <span class="label">{{ t('wizard.columnAndSplitStep.timeColumn') }}</span>
+        <p class="status-line">{{ t('wizard.columnAndSplitStep.tsfileTimeColumn') }}</p>
+        <p class="hint">{{ t('wizard.columnAndSplitStep.tsfileHint') }}</p>
       </div>
 
       <div class="field">
@@ -75,8 +80,10 @@ import { refreshResourceCounts } from '../../composables/useResourceCounts';
 
 const { t } = useI18n();
 const columns = computed(() => wizardState.preview?.columns.map((column) => column.name) || []);
+const fileFormat = computed(() => wizardState.preview?.file_format === 'tsfile' ? 'tsfile' : 'csv');
+const isTsFile = computed(() => fileFormat.value === 'tsfile');
 const timeColumn = ref('time');
-const nonTimeColumns = computed(() => columns.value.filter((c) => c !== timeColumn.value));
+const nonTimeColumns = computed(() => isTsFile.value ? columns.value : columns.value.filter((c) => c !== timeColumn.value));
 
 const valueColumns = ref<string[]>([]);
 const target = ref('');
@@ -108,8 +115,8 @@ async function load() {
       name: 'Uploaded dataset',
       domain: 'general',
       source_uri: wizardState.sourceUri,
-      file_format: 'csv',
-      time_column: timeColumn.value,
+      file_format: fileFormat.value,
+      time_column: isTsFile.value ? 'time' : timeColumn.value,
       value_columns: valueColumns.value
     });
     wizardState.manifestId = manifest.dataset_manifest_id;

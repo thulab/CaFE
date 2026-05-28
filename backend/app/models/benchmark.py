@@ -24,6 +24,12 @@ class CapabilityBlock(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class CapabilityBlockShard(SQLModel, table=True):
+    capability_block_id: str = Field(primary_key=True)
+    shard_id: str = Field(primary_key=True)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Track(SQLModel, table=True):
     track_id: str = Field(default_factory=new_id, primary_key=True)
     name: str

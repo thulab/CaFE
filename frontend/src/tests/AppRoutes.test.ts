@@ -4,6 +4,7 @@ import App from '../App.vue';
 import { i18n, setLocale } from '../i18n';
 import EvaluationWizardPage from '../pages/EvaluationWizardPage.vue';
 import LoadJobPage from '../pages/LoadJobPage.vue';
+import { authState } from '../stores/auth';
 import { resetWizard, wizardState } from '../stores/wizard';
 
 function jsonResponse(body: unknown) {
@@ -15,6 +16,19 @@ function mockFetch() {
     const url = String(input);
     if (url === '/api/models') {
       return Promise.resolve(jsonResponse({ items: [{ model_id: 'model-1', name: 'Timer 3.5' }] }));
+    }
+    if (url === '/api/tracks') {
+      return Promise.resolve(jsonResponse({
+        items: [{ track_id: 'track-1', name: 'Hourly energy', primary_metric_id: 'mase', status: 'ready', created_at: '2026-01-01T00:00:00Z' }]
+      }));
+    }
+    if (url === '/api/shards?limit=200') {
+      return Promise.resolve(jsonResponse({
+        items: [{ shard_id: 'shard-1', dataset_manifest_id: 'manifest-1', source_uri: '/tmp/hourly.csv', status: 'ready', row_count: 20, target_columns: ['target'], value_columns: ['target'], target_dim: 1, context_length: 6, horizon: 3, stride: 3, sample_count: 4 }],
+        total: 1,
+        limit: 200,
+        offset: 0
+      }));
     }
     if (url === '/api/reports/rep-1') {
       return Promise.resolve(jsonResponse({ report_id: 'rep-1', model_metrics: [], task_summaries: [], sample_forecast_links: [] }));
@@ -91,6 +105,15 @@ describe('App routes and artifact links', () => {
     resetWizard();
     vi.restoreAllMocks();
     setLocale('en-US');
+    authState.user = {
+      user_id: 'admin-test',
+      username: 'admin',
+      email: null,
+      is_active: true,
+      is_superuser: true,
+      roles: ['admin'],
+      permissions: []
+    };
     window.location.hash = '#/';
   });
 
@@ -133,6 +156,39 @@ describe('App routes and artifact links', () => {
     expect((await screen.findAllByText('Lower is better')).length).toBeGreaterThan(0);
 
     rendered.unmount();
+  });
+
+  it('resets the wizard when New evaluation is clicked from an existing new-evaluation route', async () => {
+    mockFetch();
+    window.location.hash = '#/new';
+    wizardState.preview = {
+      upload_id: 'upload-1',
+      source_uri: '/tmp/hourly.csv',
+      columns: [{ name: 'time' }, { name: 'target' }],
+      preview_rows: []
+    };
+    wizardState.step = 5;
+
+    render(App, { global: { plugins: [i18n] } });
+
+    const newEvaluationLinks = await screen.findAllByRole('link', { name: /New evaluation/ });
+    await fireEvent.click(newEvaluationLinks.at(-1)!);
+
+    await waitFor(() => {
+      expect(wizardState.preview).toBeNull();
+      expect(wizardState.step).toBe(0);
+      expect(window.location.hash).toMatch(/^#\/new\?session=/);
+    });
+  });
+
+  it('routes the track workspace list to an authenticated Tracks page', async () => {
+    mockFetch();
+    window.location.hash = '#/tracks';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('heading', { name: 'Tracks' })).toBeTruthy();
+    expect(await screen.findByText('All evaluation tracks you created or can access.')).toBeTruthy();
   });
 
   it('exposes view links for created workflow artifacts', async () => {

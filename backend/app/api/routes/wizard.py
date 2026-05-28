@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
-from app.models.benchmark import CapabilityBlock
+from app.models.benchmark import CapabilityBlock, CapabilityBlockShard
 from app.models.dataset import Shard
 from app.services.track_service import create_real_capability_block, create_track_with_blocks
 
@@ -22,6 +22,8 @@ def _delete_capability_block(session: Session, capability_block_id: str) -> None
     for shard in session.exec(select(Shard).where(Shard.capability_block_id == capability_block_id)).all():
         shard.capability_block_id = None
         session.add(shard)
+    for link in session.exec(select(CapabilityBlockShard).where(CapabilityBlockShard.capability_block_id == capability_block_id)).all():
+        session.delete(link)
     block = session.get(CapabilityBlock, capability_block_id)
     if block is not None:
         session.delete(block)

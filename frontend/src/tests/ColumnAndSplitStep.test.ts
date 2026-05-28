@@ -71,6 +71,31 @@ describe('ColumnAndSplitStep', () => {
     expect(manifestBody.name).toBe('Uploaded dataset');
   });
 
+  it('creates tsfile manifests without requiring a CSV timestamp column', async () => {
+    wizardState.preview = {
+      upload_id: 'u-ts',
+      source_uri: '/tmp/data.tsfile',
+      file_format: 'tsfile',
+      columns: [{ name: 'temperature' }, { name: 'pressure' }],
+      preview_rows: []
+    };
+    wizardState.sourceUri = '/tmp/data.tsfile';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm-ts' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j-ts', status: 'succeeded', output_shard_id: 's-ts' }), { status: 200 }));
+
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.update(screen.getByLabelText('Target'), 'temperature');
+    await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
+
+    await waitFor(() => expect(wizardState.shardId).toBe('s-ts'));
+    const manifestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    expect(manifestBody.file_format).toBe('tsfile');
+    expect(manifestBody.time_column).toBe('time');
+    expect(manifestBody.value_columns).toEqual(['temperature', 'pressure']);
+  });
+
   it('renders split labels and window status in Chinese', () => {
     setLocale('zh-CN');
 

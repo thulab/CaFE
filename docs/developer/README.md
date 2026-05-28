@@ -32,7 +32,7 @@ flowchart LR
 
 ```
 DatasetManifest → DatasetLoadJob → Shard(real) → SampleIndex      （数据侧）
-Track → CapabilityBlock → Shard → SampleIndex                     （组织侧）
+Track → CapabilityBlock → CapabilityBlockShard → Shard → SampleIndex （组织侧）
 BenchmarkingRun → Unit(按模型) → Task(按能力块) → Shard → Sample  （执行侧）
 MetricResult：单表多层级（sample / shard / task / unit）
 ```
