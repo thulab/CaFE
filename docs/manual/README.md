@@ -201,6 +201,26 @@ http://127.0.0.1:5173
 
 使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。
 
+### 6.3 资源归档、恢复与永久删除
+
+工作台中的数据集、切片、赛道和评测运行支持两类删除语义：
+
+- **归档（Archive）**：默认删除动作，可恢复。归档不会删除业务行、历史报告或榜单结果；资源默认从列表和新建流程中隐藏，详情深链仍可打开。
+- **永久删除（Permanent delete）**：管理员操作，不可恢复。前端会先展示影响范围，再二次确认；后端按依赖关系删除 DB 行，并清理报告/预测产物。数据集 purge 还会删除位于 `runtime/uploads/` 下的托管上传文件。
+
+具体行为：
+
+- 数据集 / 切片：在「数据集」页面上传、切片、查看和归档。归档后默认不再出现在新建评测或赛道创建的候选列表；打开「Show archived」可恢复或永久删除。
+- 赛道：在「赛道」页面或赛道详情中归档。归档赛道会保留历史榜单、运行列表和报告，但不能再基于该赛道启动新的评测运行。
+- 运行：只能在终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）后归档或永久删除；排队中、运行中或取消请求中的 run 需要先等待终态或取消完成。
+- 永久删除数据集或切片可能级联删除依赖它的赛道、运行、报告、指标、榜单条目和预测产物；永久删除赛道会级联删除其运行与榜单；永久删除运行会删除该 run 的 unit/task、报告、预测、指标和事件。
+
+常见错误：
+
+- `resource_archived`：试图在已归档赛道上启动新运行。
+- `run_not_terminal`：运行未到终态，不能归档或永久删除。
+- `purge_requires_cascade`：资源存在下游引用，管理员需在影响范围确认后用级联删除。
+
 ## 7. 查看结果
 
 下列接口为后端真实路径，挂载在后端根路径下（不带 `/api` 前缀）。前端访问时通过 Vite 的 `/api` 代理转发，代理会自动去掉 `/api` 前缀。直接用 `curl` 调试请使用后端地址，例如 `http://127.0.0.1:8000/...`。
@@ -272,6 +292,28 @@ GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
 - `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MASE/MSE/MAE；MASE 在平稳历史等场景下可能无定义），失败时附 `error_message`。
 
 前端「样本预测对比」页把历史、真值与各模型预测画在同一张**交互式折线图**上（按真实数据缩放、带坐标轴与网格，各模型用不同颜色、预测用虚线，悬浮显示对应步数值，图例可点选开关各序列，多维目标可切换维度），并列出每模型指标表（最优值高亮）；非 `succeeded` 的模型以告警条单独列出。
+
+### 7.4 生命周期接口
+
+列表接口默认隐藏已归档资源，可用 `include_archived=true` 显式包含：
+
+```text
+GET /dataset-manifests?include_archived=true
+GET /shards?include_archived=true
+GET /tracks?include_archived=true
+GET /benchmarking-runs?include_archived=true
+```
+
+四类资源都提供一致的生命周期接口：
+
+```text
+GET    /<resource-path>/{id}/deletion-impact
+POST   /<resource-path>/{id}/archive
+POST   /<resource-path>/{id}/restore
+DELETE /<resource-path>/{id}?cascade=true
+```
+
+其中 `<resource-path>` 为 `dataset-manifests`、`shards`、`tracks` 或 `benchmarking-runs`。归档/恢复分别需要 `dataset.delete`、`track.delete` 或 `run.delete` 权限；永久删除需要 `admin.purge` 权限。
 
 ## 8. 运行产物
 

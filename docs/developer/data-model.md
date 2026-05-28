@@ -38,7 +38,7 @@ def utc_now() -> datetime:
 
 ## 1. 总览
 
-### 1.1 SQLModel 表实体清单（24 个）
+### 1.1 SQLModel 表实体清单（25 个）
 
 | 实体 | 文件 | 职责 |
 | --- | --- | --- |
@@ -66,6 +66,7 @@ def utc_now() -> datetime:
 | `Permission` | `backend/app/models/auth.py:28` | 权限码字典；启动时由 `core/permissions.py` seed |
 | `UserRole` | `backend/app/models/auth.py:34` | 用户-角色关联表 |
 | `RolePermission` | `backend/app/models/auth.py:39` | 角色-权限关联表 |
+| `ArchivedResource` | `backend/app/models/lifecycle.py:8` | 多态资源归档状态；不改写业务实体状态 |
 
 ### 1.2 ER 图
 
@@ -112,6 +113,11 @@ erDiagram
     Role ||--o{ UserRole : "role_id"
     Role ||--o{ RolePermission : "role_id"
     Permission ||--o{ RolePermission : "permission_id"
+
+    ArchivedResource }o--|| DatasetManifest : "resource_type/resource_id"
+    ArchivedResource }o--|| Shard : "resource_type/resource_id"
+    ArchivedResource }o--|| Track : "resource_type/resource_id"
+    ArchivedResource }o--|| BenchmarkingRun : "resource_type/resource_id"
 ```
 
 ### 1.3 核心层级速览
@@ -133,7 +139,28 @@ BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → 
 
 `MetricResult` 是**单表多层级**：通过 `result_level` 字段区分 `sample` / `shard` / `task` / `unit`（MVP 实际写入这四级；定义上还预留 `run` / `ranking`）。
 
+生命周期侧：
+
+```text
+ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track / BenchmarkingRun
+```
+
+归档状态独立存储，避免把 `BenchmarkingRun.status` 这种执行状态混入资源管理状态。物理删除由 `services/resource_lifecycle.py` 显式按依赖顺序清理。
+
 > **逻辑外键说明**：模型层未声明数据库级 FOREIGN KEY，关系仅以带 `index=True` 的 ID 字段表达，并由 service 层维护引用完整性。ER 图中的关系基数据此还原。
+
+### 1.4 ArchivedResource
+
+资源归档状态表。源文件 `backend/app/models/lifecycle.py:8`。
+
+| 字段 | 类型 | 默认值/约束 | 说明 |
+| --- | --- | --- | --- |
+| `resource_type` | `str` | **联合主键** | `dataset_manifest` / `shard` / `track` / `benchmarking_run` |
+| `resource_id` | `str` | **联合主键** | 对应业务实体 ID |
+| `archived_reason` | `str \| None` | `None` | 可选归档原因，当前 UI 未填写 |
+| `archived_at` | `datetime` | `utc_now` | 归档时间 |
+
+列表接口通过该表默认过滤归档资源；详情接口仍返回业务实体并附加 `archived_at`。恢复资源时删除对应 `ArchivedResource` 行。归档不删除报告、预测、指标或榜单条目。
 
 ---
 
@@ -362,6 +389,8 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 
 **status 取值**：仅 `"ready"`（默认值）。spec §4.6 预留 `draft / disabled`。
 
+> 归档状态不写入 `Track.status`，而是由 `ArchivedResource(resource_type="track")` 表达。归档赛道仍可查详情和榜单，但 `create_benchmarking_run` 会拒绝在归档赛道上创建新 run。
+
 ### 3.3 Model
 
 可评测模型注册项。源文件 `backend/app/models/model_registry.py:10`。
@@ -428,6 +457,8 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 - `"succeeded"`：全部 unit 成功（`run_executor.py:117`）。
 - `"partial_succeeded"`：部分 unit 成功、部分失败（`run_executor.py:115`）。
 - `"failed"`：全部失败，或服务重启时把未完成 run 标记失败（`run_executor.py:83,119`）。
+
+> 归档状态不写入 `BenchmarkingRun.status`，而是由 `ArchivedResource(resource_type="benchmarking_run")` 表达。归档/永久删除 run 前必须已进入终态：`succeeded`、`partial_succeeded`、`failed` 或 `cancelled`。
 
 终态判定逻辑（`run_executor.py:112-119`）：统计 `unit.status == "succeeded"` 与 `== "failed"` 的数量——同时存在 → `partial_succeeded`；只有成功 → `succeeded`；否则 → `failed`。
 
@@ -803,7 +834,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 1. 若已 `cancel_requested` → 直接 `cancelled` 并返回。
 2. 否则 `running`，逐 unit → 逐 task → 逐 shard → 逐 sample 执行；每 sample 调 adapter 产 forecast、算 sample 指标、写 forecast 行；shard/task/unit 逐层聚合写指标。
 3. 终态判定（§4.1），写 RunEvent，调 `generate_run_report` 生成报告，回填 `run.report_id`。
-4. 非 cancelled 时对 `mse`/`mae` 各刷新一次榜单。
+4. 非 cancelled 时对 `mase`/`mse`/`mae` 各刷新一次榜单。
 
 取消（`cancel_run`，`run_executor.py:66-75`）：协作式取消——置 `cancel_requested=True`、`cancel_requested_at`、`status="cancel_requested"`，写 warning 事件。
 
@@ -824,6 +855,23 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 ### 8.10 stub forecast 可复现
 
 `StubTimerAdapter.forecast`（`stub_timer_adapter.py:9-27`）：以 `target_history` 最后一个值做 naive 预测，叠加由 `sha256(f"{model_id}:{sample_id}:{seed}")` 决定的确定性噪声与 `model_bias`。相同 `model_id + sample_id + seed` 必得相同 forecast（spec §1.7）。
+
+### 8.11 资源归档与物理删除
+
+`ArchivedResource` 只记录归档标记，不修改业务实体状态。`visible_rows` / `row_with_archive`（`services/resource_lifecycle.py`）让列表默认隐藏归档资源，并让详情和 `include_archived=true` 列表带上 `archived_at`。
+
+归档/恢复入口：
+
+- dataset manifest / shard：`POST /dataset-manifests/{id}/archive|restore`、`POST /shards/{id}/archive|restore`，需要 `dataset.delete`。
+- track：`POST /tracks/{id}/archive|restore`，需要 `track.delete`。
+- benchmarking run：`POST /benchmarking-runs/{id}/archive|restore`，需要 `run.delete`，且 run 必须是终态。
+
+永久删除入口都需要 `admin.purge`。`deletion_impact` 先返回受影响实体计数，`DELETE ...?cascade=true` 才允许删除有下游引用的 dataset/shard/track。核心级联边界：
+
+- purge dataset manifest：删除关联 load jobs、shards、SeriesPoint、SampleIndex，以及引用这些 shards 的 tracks/runs/reports/rankings/metrics/forecast artifacts；同时删除位于 `runtime/uploads/` 下的托管上传文件。
+- purge shard：删除该 shard 的 SeriesPoint、SampleIndex、sample/shard 指标、legacy storage 和引用它的 tracks/runs；不删除同一 manifest 下其它 shard，也不主动删除 manifest 的上传源文件。
+- purge track：有 run 时非级联删除返回 `purge_requires_cascade`；级联删除 runs、reports、ranking list/entries、capability blocks 和相关指标。
+- purge run：删除 units、tasks、reports、forecast artifacts、metric results、ranking entries 和 run events；非终态返回 `run_not_terminal`。
 
 ---
 

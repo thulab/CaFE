@@ -94,6 +94,13 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 
 `User` / `Role` / `Permission` / `UserRole` / `RolePermission` 在启动时自动建表并 seed。`admin` 是 superuser，`viewer` 只拿 `*.read` 权限。前端 `useAuthGuard.ts` 镜像同一套 Tier 规则，用于 hash 路由跳转到登录页或 forbidden 页。
 
+资源生命周期相关权限：
+
+- `dataset.delete`：归档/恢复 dataset manifest 与 shard。
+- `track.delete`：归档/恢复 track。
+- `run.delete`：归档/恢复 benchmarking run。
+- `admin.purge`：物理删除所有资源。
+
 ---
 
 ## 2. 关键流程
@@ -175,6 +182,8 @@ flowchart LR
 - 每个 model 一个 `Unit`。
 - 每个 `(model, block)` 一个 `Task`。
 - 一条 `RunEvent("run queued")`。
+
+若 track 已在 `ArchivedResource` 中标记归档，创建 run 会直接抛 `resource_archived`（409），不会建出半成品 run。
 
 #### 调度与后台执行
 
@@ -314,6 +323,35 @@ flowchart LR
     FS --> OUT
 ```
 
+### 2.g 资源生命周期：归档、恢复、影响预览、物理删除
+
+**入口**：`GET /{resource}/{id}/deletion-impact`、`POST /{resource}/{id}/archive`、`POST /{resource}/{id}/restore`、`DELETE /{resource}/{id}?cascade=true`
+**服务**：`services/resource_lifecycle.py`
+**状态实体**：`ArchivedResource(resource_type, resource_id, archived_at)`
+
+归档是默认删除动作：service 只写 `ArchivedResource`，不改 `DatasetManifest.status`、`Shard.status`、`Track.status` 或 `BenchmarkingRun.status`。列表接口调用 `visible_rows` 默认过滤归档资源；详情接口调用 `row_with_archive` 或等价逻辑返回 `archived_at`。恢复则删除归档标记。run 的归档/删除额外要求状态在 `succeeded / partial_succeeded / failed / cancelled` 中，否则抛 `run_not_terminal`。
+
+`deletion_impact` 会先计算物理删除影响范围，返回固定 key：dataset manifests、load jobs、shards、series points、sample indices、capability blocks、tracks、benchmarking runs、units、tasks、reports、ranking lists/entries、forecast artifacts、metric results、run events。前端确认框只展示计数大于 0 的项。
+
+物理删除不依赖数据库外键级联，而是在 service 层按顺序显式删除：
+
+- dataset manifest：先 purge 引用其 shards 的 tracks，再 purge shards，最后删 load jobs、manifest、archive mark，并删除 `runtime/uploads/` 下的托管上传文件。
+- shard：先 purge 引用它的 tracks，再删 sample/series/metric/forecast/block links；若是 legacy shard storage 还会 unlink `storage_uri`。
+- track：有 run 时非级联拒绝；级联时先 purge runs，再删 ranking entries/list、capability block links、blocks、track。
+- benchmarking run：先确认终态，再删 forecast/report 文件和 unit/task/report/metric/ranking/event/run 行。
+
+```mermaid
+flowchart LR
+    UI["前端 Archive / Restore / Permanent delete"] --> IMP["GET deletion-impact"]
+    IMP --> DLG["确认框展示影响范围"]
+    DLG -->|Archive| AR["POST archive<br/>写 ArchivedResource"]
+    DLG -->|Restore| RS["POST restore<br/>删 ArchivedResource"]
+    DLG -->|Permanent delete| PUR["DELETE ?cascade=true<br/>resource_lifecycle 显式级联"]
+    AR --> LIST["列表默认隐藏<br/>详情仍可访问"]
+    RS --> LIST
+    PUR --> GONE["业务行与报告/预测产物删除"]
+```
+
 ---
 
 ## 3. 本地桩服务（`backend/stub_service`）
@@ -373,22 +411,43 @@ export TSBENCHMARK_MODEL_ADAPTER=rest    # 或 stub（完全进程内，连桩�
 | --- | --- | --- |
 | POST | `/dataset-manifests/upload` | 上传 CSV 或 TsFile，返回嗅探（CSV：列/预览/分隔符/编码/has_header/类型；TsFile：设备/物理量列） |
 | POST | `/dataset-manifests` | 创建数据集 manifest |
+| GET | `/dataset-manifests` | 分页列 manifest；`include_archived=true` 时包含归档资源 |
 | GET | `/dataset-manifests/{dataset_manifest_id}` | 取 manifest |
+| GET | `/dataset-manifests/{dataset_manifest_id}/deletion-impact` | 预览删除 manifest 的影响范围 |
+| POST | `/dataset-manifests/{dataset_manifest_id}/archive` | 归档 manifest |
+| POST | `/dataset-manifests/{dataset_manifest_id}/restore` | 恢复 manifest |
+| DELETE | `/dataset-manifests/{dataset_manifest_id}` | 管理员物理删除 manifest（有引用需 `cascade=true`） |
 | POST | `/dataset-load-jobs` | 创建并同步执行 load job（读取 → 切窗 → 写 SeriesPoint + 样本指针） |
 | GET | `/dataset-load-jobs/{load_job_id}` | 取 load job |
+| GET | `/shards` | 分页列 shard；`include_archived=true` 时包含归档资源 |
 | GET | `/shards/{shard_id}` | 取 shard |
+| GET | `/shards/{shard_id}/deletion-impact` | 预览删除 shard 的影响范围 |
+| POST | `/shards/{shard_id}/archive` | 归档 shard |
+| POST | `/shards/{shard_id}/restore` | 恢复 shard |
+| DELETE | `/shards/{shard_id}` | 管理员物理删除 shard（有引用需 `cascade=true`） |
 | GET | `/shards/{shard_id}/samples` | 分页列 shard 的样本索引 |
 | GET | `/samples/{sample_id}/preview` | 取样本原始 history/future |
 | GET | `/samples/{sample_id}/forecast` | 取样本 + 某 run 各模型预测（需 `run_id`） |
 | POST | `/capability-blocks` | 由 real shard 创建能力块 |
 | POST | `/tracks` | 创建赛道（同时建榜单） |
+| GET | `/tracks` | 列赛道；`include_archived=true` 时包含归档资源 |
+| GET | `/tracks/{track_id}` | 取赛道摘要（含归档状态） |
+| GET | `/tracks/{track_id}/deletion-impact` | 预览删除 track 的影响范围 |
+| POST | `/tracks/{track_id}/archive` | 归档 track |
+| POST | `/tracks/{track_id}/restore` | 恢复 track |
+| DELETE | `/tracks/{track_id}` | 管理员物理删除 track（有 run 需 `cascade=true`） |
 | GET | `/tracks/{track_id}/ranking` | 查榜（`metric` / `policy` 可选） |
 | POST | `/models` | 创建模型 |
 | GET | `/models` | REST 模式列 timer-rest-service 模型目录并同步本地镜像；stub 模式列本地模型 |
 | POST | `/models/{model_id}/load` | REST 模式调用 timer-rest-service `/models/load` 并等待 loaded |
 | POST | `/wizard/real-dataset-track` | 一步建能力块 + 赛道 + 榜单 |
 | POST | `/benchmarking-runs` | 创建并调度评测运行 |
+| GET | `/benchmarking-runs` | 分页列 run；可用 `track_id` 过滤，`include_archived=true` 时包含归档资源 |
 | GET | `/benchmarking-runs/{benchmarking_run_id}/progress` | 查运行进度 |
+| GET | `/benchmarking-runs/{benchmarking_run_id}/deletion-impact` | 预览删除 run 的影响范围 |
+| POST | `/benchmarking-runs/{benchmarking_run_id}/archive` | 归档终态 run |
+| POST | `/benchmarking-runs/{benchmarking_run_id}/restore` | 恢复 run |
+| DELETE | `/benchmarking-runs/{benchmarking_run_id}` | 管理员物理删除终态 run |
 | POST | `/benchmarking-runs/{benchmarking_run_id}/cancel` | 请求取消运行 |
 | GET | `/reports/{report_id}` | 取运行报告 |
 | GET | `/__test__/error-contract` | 错误信封探针（测试用） |

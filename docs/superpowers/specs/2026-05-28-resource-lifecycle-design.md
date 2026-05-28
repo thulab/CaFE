@@ -74,6 +74,8 @@ Track -> BenchmarkingRun -> Unit / Task / Report / RankingEntry / ForecastArtifa
 5. 删除 shards 的 samples、series points、metric results、forecast artifacts。
 6. 删除 load jobs、manifest 和 archive marks。
 
+托管上传文件（`runtime/uploads/` 下的源文件）随 dataset manifest 的物理删除一起删除；非托管路径不自动删除。
+
 ### Shard
 
 影响范围包括 shard、series points、sample indices、block links，以及引用它的 tracks/runs。若 shard 被任何 track 引用，非级联 purge 拒绝。

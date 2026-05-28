@@ -56,7 +56,7 @@ Modify:
 - Modify: `backend/app/api/routes/benchmarking_runs.py`
 - Test: `backend/tests/api/test_resource_lifecycle.py`
 
-- [ ] **Step 1: Write failing backend tests**
+- [x] **Step 1: Write failing backend tests**
 
 Add tests that create a dataset -> shard -> track -> run chain, then assert:
 
@@ -82,7 +82,7 @@ cd backend && uv run pytest tests/api/test_resource_lifecycle.py -q
 
 Expected: tests fail because lifecycle endpoints do not exist.
 
-- [ ] **Step 2: Implement archive table and service primitives**
+- [x] **Step 2: Implement archive table and service primitives**
 
 Add `ArchivedResource` with compound primary key `(resource_type, resource_id)`. Implement:
 
@@ -94,7 +94,7 @@ archive_map(session, resource_type, resource_ids)
 active_filter_ids(session, resource_type, resource_ids, include_archived)
 ```
 
-- [ ] **Step 3: Implement impact builders**
+- [x] **Step 3: Implement impact builders**
 
 Implement one public function:
 
@@ -129,7 +129,7 @@ Return:
 }
 ```
 
-- [ ] **Step 4: Wire list filters and archive endpoints**
+- [x] **Step 4: Wire list filters and archive endpoints**
 
 Add `include_archived: bool = False` to list routes. Default lists exclude archived resources; details include `archived_at`.
 
@@ -143,7 +143,7 @@ POST   /.../{id}/restore
 
 Use permissions from the spec.
 
-- [ ] **Step 5: Reject new runs on archived tracks**
+- [x] **Step 5: Reject new runs on archived tracks**
 
 In run creation service, check `ArchivedResource(resource_type="track", resource_id=track_id)` and raise:
 
@@ -151,7 +151,7 @@ In run creation service, check `ArchivedResource(resource_type="track", resource
 ApiError("resource_archived", "track is archived", {"track_id": track_id}, 409)
 ```
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -181,7 +181,7 @@ git commit -m "添加资源归档和影响预览接口"
 - Modify: `backend/app/api/routes/benchmarking_runs.py`
 - Test: `backend/tests/api/test_resource_lifecycle.py`
 
-- [ ] **Step 1: Write failing purge tests**
+- [x] **Step 1: Write failing purge tests**
 
 Extend lifecycle tests:
 
@@ -207,7 +207,7 @@ cd backend && uv run pytest tests/api/test_resource_lifecycle.py -q
 
 Expected: purge tests fail because DELETE endpoints do not exist.
 
-- [ ] **Step 2: Implement purge ordering**
+- [x] **Step 2: Implement purge ordering**
 
 Implement:
 
@@ -220,7 +220,7 @@ purge_dataset_manifest(session, dataset_manifest_id, cascade=False)
 
 Delete child rows explicitly before parents. If `cascade=False` and downstream references exist, raise `purge_requires_cascade` with impact details. If a run is `queued` or `running`, raise `run_not_terminal`.
 
-- [ ] **Step 3: Wire DELETE endpoints**
+- [x] **Step 3: Wire DELETE endpoints**
 
 Add DELETE routes requiring `admin.purge`:
 
@@ -233,7 +233,7 @@ DELETE /benchmarking-runs/{id}?cascade=false
 
 Return `{ "ok": true, "purged": impact }`.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run:
 
@@ -271,7 +271,7 @@ git commit -m "添加管理员物理删除资源接口"
 - Modify: `frontend/src/i18n/locales/zh-CN.ts`
 - Test: `frontend/src/tests/ResourceLifecycle.test.ts`
 
-- [ ] **Step 1: Write failing frontend tests**
+- [x] **Step 1: Write failing frontend tests**
 
 Add tests asserting:
 
@@ -290,7 +290,7 @@ cd frontend && npm test -- ResourceLifecycle.test.ts
 
 Expected: tests fail because controls are absent.
 
-- [ ] **Step 2: Add lifecycle API helpers and types**
+- [x] **Step 2: Add lifecycle API helpers and types**
 
 Define:
 
@@ -309,19 +309,19 @@ export interface DeletionImpactDTO {
 
 Add `includeArchived?: boolean` to list helpers.
 
-- [ ] **Step 3: Build reusable confirmation dialog**
+- [x] **Step 3: Build reusable confirmation dialog**
 
 `ResourceActionDialog.vue` takes `resourceType`, `resourceId`, `action`, `open` and emits `done`. It fetches impact on open, shows affected counts, and calls archive/restore/purge.
 
-- [ ] **Step 4: Wire workspace pages**
+- [x] **Step 4: Wire workspace pages**
 
 Add “Show archived” toggle and row actions to datasets/tracks/runs. Archived rows show a badge. After any action, reload the current list.
 
-- [ ] **Step 5: Wire detail pages**
+- [x] **Step 5: Wire detail pages**
 
 Track detail displays archived state and hides/disables new-run controls while archived. Run detail displays archived state and offers restore/purge actions.
 
-- [ ] **Step 6: Verify and commit**
+- [x] **Step 6: Verify and commit**
 
 Run:
 
@@ -349,7 +349,7 @@ git commit -m "添加前端资源归档删除操作"
 - Modify: `docs/developer/data-model.md`
 - Modify: `docs/developer/key-flows.md`
 
-- [ ] **Step 1: Update documentation**
+- [x] **Step 1: Update documentation**
 
 Document:
 
@@ -359,7 +359,7 @@ Document:
 - 数据模型新增 `ArchivedResource`。
 - 物理删除的级联边界。
 
-- [ ] **Step 2: Verify all relevant suites**
+- [x] **Step 2: Verify all relevant suites**
 
 Run:
 
@@ -371,7 +371,7 @@ bash scripts/tests/test_system_scripts.sh
 git diff --check
 ```
 
-- [ ] **Step 3: Commit docs and final fixes**
+- [x] **Step 3: Commit docs and final fixes**
 
 Commit:
 
