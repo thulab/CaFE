@@ -8,9 +8,13 @@
       </div>
       <div class="head-actions">
         <StatusBadge v-if="progress" :status="progress.status" big />
+        <span v-if="progress?.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
         <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>
         <button v-else-if="isCancelling" class="btn sm" type="button" disabled><Icon name="ban" :size="15" /> {{ t('runs.detail.cancelling') }}</button>
         <a v-if="progress?.report_id" class="btn" :href="`#/reports/${progress.report_id}`"><Icon name="barChart" :size="16" /> {{ t('runs.detail.openReport') }}</a>
+        <button v-if="progress && !progress.archived_at && !isPolling" class="btn secondary sm" type="button" @click="openLifecycle('archive')">{{ t('lifecycle.archive') }}</button>
+        <button v-if="progress?.archived_at" class="btn secondary sm" type="button" @click="openLifecycle('restore')">{{ t('lifecycle.restore') }}</button>
+        <button v-if="progress && !isPolling" class="btn danger sm" type="button" @click="openLifecycle('purge')">{{ t('lifecycle.permanentDelete') }}</button>
       </div>
     </header>
 
@@ -94,17 +98,27 @@
         </article>
       </section>
     </StateBlock>
+    <ResourceActionDialog
+      :open="dialog.open"
+      resource-type="benchmarking_run"
+      :resource-id="runId"
+      :action="dialog.action"
+      @close="dialog.open = false"
+      @done="load"
+    />
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
+import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import { ApiError } from '../api/client';
 import { cancelRun, getRunProgress } from '../api/runs';
 import type { RunProgressDTO } from '../api/types';
+import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { percent, shortId } from '../lib/format';
@@ -119,6 +133,10 @@ const { text: error, clear: clearError, setError } = useDisplayMessage();
 let timer: ReturnType<typeof setInterval> | undefined;
 const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
+const dialog = reactive<{ open: boolean; action: LifecycleAction }>({
+  open: false,
+  action: 'archive',
+});
 
 const p = computed(() => progress.value?.progress ?? {});
 // 仍需轮询：非终态都要继续刷（含 cancel_requested → cancelled 的过渡）。
@@ -162,6 +180,11 @@ async function onCancel() {
 function stopPolling() {
   if (timer) clearInterval(timer);
   timer = undefined;
+}
+
+function openLifecycle(action: LifecycleAction) {
+  dialog.action = action;
+  dialog.open = true;
 }
 
 const pct = (a: unknown, b: unknown) => percent(Number(a ?? 0), Number(b ?? 0));

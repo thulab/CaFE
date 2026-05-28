@@ -649,6 +649,14 @@ textarea:focus {
   flex: none;
 }
 
+.choice.compact {
+  display: inline-flex;
+  width: auto;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+}
+
 /* ======================= Page scaffolding ================================= */
 .page {
   max-width: 1220px;
@@ -1442,6 +1450,50 @@ th.num {
 }
 
 .divider { height: 1px; background: var(--border); border: 0; margin: 4px 0; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.42);
+  z-index: var(--z-overlay);
+}
+
+.modal-panel {
+  width: min(560px, 100%);
+  max-height: min(720px, calc(100vh - 40px));
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.compact-title {
+  margin: 0 0 8px;
+  font-size: 0.92rem;
+}
+
+.impact-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.impact-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
 
 /* ======================= Responsive ======================================= */
 @media (max-width: 1024px) {

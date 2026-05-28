@@ -115,6 +115,12 @@
     </section>
 
     <section class="card pad">
+      <div class="toolbar">
+        <label class="choice compact">
+          <input v-model="showArchived" type="checkbox" :aria-label="t('lifecycle.showArchived')" @change="load" />
+          {{ t('lifecycle.showArchived') }}
+        </label>
+      </div>
       <StateBlock
         :loading="loading"
         :error="error || ''"
@@ -129,7 +135,7 @@
         </template>
         <div class="table-wrap">
           <table class="data">
-            <thead><tr><th>{{ t('datasets.artifact') }}</th><th>{{ t('datasets.type') }}</th><th>{{ t('datasets.detail') }}</th><th>{{ t('datasets.created') }}</th></tr></thead>
+            <thead><tr><th>{{ t('datasets.artifact') }}</th><th>{{ t('datasets.type') }}</th><th>{{ t('datasets.detail') }}</th><th>{{ t('datasets.created') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
             <tbody>
               <tr v-for="item in displayItems" :key="`${item.kind}-${item.id}`">
                 <td>
@@ -138,24 +144,46 @@
                   </a>
                   <div class="faint mono" style="font-size:0.74rem">{{ shortId(item.id) }}</div>
                 </td>
-                <td><span class="badge" :class="item.kind === 'shard' ? 'primary' : ''">{{ t(`datasets.kind.${item.kind}`) }}</span></td>
+                <td>
+                  <div class="pill-row">
+                    <span class="badge" :class="item.kind === 'shard' ? 'primary' : ''">{{ t(`datasets.kind.${item.kind}`) }}</span>
+                    <span v-if="item.archivedAt" class="badge warning">{{ t('lifecycle.archived') }}</span>
+                  </div>
+                </td>
                 <td class="muted">{{ item.subtitle || t('common.notAvailable') }}</td>
                 <td class="muted nowrap" :title="item.createdAt ? formatDateTime(item.createdAt) : ''">{{ item.createdAt ? timeAgo(item.createdAt) : t('common.notAvailable') }}</td>
+                <td>
+                  <div class="pill-row">
+                    <button v-if="!item.archivedAt" class="btn secondary sm" type="button" @click="openLifecycle('archive', item)">{{ t('lifecycle.archive') }}</button>
+                    <button v-else class="btn secondary sm" type="button" @click="openLifecycle('restore', item)">{{ t('lifecycle.restore') }}</button>
+                    <button class="btn danger sm" type="button" @click="openLifecycle('purge', item)">{{ t('lifecycle.permanentDelete') }}</button>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
       </StateBlock>
     </section>
+    <ResourceActionDialog
+      :open="dialog.open"
+      :resource-type="dialog.resourceType"
+      :resource-id="dialog.resourceId"
+      :action="dialog.action"
+      @close="dialog.open = false"
+      @done="load"
+    />
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
+import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import { createDatasetManifest, createLoadJob, listDatasetManifests, listShards, uploadDataset } from '../api/datasets';
-import type { UploadPreviewDTO } from '../api/types';
+import type { ResourceType, UploadPreviewDTO } from '../api/types';
+import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { shortId } from '../lib/format';
@@ -172,6 +200,7 @@ interface Row {
   subtitle?: string;
   href: string;
   createdAt?: string;
+  archivedAt?: string | null;
 }
 
 const items = ref<Row[]>([]);
@@ -183,6 +212,7 @@ const { formatDateTime, formatInt, timeAgo } = useFormat();
 const uploadDragging = ref(false);
 const uploading = ref(false);
 const sliceBusy = ref(false);
+const showArchived = ref(false);
 const uploadFileName = ref('');
 const uploadPreview = ref<UploadPreviewDTO | null>(null);
 const createdShardId = ref('');
@@ -193,6 +223,12 @@ const uploadContext = ref(6);
 const uploadHorizon = ref(3);
 const uploadStride = ref(3);
 const uploadMaxSamples = ref<number | undefined>(undefined);
+const dialog = reactive<{ open: boolean; action: LifecycleAction; resourceType: ResourceType; resourceId: string }>({
+  open: false,
+  action: 'archive',
+  resourceType: 'dataset_manifest',
+  resourceId: '',
+});
 
 const uploadColumns = computed(() => uploadPreview.value?.columns.map((column) => column.name) || []);
 const uploadFileFormat = computed(() => uploadPreview.value?.file_format === 'tsfile' ? 'tsfile' : 'csv');
@@ -242,8 +278,8 @@ async function load() {
   clearError();
   try {
     const [manifests, shards] = await Promise.all([
-      listDatasetManifests({ limit: 200 }),
-      listShards({ limit: 200 })
+      listDatasetManifests({ limit: 200, includeArchived: showArchived.value }),
+      listShards({ limit: 200, includeArchived: showArchived.value })
     ]);
     const rows: Row[] = [];
     for (const m of manifests.items) {
@@ -253,7 +289,8 @@ async function load() {
         name: m.name,
         subtitle: m.domain,
         href: `#/datasets/${m.dataset_manifest_id}`,
-        createdAt: m.created_at
+        createdAt: m.created_at,
+        archivedAt: m.archived_at
       });
     }
     for (const s of shards.items) {
@@ -263,7 +300,8 @@ async function load() {
         targetColumns: s.target_columns ?? [],
         rowCount: s.row_count ?? 0,
         href: `#/shards/${s.shard_id}`,
-        createdAt: s.created_at
+        createdAt: s.created_at,
+        archivedAt: s.archived_at
       });
     }
     rows.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
@@ -274,6 +312,13 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+function openLifecycle(action: LifecycleAction, item: Row) {
+  dialog.action = action;
+  dialog.resourceType = item.kind === 'dataset' ? 'dataset_manifest' : 'shard';
+  dialog.resourceId = item.id;
+  dialog.open = true;
 }
 
 async function onUploadChange(event: Event) {

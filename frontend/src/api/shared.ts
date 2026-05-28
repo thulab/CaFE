@@ -1,6 +1,7 @@
 export interface ListParams {
   limit?: number;
   offset?: number;
+  includeArchived?: boolean;
 }
 
 export function buildListQuery(params: object): string {

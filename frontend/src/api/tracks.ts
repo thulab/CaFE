@@ -1,8 +1,11 @@
 import { apiRequest } from './client';
 import type { TrackDTO } from './types';
+import { buildListQuery } from './shared';
 
-export function listTracks() {
-  return apiRequest<{ items: TrackDTO[] }>('/tracks');
+export function listTracks(params: { includeArchived?: boolean } = {}) {
+  return apiRequest<{ items: TrackDTO[]; total?: number }>(
+    `/tracks${buildListQuery({ include_archived: params.includeArchived || undefined })}`
+  );
 }
 
 export function getTrack(trackId: string) {

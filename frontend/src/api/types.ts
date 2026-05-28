@@ -42,6 +42,7 @@ export interface DatasetManifestDTO {
   frequency?: string | null;
   timezone?: string | null;
   status: string;
+  archived_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -80,6 +81,7 @@ export interface ShardDTO {
   stride: number;
   sample_count: number;
   status: string;
+  archived_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
@@ -112,6 +114,7 @@ export interface RunProgressDTO {
   recent_events: Array<{ created_at: string; message?: string; event_type?: string; level?: string }>;
   report_id?: string;
   ranking_list_id?: string;
+  archived_at?: string | null;
 }
 
 export interface RankingDTO {
@@ -128,6 +131,7 @@ export interface TrackDTO {
   benchmark_version?: string;
   data_version?: string;
   status: string;
+  archived_at?: string | null;
   capability_block_ids?: string[];
   shard_ids?: string[];
   shard_count?: number;
@@ -155,6 +159,7 @@ export interface BenchmarkingRunSummaryDTO {
   track_id: string;
   model_ids: string[];
   status: string;
+  archived_at?: string | null;
   model_count: number;
   task_count: number;
   sample_count: number;
@@ -164,6 +169,18 @@ export interface BenchmarkingRunSummaryDTO {
   finished_at?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export type ResourceType = 'dataset_manifest' | 'shard' | 'track' | 'benchmarking_run';
+
+export interface DeletionImpactDTO {
+  resource_type: ResourceType;
+  resource_id: string;
+  archive_available: boolean;
+  purge_available: boolean;
+  cascade_required: boolean;
+  affected: Record<string, number>;
+  warnings: string[];
 }
 
 export interface ReportSummaryDTO {

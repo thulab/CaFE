@@ -3,12 +3,16 @@
     <header class="page-head">
       <div>
         <p class="eyebrow">{{ t('track.eyebrow') }}</p>
-        <h1>{{ t('track.title') }}</h1>
+        <h1>{{ track?.name || t('track.title') }}</h1>
         <p class="page-sub">{{ t('track.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <span v-if="track?.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
         <a class="btn secondary sm" :href="`#/tracks/${trackId}/ranking`"><Icon name="trophy" :size="15" /> {{ t('track.standaloneRanking') }}</a>
-        <a class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> {{ t('track.newEvaluation') }}</a>
+        <a v-if="track && !track.archived_at" class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> {{ t('track.newEvaluation') }}</a>
+        <button v-if="track && !track.archived_at" class="btn secondary sm" type="button" @click="openLifecycle('archive')">{{ t('lifecycle.archive') }}</button>
+        <button v-if="track?.archived_at" class="btn secondary sm" type="button" @click="openLifecycle('restore')">{{ t('lifecycle.restore') }}</button>
+        <button v-if="track" class="btn danger sm" type="button" @click="openLifecycle('purge')">{{ t('lifecycle.permanentDelete') }}</button>
       </div>
     </header>
 
@@ -18,12 +22,13 @@
         <div class="card-body">
           <dl class="detail-grid">
             <div class="detail-item"><dt>{{ t('track.trackId') }}</dt><dd class="mono">{{ trackId }}</dd></div>
+            <div v-if="track?.archived_at" class="detail-item"><dt>{{ t('lifecycle.state') }}</dt><dd><span class="badge warning">{{ t('lifecycle.archived') }}</span></dd></div>
             <div class="detail-item"><dt>{{ t('track.rankingRoute') }}</dt><dd><a class="text-link" :href="`#/tracks/${trackId}/ranking`">{{ t('track.openStandaloneRanking') }}</a></dd></div>
           </dl>
         </div>
       </article>
 
-      <article class="card">
+      <article v-if="track && !track.archived_at" class="card">
         <header class="card-head">
           <h2 class="card-title">{{ t('runPanel.startFromTrack') }}</h2>
         </header>
@@ -31,6 +36,7 @@
           <TrackRunPanel :track-id="trackId" @run-created="loadRuns" />
         </div>
       </article>
+      <p v-else class="alert" role="note"><Icon class="alert-ico" name="info" :size="16" />{{ t('track.archivedNoRuns') }}</p>
 
       <article class="card">
         <header class="card-head">
@@ -125,21 +131,32 @@
         </div>
       </article>
     </section>
+    <ResourceActionDialog
+      :open="dialog.open"
+      resource-type="track"
+      :resource-id="trackId"
+      :action="dialog.action"
+      @close="dialog.open = false"
+      @done="afterLifecycleDone"
+    />
   </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
+import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getRanking } from '../api/results';
 import { listRuns } from '../api/runs';
-import type { BenchmarkingRunSummaryDTO } from '../api/types';
+import { getTrack } from '../api/tracks';
+import type { BenchmarkingRunSummaryDTO, TrackDTO } from '../api/types';
+import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { shortId } from '../lib/format';
@@ -149,17 +166,31 @@ const metric = ref('mase');
 const policy = ref('latest_valid_result');
 const items = ref<Array<{ model_id: string; rank: number; metric_value: number }>>([]);
 const loading = ref(true);
+const track = ref<TrackDTO | null>(null);
 const runs = ref<BenchmarkingRunSummaryDTO[]>([]);
 const runsLoading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 const { text: runsError, clear: clearRunsError, setError: setRunsError } = useDisplayMessage();
 const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
+const dialog = reactive<{ open: boolean; action: LifecycleAction }>({
+  open: false,
+  action: 'archive',
+});
 
 onMounted(() => {
+  void loadTrack();
   void load();
   void loadRuns();
 });
+
+async function loadTrack() {
+  try {
+    track.value = await getTrack(props.trackId);
+  } catch {
+    track.value = null;
+  }
+}
 
 async function load() {
   loading.value = true;
@@ -188,5 +219,15 @@ async function loadRuns() {
 function runTitle(modelCount: number) {
   const key = modelCount === 1 ? 'artifacts.runTitleOne' : 'artifacts.runTitleOther';
   return t(key, { count: formatInt(modelCount) });
+}
+
+function openLifecycle(action: LifecycleAction) {
+  dialog.action = action;
+  dialog.open = true;
+}
+
+async function afterLifecycleDone() {
+  await loadTrack();
+  await loadRuns();
 }
 </script>

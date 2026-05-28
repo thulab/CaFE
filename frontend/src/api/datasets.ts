@@ -43,14 +43,17 @@ export function getShardSamples(shardId: string): Promise<ShardSamplesDTO> {
 }
 
 export function listDatasetManifests(params: ListParams = {}): Promise<ListResponse<DatasetManifestDTO>> {
-  return apiRequest<ListResponse<DatasetManifestDTO>>(`/dataset-manifests${buildListQuery(params)}`);
+  const { includeArchived, ...rest } = params;
+  return apiRequest<ListResponse<DatasetManifestDTO>>(
+    `/dataset-manifests${buildListQuery({ ...rest, include_archived: includeArchived || undefined })}`
+  );
 }
 
 export function listShards(
   params: ListParams & { datasetManifestId?: string } = {}
 ): Promise<ListResponse<ShardDTO>> {
-  const { datasetManifestId, ...rest } = params;
+  const { datasetManifestId, includeArchived, ...rest } = params;
   return apiRequest<ListResponse<ShardDTO>>(
-    `/shards${buildListQuery({ ...rest, dataset_manifest_id: datasetManifestId })}`
+    `/shards${buildListQuery({ ...rest, dataset_manifest_id: datasetManifestId, include_archived: includeArchived || undefined })}`
   );
 }

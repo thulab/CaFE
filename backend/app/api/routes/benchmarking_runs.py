@@ -13,6 +13,7 @@ from app.models.benchmark import BenchmarkingRun
 from app.services.resource_lifecycle import (
     RESOURCE_RUN,
     archive_resource,
+    archived_at,
     deletion_impact,
     purge_run,
     restore_resource,
@@ -111,7 +112,9 @@ def delete_run(benchmarking_run_id: str, session: Session = Depends(get_db_sessi
 def get_run_progress(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
     if session.get(BenchmarkingRun, benchmarking_run_id) is None:
         raise ApiError("resource_not_found", "resource not found", {"resource_type": RESOURCE_RUN, "resource_id": benchmarking_run_id}, 404)
-    return build_run_progress(session, benchmarking_run_id)
+    data = build_run_progress(session, benchmarking_run_id)
+    data["archived_at"] = archived_at(session, RESOURCE_RUN, benchmarking_run_id)
+    return data
 
 
 @router.post("/{benchmarking_run_id}/cancel", tier="perm", perm="run.cancel")

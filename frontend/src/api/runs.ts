@@ -22,8 +22,8 @@ export function cancelRun(runId: string) {
 export function listRuns(
   params: ListParams & { trackId?: string } = {}
 ): Promise<ListResponse<BenchmarkingRunSummaryDTO>> {
-  const { trackId, ...rest } = params;
+  const { trackId, includeArchived, ...rest } = params;
   return apiRequest<ListResponse<BenchmarkingRunSummaryDTO>>(
-    `/benchmarking-runs${buildListQuery({ ...rest, track_id: trackId })}`
+    `/benchmarking-runs${buildListQuery({ ...rest, track_id: trackId, include_archived: includeArchived || undefined })}`
   );
 }
