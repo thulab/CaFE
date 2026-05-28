@@ -3,6 +3,7 @@ from sqlmodel import Session, select
 
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
+from app.core.errors import ApiError
 from app.models.report import Report
 from app.services.report_service import read_report
 
@@ -32,6 +33,8 @@ def list_reports(
 @router.get("/{report_id}", tier="authed")
 def get_report(report_id: str, session: Session = Depends(get_db_session)) -> dict:
     report = session.get(Report, report_id)
+    if report is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": "report", "resource_id": report_id}, 404)
     payload = read_report(report)
     payload["report_id"] = report.report_id
     return payload

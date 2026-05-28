@@ -8,7 +8,17 @@ from sqlmodel import Session, select
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
 from app.core.config import get_settings
+from app.core.errors import ApiError
 from app.models.benchmark import BenchmarkingRun
+from app.services.resource_lifecycle import (
+    RESOURCE_RUN,
+    archive_resource,
+    deletion_impact,
+    purge_run,
+    restore_resource,
+    row_with_archive,
+    visible_rows,
+)
 from app.services.run_executor import build_run_progress, cancel_run, create_benchmarking_run, execute_run
 from app.workers.run_queue import RunQueue
 
@@ -57,6 +67,7 @@ def _execute_in_background(engine, run_id: str, runtime_dir: Path, queue: RunQue
 @router.get("", tier="authed")
 def list_runs(
     track_id: str | None = None,
+    include_archived: bool = False,
     limit: int = 50,
     offset: int = 0,
     session: Session = Depends(get_db_session),
@@ -64,15 +75,42 @@ def list_runs(
     base = select(BenchmarkingRun)
     if track_id:
         base = base.where(BenchmarkingRun.track_id == track_id)
-    total = len(session.exec(base).all())
-    items = session.exec(
-        base.order_by(BenchmarkingRun.created_at.desc()).offset(offset).limit(limit)
-    ).all()
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    rows = session.exec(base.order_by(BenchmarkingRun.created_at.desc())).all()
+    rows = visible_rows(session, RESOURCE_RUN, rows, "benchmarking_run_id", include_archived)
+    total = len(rows)
+    items = rows[offset : offset + limit]
+    return {
+        "items": [row_with_archive(session, RESOURCE_RUN, item, "benchmarking_run_id") for item in items],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/{benchmarking_run_id}/deletion-impact", tier="perm", perm="run.delete")
+def get_run_deletion_impact(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return deletion_impact(session, RESOURCE_RUN, benchmarking_run_id)
+
+
+@router.post("/{benchmarking_run_id}/archive", tier="perm", perm="run.delete")
+def archive_run(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return archive_resource(session, RESOURCE_RUN, benchmarking_run_id)
+
+
+@router.post("/{benchmarking_run_id}/restore", tier="perm", perm="run.delete")
+def restore_run(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return restore_resource(session, RESOURCE_RUN, benchmarking_run_id)
+
+
+@router.delete("/{benchmarking_run_id}", tier="perm", perm="admin.purge")
+def delete_run(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return purge_run(session, benchmarking_run_id)
 
 
 @router.get("/{benchmarking_run_id}/progress", tier="authed")
 def get_run_progress(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    if session.get(BenchmarkingRun, benchmarking_run_id) is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": RESOURCE_RUN, "resource_id": benchmarking_run_id}, 404)
     return build_run_progress(session, benchmarking_run_id)
 
 

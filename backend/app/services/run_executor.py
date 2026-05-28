@@ -15,6 +15,7 @@ from app.services.metric_service import aggregate_metric, compute_sample_metrics
 from app.services.model_adapter import ModelAdapter, get_model_adapter, remote_model_id
 from app.services.model_catalog import ensure_catalog_models_exist
 from app.services.model_input import build_model_input
+from app.services.resource_lifecycle import RESOURCE_TRACK, is_archived
 from app.services.sample_store import SampleStore
 from app.services.track_service import shards_for_capability_block
 
@@ -25,6 +26,8 @@ METRIC_NAMES = ["mase", "mse", "mae"]
 def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str]) -> BenchmarkingRun:
     if not model_ids:
         raise ApiError("run_requires_model", "benchmarking run requires at least one model")
+    if is_archived(session, RESOURCE_TRACK, track_id):
+        raise ApiError("resource_archived", "track is archived", {"track_id": track_id}, 409)
     ensure_catalog_models_exist(session, get_settings(), model_ids)
     blocks = session.exec(select(CapabilityBlock).where(CapabilityBlock.track_id == track_id)).all()
     if not blocks:

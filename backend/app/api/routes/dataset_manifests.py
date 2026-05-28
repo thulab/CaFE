@@ -8,10 +8,20 @@ from sqlmodel import Session, select
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
 from app.core.config import get_settings
+from app.core.errors import ApiError
 from app.core.ids import new_id
 from app.core.time import utc_now
 from app.models.dataset import DatasetManifest
 from app.services.csv_dataset_reader import CsvDatasetReader
+from app.services.resource_lifecycle import (
+    RESOURCE_DATASET,
+    archive_resource,
+    deletion_impact,
+    purge_dataset_manifest,
+    restore_resource,
+    row_with_archive,
+    visible_rows,
+)
 from app.services.tsfile_dataset_reader import tsfile_device_path, tsfile_field_name
 
 router = make_router(prefix="/dataset-manifests", tags=["dataset-manifests"])
@@ -145,18 +155,46 @@ def create_dataset_manifest(payload: DatasetManifestCreate, session: Session = D
 
 @router.get("", tier="authed")
 def list_dataset_manifests(
-    limit: int = 50, offset: int = 0, session: Session = Depends(get_db_session)
+    include_archived: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_db_session),
 ) -> dict:
-    total = len(session.exec(select(DatasetManifest)).all())
-    items = session.exec(
-        select(DatasetManifest)
-        .order_by(DatasetManifest.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-    ).all()
-    return {"items": items, "total": total, "limit": limit, "offset": offset}
+    rows = session.exec(select(DatasetManifest).order_by(DatasetManifest.created_at.desc())).all()
+    rows = visible_rows(session, RESOURCE_DATASET, rows, "dataset_manifest_id", include_archived)
+    total = len(rows)
+    items = rows[offset : offset + limit]
+    return {
+        "items": [row_with_archive(session, RESOURCE_DATASET, item, "dataset_manifest_id") for item in items],
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.get("/{dataset_manifest_id}/deletion-impact", tier="perm", perm="dataset.delete")
+def get_dataset_manifest_deletion_impact(dataset_manifest_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return deletion_impact(session, RESOURCE_DATASET, dataset_manifest_id)
+
+
+@router.post("/{dataset_manifest_id}/archive", tier="perm", perm="dataset.delete")
+def archive_dataset_manifest(dataset_manifest_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return archive_resource(session, RESOURCE_DATASET, dataset_manifest_id)
+
+
+@router.post("/{dataset_manifest_id}/restore", tier="perm", perm="dataset.delete")
+def restore_dataset_manifest(dataset_manifest_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return restore_resource(session, RESOURCE_DATASET, dataset_manifest_id)
+
+
+@router.delete("/{dataset_manifest_id}", tier="perm", perm="admin.purge")
+def delete_dataset_manifest(dataset_manifest_id: str, cascade: bool = False, session: Session = Depends(get_db_session)) -> dict:
+    return purge_dataset_manifest(session, dataset_manifest_id, cascade)
 
 
 @router.get("/{dataset_manifest_id}", tier="authed")
-def get_dataset_manifest(dataset_manifest_id: str, session: Session = Depends(get_db_session)) -> DatasetManifest:
-    return session.get(DatasetManifest, dataset_manifest_id)
+def get_dataset_manifest(dataset_manifest_id: str, session: Session = Depends(get_db_session)) -> dict:
+    manifest = session.get(DatasetManifest, dataset_manifest_id)
+    if manifest is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": RESOURCE_DATASET, "resource_id": dataset_manifest_id}, 404)
+    return row_with_archive(session, RESOURCE_DATASET, manifest, "dataset_manifest_id")

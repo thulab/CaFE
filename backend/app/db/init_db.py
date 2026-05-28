@@ -4,6 +4,7 @@ from app.core.errors import ApiError
 from app.models.auth import Permission, Role, RolePermission, User, UserRole
 from app.models.benchmark import BenchmarkingRun, CapabilityBlock, CapabilityBlockShard, ForecastArtifact, RunEvent, Task, Track, Unit
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
+from app.models.lifecycle import ArchivedResource
 from app.models.metric import MetricDefinition, MetricResult
 from app.models.model_registry import Model
 from app.models.ranking import RankingEntry, RankingList
