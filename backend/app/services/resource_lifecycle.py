@@ -3,6 +3,7 @@ from typing import Any, Iterable
 
 from sqlmodel import Session, select
 
+from app.core.config import get_settings
 from app.core.errors import ApiError
 from app.models.benchmark import BenchmarkingRun, CapabilityBlock, CapabilityBlockShard, ForecastArtifact, RunEvent, Task, Track, Unit
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
@@ -127,6 +128,8 @@ def purge_dataset_manifest(session: Session, dataset_manifest_id: str, cascade: 
     impact = _dataset_impact(session, dataset_manifest_id)
     if impact["cascade_required"] and not cascade:
         _raise_cascade_required(impact)
+    manifest = session.get(DatasetManifest, dataset_manifest_id)
+    source_uri = manifest.source_uri if manifest is not None else None
     for track_id in _track_ids_for_dataset(session, dataset_manifest_id):
         purge_track(session, track_id, cascade=True, commit=False)
     for shard_id in _shard_ids_for_dataset(session, dataset_manifest_id):
@@ -134,8 +137,8 @@ def purge_dataset_manifest(session: Session, dataset_manifest_id: str, cascade: 
             purge_shard(session, shard_id, cascade=True, commit=False)
     _delete_where(session, DatasetLoadJob, DatasetLoadJob.dataset_manifest_id == dataset_manifest_id)
     _delete_archive_marks(session, RESOURCE_DATASET, [dataset_manifest_id])
-    manifest = session.get(DatasetManifest, dataset_manifest_id)
     if manifest is not None:
+        _unlink_managed_upload(source_uri)
         session.delete(manifest)
     session.commit()
     return {"ok": True, "purged": impact}
@@ -145,6 +148,8 @@ def purge_shard(session: Session, shard_id: str, cascade: bool = False, commit: 
     impact = _shard_impact(session, shard_id)
     if impact["cascade_required"] and not cascade:
         _raise_cascade_required(impact)
+    shard = session.get(Shard, shard_id)
+    storage_uri = shard.storage_uri if shard is not None else None
     for track_id in _track_ids_for_shard(session, shard_id):
         purge_track(session, track_id, cascade=True, commit=False)
     sample_ids = _sample_ids_for_shards(session, [shard_id])
@@ -155,8 +160,9 @@ def purge_shard(session: Session, shard_id: str, cascade: bool = False, commit: 
     _delete_where(session, CapabilityBlockShard, CapabilityBlockShard.shard_id == shard_id)
     _delete_orphan_blocks(session)
     _delete_archive_marks(session, RESOURCE_SHARD, [shard_id])
-    shard = session.get(Shard, shard_id)
     if shard is not None:
+        if storage_uri:
+            _unlink(storage_uri)
         session.delete(shard)
     if commit:
         session.commit()
@@ -524,6 +530,18 @@ def _unlink(uri: str) -> None:
     try:
         path = Path(uri)
         if path.is_file():
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _unlink_managed_upload(uri: str | None) -> None:
+    if not uri:
+        return
+    try:
+        uploads_dir = get_settings().uploads_dir.resolve()
+        path = Path(uri).resolve()
+        if path.is_file() and uploads_dir in path.parents:
             path.unlink()
     except OSError:
         pass

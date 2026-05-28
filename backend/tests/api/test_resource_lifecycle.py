@@ -162,6 +162,26 @@ def test_cascade_dataset_purge_removes_downstream_track_and_data(app, client):
         assert session.exec(select(BenchmarkingRun)).all() == []
 
 
+def test_cascade_dataset_purge_removes_managed_upload_file(app, client):
+    ids = _executed_chain(app)
+    upload_path = get_settings().uploads_dir / "managed-upload.csv"
+    upload_path.parent.mkdir(parents=True, exist_ok=True)
+    upload_path.write_text("time,target\n2026-01-01T00:00:00,1\n", encoding="utf-8")
+    with Session(app.state.engine) as session:
+        manifest = session.get(DatasetManifest, ids["manifest_id"])
+        shard = session.get(Shard, ids["shard_id"])
+        manifest.source_uri = str(upload_path)
+        shard.source_uri = str(upload_path)
+        session.add(manifest)
+        session.add(shard)
+        session.commit()
+
+    response = client.delete(f"/dataset-manifests/{ids['manifest_id']}", params={"cascade": True})
+
+    assert response.status_code == 200, response.text
+    assert not upload_path.exists()
+
+
 def test_running_run_cannot_be_purged(app, client):
     ids = _queued_chain(app)
 
