@@ -89,7 +89,7 @@ function readNext(): string | null {
 function renderMessage(message: MessageState): string {
   if (!message) return '';
   if ('raw' in message) return message.raw;
-  return t(message.key, message.params);
+  return t(message.key, message.params ?? {});
 }
 
 function messageFromError(error: unknown, fallbackKey: string): MessageState {

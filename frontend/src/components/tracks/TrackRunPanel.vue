@@ -45,6 +45,7 @@ import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import Icon from '../ui/Icon.vue';
 
 const props = defineProps<{ trackId: string }>();
+const emit = defineEmits<{ (event: 'run-created', runId: string): void }>();
 
 const { t } = useI18n();
 const models = ref<ModelDTO[]>([]);
@@ -81,6 +82,7 @@ async function run() {
     await loadSelectedModels();
     const created = await createRun({ track_id: props.trackId, model_ids: selectedIds.value });
     runId.value = created.benchmarking_run_id;
+    emit('run-created', created.benchmarking_run_id);
     void refreshResourceCounts();
   } catch (caught) {
     setError(caught, 'errors.failedToStartRun');

@@ -45,14 +45,14 @@ describe('ColumnAndSplitStep', () => {
 
     // Assert manifest payload uses value_columns
     const manifestCall = fetchSpy.mock.calls[0];
-    const manifestBody = JSON.parse(manifestCall[1].body as string);
+    const manifestBody = JSON.parse(manifestCall![1]!.body as string);
     expect(manifestBody.value_columns).toContain('target');
     expect(manifestBody.value_columns).toContain('other');
     expect(manifestBody).not.toHaveProperty('target_columns');
 
     // Assert load job payload has split_config.target_columns
     const loadJobCall = fetchSpy.mock.calls[1];
-    const loadJobBody = JSON.parse(loadJobCall[1].body as string);
+    const loadJobBody = JSON.parse(loadJobCall![1]!.body as string);
     expect(loadJobBody.split_config.target_columns).toEqual(['target']);
   });
 
@@ -67,7 +67,7 @@ describe('ColumnAndSplitStep', () => {
     await fireEvent.click(screen.getByRole('button', { name: '加载分片' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
-    const manifestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    const manifestBody = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
     expect(manifestBody.name).toBe('Uploaded dataset');
   });
 
@@ -90,7 +90,7 @@ describe('ColumnAndSplitStep', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s-ts'));
-    const manifestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    const manifestBody = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
     expect(manifestBody.file_format).toBe('tsfile');
     expect(manifestBody.time_column).toBe('time');
     expect(manifestBody.value_columns).toEqual(['temperature', 'pressure']);

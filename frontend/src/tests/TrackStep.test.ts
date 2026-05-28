@@ -25,7 +25,7 @@ describe('TrackStep', () => {
     await fireEvent.click(screen.getByRole('button', { name: '创建赛道' }));
 
     await waitFor(() => expect(wizardState.trackId).toBe('track-1'));
-    const body = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
     expect(body.name).toBe('Real dataset track');
   });
 });

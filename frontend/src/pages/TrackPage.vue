@@ -28,7 +28,60 @@
           <h2 class="card-title">{{ t('runPanel.startFromTrack') }}</h2>
         </header>
         <div class="card-body">
-          <TrackRunPanel :track-id="trackId" />
+          <TrackRunPanel :track-id="trackId" @run-created="loadRuns" />
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-head">
+          <h2 class="card-title">{{ t('track.runs') }}</h2>
+          <span class="badge">{{ formatInt(runs.length) }}</span>
+        </header>
+        <div class="card-body">
+          <StateBlock
+            :loading="runsLoading"
+            :error="runsError"
+            :empty="!runsLoading && !runsError && runs.length === 0"
+            empty-icon="activity"
+            :empty-title="t('track.noRuns')"
+            :empty-desc="t('track.noRunsDesc')"
+            @retry="loadRuns"
+          >
+            <div class="table-wrap">
+              <table class="data">
+                <thead>
+                  <tr>
+                    <th>{{ t('runs.run') }}</th>
+                    <th>{{ t('runs.lastStatus') }}</th>
+                    <th>{{ t('runs.detail.models') }}</th>
+                    <th>{{ t('runs.detail.tasks') }}</th>
+                    <th>{{ t('runs.detail.samples') }}</th>
+                    <th>{{ t('runs.created') }}</th>
+                    <th>{{ t('common.actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="run in runs" :key="run.benchmarking_run_id">
+                    <td>
+                      <a class="text-link" :href="`#/runs/${run.benchmarking_run_id}`">{{ runTitle(run.model_count) }}</a>
+                      <div class="faint mono" style="font-size:0.74rem">{{ shortId(run.benchmarking_run_id) }}</div>
+                    </td>
+                    <td><StatusBadge :status="run.status" /></td>
+                    <td class="muted">{{ formatInt(run.model_count) }}</td>
+                    <td class="muted">{{ formatInt(run.task_count) }}</td>
+                    <td class="muted">{{ formatInt(run.sample_count) }}</td>
+                    <td class="muted nowrap" :title="run.created_at ? formatDateTime(run.created_at) : ''">{{ run.created_at ? timeAgo(run.created_at) : t('common.notAvailable') }}</td>
+                    <td>
+                      <div class="pill-row">
+                        <a class="btn secondary sm" :href="`#/runs/${run.benchmarking_run_id}`"><Icon name="external" :size="14" /> {{ t('runs.openRun') }}</a>
+                        <a v-if="run.report_id" class="btn secondary sm" :href="`#/reports/${run.report_id}`"><Icon name="barChart" :size="14" /> {{ t('runs.detail.openReport') }}</a>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </StateBlock>
         </div>
       </article>
 
@@ -80,21 +133,33 @@ import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
+import StatusBadge from '../components/ui/StatusBadge.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getRanking } from '../api/results';
+import { listRuns } from '../api/runs';
+import type { BenchmarkingRunSummaryDTO } from '../api/types';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
+import { useFormat } from '../composables/useFormat';
+import { shortId } from '../lib/format';
 
 const props = defineProps<{ trackId: string }>();
 const metric = ref('mase');
 const policy = ref('latest_valid_result');
 const items = ref<Array<{ model_id: string; rank: number; metric_value: number }>>([]);
 const loading = ref(true);
+const runs = ref<BenchmarkingRunSummaryDTO[]>([]);
+const runsLoading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { text: runsError, clear: clearRunsError, setError: setRunsError } = useDisplayMessage();
 const { t } = useI18n();
+const { formatDateTime, formatInt, timeAgo } = useFormat();
 
-onMounted(load);
+onMounted(() => {
+  void load();
+  void loadRuns();
+});
 
 async function load() {
   loading.value = true;
@@ -106,5 +171,22 @@ async function load() {
   } finally {
     loading.value = false;
   }
+}
+
+async function loadRuns() {
+  runsLoading.value = true;
+  clearRunsError();
+  try {
+    runs.value = (await listRuns({ limit: 200, trackId: props.trackId })).items ?? [];
+  } catch (e) {
+    setRunsError(e, 'errors.failedToLoadRuns');
+  } finally {
+    runsLoading.value = false;
+  }
+}
+
+function runTitle(modelCount: number) {
+  const key = modelCount === 1 ? 'artifacts.runTitleOne' : 'artifacts.runTitleOther';
+  return t(key, { count: formatInt(modelCount) });
 }
 </script>

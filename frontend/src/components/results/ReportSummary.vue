@@ -13,7 +13,22 @@
             <thead>
               <tr>
                 <th>{{ t('results.model') }}</th>
-                <th v-for="key in metricKeys" :key="key" class="num">{{ key.toUpperCase() }}</th>
+                <th
+                  v-for="key in metricKeys"
+                  :key="key"
+                  class="num"
+                  :aria-sort="sortKey === key ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'"
+                >
+                  <button
+                    class="btn ghost sm"
+                    type="button"
+                    :aria-label="t('results.sortByMetric', { metric: key.toUpperCase() })"
+                    @click="sortBy(key)"
+                  >
+                    {{ key.toUpperCase() }}
+                    <span v-if="sortKey === key" class="faint">{{ sortDir === 'asc' ? t('results.sortAscShort') : t('results.sortDescShort') }}</span>
+                  </button>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -69,7 +84,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import StatusBadge from '../ui/StatusBadge.vue';
@@ -82,6 +97,8 @@ const props = defineProps<{ report: ReportDTO }>();
 const { modelName } = useModels();
 const { t } = useI18n();
 const { formatNumber, formatInt } = useFormat();
+const sortKey = ref('');
+const sortDir = ref<'asc' | 'desc'>('asc');
 const modelCountLabel = computed(() =>
   t(props.report.model_metrics.length === 1 ? 'results.modelCountOne' : 'results.modelCountOther', { count: props.report.model_metrics.length })
 );
@@ -122,7 +139,7 @@ const bestByMetric = computed(() => {
   return best;
 });
 
-const rows = computed(() =>
+const unsortedRows = computed(() =>
   props.report.model_metrics.map((m) => {
     const id = String(m.model_id ?? '');
     const metrics = metricsOf(m);
@@ -133,4 +150,29 @@ const rows = computed(() =>
     return { id, name: modelName(id) || id, metrics, best };
   })
 );
+
+const rows = computed(() => {
+  if (!sortKey.value) return unsortedRows.value;
+  const direction = sortDir.value === 'asc' ? 1 : -1;
+  return [...unsortedRows.value].sort((a, b) => {
+    const av = a.metrics[sortKey.value];
+    const bv = b.metrics[sortKey.value];
+    const aMissing = av == null || !Number.isFinite(av);
+    const bMissing = bv == null || !Number.isFinite(bv);
+    if (aMissing && bMissing) return a.name.localeCompare(b.name);
+    if (aMissing) return 1;
+    if (bMissing) return -1;
+    if (av === bv) return a.name.localeCompare(b.name);
+    return (av - bv) * direction;
+  });
+});
+
+function sortBy(key: string) {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
+    return;
+  }
+  sortKey.value = key;
+  sortDir.value = 'asc';
+}
 </script>

@@ -90,6 +90,26 @@ function mockFetch() {
         ranking_list_id: 'rank-1'
       }));
     }
+    if (url === '/api/benchmarking-runs?limit=200&track_id=track-1') {
+      return Promise.resolve(jsonResponse({
+        items: [
+          {
+            benchmarking_run_id: 'run-1',
+            track_id: 'track-1',
+            model_ids: ['model-1'],
+            status: 'succeeded',
+            model_count: 1,
+            task_count: 1,
+            sample_count: 4,
+            report_id: 'rep-1',
+            created_at: '2026-01-01T00:00:00Z'
+          }
+        ],
+        total: 1,
+        limit: 200,
+        offset: 0
+      }));
+    }
     if (url === '/api/tracks/track-1/ranking?metric=mase&policy=latest_valid_result') {
       return Promise.resolve(jsonResponse({ items: [{ model_id: 'model-1', rank: 1, metric_value: 0.2 }] }));
     }
@@ -153,6 +173,8 @@ describe('App routes and artifact links', () => {
     window.location.hash = '#/tracks/track-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(await screen.findByRole('heading', { name: 'Track detail' })).toBeTruthy();
+    expect(await screen.findByText('Run · 1 model')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Open report/ }).getAttribute('href')).toBe('#/reports/rep-1');
     expect((await screen.findAllByText('Lower is better')).length).toBeGreaterThan(0);
 
     rendered.unmount();

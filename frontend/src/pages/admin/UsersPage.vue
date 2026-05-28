@@ -427,7 +427,7 @@ async function onDelete(): Promise<void> {
 function renderMessage(message: MessageState): string {
   if (!message) return '';
   if ('raw' in message) return message.raw;
-  return t(message.key, message.params);
+  return t(message.key, message.params ?? {});
 }
 
 function errorMessage(error: unknown, fallbackKey: string): MessageState {
