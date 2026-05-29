@@ -120,8 +120,8 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 - 前置幂等校验：`assert_manifest_can_succeed_load` 与 `assert_manifest_can_create_successful_real_shard`（`db/init_db.py:18,33`）——一个 manifest 只能有一个成功 load job / 一个 ready 的 real shard。
 - `_execute_job` 用 `get_dataset_reader(manifest.file_format).read(...)` 读取并**严格校验**（**全列摄入**）：除时间列外的**所有数值列**（manifest `value_columns`；为空则全取）逐列校验为有限 float，时间轴经共享的 `validate_time_axis`（递增/不重复/等间隔 + 时区一致性 + 频率按**时长**比较）。TsFile 输入只支持表模型；默认要求**恰好一个设备**，但对 TimeBench 这类多 `timeseries_id` 分片，manifest 可用完整 series path（`table.device.value`）从文件中选定一个设备。随后从 `split_config.target_columns` 选**恰好 1 个**目标列（必须 ⊆ `value_columns`，否则 `load_target_columns_invalid`）。
 - `build_windows`（`dataset_load_service.py`）按 `context_length / horizon / stride`（stride 默认等于 horizon）滑窗。每窗给出 context 区间 `[context_start, context_end]` 与 horizon 区间 `[horizon_start, horizon_end]`。校验：参数为正、`context_length + horizon ≤ row_count`、至少产出一个窗口。
-- `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现；与 stride 的相互作用见 data-model §10.6）。
-- 创建 `Shard`（status=`ready`），用 `SeriesStore.write` 把**全列数值矩阵**逐点写入 `SeriesPoint`（一行一时间点，`values_json={列:值}`，`ts` 存 ISO 原文）；再由 `SampleStore.write_samples` 为每窗建一条 `SampleIndex`——**指针化**，`storage_ref` 只记录行号区间，`checksum` 对样本**内容**算（排除随机 ID，跨加载可比，#7）。读取时按 `(shard_id, row_index)` 范围查询 `SeriesPoint` 现切（单一真值源）。
+- `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现；与 stride 的相互作用见 data-model §10.6）。前端可同时传 `split_config.shard_name` 作为切片展示名；后端只保存到 `Shard.name`，不参与窗口构造。
+- 创建 `Shard`（status=`ready`，可带 `name`），用 `SeriesStore.write` 把**全列数值矩阵**逐点写入 `SeriesPoint`（一行一时间点，`values_json={列:值}`，`ts` 存 ISO 原文）；再由 `SampleStore.write_samples` 为每窗建一条 `SampleIndex`——**指针化**，`storage_ref` 只记录行号区间，`checksum` 对样本**内容**算（排除随机 ID，跨加载可比，#7）。读取时按 `(shard_id, row_index)` 范围查询 `SeriesPoint` 现切（单一真值源）。
 - **原子加载**：`Shard` + 全部 `SeriesPoint` + 全部 `SampleIndex` 同处一个事务。成功时回填 `manifest.status="loaded"`、`job.status="succeeded"` 及 `validation_summary`；任一 `ApiError` 触发 `session.rollback()` 丢弃半成品，再把 job 落为 `failed` + `error_code/error_message`（替代旧的删 `.tsfile` 文件清理）。
 
 ```mermaid
@@ -151,9 +151,9 @@ sequenceDiagram
 **服务**：`create_real_capability_block` → `create_track_with_blocks`（均在 `services/track_service.py`）
 **产物实体**：`CapabilityBlock`（real）→ `Track` + `RankingList`
 
-`create_real_capability_block`（`track_service.py:19`）把一组 ready 的 real `Shard` 聚合成一个 `CapabilityBlock`（block_type=`real`, capability_type=`real_data`），累加 `sample_count`、取最大 `target_dim`，并把每个 shard 的 `capability_block_id` 回指过去。校验：至少一个 shard（`capability_block_requires_shard`）、shard 都存在（`shard_not_found`）、shard 未被占用（`shard_already_assigned`）。
+`create_real_capability_block`（`track_service.py:19`）把一组 real `Shard` 聚合成一个 `CapabilityBlock`（block_type=`real`, capability_type=`real_data`），累加 `sample_count`、取最大 `target_dim`，并通过 `CapabilityBlockShard` 写入 block → shard 关联；不再写 `Shard.capability_block_id`，因此同一 shard 可被多条赛道复用。校验：至少一个 shard（`capability_block_requires_shard`）、shard 都存在（`shard_not_found`）。
 
-`create_track_with_blocks`（`track_service.py:50`）建 `Track`，把 block 的 `track_id` 指过去，并**同时创建一个 `RankingList`**（`default_metric_id` = `primary_metric_id`）。返回 `(track, ranking)`。校验至少一个 block（`track_requires_block`）、block 都存在（`capability_block_not_found`）。
+`create_track_with_blocks`（`track_service.py:50`）建 `Track`，把 block 的 `track_id` 指过去，并**同时创建一个 `RankingList`**（`default_metric_id` = `primary_metric_id`）。前端向导会显式传入赛道名称和主指标（`mase` / `mse` / `mae`），因此榜单默认视图跟随用户创建赛道时的选择。返回 `(track, ranking)`。校验至少一个 block（`track_requires_block`）、block 都存在（`capability_block_not_found`）。
 
 向导端点 `POST /wizard/real-dataset-track`（`routes/wizard.py:17`）把两步串起来，一次返回 `track_id / capability_block_id / ranking_list_id`。
 

@@ -11,6 +11,7 @@ describe('ColumnAndSplitStep', () => {
     wizardState.preview = {
       upload_id: 'u1',
       source_uri: '/tmp/data.csv',
+      filename: 'data.csv',
       columns: [{ name: 'time' }, { name: 'target' }, { name: 'other' }],
       preview_rows: []
     };
@@ -35,6 +36,11 @@ describe('ColumnAndSplitStep', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
+    expect((screen.getByLabelText('Dataset name') as HTMLInputElement).value).toBe('data');
+    expect((screen.getByLabelText('Shard name') as HTMLInputElement).value).toBe('data shard');
+    await fireEvent.update(screen.getByLabelText('Dataset name'), 'Energy demand');
+    await fireEvent.update(screen.getByLabelText('Shard name'), 'Energy demand validation');
+
     // Select a target from the single-select dropdown
     const targetSelect = screen.getByLabelText('Target');
     await fireEvent.update(targetSelect, 'target');
@@ -46,6 +52,7 @@ describe('ColumnAndSplitStep', () => {
     // Assert manifest payload uses value_columns
     const manifestCall = fetchSpy.mock.calls[0];
     const manifestBody = JSON.parse(manifestCall![1]!.body as string);
+    expect(manifestBody.name).toBe('Energy demand');
     expect(manifestBody.value_columns).toContain('target');
     expect(manifestBody.value_columns).toContain('other');
     expect(manifestBody).not.toHaveProperty('target_columns');
@@ -54,6 +61,7 @@ describe('ColumnAndSplitStep', () => {
     const loadJobCall = fetchSpy.mock.calls[1];
     const loadJobBody = JSON.parse(loadJobCall![1]!.body as string);
     expect(loadJobBody.split_config.target_columns).toEqual(['target']);
+    expect(loadJobBody.split_config.shard_name).toBe('Energy demand validation');
   });
 
   it('keeps the generated manifest payload name stable under Chinese UI', async () => {
@@ -68,7 +76,7 @@ describe('ColumnAndSplitStep', () => {
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
     const manifestBody = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
-    expect(manifestBody.name).toBe('Uploaded dataset');
+    expect(manifestBody.name).toBe('data');
   });
 
   it('creates tsfile manifests without requiring a CSV timestamp column', async () => {

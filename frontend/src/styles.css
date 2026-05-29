@@ -1132,6 +1132,55 @@ th.num {
 @keyframes stripe { to { background-position: 32px 0, 0 0; } }
 
 /* ======================= Stepper (wizard rail) ============================ */
+.entry-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.entry-card {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  min-height: 210px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.entry-card:hover {
+  border-color: var(--primary-border);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+
+.entry-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius);
+  background: var(--primary-soft);
+  color: var(--primary-text);
+}
+
+.entry-title {
+  font-size: 1.12rem;
+  font-weight: 750;
+}
+
+.entry-desc {
+  color: var(--text-muted);
+  max-width: 54ch;
+}
+
 .wizard-layout {
   display: grid;
   gap: 20px;
@@ -1527,6 +1576,7 @@ th.num {
   .page { padding: 20px 16px 56px; }
   .app-topbar { padding: 10px 16px; }
   .page-head h1 { font-size: 1.5rem; }
+  .entry-grid,
   .grid-2,
   .detail-grid { grid-template-columns: 1fr; }
   .step-card-head { grid-template-columns: 40px minmax(0, 1fr); }

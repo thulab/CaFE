@@ -149,6 +149,7 @@ class DatasetLoadService:
         session.commit()
 
         shard = Shard(
+            name=str(config.get("shard_name") or "").strip() or None,
             dataset_manifest_id=manifest.dataset_manifest_id,
             load_job_id=job.load_job_id,
             source_uri=manifest.source_uri,

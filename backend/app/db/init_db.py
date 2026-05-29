@@ -1,3 +1,4 @@
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, select
 
 from app.core.errors import ApiError
@@ -16,6 +17,16 @@ from app.models.series_point import SeriesPoint
 def init_db(engine) -> None:
     # Imports above register all SQLModel table metadata.
     SQLModel.metadata.create_all(engine)
+    _ensure_compat_columns(engine)
+
+
+def _ensure_compat_columns(engine) -> None:
+    inspector = inspect(engine)
+    if "shard" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("shard")}
+        if "name" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE shard ADD COLUMN name VARCHAR"))
 
 
 def assert_manifest_can_succeed_load(session: Session, dataset_manifest_id: str) -> None:

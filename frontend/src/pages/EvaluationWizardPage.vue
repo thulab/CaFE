@@ -15,9 +15,24 @@
       </div>
     </header>
 
-    <ExistingTrackRunPanel />
+    <section v-if="!wizardState.entryMode" class="entry-grid" aria-label="Evaluation start options">
+      <button class="entry-card" type="button" @click="selectEntryMode('upload')">
+        <span class="entry-icon"><Icon name="upload" :size="22" /></span>
+        <span class="entry-title">{{ t('wizard.entry.uploadTitle') }}</span>
+        <span class="entry-desc">{{ t('wizard.entry.uploadDesc') }}</span>
+        <span class="btn sm">{{ t('wizard.entry.uploadAction') }} <Icon name="arrowRight" :size="15" /></span>
+      </button>
+      <button class="entry-card" type="button" @click="selectEntryMode('existing-track')">
+        <span class="entry-icon"><Icon name="target" :size="22" /></span>
+        <span class="entry-title">{{ t('wizard.entry.existingTitle') }}</span>
+        <span class="entry-desc">{{ t('wizard.entry.existingDesc') }}</span>
+        <span class="btn secondary sm">{{ t('wizard.entry.existingAction') }} <Icon name="arrowRight" :size="15" /></span>
+      </button>
+    </section>
 
-    <div class="wizard-layout">
+    <ExistingTrackRunPanel v-else-if="wizardState.entryMode === 'existing-track'" />
+
+    <div v-else class="wizard-layout">
       <aside class="wizard-aside">
         <div class="card pad">
           <p class="nav-group-label" style="margin:0 0 8px">{{ t('wizard.progress', { done: completedCount, total: steps.length }) }}</p>
@@ -70,7 +85,7 @@
         <component :is="active.component" />
 
         <footer class="wizard-foot">
-          <button class="btn secondary" type="button" :disabled="current === 0" @click="goPrev">
+          <button class="btn secondary" type="button" @click="goBack">
             <Icon name="chevronLeft" :size="16" /> {{ t('common.back') }}
           </button>
           <p class="status-line">{{ footHint }}</p>
@@ -92,7 +107,7 @@ import LoadShardStep from '../components/wizard/LoadShardStep.vue';
 import TrackStep from '../components/wizard/TrackStep.vue';
 import RunStep from '../components/wizard/RunStep.vue';
 import ResultStep from '../components/wizard/ResultStep.vue';
-import { goPrev, goToStep, resetWizard, wizardState } from '../stores/wizard';
+import { goPrev, goToStep, resetWizard, wizardState, type WizardEntryMode } from '../stores/wizard';
 
 const { t } = useI18n();
 
@@ -139,5 +154,18 @@ const artifacts = computed(() => {
 
 function onReset() {
   resetWizard();
+}
+
+function selectEntryMode(mode: Exclude<WizardEntryMode, ''>) {
+  wizardState.entryMode = mode;
+  if (mode === 'upload') goToStep(0);
+}
+
+function goBack() {
+  if (current.value === 0) {
+    wizardState.entryMode = '';
+    return;
+  }
+  goPrev();
 }
 </script>

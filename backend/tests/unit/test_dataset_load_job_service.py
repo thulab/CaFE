@@ -5,7 +5,7 @@ from sqlmodel import Session, create_engine, select
 
 from app.core.errors import ApiError
 from app.db.init_db import init_db
-from app.models.dataset import DatasetManifest
+from app.models.dataset import DatasetManifest, Shard
 from app.models.sample import SampleIndex
 from app.services.dataset_load_service import DatasetLoadService
 
@@ -60,3 +60,19 @@ def test_failed_load_cleans_intermediate_artifacts_and_can_retry(tmp_path):
 
         assert retried.status == "succeeded"
         assert retried.output_shard_id is not None
+
+
+def test_load_job_persists_optional_shard_name(tmp_path):
+    source = Path(__file__).parents[1] / "fixtures" / "valid_hourly_20.csv"
+    with make_session(tmp_path) as session:
+        manifest = create_manifest(session, str(source))
+        service = DatasetLoadService(tmp_path / "runtime")
+
+        job = service.create_load_job(
+            session,
+            manifest.dataset_manifest_id,
+            {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"], "shard_name": "Energy validation slice"},
+        )
+
+        shard = session.get(Shard, job.output_shard_id)
+        assert shard.name == "Energy validation slice"

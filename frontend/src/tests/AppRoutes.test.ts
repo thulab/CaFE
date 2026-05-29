@@ -227,6 +227,7 @@ describe('App routes and artifact links', () => {
     wizardState.trackId = 'track-1';
     wizardState.runId = 'run-1';
     wizardState.reportId = 'rep-1';
+    wizardState.entryMode = 'upload';
 
     render(EvaluationWizardPage, { global: { plugins: [i18n] } });
 

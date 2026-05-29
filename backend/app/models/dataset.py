@@ -46,6 +46,7 @@ class DatasetLoadJob(SQLModel, table=True):
 
 class Shard(SQLModel, table=True):
     shard_id: str = Field(default_factory=new_id, primary_key=True)
+    name: str | None = None
     shard_type: str = "real"
     dataset_manifest_id: str = Field(index=True)
     load_job_id: str | None = Field(default=None, index=True)

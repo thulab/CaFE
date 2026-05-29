@@ -13,6 +13,8 @@
 3. **赛道是前端一等概念。** 左侧导航新增 `Tracks`，展示已创建赛道、主指标、样本数、排行榜入口和运行入口。
 4. **新建评测默认从赛道开始。** `New evaluation` 更像“快速运行模型”：先选择已有赛道，再选模型运行。若没有可用赛道，用户可跳转到数据集页上传/切片或在向导内走上传分支。
 5. **TsFile 上传必须在前端可达。** 后端已经支持 `.tsfile` 上传嗅探和 load，前端文件选择器与 split 表单需要使用 `preview.file_format`，不能硬编码 `csv`。
+6. **新建评测入口先分流。** 用户进入 `New evaluation` 后先在“上传数据”和“选择已有赛道”两个卡片中选择路径；上传路径继续完整向导，已有赛道路径直接选择模型运行。
+7. **命名与主指标由用户显式确认。** 上传数据默认用文件名填充数据集名称、切片名称和赛道名称，但用户可以在切片步骤修改数据集/切片名称，并在创建赛道步骤修改赛道名称、选择主指标。
 
 ## 2. 目标信息架构
 
@@ -45,22 +47,26 @@ Dataset file (CSV / TsFile)
   - CSV：选择 time column、value columns、target column、context/horizon/stride/max_samples。
   - TsFile：用上传嗅探返回的 series / measurement 作为 value columns；时间轴来自文件本身，time column 不作为关键交互。
 - 切片创建完成后，该 shard 可用于任意赛道。
+- 上传预览成功后，数据集名称默认取文件名（去掉扩展名），切片名称默认取同一基础名加 `shard` 后缀；两者都可在创建切片前修改。
 
 ### 3.2 Tracks
 
 - 新增 `TracksPage` 列出所有赛道。
 - 列表展示：track name、primary metric、policy、sample count、created_at、ranking link、run models action。
-- 新建赛道时可以选择多条 ready shard。
+- 新建赛道时可以选择多条 ready shard，并输入赛道名称、选择主指标（`mase` / `mse` / `mae`）。
 - 赛道详情页展示元数据、排行榜、关联切片、历史 runs，并提供 `Run models` 操作。
 
 ### 3.3 New Evaluation
 
 - 点击顶部或侧栏 `New evaluation` 时必须创建新的向导会话；如果用户已经在 `#/new`，也要 reset wizard，而不是保留上一次完成状态。
+- 页面入口先显示两个卡片：
+  1. 上传数据：进入上传、配置切片、创建赛道、选择模型的完整向导。
+  2. 选择已有赛道：展示可用赛道，选择模型并创建 run。
 - 快速路径：
   1. 选择已有 Track。
   2. 选择模型。
   3. 创建 run 并轮询进度。
-- 辅助路径：没有合适 track 时，跳转/引导到 Datasets 和 Tracks 创建资产。
+- 辅助路径：上传数据分支可直接创建新的 dataset manifest、shard 与 track；没有合适 track 时也可跳转/引导到 Datasets 和 Tracks 创建资产。
 
 ## 4. 后端关系调整
 
@@ -88,3 +94,6 @@ CapabilityBlockShard
 - 新增 Tracks 页面，可以查看赛道并从赛道发起 run。
 - `New evaluation` 按钮在 `#/new` 页面内再次点击会重置当前向导状态。
 - 新增/修改 UI 文案同时提供 `en-US` 与 `zh-CN`。
+- `New evaluation` 首屏提供“上传数据 / 选择已有赛道”两个明确入口，避免两种路径混在同一工作区。
+- 引导创建赛道时可以输入赛道名称并选择主指标，创建出的 `RankingList.default_metric_id` 跟随该主指标。
+- 上传数据后数据集名称默认来自文件名，创建切片时可以指定切片名称；切片列表和详情优先展示切片名称。

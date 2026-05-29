@@ -3,7 +3,7 @@
     <header class="page-head">
       <div>
         <p class="eyebrow">{{ t('shard.eyebrow') }}</p>
-        <h1>{{ t('shard.title') }}</h1>
+        <h1>{{ shard?.name || t('shard.title') }}</h1>
         <p class="page-sub">{{ t('shard.subtitle') }}</p>
       </div>
       <div class="head-actions">
@@ -27,6 +27,7 @@
           <div class="card-body">
             <dl class="detail-grid">
               <div class="detail-item"><dt>{{ t('shard.shardId') }}</dt><dd class="mono">{{ shard.shard_id }}</dd></div>
+              <div v-if="shard.name" class="detail-item"><dt>{{ t('shard.name') }}</dt><dd>{{ shard.name }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.manifest') }}</dt><dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shortId(shard.dataset_manifest_id) }}</a></dd></div>
               <div class="detail-item"><dt>{{ t('shard.loadJob') }}</dt><dd><a v-if="shard.load_job_id" class="text-link" :href="`#/load-jobs/${shard.load_job_id}`">{{ shortId(shard.load_job_id) }}</a><span v-else class="faint">{{ t('shard.notRecorded') }}</span></dd></div>
               <div class="detail-item"><dt>{{ t('shard.split') }}</dt><dd>{{ t('shard.splitSummary', { context: shard.context_length, horizon: shard.horizon, stride: shard.stride }) }}</dd></div>

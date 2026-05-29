@@ -63,7 +63,7 @@ import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { uploadDataset } from '../../api/datasets';
-import { goNext, wizardState } from '../../stores/wizard';
+import { applyUploadNameDefaults, goNext, wizardState } from '../../stores/wizard';
 import { messageFromError, renderMessage } from '../../lib/errors';
 
 const { t, te } = useI18n();
@@ -90,6 +90,7 @@ async function handle(file?: File) {
   try {
     wizardState.preview = await uploadDataset(file);
     wizardState.sourceUri = wizardState.preview.source_uri;
+    applyUploadNameDefaults(wizardState.preview.filename || file.name);
     wizardState.error = null;
   } catch (error) {
     wizardState.error = messageFromError(error, te, 'wizard.uploadStep.errors.uploadFailed');

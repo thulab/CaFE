@@ -214,6 +214,7 @@ async function createTrack() {
 }
 
 function shardTitle(shard: ShardDTO) {
+  if (shard.name) return shard.name;
   return t('artifacts.shardTitle', { target: shard.target_columns?.[0] ?? t('artifacts.unknownTarget') });
 }
 

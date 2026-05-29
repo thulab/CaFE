@@ -53,6 +53,19 @@
         </div>
 
         <div class="grid-2">
+          <div class="field">
+            <label class="label" for="dataset-upload-name">{{ t('wizard.columnAndSplitStep.datasetName') }}</label>
+            <input id="dataset-upload-name" v-model.trim="uploadDatasetName" />
+            <p class="hint">{{ t('wizard.columnAndSplitStep.datasetNameHint') }}</p>
+          </div>
+          <div class="field">
+            <label class="label" for="dataset-shard-name">{{ t('wizard.columnAndSplitStep.shardName') }}</label>
+            <input id="dataset-shard-name" v-model.trim="uploadShardName" />
+            <p class="hint">{{ t('wizard.columnAndSplitStep.shardNameHint') }}</p>
+          </div>
+        </div>
+
+        <div class="grid-2">
           <div v-if="!uploadIsTsFile" class="field">
             <label class="label" for="dataset-time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
             <select id="dataset-time-column" v-model="uploadTimeColumn">
@@ -216,6 +229,8 @@ const showArchived = ref(false);
 const uploadFileName = ref('');
 const uploadPreview = ref<UploadPreviewDTO | null>(null);
 const createdShardId = ref('');
+const uploadDatasetName = ref('');
+const uploadShardName = ref('');
 const uploadTimeColumn = ref('time');
 const uploadValueColumns = ref<string[]>([]);
 const uploadTarget = ref('');
@@ -258,6 +273,7 @@ watch(uploadValueColumns, (cols) => {
 
 function rowTitle(item: Row): string {
   if (item.kind === 'dataset') return item.name ?? '';
+  if (item.name) return item.name;
   return t('artifacts.shardTitle', { target: item.targetColumns?.[0] ?? t('artifacts.unknownTarget') });
 }
 
@@ -297,6 +313,7 @@ async function load() {
       rows.push({
         kind: 'shard',
         id: s.shard_id,
+        name: s.name ?? undefined,
         targetColumns: s.target_columns ?? [],
         rowCount: s.row_count ?? 0,
         href: `#/shards/${s.shard_id}`,
@@ -339,6 +356,9 @@ async function handleUpload(file?: File) {
   clearUploadError();
   try {
     uploadPreview.value = await uploadDataset(file);
+    const baseName = baseNameFromFilename(uploadPreview.value.filename || file.name);
+    uploadDatasetName.value = baseName;
+    uploadShardName.value = `${baseName} shard`;
     uploadTimeColumn.value = uploadColumns.value.includes('time') ? 'time' : uploadColumns.value[0] ?? 'time';
     uploadValueColumns.value = [...uploadNonTimeColumns.value];
     uploadTarget.value = '';
@@ -363,18 +383,19 @@ async function createShard() {
   clearUploadError();
   try {
     const manifest = await createDatasetManifest({
-      name: uploadPreview.value.filename || uploadFileName.value || 'Uploaded dataset',
+      name: uploadDatasetName.value || baseNameFromFilename(uploadPreview.value.filename || uploadFileName.value),
       domain: 'general',
       source_uri: uploadPreview.value.source_uri,
       file_format: uploadFileFormat.value,
       time_column: uploadIsTsFile.value ? 'time' : uploadTimeColumn.value,
       value_columns: uploadValueColumns.value
     });
-    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number } = {
+    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; shard_name?: string; max_samples?: number } = {
       context_length: uploadContext.value,
       horizon: uploadHorizon.value,
       stride: uploadStride.value,
-      target_columns: [uploadTarget.value]
+      target_columns: [uploadTarget.value],
+      shard_name: uploadShardName.value || `${uploadDatasetName.value || 'Uploaded dataset'} shard`
     };
     if (uploadMaxSamples.value != null && uploadMaxSamples.value > 0) splitConfig.max_samples = uploadMaxSamples.value;
     const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });
@@ -385,6 +406,13 @@ async function createShard() {
   } finally {
     sliceBusy.value = false;
   }
+}
+
+function baseNameFromFilename(filename?: string | null): string {
+  const clean = (filename || '').split(/[\\/]/).pop()?.trim() || '';
+  if (!clean) return 'Uploaded dataset';
+  const dot = clean.lastIndexOf('.');
+  return dot > 0 ? clean.slice(0, dot) : clean;
 }
 
 onMounted(load);

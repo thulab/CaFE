@@ -185,17 +185,24 @@ http://127.0.0.1:5173
 
 ### 6.2 走查向导
 
-点侧边栏「新建评测」（`#/new`）。向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
+点侧边栏「新建评测」（`#/new`）。页面会先让你选择入口：
 
-1. **Upload CSV**：把 CSV **拖入**虚线框，或点「Choose file」选择（文件输入的无障碍标签为 `CSV file`）。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），点「Next」继续。
+- **上传数据**：上传 CSV / TsFile，配置列与切片，然后创建赛道并启动评测。
+- **选择已有赛道**：复用已创建且未归档的赛道，直接选择模型启动一次新的评测运行。
+
+选择上传数据后，向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
+
+1. **Upload dataset**：把 CSV / TsFile **拖入**虚线框，或点「Choose file」选择。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），并默认把文件名（去掉扩展名）作为后续数据集名称、切片名称和赛道名称的基础，点「Next」继续。
 2. **Configure split**：
+   - `Dataset name` 默认为上传文件名，可改成业务可读名称。
+   - `Shard name` 默认为“文件名 shard”，用于在数据集页、切片详情和赛道选择中识别该切片。
    - `Time column` 下拉选时间列（默认 `time`）。
    - `Value columns` 复选框组：勾选要纳入的数值列（默认全选非时间列）。
    - `Target column` **下拉单选**目标列（必须是已勾选的 value column 之一；不选会提示 “Select exactly one target”）。
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
    - 点「Load shard」：依次创建 dataset manifest、提交 load job 并物化样本，成功后自动进入下一步。
 3. **Confirm shard**：展示样本数量（形如 `N samples`）等统计，并提供「Inspect shard」链接；点「Continue」继续。
-4. **Create track**：点「Create track」，基于已加载的 shard 创建「真实数据评测赛道」（**主指标 MASE**），给出「View track」「View ranking」链接后自动进入下一步。
+4. **Create track**：填写赛道名称并选择主指标（MASE / MSE / MAE，均为 lower is better），点「Create track」后基于已加载的 shard 创建「真实数据评测赛道」，给出「View track」「View ranking」链接后自动进入下一步。
 5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
 6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
 

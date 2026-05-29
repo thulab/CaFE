@@ -177,7 +177,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `domain` | `str` | 必填 | 数据领域 |
 | `source_type` | `str` | `"managed_file"` | MVP 固定为托管上传文件 |
 | `source_uri` | `str` | 必填 | 原始数据位置（`runtime/uploads/` 下） |
-| `file_format` | `str` | `"csv"` | MVP 仅 csv |
+| `file_format` | `str` | `"csv"` | 输入格式；当前支持 `csv` / `tsfile` |
 | `time_column` | `str` | 必填 | 时间列列名 |
 | `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入的数值列；为空时 reader 自动取除时间列外全部列。目标列的选择移到 load-job（见 §2.2 split_config）。<br>**2026-05-25 重构**：原 `target_columns` 字段更名为 `value_columns`（语义：全列摄入），目标选择不再绑定在 manifest。 |
 | `frequency` | `str \| None` | `None` | 时间频率；load 成功后由推断结果回填 |
@@ -235,6 +235,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 - `stride`（int，可选；缺省取 `horizon`）
 - `target_columns`（list[str]，**必填且恰好 1 个**；必须 ⊆ manifest 的 `value_columns`，否则 `load_target_columns_invalid`）——**2026-05-25 重构**：目标列选择从 manifest 移到此处。
 - `max_samples`（int，可选）：窗口数超过它时沿序列均匀采样（含首尾，可复现）。
+- `shard_name`（str，可选）：前端上传/切片时提供的人类可读切片名称；成功后写入 `Shard.name`，不参与唯一性或执行逻辑。
 
 **`validation_summary` 结构**（成功时写入，`dataset_load_service.py:155-160`）：
 ```json
@@ -255,6 +256,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | 字段 | 类型 | 默认值/约束 | 说明 |
 | --- | --- | --- | --- |
 | `shard_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
+| `name` | `str \| None` | `None` | 切片展示名；来自 `split_config.shard_name`，列表和详情优先展示该值 |
 | `shard_type` | `str` | `"real"` | MVP 固定 real |
 | `dataset_manifest_id` | `str` | `index=True`（逻辑外键 → DatasetManifest） | 数据来源 |
 | `load_job_id` | `str \| None` | `None`，`index=True`（逻辑外键 → DatasetLoadJob） | 产生该 shard 的 job |

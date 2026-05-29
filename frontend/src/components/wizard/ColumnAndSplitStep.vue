@@ -1,6 +1,19 @@
 <template>
   <section class="step-body">
     <div class="grid-2">
+      <div class="field">
+        <label class="label" for="dataset-name">{{ t('wizard.columnAndSplitStep.datasetName') }}</label>
+        <input id="dataset-name" v-model.trim="wizardState.datasetName" :aria-label="t('wizard.columnAndSplitStep.datasetName')" />
+        <p class="hint">{{ t('wizard.columnAndSplitStep.datasetNameHint') }}</p>
+      </div>
+      <div class="field">
+        <label class="label" for="shard-name">{{ t('wizard.columnAndSplitStep.shardName') }}</label>
+        <input id="shard-name" v-model.trim="wizardState.shardName" :aria-label="t('wizard.columnAndSplitStep.shardName')" />
+        <p class="hint">{{ t('wizard.columnAndSplitStep.shardNameHint') }}</p>
+      </div>
+    </div>
+
+    <div class="grid-2">
       <div v-if="!isTsFile" class="field">
         <label class="label" for="time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
         <select id="time-column" v-model="timeColumn">
@@ -74,7 +87,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
-import { goNext, wizardState } from '../../stores/wizard';
+import { defaultNameFromFilename, goNext, wizardState } from '../../stores/wizard';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
 
@@ -100,6 +113,8 @@ watch(nonTimeColumns, (cols) => {
   }
 }, { immediate: true });
 
+watch(() => wizardState.preview?.filename, ensureNames, { immediate: true });
+
 async function load() {
   if (!target.value || !valueColumns.value.includes(target.value)) {
     setErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
@@ -111,8 +126,9 @@ async function load() {
   }
   busy.value = true;
   try {
+    ensureNames();
     const manifest = await createDatasetManifest({
-      name: 'Uploaded dataset',
+      name: wizardState.datasetName || defaultNameFromFilename(wizardState.preview?.filename),
       domain: 'general',
       source_uri: wizardState.sourceUri,
       file_format: fileFormat.value,
@@ -121,11 +137,12 @@ async function load() {
     });
     wizardState.manifestId = manifest.dataset_manifest_id;
 
-    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number } = {
+    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; shard_name?: string; max_samples?: number } = {
       context_length: context.value,
       horizon: horizon.value,
       stride: stride.value,
-      target_columns: [target.value]
+      target_columns: [target.value],
+      shard_name: wizardState.shardName || `${wizardState.datasetName || defaultNameFromFilename(wizardState.preview?.filename)} shard`
     };
     if (maxSamples.value != null && maxSamples.value > 0) {
       splitConfig.max_samples = maxSamples.value;
@@ -141,5 +158,12 @@ async function load() {
   } finally {
     busy.value = false;
   }
+}
+
+function ensureNames() {
+  const base = defaultNameFromFilename(wizardState.preview?.filename);
+  if (!wizardState.datasetName) wizardState.datasetName = base;
+  if (!wizardState.shardName) wizardState.shardName = `${wizardState.datasetName || base} shard`;
+  if (!wizardState.trackName) wizardState.trackName = `${wizardState.datasetName || base} track`;
 }
 </script>
