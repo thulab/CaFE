@@ -18,7 +18,7 @@
       </div>
       <p v-else class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.runStep.loadingModels') }}</p>
     </div>
-    <p v-if="isPreparingModels" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.runStep.loadingSelectedModels') }}</p>
+    <p v-if="isCreatingRun" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.runStep.startingRun') }}</p>
 
     <!-- Live progress -->
     <div v-if="runId" class="card pad" style="display:grid;gap:12px">
@@ -41,8 +41,8 @@
         <a v-if="runId" class="btn secondary sm" :href="`#/runs/${runId}`"><Icon name="external" :size="15" /> {{ t('wizard.runStep.openRun') }}</a>
         <button v-if="isRunning" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>
       </div>
-      <button class="btn" type="button" :disabled="selectedIds.length === 0 || !wizardState.trackId || isPreparingModels || isRunning" @click="run">
-        <span v-if="isPreparingModels || isRunning" class="spinner" /> <Icon v-else name="play" :size="16" /> {{ t('wizard.runStep.run') }}
+      <button class="btn" type="button" :disabled="selectedIds.length === 0 || !wizardState.trackId || isCreatingRun || isRunning" @click="run">
+        <span v-if="isCreatingRun || isRunning" class="spinner" /> <Icon v-else name="play" :size="16" /> {{ t('wizard.runStep.run') }}
       </button>
     </div>
   </section>
@@ -53,7 +53,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import StatusBadge from '../ui/StatusBadge.vue';
-import { listModels, loadModel, type ModelDTO } from '../../api/models';
+import { listModels, type ModelDTO } from '../../api/models';
 import { cancelRun, createRun, getRunProgress } from '../../api/runs';
 import { goNext, wizardState } from '../../stores/wizard';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
@@ -68,7 +68,7 @@ const models = ref<ModelDTO[]>([]);
 const status = ref('idle');
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 const progress = ref<RunProgressDTO | null>(null);
-const isPreparingModels = ref(false);
+const isCreatingRun = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const runId = computed(() => wizardState.runId);
@@ -116,9 +116,8 @@ async function run() {
   stopPolling();
   clearError();
   progress.value = null;
-  isPreparingModels.value = true;
+  isCreatingRun.value = true;
   try {
-    await loadSelectedModels();
     const created = await createRun({ track_id: wizardState.trackId, model_ids: selectedIds.value });
     wizardState.runId = created.benchmarking_run_id;
     status.value = created.status;
@@ -127,18 +126,7 @@ async function run() {
   } catch (e) {
     setError(e, 'errors.failedToStartRun');
   } finally {
-    isPreparingModels.value = false;
-  }
-}
-
-async function loadSelectedModels() {
-  const selected = models.value.filter((model) => selectedIds.value.includes(model.model_id));
-  for (const model of selected) {
-    if (model.loaded === false) {
-      const loaded = await loadModel(model.model_id);
-      const index = models.value.findIndex((item) => item.model_id === model.model_id);
-      if (index >= 0) models.value[index] = { ...models.value[index], ...loaded };
-    }
+    isCreatingRun.value = false;
   }
 }
 

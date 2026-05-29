@@ -19,7 +19,7 @@
       <p v-else class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.runStep.loadingModels') }}</p>
     </div>
 
-    <p v-if="isPreparingModels" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('wizard.runStep.loadingSelectedModels') }}</p>
+    <p v-if="isCreatingRun" class="status-line"><span class="spinner" style="vertical-align:-3px;margin-right:6px" />{{ t('runPanel.startingRun') }}</p>
     <p v-if="runId" class="note-success">
       <Icon name="checkCircle" :size="16" />{{ t('runPanel.runCreated', { id: runId }) }}
       <a class="text-link" :href="`#/runs/${runId}`">{{ t('wizard.runStep.openRun') }}</a>
@@ -28,8 +28,8 @@
 
     <div class="wizard-foot" style="padding:0;border:0">
       <span class="status-line">{{ t('runPanel.selectedModels', { count: selectedIds.length }) }}</span>
-      <button class="btn" type="button" :disabled="selectedIds.length === 0 || isPreparingModels" @click="run">
-        <span v-if="isPreparingModels" class="spinner" /> <Icon v-else name="play" :size="16" /> {{ t('runPanel.startRun') }}
+      <button class="btn" type="button" :disabled="selectedIds.length === 0 || isCreatingRun" @click="run">
+        <span v-if="isCreatingRun" class="spinner" /> <Icon v-else name="play" :size="16" /> {{ t('runPanel.startRun') }}
       </button>
     </div>
   </section>
@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { listModels, loadModel, type ModelDTO } from '../../api/models';
+import { listModels, type ModelDTO } from '../../api/models';
 import { createRun } from '../../api/runs';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
@@ -51,7 +51,7 @@ const { t } = useI18n();
 const models = ref<ModelDTO[]>([]);
 const selectedIds = ref<string[]>([]);
 const runId = ref('');
-const isPreparingModels = ref(false);
+const isCreatingRun = ref(false);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 
 const allSelected = computed(() => models.value.length > 0 && selectedIds.value.length === models.value.length);
@@ -76,10 +76,9 @@ function toggleAll() {
 
 async function run() {
   clearError();
-  isPreparingModels.value = true;
+  isCreatingRun.value = true;
   runId.value = '';
   try {
-    await loadSelectedModels();
     const created = await createRun({ track_id: props.trackId, model_ids: selectedIds.value });
     runId.value = created.benchmarking_run_id;
     emit('run-created', created.benchmarking_run_id);
@@ -87,18 +86,7 @@ async function run() {
   } catch (caught) {
     setError(caught, 'errors.failedToStartRun');
   } finally {
-    isPreparingModels.value = false;
-  }
-}
-
-async function loadSelectedModels() {
-  const selected = models.value.filter((model) => selectedIds.value.includes(model.model_id));
-  for (const model of selected) {
-    if (model.loaded === false) {
-      const loaded = await loadModel(model.model_id);
-      const index = models.value.findIndex((item) => item.model_id === model.model_id);
-      if (index >= 0) models.value[index] = { ...models.value[index], ...loaded };
-    }
+    isCreatingRun.value = false;
   }
 }
 

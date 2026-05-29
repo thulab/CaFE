@@ -126,10 +126,13 @@ def execute_run(session: Session, run_id: str, runtime_dir: Path) -> Benchmarkin
     session.add(run)
     session.commit()
 
-    adapter = get_model_adapter(get_settings())
+    settings = get_settings()
+    adapter = get_model_adapter(settings)
+    if _uses_sequential_model_lifecycle(settings):
+        _unload_all_models_before_run(session, run, adapter, settings.timer_service_model_load_timeout_seconds)
     units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all()
     for unit in units:
-        _execute_unit(session, run, unit, Path(runtime_dir), adapter)
+        _execute_unit(session, run, unit, Path(runtime_dir), adapter, settings)
 
     statuses = [unit.status for unit in units]
     succeeded = len([status for status in statuses if status == "succeeded"])
@@ -161,7 +164,40 @@ def execute_run(session: Session, run_id: str, runtime_dir: Path) -> Benchmarkin
     return run
 
 
-def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_dir: Path, adapter: ModelAdapter) -> None:
+def _uses_sequential_model_lifecycle(settings) -> bool:
+    return settings.model_lifecycle_mode != "keep_loaded"
+
+
+def _unload_all_models_before_run(session: Session, run: BenchmarkingRun, adapter: ModelAdapter, timeout_seconds: int) -> None:
+    unload_all_models = getattr(adapter, "unload_all_models", None)
+    if unload_all_models is None:
+        return
+    _add_run_event(
+        session,
+        run.benchmarking_run_id,
+        event_type="model_unload_all_started",
+        message="unloading loaded models before run",
+    )
+    try:
+        unload_all_models(timeout_seconds=timeout_seconds)
+    except Exception as error:  # noqa: BLE001 — best-effort cleanup must not prevent the run from loading its first model
+        _add_run_event(
+            session,
+            run.benchmarking_run_id,
+            level="warning",
+            event_type="model_unload_all_failed",
+            message=f"failed to unload loaded models before run: {error}",
+        )
+        return
+    _add_run_event(
+        session,
+        run.benchmarking_run_id,
+        event_type="model_unload_all_finished",
+        message="loaded models unloaded before run",
+    )
+
+
+def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_dir: Path, adapter: ModelAdapter, settings) -> None:
     model = session.get(Model, unit.model_id)
     unit.status = "running"
     unit.started_at = utc_now()
@@ -178,37 +214,124 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
         "remote_model_id": remote_model_id(model),
         "stub_seed": model.stub_seed,
     }
-    ensure_model_loaded = getattr(adapter, "ensure_model_loaded", None)
-    if ensure_model_loaded is not None:
-        try:
-            ensure_model_loaded(
-                model_payload,
-                timeout_seconds=get_settings().timer_service_model_load_timeout_seconds,
+    try:
+        ensure_model_loaded = getattr(adapter, "ensure_model_loaded", None)
+        if ensure_model_loaded is not None:
+            _add_run_event(
+                session,
+                run.benchmarking_run_id,
+                unit_id=unit.unit_id,
+                event_type="model_load_started",
+                message=f"loading model {model_payload['remote_model_id']}",
+                payload={"model_id": model.model_id, "remote_model_id": model_payload["remote_model_id"]},
             )
-        except Exception as error:  # noqa: BLE001 — load failure is recorded on the unit, not raised out of the run
-            _fail_unit(session, unit, "model_load_error", str(error))
-            session.add(
-                RunEvent(
-                    benchmarking_run_id=run.benchmarking_run_id,
+            try:
+                ensure_model_loaded(
+                    model_payload,
+                    timeout_seconds=settings.timer_service_model_load_timeout_seconds,
+                )
+            except Exception as error:  # noqa: BLE001 — load failure is recorded on the unit, not raised out of the run
+                _fail_unit(session, unit, "model_load_error", str(error))
+                _add_run_event(
+                    session,
+                    run.benchmarking_run_id,
+                    unit_id=unit.unit_id,
                     level="error",
                     event_type="model_load_failed",
                     message=f"model load failed for {model_payload['remote_model_id']}: {error}",
+                    payload={"model_id": model.model_id, "remote_model_id": model_payload["remote_model_id"]},
                 )
+                return
+            _add_run_event(
+                session,
+                run.benchmarking_run_id,
+                unit_id=unit.unit_id,
+                event_type="model_loaded",
+                message=f"model {model_payload['remote_model_id']} loaded",
+                payload={"model_id": model.model_id, "remote_model_id": model_payload["remote_model_id"]},
             )
-            session.commit()
-            return
 
-    tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
-    task_metrics: list[dict[str, float] | None] = []
-    for task in tasks:
-        task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
-    for metric_name in METRIC_NAMES:
-        aggregated = aggregate_metric(task_metrics, metric_name)
-        if aggregated:
-            session.add(_metric(metric_name, "unit", run, unit, None, model.model_id, aggregated["value"]))
-    unit.status = "succeeded" if all(metric is not None for metric in task_metrics) else "partial_succeeded"
-    unit.finished_at = utc_now()
-    session.add(unit)
+        tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
+        task_metrics: list[dict[str, float] | None] = []
+        for task in tasks:
+            task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
+        for metric_name in METRIC_NAMES:
+            aggregated = aggregate_metric(task_metrics, metric_name)
+            if aggregated:
+                session.add(_metric(metric_name, "unit", run, unit, None, model.model_id, aggregated["value"]))
+        unit.status = "succeeded" if all(metric is not None for metric in task_metrics) else "partial_succeeded"
+        unit.finished_at = utc_now()
+        session.add(unit)
+        session.commit()
+    finally:
+        if _uses_sequential_model_lifecycle(settings):
+            _unload_model_after_unit(session, run, unit, model_payload, adapter, settings.timer_service_model_load_timeout_seconds)
+
+
+def _unload_model_after_unit(
+    session: Session,
+    run: BenchmarkingRun,
+    unit: Unit,
+    model_payload: dict,
+    adapter: ModelAdapter,
+    timeout_seconds: int,
+) -> None:
+    unload_model = getattr(adapter, "unload_model", None)
+    if unload_model is None:
+        return
+    remote_id = model_payload["remote_model_id"]
+    _add_run_event(
+        session,
+        run.benchmarking_run_id,
+        unit_id=unit.unit_id,
+        event_type="model_unload_started",
+        message=f"unloading model {remote_id}",
+        payload={"model_id": model_payload["model_id"], "remote_model_id": remote_id},
+    )
+    try:
+        unload_model(model_payload, timeout_seconds=timeout_seconds)
+    except Exception as error:  # noqa: BLE001 — evaluation results are already persisted; record cleanup failure only
+        _add_run_event(
+            session,
+            run.benchmarking_run_id,
+            unit_id=unit.unit_id,
+            level="warning",
+            event_type="model_unload_failed",
+            message=f"failed to unload model {remote_id}: {error}",
+            payload={"model_id": model_payload["model_id"], "remote_model_id": remote_id},
+        )
+        return
+    _add_run_event(
+        session,
+        run.benchmarking_run_id,
+        unit_id=unit.unit_id,
+        event_type="model_unloaded",
+        message=f"model {remote_id} unloaded",
+        payload={"model_id": model_payload["model_id"], "remote_model_id": remote_id},
+    )
+
+
+def _add_run_event(
+    session: Session,
+    run_id: str,
+    message: str,
+    event_type: str,
+    level: str = "info",
+    unit_id: str | None = None,
+    task_id: str | None = None,
+    payload: dict | None = None,
+) -> None:
+    session.add(
+        RunEvent(
+            benchmarking_run_id=run_id,
+            unit_id=unit_id,
+            task_id=task_id,
+            level=level,
+            event_type=event_type,
+            message=message,
+            payload=payload or {},
+        )
+    )
     session.commit()
 
 

@@ -195,11 +195,12 @@ flowchart LR
 
 1. 入口先看 `cancel_requested`：若已请求取消，直接落 `cancelled` + finished_at + `RunEvent`，返回。
 2. 否则置 `running`、发 `run started` 事件，通过 `get_model_adapter(get_settings())` 选定适配器（见 2.d）。
-3. 遍历每个 `Unit` 调 `_execute_unit`。
+3. 若 `model_lifecycle_mode != "keep_loaded"`（默认 `sequential_unload`），先调用适配器 `unload_all_models`，尽量清空 timer-rest-service 当前已加载模型，降低 run 起始显存水位；失败只写 warning `RunEvent`，不阻断后续加载。
+4. 遍历每个 `Unit` 调 `_execute_unit`。
 
 各层逻辑：
 
-- `_execute_unit`（`run_executor.py:136`）：置 unit `running`；**失败注入**——若该 model 的 `endpoint_uri == "stub://fail"`，调 `_fail_unit` 把它名下所有 Task 与该 Unit 全标 `failed`（`error_code="adapter_error"`）并返回。否则先通过 `ensure_model_loaded` 兜底加载模型，再逐 Task 调 `_execute_task`，并对 `METRIC_NAMES=["mase","mse","mae"]` 聚合 unit 级指标写 `MetricResult(result_level="unit")`。
+- `_execute_unit`（`run_executor.py`）：置 unit `running`；**失败注入**——若该 model 的 `endpoint_uri == "stub://fail"`，调 `_fail_unit` 把它名下所有 Task 与该 Unit 全标 `failed`（`error_code="adapter_error"`）并返回。否则先通过 `ensure_model_loaded` 兜底加载当前模型，再逐 Task 调 `_execute_task`，并对 `METRIC_NAMES=["mase","mse","mae"]` 聚合 unit 级指标写 `MetricResult(result_level="unit")`。默认生命周期下，整个 unit 被包在 `finally` 中调用 `unload_model`：即加载一个模型、跑完该模型所有任务、卸载，再进入下一个模型；卸载失败只写 warning 事件，不反向修改已落盘评测结果。
 - `_execute_task`（`run_executor.py:176`）：取 block 下所有 `Shard`，逐 shard 调 `_execute_shard`，并对 `METRIC_NAMES=["mase","mse","mae"]` 聚合 task 级指标（`result_level="task"`，带 `capability_block_id`）。
 - `_execute_shard`（`run_executor.py`）：取 shard 全部 `SampleIndex`（按 `sample_index` 排序），逐 sample：`SampleStore.read_by_ref(session, storage_ref)` 经 `SeriesStore.slice` 按 `(shard_id, row_index)` 范围**现切**出样本 → **`build_model_input(sample)`** 构造**不含 `target_future`、带 `horizon`** 的输入视图（输入/答案分离，`services/model_input.py`）→ `adapter.forecast(model_input, model_payload, timeout)` → `compute_sample_metrics(target_future, forecast, target_history)` 算 **mse/mae/mase**（`services/metric_service.py`，`target_future` 仅服务端用于算分）→ 每个 sample 指标写 `MetricResult(result_level="sample", aggregation="raw")`。所有 sample 的预测行经 `ForecastStore.write_forecasts` 落到 `runtime/forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`（`forecast.v1` schema，带 sha256 checksum）并建 `ForecastArtifact`。最后对 `METRIC_NAMES=["mase","mse","mae"]` 逐指标聚合 shard 级（`result_level="shard"`）。
 
@@ -225,10 +226,14 @@ sequenceDiagram
     alt running
         RT->>TH: Thread(_execute_in_background)
         TH->>EX: execute_run(session, run_id)
-        loop 每个 Unit / Task / Shard / Sample
-            EX->>AD: forecast(sample, model_payload)
-            AD-->>EX: forecast 预测
-            EX->>EX: compute_sample_metrics + 落盘 + 聚合
+        loop 每个 Unit / 模型
+            EX->>AD: ensure_model_loaded(model_payload)
+            loop 当前 Unit 的 Task / Shard / Sample
+                EX->>AD: forecast(sample, model_payload)
+                AD-->>EX: forecast 预测
+                EX->>EX: compute_sample_metrics + 落盘 + 聚合
+            end
+            EX->>AD: unload_model(model_payload)
         end
         EX->>EX: 按 unit succeeded/partial/failed 判定 run 终态
         EX->>RNK: refresh_ranking(mase, mse, mae, commit=false)
@@ -251,7 +256,7 @@ sequenceDiagram
 
 ### 2.d 模型推理接入
 
-**协议**：`ModelAdapter`（`services/model_adapter.py:8`）定义两个方法：`ensure_model_loaded(model, timeout_seconds)` 与 `forecast(sample, model, timeout_seconds) -> list[list[float]]`。
+**协议**：`ModelAdapter`（`services/model_adapter.py`）定义模型生命周期与推理方法：`unload_all_models(timeout_seconds)`、`ensure_model_loaded(model, timeout_seconds)`、`forecast(sample, model, timeout_seconds) -> list[list[float]]`、`unload_model(model, timeout_seconds)`。执行器默认用 `unload_all → load one → forecast all samples for that model → unload one` 的顺序控制显存峰值。
 
 **工厂**：`get_model_adapter(settings)`（`model_adapter.py:13`）按 `settings.model_adapter` 选择：
 
@@ -260,7 +265,7 @@ sequenceDiagram
 
 **remote_model_id 映射**：`remote_model_id(model)`（`model_adapter.py:23`）把本地 `Model` 映射为远端 ID：REST 同步的模型使用 `endpoint_uri="timer://<remote_id>"`，优先取该远端 ID；否则按历史规则用 `model_family + model_version` 拼出 `"{family}-{version}"`（如 `Timer-3.5`），再退化为 `name` 或 `model_id`。运行时 `_execute_unit` / `_execute_shard` 把它放进 `model_payload`，由适配器使用。
 
-**配置与契约关系**：`Settings`（`core/config.py:18-29`）的 `timer_service_base_url`（默认 `http://127.0.0.1:10810`）+ `timer_service_api_prefix`（默认 `/ai/api/v1`）拼成 `timer_service_url`，对应 [rest-api.md](../reference/rest-api.md) 约定的 `http://<host>:<port>` 前缀 + `/ai/api/v1` 路径前缀。
+**配置与契约关系**：`Settings`（`core/config.py`）的 `timer_service_base_url`（默认 `http://127.0.0.1:10810`）+ `timer_service_api_prefix`（默认 `/ai/api/v1`）拼成 `timer_service_url`，对应 [rest-api.md](../reference/rest-api.md) 约定的 `http://<host>:<port>` 前缀 + `/ai/api/v1` 路径前缀。`model_lifecycle_mode` 默认 `sequential_unload`；设为 `keep_loaded` 时，运行开始不清空已加载模型，unit 完成后也不主动卸载。
 
 #### TimerRestAdapter（`services/timer_rest_adapter.py`）
 
@@ -268,8 +273,8 @@ sequenceDiagram
 - **请求发送** `_post`（`timer_rest_adapter.py:65`）：默认用 `httpx.Client(timeout=..., trust_env=False)`——**`trust_env=False`** 是关键：推理服务是内网服务，绕开系统 HTTP/SOCKS 代理。HTTP 非 200 或业务信封 `code != 200` 均抛 `TimerServiceError`（真实服务会把「模型未加载」这类业务错误包装成 HTTP 200 + `code=400`）。
 - **响应解析** `_parse_response`（`timer_rest_adapter.py:91`）：从 `data.results[0]` 取 `columns/data`，剔除 `time` 列只留数值列，截断到 `horizon`。形状不符抛 `TimerServiceError`。
 - **错误归一**：所有 `httpx.HTTPError`、非 200、契约不符都收敛为 `TimerServiceError`（`timer_rest_adapter.py:12`）。
-- 另有 `list_models`（GET `/models/list`，取 `data.models`）和 `load_model`（POST `/models/load`）。REST 模式下 `/models` 路由直接以 `/models/list` 为权威来源，并通过 `model_catalog.py` 把远端模型同步成本地 `Model(model_id=<remote_id>, endpoint_uri="timer://<remote_id>")` 镜像，供 run/unit/metric 继续用本地外键串联。`POST /models/{model_id}/load` 供前端在创建 run 前主动加载已选模型。
-- `_execute_unit` 在进入 task 前调用 `adapter.ensure_model_loaded(...)` 兜底确认。未加载模型会先 POST `/models/load` 并轮询 `/models/list` 直到 `loaded=true`；加载失败会把该 unit 和其 tasks 标记为 `failed` / `model_load_error`，写入 `RunEvent`，然后让 run 正常进入终态。
+- 另有 `list_models`（GET `/models/list`，取 `data.models`）、`load_model`（POST `/models/load`）、`unload_model`（POST `/models/unload`，已卸载 409 视为 no-op）与 `unload_all_models`（先列目录，只卸载 `loaded=true` 的模型）。REST 模式下 `/models` 路由直接以 `/models/list` 为权威来源，并通过 `model_catalog.py` 把远端模型同步成本地 `Model(model_id=<remote_id>, endpoint_uri="timer://<remote_id>")` 镜像，供 run/unit/metric 继续用本地外键串联。`POST /models/{model_id}/load` 仍可供手动预热，但新建评测/赛道运行前端不再批量调用它。
+- `_execute_unit` 在进入 task 前调用 `adapter.ensure_model_loaded(...)` 兜底确认。未加载模型会先 POST `/models/load` 并轮询 `/models/list` 直到 `loaded=true`；加载失败会把该 unit 和其 tasks 标记为 `failed` / `model_load_error`，写入 `RunEvent`，然后在 `finally` 中尽量 `unload_model`，让 run 正常进入终态。
 
 #### StubTimerAdapter（`services/stub_timer_adapter.py`）
 

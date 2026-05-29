@@ -80,6 +80,50 @@ def test_adapter_list_models_returns_loaded_builtins():
     assert all(m["loaded"] for m in models if m["model_id"].startswith("Timer"))
 
 
+def test_adapter_unloads_loaded_model_and_treats_repeated_unload_as_noop():
+    adapter = _adapter_against_stub()
+
+    adapter.unload_model({"model_id": "local", "remote_model_id": "Timer-3.5"}, timeout_seconds=30)
+    adapter.unload_model({"model_id": "local", "remote_model_id": "Timer-3.5"}, timeout_seconds=30)
+
+    service_model = next(model for model in adapter.list_models() if model["model_id"] == "Timer-3.5")
+    assert service_model["loaded"] is False
+
+
+def test_adapter_unload_all_models_only_calls_loaded_models():
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.url.path.endswith("/models/list"):
+            return httpx.Response(
+                200,
+                json={
+                    "code": 200,
+                    "message": "Success",
+                    "data": {
+                        "models": [
+                            {"model_id": "m-loaded", "loaded": True},
+                            {"model_id": "m-cold", "loaded": False},
+                        ]
+                    },
+                },
+            )
+        if request.url.path.endswith("/models/unload"):
+            return httpx.Response(200, json={"code": 200, "message": "unloaded", "data": {"model_id": "m-loaded"}})
+        return httpx.Response(404, json={"code": 404, "message": "not found", "data": None})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    adapter = TimerRestAdapter(base_url=str(client.base_url), api_prefix="/ai/api/v1", client=client)
+
+    adapter.unload_all_models(timeout_seconds=30)
+
+    assert calls == [
+        ("GET", "/ai/api/v1/models/list"),
+        ("POST", "/ai/api/v1/models/unload"),
+    ]
+
+
 def test_adapter_loads_unloaded_model_before_forecast():
     calls: list[tuple[str, str]] = []
     list_calls = 0

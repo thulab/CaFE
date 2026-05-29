@@ -63,6 +63,36 @@ class TimerRestAdapter:
         except (KeyError, TypeError) as exc:
             raise TimerServiceError(f"unexpected models/load response shape: {response}") from exc
 
+    def unload_model(self, model: dict, timeout_seconds: int = 600) -> None:
+        """POST /models/unload → 卸载一个模型；已卸载视为成功。"""
+        model_id = model.get("remote_model_id") or model.get("model_id")
+        if not model_id:
+            raise TimerServiceError("model_id is required before unloading model")
+        try:
+            self._post(f"{self._base}/models/unload", {"model_id": str(model_id)}, timeout_seconds)
+        except TimerServiceError as exc:
+            if self._is_already_unloaded_error(exc):
+                return
+            raise
+        except httpx.HTTPError as exc:
+            raise TimerServiceError(f"models/unload request failed: {exc}") from exc
+
+    def unload_all_models(self, timeout_seconds: int = 600) -> None:
+        """卸载 timer-rest-service 当前已加载的全部模型。"""
+        errors: list[str] = []
+        for service_model in self.list_models(timeout_seconds=timeout_seconds):
+            if service_model.get("loaded"):
+                model_id = str(service_model.get("model_id") or "")
+                try:
+                    self.unload_model(
+                        {"model_id": model_id, "remote_model_id": model_id},
+                        timeout_seconds=timeout_seconds,
+                    )
+                except TimerServiceError as exc:
+                    errors.append(f"{model_id}: {exc}")
+        if errors:
+            raise TimerServiceError("failed to unload all loaded models: " + "; ".join(errors))
+
     def ensure_model_loaded(self, model: dict, timeout_seconds: int = 600) -> None:
         """确保 forecast 前模型已加载；未加载则调用 /models/load。"""
         model_id = model.get("remote_model_id") or model.get("model_id")
@@ -140,6 +170,10 @@ class TimerRestAdapter:
         if code is not None and code != 200:
             message = payload.get("message") if isinstance(payload, dict) else payload
             raise TimerServiceError(f"{url} returned service code {code}: {message}")
+
+    def _is_already_unloaded_error(self, exc: TimerServiceError) -> bool:
+        message = str(exc).lower()
+        return "409" in message and "not loaded" in message
 
     def _parse_response(self, payload: dict, horizon: int) -> list[list[float]]:
         try:

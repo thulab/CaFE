@@ -99,11 +99,14 @@ TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 | `TSBENCHMARK_TIMER_SERVICE_BASE_URL` | `http://127.0.0.1:10810` | 服务前缀 `http://<host>:<port>` |
 | `TSBENCHMARK_TIMER_SERVICE_API_PREFIX` | `/ai/api/v1` | 文档约定的统一路径前缀 |
 | `TSBENCHMARK_MODEL_ADAPTER` | `rest` | `rest`=走 HTTP；`stub`=进程内确定性桩，无需网络 |
+| `TSBENCHMARK_MODEL_LIFECYCLE_MODE` | `sequential_unload` | `sequential_unload`=每次运行逐模型加载/评测/卸载；`keep_loaded`=保留模型常驻 |
 | `TSBENCHMARK_SAMPLE_FORECAST_TIMEOUT_SECONDS` | `300` | 单个样本调用推理服务的超时秒数 |
 | `TSBENCHMARK_RUNTIME_DIR` | `runtime` | 运行产物根目录（见第 8 节） |
 | `TSBENCHMARK_DATABASE_URL` | `sqlite:///runtime/tsbenchmark.db` | SQLite 数据库地址 |
 
 `base_url` 与 `api_prefix` 会拼成业务端点根地址，例如默认值拼出 `http://127.0.0.1:10810/ai/api/v1`。
+
+默认模型生命周期为 `sequential_unload`：创建运行后，后端会先尽量卸载 timer-rest-service 中已加载的模型，然后按模型逐个加载、评测、卸载，以降低多模型评测时的显存峰值。前端不会在启动运行前批量预加载模型。小模型调试场景如果希望保留常驻加载，可显式设置 `TSBENCHMARK_MODEL_LIFECYCLE_MODE=keep_loaded`。
 
 ### 4.2 三种接入模式
 

@@ -23,6 +23,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
     # 测试默认走进程内确定性桩，避免依赖网络上的 timer-rest-service。
     # 需要验证 REST 路径的用例可在用例内 setenv("TSBENCHMARK_MODEL_ADAPTER", "rest") 覆盖。
     monkeypatch.setenv("TSBENCHMARK_MODEL_ADAPTER", "stub")
+    monkeypatch.setenv("TSBENCHMARK_MODEL_LIFECYCLE_MODE", "sequential_unload")
     # 鉴权层需要 JWT 密钥与可预测的 admin 密码；缺这两条 create_app() 会拒绝启动。
     monkeypatch.setenv("TSBENCHMARK_AUTH_SECRET", "test-secret-32-bytes-long-padding-xx")
     monkeypatch.setenv("TSBENCHMARK_ADMIN_PASSWORD", "test-admin-pw")
@@ -31,6 +32,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Iterator[None]:
     os.environ.pop("TSBENCHMARK_RUNTIME_DIR", None)
     os.environ.pop("TSBENCHMARK_DATABASE_URL", None)
     os.environ.pop("TSBENCHMARK_MODEL_ADAPTER", None)
+    os.environ.pop("TSBENCHMARK_MODEL_LIFECYCLE_MODE", None)
     os.environ.pop("TSBENCHMARK_AUTH_SECRET", None)
     os.environ.pop("TSBENCHMARK_ADMIN_PASSWORD", None)
 

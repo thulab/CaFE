@@ -25,7 +25,7 @@ flowchart LR
 
 - **后端**：FastAPI + SQLModel + SQLite。分层边界——`api/routes/` 只做校验与委派，`services/` 承载业务行为，`models/` 仅持久化，`workers/` 跑后台执行。
 - **前端**：Vue 3 + Vite 7，经 `/api` 代理访问后端。
-- **推理**：通过 `ModelAdapter` 协议接出，由配置 `TSBENCHMARK_MODEL_ADAPTER` 选择 `rest`（HTTP 调 timer-rest-service / 本地桩）或 `stub`（进程内确定性桩）。
+- **推理**：通过 `ModelAdapter` 协议接出，由配置 `TSBENCHMARK_MODEL_ADAPTER` 选择 `rest`（HTTP 调 timer-rest-service / 本地桩）或 `stub`（进程内确定性桩）；默认 `TSBENCHMARK_MODEL_LIFECYCLE_MODE=sequential_unload`，运行时逐模型加载、评测、卸载。
 - **产物**：序列真值与样本存进 SQLite（`SeriesPoint` 逐点行 + `SampleIndex` 指针）；评测产物（预测、报告）落在 `runtime/` 下的 JSONL / JSON 文件；元数据进 SQLite。
 
 ## 核心数据层级

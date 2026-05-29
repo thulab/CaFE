@@ -9,6 +9,12 @@ class StubTimerAdapter:
     def ensure_model_loaded(self, model: dict, timeout_seconds: int) -> None:
         del model, timeout_seconds
 
+    def unload_model(self, model: dict, timeout_seconds: int) -> None:
+        del model, timeout_seconds
+
+    def unload_all_models(self, timeout_seconds: int) -> None:
+        del timeout_seconds
+
     def forecast(self, sample: dict, model: dict, timeout_seconds: int) -> list[list[float]]:
         del timeout_seconds
         sample_id = str(sample["sample_id"])
