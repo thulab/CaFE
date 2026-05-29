@@ -7,8 +7,11 @@
         <p class="page-sub">{{ t('sampleForecast.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <a v-if="reportLink" class="btn secondary sm" :href="reportLink">
+          <Icon name="chevronLeft" :size="15" /> {{ t('sampleForecast.backToReport') }}
+        </a>
         <ResumeWizardButton resource-type="sample_forecast" :resource-id="runId" />
-        <span class="badge mono">{{ shortId(sampleId) }}</span>
+        <span class="badge mono">{{ sampleBadge }}</span>
       </div>
     </header>
 
@@ -47,9 +50,17 @@ import type { SampleForecastDTO } from '../api/types';
 import { useAsyncData } from '../composables/useAsync';
 import { shortId } from '../lib/format';
 
-const props = defineProps<{ sampleId: string; runId: string }>();
+const props = defineProps<{ sampleId: string; runId: string; reportId?: string }>();
 const { data: sample, loading, error, run } = useAsyncData<SampleForecastDTO>(() => getSampleForecast(props.sampleId, props.runId));
 const failedModels = computed(() => sample.value?.models.filter((m) => m.status !== 'succeeded') || []);
+const reportLink = computed(() => {
+  const reportId = props.reportId || sample.value?.links?.report;
+  return reportId ? `#/reports/${reportId}` : '';
+});
+const sampleBadge = computed(() => {
+  if (typeof sample.value?.sample_index === 'number') return `#${sample.value.sample_index + 1}`;
+  return shortId(props.sampleId);
+});
 const { t } = useI18n();
 
 onMounted(run);

@@ -341,9 +341,15 @@ function resolveRoute(): RouteView {
   if (parts[0] === 'samples' && id) {
     const qIdx = routeHash.value.indexOf('?');
     const params = new URLSearchParams(qIdx >= 0 ? routeHash.value.slice(qIdx + 1) : '');
+    const reportId = params.get('report_id') || '';
     return {
-      component: SampleForecastPage, props: { sampleId: id, runId: params.get('run_id') || '' }, navKey: 'runs', tier: 'authed',
-      crumbs: [HOME_CRUMB.value, { label: t('home.steps.review.title') }]
+      component: SampleForecastPage, props: { sampleId: id, runId: params.get('run_id') || '', reportId }, navKey: 'runs', tier: 'authed',
+      crumbs: [
+        HOME_CRUMB.value,
+        { label: t('nav.runs'), href: '#/runs' },
+        reportId ? { label: t('nav.report'), href: `#/reports/${reportId}` } : { label: t('home.steps.review.title') },
+        { label: shortId(id) },
+      ]
     };
   }
   return { component: HomePage, props: {}, navKey: 'home', tier: 'authed', crumbs: [HOME_CRUMB.value] };

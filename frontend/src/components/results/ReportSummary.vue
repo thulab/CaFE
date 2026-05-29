@@ -64,19 +64,54 @@
       </article>
 
       <article class="card">
-        <header class="card-head"><h2 class="card-title">{{ t('results.sampleForecasts') }}</h2><span class="badge">{{ formatInt(report.sample_forecast_links.length) }}</span></header>
+        <header class="card-head">
+          <h2 class="card-title">{{ t('results.sampleForecasts') }}</h2>
+          <span class="badge">{{ formatInt(sampleLinks.length) }}</span>
+        </header>
         <div class="card-body">
-          <p v-if="!report.sample_forecast_links.length" class="empty-state">{{ t('results.noSampleForecasts') }}</p>
-          <nav v-else class="pill-row" :aria-label="t('results.sampleForecastLinks')">
-            <a
-              v-for="link in report.sample_forecast_links"
-              :key="link.sample_id"
-              class="btn secondary sm"
-              :href="`#/samples/${link.sample_id}?run_id=${link.run_id}`"
-            >
-              <Icon name="lineChart" :size="14" /> {{ link.sample_id }}
-            </a>
-          </nav>
+          <p v-if="!sampleLinks.length" class="empty-state">{{ t('results.noSampleForecasts') }}</p>
+          <div v-else class="stack">
+            <div class="table-wrap">
+              <table class="data">
+                <caption>{{ samplePageLabel }}</caption>
+                <thead>
+                  <tr>
+                    <th>{{ t('results.sample') }}</th>
+                    <th>{{ t('results.window') }}</th>
+                    <th>{{ t('results.models') }}</th>
+                    <th>{{ t('common.actions') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="link in visibleSampleLinks" :key="`${link.run_id}:${link.sample_id}`">
+                    <td>
+                      <span style="font-weight:650">{{ sampleLabel(link) }}</span>
+                      <div class="faint mono" style="font-size:0.74rem">{{ shortId(link.sample_id) }}</div>
+                    </td>
+                    <td>
+                      <span>{{ sampleWindowSummary(link) }}</span>
+                      <div class="faint" style="font-size:0.74rem">{{ sampleTimeSummary(link) }}</div>
+                    </td>
+                    <td><span class="badge neutral">{{ modelCountText(link.model_count ?? report.model_metrics.length) }}</span></td>
+                    <td>
+                      <a class="btn secondary sm" :href="sampleHref(link)">
+                        <Icon name="lineChart" :size="14" /> {{ t('common.open') }}
+                      </a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="sample-pager" :aria-label="t('results.samplePagination')">
+              <button class="btn ghost sm" type="button" :disabled="samplePage <= 1" @click="samplePage -= 1">
+                <Icon name="chevronLeft" :size="14" /> {{ t('results.previousPage') }}
+              </button>
+              <span class="status-line">{{ t('results.pageStatus', { page: samplePage, pages: samplePageCount }) }}</span>
+              <button class="btn ghost sm" type="button" :disabled="samplePage >= samplePageCount" @click="samplePage += 1">
+                {{ t('results.nextPage') }} <Icon name="chevronRight" :size="14" />
+              </button>
+            </div>
+          </div>
         </div>
       </article>
     </div>
@@ -84,11 +119,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
 import StatusBadge from '../ui/StatusBadge.vue';
-import type { ReportDTO } from '../../api/types';
+import type { ReportDTO, SampleForecastLinkDTO } from '../../api/types';
 import { useModels } from '../../composables/useModels';
 import { useFormat } from '../../composables/useFormat';
 import { shortId } from '../../lib/format';
@@ -96,9 +131,11 @@ import { shortId } from '../../lib/format';
 const props = defineProps<{ report: ReportDTO }>();
 const { modelName } = useModels();
 const { t } = useI18n();
-const { formatNumber, formatInt } = useFormat();
+const { formatNumber, formatInt, locale } = useFormat();
 const sortKey = ref('');
 const sortDir = ref<'asc' | 'desc'>('asc');
+const samplePage = ref(1);
+const SAMPLE_PAGE_SIZE = 10;
 const modelCountLabel = computed(() =>
   t(props.report.model_metrics.length === 1 ? 'results.modelCountOne' : 'results.modelCountOther', { count: props.report.model_metrics.length })
 );
@@ -167,6 +204,46 @@ const rows = computed(() => {
   });
 });
 
+const sampleLinks = computed(() => {
+  const bySample = new Map<string, SampleForecastLinkDTO>();
+  for (const link of props.report.sample_forecast_links || []) {
+    const key = `${link.run_id}:${link.sample_id}`;
+    const current = bySample.get(key);
+    if (!current) {
+      bySample.set(key, { ...link });
+      continue;
+    }
+    bySample.set(key, {
+      ...current,
+      ...Object.fromEntries(Object.entries(link).filter(([, value]) => value !== undefined && value !== null)),
+      model_count: Math.max(Number(current.model_count ?? 0), Number(link.model_count ?? 0), props.report.model_metrics.length),
+    });
+  }
+  return [...bySample.values()].sort((a, b) => {
+    const ai = typeof a.sample_index === 'number' ? a.sample_index : Number.POSITIVE_INFINITY;
+    const bi = typeof b.sample_index === 'number' ? b.sample_index : Number.POSITIVE_INFINITY;
+    if (ai !== bi) return ai - bi;
+    return a.sample_id.localeCompare(b.sample_id);
+  });
+});
+
+const samplePageCount = computed(() => Math.max(1, Math.ceil(sampleLinks.value.length / SAMPLE_PAGE_SIZE)));
+const visibleSampleLinks = computed(() => {
+  const start = (samplePage.value - 1) * SAMPLE_PAGE_SIZE;
+  return sampleLinks.value.slice(start, start + SAMPLE_PAGE_SIZE);
+});
+
+const samplePageLabel = computed(() => {
+  if (!sampleLinks.value.length) return '';
+  const start = (samplePage.value - 1) * SAMPLE_PAGE_SIZE + 1;
+  const end = Math.min(samplePage.value * SAMPLE_PAGE_SIZE, sampleLinks.value.length);
+  return t('results.samplePageRange', { start, end, total: sampleLinks.value.length });
+});
+
+watch(samplePageCount, (count) => {
+  if (samplePage.value > count) samplePage.value = count;
+});
+
 function sortBy(key: string) {
   if (sortKey.value === key) {
     sortDir.value = sortDir.value === 'asc' ? 'desc' : 'asc';
@@ -174,5 +251,48 @@ function sortBy(key: string) {
   }
   sortKey.value = key;
   sortDir.value = 'asc';
+}
+
+function sampleLabel(link: SampleForecastLinkDTO) {
+  if (typeof link.sample_index === 'number') return t('results.sampleWindowLabel', { index: link.sample_index + 1 });
+  return t('results.sampleFallbackLabel', { id: shortId(link.sample_id) });
+}
+
+function sampleWindowSummary(link: SampleForecastLinkDTO) {
+  if (typeof link.horizon_start === 'number' && typeof link.horizon_end === 'number') {
+    return t('results.sampleHorizonRows', { start: link.horizon_start, end: link.horizon_end });
+  }
+  if (typeof link.context_start === 'number' && typeof link.context_end === 'number') {
+    return t('results.sampleContextRows', { start: link.context_start, end: link.context_end });
+  }
+  return t('common.notAvailable');
+}
+
+function sampleTimeSummary(link: SampleForecastLinkDTO) {
+  if (link.forecast_start_at && link.forecast_end_at) {
+    return t('results.sampleForecastTimeRange', { start: compactDateTime(link.forecast_start_at), end: compactDateTime(link.forecast_end_at) });
+  }
+  return t('results.sampleNoTimestamp');
+}
+
+function compactDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(locale.value, {
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function modelCountText(count: number | null | undefined) {
+  const safe = Math.max(0, Number(count || 0));
+  return t(safe === 1 ? 'results.modelCountInlineOne' : 'results.modelCountInlineOther', { count: safe });
+}
+
+function sampleHref(link: SampleForecastLinkDTO) {
+  const params = new URLSearchParams({ run_id: link.run_id, report_id: props.report.report_id });
+  return `#/samples/${encodeURIComponent(link.sample_id)}?${params.toString()}`;
 }
 </script>

@@ -28,7 +28,7 @@ def generate_run_report(session: Session, run_id: str, runtime_dir: Path) -> Rep
         "status": run.status,
         "model_metrics": [_unit_metrics(session, unit, metrics) for unit in units],
         "task_summaries": [_task_summary(task, metrics) for task in tasks],
-        "sample_forecast_links": _sample_links(run_id, artifacts),
+        "sample_forecast_links": _sample_links(session, run_id, artifacts),
         "cancellation_reason": "cancel_requested" if run.status == "cancelled" else None,
     }
     output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -136,11 +136,57 @@ def _task_summary(task: Task, metrics: list[MetricResult]) -> dict:
     }
 
 
-def _sample_links(run_id: str, artifacts: list[ForecastArtifact]) -> list[dict]:
-    links = []
+def _sample_links(session: Session, run_id: str, artifacts: list[ForecastArtifact]) -> list[dict]:
+    links_by_sample: dict[str, dict] = {}
+    models_by_sample: dict[str, set[str]] = {}
     for artifact in artifacts:
         with Path(artifact.storage_uri).open(encoding="utf-8") as file:
             for line in file:
                 sample_id = json.loads(line)["sample_id"]
-                links.append({"sample_id": sample_id, "run_id": run_id, "forecast_artifact_id": artifact.forecast_artifact_id})
+                if sample_id not in links_by_sample:
+                    links_by_sample[sample_id] = _sample_link(session, run_id, sample_id, artifact.forecast_artifact_id)
+                    models_by_sample[sample_id] = set()
+                models_by_sample[sample_id].add(artifact.model_id)
+                links_by_sample[sample_id]["forecast_artifact_ids"].append(artifact.forecast_artifact_id)
+    links = list(links_by_sample.values())
+    for link in links:
+        link["model_count"] = len(models_by_sample.get(link["sample_id"], set()))
     return links
+
+
+def _sample_link(session: Session, run_id: str, sample_id: str, forecast_artifact_id: str) -> dict:
+    sample_index = session.get(SampleIndex, sample_id)
+    link = {
+        "sample_id": sample_id,
+        "run_id": run_id,
+        "forecast_artifact_id": forecast_artifact_id,
+        "forecast_artifact_ids": [],
+        "model_count": 0,
+    }
+    if sample_index is None:
+        return link
+
+    link.update(
+        {
+            "sample_index": sample_index.sample_index,
+            "context_start": sample_index.context_start,
+            "context_end": sample_index.context_end,
+            "horizon_start": sample_index.horizon_start,
+            "horizon_end": sample_index.horizon_end,
+        }
+    )
+    try:
+        sample = SampleStore().read_by_ref(session, sample_index.storage_ref)
+    except Exception:  # noqa: BLE001 — report generation must tolerate missing sample detail metadata
+        return link
+    history_timestamps = sample.get("history_timestamps") or []
+    future_timestamps = sample.get("future_timestamps") or []
+    link.update(
+        {
+            "history_start_at": history_timestamps[0] if history_timestamps else None,
+            "history_end_at": history_timestamps[-1] if history_timestamps else None,
+            "forecast_start_at": future_timestamps[0] if future_timestamps else None,
+            "forecast_end_at": future_timestamps[-1] if future_timestamps else None,
+        }
+    )
+    return link

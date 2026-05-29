@@ -760,14 +760,14 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `status` | `str` | run 终态 |
 | `model_metrics` | `list[dict]` | 每个 unit 一项（见下） |
 | `task_summaries` | `list[dict]` | 每个 task 一项（见下） |
-| `sample_forecast_links` | `list[dict]` | sample → forecast artifact 链接 |
+| `sample_forecast_links` | `list[dict]` | 按 sample 去重后的 sample → forecast artifact 链接，含窗口/时间戳展示元数据 |
 | `cancellation_reason` | `str \| None` | run 为 `cancelled` 时为 `"cancel_requested"`，否则 `null` |
 
 `model_metrics[*]`（`_unit_metrics`，`report_service.py:50-62`）：`unit_id`、`model_id`、`model_name`、`status`、`metrics`（仅 `result_level=="unit"` 且匹配 unit 的指标，形如 `{"mse":..,"mae":..}`）。
 
 `task_summaries[*]`（`_task_summary`，`report_service.py:65-79`）：`task_id`、`unit_id`、`model_id`、`capability_block_id`、`status`、`error_code`、`error_message`、`metrics`（仅 `result_level=="task"` 且匹配 task）。
 
-`sample_forecast_links[*]`（`_sample_links`，`report_service.py:82-89`）：逐个读取 ForecastArtifact 文件，每行产出 `{"sample_id":..,"run_id":..,"forecast_artifact_id":..}`。
+`sample_forecast_links[*]`（`_sample_links`，`report_service.py`）：逐个读取 ForecastArtifact 文件并按 `(run_id, sample_id)` 去重，产出 `{"sample_id":..,"run_id":..,"forecast_artifact_id":..,"forecast_artifact_ids":[..],"model_count":..}`；若 `SampleIndex` 可读，还会补 `sample_index`、`context_start/end`、`horizon_start/end`、`history_start/end_at`、`forecast_start/end_at`，供报告页分页展示为可读窗口名称，而不是裸 ID。
 
 > 报告 DB 实体（`Report`）的 `summary` 字段与此 JSON 不同：`summary` 只存 `{status, model_count, task_count}`（§5.3），完整内容落在 `storage_uri` 指向的 JSON 文件里。
 

@@ -316,7 +316,7 @@ flowchart TB
 1. 用 `SampleStore.read_by_ref` 读出样本的 history/future（时间戳、目标值、列名）。
 2. 取该 sample 所属 shard 在该 run 下的所有 `ForecastArtifact`，逐个用 `ForecastStore.read_forecasts` 读出 JSONL，过滤出 `sample_id` 匹配的那一行。
 3. 每个命中的模型组一条 `models[]` 记录：`model_name`、`forecast`、`metrics`、`status / error_code / error_message`，并补 `unit_status / task_status`。
-4. 顶层返回 `history_timestamps / future_timestamps / target_history / target_future / target_column_names` + `models[]` + `links`，供前端把真值与各模型预测画在同一张图上。
+4. 顶层返回 `sample_index`、行号窗口、history/forecast 时间戳范围、`history_timestamps / future_timestamps / target_history / target_future / target_column_names` + `models[]` + `links`，供前端把真值与各模型预测画在同一张图上，并从样本页跳回报告。
 
 ```mermaid
 flowchart LR

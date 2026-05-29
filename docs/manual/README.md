@@ -283,7 +283,7 @@ GET /reports/{report_id}
 
 - `model_metrics`：模型（unit）级指标表。
 - `task_summaries`：task 摘要（含 task 级指标、`error_code`、`error_message`）。
-- `sample_forecast_links`：样本预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id`。
+- `sample_forecast_links`：按样本去重后的预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id(s)`，并尽量附带 `sample_index`、行号窗口和预测时间戳范围，方便前端显示可读样本名称。
 - `status`：run 终态。
 - `cancellation_reason`：取消运行时为 `cancel_requested`，否则为 `null`。
 - `benchmarking_run_id`、`track_id`、`report_id`。
@@ -299,6 +299,7 @@ GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
 `run_id` 为必填查询参数。返回内容包括：
 
 - `sample_id`。
+- `sample_index`、行号窗口和预测时间戳范围（如可从样本索引恢复）。
 - `target_history`：历史 target 值。
 - `target_future`：未来真值。
 - `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MASE/MSE/MAE；MASE 在平稳历史等场景下可能无定义），失败时附 `error_message`。

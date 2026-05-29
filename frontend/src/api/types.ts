@@ -141,11 +141,31 @@ export interface TrackDTO {
   updated_at?: string;
 }
 
+export interface SampleWindowMeta {
+  sample_index?: number | null;
+  context_start?: number | null;
+  context_end?: number | null;
+  horizon_start?: number | null;
+  horizon_end?: number | null;
+  history_start_at?: string | null;
+  history_end_at?: string | null;
+  forecast_start_at?: string | null;
+  forecast_end_at?: string | null;
+}
+
+export interface SampleForecastLinkDTO extends SampleWindowMeta {
+  sample_id: string;
+  run_id: string;
+  forecast_artifact_id?: string | null;
+  forecast_artifact_ids?: string[];
+  model_count?: number | null;
+}
+
 export interface ReportDTO {
   report_id: string;
   model_metrics: Array<Record<string, unknown>>;
   task_summaries: Array<Record<string, unknown>>;
-  sample_forecast_links: Array<{ sample_id: string; run_id: string }>;
+  sample_forecast_links: SampleForecastLinkDTO[];
 }
 
 export interface ListResponse<T> {
@@ -195,8 +215,11 @@ export interface ReportSummaryDTO {
   updated_at?: string;
 }
 
-export interface SampleForecastDTO {
+export interface SampleForecastDTO extends SampleWindowMeta {
   sample_id: string;
+  benchmarking_run_id?: string;
+  shard_id?: string;
+  capability_block_id?: string | null;
   target_history: number[][];
   target_future: number[][];
   models: Array<{
@@ -207,4 +230,9 @@ export interface SampleForecastDTO {
     metrics: Record<string, number>;
     error_message?: string;
   }>;
+  links?: {
+    run?: string | null;
+    report?: string | null;
+    ranking?: string | null;
+  };
 }

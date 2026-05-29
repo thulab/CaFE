@@ -21,6 +21,10 @@ def test_sample_forecast_api_returns_history_truth_forecasts_and_metrics(client)
     assert body["sample_id"] == sample_id
     assert body["target_history"]
     assert body["target_future"]
+    assert body["sample_index"] == 0
+    assert body["horizon_start"] <= body["horizon_end"]
+    assert body["forecast_start_at"]
+    assert body["forecast_end_at"]
     assert body["models"][0]["model_id"] == model_id
     assert "mse" in body["models"][0]["metrics"]
     # 回看链接：前端要能从样本预测跳回报告与榜单，report/ranking 必须是真实 id 而非 None。

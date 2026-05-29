@@ -837,6 +837,14 @@ textarea:focus {
   gap: 8px;
 }
 
+.sample-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 /* ======================= Tables =========================================== */
 .table-wrap {
   overflow-x: auto;
