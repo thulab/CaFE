@@ -38,6 +38,7 @@ const enUS = {
     public: 'Public',
     overview: 'Overview',
     newEvaluation: 'New evaluation',
+    continueEvaluation: 'Continue evaluation',
     datasets: 'Datasets',
     tracks: 'Tracks',
     runs: 'Runs',
@@ -187,6 +188,9 @@ const enUS = {
     progress: 'Progress · {done}/{total}',
     footComplete: 'Step complete — pick the next step on the left.',
     footIncomplete: 'Finish this step to unlock the next one.',
+    resume: {
+      continueCurrent: 'Continue current evaluation',
+    },
     steps: {
       uploadCsv: {
         title: 'Upload data',

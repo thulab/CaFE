@@ -9,6 +9,7 @@
       <div class="head-actions">
         <StatusBadge v-if="progress" :status="progress.status" big />
         <span v-if="progress?.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
+        <ResumeWizardButton resource-type="run" :resource-id="runId" />
         <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>
         <button v-else-if="isCancelling" class="btn sm" type="button" disabled><Icon name="ban" :size="15" /> {{ t('runs.detail.cancelling') }}</button>
         <a v-if="progress?.report_id" class="btn" :href="`#/reports/${progress.report_id}`"><Icon name="barChart" :size="16" /> {{ t('runs.detail.openReport') }}</a>
@@ -115,6 +116,7 @@ import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import { ApiError } from '../api/client';
 import { cancelRun, getRunProgress } from '../api/runs';
 import type { RunProgressDTO } from '../api/types';

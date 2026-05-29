@@ -38,6 +38,7 @@ const zhCN = {
     public: '公开',
     overview: '概览',
     newEvaluation: '新建评测',
+    continueEvaluation: '继续评测',
     datasets: '数据集',
     tracks: '赛道',
     runs: '运行',
@@ -187,6 +188,9 @@ const zhCN = {
     progress: '进度 · {done}/{total}',
     footComplete: '当前步骤已完成，请在左侧选择下一步。',
     footIncomplete: '完成当前步骤后可解锁下一步。',
+    resume: {
+      continueCurrent: '继续当前评测',
+    },
     steps: {
       uploadCsv: {
         title: '上传数据',

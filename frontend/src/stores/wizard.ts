@@ -1,8 +1,30 @@
-import { reactive } from 'vue';
+import { reactive, watch } from 'vue';
 import type { UploadPreviewDTO } from '../api/types';
 import type { MessageState } from '../lib/errors';
 
 export type WizardEntryMode = '' | 'upload' | 'existing-track';
+export type WizardResourceType = 'dataset_manifest' | 'load_job' | 'shard' | 'track' | 'ranking' | 'run' | 'report' | 'sample_forecast';
+export const WIZARD_STORAGE_KEY = 'tsbenchmark:wizard:draft:v1';
+
+type WizardSnapshot = {
+  entryMode: WizardEntryMode;
+  step: number;
+  preview: UploadPreviewDTO | null;
+  sourceUri: string;
+  datasetName: string;
+  shardName: string;
+  trackName: string;
+  primaryMetric: string;
+  selectedModelIds: string[];
+  manifestId: string;
+  loadJobId: string;
+  shardId: string;
+  trackId: string;
+  capabilityBlockId: string;
+  rankingListId: string;
+  runId: string;
+  reportId: string;
+};
 
 export const wizardState = reactive({
   entryMode: '' as WizardEntryMode,
@@ -13,6 +35,7 @@ export const wizardState = reactive({
   shardName: '',
   trackName: '',
   primaryMetric: 'mase',
+  selectedModelIds: [] as string[],
   manifestId: '',
   loadJobId: '',
   shardId: '',
@@ -25,6 +48,20 @@ export const wizardState = reactive({
 });
 
 export const STEP_COUNT = 6;
+
+let suppressPersist = false;
+
+restoreWizardDraft();
+
+if (canUseSessionStorage()) {
+  watch(
+    wizardState,
+    () => {
+      if (!suppressPersist) persistWizardDraft();
+    },
+    { deep: true, flush: 'sync' }
+  );
+}
 
 export function goToStep(index: number) {
   wizardState.step = Math.max(0, Math.min(STEP_COUNT - 1, index));
@@ -39,6 +76,7 @@ export function goPrev() {
 }
 
 export function resetWizard() {
+  suppressPersist = true;
   wizardState.entryMode = '';
   wizardState.step = 0;
   wizardState.preview = null;
@@ -47,6 +85,7 @@ export function resetWizard() {
   wizardState.shardName = '';
   wizardState.trackName = '';
   wizardState.primaryMetric = 'mase';
+  wizardState.selectedModelIds = [];
   wizardState.manifestId = '';
   wizardState.loadJobId = '';
   wizardState.shardId = '';
@@ -56,6 +95,8 @@ export function resetWizard() {
   wizardState.runId = '';
   wizardState.reportId = '';
   wizardState.error = null;
+  clearWizardDraft();
+  suppressPersist = false;
 }
 
 export function defaultNameFromFilename(filename?: string | null) {
@@ -70,4 +111,116 @@ export function applyUploadNameDefaults(filename?: string | null) {
   wizardState.datasetName = base;
   wizardState.shardName = `${base} shard`;
   wizardState.trackName = `${base} track`;
+}
+
+export function hasWizardDraft() {
+  return Boolean(
+    wizardState.entryMode ||
+    wizardState.preview ||
+    wizardState.manifestId ||
+    wizardState.loadJobId ||
+    wizardState.shardId ||
+    wizardState.trackId ||
+    wizardState.runId ||
+    wizardState.reportId
+  );
+}
+
+export function hasIncompleteWizardDraft() {
+  return hasWizardDraft() && !wizardState.reportId;
+}
+
+export function wizardMatchesResource(resourceType: WizardResourceType, resourceId: string) {
+  if (!resourceId || !hasWizardDraft()) return false;
+  if (resourceType === 'dataset_manifest') return wizardState.manifestId === resourceId;
+  if (resourceType === 'load_job') return wizardState.loadJobId === resourceId;
+  if (resourceType === 'shard') return wizardState.shardId === resourceId;
+  if (resourceType === 'track' || resourceType === 'ranking') return wizardState.trackId === resourceId;
+  if (resourceType === 'run' || resourceType === 'sample_forecast') return wizardState.runId === resourceId;
+  if (resourceType === 'report') return wizardState.reportId === resourceId;
+  return false;
+}
+
+export function restoreWizardDraft() {
+  if (!canUseSessionStorage()) return false;
+  const raw = window.sessionStorage.getItem(WIZARD_STORAGE_KEY);
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as Partial<WizardSnapshot>;
+    applySnapshot(parsed);
+    return true;
+  } catch {
+    clearWizardDraft();
+    return false;
+  }
+}
+
+function persistWizardDraft() {
+  if (!canUseSessionStorage()) return;
+  if (!hasWizardDraft()) {
+    clearWizardDraft();
+    return;
+  }
+  window.sessionStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify(snapshot()));
+}
+
+function clearWizardDraft() {
+  if (canUseSessionStorage()) window.sessionStorage.removeItem(WIZARD_STORAGE_KEY);
+}
+
+function applySnapshot(value: Partial<WizardSnapshot>) {
+  suppressPersist = true;
+  wizardState.entryMode = value.entryMode === 'upload' || value.entryMode === 'existing-track' ? value.entryMode : '';
+  wizardState.step = clampStep(value.step);
+  wizardState.preview = value.preview ?? null;
+  wizardState.sourceUri = stringValue(value.sourceUri);
+  wizardState.datasetName = stringValue(value.datasetName);
+  wizardState.shardName = stringValue(value.shardName);
+  wizardState.trackName = stringValue(value.trackName);
+  wizardState.primaryMetric = stringValue(value.primaryMetric) || 'mase';
+  wizardState.selectedModelIds = Array.isArray(value.selectedModelIds) ? value.selectedModelIds.filter((item) => typeof item === 'string') : [];
+  wizardState.manifestId = stringValue(value.manifestId);
+  wizardState.loadJobId = stringValue(value.loadJobId);
+  wizardState.shardId = stringValue(value.shardId);
+  wizardState.trackId = stringValue(value.trackId);
+  wizardState.capabilityBlockId = stringValue(value.capabilityBlockId);
+  wizardState.rankingListId = stringValue(value.rankingListId);
+  wizardState.runId = stringValue(value.runId);
+  wizardState.reportId = stringValue(value.reportId);
+  wizardState.error = null;
+  suppressPersist = false;
+}
+
+function snapshot(): WizardSnapshot {
+  return {
+    entryMode: wizardState.entryMode,
+    step: wizardState.step,
+    preview: wizardState.preview,
+    sourceUri: wizardState.sourceUri,
+    datasetName: wizardState.datasetName,
+    shardName: wizardState.shardName,
+    trackName: wizardState.trackName,
+    primaryMetric: wizardState.primaryMetric,
+    selectedModelIds: [...wizardState.selectedModelIds],
+    manifestId: wizardState.manifestId,
+    loadJobId: wizardState.loadJobId,
+    shardId: wizardState.shardId,
+    trackId: wizardState.trackId,
+    capabilityBlockId: wizardState.capabilityBlockId,
+    rankingListId: wizardState.rankingListId,
+    runId: wizardState.runId,
+    reportId: wizardState.reportId,
+  };
+}
+
+function canUseSessionStorage() {
+  return typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined';
+}
+
+function clampStep(value: unknown) {
+  return Math.max(0, Math.min(STEP_COUNT - 1, Number.isFinite(Number(value)) ? Number(value) : 0));
+}
+
+function stringValue(value: unknown) {
+  return typeof value === 'string' ? value : '';
 }

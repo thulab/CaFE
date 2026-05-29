@@ -108,7 +108,7 @@
             href="#/new"
             @click.prevent="startNewEvaluation"
           >
-            <Icon name="plus" :size="16" /> {{ t('nav.newEvaluation') }}
+            <Icon :name="hasActiveDraft ? 'arrowRight' : 'plus'" :size="16" /> {{ topbarEvaluationLabel }}
           </a>
           <div class="locale-switch" role="group" :aria-label="t('a11y.languageSwitcher')">
             <button
@@ -169,7 +169,7 @@ import { setLocale } from './i18n';
 import { LOCALES, type LocaleCode } from './i18n/keys';
 import { shortId } from './lib/format';
 import { authState, has, logout } from './stores/auth';
-import { resetWizard } from './stores/wizard';
+import { hasIncompleteWizardDraft, resetWizard } from './stores/wizard';
 import { evaluateGuard, type Tier } from './composables/useAuthGuard';
 
 const { pref, resolvedTheme, cycleTheme } = useTheme();
@@ -197,6 +197,8 @@ const themeIcon = computed(() =>
 
 const user = computed(() => authState.user);
 const hasRunExecute = computed(() => has('run.execute'));
+const hasActiveDraft = computed(() => hasIncompleteWizardDraft());
+const topbarEvaluationLabel = computed(() => hasActiveDraft.value ? t('nav.continueEvaluation') : t('nav.newEvaluation'));
 const isAdmin = computed(() => !!user.value && (user.value.is_superuser || user.value.roles.includes('admin')));
 
 const { state: countsState, refresh: refreshCounts } = useResourceCounts();
@@ -212,7 +214,7 @@ watch(routeHash, (next) => {
 
 const navItems = computed(() => [
   { key: 'home', label: t('nav.overview'), icon: 'dashboard', href: '#/', count: 0 },
-  { key: 'new', label: t('nav.newEvaluation'), icon: 'sparkles', href: '#/new', count: 0 },
+  { key: 'new', label: topbarEvaluationLabel.value, icon: hasActiveDraft.value ? 'arrowRight' : 'sparkles', href: '#/new', count: 0 },
   { key: 'datasets', label: t('nav.datasets'), icon: 'database', href: '#/datasets', count: countsState.counts.datasets + countsState.counts.shards },
   { key: 'tracks', label: t('nav.tracks'), icon: 'target', href: '#/tracks', count: 0 },
   { key: 'runs', label: t('nav.runs'), icon: 'activity', href: '#/runs', count: countsState.counts.runs },
@@ -392,8 +394,13 @@ function onNavItemClick(key: string, event: MouseEvent) {
 
 function startNewEvaluation(event?: Event) {
   event?.preventDefault();
-  resetWizard();
   closeNav();
+  if (hasIncompleteWizardDraft()) {
+    window.location.hash = '/new';
+    routeHash.value = '/new';
+    return;
+  }
+  resetWizard();
   const next = `/new?session=${Date.now()}`;
   window.location.hash = next;
   routeHash.value = next;

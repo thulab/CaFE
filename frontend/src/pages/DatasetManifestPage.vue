@@ -7,6 +7,7 @@
         <p class="page-sub">{{ t('datasetManifest.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <ResumeWizardButton resource-type="dataset_manifest" :resource-id="datasetManifestId" />
         <a class="btn secondary sm" href="#/datasets"><Icon name="list" :size="15" /> {{ t('datasetManifest.allDatasets') }}</a>
       </div>
     </header>
@@ -43,6 +44,7 @@
 import { onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import { getDatasetManifest } from '../api/datasets';

@@ -7,6 +7,7 @@
         <p class="page-sub">{{ t('loadJob.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <ResumeWizardButton resource-type="load_job" :resource-id="loadJobId" />
         <a class="btn secondary sm" :href="job?.output_shard_id ? `#/shards/${job.output_shard_id}` : '#/datasets'">
           <Icon name="layers" :size="15" /> {{ t('loadJob.openShard') }}
         </a>
@@ -44,6 +45,7 @@
 import { onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import { getLoadJob } from '../api/datasets';

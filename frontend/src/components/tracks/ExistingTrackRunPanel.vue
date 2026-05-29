@@ -25,17 +25,18 @@
           </option>
         </select>
       </div>
-      <TrackRunPanel v-if="selectedTrackId" :track-id="selectedTrackId" />
+      <TrackRunPanel v-if="selectedTrackId" :track-id="selectedTrackId" @run-created="onRunCreated" />
     </StateBlock>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listTracks } from '../../api/tracks';
 import type { TrackDTO } from '../../api/types';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
+import { wizardState } from '../../stores/wizard';
 import Icon from '../ui/Icon.vue';
 import StateBlock from '../ui/StateBlock.vue';
 import TrackRunPanel from './TrackRunPanel.vue';
@@ -47,17 +48,27 @@ const loading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 
 onMounted(load);
+watch(selectedTrackId, (trackId) => {
+  wizardState.entryMode = 'existing-track';
+  wizardState.trackId = trackId;
+});
 
 async function load() {
   loading.value = true;
   clearError();
   try {
     tracks.value = (await listTracks()).items ?? [];
-    selectedTrackId.value = tracks.value[0]?.track_id || '';
+    selectedTrackId.value = tracks.value.some((track) => track.track_id === wizardState.trackId)
+      ? wizardState.trackId
+      : tracks.value[0]?.track_id || '';
   } catch (caught) {
     setError(caught, 'errors.failedToLoadTracks');
   } finally {
     loading.value = false;
   }
+}
+
+function onRunCreated(runId: string) {
+  wizardState.runId = runId;
 }
 </script>

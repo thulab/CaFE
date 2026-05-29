@@ -7,6 +7,7 @@
         <p class="page-sub">{{ t('ranking.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <ResumeWizardButton resource-type="ranking" :resource-id="trackId" />
         <a class="btn secondary sm" :href="`#/tracks/${trackId}`"><Icon name="target" :size="15" /> {{ t('ranking.trackDetail') }}</a>
       </div>
     </header>
@@ -54,6 +55,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';

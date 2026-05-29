@@ -15,6 +15,7 @@
 5. **TsFile 上传必须在前端可达。** 后端已经支持 `.tsfile` 上传嗅探和 load，前端文件选择器与 split 表单需要使用 `preview.file_format`，不能硬编码 `csv`。
 6. **新建评测入口先分流。** 用户进入 `New evaluation` 后先在“上传数据”和“选择已有赛道”两个卡片中选择路径；上传路径继续完整向导，已有赛道路径直接选择模型运行。
 7. **命名与主指标由用户显式确认。** 上传数据默认用文件名填充数据集名称、切片名称和赛道名称，但用户可以在切片步骤修改数据集/切片名称，并在创建赛道步骤修改赛道名称、选择主指标。
+8. **未完成向导可恢复。** 当前向导草稿写入浏览器 `sessionStorage`；只要尚未生成报告，`New evaluation` 入口显示为继续当前评测。所有从向导跳出的产物详情页都提供返回当前向导的 CTA。
 
 ## 2. 目标信息架构
 
@@ -62,6 +63,8 @@ Dataset file (CSV / TsFile)
 - 页面入口先显示两个卡片：
   1. 上传数据：进入上传、配置切片、创建赛道、选择模型的完整向导。
   2. 选择已有赛道：展示可用赛道，选择模型并创建 run。
+- 上传分支和已有赛道分支都写入同一个向导草稿。上传分支保存 preview、manifest/load job/shard/track/run/report 等产物 ID；已有赛道分支至少保存所选 track 和创建出的 run。
+- 从 `Inspect shard`、Created artifacts 面板、`View track`、`View ranking`、`Open run`、`Open report` 或样本预测详情离开向导时，目标详情页需要识别当前草稿里的对应资源 ID，并显示 `Continue current evaluation`。
 - 快速路径：
   1. 选择已有 Track。
   2. 选择模型。

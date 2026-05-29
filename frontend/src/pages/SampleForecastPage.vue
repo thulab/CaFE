@@ -7,6 +7,7 @@
         <p class="page-sub">{{ t('sampleForecast.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <ResumeWizardButton resource-type="sample_forecast" :resource-id="runId" />
         <span class="badge mono">{{ shortId(sampleId) }}</span>
       </div>
     </header>
@@ -37,6 +38,7 @@
 import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ForecastChart from '../components/results/ForecastChart.vue';
 import SampleMetricTable from '../components/results/SampleMetricTable.vue';

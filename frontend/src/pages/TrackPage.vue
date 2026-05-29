@@ -8,6 +8,7 @@
       </div>
       <div class="head-actions">
         <span v-if="track?.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
+        <ResumeWizardButton resource-type="track" :resource-id="trackId" />
         <a class="btn secondary sm" :href="`#/tracks/${trackId}/ranking`"><Icon name="trophy" :size="15" /> {{ t('track.standaloneRanking') }}</a>
         <a v-if="track && !track.archived_at" class="btn accent sm" href="#/new"><Icon name="plus" :size="15" /> {{ t('track.newEvaluation') }}</a>
         <button v-if="track && !track.archived_at" class="btn secondary sm" type="button" @click="openLifecycle('archive')">{{ t('lifecycle.archive') }}</button>
@@ -149,6 +150,7 @@ import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';

@@ -7,6 +7,7 @@
         <p class="page-sub">{{ t('shard.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <ResumeWizardButton resource-type="shard" :resource-id="shardId" />
         <a class="btn secondary sm" :href="shard?.dataset_manifest_id ? `#/datasets/${shard.dataset_manifest_id}` : '#/datasets'">
           <Icon name="database" :size="15" /> {{ t('shard.openDataset') }}
         </a>
@@ -65,6 +66,7 @@
 import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
 import { getShard, getShardSamples } from '../api/datasets';

@@ -190,6 +190,8 @@ http://127.0.0.1:5173
 - **上传数据**：上传 CSV / TsFile，配置列与切片，然后创建赛道并启动评测。
 - **选择已有赛道**：复用已创建且未归档的赛道，直接选择模型启动一次新的评测运行。
 
+向导草稿会保存在浏览器 `sessionStorage` 中。只要当前评测还没生成报告，顶部和侧边栏的「New evaluation」会切换为「Continue evaluation」，点击后回到当前向导而不是重新开始。向导中的产物链接（Dataset manifest / Load job / Shard / Track / Ranking / Run / Report / Sample forecast）打开详情页后，也会在详情页顶部显示「Continue current evaluation」用于回到刚才的流程。若需要显式开始新的流程，在向导页点右上角「Reset」清空当前草稿。
+
 选择上传数据后，向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
 
 1. **Upload dataset**：把 CSV / TsFile **拖入**虚线框，或点「Choose file」选择。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），并默认把文件名（去掉扩展名）作为后续数据集名称、切片名称和赛道名称的基础，点「Next」继续。

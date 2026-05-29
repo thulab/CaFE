@@ -65,7 +65,6 @@ const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 
 const { t } = useI18n();
 const models = ref<ModelDTO[]>([]);
-const selectedIds = ref<string[]>([]);
 const status = ref('idle');
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 const progress = ref<RunProgressDTO | null>(null);
@@ -73,6 +72,12 @@ const isPreparingModels = ref(false);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const runId = computed(() => wizardState.runId);
+const selectedIds = computed({
+  get: () => wizardState.selectedModelIds,
+  set: (ids: string[]) => {
+    wizardState.selectedModelIds = ids;
+  }
+});
 const isRunning = computed(() => !TERMINAL.includes(status.value) && Boolean(runId.value));
 const allSelected = computed(() => models.value.length > 0 && selectedIds.value.length === models.value.length);
 
@@ -92,6 +97,10 @@ const progressVariant = computed(() => {
 onMounted(async () => {
   try {
     models.value = (await listModels()).items;
+    if (wizardState.runId) {
+      await poll();
+      if (!TERMINAL.includes(status.value)) timer = setInterval(poll, 5000);
+    }
   } catch (e) {
     setError(e, 'errors.failedToLoadModels');
   }

@@ -123,6 +123,7 @@ function mockFetch() {
 describe('App routes and artifact links', () => {
   beforeEach(() => {
     resetWizard();
+    window.sessionStorage.clear();
     vi.restoreAllMocks();
     setLocale('en-US');
     authState.user = {
@@ -180,16 +181,34 @@ describe('App routes and artifact links', () => {
     rendered.unmount();
   });
 
-  it('resets the wizard when New evaluation is clicked from an existing new-evaluation route', async () => {
+  it('continues an unfinished wizard when New evaluation is clicked', async () => {
     mockFetch();
-    window.location.hash = '#/new';
+    window.location.hash = '#/shards/shard-1';
+    wizardState.entryMode = 'upload';
     wizardState.preview = {
       upload_id: 'upload-1',
       source_uri: '/tmp/hourly.csv',
       columns: [{ name: 'time' }, { name: 'target' }],
       preview_rows: []
     };
-    wizardState.step = 5;
+    wizardState.shardId = 'shard-1';
+    wizardState.step = 2;
+
+    render(App, { global: { plugins: [i18n] } });
+
+    const newEvaluationLinks = await screen.findAllByRole('link', { name: /Continue evaluation/ });
+    await fireEvent.click(newEvaluationLinks.at(-1)!);
+
+    await waitFor(() => {
+      expect(wizardState.preview?.upload_id).toBe('upload-1');
+      expect(wizardState.step).toBe(2);
+      expect(window.location.hash).toBe('#/new');
+    });
+  });
+
+  it('starts a new wizard session when there is no unfinished draft', async () => {
+    mockFetch();
+    window.location.hash = '#/new';
 
     render(App, { global: { plugins: [i18n] } });
 
@@ -242,6 +261,40 @@ describe('App routes and artifact links', () => {
       expect(screen.getByRole('link', { name: 'Run' }).getAttribute('href')).toBe('#/runs/run-1');
       expect(screen.getByRole('link', { name: 'Report' }).getAttribute('href')).toBe('#/reports/rep-1');
     });
+  });
+
+  it('offers a resume link on every artifact page created by the current wizard', async () => {
+    mockFetch();
+    wizardState.entryMode = 'upload';
+    wizardState.step = 4;
+    wizardState.manifestId = 'manifest-1';
+    wizardState.loadJobId = 'load-1';
+    wizardState.shardId = 'shard-1';
+    wizardState.trackId = 'track-1';
+    wizardState.runId = 'run-1';
+    wizardState.reportId = 'rep-1';
+
+    window.location.hash = '#/datasets/manifest-1';
+    const rendered = render(App, { global: { plugins: [i18n] } });
+
+    const routes = [
+      { hash: '#/datasets/manifest-1', heading: 'Dataset manifest' },
+      { hash: '#/load-jobs/load-1', heading: 'Dataset load job' },
+      { hash: '#/shards/shard-1', heading: 'Shard detail' },
+      { hash: '#/tracks/track-1', heading: 'Track detail' },
+      { hash: '#/tracks/track-1/ranking', heading: 'Track ranking' },
+      { hash: '#/runs/run-1', heading: 'Benchmarking run' },
+      { hash: '#/reports/rep-1', heading: 'Benchmark report' },
+    ];
+
+    for (const route of routes) {
+      window.location.hash = route.hash;
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      expect(await screen.findByRole('heading', { name: route.heading })).toBeTruthy();
+      expect((await screen.findByRole('link', { name: 'Continue current evaluation' })).getAttribute('href')).toBe('#/new');
+    }
+
+    rendered.unmount();
   });
 
   it('switches app shell navigation language without changing the route', async () => {

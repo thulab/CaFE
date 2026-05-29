@@ -6,7 +6,8 @@
         <h1>{{ t('report.title') }}</h1>
         <p class="page-sub">{{ t('report.subtitle') }}</p>
       </div>
-      <div v-if="report" class="head-actions">
+      <div class="head-actions">
+        <ResumeWizardButton resource-type="report" :resource-id="reportId" />
         <span class="badge primary mono">{{ shortId(reportId) }}</span>
       </div>
     </header>
@@ -20,6 +21,7 @@
 <script setup lang="ts">
 import { onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ReportSummary from '../components/results/ReportSummary.vue';
 import { getReport } from '../api/results';
