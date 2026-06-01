@@ -38,8 +38,8 @@ export function getShard(shardId: string): Promise<ShardDTO> {
   return apiRequest<ShardDTO>(`/shards/${shardId}`);
 }
 
-export function getShardSamples(shardId: string): Promise<ShardSamplesDTO> {
-  return apiRequest<ShardSamplesDTO>(`/shards/${shardId}/samples`);
+export function getShardSamples(shardId: string, params: Pick<ListParams, 'limit' | 'offset'> = {}): Promise<ShardSamplesDTO> {
+  return apiRequest<ShardSamplesDTO>(`/shards/${shardId}/samples${buildListQuery(params)}`);
 }
 
 export function listDatasetManifests(params: ListParams = {}): Promise<ListResponse<DatasetManifestDTO>> {

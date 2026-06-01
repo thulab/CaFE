@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { uploadDataset, createLoadJob } from '../api/datasets';
+import { uploadDataset, createLoadJob, getShardSamples } from '../api/datasets';
 import { createRun, getRunProgress } from '../api/runs';
 import { getRanking, getReport, getSampleForecast } from '../api/results';
+import { getSamplePreview } from '../api/samples';
 import { ApiError } from '../api/client';
 
 describe('api client', () => {
@@ -46,6 +47,18 @@ describe('api client', () => {
     expect((await getRanking('t1', 'mse', 'latest_valid_result')).items[0].rank).toBe(1);
     expect((await getReport('rep1')).report_id).toBe('rep1');
     expect((await getSampleForecast('s1', 'r1')).sample_id).toBe('s1');
+  });
+
+  it('builds paginated shard sample and sample preview requests', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse({ items: [], total: 0, limit: 10, offset: 20 }))
+      .mockResolvedValueOnce(jsonResponse({ sample_id: 'sample-1', target_history: [[1]], target_future: [[2]] }));
+
+    await getShardSamples('shard-1', { limit: 10, offset: 20 });
+    await getSamplePreview('sample-1');
+
+    expect(String(fetchSpy.mock.calls[0]![0])).toBe('/api/shards/shard-1/samples?limit=10&offset=20');
+    expect(String(fetchSpy.mock.calls[1]![0])).toBe('/api/samples/sample-1/preview');
   });
 });
 

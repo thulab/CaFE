@@ -106,6 +106,16 @@ export interface ShardSamplesDTO {
   offset?: number;
 }
 
+export interface SamplePreviewDTO extends SampleWindowMeta {
+  sample_id: string;
+  shard_id?: string;
+  target_column_names?: string[];
+  history_timestamps?: string[];
+  future_timestamps?: string[];
+  target_history: number[][];
+  target_future: number[][];
+}
+
 export interface RunProgressDTO {
   benchmarking_run_id: string;
   status: string;
