@@ -7,7 +7,7 @@ TsFile 时间是内建轴，`time_column` 参数被忽略。
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from app.core.errors import ApiError
@@ -35,7 +35,7 @@ class TsFileDatasetReader:
 
             ts_ms = [int(value) for value in tf[selected_series[0]].timestamps[:]]
             row_count = len(ts_ms)
-            timestamps = [datetime.fromtimestamp(ms / 1000) for ms in ts_ms]
+            timestamps = [datetime.fromtimestamp(ms / 1000, UTC).replace(tzinfo=None) for ms in ts_ms]
             column_arrays = {
                 col: [float(v) for v in tf[series_name][0:row_count]]
                 for col, series_name in zip(columns, selected_series, strict=True)

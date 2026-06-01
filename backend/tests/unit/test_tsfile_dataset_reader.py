@@ -1,3 +1,6 @@
+import os
+import time
+
 import pandas as pd
 import pytest
 import tsfile
@@ -72,6 +75,35 @@ def test_full_series_paths_must_share_one_device(tmp_path):
         TsFileDatasetReader().read(path, "time", value_columns=["tsbench.dev1.target", "tsbench.dev2.target"])
 
     assert exc.value.error_code == "tsfile_multiple_devices"
+
+
+def test_tsfile_epoch_timestamps_are_not_converted_through_local_timezone(tmp_path, monkeypatch):
+    path = tmp_path / "dst.tsfile"
+    rows = [
+        {"time": 527_011_200_000, "target": 1.0, "dataset_id": "dev1"},
+        {"time": 527_014_800_000, "target": 2.0, "dataset_id": "dev1"},
+    ]
+    tsfile.dataframe_to_tsfile(
+        pd.DataFrame(rows), str(path), table_name="tsbench", time_column="time", tag_column=["dataset_id"]
+    )
+    original_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    time.tzset()
+
+    try:
+        result = TsFileDatasetReader().read(path, "time", value_columns=["target"])
+    finally:
+        if original_tz is None:
+            monkeypatch.delenv("TZ", raising=False)
+        else:
+            monkeypatch.setenv("TZ", original_tz)
+        time.tzset()
+
+    assert result.frequency == "1h"
+    assert [timestamp.isoformat() for timestamp in result.timestamps] == [
+        "1986-09-13T16:00:00",
+        "1986-09-13T17:00:00",
+    ]
 
 
 def test_tsfile_input_load_flow_stores_into_sqlite(tmp_path):
