@@ -22,7 +22,11 @@ start_service() {
   log_file="$(tsbenchmark_log_file "$service")"
   : >"$log_file"
 
-  nohup bash -c "$command" >>"$log_file" 2>&1 &
+  if command -v setsid >/dev/null 2>&1; then
+    nohup setsid bash -c "$command" >>"$log_file" 2>&1 </dev/null &
+  else
+    nohup bash -c "$command" >>"$log_file" 2>&1 </dev/null &
+  fi
   pid="$!"
   echo "$pid" >"$pid_file"
 
