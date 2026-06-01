@@ -1,6 +1,6 @@
 """SQLite 逐点行序列存储：取代 per-shard TsFile，作为样本真值的单一来源。
 
-- write     —— 把全列矩阵逐行写入 SeriesPoint（每点一行 + {列:值} 字典）。
+- write     —— 把目标列矩阵逐行写入 SeriesPoint（每点一行 + {列:值} 字典）。
 - slice     —— 按 (shard_id, row_index) 闭区间范围查询，返回 row-major 值矩阵。
 - slice_timestamps —— 同范围取 ISO 时间戳。
 

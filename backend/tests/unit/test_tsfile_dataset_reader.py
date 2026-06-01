@@ -136,7 +136,7 @@ def test_tsfile_input_load_flow_stores_into_sqlite(tmp_path):
         assert "extra" not in rows[0].values_json
 
 
-def test_tsfile_load_flow_selects_full_series_target_without_manifest_value_columns(tmp_path):
+def test_tsfile_load_flow_selects_full_series_target_without_extra_manifest_columns(tmp_path):
     path = tmp_path / "multi-flow.tsfile"
     _write_tsfile(path, devices=("dev1", "dev2"), n=20)
 
