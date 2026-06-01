@@ -174,6 +174,18 @@ describe('App routes and artifact links', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/reports/rep-1', expect.any(Object));
   });
 
+  it('shows public leaderboards by default for anonymous visitors', async () => {
+    authState.user = null;
+    mockFetch();
+    window.location.hash = '#/';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('heading', { name: 'Leaderboards' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
+    await waitFor(() => expect(window.location.hash).toBe('#/leaderboards'));
+  });
+
   it('routes artifact hashes to dedicated view pages', async () => {
     mockFetch();
 

@@ -252,6 +252,9 @@ function resolveRoute(): RouteView {
   const id = parts[1] || '';
 
   // ----- public (Tier 0) -----
+  if (!authState.user && parts.length === 0) {
+    return { component: LeaderboardsPage, props: {}, navKey: 'leaderboards', tier: 'public', crumbs: [{ label: t('nav.leaderboards') }] };
+  }
   if (parts[0] === 'login') {
     return { component: LoginPage, props: {}, navKey: '', tier: 'public', crumbs: [{ label: t('auth.signIn') }] };
   }
