@@ -65,6 +65,12 @@ def subsample_windows(windows: list[SampleWindow], max_samples: int | None) -> l
     return [windows[index] for index in picked]
 
 
+def reader_type_for_format(file_format: str) -> str:
+    if file_format == "tsfile":
+        return "tsfile_dataset_reader"
+    return "csv_dataset_reader"
+
+
 class DatasetLoadService:
     def __init__(self, runtime_dir: Path):
         self.runtime_dir = Path(runtime_dir)
@@ -85,6 +91,7 @@ class DatasetLoadService:
 
         job = DatasetLoadJob(
             dataset_manifest_id=dataset_manifest_id,
+            reader_type=reader_type_for_format(manifest.file_format),
             split_config=split_config,
             seed=seed,
             started_at=utc_now(),

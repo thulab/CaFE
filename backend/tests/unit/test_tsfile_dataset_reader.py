@@ -158,6 +158,7 @@ def test_tsfile_load_flow_selects_full_series_target_without_extra_manifest_colu
         )
 
         assert job.status == "succeeded", job.error_message
+        assert job.reader_type == "tsfile_dataset_reader"
         shard = session.get(Shard, job.output_shard_id)
         assert shard.target_columns == ["tsbench.dev2.target"]
         assert "value_columns" not in shard.model_dump()
