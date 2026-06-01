@@ -16,11 +16,11 @@
     </header>
 
     <section v-if="!wizardState.entryMode" class="entry-grid" aria-label="Evaluation start options">
-      <button class="entry-card" type="button" @click="selectEntryMode('upload')">
-        <span class="entry-icon"><Icon name="upload" :size="22" /></span>
-        <span class="entry-title">{{ t('wizard.entry.uploadTitle') }}</span>
-        <span class="entry-desc">{{ t('wizard.entry.uploadDesc') }}</span>
-        <span class="btn sm">{{ t('wizard.entry.uploadAction') }} <Icon name="arrowRight" :size="15" /></span>
+      <button class="entry-card" type="button" @click="selectEntryMode('new-track')">
+        <span class="entry-icon"><Icon name="target" :size="22" /></span>
+        <span class="entry-title">{{ t('wizard.entry.createTrackTitle') }}</span>
+        <span class="entry-desc">{{ t('wizard.entry.createTrackDesc') }}</span>
+        <span class="btn sm">{{ t('wizard.entry.createTrackAction') }} <Icon name="arrowRight" :size="15" /></span>
       </button>
       <button class="entry-card" type="button" @click="selectEntryMode('existing-track')">
         <span class="entry-icon"><Icon name="target" :size="22" /></span>
@@ -103,8 +103,8 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import ExistingTrackRunPanel from '../components/tracks/ExistingTrackRunPanel.vue';
 import UploadStep from '../components/wizard/UploadStep.vue';
 import ColumnAndSplitStep from '../components/wizard/ColumnAndSplitStep.vue';
-import LoadShardStep from '../components/wizard/LoadShardStep.vue';
 import TrackStep from '../components/wizard/TrackStep.vue';
+import TestCaseSetStep from '../components/wizard/TestCaseSetStep.vue';
 import RunStep from '../components/wizard/RunStep.vue';
 import ResultStep from '../components/wizard/ResultStep.vue';
 import { goPrev, goToStep, resetWizard, wizardState, type WizardEntryMode } from '../stores/wizard';
@@ -112,10 +112,10 @@ import { goPrev, goToStep, resetWizard, wizardState, type WizardEntryMode } from
 const { t } = useI18n();
 
 const stepDefs = computed(() => [
-  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, complete: () => Boolean(wizardState.preview) },
-  { title: t('wizard.steps.configureSplit.title'), kicker: t('wizard.steps.configureSplit.kicker'), description: t('wizard.steps.configureSplit.description'), component: ColumnAndSplitStep, complete: () => Boolean(wizardState.shardId) },
-  { title: t('wizard.steps.confirmShard.title'), kicker: t('wizard.steps.confirmShard.kicker'), description: t('wizard.steps.confirmShard.description'), component: LoadShardStep, complete: () => Boolean(wizardState.shardId) },
-  { title: t('wizard.steps.createTrack.title'), kicker: t('wizard.steps.createTrack.kicker'), description: t('wizard.steps.createTrack.description'), component: TrackStep, complete: () => Boolean(wizardState.trackId) },
+  { title: t('wizard.steps.createTrack.title'), kicker: t('wizard.steps.createTrack.kicker'), description: t('wizard.steps.createTrack.description'), component: TrackStep, complete: () => Boolean(wizardState.trackName && wizardState.primaryMetric) },
+  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, complete: () => Boolean(wizardState.preview || wizardState.dataUploadSkipped) },
+  { title: t('wizard.steps.configureSplit.title'), kicker: t('wizard.steps.configureSplit.kicker'), description: t('wizard.steps.configureSplit.description'), component: ColumnAndSplitStep, complete: () => Boolean(wizardState.shardId || wizardState.dataUploadSkipped) },
+  { title: t('wizard.steps.selectTestCases.title'), kicker: t('wizard.steps.selectTestCases.kicker'), description: t('wizard.steps.selectTestCases.description'), component: TestCaseSetStep, complete: () => Boolean(wizardState.trackId) },
   { title: t('wizard.steps.runModels.title'), kicker: t('wizard.steps.runModels.kicker'), description: t('wizard.steps.runModels.description'), component: RunStep, complete: () => Boolean(wizardState.reportId) },
   { title: t('wizard.steps.openReport.title'), kicker: t('wizard.steps.openReport.kicker'), description: t('wizard.steps.openReport.description'), component: ResultStep, complete: () => Boolean(wizardState.reportId) }
 ]);
@@ -158,7 +158,7 @@ function onReset() {
 
 function selectEntryMode(mode: Exclude<WizardEntryMode, ''>) {
   wizardState.entryMode = mode;
-  if (mode === 'upload') goToStep(0);
+  if (mode === 'new-track') goToStep(0);
 }
 
 function goBack() {

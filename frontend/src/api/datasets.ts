@@ -50,10 +50,10 @@ export function listDatasetManifests(params: ListParams = {}): Promise<ListRespo
 }
 
 export function listShards(
-  params: ListParams & { datasetManifestId?: string } = {}
+  params: ListParams & { datasetManifestId?: string; query?: string } = {}
 ): Promise<ListResponse<ShardDTO>> {
-  const { datasetManifestId, includeArchived, ...rest } = params;
+  const { datasetManifestId, includeArchived, query, ...rest } = params;
   return apiRequest<ListResponse<ShardDTO>>(
-    `/shards${buildListQuery({ ...rest, dataset_manifest_id: datasetManifestId, include_archived: includeArchived || undefined })}`
+    `/shards${buildListQuery({ ...rest, q: query ?? rest.q, dataset_manifest_id: datasetManifestId, include_archived: includeArchived || undefined })}`
   );
 }

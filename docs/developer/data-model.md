@@ -44,7 +44,7 @@ def utc_now() -> datetime:
 | --- | --- | --- |
 | `DatasetManifest` | `backend/app/models/dataset.py:11` | 描述真实数据源（**CSV 或 TsFile** 文件、列配置） |
 | `DatasetLoadJob` | `backend/app/models/dataset.py:28` | 一次数据加载/校验/切分/索引任务 |
-| `Shard` | `backend/app/models/dataset.py:47` | 统一数据单元；MVP 用 `shard_type=real` |
+| `Shard` | `backend/app/models/dataset.py:47` | 统一数据单元；MVP 用 `shard_type=real`，前端展示为“测试用例集” |
 | `SeriesPoint` | `backend/app/models/series_point.py:11` | per-shard 原始序列逐点行存储（**SQLite 单一真值源**） |
 | `SampleIndex` | `backend/app/models/sample.py:11` | 样本切片位置（行号区间指针，值在 `SeriesPoint`） |
 | `CapabilityBlock` | `backend/app/models/benchmark.py:11` | 统一能力块；MVP 用 `block_type=real` |
@@ -249,12 +249,12 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 
 ### 2.3 Shard
 
-统一数据单元。源文件 `backend/app/models/dataset.py:47`。
+统一数据单元。源文件 `backend/app/models/dataset.py:47`。产品界面中将其展示为“测试用例集 / Test case set”，但代码、API、数据库字段仍沿用 `Shard` 命名。
 
 | 字段 | 类型 | 默认值/约束 | 说明 |
 | --- | --- | --- | --- |
 | `shard_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
-| `name` | `str \| None` | `None` | 切片展示名；来自 `split_config.shard_name`，列表和详情优先展示该值 |
+| `name` | `str \| None` | `None` | 测试用例集展示名；来自 `split_config.shard_name`，列表和详情优先展示该值 |
 | `shard_type` | `str` | `"real"` | MVP 固定 real |
 | `dataset_manifest_id` | `str` | `index=True`（逻辑外键 → DatasetManifest） | 数据来源 |
 | `load_job_id` | `str \| None` | `None`，`index=True`（逻辑外键 → DatasetLoadJob） | 产生该 shard 的 job |

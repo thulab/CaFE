@@ -17,19 +17,20 @@ describe('EvaluationWizardPage entry modes', () => {
     vi.restoreAllMocks();
   });
 
-  it('starts with separate upload and existing-track choices', async () => {
+  it('starts with separate create-track and existing-track choices', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [] }));
 
     render(EvaluationWizardPage, { global: { plugins: [i18n] } });
 
-    expect(screen.getByRole('button', { name: /Upload data/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Create new track/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Choose existing track/ })).toBeTruthy();
     expect(screen.queryByText('Drop a CSV or TsFile here or browse')).toBeNull();
 
-    await fireEvent.click(screen.getByRole('button', { name: /Upload data/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Create new track/ }));
 
-    expect(wizardState.entryMode).toBe('upload');
-    expect(await screen.findByText('Drop a CSV or TsFile here or browse')).toBeTruthy();
+    expect(wizardState.entryMode).toBe('new-track');
+    expect(await screen.findByLabelText('Track name')).toBeTruthy();
+    expect(screen.queryByText('Drop a CSV or TsFile here or browse')).toBeNull();
   });
 
   it('opens the existing-track run panel without rendering the upload wizard', async () => {
@@ -60,7 +61,8 @@ describe('UploadStep naming defaults', () => {
     vi.restoreAllMocks();
   });
 
-  it('defaults dataset, shard, and track names from the uploaded file name', async () => {
+  it('defaults dataset and test case set names from the uploaded file name without overwriting a configured track name', async () => {
+    wizardState.trackName = 'Monthly energy benchmark';
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
       upload_id: 'upload-1',
       source_uri: '/tmp/hourly-energy.csv',
@@ -73,8 +75,8 @@ describe('UploadStep naming defaults', () => {
     await fireEvent.change(screen.getByLabelText('Data file'), { target: { files: [new File(['x'], 'hourly-energy.csv')] } });
 
     await waitFor(() => expect(wizardState.datasetName).toBe('hourly-energy'));
-    expect(wizardState.shardName).toBe('hourly-energy shard');
-    expect(wizardState.trackName).toBe('hourly-energy track');
+    expect(wizardState.shardName).toBe('hourly-energy test cases');
+    expect(wizardState.trackName).toBe('Monthly energy benchmark');
   });
 });
 
@@ -87,17 +89,19 @@ describe('wizard draft persistence', () => {
   });
 
   it('persists unfinished wizard state to sessionStorage and clears it on reset', async () => {
-    wizardState.entryMode = 'upload';
+    wizardState.entryMode = 'new-track';
     wizardState.step = 2;
     wizardState.datasetName = 'Hourly energy';
     wizardState.shardId = 'shard-1';
+    wizardState.selectedShardIds = ['shard-1'];
 
     await waitFor(() => {
       const saved = JSON.parse(window.sessionStorage.getItem(WIZARD_STORAGE_KEY) || '{}');
-      expect(saved.entryMode).toBe('upload');
+      expect(saved.entryMode).toBe('new-track');
       expect(saved.step).toBe(2);
       expect(saved.datasetName).toBe('Hourly energy');
       expect(saved.shardId).toBe('shard-1');
+      expect(saved.selectedShardIds).toEqual(['shard-1']);
     });
 
     resetWizard();
@@ -115,14 +119,16 @@ describe('wizard draft persistence', () => {
       primaryMetric: 'mse',
       manifestId: 'manifest-1',
       loadJobId: 'load-1',
-      shardId: 'shard-1'
+      shardId: 'shard-1',
+      selectedShardIds: ['shard-1', 'shard-2']
     }));
 
     restoreWizardDraft();
 
-    expect(wizardState.entryMode).toBe('upload');
+    expect(wizardState.entryMode).toBe('new-track');
     expect(wizardState.step).toBe(3);
     expect(wizardState.primaryMetric).toBe('mse');
     expect(wizardState.shardId).toBe('shard-1');
+    expect(wizardState.selectedShardIds).toEqual(['shard-1', 'shard-2']);
   });
 });

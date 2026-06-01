@@ -64,6 +64,7 @@ export interface DatasetLoadJobDetailDTO extends DatasetLoadJobDTO {
 export interface ShardDTO {
   shard_id: string;
   name?: string | null;
+  dataset_name?: string | null;
   shard_type?: string;
   dataset_manifest_id: string;
   load_job_id?: string | null;

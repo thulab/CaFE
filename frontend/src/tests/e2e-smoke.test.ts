@@ -55,12 +55,12 @@ describe('frontend smoke flow', () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ items: [] }), { status: 200 }));
     const rendered = render(App, { global: { plugins: [i18n] } });
 
-    expect(screen.getAllByText('Upload data').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Create new track').length).toBeGreaterThan(0);
 
     setLocale('zh-CN');
     await nextTick();
 
-    expect(screen.getAllByText('上传数据').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('创建新赛道').length).toBeGreaterThan(0);
     rendered.unmount();
   });
 });

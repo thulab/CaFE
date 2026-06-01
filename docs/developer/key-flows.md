@@ -112,6 +112,8 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 **产物实体**：`DatasetManifest` → `DatasetLoadJob` → `Shard` + N×`SeriesPoint`（逐点真值）+ N×`SampleIndex`（行号区间指针）
 
 > **2026-05-25 SQLite pivot**：序列真值从「per-dataset TsFile」改为 SQLite `SeriesPoint`（逐点行）。TsFile 由存储格式降为**输入格式之一**——输入支持 **CSV 或 TsFile**，由 `get_dataset_reader(manifest.file_format)` 选 reader，二者产出统一的 `DatasetReadResult`。
+>
+> **2026-06-02 前端术语**：底层实体仍叫 `Shard`，API 和 DB 字段不迁移；前端面向用户统一展示为“测试用例集 / Test case set”，表示由数据集生成、可被赛道复用的预测评测样本集合。
 
 上传（`routes/dataset_manifests.py:29`）只做嗅探，把文件落到 `uploads/`，不入库（#3 已改为按扩展名分支）：CSV 用 `CsvDatasetReader` 给出分隔符/编码/列名/预览，`has_header`（`_looks_like_data_row` 真判）与 per-列 `inferred_type`（numeric/string 真推断）；`.tsfile` 则用 `tsfile.TsFileDataFrame` 给出设备名与物理量列。创建 manifest（`dataset_manifests.py:59`）把元数据（含 `file_format`）写入 `DatasetManifest`。
 

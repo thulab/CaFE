@@ -162,7 +162,7 @@ describe('App routes and artifact links', () => {
 
     window.location.hash = '#/shards/shard-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
-    expect(await screen.findByRole('heading', { name: 'Shard detail' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Test case set detail' })).toBeTruthy();
     expect(await screen.findByText('sample-1')).toBeTruthy();
 
     window.location.hash = '#/runs/run-1';
@@ -183,7 +183,7 @@ describe('App routes and artifact links', () => {
   it('continues an unfinished wizard when New evaluation is clicked', async () => {
     mockFetch();
     window.location.hash = '#/shards/shard-1';
-    wizardState.entryMode = 'upload';
+    wizardState.entryMode = 'new-track';
     wizardState.preview = {
       upload_id: 'upload-1',
       source_uri: '/tmp/hourly.csv',
@@ -245,7 +245,7 @@ describe('App routes and artifact links', () => {
     wizardState.trackId = 'track-1';
     wizardState.runId = 'run-1';
     wizardState.reportId = 'rep-1';
-    wizardState.entryMode = 'upload';
+    wizardState.entryMode = 'new-track';
 
     render(EvaluationWizardPage, { global: { plugins: [i18n] } });
 
@@ -255,7 +255,7 @@ describe('App routes and artifact links', () => {
     await waitFor(() => {
       expect(screen.getByRole('link', { name: 'Dataset manifest' }).getAttribute('href')).toBe('#/datasets/manifest-1');
       expect(screen.getByRole('link', { name: 'Load job' }).getAttribute('href')).toBe('#/load-jobs/load-1');
-      expect(screen.getByRole('link', { name: 'Shard' }).getAttribute('href')).toBe('#/shards/shard-1');
+      expect(screen.getByRole('link', { name: 'Test case set' }).getAttribute('href')).toBe('#/shards/shard-1');
       expect(screen.getByRole('link', { name: 'Track' }).getAttribute('href')).toBe('#/tracks/track-1');
       expect(screen.getByRole('link', { name: 'Run' }).getAttribute('href')).toBe('#/runs/run-1');
       expect(screen.getByRole('link', { name: 'Report' }).getAttribute('href')).toBe('#/reports/rep-1');
@@ -264,7 +264,7 @@ describe('App routes and artifact links', () => {
 
   it('offers a resume link on every artifact page created by the current wizard', async () => {
     mockFetch();
-    wizardState.entryMode = 'upload';
+    wizardState.entryMode = 'new-track';
     wizardState.step = 4;
     wizardState.manifestId = 'manifest-1';
     wizardState.loadJobId = 'load-1';
@@ -279,7 +279,7 @@ describe('App routes and artifact links', () => {
     const routes = [
       { hash: '#/datasets/manifest-1', heading: 'Dataset manifest' },
       { hash: '#/load-jobs/load-1', heading: 'Dataset load job' },
-      { hash: '#/shards/shard-1', heading: 'Shard detail' },
+      { hash: '#/shards/shard-1', heading: 'Test case set detail' },
       { hash: '#/tracks/track-1', heading: 'Track detail' },
       { hash: '#/tracks/track-1/ranking', heading: 'Track ranking' },
       { hash: '#/runs/run-1', heading: 'Benchmarking run' },
@@ -322,7 +322,7 @@ describe('App routes and artifact links', () => {
 
     render(LoadJobPage, { props: { loadJobId: 'load-1' }, global: { plugins: [i18n] } });
 
-    expect(await screen.findByText('正在物化样本')).toBeTruthy();
+    expect(await screen.findByText('正在生成样本')).toBeTruthy();
     expect(screen.queryByText('Materializing samples')).toBeNull();
   });
 });

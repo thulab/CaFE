@@ -49,10 +49,10 @@ describe('workspace pages', () => {
     render(DatasetsPage, { global: { plugins: [i18n] } });
     expect(screen.getByRole('heading', { name: 'Datasets' })).toBeTruthy();
     expect(await screen.findByText('Uploaded dataset')).toBeTruthy();
-    expect(await screen.findByText('Shard · target')).toBeTruthy();
+    expect(await screen.findByText('Test cases · target')).toBeTruthy();
   });
 
-  it('DatasetsPage uploads a data file and materializes a reusable shard', async () => {
+  it('DatasetsPage uploads a data file and generates a reusable test case set', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const path = url.replace(/^\/api/, '').split('?')[0];
@@ -87,9 +87,9 @@ describe('workspace pages', () => {
     });
     expect((await screen.findAllByText('temperature')).length).toBeGreaterThan(0);
     await fireEvent.update(screen.getByLabelText('Target'), 'temperature');
-    await fireEvent.click(screen.getByRole('button', { name: 'Create shard' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
-    await waitFor(() => expect(screen.getByText('Shard ready: shard-9')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Test case set ready: shard-9')).toBeTruthy());
     const manifestBody = JSON.parse(fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/dataset-manifests')![1]!.body as string);
     expect(manifestBody.file_format).toBe('tsfile');
     expect(manifestBody).not.toHaveProperty('value_columns');
@@ -108,12 +108,12 @@ describe('workspace pages', () => {
     });
     render(DatasetsPage, { global: { plugins: [i18n] } });
 
-    expect(await screen.findByText('Shard · target')).toBeTruthy();
+    expect(await screen.findByText('Test cases · target')).toBeTruthy();
     expect(screen.getByText('target · 20 rows')).toBeTruthy();
 
     setLocale('zh-CN');
 
-    expect(await screen.findByText('分片 · target')).toBeTruthy();
+    expect(await screen.findByText('测试用例 · target')).toBeTruthy();
     expect(screen.getByText('target · 20 行')).toBeTruthy();
   });
 
@@ -130,13 +130,13 @@ describe('workspace pages', () => {
     });
     render(DatasetsPage, { global: { plugins: [i18n] } });
 
-    expect(await screen.findByText('Shard · No target')).toBeTruthy();
-    expect(screen.getByText('Shard · 20 rows')).toBeTruthy();
+    expect(await screen.findByText('Test cases · No target')).toBeTruthy();
+    expect(screen.getByText('Test case set · 20 rows')).toBeTruthy();
 
     setLocale('zh-CN');
 
-    expect(await screen.findByText('分片 · 未知目标')).toBeTruthy();
-    expect(screen.getByText('分片 · 20 行')).toBeTruthy();
+    expect(await screen.findByText('测试用例 · 未知目标')).toBeTruthy();
+    expect(screen.getByText('测试用例集 · 20 行')).toBeTruthy();
   });
 
   it('HomePage localizes the missing shard target fallback', async () => {
@@ -148,11 +148,11 @@ describe('workspace pages', () => {
     });
     render(HomePage, { global: { plugins: [i18n] } });
 
-    expect(await screen.findByText('Shard · No target')).toBeTruthy();
+    expect(await screen.findByText('Test cases · No target')).toBeTruthy();
 
     setLocale('zh-CN');
 
-    expect(await screen.findByText('分片 · 未知目标')).toBeTruthy();
+    expect(await screen.findByText('测试用例 · 未知目标')).toBeTruthy();
   });
 
   it('DatasetsPage keeps visible load errors reactive after locale changes', async () => {

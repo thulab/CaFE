@@ -1,5 +1,17 @@
 <template>
   <section class="step-body">
+    <template v-if="wizardState.dataUploadSkipped">
+      <p class="field-help">{{ t('wizard.columnAndSplitStep.skipUploadDescription') }}</p>
+      <p class="note-success"><Icon name="checkCircle" :size="16" />{{ t('wizard.columnAndSplitStep.skipUploadReady') }}</p>
+      <div class="wizard-foot" style="padding:0;border:0">
+        <span class="status-line">{{ t('wizard.columnAndSplitStep.skipUploadStatus') }}</span>
+        <button class="btn" type="button" @click="goNext">
+          {{ t('wizard.columnAndSplitStep.chooseExistingSets') }} <Icon name="arrowRight" :size="16" />
+        </button>
+      </div>
+    </template>
+
+    <template v-else>
     <div class="grid-2">
       <div class="field">
         <label class="label" for="dataset-name">{{ t('wizard.columnAndSplitStep.datasetName') }}</label>
@@ -69,6 +81,7 @@
         <span v-if="busy" class="spinner" /> {{ wizardState.shardId ? t('wizard.columnAndSplitStep.reloadShard') : t('wizard.columnAndSplitStep.loadShard') }}
       </button>
     </div>
+    </template>
   </section>
 </template>
 
@@ -138,6 +151,7 @@ async function load() {
     const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });
     wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';
+    if (job.output_shard_id) selectGeneratedShard(job.output_shard_id);
     void refreshResourceCounts();
     if (job.status !== 'succeeded' || !job.output_shard_id) {
       setRawError(loadJobErrorMessage(job));
@@ -155,12 +169,15 @@ async function load() {
 function ensureNames() {
   const base = defaultNameFromFilename(wizardState.preview?.filename);
   if (!wizardState.datasetName) wizardState.datasetName = base;
-  if (!wizardState.shardName) wizardState.shardName = `${wizardState.datasetName || base} shard`;
-  if (!wizardState.trackName) wizardState.trackName = `${wizardState.datasetName || base} track`;
+  if (!wizardState.shardName) wizardState.shardName = `${wizardState.datasetName || base} test cases`;
 }
 
 function loadJobErrorMessage(job: { status?: string; error_code?: string | null; error_message?: string | null }) {
   const code = job.error_code || job.status || 'load_failed';
   return job.error_message ? `${code} · ${job.error_message}` : code;
+}
+
+function selectGeneratedShard(shardId: string) {
+  wizardState.selectedShardIds = [shardId, ...wizardState.selectedShardIds.filter((id) => id !== shardId)];
 }
 </script>

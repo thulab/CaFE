@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import UploadStep from '../components/wizard/UploadStep.vue';
 import { i18n, setLocale } from '../i18n';
-import { resetWizard } from '../stores/wizard';
+import { resetWizard, wizardState } from '../stores/wizard';
 
 describe('UploadStep', () => {
   beforeEach(() => {
@@ -35,5 +35,16 @@ describe('UploadStep', () => {
     await fireEvent.change(screen.getByLabelText('Data file'), { target: { files: [new File(['x'], 'bad.csv')] } });
 
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bad CSV'));
+  });
+
+  it('can skip upload and continue to existing test case selection', async () => {
+    wizardState.step = 1;
+    render(UploadStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Skip upload' }));
+
+    expect(wizardState.dataUploadSkipped).toBe(true);
+    expect(wizardState.preview).toBeNull();
+    expect(wizardState.step).toBe(2);
   });
 });

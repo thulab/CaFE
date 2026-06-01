@@ -2,7 +2,7 @@ import { reactive, watch } from 'vue';
 import type { UploadPreviewDTO } from '../api/types';
 import type { MessageState } from '../lib/errors';
 
-export type WizardEntryMode = '' | 'upload' | 'existing-track';
+export type WizardEntryMode = '' | 'new-track' | 'existing-track';
 export type WizardResourceType = 'dataset_manifest' | 'load_job' | 'shard' | 'track' | 'ranking' | 'run' | 'report' | 'sample_forecast';
 export const WIZARD_STORAGE_KEY = 'tsbenchmark:wizard:draft:v1';
 
@@ -10,6 +10,7 @@ type WizardSnapshot = {
   entryMode: WizardEntryMode;
   step: number;
   preview: UploadPreviewDTO | null;
+  dataUploadSkipped: boolean;
   sourceUri: string;
   datasetName: string;
   shardName: string;
@@ -19,6 +20,7 @@ type WizardSnapshot = {
   manifestId: string;
   loadJobId: string;
   shardId: string;
+  selectedShardIds: string[];
   trackId: string;
   capabilityBlockId: string;
   rankingListId: string;
@@ -30,6 +32,7 @@ export const wizardState = reactive({
   entryMode: '' as WizardEntryMode,
   step: 0,
   preview: null as UploadPreviewDTO | null,
+  dataUploadSkipped: false,
   sourceUri: '',
   datasetName: '',
   shardName: '',
@@ -39,6 +42,7 @@ export const wizardState = reactive({
   manifestId: '',
   loadJobId: '',
   shardId: '',
+  selectedShardIds: [] as string[],
   trackId: '',
   capabilityBlockId: '',
   rankingListId: '',
@@ -80,6 +84,7 @@ export function resetWizard() {
   wizardState.entryMode = '';
   wizardState.step = 0;
   wizardState.preview = null;
+  wizardState.dataUploadSkipped = false;
   wizardState.sourceUri = '';
   wizardState.datasetName = '';
   wizardState.shardName = '';
@@ -89,6 +94,7 @@ export function resetWizard() {
   wizardState.manifestId = '';
   wizardState.loadJobId = '';
   wizardState.shardId = '';
+  wizardState.selectedShardIds = [];
   wizardState.trackId = '';
   wizardState.capabilityBlockId = '';
   wizardState.rankingListId = '';
@@ -109,8 +115,7 @@ export function defaultNameFromFilename(filename?: string | null) {
 export function applyUploadNameDefaults(filename?: string | null) {
   const base = defaultNameFromFilename(filename);
   wizardState.datasetName = base;
-  wizardState.shardName = `${base} shard`;
-  wizardState.trackName = `${base} track`;
+  wizardState.shardName = `${base} test cases`;
 }
 
 export function hasWizardDraft() {
@@ -120,6 +125,7 @@ export function hasWizardDraft() {
     wizardState.manifestId ||
     wizardState.loadJobId ||
     wizardState.shardId ||
+    wizardState.selectedShardIds.length > 0 ||
     wizardState.trackId ||
     wizardState.runId ||
     wizardState.reportId
@@ -170,9 +176,10 @@ function clearWizardDraft() {
 
 function applySnapshot(value: Partial<WizardSnapshot>) {
   suppressPersist = true;
-  wizardState.entryMode = value.entryMode === 'upload' || value.entryMode === 'existing-track' ? value.entryMode : '';
+  wizardState.entryMode = normalizeEntryMode(value.entryMode);
   wizardState.step = clampStep(value.step);
   wizardState.preview = value.preview ?? null;
+  wizardState.dataUploadSkipped = Boolean(value.dataUploadSkipped);
   wizardState.sourceUri = stringValue(value.sourceUri);
   wizardState.datasetName = stringValue(value.datasetName);
   wizardState.shardName = stringValue(value.shardName);
@@ -182,6 +189,7 @@ function applySnapshot(value: Partial<WizardSnapshot>) {
   wizardState.manifestId = stringValue(value.manifestId);
   wizardState.loadJobId = stringValue(value.loadJobId);
   wizardState.shardId = stringValue(value.shardId);
+  wizardState.selectedShardIds = Array.isArray(value.selectedShardIds) ? value.selectedShardIds.filter((item) => typeof item === 'string') : [];
   wizardState.trackId = stringValue(value.trackId);
   wizardState.capabilityBlockId = stringValue(value.capabilityBlockId);
   wizardState.rankingListId = stringValue(value.rankingListId);
@@ -196,6 +204,7 @@ function snapshot(): WizardSnapshot {
     entryMode: wizardState.entryMode,
     step: wizardState.step,
     preview: wizardState.preview,
+    dataUploadSkipped: wizardState.dataUploadSkipped,
     sourceUri: wizardState.sourceUri,
     datasetName: wizardState.datasetName,
     shardName: wizardState.shardName,
@@ -205,6 +214,7 @@ function snapshot(): WizardSnapshot {
     manifestId: wizardState.manifestId,
     loadJobId: wizardState.loadJobId,
     shardId: wizardState.shardId,
+    selectedShardIds: [...wizardState.selectedShardIds],
     trackId: wizardState.trackId,
     capabilityBlockId: wizardState.capabilityBlockId,
     rankingListId: wizardState.rankingListId,
@@ -223,4 +233,10 @@ function clampStep(value: unknown) {
 
 function stringValue(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeEntryMode(value: unknown): WizardEntryMode {
+  if (value === 'existing-track') return 'existing-track';
+  if (value === 'new-track' || value === 'upload') return 'new-track';
+  return '';
 }

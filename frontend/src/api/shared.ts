@@ -1,6 +1,7 @@
 export interface ListParams {
   limit?: number;
   offset?: number;
+  q?: string;
   includeArchived?: boolean;
 }
 

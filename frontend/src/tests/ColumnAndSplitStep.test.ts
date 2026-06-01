@@ -25,7 +25,7 @@ describe('ColumnAndSplitStep', () => {
     // context=0 would trigger split validation after a target is selected
     await fireEvent.update(screen.getByLabelText('Context'), '0');
     // Target not selected (default is empty) → should trigger target error
-    await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     expect(screen.getByRole('alert').textContent).toContain('Select exactly one target');
   });
@@ -37,17 +37,18 @@ describe('ColumnAndSplitStep', () => {
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     expect((screen.getByLabelText('Dataset name') as HTMLInputElement).value).toBe('data');
-    expect((screen.getByLabelText('Shard name') as HTMLInputElement).value).toBe('data shard');
+    expect((screen.getByLabelText('Test case set name') as HTMLInputElement).value).toBe('data test cases');
     await fireEvent.update(screen.getByLabelText('Dataset name'), 'Energy demand');
-    await fireEvent.update(screen.getByLabelText('Shard name'), 'Energy demand validation');
+    await fireEvent.update(screen.getByLabelText('Test case set name'), 'Energy demand validation');
 
     // Select a target from the single-select dropdown
     const targetSelect = screen.getByLabelText('Target');
     await fireEvent.update(targetSelect, 'target');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
+    expect(wizardState.selectedShardIds).toEqual(['s1']);
 
     const manifestCall = fetchSpy.mock.calls[0];
     const manifestBody = JSON.parse(manifestCall![1]!.body as string);
@@ -70,7 +71,7 @@ describe('ColumnAndSplitStep', () => {
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     await fireEvent.update(screen.getByLabelText('目标'), 'target');
-    await fireEvent.click(screen.getByRole('button', { name: '加载分片' }));
+    await fireEvent.click(screen.getByRole('button', { name: '生成测试用例集' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
     const manifestBody = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
@@ -93,7 +94,7 @@ describe('ColumnAndSplitStep', () => {
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     await fireEvent.update(screen.getByLabelText('Target'), 'temperature');
-    await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s-ts'));
     const manifestBody = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
@@ -114,7 +115,7 @@ describe('ColumnAndSplitStep', () => {
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     await fireEvent.update(screen.getByLabelText('Target'), 'target');
-    await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('tsfile_multiple_devices');
     expect(wizardState.shardId).toBe('');
@@ -129,5 +130,18 @@ describe('ColumnAndSplitStep', () => {
     expect(screen.getByText('预测步长')).toBeTruthy();
     expect(screen.getByText('滑窗步长')).toBeTruthy();
     expect(screen.getByText('窗口：6 个上下文点 → 3 个预测点，滑窗步长 3。')).toBeTruthy();
+  });
+
+  it('continues to existing test case selection when upload was skipped', async () => {
+    resetWizard();
+    wizardState.dataUploadSkipped = true;
+    wizardState.step = 2;
+
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    expect(screen.getByText('No new data uploaded. Continue to choose existing test case sets.')).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Choose existing test case sets' }));
+
+    expect(wizardState.step).toBe(3);
   });
 });

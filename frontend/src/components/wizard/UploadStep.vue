@@ -51,9 +51,14 @@
 
     <div class="wizard-foot" style="padding:0;border:0">
       <span class="status-line">{{ preview ? t('wizard.uploadStep.previewLoaded') : t('wizard.uploadStep.waitingForFile') }}</span>
-      <button class="btn" type="button" :disabled="!preview" @click="goNext">
-        {{ t('wizard.uploadStep.next') }} <Icon name="arrowRight" :size="16" />
-      </button>
+      <div class="head-actions">
+        <button v-if="!preview" class="btn secondary" type="button" @click="skipUpload">
+          {{ t('wizard.uploadStep.skipUpload') }}
+        </button>
+        <button class="btn" type="button" :disabled="!preview" @click="goNext">
+          {{ t('wizard.uploadStep.next') }} <Icon name="arrowRight" :size="16" />
+        </button>
+      </div>
     </div>
   </section>
 </template>
@@ -90,6 +95,7 @@ async function handle(file?: File) {
   try {
     wizardState.preview = await uploadDataset(file);
     wizardState.sourceUri = wizardState.preview.source_uri;
+    wizardState.dataUploadSkipped = false;
     applyUploadNameDefaults(wizardState.preview.filename || file.name);
     wizardState.error = null;
   } catch (error) {
@@ -97,5 +103,12 @@ async function handle(file?: File) {
   } finally {
     uploading.value = false;
   }
+}
+
+function skipUpload() {
+  wizardState.preview = null;
+  wizardState.sourceUri = '';
+  wizardState.dataUploadSkipped = true;
+  goNext();
 }
 </script>

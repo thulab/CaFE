@@ -184,29 +184,29 @@ http://127.0.0.1:5173
 
 > ⚠️ 关于登录：`./scripts/start-system.sh` 会用开发默认值启动，首次初始化的 admin 用户密码默认为 `admin`。直接运行后端时必须设置 `TSBENCHMARK_AUTH_SECRET`；生产或共享环境应同时设置强随机 `TSBENCHMARK_ADMIN_PASSWORD`。
 
-详情页（数据集清单 / 加载任务 / shard / 赛道 / 排行 / 报告 / 样本预测）通过列表、面包屑或向导右侧的「Created artifacts」面板进入，也可直接用 URL 哈希深链访问（如 `#/reports/<id>`）。
+详情页（数据集清单 / 加载任务 / 测试用例集 / 赛道 / 排行 / 报告 / 样本预测）通过列表、面包屑或向导右侧的「Created artifacts」面板进入，也可直接用 URL 哈希深链访问（如 `#/reports/<id>`）。前端把底层 `Shard` 展示为“测试用例集”，用于表达由数据集生成、可被赛道复用的预测评测样本集合。
 
 ### 6.2 走查向导
 
 点侧边栏「新建评测」（`#/new`）。页面会先让你选择入口：
 
-- **上传数据**：上传 CSV / TsFile，配置列与切片，然后创建赛道并启动评测。
+- **创建新赛道**：先填写赛道名称和主指标，再上传或复用测试用例集，最后选择模型启动评测。
 - **选择已有赛道**：复用已创建且未归档的赛道，直接选择模型启动一次新的评测运行。
 
-向导草稿会保存在浏览器 `sessionStorage` 中。只要当前评测还没生成报告，顶部和侧边栏的「New evaluation」会切换为「Continue evaluation」，点击后回到当前向导而不是重新开始。向导中的产物链接（Dataset manifest / Load job / Shard / Track / Ranking / Run / Report / Sample forecast）打开详情页后，也会在详情页顶部显示「Continue current evaluation」用于回到刚才的流程。若需要显式开始新的流程，在向导页点右上角「Reset」清空当前草稿。
+向导草稿会保存在浏览器 `sessionStorage` 中。只要当前评测还没生成报告，顶部和侧边栏的「New evaluation」会切换为「Continue evaluation」，点击后回到当前向导而不是重新开始。向导中的产物链接（Dataset manifest / Load job / Test case set / Track / Ranking / Run / Report / Sample forecast）打开详情页后，也会在详情页顶部显示「Continue current evaluation」用于回到刚才的流程。若需要显式开始新的流程，在向导页点右上角「Reset」清空当前草稿。
 
-选择上传数据后，向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
+选择创建新赛道后，向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
 
-1. **Upload dataset**：把 CSV / TsFile **拖入**虚线框，或点「Choose file」选择。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），并默认把文件名（去掉扩展名）作为后续数据集名称、切片名称和赛道名称的基础，点「Next」继续。
-2. **Configure split**：
+1. **Create track**：填写赛道名称并选择主指标（MASE / MSE / MAE，均为 lower is better），点「Continue」进入数据步骤。此时还不会创建后端赛道，避免产生没有绑定数据的半成品赛道。
+2. **Upload data**：把 CSV / TsFile **拖入**虚线框，或点「Choose file」选择。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），并默认把文件名（去掉扩展名）作为数据集名称和测试用例集名称的基础，点「Next」继续；如果已有可复用测试用例集，也可以点「Skip upload」直接进入选择。
+3. **Generate test cases**：
    - `Dataset name` 默认为上传文件名，可改成业务可读名称。
-   - `Shard name` 默认为“文件名 shard”，用于在数据集页、切片详情和赛道选择中识别该切片。
+   - `Test case set name` 默认为“文件名 test cases”，用于在数据集页、测试用例集详情和赛道选择中识别该集合。
    - `Time column` 下拉选时间列（默认 `time`）。
    - `Target column` **下拉单选**目标列；MVP 只加载这个单变量目标，不选会提示 “Select exactly one target”。
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
-   - 点「Load shard」：依次创建 dataset manifest、提交 load job 并物化样本，成功后自动进入下一步。
-3. **Confirm shard**：展示样本数量（形如 `N samples`）等统计，并提供「Inspect shard」链接；点「Continue」继续。
-4. **Create track**：填写赛道名称并选择主指标（MASE / MSE / MAE，均为 lower is better），点「Create track」后基于已加载的 shard 创建「真实数据评测赛道」，给出「View track」「View ranking」链接后自动进入下一步。
+   - 点「Generate test case set」：依次创建 dataset manifest、提交 load job 并生成样本，成功后自动进入下一步。若第 2 步跳过上传，本步只显示提示并继续到已有测试用例集选择。
+4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列或 ID，并追加已有集合。点「Create track from selected sets」后，系统基于所选集合创建真实数据评测赛道与默认榜单。
 5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
 6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
 
@@ -214,17 +214,17 @@ http://127.0.0.1:5173
 
 ### 6.3 资源归档、恢复与永久删除
 
-工作台中的数据集、切片、赛道和评测运行支持两类删除语义：
+工作台中的数据集、测试用例集、赛道和评测运行支持两类删除语义：
 
 - **归档（Archive）**：默认删除动作，可恢复。归档不会删除业务行、历史报告或榜单结果；资源默认从列表和新建流程中隐藏，详情深链仍可打开。
 - **永久删除（Permanent delete）**：管理员操作，不可恢复。前端会先展示影响范围，再二次确认；后端按依赖关系删除 DB 行，并清理报告/预测产物。数据集 purge 还会删除位于 `runtime/uploads/` 下的托管上传文件。
 
 具体行为：
 
-- 数据集 / 切片：在「数据集」页面上传、切片、查看和归档。归档后默认不再出现在新建评测或赛道创建的候选列表；打开「Show archived」可恢复或永久删除。
+- 数据集 / 测试用例集：在「数据集」页面上传数据、生成测试用例集、查看和归档。归档后默认不再出现在新建评测或赛道创建的候选列表；打开「Show archived」可恢复或永久删除。
 - 赛道：在「赛道」页面或赛道详情中归档。归档赛道会保留历史榜单、运行列表和报告，但不能再基于该赛道启动新的评测运行。
 - 运行：只能在终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）后归档或永久删除；排队中、运行中或取消请求中的 run 需要先等待终态或取消完成。
-- 永久删除数据集或切片可能级联删除依赖它的赛道、运行、报告、指标、榜单条目和预测产物；永久删除赛道会级联删除其运行与榜单；永久删除运行会删除该 run 的 unit/task、报告、预测、指标和事件。
+- 永久删除数据集或测试用例集可能级联删除依赖它的赛道、运行、报告、指标、榜单条目和预测产物；永久删除赛道会级联删除其运行与榜单；永久删除运行会删除该 run 的 unit/task、报告、预测、指标和事件。
 
 常见错误：
 

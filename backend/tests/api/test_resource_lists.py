@@ -22,8 +22,8 @@ def _seed_manifest(session: Session, name: str) -> str:
     return m.dataset_manifest_id
 
 
-def _seed_shard(session: Session, manifest_id: str) -> str:
-    s = Shard(dataset_manifest_id=manifest_id, source_uri=f"/tmp/{manifest_id}.shard")
+def _seed_shard(session: Session, manifest_id: str, name: str | None = None) -> str:
+    s = Shard(dataset_manifest_id=manifest_id, source_uri=f"/tmp/{manifest_id}.shard", name=name)
     session.add(s)
     session.commit()
     return s.shard_id
@@ -87,6 +87,20 @@ def test_list_shards_supports_dataset_manifest_id_filter(app, client):
     only_m1 = client.get("/shards", params={"dataset_manifest_id": m1_id}).json()
     assert only_m1["total"] == 2
     assert all(it["dataset_manifest_id"] == m1_id for it in only_m1["items"])
+
+
+def test_list_shards_supports_name_search_and_dataset_name(app, client):
+    with Session(app.state.engine) as session:
+        energy_id = _seed_manifest(session, "hourly-energy")
+        weather_id = _seed_manifest(session, "weather")
+        _seed_shard(session, energy_id, "energy validation cases")
+        _seed_shard(session, weather_id, "weather validation cases")
+
+    body = client.get("/shards", params={"q": "energy"}).json()
+
+    assert body["total"] == 1
+    assert body["items"][0]["name"] == "energy validation cases"
+    assert body["items"][0]["dataset_name"] == "hourly-energy"
 
 
 def test_list_runs_supports_track_id_filter(app, client):

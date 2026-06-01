@@ -915,6 +915,37 @@ table.data tr.is-winner:hover {
   background: color-mix(in srgb, var(--success-soft) 80%, var(--surface-2));
 }
 
+table.data tr.is-selected {
+  background: var(--primary-soft);
+}
+
+table.data .select-col {
+  width: 44px;
+  text-align: center;
+}
+
+table.data .select-col input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
+.selectable-list {
+  display: grid;
+  gap: 14px;
+}
+
+.selectable-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.selectable-title {
+  color: var(--text);
+  font-weight: 700;
+}
+
 td.num,
 th.num {
   text-align: right;

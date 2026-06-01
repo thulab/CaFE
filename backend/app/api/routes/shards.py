@@ -4,7 +4,7 @@ from sqlmodel import Session, select
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
 from app.core.errors import ApiError
-from app.models.dataset import Shard
+from app.models.dataset import DatasetManifest, Shard
 from app.models.sample import SampleIndex
 from app.services.resource_lifecycle import (
     RESOURCE_SHARD,
@@ -22,6 +22,7 @@ router = make_router(prefix="/shards", tags=["shards"])
 @router.get("", tier="authed")
 def list_shards(
     dataset_manifest_id: str | None = None,
+    q: str | None = None,
     include_archived: bool = False,
     limit: int = 50,
     offset: int = 0,
@@ -32,10 +33,12 @@ def list_shards(
         base = base.where(Shard.dataset_manifest_id == dataset_manifest_id)
     rows = session.exec(base.order_by(Shard.created_at.desc())).all()
     rows = visible_rows(session, RESOURCE_SHARD, rows, "shard_id", include_archived)
+    manifest_names = _manifest_names(session, rows)
+    rows = _filter_shards(rows, manifest_names, q)
     total = len(rows)
     items = rows[offset : offset + limit]
     return {
-        "items": [row_with_archive(session, RESOURCE_SHARD, item, "shard_id") for item in items],
+        "items": [_row_with_dataset_name(session, item, manifest_names) for item in items],
         "total": total,
         "limit": limit,
         "offset": offset,
@@ -81,3 +84,35 @@ def list_shard_samples(shard_id: str, limit: int = 20, offset: int = 0, session:
     ).all()
     total = len(session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard_id)).all())
     return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+def _manifest_names(session: Session, rows: list[Shard]) -> dict[str, str]:
+    manifest_ids = list({row.dataset_manifest_id for row in rows})
+    if not manifest_ids:
+        return {}
+    manifests = session.exec(select(DatasetManifest).where(DatasetManifest.dataset_manifest_id.in_(manifest_ids))).all()
+    return {manifest.dataset_manifest_id: manifest.name for manifest in manifests}
+
+
+def _filter_shards(rows: list[Shard], manifest_names: dict[str, str], query: str | None) -> list[Shard]:
+    needle = (query or "").strip().lower()
+    if not needle:
+        return rows
+
+    def matches(row: Shard) -> bool:
+        values = [
+            row.name or "",
+            row.shard_id,
+            row.source_uri,
+            manifest_names.get(row.dataset_manifest_id, ""),
+            " ".join(row.target_columns or []),
+        ]
+        return any(needle in value.lower() for value in values)
+
+    return [row for row in rows if matches(row)]
+
+
+def _row_with_dataset_name(session: Session, row: Shard, manifest_names: dict[str, str]) -> dict:
+    data = row_with_archive(session, RESOURCE_SHARD, row, "shard_id")
+    data["dataset_name"] = manifest_names.get(row.dataset_manifest_id)
+    return data
