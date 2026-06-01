@@ -22,7 +22,7 @@ describe('ColumnAndSplitStep', () => {
   it('enforces single target and positive split values', async () => {
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    // Value columns default all checked; context=0 triggers split validation
+    // context=0 would trigger split validation after a target is selected
     await fireEvent.update(screen.getByLabelText('Context'), '0');
     // Target not selected (default is empty) → should trigger target error
     await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
@@ -49,12 +49,10 @@ describe('ColumnAndSplitStep', () => {
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
 
-    // Assert manifest payload uses value_columns
     const manifestCall = fetchSpy.mock.calls[0];
     const manifestBody = JSON.parse(manifestCall![1]!.body as string);
     expect(manifestBody.name).toBe('Energy demand');
-    expect(manifestBody.value_columns).toContain('target');
-    expect(manifestBody.value_columns).toContain('other');
+    expect(manifestBody).not.toHaveProperty('value_columns');
     expect(manifestBody).not.toHaveProperty('target_columns');
 
     // Assert load job payload has split_config.target_columns
@@ -101,7 +99,25 @@ describe('ColumnAndSplitStep', () => {
     const manifestBody = JSON.parse(fetchSpy.mock.calls[0]![1]!.body as string);
     expect(manifestBody.file_format).toBe('tsfile');
     expect(manifestBody.time_column).toBe('time');
-    expect(manifestBody.value_columns).toEqual(['temperature', 'pressure']);
+    expect(manifestBody).not.toHaveProperty('value_columns');
+  });
+
+  it('shows load job failures returned in a 200 response', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        load_job_id: 'j1',
+        status: 'failed',
+        error_code: 'tsfile_multiple_devices',
+        error_message: 'MVP supports exactly one selected device per tsfile'
+      }), { status: 200 }));
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.update(screen.getByLabelText('Target'), 'target');
+    await fireEvent.click(screen.getByRole('button', { name: 'Load shard' }));
+
+    expect((await screen.findByRole('alert')).textContent).toContain('tsfile_multiple_devices');
+    expect(wizardState.shardId).toBe('');
   });
 
   it('renders split labels and window status in Chinese', () => {

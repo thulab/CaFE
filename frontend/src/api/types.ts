@@ -16,7 +16,6 @@ export interface DatasetManifestCreateDTO {
   source_uri: string;
   file_format: 'csv' | 'tsfile' | string;
   time_column: string;
-  value_columns: string[];
 }
 
 export interface DatasetLoadJobCreateDTO {
@@ -29,6 +28,8 @@ export interface DatasetLoadJobDTO {
   load_job_id: string;
   status: string;
   output_shard_id?: string;
+  error_code?: string | null;
+  error_message?: string | null;
 }
 
 export interface DatasetManifestDTO {
@@ -38,7 +39,6 @@ export interface DatasetManifestDTO {
   source_uri: string;
   file_format: string;
   time_column: string;
-  value_columns: string[];
   frequency?: string | null;
   timezone?: string | null;
   status: string;
@@ -74,7 +74,6 @@ export interface ShardDTO {
   time_range_end?: string | null;
   row_count: number;
   target_columns: string[];
-  value_columns: string[];
   target_dim: number;
   frequency?: string | null;
   context_length: number;

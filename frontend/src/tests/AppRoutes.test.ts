@@ -24,7 +24,7 @@ function mockFetch() {
     }
     if (url === '/api/shards?limit=200') {
       return Promise.resolve(jsonResponse({
-        items: [{ shard_id: 'shard-1', dataset_manifest_id: 'manifest-1', source_uri: '/tmp/hourly.csv', status: 'ready', row_count: 20, target_columns: ['target'], value_columns: ['target'], target_dim: 1, context_length: 6, horizon: 3, stride: 3, sample_count: 4 }],
+        items: [{ shard_id: 'shard-1', dataset_manifest_id: 'manifest-1', source_uri: '/tmp/hourly.csv', status: 'ready', row_count: 20, target_columns: ['target'], target_dim: 1, context_length: 6, horizon: 3, stride: 3, sample_count: 4 }],
         total: 1,
         limit: 200,
         offset: 0
@@ -41,7 +41,6 @@ function mockFetch() {
         source_uri: '/tmp/hourly.csv',
         file_format: 'csv',
         time_column: 'time',
-        value_columns: ['target'],
         status: 'ready_to_load'
       }));
     }

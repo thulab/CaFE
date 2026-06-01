@@ -83,21 +83,11 @@
             <label class="label" for="dataset-target">{{ t('wizard.columnAndSplitStep.targetColumn') }}</label>
             <select id="dataset-target" v-model="uploadTarget" :aria-label="t('wizard.columnAndSplitStep.target')">
               <option value="">{{ t('wizard.columnAndSplitStep.selectTarget') }}</option>
-              <option v-for="column in uploadValueColumns" :key="column" :value="column">{{ column }}</option>
+              <option v-for="column in uploadNonTimeColumns" :key="column" :value="column">{{ column }}</option>
             </select>
             <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
           </div>
         </div>
-
-        <fieldset class="field" style="border:0;padding:0;margin:0">
-          <legend class="label" style="padding:0;margin-bottom:6px">{{ t('wizard.columnAndSplitStep.valueColumns') }}</legend>
-          <div class="choice-grid">
-            <label v-for="column in uploadNonTimeColumns" :key="column" class="choice">
-              <input v-model="uploadValueColumns" type="checkbox" :value="column" :aria-label="column" />
-              {{ column }}
-            </label>
-          </div>
-        </fieldset>
 
         <div class="grid-auto">
           <div class="field">
@@ -219,7 +209,7 @@ interface Row {
 const items = ref<Row[]>([]);
 const loading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
-const { text: uploadError, clear: clearUploadError, setKey: setUploadErrorKey, setError: setUploadError } = useDisplayMessage();
+const { text: uploadError, clear: clearUploadError, setKey: setUploadErrorKey, setRaw: setRawUploadError, setError: setUploadError } = useDisplayMessage();
 const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
 const uploadDragging = ref(false);
@@ -232,7 +222,6 @@ const createdShardId = ref('');
 const uploadDatasetName = ref('');
 const uploadShardName = ref('');
 const uploadTimeColumn = ref('time');
-const uploadValueColumns = ref<string[]>([]);
 const uploadTarget = ref('');
 const uploadContext = ref(6);
 const uploadHorizon = ref(3);
@@ -260,16 +249,10 @@ const displayItems = computed(() => items.value.map((item) => ({
 })));
 
 watch(uploadNonTimeColumns, (cols) => {
-  if (cols.length > 0 && uploadValueColumns.value.length === 0) {
-    uploadValueColumns.value = [...cols];
-  }
-}, { immediate: true });
-
-watch(uploadValueColumns, (cols) => {
   if (uploadTarget.value && !cols.includes(uploadTarget.value)) {
     uploadTarget.value = '';
   }
-});
+}, { immediate: true });
 
 function rowTitle(item: Row): string {
   if (item.kind === 'dataset') return item.name ?? '';
@@ -360,7 +343,6 @@ async function handleUpload(file?: File) {
     uploadDatasetName.value = baseName;
     uploadShardName.value = `${baseName} shard`;
     uploadTimeColumn.value = uploadColumns.value.includes('time') ? 'time' : uploadColumns.value[0] ?? 'time';
-    uploadValueColumns.value = [...uploadNonTimeColumns.value];
     uploadTarget.value = '';
   } catch (caught) {
     setUploadError(caught, 'wizard.uploadStep.errors.uploadFailed');
@@ -371,7 +353,7 @@ async function handleUpload(file?: File) {
 
 async function createShard() {
   if (!uploadPreview.value) return;
-  if (!uploadTarget.value || !uploadValueColumns.value.includes(uploadTarget.value)) {
+  if (!uploadTarget.value || !uploadNonTimeColumns.value.includes(uploadTarget.value)) {
     setUploadErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
     return;
   }
@@ -387,8 +369,7 @@ async function createShard() {
       domain: 'general',
       source_uri: uploadPreview.value.source_uri,
       file_format: uploadFileFormat.value,
-      time_column: uploadIsTsFile.value ? 'time' : uploadTimeColumn.value,
-      value_columns: uploadValueColumns.value
+      time_column: uploadIsTsFile.value ? 'time' : uploadTimeColumn.value
     });
     const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; shard_name?: string; max_samples?: number } = {
       context_length: uploadContext.value,
@@ -400,6 +381,11 @@ async function createShard() {
     if (uploadMaxSamples.value != null && uploadMaxSamples.value > 0) splitConfig.max_samples = uploadMaxSamples.value;
     const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });
     createdShardId.value = job.output_shard_id || '';
+    if (job.status !== 'succeeded' || !job.output_shard_id) {
+      setRawUploadError(loadJobErrorMessage(job));
+      await load();
+      return;
+    }
     await load();
   } catch (caught) {
     setUploadError(caught, 'wizard.columnAndSplitStep.errors.loadFailed');
@@ -413,6 +399,11 @@ function baseNameFromFilename(filename?: string | null): string {
   if (!clean) return 'Uploaded dataset';
   const dot = clean.lastIndexOf('.');
   return dot > 0 ? clean.slice(0, dot) : clean;
+}
+
+function loadJobErrorMessage(job: { status?: string; error_code?: string | null; error_message?: string | null }) {
+  const code = job.error_code || job.status || 'load_failed';
+  return job.error_message ? `${code} · ${job.error_message}` : code;
 }
 
 onMounted(load);

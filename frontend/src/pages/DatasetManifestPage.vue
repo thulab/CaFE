@@ -17,7 +17,6 @@
         <div class="grid-auto">
           <div class="stat-tile"><span class="stat-label">{{ t('datasetManifest.status') }}</span><span class="stat-value" style="font-size:1.1rem"><StatusBadge :status="manifest.status" big /></span></div>
           <div class="stat-tile"><span class="stat-label">{{ t('datasetManifest.format') }}</span><span class="stat-value" style="font-size:1.2rem">{{ manifest.file_format.toUpperCase() }}</span></div>
-          <div class="stat-tile"><span class="stat-label">{{ t('datasetManifest.valueColumns') }}</span><span class="stat-value">{{ formatInt(manifest.value_columns.length) }}</span></div>
           <div class="stat-tile"><span class="stat-label">{{ t('datasetManifest.domain') }}</span><span class="stat-value" style="font-size:1.2rem">{{ manifest.domain }}</span></div>
         </div>
 
@@ -27,7 +26,6 @@
             <dl class="detail-grid">
               <div class="detail-item"><dt>{{ t('datasetManifest.manifestId') }}</dt><dd class="mono">{{ manifest.dataset_manifest_id }}</dd></div>
               <div class="detail-item"><dt>{{ t('datasetManifest.timeColumn') }}</dt><dd>{{ manifest.time_column }}</dd></div>
-              <div class="detail-item"><dt>{{ t('datasetManifest.valueColumns') }}</dt><dd>{{ manifest.value_columns.join(', ') }}</dd></div>
               <div class="detail-item"><dt>{{ t('datasetManifest.frequency') }}</dt><dd>{{ manifest.frequency || t('common.notAvailable') }}</dd></div>
               <div class="detail-item"><dt>{{ t('datasetManifest.timezone') }}</dt><dd>{{ manifest.timezone || t('common.notAvailable') }}</dd></div>
               <div class="detail-item"><dt>{{ t('datasetManifest.created') }}</dt><dd>{{ formatDateTime(manifest.created_at) }}</dd></div>
@@ -55,7 +53,7 @@ import { useFormat } from '../composables/useFormat';
 const props = defineProps<{ datasetManifestId: string }>();
 const { data: manifest, loading, error, run } = useAsyncData<DatasetManifestDTO>(() => getDatasetManifest(props.datasetManifestId));
 const { t } = useI18n();
-const { formatDateTime, formatInt } = useFormat();
+const { formatDateTime } = useFormat();
 
 onMounted(run);
 </script>

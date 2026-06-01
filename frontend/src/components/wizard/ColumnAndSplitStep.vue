@@ -31,21 +31,11 @@
         <label class="label" for="target-select">{{ t('wizard.columnAndSplitStep.targetColumn') }}</label>
         <select id="target-select" v-model="target" :aria-label="t('wizard.columnAndSplitStep.target')">
           <option value="">{{ t('wizard.columnAndSplitStep.selectTarget') }}</option>
-          <option v-for="column in valueColumns" :key="column" :value="column">{{ column }}</option>
+          <option v-for="column in nonTimeColumns" :key="column" :value="column">{{ column }}</option>
         </select>
         <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
       </div>
     </div>
-
-    <fieldset class="field" style="border:0;padding:0;margin:0">
-      <legend class="label" style="padding:0;margin-bottom:6px">{{ t('wizard.columnAndSplitStep.valueColumns') }}</legend>
-      <div class="choice-grid">
-        <label v-for="column in nonTimeColumns" :key="column" class="choice">
-          <input v-model="valueColumns" type="checkbox" :value="column" :aria-label="column" />
-          {{ column }}
-        </label>
-      </div>
-    </fieldset>
 
     <div class="grid-auto">
       <div class="field">
@@ -98,25 +88,24 @@ const isTsFile = computed(() => fileFormat.value === 'tsfile');
 const timeColumn = ref('time');
 const nonTimeColumns = computed(() => isTsFile.value ? columns.value : columns.value.filter((c) => c !== timeColumn.value));
 
-const valueColumns = ref<string[]>([]);
 const target = ref('');
 const context = ref(6);
 const horizon = ref(3);
 const stride = ref(3);
 const maxSamples = ref<number | undefined>(undefined);
-const { text: error, clear: clearError, setKey: setErrorKey, setError } = useDisplayMessage();
+const { text: error, clear: clearError, setKey: setErrorKey, setRaw: setRawError, setError } = useDisplayMessage();
 const busy = ref(false);
 
 watch(nonTimeColumns, (cols) => {
-  if (cols.length > 0 && valueColumns.value.length === 0) {
-    valueColumns.value = [...cols];
+  if (target.value && !cols.includes(target.value)) {
+    target.value = '';
   }
 }, { immediate: true });
 
 watch(() => wizardState.preview?.filename, ensureNames, { immediate: true });
 
 async function load() {
-  if (!target.value || !valueColumns.value.includes(target.value)) {
+  if (!target.value || !nonTimeColumns.value.includes(target.value)) {
     setErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
     return;
   }
@@ -132,8 +121,7 @@ async function load() {
       domain: 'general',
       source_uri: wizardState.sourceUri,
       file_format: fileFormat.value,
-      time_column: isTsFile.value ? 'time' : timeColumn.value,
-      value_columns: valueColumns.value
+      time_column: isTsFile.value ? 'time' : timeColumn.value
     });
     wizardState.manifestId = manifest.dataset_manifest_id;
 
@@ -151,6 +139,10 @@ async function load() {
     wizardState.loadJobId = job.load_job_id;
     wizardState.shardId = job.output_shard_id || '';
     void refreshResourceCounts();
+    if (job.status !== 'succeeded' || !job.output_shard_id) {
+      setRawError(loadJobErrorMessage(job));
+      return;
+    }
     clearError();
     goNext();
   } catch (caught) {
@@ -165,5 +157,10 @@ function ensureNames() {
   if (!wizardState.datasetName) wizardState.datasetName = base;
   if (!wizardState.shardName) wizardState.shardName = `${wizardState.datasetName || base} shard`;
   if (!wizardState.trackName) wizardState.trackName = `${wizardState.datasetName || base} track`;
+}
+
+function loadJobErrorMessage(job: { status?: string; error_code?: string | null; error_message?: string | null }) {
+  const code = job.error_code || job.status || 'load_failed';
+  return job.error_message ? `${code} · ${job.error_message}` : code;
 }
 </script>

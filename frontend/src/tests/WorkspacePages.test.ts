@@ -92,7 +92,7 @@ describe('workspace pages', () => {
     await waitFor(() => expect(screen.getByText('Shard ready: shard-9')).toBeTruthy());
     const manifestBody = JSON.parse(fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/dataset-manifests')![1]!.body as string);
     expect(manifestBody.file_format).toBe('tsfile');
-    expect(manifestBody.value_columns).toEqual(['temperature', 'pressure']);
+    expect(manifestBody).not.toHaveProperty('value_columns');
   });
 
   it('DatasetsPage keeps loaded shard labels reactive after locale changes', async () => {
