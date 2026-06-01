@@ -503,9 +503,14 @@ const enUS = {
     index: 'Index',
     context: 'Context',
     horizon: 'Horizon',
+    openCurve: 'Open curve',
+    loadingSamples: 'Loading samples...',
+    samplePageRange: 'Showing {start}-{end} of {total} samples',
+    samplePagination: 'Test case sample pagination',
     noSampleIndex: 'No sample index loaded.',
     errors: {
       failedToLoad: 'Failed to load test case set',
+      failedToLoadSamples: 'Failed to load test case samples',
     },
   },
   login: {

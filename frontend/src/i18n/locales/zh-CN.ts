@@ -503,9 +503,14 @@ const zhCN = {
     index: '索引',
     context: '上下文',
     horizon: '预测步长',
+    openCurve: '查看曲线',
+    loadingSamples: '正在加载样本...',
+    samplePageRange: '显示第 {start}-{end} 个，共 {total} 个样本',
+    samplePagination: '测试用例样本分页',
     noSampleIndex: '未加载样本索引。',
     errors: {
       failedToLoad: '加载测试用例集失败',
+      failedToLoadSamples: '加载测试用例样本失败',
     },
   },
   login: {

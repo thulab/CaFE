@@ -69,12 +69,27 @@ function mockFetch() {
         stride: 3
       }));
     }
-    if (url === '/api/shards/shard-1/samples') {
+    if (url.startsWith('/api/shards/shard-1/samples')) {
+      const params = new URLSearchParams(url.split('?')[1] || '');
+      const offset = Number(params.get('offset') || 0);
+      const limit = Number(params.get('limit') || 20);
+      const firstIndex = offset >= 10 ? 10 : 0;
+      const count = offset >= 10 ? 2 : Math.min(limit, 10);
       return Promise.resolve(jsonResponse({
-        items: [{ sample_id: 'sample-1', sample_index: 0, context_start: 0, context_end: 6, horizon_start: 6, horizon_end: 9 }],
-        total: 1,
-        limit: 20,
-        offset: 0
+        items: Array.from({ length: count }, (_, index) => {
+          const sampleIndex = firstIndex + index;
+          return {
+            sample_id: sampleIndex === 0 ? 'sample-1' : `sample-${sampleIndex + 1}`,
+            sample_index: sampleIndex,
+            context_start: sampleIndex * 10,
+            context_end: sampleIndex * 10 + 59,
+            horizon_start: sampleIndex * 10 + 60,
+            horizon_end: sampleIndex * 10 + 75
+          };
+        }),
+        total: 12,
+        limit,
+        offset
       }));
     }
     if (url === '/api/benchmarking-runs/run-1/progress') {
@@ -178,6 +193,22 @@ describe('App routes and artifact links', () => {
     expect((await screen.findAllByText('Lower is better')).length).toBeGreaterThan(0);
 
     rendered.unmount();
+  });
+
+  it('paginates test case set samples and links to curve previews', async () => {
+    const fetchMock = mockFetch();
+    window.location.hash = '#/shards/shard-1';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Showing 1-10 of 12 samples')).toBeTruthy();
+    expect(screen.getAllByRole('link', { name: /Open curve/ })[0].getAttribute('href')).toBe('#/shards/shard-1/samples/sample-1');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+
+    await waitFor(() => expect(fetchMock.mock.calls.some((call) => String(call[0]) === '/api/shards/shard-1/samples?limit=10&offset=10')).toBe(true));
+    expect(await screen.findByText('Showing 11-12 of 12 samples')).toBeTruthy();
+    expect(screen.getByText('Window #11')).toBeTruthy();
   });
 
   it('continues an unfinished wizard when New evaluation is clicked', async () => {
