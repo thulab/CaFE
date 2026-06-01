@@ -164,6 +164,28 @@ describe('App routes and artifact links', () => {
     window.location.hash = '#/';
   });
 
+  it('shows public leaderboards by default for anonymous visitors', async () => {
+    const calls: string[] = [];
+    authState.user = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push(url);
+      if (url === '/api/ranking-lists') return jsonResponse({ items: [] });
+      return new Response(JSON.stringify({ error_code: 'auth_required', message: 'login required' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    window.location.hash = '#/';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('heading', { name: 'Leaderboards' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
+    await waitFor(() => expect(window.location.hash).toBe('#/leaderboards'));
+    expect(calls).toEqual(['/api/ranking-lists']);
+  });
+
   it('routes report hashes to the report view instead of the create workflow', async () => {
     const fetchMock = mockFetch();
     window.location.hash = '#/reports/rep-1';
@@ -172,18 +194,6 @@ describe('App routes and artifact links', () => {
 
     expect(await screen.findByRole('heading', { name: 'Benchmark report' })).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledWith('/api/reports/rep-1', expect.any(Object));
-  });
-
-  it('shows public leaderboards by default for anonymous visitors', async () => {
-    authState.user = null;
-    mockFetch();
-    window.location.hash = '#/';
-
-    render(App, { global: { plugins: [i18n] } });
-
-    expect(await screen.findByRole('heading', { name: 'Leaderboards' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Sign in' })).toBeNull();
-    await waitFor(() => expect(window.location.hash).toBe('#/leaderboards'));
   });
 
   it('routes artifact hashes to dedicated view pages', async () => {

@@ -2,6 +2,7 @@ import { reactive } from 'vue';
 import { listDatasetManifests, listShards } from '../api/datasets';
 import { listReports } from '../api/results';
 import { listRuns } from '../api/runs';
+import { authState } from '../stores/auth';
 
 // 侧边栏角标 + 首页卡片都靠这里：只为拿 total 字段，所以 limit=1 即可，不必把整张表拉下来。
 // 单飞读取失败不要把另外 3 个也拉下水——拆个体 catch，错的归零、对的归正。
@@ -28,6 +29,10 @@ async function totalOrZero(p: Promise<{ total: number }>): Promise<number> {
 }
 
 export async function refreshResourceCounts(): Promise<void> {
+  if (!authState.user) {
+    state.counts = { datasets: 0, shards: 0, runs: 0, reports: 0 };
+    return;
+  }
   if (inflight) return inflight;
   inflight = (async () => {
     const [datasets, shards, runs, reports] = await Promise.all([

@@ -214,6 +214,10 @@ watch(routeHash, (next) => {
   }
 });
 
+watch(user, (next) => {
+  if (next) void refreshCounts();
+});
+
 const navItems = computed(() => [
   { key: 'home', label: t('nav.overview'), icon: 'dashboard', href: '#/', count: 0 },
   { key: 'new', label: topbarEvaluationLabel.value, icon: hasActiveDraft.value ? 'arrowRight' : 'sparkles', href: '#/new', count: 0 },
