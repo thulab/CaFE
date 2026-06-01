@@ -341,8 +341,6 @@ const zhCN = {
       details: '详情',
       loading: '正在加载测试用例集...',
       empty: '未找到测试用例集。',
-      selectedRange: '已选择 {count} 个',
-      range: '{start}-{end} / {total}',
       selectItem: '选择',
       togglePageSelection: '选择本页全部',
       samples: '{count} 个样本',

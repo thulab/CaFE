@@ -102,9 +102,9 @@ const timeColumn = ref('time');
 const nonTimeColumns = computed(() => isTsFile.value ? columns.value : columns.value.filter((c) => c !== timeColumn.value));
 
 const target = ref('');
-const context = ref(6);
-const horizon = ref(3);
-const stride = ref(3);
+const context = ref(60);
+const horizon = ref(16);
+const stride = ref(16);
 const maxSamples = ref<number | undefined>(undefined);
 const { text: error, clear: clearError, setKey: setErrorKey, setRaw: setRawError, setError } = useDisplayMessage();
 const busy = ref(false);

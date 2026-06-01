@@ -106,4 +106,21 @@ describe('TestCaseSetStep', () => {
 
     await waitFor(() => expect(requests.some((url) => url.includes('offset=10'))).toBe(true));
   });
+
+  it('omits redundant selected range text from the test case picker footer', async () => {
+    setLocale('zh-CN');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith('/api/shards')) {
+        return jsonResponse({ items: [], total: 0, limit: 10, offset: 0 });
+      }
+      return jsonResponse({});
+    });
+
+    render(TestCaseSetStep, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('未找到测试用例集。')).toBeTruthy();
+    expect(screen.getByText('已选择 0 个测试用例集')).toBeTruthy();
+    expect(screen.queryByText(/已选择\s*个\s*·\s*-\s*\//)).toBeNull();
+  });
 });

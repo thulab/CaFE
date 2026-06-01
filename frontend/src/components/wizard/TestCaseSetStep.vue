@@ -89,8 +89,6 @@ const listLabels = computed(() => ({
   status: t('common.status'),
   loading: t('wizard.testCaseSetStep.loading'),
   empty: t('wizard.testCaseSetStep.empty'),
-  selected: t('wizard.testCaseSetStep.selectedRange'),
-  range: t('wizard.testCaseSetStep.range'),
   previousPage: t('common.previousPage'),
   nextPage: t('common.nextPage'),
   selectItem: t('wizard.testCaseSetStep.selectItem'),

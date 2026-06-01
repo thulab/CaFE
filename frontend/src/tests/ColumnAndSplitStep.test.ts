@@ -38,6 +38,9 @@ describe('ColumnAndSplitStep', () => {
 
     expect((screen.getByLabelText('Dataset name') as HTMLInputElement).value).toBe('data');
     expect((screen.getByLabelText('Test case set name') as HTMLInputElement).value).toBe('data test cases');
+    expect((screen.getByLabelText('Context') as HTMLInputElement).value).toBe('60');
+    expect((screen.getByLabelText('Horizon') as HTMLInputElement).value).toBe('16');
+    expect((screen.getByLabelText('Stride') as HTMLInputElement).value).toBe('16');
     await fireEvent.update(screen.getByLabelText('Dataset name'), 'Energy demand');
     await fireEvent.update(screen.getByLabelText('Test case set name'), 'Energy demand validation');
 
@@ -59,8 +62,13 @@ describe('ColumnAndSplitStep', () => {
     // Assert load job payload has split_config.target_columns
     const loadJobCall = fetchSpy.mock.calls[1];
     const loadJobBody = JSON.parse(loadJobCall![1]!.body as string);
-    expect(loadJobBody.split_config.target_columns).toEqual(['target']);
-    expect(loadJobBody.split_config.shard_name).toBe('Energy demand validation');
+    expect(loadJobBody.split_config).toMatchObject({
+      context_length: 60,
+      horizon: 16,
+      stride: 16,
+      target_columns: ['target'],
+      shard_name: 'Energy demand validation'
+    });
   });
 
   it('keeps the generated manifest payload name stable under Chinese UI', async () => {
@@ -129,7 +137,7 @@ describe('ColumnAndSplitStep', () => {
     expect(screen.getByText('上下文')).toBeTruthy();
     expect(screen.getByText('预测步长')).toBeTruthy();
     expect(screen.getByText('滑窗步长')).toBeTruthy();
-    expect(screen.getByText('窗口：6 个上下文点 → 3 个预测点，滑窗步长 3。')).toBeTruthy();
+    expect(screen.getByText('窗口：60 个上下文点 → 16 个预测点，滑窗步长 16。')).toBeTruthy();
   });
 
   it('continues to existing test case selection when upload was skipped', async () => {

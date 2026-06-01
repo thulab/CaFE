@@ -341,8 +341,6 @@ const enUS = {
       details: 'Details',
       loading: 'Loading test case sets...',
       empty: 'No test case sets found.',
-      selectedRange: '{count} selected',
-      range: '{start}-{end} of {total}',
       selectItem: 'Select',
       togglePageSelection: 'Select all on this page',
       samples: '{count} samples',

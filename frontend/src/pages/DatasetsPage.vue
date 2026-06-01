@@ -223,9 +223,9 @@ const uploadDatasetName = ref('');
 const uploadShardName = ref('');
 const uploadTimeColumn = ref('time');
 const uploadTarget = ref('');
-const uploadContext = ref(6);
-const uploadHorizon = ref(3);
-const uploadStride = ref(3);
+const uploadContext = ref(60);
+const uploadHorizon = ref(16);
+const uploadStride = ref(16);
 const uploadMaxSamples = ref<number | undefined>(undefined);
 const dialog = reactive<{ open: boolean; action: LifecycleAction; resourceType: ResourceType; resourceId: string }>({
   open: false,
@@ -341,7 +341,7 @@ async function handleUpload(file?: File) {
     uploadPreview.value = await uploadDataset(file);
     const baseName = baseNameFromFilename(uploadPreview.value.filename || file.name);
     uploadDatasetName.value = baseName;
-    uploadShardName.value = `${baseName} shard`;
+    uploadShardName.value = `${baseName} test cases`;
     uploadTimeColumn.value = uploadColumns.value.includes('time') ? 'time' : uploadColumns.value[0] ?? 'time';
     uploadTarget.value = '';
   } catch (caught) {
@@ -376,7 +376,7 @@ async function createShard() {
       horizon: uploadHorizon.value,
       stride: uploadStride.value,
       target_columns: [uploadTarget.value],
-      shard_name: uploadShardName.value || `${uploadDatasetName.value || 'Uploaded dataset'} shard`
+      shard_name: uploadShardName.value || `${uploadDatasetName.value || 'Uploaded dataset'} test cases`
     };
     if (uploadMaxSamples.value != null && uploadMaxSamples.value > 0) splitConfig.max_samples = uploadMaxSamples.value;
     const job = await createLoadJob({ dataset_manifest_id: manifest.dataset_manifest_id, split_config: splitConfig });

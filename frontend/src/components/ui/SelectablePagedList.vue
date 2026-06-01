@@ -57,11 +57,7 @@
     </div>
 
     <div class="sample-pager">
-      <span class="status-line">
-        {{ labels.selected.replace('{count}', String(selectedIds.length)) }} ·
-        {{ labels.range.replace('{start}', String(rangeStart)).replace('{end}', String(rangeEnd)).replace('{total}', String(total)) }}
-      </span>
-      <div class="head-actions">
+      <div class="head-actions" style="margin-left:auto">
         <button class="btn secondary sm" type="button" :disabled="offset <= 0 || loading" @click="$emit('page', previousOffset)">
           <Icon name="chevronLeft" :size="15" /> {{ labels.previousPage }}
         </button>
@@ -94,8 +90,6 @@ interface SelectablePagedListLabels {
   status: string;
   loading: string;
   empty: string;
-  selected: string;
-  range: string;
   previousPage: string;
   nextPage: string;
   selectItem: string;
@@ -127,8 +121,6 @@ const currentIds = computed(() => props.items.map((item) => item.id));
 const allCurrentPageSelected = computed(() => currentIds.value.length > 0 && currentIds.value.every((id) => props.selectedIds.includes(id)));
 const previousOffset = computed(() => Math.max(0, props.offset - props.limit));
 const nextOffset = computed(() => props.offset + props.limit);
-const rangeStart = computed(() => props.total === 0 ? 0 : props.offset + 1);
-const rangeEnd = computed(() => Math.min(props.total, props.offset + props.items.length));
 
 function emitSearch(event: Event) {
   emit('update:search', (event.target as HTMLInputElement).value);

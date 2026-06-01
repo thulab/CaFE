@@ -93,6 +93,13 @@ describe('workspace pages', () => {
     const manifestBody = JSON.parse(fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/dataset-manifests')![1]!.body as string);
     expect(manifestBody.file_format).toBe('tsfile');
     expect(manifestBody).not.toHaveProperty('value_columns');
+    const loadJobBody = JSON.parse(fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/dataset-load-jobs')![1]!.body as string);
+    expect(loadJobBody.split_config).toMatchObject({
+      context_length: 60,
+      horizon: 16,
+      stride: 16,
+      shard_name: 'data test cases'
+    });
   });
 
   it('DatasetsPage keeps loaded shard labels reactive after locale changes', async () => {
