@@ -1,7 +1,7 @@
 """生成 TSBenchmark 模板数据集（确定性、可复跑）。
 
 每份 CSV 符合平台 CSV 输入契约：第一列为时间列（严格递增、等间隔），其余为
-数值列（目标 + 可选协变量），全部有限 float。覆盖不同频率与时序形态，便于
+数值列（至少包含一个可选目标列），全部有限 float。覆盖不同频率与时序形态，便于
 上手试跑 upload → load → track → run → ranking。
 
 用法：python3 scripts/generate_template_data.py [out_dir]   默认 ./templates
@@ -33,7 +33,7 @@ def _write(out_dir: Path, name: str, header: list[str], rows: list[list]) -> Pat
 
 
 def hourly_trend(out_dir: Path) -> Path:
-    """小时频 · 线性上升趋势 + 噪声。target 与温度协变量。"""
+    """小时频 · 线性上升趋势 + 噪声。target 与额外温度列。"""
     rng = random.Random(11)
     n = 240  # 10 天
     times = _ts(START, timedelta(hours=1), n)
@@ -46,7 +46,7 @@ def hourly_trend(out_dir: Path) -> Path:
 
 
 def hourly_daily_seasonality(out_dir: Path) -> Path:
-    """小时频 · 日内（24h）季节性 + 缓趋势。target + 温度 + 负荷协变量。"""
+    """小时频 · 日内（24h）季节性 + 缓趋势。target + 额外温度/负荷列。"""
     rng = random.Random(23)
     n = 336  # 14 天
     times = _ts(START, timedelta(hours=1), n)
@@ -62,7 +62,7 @@ def hourly_daily_seasonality(out_dir: Path) -> Path:
 
 
 def daily_weekly_seasonality(out_dir: Path) -> Path:
-    """日频 · 周内（7d）季节性 + 趋势。零售口径：sales + 周末指示协变量。"""
+    """日频 · 周内（7d）季节性 + 趋势。零售口径：sales + 周末指示列。"""
     rng = random.Random(37)
     n = 168  # 24 周
     times = _ts(START, timedelta(days=1), n)
@@ -77,7 +77,7 @@ def daily_weekly_seasonality(out_dir: Path) -> Path:
 
 
 def multivariate_hourly(out_dir: Path) -> Path:
-    """小时频 · 多协变量（target + 3 协变量），演示全列摄入。"""
+    """小时频 · target + 3 个额外数值列，演示单目标选择。"""
     rng = random.Random(53)
     n = 240
     times = _ts(START, timedelta(hours=1), n)

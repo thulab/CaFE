@@ -179,7 +179,6 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `source_uri` | `str` | 必填 | 原始数据位置（`runtime/uploads/` 下） |
 | `file_format` | `str` | `"csv"` | 输入格式；当前支持 `csv` / `tsfile` |
 | `time_column` | `str` | 必填 | 时间列列名 |
-| `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入的数值列；为空时 reader 自动取除时间列外全部列。目标列的选择移到 load-job（见 §2.2 split_config）。<br>**2026-05-25 重构**：原 `target_columns` 字段更名为 `value_columns`（语义：全列摄入），目标选择不再绑定在 manifest。 |
 | `frequency` | `str \| None` | `None` | 时间频率；load 成功后由推断结果回填 |
 | `timezone` | `str \| None` | `None` | 仅作元数据，不做时区转换 |
 | `schema_version` | `str` | `"dataset_manifest.v1"` | manifest schema 版本 |
@@ -233,7 +232,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 - `context_length`（int，必填）
 - `horizon`（int，必填）
 - `stride`（int，可选；缺省取 `horizon`）
-- `target_columns`（list[str]，**必填且恰好 1 个**；必须 ⊆ manifest 的 `value_columns`，否则 `load_target_columns_invalid`）——**2026-05-25 重构**：目标列选择从 manifest 移到此处。
+- `target_columns`（list[str]，**必填且恰好 1 个**；MVP 单变量目标列选择。未选择或选择多个时报 `load_target_columns_invalid`；目标列不存在时由 reader 返回格式相关错误码）
 - `max_samples`（int，可选）：窗口数超过它时沿序列均匀采样（含首尾，可复现）。
 - `shard_name`（str，可选）：前端上传/切片时提供的人类可读切片名称；成功后写入 `Shard.name`，不参与唯一性或执行逻辑。
 
@@ -244,7 +243,6 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
   "sample_count": 4,
   "frequency": "1h",
   "columns": ["time", "target", "extra"],
-  "value_columns": ["target"],
   "target_columns": ["target"]
 }
 ```
@@ -267,8 +265,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `time_range_start` | `str \| None` | `None` | 时间范围起（ISO 8601 字符串） |
 | `time_range_end` | `str \| None` | `None` | 时间范围止（ISO 8601 字符串） |
 | `row_count` | `int` | `0` | 行数 |
-| `value_columns` | `list[str]` | `[]`，**JSON 列** | 摄入的全部数值列（每行作为 `SeriesPoint.values_json` 的键集） |
-| `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列（⊆ `value_columns`，MVP 恰好 1 个） |
+| `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列，MVP 恰好 1 个 |
 | `target_dim` | `int` | `1` | 目标维度 |
 | `frequency` | `str \| None` | `None` | 时间频率 |
 | `context_length` | `int` | `0` | 样本历史长度 |
@@ -697,7 +694,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 ### 6.1 样本视图（sample.v1）
 
-**2026-05-25 SQLite pivot**：样本不物化为文件。每个 shard 的全列数值逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。注意 `target_history`/`target_future` 只切 `target_columns`；其余 `value_columns`（如协变量）已在 `SeriesPoint.values_json` 中，但 MVP 不进 sample 视图（`history_cov`/`future_cov` 仍为空）。
+**2026-05-25 SQLite pivot / 2026-06-02 target-only cleanup**：样本不物化为文件。每个 shard 的单变量目标序列逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。MVP 不摄入协变量，`history_cov`/`future_cov` 仍为空。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -776,7 +773,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 ### 6.4 序列真值存储：SQLite SeriesPoint（2026-05-25 SQLite pivot）
 
 序列真值**不再落盘**为 per-dataset TsFile，而是逐点行存进 SQLite `SeriesPoint`（DB 表，见 §2.5）。`SeriesStore`（`services/series_store.py`）封装存取：
-- `SeriesStore.write(session, shard_id, timestamps, value_columns, values)`：把全列矩阵逐点插入 `SeriesPoint`（`values_json={列:值}`、`ts` 存 ISO 原文，**不经 ms-epoch 往返**，规避 #8 的本地时区漂移）。
+- `SeriesStore.write(session, shard_id, timestamps, columns, values)`：把目标列矩阵逐点插入 `SeriesPoint`（`values_json={列:值}`、`ts` 存 ISO 原文，**不经 ms-epoch 往返**，规避 #8 的本地时区漂移）。
 - `SeriesStore.slice(session, shard_id, columns, row_start, row_end)` / `slice_timestamps(...)`：按 `(shard_id, row_index)` **闭区间**范围查询，返回行主序 `list[list[float]]` / ISO 时间戳。`sample.v1` 的视图由此现切。
 
 > **TsFile 现在是输入格式之一**（不再是存储）：`tsfile_dataset_reader.py` 的 `TsFileDatasetReader` 把单设备表模型 TsFile 读成 `DatasetReadResult`，与 CSV 走同一存储/校验通路（`get_dataset_reader(file_format)` 工厂选 reader）。`tsfile==2.3.0` 依赖因此保留（`requires-python>=3.14`）；旧的 `services/tsfile_store.py`（`TsFileStore`/`TsFileSlicer`）已不在数据通路中使用。forecast 输出仍为 JSONL（§6.2 不变）。

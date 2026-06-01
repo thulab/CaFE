@@ -202,8 +202,7 @@ http://127.0.0.1:5173
    - `Dataset name` 默认为上传文件名，可改成业务可读名称。
    - `Shard name` 默认为“文件名 shard”，用于在数据集页、切片详情和赛道选择中识别该切片。
    - `Time column` 下拉选时间列（默认 `time`）。
-   - `Value columns` 复选框组：勾选要纳入的数值列（默认全选非时间列）。
-   - `Target column` **下拉单选**目标列（必须是已勾选的 value column 之一；不选会提示 “Select exactly one target”）。
+   - `Target column` **下拉单选**目标列；MVP 只加载这个单变量目标，不选会提示 “Select exactly one target”。
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
    - 点「Load shard」：依次创建 dataset manifest、提交 load job 并物化样本，成功后自动进入下一步。
 3. **Confirm shard**：展示样本数量（形如 `N samples`）等统计，并提供「Inspect shard」链接；点「Continue」继续。
@@ -402,8 +401,8 @@ CSV 结构 / 编码类：
 - `csv_missing_header`：缺少 header row，或首行被识别为数据行。
 - `csv_duplicate_columns`：列名重复。
 - `csv_time_column_missing`：选择的时间列不存在。
-- `csv_value_column_missing`：选择的 value column 不存在。
-- `csv_no_value_columns`：除时间列外没有可摄入的 value column。
+- `csv_target_columns_invalid`：未选择目标列或选择了多于 1 个目标列。
+- `csv_target_column_missing`：选择的目标列不存在。
 
 时间列类：
 
@@ -414,15 +413,15 @@ CSV 结构 / 编码类：
 - `csv_frequency_not_inferable`：时间戳不足 2 个，无法推断 frequency。
 - `csv_frequency_mismatch`：显式提供的 frequency 与推断结果不一致。
 
-value 值类：
+目标值类：
 
-- `csv_value_missing`：value 值缺失。
-- `csv_value_not_float`：value 无法转换为浮点数。
-- `csv_value_not_finite`：value 是 NaN 或 Inf。
+- `csv_value_missing`：目标值缺失。
+- `csv_value_not_float`：目标值无法转换为浮点数。
+- `csv_value_not_finite`：目标值是 NaN 或 Inf。
 
 切分 / 样本类：
 
-- `load_target_columns_invalid`：load job 未选择 target、选择多于 1 个 target，或 target 不在 value columns 中。
+- `load_target_columns_invalid`：load job 未选择 target，或选择了多于 1 个 target。
 - `split_config_invalid`：`context_length`、`horizon` 或 `stride` 非正数。
 - `split_length_exceeds_rows`：`context_length + horizon` 超过数据行数。
 - `sample_count_empty`：切分配置没有产生任何样本。

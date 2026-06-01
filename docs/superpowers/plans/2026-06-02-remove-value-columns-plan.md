@@ -22,15 +22,15 @@
 - Modify: `backend/app/services/series_store.py`
 - Modify tests under `backend/tests/`
 
-- [ ] Write failing tests that create manifests without `value_columns`, load with one `target_columns` entry, assert shards expose no `value_columns`, and assert multi-device TsFile full-series target succeeds.
-- [ ] Run focused backend tests and confirm failures mention stale `value_columns` assumptions.
-- [ ] Remove `value_columns` from `DatasetManifest` and `Shard`.
-- [ ] Change `DatasetReadResult.value_columns` to `target_columns` and keep `column_matrix` behavior against selected targets.
-- [ ] Change reader protocol argument from `value_columns` to `target_columns`.
-- [ ] Make CSV/TsFile readers require one target, validate it, and read only that target.
-- [ ] Change load service to parse and validate `split_config.target_columns` before reading, pass them to the reader, and write only target columns into `SeriesPoint`.
-- [ ] Update backend tests and helper factories.
-- [ ] Run focused backend tests, then commit backend changes.
+- [x] Write failing tests that create manifests without `value_columns`, load with one `target_columns` entry, assert shards expose no `value_columns`, and assert multi-device TsFile full-series target succeeds.
+- [x] Run focused backend tests and confirm failures mention stale `value_columns` assumptions.
+- [x] Remove `value_columns` from `DatasetManifest` and `Shard`.
+- [x] Change `DatasetReadResult.value_columns` to `target_columns` and keep `column_matrix` behavior against selected targets.
+- [x] Change reader protocol argument from `value_columns` to `target_columns`.
+- [x] Make CSV/TsFile readers require one target, validate it, and read only that target.
+- [x] Change load service to parse and validate `split_config.target_columns` before reading, pass them to the reader, and write only target columns into `SeriesPoint`.
+- [x] Update backend tests and helper factories.
+- [x] Run focused backend tests, then commit backend changes.
 
 ### Task 2: Frontend Target-Only Configuration
 
@@ -41,12 +41,12 @@
 - Modify: `frontend/src/pages/DatasetManifestPage.vue`
 - Modify frontend tests under `frontend/src/tests/`
 
-- [ ] Write failing frontend tests that assert manifest payloads omit `value_columns`, TsFile target-only creation submits only `split_config.target_columns`, and failed load jobs show an error.
-- [ ] Remove Value columns UI and state.
-- [ ] Submit manifest without `value_columns`.
-- [ ] Check `job.status` after `createLoadJob`; if not `succeeded`, display `error_code · error_message` and do not advance.
-- [ ] Update TypeScript DTOs and tests.
-- [ ] Run frontend tests and commit frontend changes.
+- [x] Write failing frontend tests that assert manifest payloads omit `value_columns`, TsFile target-only creation submits only `split_config.target_columns`, and failed load jobs show an error.
+- [x] Remove Value columns UI and state.
+- [x] Submit manifest without `value_columns`.
+- [x] Check `job.status` after `createLoadJob`; if not `succeeded`, display `error_code · error_message` and do not advance.
+- [x] Update TypeScript DTOs and tests.
+- [x] Run frontend tests and commit frontend changes.
 
 ### Task 3: Docs, Scripts, Runtime Reset, Final Verification
 
@@ -57,8 +57,8 @@
 - Modify: `scripts/baseline_run.py`
 - Delete local runtime data outside git: `backend/runtime/tsbenchmark.db`, `backend/runtime/uploads/*`
 
-- [ ] Update docs to describe single target selection only.
-- [ ] Update baseline script output so it no longer references `value_columns`.
+- [x] Update docs to describe single target selection only.
+- [x] Update baseline script output so it no longer references `value_columns`.
 - [ ] Stop the local system if running, remove runtime test DB/uploads, and restart if needed.
 - [ ] Run `cd backend && uv run pytest`.
 - [ ] Run `cd frontend && npm test`.
