@@ -347,6 +347,8 @@ const enUS = {
       window: '{context}→{horizon} window',
       targets: 'Targets: {targets}',
       fallbackTitle: 'Test cases · {target}',
+      generatedReady: 'Generated test case set: {name}',
+      openGeneratedSet: 'Open generated test case set',
       selectedCount: '{count} selected test case sets',
       createTrack: 'Create track from selected sets',
       recreateTrack: 'Recreate track from selected sets',

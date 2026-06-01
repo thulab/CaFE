@@ -107,6 +107,45 @@ describe('TestCaseSetStep', () => {
     await waitFor(() => expect(requests.some((url) => url.includes('offset=10'))).toBe(true));
   });
 
+  it('links the generated and listed test case sets to their detail pages', async () => {
+    wizardState.shardId = 'shard-generated';
+    wizardState.shardName = 'Generated validation cases';
+    wizardState.selectedShardIds = ['shard-generated'];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.startsWith('/api/shards')) {
+        return jsonResponse({
+          items: [
+            {
+              shard_id: 'shard-generated',
+              name: 'Generated validation cases',
+              dataset_name: 'Energy',
+              source_uri: '/tmp/energy.csv',
+              target_columns: ['load'],
+              context_length: 60,
+              horizon: 16,
+              stride: 16,
+              sample_count: 20,
+              row_count: 96,
+              status: 'ready'
+            }
+          ],
+          total: 1,
+          limit: 10,
+          offset: 0
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(TestCaseSetStep, { global: { plugins: [i18n] } });
+
+    expect((await screen.findAllByText('Generated validation cases')).length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: 'Open generated test case set' }).getAttribute('href')).toBe('#/shards/shard-generated');
+    expect(screen.getByRole('link', { name: 'Generated validation cases' }).getAttribute('href')).toBe('#/shards/shard-generated');
+    expect((screen.getByLabelText('Select Generated validation cases') as HTMLInputElement).checked).toBe(true);
+  });
+
   it('omits redundant selected range text from the test case picker footer', async () => {
     setLocale('zh-CN');
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {

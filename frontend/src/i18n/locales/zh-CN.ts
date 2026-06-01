@@ -347,6 +347,8 @@ const zhCN = {
       window: '{context}→{horizon} 窗口',
       targets: '目标列：{targets}',
       fallbackTitle: '测试用例 · {target}',
+      generatedReady: '已生成测试用例集：{name}',
+      openGeneratedSet: '查看生成的测试用例集',
       selectedCount: '已选择 {count} 个测试用例集',
       createTrack: '用所选集合创建赛道',
       recreateTrack: '用所选集合重新创建赛道',

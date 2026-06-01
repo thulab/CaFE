@@ -4,6 +4,13 @@
       {{ t('wizard.testCaseSetStep.description') }}
     </p>
 
+    <div v-if="generatedShardLink" class="note-success" style="justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <span><Icon name="checkCircle" :size="16" />{{ t('wizard.testCaseSetStep.generatedReady', { name: generatedShardName }) }}</span>
+      <a class="btn secondary sm" :href="generatedShardLink" :aria-label="t('wizard.testCaseSetStep.openGeneratedSet')">
+        <Icon name="layers" :size="15" /> {{ t('wizard.testCaseSetStep.openGeneratedSet') }}
+      </a>
+    </div>
+
     <SelectablePagedList
       v-model:selected-ids="wizardState.selectedShardIds"
       :items="items"
@@ -46,6 +53,7 @@ import SelectablePagedList from '../ui/SelectablePagedList.vue';
 type SelectablePagedListItem = {
   id: string;
   title: string;
+  href?: string;
   description?: string;
   meta?: string[];
   status?: string | null;
@@ -72,6 +80,7 @@ watch([search, offset], loadShards, { immediate: true });
 const items = computed<SelectablePagedListItem[]>(() => shards.value.map((shard) => ({
   id: shard.shard_id,
   title: shard.name || shardTitle(shard),
+  href: `#/shards/${shard.shard_id}`,
   description: shard.dataset_name || shard.source_uri,
   meta: [
     t('wizard.testCaseSetStep.samples', { count: formatInt(shard.sample_count, locale.value) }),
@@ -80,6 +89,9 @@ const items = computed<SelectablePagedListItem[]>(() => shards.value.map((shard)
   ],
   status: shard.status,
 })));
+
+const generatedShardName = computed(() => wizardState.shardName || wizardState.shardId);
+const generatedShardLink = computed(() => wizardState.shardId ? `#/shards/${wizardState.shardId}` : '');
 
 const listLabels = computed(() => ({
   search: t('wizard.testCaseSetStep.search'),

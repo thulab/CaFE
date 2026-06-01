@@ -36,7 +36,8 @@
             </td>
             <td>
               <div class="selectable-main">
-                <span class="selectable-title">{{ item.title }}</span>
+                <a v-if="item.href" class="selectable-title text-link" :href="item.href">{{ item.title }}</a>
+                <span v-else class="selectable-title">{{ item.title }}</span>
                 <span v-if="item.description" class="faint">{{ item.description }}</span>
               </div>
             </td>
@@ -77,6 +78,7 @@ import StatusBadge from './StatusBadge.vue';
 interface SelectablePagedListItem {
   id: string;
   title: string;
+  href?: string;
   description?: string;
   meta?: string[];
   status?: string | null;
