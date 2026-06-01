@@ -154,6 +154,7 @@ import RankingPage from './pages/RankingPage.vue';
 import ReportPage from './pages/ReportPage.vue';
 import RunDetailPage from './pages/RunDetailPage.vue';
 import SampleForecastPage from './pages/SampleForecastPage.vue';
+import SampleWindowPreviewPage from './pages/SampleWindowPreviewPage.vue';
 import ShardPage from './pages/ShardPage.vue';
 import TrackPage from './pages/TrackPage.vue';
 import TracksPage from './pages/TracksPage.vue';
@@ -306,6 +307,12 @@ function resolveRoute(): RouteView {
     return {
       component: LoadJobPage, props: { loadJobId: id }, navKey: 'datasets', tier: 'authed',
       crumbs: [HOME_CRUMB.value, { label: t('nav.datasets'), href: '#/datasets' }, { label: t('artifacts.loadJob') }]
+    };
+  }
+  if (parts[0] === 'shards' && id && parts[2] === 'samples' && parts[3]) {
+    return {
+      component: SampleWindowPreviewPage, props: { shardId: id, sampleId: parts[3] }, navKey: 'datasets', tier: 'authed',
+      crumbs: [HOME_CRUMB.value, { label: t('nav.datasets'), href: '#/datasets' }, { label: t('artifacts.shard'), href: `#/shards/${id}` }, { label: shortId(parts[3]) }]
     };
   }
   if (parts[0] === 'shards' && id) {

@@ -92,6 +92,18 @@ function mockFetch() {
         offset
       }));
     }
+    if (url === '/api/samples/sample-1/preview') {
+      return Promise.resolve(jsonResponse({
+        sample_id: 'sample-1',
+        shard_id: 'shard-1',
+        sample_index: 0,
+        history_timestamps: ['2026-01-01T00:00:00', '2026-01-01T01:00:00'],
+        future_timestamps: ['2026-01-01T02:00:00'],
+        target_column_names: ['target'],
+        target_history: [[1], [2]],
+        target_future: [[3]]
+      }));
+    }
     if (url === '/api/benchmarking-runs/run-1/progress') {
       return Promise.resolve(jsonResponse({
         benchmarking_run_id: 'run-1',
@@ -209,6 +221,16 @@ describe('App routes and artifact links', () => {
     await waitFor(() => expect(fetchMock.mock.calls.some((call) => String(call[0]) === '/api/shards/shard-1/samples?limit=10&offset=10')).toBe(true));
     expect(await screen.findByText('Showing 11-12 of 12 samples')).toBeTruthy();
     expect(screen.getByText('Window #11')).toBeTruthy();
+  });
+
+  it('routes test case sample hashes to the real sample preview page', async () => {
+    mockFetch();
+    window.location.hash = '#/shards/shard-1/samples/sample-1';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('heading', { name: 'Sample window preview' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Back to test case set' }).getAttribute('href')).toBe('#/shards/shard-1');
   });
 
   it('continues an unfinished wizard when New evaluation is clicked', async () => {
