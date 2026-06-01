@@ -2,37 +2,19 @@
   <main class="page">
     <header class="page-head">
       <div>
-        <p class="eyebrow">{{ t('wizard.eyebrow') }}</p>
-        <h1>{{ t('wizard.title') }}</h1>
-        <p class="page-sub">
-          {{ t('wizard.subtitle') }}
-        </p>
+        <p class="eyebrow">{{ t('trackCreate.eyebrow') }}</p>
+        <h1>{{ t('trackCreate.title') }}</h1>
+        <p class="page-sub">{{ t('trackCreate.subtitle') }}</p>
       </div>
       <div class="head-actions">
+        <a class="btn secondary sm" href="#/tracks"><Icon name="chevronLeft" :size="15" /> {{ t('trackCreate.backToTracks') }}</a>
         <button class="btn ghost sm" type="button" @click="onReset">
           <Icon name="refresh" :size="15" /> {{ t('common.reset') }}
         </button>
       </div>
     </header>
 
-    <section v-if="!wizardState.entryMode" class="entry-grid" aria-label="Evaluation start options">
-      <button class="entry-card" type="button" @click="selectEntryMode('new-track')">
-        <span class="entry-icon"><Icon name="target" :size="22" /></span>
-        <span class="entry-title">{{ t('wizard.entry.createTrackTitle') }}</span>
-        <span class="entry-desc">{{ t('wizard.entry.createTrackDesc') }}</span>
-        <span class="btn sm">{{ t('wizard.entry.createTrackAction') }} <Icon name="arrowRight" :size="15" /></span>
-      </button>
-      <button class="entry-card" type="button" @click="selectEntryMode('existing-track')">
-        <span class="entry-icon"><Icon name="target" :size="22" /></span>
-        <span class="entry-title">{{ t('wizard.entry.existingTitle') }}</span>
-        <span class="entry-desc">{{ t('wizard.entry.existingDesc') }}</span>
-        <span class="btn secondary sm">{{ t('wizard.entry.existingAction') }} <Icon name="arrowRight" :size="15" /></span>
-      </button>
-    </section>
-
-    <ExistingTrackRunPanel v-else-if="wizardState.entryMode === 'existing-track'" />
-
-    <div v-else class="wizard-layout">
+    <div class="wizard-layout">
       <aside class="wizard-aside">
         <div class="card pad">
           <p class="nav-group-label" style="margin:0 0 8px">{{ t('wizard.progress', { done: completedCount, total: steps.length }) }}</p>
@@ -82,11 +64,11 @@
           <StatusBadge :status="active.complete ? 'complete' : 'pending'" :label="active.complete ? t('common.done') : t('common.inProgress')" />
         </header>
 
-        <component :is="active.component" />
+        <component :is="active.component" v-bind="active.props" />
 
         <footer class="wizard-foot">
           <button class="btn secondary" type="button" @click="goBack">
-            <Icon name="chevronLeft" :size="16" /> {{ t('common.back') }}
+            <Icon name="chevronLeft" :size="16" /> {{ backLabel }}
           </button>
           <p class="status-line">{{ footHint }}</p>
         </footer>
@@ -100,31 +82,29 @@ import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StatusBadge from '../components/ui/StatusBadge.vue';
-import ExistingTrackRunPanel from '../components/tracks/ExistingTrackRunPanel.vue';
 import UploadStep from '../components/wizard/UploadStep.vue';
 import ColumnAndSplitStep from '../components/wizard/ColumnAndSplitStep.vue';
 import TrackStep from '../components/wizard/TrackStep.vue';
 import TestCaseSetStep from '../components/wizard/TestCaseSetStep.vue';
-import RunStep from '../components/wizard/RunStep.vue';
-import ResultStep from '../components/wizard/ResultStep.vue';
-import { goPrev, goToStep, resetWizard, wizardState, type WizardEntryMode } from '../stores/wizard';
+import { goPrev, goToStep, resetWizard, wizardState } from '../stores/wizard';
 
 const { t } = useI18n();
 
 onMounted(() => {
-  if (wizardState.flow !== 'evaluation') resetWizard('evaluation');
+  if (wizardState.flow !== 'track') resetWizard('track');
+  wizardState.flow = 'track';
+  wizardState.entryMode = 'new-track';
+  if (wizardState.step >= stepDefs.value.length) goToStep(0);
 });
 
 const stepDefs = computed(() => [
-  { title: t('wizard.steps.createTrack.title'), kicker: t('wizard.steps.createTrack.kicker'), description: t('wizard.steps.createTrack.description'), component: TrackStep, complete: () => Boolean(wizardState.trackName && wizardState.primaryMetric) },
-  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, complete: () => Boolean(wizardState.preview || wizardState.dataUploadSkipped) },
-  { title: t('wizard.steps.configureSplit.title'), kicker: t('wizard.steps.configureSplit.kicker'), description: t('wizard.steps.configureSplit.description'), component: ColumnAndSplitStep, complete: () => Boolean(wizardState.shardId || wizardState.dataUploadSkipped) },
-  { title: t('wizard.steps.selectTestCases.title'), kicker: t('wizard.steps.selectTestCases.kicker'), description: t('wizard.steps.selectTestCases.description'), component: TestCaseSetStep, complete: () => Boolean(wizardState.trackId) },
-  { title: t('wizard.steps.runModels.title'), kicker: t('wizard.steps.runModels.kicker'), description: t('wizard.steps.runModels.description'), component: RunStep, complete: () => Boolean(wizardState.reportId) },
-  { title: t('wizard.steps.openReport.title'), kicker: t('wizard.steps.openReport.kicker'), description: t('wizard.steps.openReport.description'), component: ResultStep, complete: () => Boolean(wizardState.reportId) }
+  { title: t('wizard.steps.createTrack.title'), kicker: t('wizard.steps.createTrack.kicker'), description: t('wizard.steps.createTrack.description'), component: TrackStep, props: {}, complete: () => Boolean(wizardState.trackName && wizardState.primaryMetric) },
+  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, props: {}, complete: () => Boolean(wizardState.preview || wizardState.dataUploadSkipped) },
+  { title: t('wizard.steps.configureSplit.title'), kicker: t('wizard.steps.configureSplit.kicker'), description: t('wizard.steps.configureSplit.description'), component: ColumnAndSplitStep, props: {}, complete: () => Boolean(wizardState.shardId || wizardState.dataUploadSkipped) },
+  { title: t('wizard.steps.selectTestCases.title'), kicker: t('wizard.steps.selectTestCases.kicker'), description: t('wizard.steps.selectTestCases.description'), component: TestCaseSetStep, props: { completion: 'open-track' }, complete: () => Boolean(wizardState.trackId) },
 ]);
 
-const current = computed(() => wizardState.step);
+const current = computed(() => Math.min(wizardState.step, stepDefs.value.length - 1));
 
 const steps = computed(() => {
   const flags = stepDefs.value.map((s) => s.complete());
@@ -139,6 +119,7 @@ const steps = computed(() => {
 const active = computed(() => steps.value[current.value]);
 const completedCount = computed(() => steps.value.filter((s) => s.complete).length);
 const progressPct = computed(() => Math.round((completedCount.value / steps.value.length) * 100));
+const backLabel = computed(() => current.value === 0 ? t('trackCreate.backToTracks') : t('common.back'));
 
 const footHint = computed(() => {
   if (active.value.complete) return t('wizard.footComplete');
@@ -150,24 +131,17 @@ const artifacts = computed(() => {
   if (wizardState.manifestId) out.push({ name: t('artifacts.datasetManifest'), href: `#/datasets/${wizardState.manifestId}`, icon: 'database' });
   if (wizardState.loadJobId) out.push({ name: t('artifacts.loadJob'), href: `#/load-jobs/${wizardState.loadJobId}`, icon: 'file' });
   if (wizardState.shardId) out.push({ name: t('artifacts.shard'), href: `#/shards/${wizardState.shardId}`, icon: 'layers' });
-  if (wizardState.trackId) out.push({ name: t('artifacts.track'), href: `#/tracks/${wizardState.trackId}`, icon: 'target' });
-  if (wizardState.runId) out.push({ name: t('artifacts.run'), href: `#/runs/${wizardState.runId}`, icon: 'activity' });
-  if (wizardState.reportId) out.push({ name: t('artifacts.report'), href: `#/reports/${wizardState.reportId}`, icon: 'barChart' });
   return out;
 });
 
 function onReset() {
-  resetWizard('evaluation');
-}
-
-function selectEntryMode(mode: Exclude<WizardEntryMode, ''>) {
-  wizardState.entryMode = mode;
-  if (mode === 'new-track') goToStep(0);
+  resetWizard('track');
+  wizardState.entryMode = 'new-track';
 }
 
 function goBack() {
   if (current.value === 0) {
-    wizardState.entryMode = '';
+    window.location.hash = '#/tracks';
     return;
   }
   goPrev();

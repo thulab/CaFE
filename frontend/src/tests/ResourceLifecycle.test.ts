@@ -37,6 +37,8 @@ describe('resource lifecycle UI', () => {
     render(TracksPage, { global: { plugins: [i18n] } });
 
     expect(await screen.findByText('Active track')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create track' })).toBeTruthy();
+    expect(screen.queryByLabelText('Track name')).toBeNull();
     expect(screen.queryByText('Archived track')).toBeNull();
 
     await fireEvent.click(screen.getByLabelText('Show archived'));
@@ -161,5 +163,43 @@ describe('resource lifecycle UI', () => {
     expect(await screen.findByText('Archived track')).toBeTruthy();
     expect((await screen.findAllByText('Archived')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('button', { name: 'Start run' })).toBeNull();
+  });
+
+  it('shows the test case sets that compose a track', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === '/api/tracks/track-1') {
+        return jsonResponse({ track_id: 'track-1', name: 'Energy track', primary_metric_id: 'mase', status: 'ready', shard_ids: ['shard-1'], shard_count: 1, sample_count: 20 });
+      }
+      if (url === '/api/shards/shard-1') {
+        return jsonResponse({
+          shard_id: 'shard-1',
+          name: 'Energy validation cases',
+          dataset_name: 'Energy dataset',
+          dataset_manifest_id: 'manifest-1',
+          source_uri: '/tmp/energy.csv',
+          status: 'ready',
+          row_count: 96,
+          sample_count: 20,
+          target_columns: ['load'],
+          target_dim: 1,
+          context_length: 60,
+          horizon: 16,
+          stride: 16
+        });
+      }
+      if (url === '/api/models') return jsonResponse({ items: [] });
+      if (url === '/api/benchmarking-runs?limit=200&track_id=track-1') return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
+      if (url === '/api/tracks/track-1/ranking?metric=mase&policy=latest_valid_result') return jsonResponse({ items: [] });
+      return jsonResponse({});
+    });
+
+    render(TrackPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Energy track')).toBeTruthy();
+    const link = await screen.findByRole('link', { name: 'Energy validation cases' });
+    expect(link.getAttribute('href')).toBe('#/shards/shard-1');
+    expect(screen.getByText('Energy dataset')).toBeTruthy();
+    expect(screen.getByText('Context 60 · Horizon 16 · Stride 16')).toBeTruthy();
   });
 });

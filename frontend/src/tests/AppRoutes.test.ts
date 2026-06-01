@@ -284,6 +284,16 @@ describe('App routes and artifact links', () => {
     expect(await screen.findByText('All evaluation tracks you created or can access.')).toBeTruthy();
   });
 
+  it('routes track creation to the standalone track wizard', async () => {
+    mockFetch();
+    window.location.hash = '#/tracks/new';
+
+    render(App, { global: { plugins: [i18n] } });
+
+    expect((await screen.findAllByRole('heading', { name: 'Create track' })).length).toBeGreaterThan(0);
+    expect(screen.getByText('Name the benchmark track, add or reuse test case sets, then save it for future runs.')).toBeTruthy();
+  });
+
   it('exposes view links for created workflow artifacts', async () => {
     mockFetch();
     wizardState.preview = {

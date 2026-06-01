@@ -156,6 +156,7 @@ import RunDetailPage from './pages/RunDetailPage.vue';
 import SampleForecastPage from './pages/SampleForecastPage.vue';
 import SampleWindowPreviewPage from './pages/SampleWindowPreviewPage.vue';
 import ShardPage from './pages/ShardPage.vue';
+import TrackCreateWizardPage from './pages/TrackCreateWizardPage.vue';
 import TrackPage from './pages/TrackPage.vue';
 import TracksPage from './pages/TracksPage.vue';
 import LoginPage from './pages/LoginPage.vue';
@@ -319,6 +320,12 @@ function resolveRoute(): RouteView {
     return {
       component: ShardPage, props: { shardId: id }, navKey: 'datasets', tier: 'authed',
       crumbs: [HOME_CRUMB.value, { label: t('nav.datasets'), href: '#/datasets' }, { label: t('artifacts.shard') }]
+    };
+  }
+  if (parts[0] === 'tracks' && id === 'new') {
+    return {
+      component: TrackCreateWizardPage, props: {}, navKey: 'tracks', tier: 'authed',
+      crumbs: [HOME_CRUMB.value, { label: t('nav.tracks'), href: '#/tracks' }, { label: t('trackCreate.title') }]
     };
   }
   if (parts[0] === 'tracks' && id) {

@@ -46,7 +46,7 @@ import { createRealDatasetTrack } from '../../api/tracks';
 import type { ShardDTO } from '../../api/types';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { formatInt } from '../../lib/format';
-import { goNext, wizardState } from '../../stores/wizard';
+import { goNext, resetWizard, wizardState } from '../../stores/wizard';
 import Icon from '../ui/Icon.vue';
 import SelectablePagedList from '../ui/SelectablePagedList.vue';
 
@@ -60,6 +60,9 @@ type SelectablePagedListItem = {
 };
 
 const { t, locale } = useI18n();
+const props = withDefaults(defineProps<{ completion?: 'next' | 'open-track' }>(), {
+  completion: 'next',
+});
 const limit = 10;
 const search = ref('');
 const offset = ref(0);
@@ -142,6 +145,12 @@ async function createTrack() {
     wizardState.trackId = result.track_id;
     wizardState.capabilityBlockId = result.capability_block_id;
     wizardState.rankingListId = result.ranking_list_id;
+    if (props.completion === 'open-track') {
+      const trackId = result.track_id;
+      resetWizard('evaluation');
+      window.location.hash = `#/tracks/${trackId}`;
+      return;
+    }
     goNext();
   } catch (caught) {
     setError(caught, 'wizard.testCaseSetStep.errors.failedToCreateTrack');

@@ -3,10 +3,12 @@ import type { UploadPreviewDTO } from '../api/types';
 import type { MessageState } from '../lib/errors';
 
 export type WizardEntryMode = '' | 'new-track' | 'existing-track';
+export type WizardFlow = 'evaluation' | 'track';
 export type WizardResourceType = 'dataset_manifest' | 'load_job' | 'shard' | 'track' | 'ranking' | 'run' | 'report' | 'sample_forecast';
 export const WIZARD_STORAGE_KEY = 'tsbenchmark:wizard:draft:v1';
 
 type WizardSnapshot = {
+  flow: WizardFlow;
   entryMode: WizardEntryMode;
   step: number;
   preview: UploadPreviewDTO | null;
@@ -29,6 +31,7 @@ type WizardSnapshot = {
 };
 
 export const wizardState = reactive({
+  flow: 'evaluation' as WizardFlow,
   entryMode: '' as WizardEntryMode,
   step: 0,
   preview: null as UploadPreviewDTO | null,
@@ -79,8 +82,9 @@ export function goPrev() {
   goToStep(wizardState.step - 1);
 }
 
-export function resetWizard() {
+export function resetWizard(flow: WizardFlow = 'evaluation') {
   suppressPersist = true;
+  wizardState.flow = flow;
   wizardState.entryMode = '';
   wizardState.step = 0;
   wizardState.preview = null;
@@ -133,10 +137,11 @@ export function hasWizardDraft() {
 }
 
 export function hasIncompleteWizardDraft() {
-  return hasWizardDraft() && !wizardState.reportId;
+  return wizardState.flow === 'evaluation' && hasWizardDraft() && !wizardState.reportId;
 }
 
 export function wizardMatchesResource(resourceType: WizardResourceType, resourceId: string) {
+  if (wizardState.flow !== 'evaluation') return false;
   if (!resourceId || !hasWizardDraft()) return false;
   if (resourceType === 'dataset_manifest') return wizardState.manifestId === resourceId;
   if (resourceType === 'load_job') return wizardState.loadJobId === resourceId;
@@ -176,6 +181,7 @@ function clearWizardDraft() {
 
 function applySnapshot(value: Partial<WizardSnapshot>) {
   suppressPersist = true;
+  wizardState.flow = normalizeFlow(value.flow);
   wizardState.entryMode = normalizeEntryMode(value.entryMode);
   wizardState.step = clampStep(value.step);
   wizardState.preview = value.preview ?? null;
@@ -201,6 +207,7 @@ function applySnapshot(value: Partial<WizardSnapshot>) {
 
 function snapshot(): WizardSnapshot {
   return {
+    flow: wizardState.flow,
     entryMode: wizardState.entryMode,
     step: wizardState.step,
     preview: wizardState.preview,
@@ -239,4 +246,8 @@ function normalizeEntryMode(value: unknown): WizardEntryMode {
   if (value === 'existing-track') return 'existing-track';
   if (value === 'new-track' || value === 'upload') return 'new-track';
   return '';
+}
+
+function normalizeFlow(value: unknown): WizardFlow {
+  return value === 'track' ? 'track' : 'evaluation';
 }
