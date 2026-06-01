@@ -17,7 +17,6 @@ def loaded_shard_id(client: TestClient) -> str:
             "source_uri": upload["source_uri"],
             "file_format": "csv",
             "time_column": "time",
-            "value_columns": ["target"],
         },
     ).json()
     job = client.post(

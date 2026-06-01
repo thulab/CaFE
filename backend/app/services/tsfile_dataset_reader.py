@@ -20,7 +20,7 @@ class TsFileDatasetReader:
         self,
         path: Path,
         time_column: str,
-        value_columns: list[str] | None = None,
+        target_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
         del time_column  # TsFile 时间为内建轴，无具名时间列
@@ -31,7 +31,7 @@ class TsFileDatasetReader:
             series = list(tf.list_timeseries())
             if not series:
                 raise ApiError("tsfile_empty", "tsfile contains no timeseries", {"path": str(path)})
-            selected_series, columns = _resolve_series_selection(series, value_columns)
+            selected_series, columns = _resolve_series_selection(series, target_columns)
 
             ts_ms = [int(value) for value in tf[selected_series[0]].timestamps[:]]
             row_count = len(ts_ms)
@@ -49,7 +49,7 @@ class TsFileDatasetReader:
             columns=columns,
             rows=[{} for _ in range(row_count)],
             timestamps=timestamps,
-            value_columns=columns,
+            target_columns=columns,
             values=values,
             frequency=inferred_frequency,
             encoding="tsfile",
@@ -65,16 +65,24 @@ def tsfile_field_name(series_name: str) -> str:
     return series_name.split(".")[-1]
 
 
-def _resolve_series_selection(series: list[str], value_columns: list[str] | None) -> tuple[list[str], list[str]]:
-    """Resolve manifest value_columns to concrete TsFile series paths.
+def _resolve_series_selection(series: list[str], target_columns: list[str] | None) -> tuple[list[str], list[str]]:
+    """Resolve target columns to concrete TsFile series paths.
 
-    For ordinary single-device files, value_columns are measurement names. For
+    For ordinary single-device files, target columns are measurement names. For
     TimeBench table-model shards that contain many timeseries_id tag values,
     callers may pass full series paths (e.g. ``table.device.value``) to select
     one device from a multi-device file.
     """
-    if value_columns and all(column in series for column in value_columns):
-        selected_series = list(value_columns)
+    selected_targets = list(target_columns or [])
+    if len(selected_targets) != 1:
+        raise ApiError(
+            "tsfile_target_columns_invalid",
+            "exactly one target column must be selected",
+            {"target_columns": selected_targets},
+        )
+
+    if all(column in series for column in selected_targets):
+        selected_series = selected_targets
         devices = {tsfile_device_path(name) for name in selected_series}
         if len(devices) != 1:
             raise ApiError(
@@ -82,27 +90,24 @@ def _resolve_series_selection(series: list[str], value_columns: list[str] | None
                 "MVP supports exactly one selected device per tsfile",
                 {"devices": sorted(devices)},
             )
-        return selected_series, list(value_columns)
+        return selected_series, selected_targets
 
     devices = {tsfile_device_path(name) for name in series}
     if len(devices) != 1:
         raise ApiError(
             "tsfile_multiple_devices",
-            "MVP supports exactly one device per tsfile unless value_columns selects full series paths",
+            "MVP supports exactly one device per tsfile unless target_columns selects one full series path",
             {"devices": sorted(devices)[:50], "device_count": len(devices)},
         )
     prefix = next(iter(devices))
     discovered = [tsfile_field_name(name) for name in series if name.startswith(prefix + ".")]
 
-    if value_columns:
-        missing = [column for column in value_columns if column not in discovered]
-        if missing:
-            raise ApiError(
-                "tsfile_value_column_missing",
-                "requested value column not found in tsfile",
-                {"missing": missing, "available": discovered},
-            )
-        columns = list(value_columns)
-    else:
-        columns = discovered
+    missing = [column for column in selected_targets if column not in discovered]
+    if missing:
+        raise ApiError(
+            "tsfile_target_column_missing",
+            "requested target column not found in tsfile",
+            {"missing": missing, "available": discovered},
+        )
+    columns = selected_targets
     return [f"{prefix}.{column}" for column in columns], columns

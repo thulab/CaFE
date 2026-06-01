@@ -11,7 +11,7 @@ def create_track(client: TestClient) -> tuple[str, str]:
         upload = client.post("/dataset-manifests/upload", files={"file": ("valid_hourly_20.csv", file, "text/csv")}).json()
     manifest = client.post(
         "/dataset-manifests",
-        json={"name": "valid hourly", "domain": "energy", "source_uri": upload["source_uri"], "file_format": "csv", "time_column": "time", "value_columns": ["target"]},
+        json={"name": "valid hourly", "domain": "energy", "source_uri": upload["source_uri"], "file_format": "csv", "time_column": "time"},
     ).json()
     job = client.post(
         "/dataset-load-jobs",

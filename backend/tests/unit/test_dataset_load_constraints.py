@@ -14,7 +14,7 @@ def make_session():
 
 def test_manifest_allows_many_failed_load_jobs_but_only_one_succeeded_job():
     with make_session() as session:
-        manifest = DatasetManifest(name="demo", domain="energy", source_uri="file.csv", time_column="time", target_columns=["target"])
+        manifest = DatasetManifest(name="demo", domain="energy", source_uri="file.csv", time_column="time")
         session.add(manifest)
         session.commit()
 
@@ -32,7 +32,7 @@ def test_manifest_allows_many_failed_load_jobs_but_only_one_succeeded_job():
 
 def test_manifest_allows_only_one_successful_real_shard():
     with make_session() as session:
-        manifest = DatasetManifest(name="demo", domain="energy", source_uri="file.csv", time_column="time", target_columns=["target"])
+        manifest = DatasetManifest(name="demo", domain="energy", source_uri="file.csv", time_column="time")
         session.add(manifest)
         session.commit()
 

@@ -15,7 +15,7 @@ def test_mvp_benchmarking_flow_from_csv_upload_to_sample_forecast(client):
 
     manifest = client.post(
         "/dataset-manifests",
-        json={"name": "valid hourly", "domain": "energy", "source_uri": source_uri, "file_format": "csv", "time_column": "time", "value_columns": ["target"]},
+        json={"name": "valid hourly", "domain": "energy", "source_uri": source_uri, "file_format": "csv", "time_column": "time"},
     )
     assert manifest.status_code == 200
 

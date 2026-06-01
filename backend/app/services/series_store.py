@@ -22,17 +22,17 @@ class SeriesStore:
         session: Session,
         shard_id: str,
         timestamps: list[datetime],
-        value_columns: list[str],
+        columns: list[str],
         values: list[list[float]],
     ) -> None:
-        """写入 N 行；values 为 [N, C] 行主序，列序对应 value_columns。"""
+        """写入 N 行；values 为 [N, C] 行主序，列序对应 columns。"""
         for row_index, (ts, row) in enumerate(zip(timestamps, values, strict=True)):
             session.add(
                 SeriesPoint(
                     shard_id=shard_id,
                     row_index=row_index,
                     ts=ts.isoformat(),
-                    values_json={col: float(row[i]) for i, col in enumerate(value_columns)},
+                    values_json={col: float(row[i]) for i, col in enumerate(columns)},
                 )
             )
         session.flush()  # 让同事务内的后续切片（算 checksum）可见

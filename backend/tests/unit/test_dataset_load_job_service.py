@@ -22,7 +22,6 @@ def create_manifest(session: Session, source_uri: str) -> DatasetManifest:
         domain="energy",
         source_uri=source_uri,
         time_column="time",
-        value_columns=["target"],
     )
     session.add(manifest)
     session.commit()

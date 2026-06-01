@@ -33,18 +33,18 @@ def _write_tsfile(path, devices=("dev1",), n=8):
 def test_reads_single_device_tsfile_to_dataset_read_result(tmp_path):
     path = tmp_path / "in.tsfile"
     _write_tsfile(path, n=8)
-    result = TsFileDatasetReader().read(path, "time")
-    assert set(result.value_columns) == {"target", "extra"}
+    result = TsFileDatasetReader().read(path, "time", target_columns=["target"])
+    assert result.target_columns == ["target"]
     assert result.row_count == 8
     assert result.frequency == "1h"
     assert result.column_matrix(["target"])[0] == [100.0]
 
 
-def test_value_columns_subset_selects_and_orders(tmp_path):
+def test_target_column_selects_and_orders(tmp_path):
     path = tmp_path / "in.tsfile"
     _write_tsfile(path, n=6)
-    result = TsFileDatasetReader().read(path, "time", value_columns=["target"])
-    assert result.value_columns == ["target"]
+    result = TsFileDatasetReader().read(path, "time", target_columns=["target"])
+    assert result.target_columns == ["target"]
     assert len(result.values[0]) == 1
 
 
@@ -52,7 +52,7 @@ def test_multiple_devices_rejected(tmp_path):
     path = tmp_path / "multi.tsfile"
     _write_tsfile(path, devices=("dev1", "dev2"), n=4)
     with pytest.raises(ApiError) as exc:
-        TsFileDatasetReader().read(path, "time")
+        TsFileDatasetReader().read(path, "time", target_columns=["target"])
     assert exc.value.error_code == "tsfile_multiple_devices"
 
 
@@ -60,9 +60,9 @@ def test_full_series_path_selects_one_device_from_multi_device_tsfile(tmp_path):
     path = tmp_path / "multi.tsfile"
     _write_tsfile(path, devices=("dev1", "dev2"), n=4)
 
-    result = TsFileDatasetReader().read(path, "time", value_columns=["tsbench.dev2.target"])
+    result = TsFileDatasetReader().read(path, "time", target_columns=["tsbench.dev2.target"])
 
-    assert result.value_columns == ["tsbench.dev2.target"]
+    assert result.target_columns == ["tsbench.dev2.target"]
     assert result.row_count == 4
     assert result.values[0] == [100.0]
 
@@ -72,9 +72,9 @@ def test_full_series_paths_must_share_one_device(tmp_path):
     _write_tsfile(path, devices=("dev1", "dev2"), n=4)
 
     with pytest.raises(ApiError) as exc:
-        TsFileDatasetReader().read(path, "time", value_columns=["tsbench.dev1.target", "tsbench.dev2.target"])
+        TsFileDatasetReader().read(path, "time", target_columns=["tsbench.dev1.target", "tsbench.dev2.target"])
 
-    assert exc.value.error_code == "tsfile_multiple_devices"
+    assert exc.value.error_code == "tsfile_target_columns_invalid"
 
 
 def test_tsfile_epoch_timestamps_are_not_converted_through_local_timezone(tmp_path, monkeypatch):
@@ -91,7 +91,7 @@ def test_tsfile_epoch_timestamps_are_not_converted_through_local_timezone(tmp_pa
     time.tzset()
 
     try:
-        result = TsFileDatasetReader().read(path, "time", value_columns=["target"])
+        result = TsFileDatasetReader().read(path, "time", target_columns=["target"])
     finally:
         if original_tz is None:
             monkeypatch.delenv("TZ", raising=False)
@@ -128,10 +128,36 @@ def test_tsfile_input_load_flow_stores_into_sqlite(tmp_path):
         )
         assert job.status == "succeeded", job.error_message
         shard = session.get(Shard, job.output_shard_id)
-        assert set(shard.value_columns) == {"target", "extra"}
         assert shard.target_columns == ["target"]
 
         rows = session.exec(select(SeriesPoint).where(SeriesPoint.shard_id == shard.shard_id)).all()
         assert len(rows) == 20
         assert rows[0].values_json["target"] == 100.0
-        assert rows[0].values_json["extra"] == 20.0
+        assert "extra" not in rows[0].values_json
+
+
+def test_tsfile_load_flow_selects_full_series_target_without_manifest_value_columns(tmp_path):
+    path = tmp_path / "multi-flow.tsfile"
+    _write_tsfile(path, devices=("dev1", "dev2"), n=20)
+
+    get_settings().runtime_dir.mkdir(parents=True, exist_ok=True)
+    engine = create_db_engine()
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        manifest = DatasetManifest(
+            name="x", domain="d", source_uri=str(path), file_format="tsfile", time_column="time"
+        )
+        session.add(manifest)
+        session.commit()
+        session.refresh(manifest)
+
+        job = DatasetLoadService(tmp_path).create_load_job(
+            session,
+            manifest.dataset_manifest_id,
+            {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["tsbench.dev2.target"]},
+        )
+
+        assert job.status == "succeeded", job.error_message
+        shard = session.get(Shard, job.output_shard_id)
+        assert shard.target_columns == ["tsbench.dev2.target"]
+        assert "value_columns" not in shard.model_dump()

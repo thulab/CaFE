@@ -23,7 +23,6 @@ def test_dataset_load_flow_uploads_manifest_loads_shard_and_previews_samples(cli
             "source_uri": upload_body["source_uri"],
             "file_format": "csv",
             "time_column": "time",
-            "value_columns": ["target"],
         },
     )
     assert manifest.status_code == 200

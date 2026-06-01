@@ -16,7 +16,6 @@ def _seed_manifest(session: Session, name: str) -> str:
         domain="energy",
         source_uri=f"/tmp/{name}.csv",
         time_column="time",
-        value_columns=["target"],
     )
     session.add(m)
     session.commit()

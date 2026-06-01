@@ -15,7 +15,6 @@ def create_loaded_track_with_models(session: Session, runtime_dir: Path, model_c
         domain="energy",
         source_uri=str(source),
         time_column="time",
-        value_columns=["target"],
     )
     session.add(manifest)
     session.commit()

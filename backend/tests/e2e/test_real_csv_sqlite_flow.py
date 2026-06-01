@@ -1,8 +1,7 @@
-"""真实 CSV 走新通路端到端：全列摄入 → SQLite SeriesPoint → 指针切片 → ModelInput → MASE。
+"""真实 CSV 走单目标通路端到端：目标列 → SQLite SeriesPoint → 指针切片 → ModelInput → MASE。
 
 用仓库根 test/flow_template.csv（time,target,extra 三列全数值），验证：
-- extra 列被摄入到 SQLite 的 SeriesPoint（不再像旧 reader 那样被丢弃，也不再走 TsFile）；
-- 仍只用 target 作预测目标；
+- 只有 target 列被摄入到 SQLite 的 SeriesPoint；
 - run 终态 succeeded，默认榜单指标为 mase。
 """
 from pathlib import Path
@@ -22,7 +21,6 @@ def test_real_csv_full_column_ingest_sqlite_and_mase_ranking(app, client):
     assert upload.status_code == 200
     source_uri = upload.json()["source_uri"]
 
-    # value_columns 省略 → 自动摄入除 time 外的所有数值列（target + extra）。
     manifest = client.post(
         "/dataset-manifests",
         json={"name": "flow template", "domain": "demo", "source_uri": source_uri, "file_format": "csv", "time_column": "time"},
@@ -42,19 +40,18 @@ def test_real_csv_full_column_ingest_sqlite_and_mase_ranking(app, client):
     shard_id = job.json()["output_shard_id"]
 
     shard = client.get(f"/shards/{shard_id}").json()
-    # 全列摄入：extra 进了存储；目标仍是 target。
-    assert set(shard["value_columns"]) == {"target", "extra"}
+    assert "value_columns" not in shard
     assert shard["target_columns"] == ["target"]
     assert shard["sample_count"] == 3
 
-    # 直接查 SQLite SeriesPoint 证明 extra 列真的入库且值与 CSV 一致（前 3 行 20.0/20.4/20.8）。
+    # 直接查 SQLite SeriesPoint 证明只入库 target 列，extra 不再作为协变量预留。
     with Session(app.state.engine) as session:
         rows = session.exec(
             select(SeriesPoint)
             .where(SeriesPoint.shard_id == shard_id, SeriesPoint.row_index < 3)
             .order_by(SeriesPoint.row_index)
         ).all()
-    assert [row.values_json["extra"] for row in rows] == [20.0, 20.4, 20.8]
+    assert [row.values_json for row in rows] == [{"target": 100.0}, {"target": 101.5}, {"target": 103.0}]
 
     track = client.post("/wizard/real-dataset-track", json={"name": "real track", "shard_ids": [shard_id]})
     assert track.status_code == 200

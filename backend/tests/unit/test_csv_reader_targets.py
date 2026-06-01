@@ -13,17 +13,17 @@ def test_string_values_are_converted_to_float(tmp_path):
     assert result.column_matrix(["target"]) == [[1.25], [2.5]]
 
 
-def test_multiple_value_columns_are_allowed(tmp_path):
+def test_multiple_target_columns_are_rejected(tmp_path):
     path = write_csv(tmp_path, "time,a,b\n2026-01-01 00:00:00,1,2\n2026-01-01 01:00:00,3,4\n")
 
-    result = CsvDatasetReader().read(path, "time", ["a", "b"])
+    with pytest.raises(ApiError) as exc:
+        CsvDatasetReader().read(path, "time", ["a", "b"])
 
-    assert result.value_columns == ["a", "b"]
-    assert result.values == [[1.0, 2.0], [3.0, 4.0]]
+    assert exc.value.error_code == "csv_target_columns_invalid"
 
 
 @pytest.mark.parametrize(
-    ("content", "value_columns", "code"),
+    ("content", "target_columns", "code"),
     [
         ("time,target\n2026-01-01 00:00:00,\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_missing"),
         ("time,target\n2026-01-01 00:00:00,nope\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_not_float"),
@@ -31,10 +31,10 @@ def test_multiple_value_columns_are_allowed(tmp_path):
         ("time,target\n2026-01-01 00:00:00,Inf\n2026-01-01 01:00:00,2\n", ["target"], "csv_value_not_finite"),
     ],
 )
-def test_value_validation_errors(tmp_path, content, value_columns, code):
+def test_value_validation_errors(tmp_path, content, target_columns, code):
     path = write_csv(tmp_path, content)
 
     with pytest.raises(ApiError) as exc:
-        CsvDatasetReader().read(path, "time", value_columns)
+        CsvDatasetReader().read(path, "time", target_columns)
 
     assert exc.value.error_code == code

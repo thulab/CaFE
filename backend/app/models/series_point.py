@@ -11,8 +11,8 @@ from app.core.time import utc_now
 class SeriesPoint(SQLModel, table=True):
     """per-shard 原始序列的逐点行存储（SQLite 单一真值源）。
 
-    一行 = 一个时间点；`values_json` 为该点各 value 列的 {列名: 值}，自描述、
-    不依赖 value_columns 顺序。样本读取按 `(shard_id, row_index)` 范围查询。
+    一行 = 一个时间点；`values_json` 为该点目标列的 {列名: 值}，自描述。
+    样本读取按 `(shard_id, row_index)` 范围查询。
     """
 
     series_point_id: str = Field(default_factory=new_id, primary_key=True)

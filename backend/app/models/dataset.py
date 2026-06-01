@@ -16,7 +16,6 @@ class DatasetManifest(SQLModel, table=True):
     source_uri: str
     file_format: str = "csv"
     time_column: str
-    value_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     frequency: str | None = None
     timezone: str | None = None
     schema_version: str = "dataset_manifest.v1"
@@ -57,7 +56,6 @@ class Shard(SQLModel, table=True):
     time_range_start: str | None = None
     time_range_end: str | None = None
     row_count: int = 0
-    value_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     target_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     target_dim: int = 1
     frequency: str | None = None

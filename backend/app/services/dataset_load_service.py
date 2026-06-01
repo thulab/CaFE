@@ -112,13 +112,6 @@ class DatasetLoadService:
 
     def _execute_job(self, session: Session, manifest: DatasetManifest, job: DatasetLoadJob) -> DatasetLoadJob:
         config = job.split_config
-        read_result = get_dataset_reader(manifest.file_format).read(
-            Path(manifest.source_uri),
-            time_column=manifest.time_column,
-            value_columns=manifest.value_columns or None,
-            frequency=manifest.frequency,
-        )
-
         target_columns = list(config.get("target_columns") or [])
         if len(target_columns) != 1:
             raise ApiError(
@@ -126,13 +119,13 @@ class DatasetLoadService:
                 "exactly one target column must be selected",
                 {"target_columns": target_columns},
             )
-        for target_column in target_columns:
-            if target_column not in read_result.value_columns:
-                raise ApiError(
-                    "load_target_columns_invalid",
-                    "target column must be among the dataset value columns",
-                    {"target_column": target_column, "value_columns": read_result.value_columns},
-                )
+
+        read_result = get_dataset_reader(manifest.file_format).read(
+            Path(manifest.source_uri),
+            time_column=manifest.time_column,
+            target_columns=target_columns,
+            frequency=manifest.frequency,
+        )
 
         windows = build_windows(
             read_result.row_count,
@@ -156,7 +149,6 @@ class DatasetLoadService:
             time_range_start=read_result.timestamps[0].isoformat(),
             time_range_end=read_result.timestamps[-1].isoformat(),
             row_count=read_result.row_count,
-            value_columns=read_result.value_columns,
             target_columns=target_columns,
             target_dim=len(target_columns),
             frequency=read_result.frequency,
@@ -171,7 +163,7 @@ class DatasetLoadService:
         from app.services.sample_store import SampleStore
 
         SeriesStore().write(
-            session, shard.shard_id, read_result.timestamps, read_result.value_columns, read_result.values
+            session, shard.shard_id, read_result.timestamps, read_result.target_columns, read_result.values
         )
         sample_indexes = SampleStore().write_samples(shard.shard_id, windows, target_columns, read_result)
         session.add(shard)
@@ -189,7 +181,6 @@ class DatasetLoadService:
             "sample_count": len(windows),
             "frequency": read_result.frequency,
             "columns": read_result.columns,
-            "value_columns": read_result.value_columns,
             "target_columns": target_columns,
         }
         job.finished_at = utc_now()

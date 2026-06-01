@@ -9,7 +9,7 @@ class DatasetReadResult:
     columns: list[str]
     rows: list[dict[str, str]]
     timestamps: list[datetime]
-    value_columns: list[str]
+    target_columns: list[str]
     values: list[list[float]]
     frequency: str
     encoding: str
@@ -20,8 +20,8 @@ class DatasetReadResult:
         return len(self.rows)
 
     def column_matrix(self, columns: list[str]) -> list[list[float]]:
-        """Return a row-major matrix for the given value columns, shape [row_count, len(columns)]."""
-        indexes = [self.value_columns.index(column) for column in columns]
+        """Return a row-major matrix for the given selected columns, shape [row_count, len(columns)]."""
+        indexes = [self.target_columns.index(column) for column in columns]
         return [[row[index] for index in indexes] for row in self.values]
 
 
@@ -30,7 +30,7 @@ class DatasetReader(Protocol):
         self,
         path: Path,
         time_column: str,
-        value_columns: list[str] | None = None,
+        target_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
         ...

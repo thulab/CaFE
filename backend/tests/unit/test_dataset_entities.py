@@ -16,7 +16,7 @@ def assert_uuid4(value: str) -> None:
 
 def test_core_entities_have_uuid_defaults_statuses_and_json_datetimes():
     entities = [
-        DatasetManifest(name="demo", domain="energy", source_uri="runtime/uploads/demo.csv", time_column="time", target_columns=["target"]),
+        DatasetManifest(name="demo", domain="energy", source_uri="runtime/uploads/demo.csv", time_column="time"),
         DatasetLoadJob(dataset_manifest_id="manifest-1", split_config={"context_length": 6, "horizon": 3}),
         Shard(dataset_manifest_id="manifest-1", load_job_id="load-1", source_uri="file.csv"),
         SampleIndex(shard_id="shard-1", sample_index=0, context_start=0, context_end=5, horizon_start=6, horizon_end=8),

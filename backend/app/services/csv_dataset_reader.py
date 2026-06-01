@@ -16,7 +16,7 @@ class CsvDatasetReader:
         self,
         path: Path,
         time_column: str,
-        value_columns: list[str] | None = None,
+        target_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
         text, encoding = self._read_text(path)
@@ -33,16 +33,20 @@ class CsvDatasetReader:
         if time_column not in columns:
             raise ApiError("csv_time_column_missing", "time_column was not found", {"time_column": time_column})
 
-        # 全列摄入：未显式声明 value_columns 时，除时间列外的所有列都作为数值列。
-        if value_columns:
-            for value_column in value_columns:
-                if value_column not in columns:
-                    raise ApiError("csv_value_column_missing", "value column was not found", {"value_column": value_column})
-            selected = list(value_columns)
-        else:
-            selected = [column for column in columns if column != time_column]
-        if not selected:
-            raise ApiError("csv_no_value_columns", "CSV must contain at least one value column besides the time column")
+        selected = list(target_columns or [])
+        if len(selected) != 1:
+            raise ApiError(
+                "csv_target_columns_invalid",
+                "exactly one target column must be selected",
+                {"target_columns": selected},
+            )
+        for target_column in selected:
+            if target_column not in columns:
+                raise ApiError(
+                    "csv_target_column_missing",
+                    "target column was not found",
+                    {"target_column": target_column},
+                )
 
         dict_rows: list[dict[str, str]] = []
         timestamps: list[datetime] = []
@@ -77,7 +81,7 @@ class CsvDatasetReader:
             columns=columns,
             rows=dict_rows,
             timestamps=timestamps,
-            value_columns=selected,
+            target_columns=selected,
             values=value_matrix,
             frequency=inferred_frequency,
             encoding=encoding,
