@@ -50,7 +50,7 @@ if [[ "${TSBENCHMARK_START_STUB:-1}" != "0" ]]; then
   if curl -fsS \
     --connect-timeout "${TSBENCHMARK_TIMER_PROBE_CONNECT_TIMEOUT_SECONDS:-1}" \
     --max-time "${TSBENCHMARK_TIMER_PROBE_TIMEOUT_SECONDS:-3}" \
-    "http://$stub_host:$stub_port/health/readiness" >/dev/null 2>&1; then
+    "http://$stub_host:$stub_port/health/liveness" >/dev/null 2>&1; then
     echo "stub-service skipped; timer service already responding on http://$stub_host:$stub_port"
   else
     start_service stub-service "$(tsbenchmark_stub_cmd)"
