@@ -59,8 +59,8 @@
 
 - [x] Update docs to describe single target selection only.
 - [x] Update baseline script output so it no longer references `value_columns`.
-- [ ] Stop the local system if running, remove runtime test DB/uploads, and restart if needed.
-- [ ] Run `cd backend && uv run pytest`.
-- [ ] Run `cd frontend && npm test`.
-- [ ] Run `git diff --check`.
-- [ ] Commit docs and cleanup-related code changes.
+- [x] Stop the local system if running, remove runtime test DB/uploads, and restart if needed.
+- [x] Run `cd backend && uv run pytest`.
+- [x] Run `cd frontend && npm test`.
+- [x] Run `git diff --check`.
+- [x] Commit docs and cleanup-related code changes.
