@@ -86,6 +86,12 @@ TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 
 `status-system.sh` 会把过期（进程已不存在）的 pid 文件自动清理掉，再报告 `running` / `stopped`。
 
+### 3.3 Docker 部署入口
+
+如果要部署成 Docker，并让后端连接另一个已经运行的 timer-rest-service 容器或服务地址，
+请看开发者手册里的 [Docker 部署与环境变量](../developer/deployment.md)。那里包含
+`docker compose` 用法、外部推理服务地址配置、runtime volume 说明和完整环境变量表。
+
 ## 4. 模型推理服务与本地桩程序
 
 评测的实际推理通过外部 **timer-rest-service** 的 REST API 完成（契约见 [`docs/reference/rest-api.md`](../reference/rest-api.md)）。服务地址被抽象成配置项，本地无真实服务时可启动桩程序顶上。

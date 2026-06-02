@@ -168,7 +168,7 @@ TSBenchmark 是一项针对时间序列预测模型的动态评测平台。该�
 当前仓库已经实现了这个流程的 Web MVP 与 API 闭环：
 
 - CSV / 单设备表模型 TsFile 输入；
-- 全列数值摄入，目标列在 load job 阶段单选；
+- 单目标列摄入，目标列在 load job 阶段单选；
 - SQLite `SeriesPoint` 逐点行存储作为样本真值源，`SampleIndex` 保存切片指针；
 - 真实数据 shard、能力测试块与 track 生成；
 - 通过 timer-rest-service 或本地桩执行模型评测；
@@ -212,12 +212,18 @@ TSBENCHMARK_BACKEND_PORT=8010 TSBENCHMARK_FRONTEND_PORT=5174 ./scripts/start-sys
 TSBENCHMARK_SYSTEM_DIR=/tmp/tsbenchmark-system ./scripts/status-system.sh
 ```
 
-## 6.x Docker 一键起
+## 6.x Docker 部署
 
-前置：本机安装 Docker Desktop（含 `docker compose` v2）。仓库根目录已提供 `docker-compose.yml`、`backend/Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf`。
+前置：本机安装 Docker（含 `docker compose`）。仓库根目录已提供
+`docker-compose.yml`、`backend/Dockerfile`、`frontend/Dockerfile`、`frontend/nginx.conf`
+和 `.env.example`。
+
+默认 Docker 编排假设推理服务 `timer-rest-service` 已在另一个容器或主机地址运行。
+先复制环境变量模板并填写 JWT 密钥、管理员密码和推理服务地址：
 
 ```bash
-docker compose up --build       # 首次构建并启动
+cp .env.example .env
+docker compose up -d --build
 docker compose down             # 停止；想清掉 sqlite/上传文件加 -v
 ```
 
@@ -226,13 +232,25 @@ docker compose down             # 停止；想清掉 sqlite/上传文件加 -v
 - 前端（nginx 提供静态产物 + 反代 `/api/*`）：`http://localhost:5173`
 - 后端 OpenAPI：`http://localhost:8000/docs`
 
-三个服务：
+默认两个服务：
 
-- `stub`：`timer-rest-service` 桩（与后端共享同一镜像，只是换启动命令），仅集群内部 `10810` 端口可达。
-- `backend`：FastAPI 后端；运行时数据写在命名卷 `runtime`（容器内 `/data`），sqlite/上传 CSV/样本/报告都在里面。
+- `backend`：FastAPI 后端；运行时数据写在命名卷 `tsbenchmark-runtime`（容器内 `/var/lib/tsbenchmark`），SQLite、上传文件、预测和报告都在里面。
 - `frontend`：Vite 构建的静态资源，由 nginx 服务。
 
-切换到真实推理服务：把 `backend` 的环境变量 `TSBENCHMARK_TIMER_SERVICE_BASE_URL` 指向外部地址，并去掉 `stub` 服务即可（`docker compose up backend frontend`）。
+常见推理服务地址：
+
+- 同 Docker 网络：`TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://timer-service:10810`
+- 推理服务发布在宿主机端口：`TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://host.docker.internal:10810`
+
+本地 smoke test 可以用仓库内可选桩服务：
+
+```bash
+TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://stub:10810 \
+docker compose --profile stub up -d --build
+```
+
+完整部署说明和环境变量表见
+[`docs/developer/deployment.md`](docs/developer/deployment.md)。
 
 发布镜像（按需）：
 

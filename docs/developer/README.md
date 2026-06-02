@@ -10,6 +10,7 @@
 | --- | --- |
 | [架构与关键流程](./key-flows.md) | 系统分层架构、错误信封、六大关键流程（数据集接入与样本物化 / 赛道与能力块 / **评测运行执行** / 模型推理接入 / 榜单计算 / 样本预测视图）、本地桩服务行为、API 端点速查表、扩展指引 |
 | [数据模型](./data-model.md) | 全部 23 个 SQLModel 实体设计（字段表 + 状态枚举 + ER 图）、3 类落盘产物（sample.v1 / forecast.v1 / report JSON）、传输层 DTO、关键不变量与生命周期 |
+| [Docker 部署与环境变量](./deployment.md) | Docker Compose 部署、外部推理服务地址配置、runtime volume、镜像发布，以及完整 `TSBENCHMARK_*` 环境变量表 |
 
 ## 系统速览
 
@@ -60,4 +61,4 @@ cd frontend && npm run test:e2e           # 前端 smoke
 bash scripts/tests/test_system_scripts.sh # 脚本测试
 ```
 
-更多环境变量、启停细节与排障见[用户手册](../manual/README.md)。
+更多本地使用细节见[用户手册](../manual/README.md)；部署与完整环境变量表见[Docker 部署与环境变量](./deployment.md)。
