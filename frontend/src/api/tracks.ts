@@ -3,7 +3,7 @@ import type { TrackDTO } from './types';
 import { buildListQuery } from './shared';
 
 export function listTracks(params: { includeArchived?: boolean } = {}) {
-  return apiRequest<{ items: TrackDTO[]; total?: number }>(
+  return apiRequest<{ items: TrackDTO[]; total: number }>(
     `/tracks${buildListQuery({ include_archived: params.includeArchived || undefined })}`
   );
 }

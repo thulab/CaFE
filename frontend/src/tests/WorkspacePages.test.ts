@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { i18n, setLocale } from '../i18n';
 import DatasetsPage from '../pages/DatasetsPage.vue';
 import HomePage from '../pages/HomePage.vue';
 import RunDetailPage from '../pages/RunDetailPage.vue';
 import RunsPage from '../pages/RunsPage.vue';
+import { authState } from '../stores/auth';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -25,14 +26,50 @@ function stubBackend(byPath: Record<string, unknown>) {
 }
 
 describe('workspace pages', () => {
-  beforeEach(() => setLocale('en-US'));
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    setLocale('en-US');
+    authState.user = {
+      user_id: 'admin-test',
+      username: 'admin',
+      email: null,
+      is_active: true,
+      is_superuser: true,
+      roles: ['admin'],
+      permissions: [],
+    };
+  });
+  afterEach(() => {
+    authState.user = null;
+    vi.restoreAllMocks();
+  });
 
   it('HomePage renders the empty activity state when backend has nothing', async () => {
     stubBackend({});
     render(HomePage, { global: { plugins: [i18n] } });
     expect(screen.getByRole('heading', { name: 'Workbench overview' })).toBeTruthy();
     expect(await screen.findByText('No activity yet')).toBeTruthy();
+  });
+
+  it('HomePage shows the track total in the workspace overview stats', async () => {
+    stubBackend({
+      '/dataset-manifests': { items: [], total: 3, limit: 1, offset: 0 },
+      '/shards': { items: [], total: 4, limit: 1, offset: 0 },
+      '/tracks': { items: [], total: 2 },
+      '/benchmarking-runs': { items: [], total: 5, limit: 1, offset: 0 },
+      '/reports': { items: [], total: 6, limit: 1, offset: 0 },
+    });
+
+    render(HomePage, { global: { plugins: [i18n] } });
+
+    const datasetsTile = screen.getByRole('link', { name: /Datasets/ });
+    const tracksTile = screen.getByRole('link', { name: /Tracks/ });
+    const runsTile = screen.getByRole('link', { name: /Runs/ });
+    await waitFor(() => {
+      expect(within(datasetsTile).getByText('7')).toBeTruthy();
+      expect(within(tracksTile).getByText('2')).toBeTruthy();
+      expect(within(runsTile).getByText('5')).toBeTruthy();
+      expect(screen.getByText('6')).toBeTruthy();
+    });
   });
 
   it('DatasetsPage lists manifests and shards from the backend', async () => {

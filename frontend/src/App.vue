@@ -222,7 +222,7 @@ const navItems = computed(() => [
   { key: 'home', label: t('nav.overview'), icon: 'dashboard', href: '#/', count: 0 },
   { key: 'new', label: topbarEvaluationLabel.value, icon: hasActiveDraft.value ? 'arrowRight' : 'sparkles', href: '#/new', count: 0 },
   { key: 'datasets', label: t('nav.datasets'), icon: 'database', href: '#/datasets', count: countsState.counts.datasets + countsState.counts.shards },
-  { key: 'tracks', label: t('nav.tracks'), icon: 'target', href: '#/tracks', count: 0 },
+  { key: 'tracks', label: t('nav.tracks'), icon: 'target', href: '#/tracks', count: countsState.counts.tracks },
   { key: 'runs', label: t('nav.runs'), icon: 'activity', href: '#/runs', count: countsState.counts.runs },
   { key: 'leaderboards', label: t('nav.leaderboards'), icon: 'trophy', href: '#/leaderboards', count: 0 }
 ]);

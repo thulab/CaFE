@@ -25,11 +25,11 @@
           <span class="stat-value">{{ counts.runs }}</span>
           <span class="stat-foot">{{ t('home.benchmarkingExecutions') }}</span>
         </a>
-        <div class="stat-tile">
+        <a class="stat-tile card interactive" href="#/tracks" style="text-decoration:none">
           <span class="stat-label"><Icon name="target" :size="14" style="vertical-align:-2px" /> {{ t('home.tracks') }}</span>
-          <span class="stat-value">{{ t('common.notAvailable') }}</span>
+          <span class="stat-value">{{ counts.tracks }}</span>
           <span class="stat-foot">{{ t('home.benchmarkTargets') }}</span>
-        </div>
+        </a>
         <div class="stat-tile">
           <span class="stat-label"><Icon name="barChart" :size="14" style="vertical-align:-2px" /> {{ t('home.reports') }}</span>
           <span class="stat-value">{{ counts.reports }}</span>
