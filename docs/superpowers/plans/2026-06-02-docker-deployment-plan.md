@@ -20,12 +20,12 @@
 - Modify: `frontend/package.json`
 - Create: `.env.example`
 
-- [ ] Make backend/frontend the default Compose services and move the stub service behind a `stub` profile.
-- [ ] Configure backend runtime at `/var/lib/tsbenchmark` and publish backend/frontend ports via env defaults.
-- [ ] Add `host.docker.internal:host-gateway` support for Linux host inference services.
-- [ ] Raise nginx upload size to support 748M TsFile uploads.
-- [ ] Add a production frontend build script and use it from the frontend Dockerfile.
-- [ ] Commit Docker configuration changes.
+- [x] Make backend/frontend the default Compose services and move the stub service behind a `stub` profile.
+- [x] Configure backend runtime at `/var/lib/tsbenchmark` and publish backend/frontend ports via env defaults.
+- [x] Add `host.docker.internal:host-gateway` support for Linux host inference services.
+- [x] Raise nginx upload size to support 748M TsFile uploads.
+- [x] Add a production frontend build script and use it from the frontend Dockerfile.
+- [x] Commit Docker configuration changes.
 
 ### Task 2: Deployment And Environment Documentation
 
@@ -35,21 +35,28 @@
 - Modify: `docs/manual/README.md`
 - Modify: `README.md`
 
-- [ ] Document Docker quick start with an external timer-rest-service URL.
-- [ ] Document optional local stub profile for smoke tests.
-- [ ] Add a full environment variable table with defaults, scope, and deployment notes.
-- [ ] Link the deployment guide from the developer manual and user manual.
-- [ ] Fix stale root README wording about full-column ingestion.
-- [ ] Commit documentation changes.
+- [x] Document Docker quick start with an external timer-rest-service URL.
+- [x] Document optional local stub profile for smoke tests.
+- [x] Add a full environment variable table with defaults, scope, and deployment notes.
+- [x] Link the deployment guide from the developer manual and user manual.
+- [x] Fix stale root README wording about full-column ingestion.
+- [x] Commit documentation changes.
 
 ### Task 3: Verification
 
 **Files:**
 - No production file changes expected.
 
-- [ ] Run `docker compose config` with required environment variables.
-- [ ] Run `cd frontend && npm run build`.
-- [ ] Run `docker compose build backend frontend`.
+- [x] Run `docker compose config` with required environment variables.
+- [x] Run `cd frontend && npm run build`.
+- [x] Run `docker compose build backend frontend`.
 - [ ] Run a Compose smoke test on non-default host ports against an external/stub timer service URL.
-- [ ] Run `git diff --check`.
-- [ ] Record verification result in the final response.
+- [x] Run `git diff --check`.
+- [x] Record verification result in the final response.
+
+Verification note: `docker compose build backend frontend` was executed, but this
+machine's configured Docker registry mirrors failed while resolving official base
+image metadata (`python:3.14-slim-bookworm`, `node:22-alpine`, `nginx:1.27-alpine`)
+with size-validation/401/EOF errors. The Compose smoke test could not be run
+without built images. `docker compose config`, `docker compose --profile stub config`,
+and the local frontend production build completed successfully.
