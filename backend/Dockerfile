@@ -1,4 +1,4 @@
-FROM python:3.14-slim-bookworm
+FROM python:3.14-slim-bookworm AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -6,9 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_PYTHON_DOWNLOADS=never \
-    PATH="/opt/venv/bin:$PATH" \
-    TSBENCHMARK_RUNTIME_DIR=/var/lib/tsbenchmark \
-    TSBENCHMARK_DATABASE_URL=sqlite:////var/lib/tsbenchmark/tsbenchmark.db
+    PATH="/opt/venv/bin:$PATH"
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
@@ -17,6 +15,19 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
+
+FROM python:3.14-slim-bookworm
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    TSBENCHMARK_RUNTIME_DIR=/var/lib/tsbenchmark \
+    TSBENCHMARK_DATABASE_URL=sqlite:////var/lib/tsbenchmark/tsbenchmark.db
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
 COPY backend/app ./app
 COPY backend/stub_service ./stub_service
 
