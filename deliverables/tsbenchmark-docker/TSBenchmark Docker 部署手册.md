@@ -51,7 +51,7 @@ tsbenchmark-frontend:latest   约 49 MB
 | 操作系统 | Linux x86_64 / amd64 推荐 | `uname -m` |
 | Docker | 已安装并启动 | `docker --version` |
 | Docker Compose | 支持 `docker compose` 子命令 | `docker compose version` |
-| 磁盘空间 | 建议至少 20 GB 可用空间；如上传大量 TsFile，按数据量额外预留 | `df -h` |
+| 磁盘空间 | 建议至少 5 GB 可用空间；如上传大量 TsFile，按数据量额外预留 | `df -h` |
 | 端口 | 默认需要开放 `5173` 和 `8000` | `ss -tlnp | grep -E ':(5173|8000) '` |
 | 推理服务 | timer-rest-service 已运行，TSBenchmark 后端可访问 | 见第 7 节 |
 
@@ -65,13 +65,13 @@ tsbenchmark-frontend:latest   约 49 MB
 
 ## 4. 部署包清单
 
-建议交付包中包含以下文件：
+交付包中包含以下文件：
 
 ```text
 tsbenchmark-docker-deploy.tar.gz
 ```
 
-解压后目录建议如下：
+解压后目录如下：
 
 ```text
 tsbenchmark-docker/
@@ -151,10 +151,28 @@ tsbenchmark-frontend   latest
 
 ## 7. 修改配置文件 `.env`
 
-部署前必须检查 `.env` 文件。常用配置如下：
+部署前必须检查 `.env` 文件。示例如下：
 
 ```bash
-cat .env
+# Required for backend startup. Use strong random values outside local smoke tests.
+TSBENCHMARK_AUTH_SECRET=replace-with-at-least-32-random-bytes
+TSBENCHMARK_ADMIN_PASSWORD=replace-with-strong-admin-password
+
+# External timer-rest-service address.
+# Same Docker network example: http://timer-service:10810
+# Host-published service example: http://host.docker.internal:10810
+TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://host.docker.internal:10810
+TSBENCHMARK_TIMER_SERVICE_API_PREFIX=/ai/api/v1
+
+# Model execution mode.
+TSBENCHMARK_MODEL_ADAPTER=rest
+TSBENCHMARK_MODEL_LIFECYCLE_MODE=sequential_unload
+TSBENCHMARK_TIMER_SERVICE_MODEL_LOAD_TIMEOUT_SECONDS=600
+TSBENCHMARK_SAMPLE_FORECAST_TIMEOUT_SECONDS=300
+
+# Host ports published by docker-compose.yml.
+TSBENCHMARK_FRONTEND_PUBLISHED_PORT=5173
+TSBENCHMARK_BACKEND_PUBLISHED_PORT=8000
 ```
 
 ### 7.1 必改项：JWT 密钥
@@ -248,24 +266,6 @@ TSBENCHMARK_MODEL_LIFECYCLE_MODE=sequential_unload
 
 ```text
 TSBENCHMARK_MODEL_LIFECYCLE_MODE=keep_loaded
-```
-
-### 7.6 `.env` 示例
-
-```text
-TSBENCHMARK_AUTH_SECRET=请替换为 openssl rand -hex 32 的输出
-TSBENCHMARK_ADMIN_PASSWORD=请替换为现场强密码
-
-TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://host.docker.internal:10810
-TSBENCHMARK_TIMER_SERVICE_API_PREFIX=/ai/api/v1
-
-TSBENCHMARK_MODEL_ADAPTER=rest
-TSBENCHMARK_MODEL_LIFECYCLE_MODE=sequential_unload
-TSBENCHMARK_TIMER_SERVICE_MODEL_LOAD_TIMEOUT_SECONDS=600
-TSBENCHMARK_SAMPLE_FORECAST_TIMEOUT_SECONDS=300
-
-TSBENCHMARK_FRONTEND_PUBLISHED_PORT=5173
-TSBENCHMARK_BACKEND_PUBLISHED_PORT=8000
 ```
 
 ---
@@ -374,15 +374,16 @@ PY
 1. 浏览器打开 `http://<服务器IP>:5173`。
 2. 使用 `admin` 和 `.env` 里的管理员密码登录。
 3. 在左侧进入“新建评测”或“数据集”。
-4. 上传 CSV 或 TsFile。
-5. 选择一个目标列（Target column），设置切片参数：
+4. 创建评测赛道。
+5. 上传 CSV 或 TsFile。
+6. 选择一个目标列（Target column），设置切片参数：
    - Context：历史窗口长度
    - Horizon：预测长度
    - Stride：滑窗步长
    - Max samples：最多生成多少个样本，可留空
-6. 创建切片后，创建赛道。
-7. 选择模型并启动评测。
-8. 评测完成后查看报告、榜单和样本预测曲线。
+7. 生成并选择测试用例集。
+8. 选择模型并启动评测。
+9. 评测完成后查看报告、榜单和样本预测曲线。
 
 说明：
 
@@ -502,37 +503,7 @@ docker compose ps
 
 ## 14. 常见问题
 
-### 14.1 前端能打开，但页面请求报 502
-
-通常是后端容器没启动或还在初始化。
-
-```bash
-docker compose ps
-docker compose logs backend --tail=200
-docker compose logs frontend --tail=100
-```
-
-确认 `tsbenchmark-backend` 是 `Up` 状态。
-
-### 14.2 后端启动失败，日志提示 `TSBENCHMARK_AUTH_SECRET is required`
-
-说明 `.env` 中没有配置 JWT 密钥，或启动目录不对导致 Compose 没读取到 `.env`。
-
-处理：
-
-```bash
-pwd
-ls -la .env docker-compose.yml
-grep TSBENCHMARK_AUTH_SECRET .env
-```
-
-确认在 `docker-compose.yml` 所在目录执行：
-
-```bash
-docker compose up -d
-```
-
-### 14.3 忘记 admin 密码
+### 14.1 忘记 admin 密码
 
 `TSBENCHMARK_ADMIN_PASSWORD` 只在第一次初始化数据库时生效。系统启动过以后，再改 `.env` 不会修改已有密码。
 
@@ -545,7 +516,7 @@ docker compose up -d
 
 注意：这会删除所有已上传数据集、切片、评测结果和报告。
 
-### 14.4 模型列表加载失败
+### 14.2 模型列表加载失败
 
 大概率是后端连不上推理服务。
 
@@ -576,7 +547,7 @@ PY
 - `TSBENCHMARK_TIMER_SERVICE_BASE_URL` 是否填成后端容器可访问的地址；
 - 如果推理服务在宿主机，Linux 下建议使用 `http://host.docker.internal:10810`。
 
-### 14.5 上传大 TsFile 失败
+### 14.3 上传大 TsFile 失败
 
 TSBenchmark 前端 nginx 已允许最大 `2g` 上传。如果仍失败：
 
@@ -591,7 +562,7 @@ docker compose logs backend --tail=100
 - 服务器磁盘空间足够；
 - `tsbenchmark-runtime` volume 所在磁盘没有写满。
 
-### 14.6 端口冲突
+### 14.4 端口冲突
 
 如果 `5173` 或 `8000` 被占用，修改 `.env`：
 
