@@ -7,7 +7,7 @@ RUN npm ci
 
 COPY frontend/index.html frontend/tsconfig.json frontend/vite.config.ts ./
 COPY frontend/src ./src
-RUN ./node_modules/.bin/vite build
+RUN npm run build
 
 
 FROM nginx:1.27-alpine

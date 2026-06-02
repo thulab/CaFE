@@ -7,8 +7,8 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_PYTHON_DOWNLOADS=never \
     PATH="/opt/venv/bin:$PATH" \
-    TSBENCHMARK_RUNTIME_DIR=/data \
-    TSBENCHMARK_DATABASE_URL=sqlite:////data/tsbenchmark.db
+    TSBENCHMARK_RUNTIME_DIR=/var/lib/tsbenchmark \
+    TSBENCHMARK_DATABASE_URL=sqlite:////var/lib/tsbenchmark/tsbenchmark.db
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
@@ -20,7 +20,7 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY backend/app ./app
 COPY backend/stub_service ./stub_service
 
-RUN mkdir -p /data
+RUN mkdir -p /var/lib/tsbenchmark
 
 EXPOSE 8000 10810
 
