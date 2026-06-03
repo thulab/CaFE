@@ -61,7 +61,7 @@ import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import type { RunProgressDTO } from '../../api/types';
 import { percent } from '../../lib/format';
-import { modelMaxTargetCount, modelSupportsTargetDim } from '../../lib/modelLimits';
+import { modelMaxCovariateCount, modelMaxTargetCount, modelSupportsCovariateDim, modelSupportsTargetDim } from '../../lib/modelLimits';
 
 const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 
@@ -72,6 +72,7 @@ const { text: error, clear: clearError, setError } = useDisplayMessage();
 const progress = ref<RunProgressDTO | null>(null);
 const isCreatingRun = ref(false);
 const targetDim = ref(1);
+const covariateDim = ref(0);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const runId = computed(() => wizardState.runId);
@@ -113,7 +114,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => stopPolling());
 
-watch([models, targetDim], pruneIncompatibleSelections);
+watch([models, targetDim, covariateDim], pruneIncompatibleSelections);
 
 function toggleAll() {
   selectedIds.value = allSelected.value ? [] : compatibleModels.value.map((m) => m.model_id);
@@ -145,15 +146,25 @@ function modelStateLabel(model: ModelDTO) {
 }
 
 function modelTargetLimitLabel(model: ModelDTO) {
-  if (targetDim.value <= 1) return '';
-  const maxTargetCount = modelMaxTargetCount(model);
-  if (maxTargetCount === null) return t('wizard.runStep.targetLimitUnboundedSuffix');
-  const count = maxTargetCount ?? 1;
-  return t(count === 1 ? 'wizard.runStep.targetLimitSuffixOne' : 'wizard.runStep.targetLimitSuffixOther', { count });
+  const labels: string[] = [];
+  if (targetDim.value > 1) {
+    const maxTargetCount = modelMaxTargetCount(model);
+    if (maxTargetCount === null) {
+      labels.push(t('wizard.runStep.targetLimitUnboundedSuffix'));
+    } else {
+      const count = maxTargetCount ?? 1;
+      labels.push(t(count === 1 ? 'wizard.runStep.targetLimitSuffixOne' : 'wizard.runStep.targetLimitSuffixOther', { count }));
+    }
+  }
+  if (covariateDim.value > 0) {
+    const count = modelMaxCovariateCount(model);
+    labels.push(t(count === 1 ? 'wizard.runStep.covariateLimitSuffixOne' : 'wizard.runStep.covariateLimitSuffixOther', { count }));
+  }
+  return labels.join('');
 }
 
 function isModelCompatible(model: ModelDTO) {
-  return modelSupportsTargetDim(model, targetDim.value);
+  return modelSupportsTargetDim(model, targetDim.value) && modelSupportsCovariateDim(model, covariateDim.value);
 }
 
 function pruneIncompatibleSelections() {
@@ -166,10 +177,12 @@ async function loadTargetDim() {
   const shardIds = [...wizardState.selectedShardIds];
   if (!shardIds.length) {
     targetDim.value = 1;
+    covariateDim.value = 0;
     return;
   }
   const shards = await Promise.all(shardIds.map((id) => getShard(id)));
   targetDim.value = Math.max(1, ...shards.map((shard) => Number(shard.target_dim || shard.target_columns?.length || 1)));
+  covariateDim.value = Math.max(0, ...shards.map((shard) => Number(shard.covariate_dim || shard.covariate_columns?.length || 0)));
 }
 
 async function poll() {

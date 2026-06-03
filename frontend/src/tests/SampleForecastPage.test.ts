@@ -50,4 +50,24 @@ describe('SampleForecastPage', () => {
 
     expect(await screen.findByRole('img', { name: 'Forecast chart with 1 history step, 1 ground-truth step and 1 model forecast.' })).toBeTruthy();
   });
+
+  it('renders a separate covariate chart when covariates are present', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      sample_id: 's1',
+      target_history: [[1], [2]],
+      target_future: [[3]],
+      covariate_column_names: ['promo', 'temperature'],
+      history_cov: [[0, 21], [1, 22]],
+      future_cov: [[1, 23]],
+      models: [
+        { model_id: 'm1', model_name: 'Chronos', status: 'succeeded', forecast: [[3.1]], metrics: {} }
+      ]
+    }), { status: 200 }));
+
+    render(SampleForecastPage, { props: { sampleId: 's1', runId: 'r1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('img', { name: 'Covariate chart with 2 history steps, 1 future step and 2 covariates.' })).toBeTruthy();
+    expect(screen.getByText('Covariates')).toBeTruthy();
+    expect(screen.getByText('promo')).toBeTruthy();
+  });
 });

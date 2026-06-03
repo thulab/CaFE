@@ -20,6 +20,9 @@
         <div class="card pad">
           <ForecastChart :sample="sample" />
         </div>
+        <div v-if="hasCovariates" class="card pad">
+          <CovariateChart :sample="sample" />
+        </div>
         <div class="card">
           <header class="card-head"><h2 class="card-title">{{ t('sampleForecast.perSampleMetrics') }}</h2></header>
           <div class="card-body">
@@ -44,6 +47,7 @@ import Icon from '../components/ui/Icon.vue';
 import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ForecastChart from '../components/results/ForecastChart.vue';
+import CovariateChart from '../components/results/CovariateChart.vue';
 import SampleMetricTable from '../components/results/SampleMetricTable.vue';
 import { getSampleForecast } from '../api/results';
 import type { SampleForecastDTO } from '../api/types';
@@ -53,6 +57,7 @@ import { shortId } from '../lib/format';
 const props = defineProps<{ sampleId: string; runId: string; reportId?: string }>();
 const { data: sample, loading, error, run } = useAsyncData<SampleForecastDTO>(() => getSampleForecast(props.sampleId, props.runId));
 const failedModels = computed(() => sample.value?.models.filter((m) => m.status !== 'succeeded') || []);
+const hasCovariates = computed(() => Boolean(sample.value?.covariate_column_names?.length));
 const reportLink = computed(() => {
   const reportId = props.reportId || sample.value?.links?.report;
   return reportId ? `#/reports/${reportId}` : '';

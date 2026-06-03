@@ -11,8 +11,8 @@ def test_checksum_is_content_based_and_cross_load_stable():
     read_result = CsvDatasetReader().read(path, "time", ["target"])
     windows = build_windows(read_result.row_count, context_length=6, horizon=3, stride=3)
 
-    a = SampleStore().write_samples("shard-A", windows[:2], ["target"], read_result)
-    b = SampleStore().write_samples("shard-B", windows[:2], ["target"], read_result)
+    a = SampleStore().write_samples("shard-A", windows[:2], ["target"], [], read_result)
+    b = SampleStore().write_samples("shard-B", windows[:2], ["target"], [], read_result)
 
     # 随机 sample_id 不同，但内容相同 → checksum 相同
     assert a[0].sample_id != b[0].sample_id
@@ -27,7 +27,7 @@ def test_storage_ref_records_row_ranges_not_jsonl_line():
     read_result = CsvDatasetReader().read(path, "time", ["target"])
     windows = build_windows(read_result.row_count, context_length=6, horizon=3, stride=3)
 
-    samples = SampleStore().write_samples("shard-1", windows[:2], ["target"], read_result)
+    samples = SampleStore().write_samples("shard-1", windows[:2], ["target"], [], read_result)
 
     assert samples[0].materialized is False
     assert samples[0].storage_ref["context"] == [0, 5]

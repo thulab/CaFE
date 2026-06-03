@@ -129,12 +129,28 @@ class TimerRestAdapter:
         ]
         columns = [self._TIME_COL, *value_cols]
         data = [[history_ts[i], *row] for i, row in enumerate(history)]
-        return {
+        body = {
             "model_id": model.get("remote_model_id") or str(model["model_id"]),
             "targets": [{"columns": columns, "data": data}],
             "output_length": [horizon],
             "time_col": [self._TIME_COL],
         }
+        covariate_cols = sample.get("covariate_column_names") or []
+        if covariate_cols:
+            body["history_covs"] = [
+                {
+                    "columns": [self._TIME_COL, *covariate_cols],
+                    "data": [[history_ts[i], *row] for i, row in enumerate(sample.get("history_cov") or [])],
+                }
+            ]
+            future_ts = sample.get("future_timestamps") or list(range(horizon))
+            body["future_covs"] = [
+                {
+                    "columns": [self._TIME_COL, *covariate_cols],
+                    "data": [[future_ts[i], *row] for i, row in enumerate(sample.get("future_cov") or [])],
+                }
+            ]
+        return body
 
     def _post(self, url: str, body: dict, timeout_seconds: int) -> dict:
         if self._client is not None:

@@ -62,8 +62,11 @@ def build_sample_forecast(session: Session, sample_id: str, run_id: str) -> dict
         "history_timestamps": sample["history_timestamps"],
         "future_timestamps": sample["future_timestamps"],
         "target_column_names": sample["target_column_names"],
+        "covariate_column_names": sample.get("covariate_column_names", []),
         "target_history": sample["target_history"],
         "target_future": sample["target_future"],
+        "history_cov": sample.get("history_cov", []),
+        "future_cov": sample.get("future_cov", []),
         "models": models,
         "links": {
             "run": run_id,

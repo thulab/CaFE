@@ -17,6 +17,7 @@ class SampleIndex(SQLModel, table=True):
     horizon_start: int
     horizon_end: int
     target_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    covariate_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     context_length: int = 0
     horizon: int = 0
     storage_ref: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))

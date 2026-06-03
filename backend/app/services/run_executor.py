@@ -33,7 +33,9 @@ def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str
     if not blocks:
         raise ApiError("track_has_no_blocks", "track has no capability blocks", {"track_id": track_id})
     target_dim = max((block.target_dim for block in blocks), default=1)
+    covariate_dim = max((block.covariate_dim for block in blocks), default=0)
     _validate_models_support_target_dim(session, model_ids, target_dim)
+    _validate_models_support_covariate_dim(session, model_ids, covariate_dim)
 
     block_sample_count = sum(block.sample_count for block in blocks)
     run = BenchmarkingRun(
@@ -105,6 +107,37 @@ def _forecast_limits_support_target_dim(limits: dict, target_dim: int) -> bool:
         return True
     try:
         return int(max_target_count) >= target_dim
+    except (TypeError, ValueError):
+        return False
+
+
+def _validate_models_support_covariate_dim(session: Session, model_ids: list[str], covariate_dim: int) -> None:
+    if covariate_dim <= 0:
+        return
+    unsupported: list[str] = []
+    limits_by_model: dict[str, dict] = {}
+    for model_id in model_ids:
+        model = session.get(Model, model_id)
+        if model is None:
+            continue
+        limits = model.forecast_limits if isinstance(model.forecast_limits, dict) else {}
+        limits_by_model[model_id] = limits
+        if not _forecast_limits_support_covariate_dim(limits, covariate_dim):
+            unsupported.append(model_id)
+    if unsupported:
+        raise ApiError(
+            "model_covariate_dim_unsupported",
+            "selected model does not support the track covariate dimension",
+            {"model_ids": unsupported, "covariate_dim": covariate_dim, "forecast_limits": limits_by_model},
+            status_code=400,
+        )
+
+
+def _forecast_limits_support_covariate_dim(limits: dict, covariate_dim: int) -> bool:
+    if "max_covariate_count" not in limits:
+        return False
+    try:
+        return int(limits.get("max_covariate_count")) >= covariate_dim
     except (TypeError, ValueError):
         return False
 

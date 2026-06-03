@@ -58,6 +58,8 @@ class Shard(SQLModel, table=True):
     row_count: int = 0
     target_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     target_dim: int = 1
+    covariate_columns: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    covariate_dim: int = 0
     frequency: str | None = None
     context_length: int = 0
     horizon: int = 0

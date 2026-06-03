@@ -44,7 +44,7 @@ MetricResult：单表多层级（sample / shard / task / unit）
 
 - **应用外壳** `App.vue`：左侧栏导航（概览 / 新建评测 / 数据集 / 运行）+ 顶栏（面包屑 + 亮暗主题切换）+ 自写 hash 路由（`#/`、`#/new`、`#/datasets[/:id]`、`#/load-jobs/:id`、`#/shards/:id`、`#/runs[/:id]`、`#/tracks/:id[/ranking]`、`#/reports/:id`、`#/samples/:id?run_id=`），未匹配回落到概览。工作流（向导）是子页面 `#/new`，首页 `#/` 是概览。
 - **页面** `pages/`：`HomePage`（概览）、`EvaluationWizardPage`（分步门禁向导）、`DatasetsPage` / `RunsPage`（列表）、各详情页（DatasetManifest / LoadJob / Shard / RunDetail / Track / Ranking / Report / SampleForecast）。
-- **组件**：`components/wizard/`（6 个向导步骤）、`components/results/`（`ForecastChart` 交互式折线图、`RankingChart` 条形、`RankingTable` / `ReportSummary` / `SampleMetricTable`）、`components/ui/`（`Icon` 内联 SVG、`StatusBadge`、`StateBlock` 统一 loading/empty/error+重试）。
+- **组件**：`components/wizard/`（6 个向导步骤）、`components/results/`（`ForecastChart` 交互式预测折线图、`CovariateChart` 协变量折线图、`RankingChart` 条形、`RankingTable` / `ReportSummary` / `SampleMetricTable`）、`components/ui/`（`Icon` 内联 SVG、`StatusBadge`、`StateBlock` 统一 loading/empty/error+重试、`SelectablePagedList` / `ColumnSelectionList` 可搜索分页选择列表）。
 - **设计系统** `styles.css`：CSS tokens，亮 + 暗双主题经 `[data-theme]` 切换（`composables/useTheme.ts`，默认跟随系统）。
 - **状态 / 工具**：`stores/wizard.ts`（向导状态 + 分步控制）、`stores/auth.ts`（JWT token、当前用户与权限码）、`composables/useAuthGuard.ts`（前端镜像 Tier 0/1/2 路由守卫）、`composables/useResourceCounts.ts`（列表总数角标）、`composables/useModels.ts`（缓存模型目录把 `model_id` 解析为名字）、`lib/format.ts`。
 - **API 客户端** `api/`：`client.ts` 统一加 `/api` 前缀并解析错误信封，其余按域分模块。

@@ -120,17 +120,25 @@ class DatasetLoadService:
     def _execute_job(self, session: Session, manifest: DatasetManifest, job: DatasetLoadJob) -> DatasetLoadJob:
         config = job.split_config
         target_columns = list(config.get("target_columns") or [])
+        covariate_columns = list(config.get("covariate_columns") or [])
         if not target_columns or len(set(target_columns)) != len(target_columns):
             raise ApiError(
                 "load_target_columns_invalid",
                 "at least one distinct target column must be selected",
                 {"target_columns": target_columns},
             )
+        if len(set(covariate_columns)) != len(covariate_columns) or set(target_columns).intersection(covariate_columns):
+            raise ApiError(
+                "load_covariate_columns_invalid",
+                "covariate columns must be distinct and cannot overlap target columns",
+                {"target_columns": target_columns, "covariate_columns": covariate_columns},
+            )
 
         read_result = get_dataset_reader(manifest.file_format).read(
             Path(manifest.source_uri),
             time_column=manifest.time_column,
             target_columns=target_columns,
+            covariate_columns=covariate_columns,
             frequency=manifest.frequency,
         )
 
@@ -158,6 +166,8 @@ class DatasetLoadService:
             row_count=read_result.row_count,
             target_columns=target_columns,
             target_dim=len(target_columns),
+            covariate_columns=covariate_columns,
+            covariate_dim=len(covariate_columns),
             frequency=read_result.frequency,
             context_length=int(config["context_length"]),
             horizon=int(config["horizon"]),
@@ -170,9 +180,9 @@ class DatasetLoadService:
         from app.services.sample_store import SampleStore
 
         SeriesStore().write(
-            session, shard.shard_id, read_result.timestamps, read_result.target_columns, read_result.values
+            session, shard.shard_id, read_result.timestamps, read_result.value_columns, read_result.values
         )
-        sample_indexes = SampleStore().write_samples(shard.shard_id, windows, target_columns, read_result)
+        sample_indexes = SampleStore().write_samples(shard.shard_id, windows, target_columns, covariate_columns, read_result)
         session.add(shard)
         for sample_index in sample_indexes:
             session.add(sample_index)
@@ -189,6 +199,7 @@ class DatasetLoadService:
             "frequency": read_result.frequency,
             "columns": read_result.columns,
             "target_columns": target_columns,
+            "covariate_columns": covariate_columns,
         }
         job.finished_at = utc_now()
         job.updated_at = utc_now()
@@ -198,6 +209,7 @@ class DatasetLoadService:
         session.commit()
         session.refresh(job)
         return job
+
 
 def sample_count_for_shard(session: Session, shard_id: str) -> int:
     return len(session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard_id)).all())

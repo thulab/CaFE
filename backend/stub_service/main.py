@@ -46,14 +46,14 @@ BUILTIN_MODELS = [
         "model_type": "Timer-S1",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_output_length": 720, "default_output_length": 272},
+        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 272},
     },
     {
         "model_id": "Timer-3.0",
         "model_type": "sundial",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_output_length": 720, "default_output_length": 96},
+        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 96},
     },
     {
         "model_id": "Chronos-2",
@@ -67,21 +67,21 @@ BUILTIN_MODELS = [
         "model_type": "toto2p0",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": None, "max_output_length": 720},
+        "forecast_limits": {"max_target_count": None, "max_covariate_count": 0, "max_output_length": 720},
     },
     {
         "model_id": "AutoARIMA",
         "model_type": "auto_arima",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_output_length": 720},
+        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720},
     },
     {
         "model_id": "Holt-Winters",
         "model_type": "holtwinters",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_output_length": 720},
+        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720},
     },
 ]
 

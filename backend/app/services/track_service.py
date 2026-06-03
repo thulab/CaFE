@@ -8,11 +8,11 @@ from app.models.ranking import RankingList
 
 
 MVP_STUB_MODELS = [
-    ("Timer 3.5", "Timer", "3.5", {"max_target_count": 1}),
-    ("Timer 3.0", "Timer", "3.0", {"max_target_count": 1}),
-    ("Chronos 2", "Chronos", "2", {"max_target_count": 1}),
-    ("toto", "toto", "mvp", {"max_target_count": None}),
-    ("TimesFM 2.5", "TimesFM", "2.5", {"max_target_count": 1}),
+    ("Timer 3.5", "Timer", "3.5", {"max_target_count": 1, "max_covariate_count": 0}),
+    ("Timer 3.0", "Timer", "3.0", {"max_target_count": 1, "max_covariate_count": 0}),
+    ("Chronos 2", "Chronos", "2", {"max_target_count": 1, "max_covariate_count": 50}),
+    ("toto", "toto", "mvp", {"max_target_count": None, "max_covariate_count": 0}),
+    ("TimesFM 2.5", "TimesFM", "2.5", {"max_target_count": 1, "max_covariate_count": 0}),
 ]
 
 
@@ -32,6 +32,7 @@ def create_real_capability_block(session: Session, name: str, shard_ids: list[st
         shard_count=len(shards),
         sample_count=sum(shard.sample_count for shard in shards),
         target_dim=max((shard.target_dim for shard in shards), default=1),
+        covariate_dim=max((shard.covariate_dim for shard in shards), default=0),
     )
     session.add(block)
     session.commit()

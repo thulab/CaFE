@@ -21,6 +21,7 @@ class TsFileDatasetReader:
         path: Path,
         time_column: str,
         target_columns: list[str] | None = None,
+        covariate_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
         del time_column  # TsFile 时间为内建轴，无具名时间列
@@ -31,7 +32,9 @@ class TsFileDatasetReader:
             series = list(tf.list_timeseries())
             if not series:
                 raise ApiError("tsfile_empty", "tsfile contains no timeseries", {"path": str(path)})
-            selected_series, columns = _resolve_series_selection(series, target_columns)
+            selected_targets = list(target_columns or [])
+            selected_covariates = list(covariate_columns or [])
+            selected_series, columns = _resolve_series_selection(series, [*selected_targets, *selected_covariates])
 
             ts_ms = [int(value) for value in tf[selected_series[0]].timestamps[:]]
             row_count = len(ts_ms)
@@ -55,7 +58,8 @@ class TsFileDatasetReader:
             columns=columns,
             rows=[{} for _ in range(row_count)],
             timestamps=timestamps,
-            target_columns=columns,
+            target_columns=selected_targets,
+            covariate_columns=selected_covariates,
             values=values,
             frequency=inferred_frequency,
             encoding="tsfile",

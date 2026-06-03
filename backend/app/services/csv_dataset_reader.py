@@ -17,6 +17,7 @@ class CsvDatasetReader:
         path: Path,
         time_column: str,
         target_columns: list[str] | None = None,
+        covariate_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
         text, encoding = self._read_text(path)
@@ -33,19 +34,21 @@ class CsvDatasetReader:
         if time_column not in columns:
             raise ApiError("csv_time_column_missing", "time_column was not found", {"time_column": time_column})
 
-        selected = list(target_columns or [])
-        if not selected or len(set(selected)) != len(selected):
+        selected_targets = list(target_columns or [])
+        selected_covariates = list(covariate_columns or [])
+        selected = [*selected_targets, *selected_covariates]
+        if not selected_targets or len(set(selected)) != len(selected):
             raise ApiError(
                 "csv_target_columns_invalid",
-                "at least one distinct target column must be selected",
-                {"target_columns": selected},
+                "at least one distinct target column must be selected and value columns cannot repeat",
+                {"target_columns": selected_targets, "covariate_columns": selected_covariates},
             )
-        for target_column in selected:
-            if target_column not in columns:
+        for value_column in selected:
+            if value_column not in columns:
                 raise ApiError(
                     "csv_target_column_missing",
-                    "target column was not found",
-                    {"target_column": target_column},
+                    "selected value column was not found",
+                    {"target_column": value_column},
                 )
 
         dict_rows: list[dict[str, str]] = []
@@ -81,7 +84,8 @@ class CsvDatasetReader:
             columns=columns,
             rows=dict_rows,
             timestamps=timestamps,
-            target_columns=selected,
+            target_columns=selected_targets,
+            covariate_columns=selected_covariates,
             values=value_matrix,
             frequency=inferred_frequency,
             encoding=encoding,

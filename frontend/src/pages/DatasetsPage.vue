@@ -81,14 +81,27 @@
 
           <div class="field">
             <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
-            <div class="choice-grid" role="group" :aria-label="t('wizard.columnAndSplitStep.targetColumns')">
-              <label v-for="column in uploadNonTimeColumns" :key="column" class="choice">
-                <input v-model="uploadTargets" type="checkbox" :value="column" :aria-label="column" />
-                <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ column }}</span>
-              </label>
-            </div>
+            <ColumnSelectionList
+              v-model:selected="uploadTargets"
+              :columns="uploadTargetCandidates"
+              :labels="targetListLabels"
+              :selected-count-label="t('wizard.columnAndSplitStep.selectedTargets', { count: uploadTargets.length })"
+              search-id="dataset-target-column-search"
+            />
             <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
           </div>
+        </div>
+
+        <div class="field">
+          <span class="label">{{ t('wizard.columnAndSplitStep.covariateColumns') }}</span>
+          <ColumnSelectionList
+            v-model:selected="uploadCovariates"
+            :columns="uploadCovariateCandidates"
+            :labels="covariateListLabels"
+            :selected-count-label="t('wizard.columnAndSplitStep.selectedCovariates', { count: uploadCovariates.length })"
+            search-id="dataset-covariate-column-search"
+          />
+          <p class="hint">{{ t('wizard.columnAndSplitStep.covariateHint') }}</p>
         </div>
 
         <div class="grid-auto">
@@ -186,6 +199,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
+import ColumnSelectionList from '../components/ui/ColumnSelectionList.vue';
 import { createDatasetManifest, createLoadJob, listDatasetManifests, listShards, uploadDataset } from '../api/datasets';
 import type { ResourceType, UploadPreviewDTO } from '../api/types';
 import type { LifecycleAction } from '../api/lifecycle';
@@ -225,6 +239,7 @@ const uploadDatasetName = ref('');
 const uploadShardName = ref('');
 const uploadTimeColumn = ref('time');
 const uploadTargets = ref<string[]>([]);
+const uploadCovariates = ref<string[]>([]);
 const uploadContext = ref(60);
 const uploadHorizon = ref(16);
 const uploadStride = ref(16);
@@ -240,6 +255,10 @@ const uploadColumns = computed(() => uploadPreview.value?.columns.map((column) =
 const uploadFileFormat = computed(() => uploadPreview.value?.file_format === 'tsfile' ? 'tsfile' : 'csv');
 const uploadIsTsFile = computed(() => uploadFileFormat.value === 'tsfile');
 const uploadNonTimeColumns = computed(() => uploadIsTsFile.value ? uploadColumns.value : uploadColumns.value.filter((column) => column !== uploadTimeColumn.value));
+const uploadTargetCandidates = computed(() => uploadNonTimeColumns.value.filter((column) => !uploadCovariates.value.includes(column)));
+const uploadCovariateCandidates = computed(() => uploadNonTimeColumns.value.filter((column) => !uploadTargets.value.includes(column)));
+const targetListLabels = computed(() => columnListLabels(t('wizard.columnAndSplitStep.targetSearch'), t('wizard.columnAndSplitStep.selectTargetColumn'), t('wizard.columnAndSplitStep.toggleTargetPage')));
+const covariateListLabels = computed(() => columnListLabels(t('wizard.columnAndSplitStep.covariateSearch'), t('wizard.columnAndSplitStep.selectCovariateColumn'), t('wizard.columnAndSplitStep.toggleCovariatePage')));
 
 const ICONS: Record<Kind, string> = { dataset: 'database', shard: 'layers' };
 const kindIcon = (k: Kind) => ICONS[k] || 'file';
@@ -252,6 +271,7 @@ const displayItems = computed(() => items.value.map((item) => ({
 
 watch(uploadNonTimeColumns, (cols) => {
   uploadTargets.value = uploadTargets.value.filter((target) => cols.includes(target));
+  uploadCovariates.value = uploadCovariates.value.filter((covariate) => cols.includes(covariate));
 }, { immediate: true });
 
 function rowTitle(item: Row): string {
@@ -344,6 +364,7 @@ async function handleUpload(file?: File) {
     uploadShardName.value = `${baseName} test cases`;
     uploadTimeColumn.value = uploadColumns.value.includes('time') ? 'time' : uploadColumns.value[0] ?? 'time';
     uploadTargets.value = [];
+    uploadCovariates.value = [];
   } catch (caught) {
     setUploadError(caught, 'wizard.uploadStep.errors.uploadFailed');
   } finally {
@@ -355,6 +376,10 @@ async function createShard() {
   if (!uploadPreview.value) return;
   if (uploadTargets.value.length === 0 || uploadTargets.value.some((target) => !uploadNonTimeColumns.value.includes(target))) {
     setUploadErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
+    return;
+  }
+  if (uploadCovariates.value.some((covariate) => !uploadNonTimeColumns.value.includes(covariate)) || uploadCovariates.value.some((covariate) => uploadTargets.value.includes(covariate))) {
+    setUploadErrorKey('wizard.columnAndSplitStep.errors.invalidCovariates');
     return;
   }
   if (uploadContext.value <= 0 || uploadHorizon.value <= 0 || uploadStride.value <= 0) {
@@ -371,11 +396,12 @@ async function createShard() {
       file_format: uploadFileFormat.value,
       time_column: uploadIsTsFile.value ? 'time' : uploadTimeColumn.value
     });
-    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; shard_name?: string; max_samples?: number } = {
+    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; covariate_columns: string[]; shard_name?: string; max_samples?: number } = {
       context_length: uploadContext.value,
       horizon: uploadHorizon.value,
       stride: uploadStride.value,
       target_columns: [...uploadTargets.value],
+      covariate_columns: [...uploadCovariates.value],
       shard_name: uploadShardName.value || `${uploadDatasetName.value || 'Uploaded dataset'} test cases`
     };
     if (uploadMaxSamples.value != null && uploadMaxSamples.value > 0) splitConfig.max_samples = uploadMaxSamples.value;
@@ -399,6 +425,22 @@ function baseNameFromFilename(filename?: string | null): string {
   if (!clean) return 'Uploaded dataset';
   const dot = clean.lastIndexOf('.');
   return dot > 0 ? clean.slice(0, dot) : clean;
+}
+
+function columnListLabels(search: string, selectItem: string, togglePageSelection: string) {
+  return {
+    search,
+    searchPlaceholder: t('wizard.columnAndSplitStep.columnSearchPlaceholder'),
+    item: t('wizard.columnAndSplitStep.columnName'),
+    details: t('wizard.columnAndSplitStep.columnDetails'),
+    status: t('common.status'),
+    loading: t('common.loading'),
+    empty: t('wizard.columnAndSplitStep.noColumns'),
+    previousPage: t('common.previousPage'),
+    nextPage: t('common.nextPage'),
+    selectItem,
+    togglePageSelection,
+  };
 }
 
 function loadJobErrorMessage(job: { status?: string; error_code?: string | null; error_message?: string | null }) {

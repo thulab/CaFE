@@ -233,6 +233,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 - `horizon`（int，必填）
 - `stride`（int，可选；缺省取 `horizon`）
 - `target_columns`（list[str]，**必填且至少 1 个，不能重复**；目标列选择。未选择或重复时报 `load_target_columns_invalid`；目标列不存在时由 reader 返回格式相关错误码）
+- `covariate_columns`（list[str]，可选；known-future 协变量列选择。不能重复，不能与 `target_columns` 重叠；选择的列会与目标列共用同一时间轴并按窗口切成 `history_cov` / `future_cov`）
 - `max_samples`（int，可选）：窗口数超过它时沿序列均匀采样（含首尾，可复现）。
 - `shard_name`（str，可选）：前端上传/切片时提供的人类可读切片名称；成功后写入 `Shard.name`，不参与唯一性或执行逻辑。
 
@@ -243,7 +244,8 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
   "sample_count": 4,
   "frequency": "1h",
   "columns": ["time", "target", "extra"],
-  "target_columns": ["target"]
+  "target_columns": ["target"],
+  "covariate_columns": ["extra"]
 }
 ```
 
@@ -267,6 +269,8 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `row_count` | `int` | `0` | 行数 |
 | `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列，可为一个或多个 |
 | `target_dim` | `int` | `1` | 目标维度，等于 `target_columns` 数量 |
+| `covariate_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的 known-future 协变量列 |
+| `covariate_dim` | `int` | `0` | 协变量维度，等于 `covariate_columns` 数量 |
 | `frequency` | `str \| None` | `None` | 时间频率 |
 | `context_length` | `int` | `0` | 样本历史长度 |
 | `horizon` | `int` | `0` | 预测长度 |
@@ -300,9 +304,10 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `horizon_start` | `int` | 必填 | future 窗口起 |
 | `horizon_end` | `int` | 必填 | future 窗口止（含） |
 | `target_columns` | `list[str]` | `[]`，**JSON 列** | 目标列 |
+| `covariate_columns` | `list[str]` | `[]`，**JSON 列** | known-future 协变量列 |
 | `context_length` | `int` | `0` | history 长度 |
 | `horizon` | `int` | `0` | future 长度 |
-| `storage_ref` | `dict[str, Any]` | `{}`，**JSON 列** | **指针化切片引用**：`{shard_id, sample_id, sample_index, target_columns, context:[s,e], horizon:[s,e]}`（行号区间，**闭区间**；切片走 `SeriesPoint`） |
+| `storage_ref` | `dict[str, Any]` | `{}`，**JSON 列** | **指针化切片引用**：`{shard_id, sample_id, sample_index, target_columns, covariate_columns, context:[s,e], horizon:[s,e]}`（行号区间，**闭区间**；切片走 `SeriesPoint`） |
 | `materialized` | `bool` | `False` | 指针化：值在 `SeriesPoint`，样本不物化为产物 |
 | `materialized_sample_uri` | `str \| None` | `None` | 兼容旧 `read_by_ref` 签名的遗留字段，已不使用 |
 | `checksum` | `str \| None` | `None` | 样本**内容**（值/时间戳/列名/行范围）的 sha256，**排除随机 ID** → 同数据跨加载相等（#7） |
@@ -346,6 +351,7 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | `name` | `str` | 必填 | 展示名 |
 | `task_type` | `str` | `"univariate_forecast"` | 任务类型 |
 | `target_dim` | `int` | `1` | 目标维度 |
+| `covariate_dim` | `int` | `0` | 协变量维度 |
 | `shard_count` | `int` | `0` | shard 数 |
 | `sample_count` | `int` | `0` | 汇总样本数 |
 | `aggregation_policy` | `str` | `"mean_over_shards"` | shard 聚合策略 |
@@ -403,7 +409,7 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | `adapter_type` | `str` | `"timer_service"` | adapter 类型 |
 | `endpoint_uri` | `str \| None` | `None` | 推理服务地址 |
 | `supported_task_types` | `list[str]` | `["univariate_forecast"]`，**JSON 列** | 支持的任务类型 |
-| `forecast_limits` | `dict[str, Any]` | `{}`，**JSON 列** | 远端模型能力限制镜像；当前读取 `max_target_count` 判断多目标支持，`null` 表示不限制目标数，缺失表示不支持多目标 |
+| `forecast_limits` | `dict[str, Any]` | `{}`，**JSON 列** | 远端模型能力限制镜像；读取 `max_target_count` 判断多目标支持，`null` 表示不限制目标数，缺失表示不支持多目标；读取 `max_covariate_count` 判断协变量支持，缺失或 `0` 表示不支持协变量 |
 | `input_schema_version` | `str` | `"sample.v1"` | 输入协议版本 |
 | `stub_seed` | `int` | `0` | stub 可复现 seed |
 | `status` | `str` | `"available"` | 见下方枚举 |
@@ -415,9 +421,9 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 **adapter_type**：默认 `"timer_service"`。
 - 注意实际选用哪种 adapter 由**全局配置**决定而非该字段：`get_model_adapter(settings)` 在 `settings.model_adapter == "stub"` 时返回 `StubTimerAdapter`，否则返回 `TimerRestAdapter`（`services/model_adapter.py:13-20`）。
 - `endpoint_uri == "stub://fail"` 是约定的失败注入：会让对应 unit 直接以 `adapter_error` 失败（`run_executor.py:142-143`）。
-- 种子模型由 `seed_mvp_models` 写入（`track_service.py:79-93`），共 5 个：Timer 3.5 / Timer 3.0 / Chronos 2 / toto / TimesFM 2.5，`endpoint_uri` 形如 `stub://timer-service/{slug}`；其中 `toto` 的 `forecast_limits.max_target_count=null`，其余 MVP 种子模型为 `1`。
+- 种子模型由 `seed_mvp_models` 写入（`track_service.py:79-93`），共 5 个：Timer 3.5 / Timer 3.0 / Chronos 2 / toto / TimesFM 2.5，`endpoint_uri` 形如 `stub://timer-service/{slug}`；其中 `toto` 的 `forecast_limits.max_target_count=null`，其余 MVP 种子模型为 `1`；`Chronos 2` 的 `forecast_limits.max_covariate_count=50`，其余为 `0`。
 - `remote_model_id(model)` 把本地模型映射为 REST 服务的 model_id，规则为 `{model_family}-{model_version}`（如 `Timer-3.5`），缺失时退回 `name` 或 `model_id`（`model_adapter.py:23-29`）。
-- REST 模式下 `/models` 以 timer-rest-service `/models/list` 为权威来源并同步 `forecast_limits`。创建 run 时若 track 的最大 `target_dim > 1`，缺失 `max_target_count` 或小于目标维度的模型会被 `model_target_dim_unsupported` 拒绝。
+- REST 模式下 `/models` 以 timer-rest-service `/models/list` 为权威来源并同步 `forecast_limits`。创建 run 时若 track 的最大 `target_dim > 1`，缺失 `max_target_count` 或小于目标维度的模型会被 `model_target_dim_unsupported` 拒绝；若 track 的最大 `covariate_dim > 0`，缺失 `max_covariate_count` 或小于协变量维度的模型会被 `model_covariate_dim_unsupported` 拒绝。
 
 ---
 
@@ -696,7 +702,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 ### 6.1 样本视图（sample.v1）
 
-**2026-05-25 SQLite pivot / 2026-06-02 target-only cleanup / 2026-06-03 multi-target**：样本不物化为文件。每个 shard 的目标向量序列逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。MVP 不摄入协变量，`history_cov`/`future_cov` 仍为空。
+**2026-05-25 SQLite pivot / 2026-06-02 target-only cleanup / 2026-06-03 multi-target + known-future covariates**：样本不物化为文件。每个 shard 的目标向量与协变量序列逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。协变量只支持 known-future：同一 `covariate_column_names` 在 history 与 horizon 两段都存在，分别返回为 `history_cov` / `future_cov`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -705,12 +711,13 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `shard_id` | `str` | 所属 shard |
 | `sample_index` | `int` | shard 内序号 |
 | `target_column_names` | `list[str]` | 目标列名 |
+| `covariate_column_names` | `list[str]` | 协变量列名；无协变量时为空数组 |
 | `history_timestamps` | `list[str]` | history 窗口 ISO 8601 时间戳，长度 = context_length |
 | `future_timestamps` | `list[str]` | future 窗口 ISO 8601 时间戳，长度 = horizon |
 | `target_history` | `list[list[float]]` | shape `[context_length, target_dim]`，二维数组（单变量也是二维） |
 | `target_future` | `list[list[float]]` | shape `[horizon, target_dim]`，作为 ground truth |
-| `history_cov` | `list` | 历史协变量；MVP 为空数组 `[]` |
-| `future_cov` | `list` | 未来协变量；MVP 为空数组 `[]` |
+| `history_cov` | `list[list[float]]` | shape `[context_length, covariate_dim]`；无协变量时为空数组 `[]` |
+| `future_cov` | `list[list[float]]` | shape `[horizon, covariate_dim]`；无协变量时为空数组 `[]` |
 | `source_row_start` | `int` | 校验后原始数据行起（左闭） |
 | `source_row_end` | `int` | 校验后原始数据行止（含） |
 
@@ -718,7 +725,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 示例片段：
 ```json
-{"future_cov":[],"future_timestamps":["2020-01-01T06:00:00","2020-01-01T07:00:00","2020-01-01T08:00:00"],"history_cov":[],"history_timestamps":["2020-01-01T00:00:00","2020-01-01T01:00:00","2020-01-01T02:00:00","2020-01-01T03:00:00","2020-01-01T04:00:00","2020-01-01T05:00:00"],"sample_id":"...","sample_index":0,"schema_version":"sample.v1","shard_id":"...","source_row_end":8,"source_row_start":0,"target_column_names":["value"],"target_future":[[6.0],[7.0],[8.0]],"target_history":[[0.0],[1.0],[2.0],[3.0],[4.0],[5.0]]}
+{"covariate_column_names":["promo"],"future_cov":[[1.0],[0.0],[1.0]],"future_timestamps":["2020-01-01T06:00:00","2020-01-01T07:00:00","2020-01-01T08:00:00"],"history_cov":[[0.0],[0.0],[1.0],[0.0],[0.0],[1.0]],"history_timestamps":["2020-01-01T00:00:00","2020-01-01T01:00:00","2020-01-01T02:00:00","2020-01-01T03:00:00","2020-01-01T04:00:00","2020-01-01T05:00:00"],"sample_id":"...","sample_index":0,"schema_version":"sample.v1","shard_id":"...","source_row_end":8,"source_row_start":0,"target_column_names":["value"],"target_future":[[6.0],[7.0],[8.0]],"target_history":[[0.0],[1.0],[2.0],[3.0],[4.0],[5.0]]}
 ```
 
 ### 6.2 预测产物（forecast.v1）
@@ -775,7 +782,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 ### 6.4 序列真值存储：SQLite SeriesPoint（2026-05-25 SQLite pivot）
 
 序列真值**不再落盘**为 per-dataset TsFile，而是逐点行存进 SQLite `SeriesPoint`（DB 表，见 §2.5）。`SeriesStore`（`services/series_store.py`）封装存取：
-- `SeriesStore.write(session, shard_id, timestamps, columns, values)`：把目标列矩阵逐点插入 `SeriesPoint`（`values_json={列:值}`、`ts` 存 ISO 原文，**不经 ms-epoch 往返**，规避 #8 的本地时区漂移）。
+- `SeriesStore.write(session, shard_id, timestamps, columns, values)`：把目标列 + 协变量列矩阵逐点插入 `SeriesPoint`（`values_json={列:值}`、`ts` 存 ISO 原文，**不经 ms-epoch 往返**，规避 #8 的本地时区漂移）。
 - `SeriesStore.slice(session, shard_id, columns, row_start, row_end)` / `slice_timestamps(...)`：按 `(shard_id, row_index)` **闭区间**范围查询，返回行主序 `list[list[float]]` / ISO 时间戳。`sample.v1` 的视图由此现切。
 
 > **TsFile 现在是输入格式之一**（不再是存储）：`tsfile_dataset_reader.py` 的 `TsFileDatasetReader` 把单设备表模型 TsFile 读成 `DatasetReadResult`，与 CSV 走同一存储/校验通路（`get_dataset_reader(file_format)` 工厂选 reader）。`tsfile==2.3.0` 依赖因此保留（`requires-python>=3.14`）；旧的 `services/tsfile_store.py`（`TsFileStore`/`TsFileSlicer`）已不在数据通路中使用。forecast 输出仍为 JSONL（§6.2 不变）。
@@ -793,7 +800,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `ModelDTO` | `schemas/model_registry.py:4` | `model_id: str`、`name: str`、`adapter_type: str`、`forecast_limits: dict` |
 | `RankingRowDTO` | `schemas/ranking.py:4` | `model_id: str`、`metric_value: float`、`rank: int` |
 | `ReportDTO` | `schemas/report.py:4` | `report_id: str`、`benchmarking_run_id: str`、`status: str` |
-| `SamplePreviewDTO` | `schemas/sample.py:4` | `sample_id: str`、`target_history: list[list[float]]`、`target_future: list[list[float]]` |
+| `SamplePreviewDTO` | `schemas/sample.py:4` | `sample_id: str`、`target_history: list[list[float]]`、`target_future: list[list[float]]`，带协变量样本还包含 `covariate_column_names/history_cov/future_cov` |
 
 > spec §3.2 / §7 还提到 `SampleForecastDTO`、`RunProgressDTO` 等读模型，但当前它们没有独立的 schema 类——而是由 service 直接构造 `dict` 返回（`build_sample_forecast`、`build_run_progress`）。
 
@@ -819,7 +826,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 ### 8.5 capability block 与 shard 复用
 
-`create_real_capability_block`（`track_service.py:15-43`）：要求至少一个 shard；shard 不存在抛 `shard_not_found`；输入 shard id 会去重。新建 block 后通过 `CapabilityBlockShard` 写入 block → shard 关联，不再写 `Shard.capability_block_id`，因此同一 shard 可以被多个 block / track 复用。block 的 `shard_count`/`sample_count`/`target_dim` 由所含 shard 汇总。
+`create_real_capability_block`（`track_service.py:15-43`）：要求至少一个 shard；shard 不存在抛 `shard_not_found`；输入 shard id 会去重。新建 block 后通过 `CapabilityBlockShard` 写入 block → shard 关联，不再写 `Shard.capability_block_id`，因此同一 shard 可以被多个 block / track 复用。block 的 `shard_count`/`sample_count`/`target_dim`/`covariate_dim` 由所含 shard 汇总。
 
 `shards_for_capability_block` 先读 `CapabilityBlockShard`；若旧数据没有关联表记录，则 fallback 到 `Shard.capability_block_id`。
 

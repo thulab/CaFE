@@ -120,10 +120,10 @@ service 层抛 `ApiError`，routes 层不需 try/except；FastAPI 通过 `add_ex
 真正的存储在创建 load job 时同步发生（`routes/dataset_load_jobs.py:20` → `DatasetLoadService.create_load_job`）：
 
 - 前置幂等校验：`assert_manifest_can_succeed_load` 与 `assert_manifest_can_create_successful_real_shard`（`db/init_db.py:18,33`）——一个 manifest 只能有一个成功 load job / 一个 ready 的 real shard。
-- `_execute_job` 先从 `split_config.target_columns` 取**一个或多个不重复**的目标列，再用 `get_dataset_reader(manifest.file_format).read(...)` 读取并**严格校验**这个目标向量：每个目标值都必须是有限 float，所有目标共享同一条时间轴，时间轴经共享的 `validate_time_axis`（递增/不重复/等间隔 + 时区一致性 + 频率按**时长**比较）。TsFile 输入只支持表模型；对 TimeBench 这类多 `timeseries_id` 分片，前端可直接选择完整 series path（`table.device.value`），reader 据此要求所有目标来自同一个设备。未选择或选择重复目标列时报 `load_target_columns_invalid`。
+- `_execute_job` 先从 `split_config.target_columns` 取**一个或多个不重复**的目标列，再从 `split_config.covariate_columns` 取可选 known-future 协变量列；协变量列不能重复，不能与目标列重叠。随后用 `get_dataset_reader(manifest.file_format).read(...)` 读取并**严格校验**这些 value 列：每个目标/协变量值都必须是有限 float，所有列共享同一条时间轴，时间轴经共享的 `validate_time_axis`（递增/不重复/等间隔 + 时区一致性 + 频率按**时长**比较）。TsFile 输入只支持表模型；对 TimeBench 这类多 `timeseries_id` 分片，前端可直接选择完整 series path（`table.device.value`），reader 据此要求所有目标和协变量来自同一个设备。未选择或选择重复目标列时报 `load_target_columns_invalid`；协变量重复或与目标重叠时报 `load_covariate_columns_invalid`。
 - `build_windows`（`dataset_load_service.py`）按 `context_length / horizon / stride`（stride 默认等于 horizon）滑窗。每窗给出 context 区间 `[context_start, context_end]` 与 horizon 区间 `[horizon_start, horizon_end]`。校验：参数为正、`context_length + horizon ≤ row_count`、至少产出一个窗口。
 - `build_windows` 后按 `split_config.max_samples` 可选**均匀采样**（`subsample_windows`，含首尾、可复现；与 stride 的相互作用见 data-model §10.6）。前端可同时传 `split_config.shard_name` 作为切片展示名；后端只保存到 `Shard.name`，不参与窗口构造。
-- 创建 `Shard`（status=`ready`，可带 `name`），用 `SeriesStore.write` 把**目标列矩阵**逐点写入 `SeriesPoint`（一行一时间点，`values_json={target:值}`，`ts` 存 ISO 原文）；再由 `SampleStore.write_samples` 为每窗建一条 `SampleIndex`——**指针化**，`storage_ref` 只记录行号区间，`checksum` 对样本**内容**算（排除随机 ID，跨加载可比，#7）。读取时按 `(shard_id, row_index)` 范围查询 `SeriesPoint` 现切（单一真值源）。
+- 创建 `Shard`（status=`ready`，可带 `name`），用 `SeriesStore.write` 把**目标列 + 协变量列矩阵**逐点写入 `SeriesPoint`（一行一时间点，`values_json={列:值}`，`ts` 存 ISO 原文）；再由 `SampleStore.write_samples` 为每窗建一条 `SampleIndex`——**指针化**，`storage_ref` 记录行号区间、目标列与协变量列，`checksum` 对样本**内容**算（排除随机 ID，跨加载可比，#7）。读取时按 `(shard_id, row_index)` 范围查询 `SeriesPoint` 现切（单一真值源），把协变量自动切成 `history_cov` / `future_cov`。
 - **原子加载**：`Shard` + 全部 `SeriesPoint` + 全部 `SampleIndex` 同处一个事务。成功时回填 `manifest.status="loaded"`、`job.status="succeeded"` 及 `validation_summary`；任一 `ApiError` 触发 `session.rollback()` 丢弃半成品，再把 job 落为 `failed` + `error_code/error_message`（替代旧的删 `.tsfile` 文件清理）。
 
 ```mermaid
@@ -138,7 +138,7 @@ sequenceDiagram
     C->>R: POST /dataset-load-jobs {manifest_id, split_config, seed}
     R->>DLS: create_load_job(...)
     DLS->>DB: 幂等校验 + 建 DatasetLoadJob(status=created→validating)
-    DLS->>RD: read(source_uri, time_col, target_columns, freq)
+    DLS->>RD: read(source_uri, time_col, target_columns, covariate_columns, freq)
     RD-->>DLS: DatasetReadResult（校验通过）
     DLS->>DLS: build_windows(context/horizon/stride) + subsample
     DLS->>SS: SeriesStore.write(SeriesPoint) + SampleStore.write_samples(指针)
@@ -153,7 +153,7 @@ sequenceDiagram
 **服务**：`create_real_capability_block` → `create_track_with_blocks`（均在 `services/track_service.py`）
 **产物实体**：`CapabilityBlock`（real）→ `Track` + `RankingList`
 
-`create_real_capability_block`（`track_service.py:19`）把一组 real `Shard` 聚合成一个 `CapabilityBlock`（block_type=`real`, capability_type=`real_data`），累加 `sample_count`、取最大 `target_dim`，并通过 `CapabilityBlockShard` 写入 block → shard 关联；不再写 `Shard.capability_block_id`，因此同一 shard 可被多条赛道复用。校验：至少一个 shard（`capability_block_requires_shard`）、shard 都存在（`shard_not_found`）。
+`create_real_capability_block`（`track_service.py:19`）把一组 real `Shard` 聚合成一个 `CapabilityBlock`（block_type=`real`, capability_type=`real_data`），累加 `sample_count`、取最大 `target_dim` 与最大 `covariate_dim`，并通过 `CapabilityBlockShard` 写入 block → shard 关联；不再写 `Shard.capability_block_id`，因此同一 shard 可被多条赛道复用。校验：至少一个 shard（`capability_block_requires_shard`）、shard 都存在（`shard_not_found`）。
 
 `create_track_with_blocks`（`track_service.py:50`）建 `Track`，把 block 的 `track_id` 指过去，并**同时创建一个 `RankingList`**（`default_metric_id` = `primary_metric_id`）。前端向导会显式传入赛道名称和主指标（`mase` / `mse` / `mae`），因此榜单默认视图跟随用户创建赛道时的选择。返回 `(track, ranking)`。校验至少一个 block（`track_requires_block`）、block 都存在（`capability_block_not_found`）。
 
@@ -178,7 +178,7 @@ flowchart LR
 
 #### 创建与建模
 
-`create_benchmarking_run`（`services/run_executor.py:19`）校验至少一个 model（`run_requires_model`）、track 有 block（`track_has_no_blocks`），并先取 track 下所有 block 的最大 `target_dim` 校验模型能力：当 `target_dim > 1` 时，只有 `Model.forecast_limits.max_target_count` 为 `null`（不限）或大于等于该维度的模型可运行；缺失该字段或值为 `1` 的模型会触发 `model_target_dim_unsupported`，不会建出半成品 run。然后建出层级：
+`create_benchmarking_run`（`services/run_executor.py:19`）校验至少一个 model（`run_requires_model`）、track 有 block（`track_has_no_blocks`），并先取 track 下所有 block 的最大 `target_dim` 与 `covariate_dim` 校验模型能力：当 `target_dim > 1` 时，只有 `Model.forecast_limits.max_target_count` 为 `null`（不限）或大于等于该维度的模型可运行；缺失该字段或值为 `1` 的模型会触发 `model_target_dim_unsupported`。当 `covariate_dim > 0` 时，只有 `Model.forecast_limits.max_covariate_count` 大于等于该维度的模型可运行；缺失或 `0` 会触发 `model_covariate_dim_unsupported`。任一能力不满足都不会建出半成品 run。然后建出层级：
 
 - 一个 `BenchmarkingRun`（status=`queued`），预填 `model_count / task_count（= 模型数 × block 数）/ sample_count`。
 - 每个 model 一个 `Unit`。
@@ -271,11 +271,11 @@ sequenceDiagram
 
 #### TimerRestAdapter（`services/timer_rest_adapter.py`）
 
-- **请求构造** `_build_request`（`timer_rest_adapter.py:50`）：把内部 sample 转成 `/forecast` 契约——以固定列名 `time` 为时间列，`columns = [time, *target_column_names]`，`data` 为 `[[history_ts, *row], ...]`，`output_length = [horizon]`（**2026-05-25 起取 `model_input["horizon"]`，不再读 `target_future` 的长度**，与桩适配器同步改造），`time_col = ["time"]`，`model_id` 取 `model["remote_model_id"]`。
+- **请求构造** `_build_request`（`timer_rest_adapter.py:50`）：把内部 sample 转成 `/forecast` 契约——以固定列名 `time` 为时间列，`columns = [time, *target_column_names]`，`data` 为 `[[history_ts, *row], ...]`，`output_length = [horizon]`（**2026-05-25 起取 `model_input["horizon"]`，不再读 `target_future` 的长度**，与桩适配器同步改造），`time_col = ["time"]`，`model_id` 取 `model["remote_model_id"]`。若样本含 `covariate_column_names`，则额外发送 `history_covs` 与 `future_covs`：两边都用 `columns=[time,*covariate_column_names]`，前者配 `history_timestamps/history_cov`，后者配 `future_timestamps/future_cov`，用同列名表达同一个协变量在历史段与未来已知段的两部分。
 - **请求发送** `_post`（`timer_rest_adapter.py:65`）：默认用 `httpx.Client(timeout=..., trust_env=False)`——**`trust_env=False`** 是关键：推理服务是内网服务，绕开系统 HTTP/SOCKS 代理。HTTP 非 200 或业务信封 `code != 200` 均抛 `TimerServiceError`（真实服务会把「模型未加载」这类业务错误包装成 HTTP 200 + `code=400`）。
 - **响应解析** `_parse_response`（`timer_rest_adapter.py:91`）：从 `data.results[0]` 取 `columns/data`，剔除 `time` 列只留数值列，截断到 `horizon`。形状不符抛 `TimerServiceError`。
 - **错误归一**：所有 `httpx.HTTPError`、非 200、契约不符都收敛为 `TimerServiceError`（`timer_rest_adapter.py:12`）。
-- 另有 `list_models`（GET `/models/list`，取 `data.models`）、`load_model`（POST `/models/load`）、`unload_model`（POST `/models/unload`，已卸载 409 视为 no-op）与 `unload_all_models`（先列目录，只卸载 `loaded=true` 的模型）。REST 模式下 `/models` 路由直接以 `/models/list` 为权威来源，并通过 `model_catalog.py` 把远端模型同步成本地 `Model(model_id=<remote_id>, endpoint_uri="timer://<remote_id>", forecast_limits=...)` 镜像，供 run/unit/metric 继续用本地外键串联。多目标兼容性按 `forecast_limits.max_target_count` 判断：`1` 表示单目标，`null` 表示原生多目标不限目标数，缺失字段按不支持多目标处理。`POST /models/{model_id}/load` 仍可供手动预热，但新建评测/赛道运行前端不再批量调用它。
+- 另有 `list_models`（GET `/models/list`，取 `data.models`）、`load_model`（POST `/models/load`）、`unload_model`（POST `/models/unload`，已卸载 409 视为 no-op）与 `unload_all_models`（先列目录，只卸载 `loaded=true` 的模型）。REST 模式下 `/models` 路由直接以 `/models/list` 为权威来源，并通过 `model_catalog.py` 把远端模型同步成本地 `Model(model_id=<remote_id>, endpoint_uri="timer://<remote_id>", forecast_limits=...)` 镜像，供 run/unit/metric 继续用本地外键串联。多目标兼容性按 `forecast_limits.max_target_count` 判断：`1` 表示单目标，`null` 表示原生多目标不限目标数，缺失字段按不支持多目标处理。协变量兼容性按 `forecast_limits.max_covariate_count` 判断：大于等于测试用例集 `covariate_dim` 才可运行，缺失或 `0` 表示不支持协变量。`POST /models/{model_id}/load` 仍可供手动预热，但新建评测/赛道运行前端不再批量调用它。
 - `_execute_unit` 在进入 task 前调用 `adapter.ensure_model_loaded(...)` 兜底确认。未加载模型会先 POST `/models/load` 并轮询 `/models/list` 直到 `loaded=true`；加载失败会把该 unit 和其 tasks 标记为 `failed` / `model_load_error`，写入 `RunEvent`，然后在 `finally` 中尽量 `unload_model`，让 run 正常进入终态。
 
 #### StubTimerAdapter（`services/stub_timer_adapter.py`）
@@ -318,7 +318,7 @@ flowchart TB
 1. 用 `SampleStore.read_by_ref` 读出样本的 history/future（时间戳、目标值、列名）。
 2. 取该 sample 所属 shard 在该 run 下的所有 `ForecastArtifact`，逐个用 `ForecastStore.read_forecasts` 读出 JSONL，过滤出 `sample_id` 匹配的那一行。
 3. 每个命中的模型组一条 `models[]` 记录：`model_name`、`forecast`、`metrics`、`status / error_code / error_message`，并补 `unit_status / task_status`。
-4. 顶层返回 `sample_index`、行号窗口、history/forecast 时间戳范围、`history_timestamps / future_timestamps / target_history / target_future / target_column_names` + `models[]` + `links`，供前端把真值与各模型预测画在同一张图上，并从样本页跳回报告。
+4. 顶层返回 `sample_index`、行号窗口、history/forecast 时间戳范围、`history_timestamps / future_timestamps / target_history / target_future / target_column_names`，以及可选的 `covariate_column_names / history_cov / future_cov` + `models[]` + `links`。前端把真值与各模型预测画在同一张图上；如果有协变量，再在下方单独画协变量图，并从样本页跳回报告。
 
 ```mermaid
 flowchart LR
@@ -372,7 +372,7 @@ flowchart LR
 | 基础 / 健康 | `GET /`（302→/docs）、`GET /health/{startup,liveness,readiness}` | 健康探针返回固定 `started/alive/ready` |
 | 运维 | `POST /reboot`、`GET /metrics` | reboot 是**安全桩**：返回契约形状但不真正发 SIGTERM（`main.py:307`）；metrics 输出 Prometheus 文本 |
 | 推理 | `POST /ai/api/v1/forecast` | 见下「确定性算法」 |
-| 模型管理 | `GET /models/list`、`GET /models/list_loaded`、`POST /models/{register,load,unload,delete}` | 内置模型含 `Timer-3.5/3.0`、`Chronos-2`、`toto2.0`、`AutoARIMA`、`Holt-Winters`，视为已加载；`forecast_limits.max_target_count` 中只有 `toto2.0` 为 `null`（支持原生多目标），其余为 `1`；register/load/unload/delete 改内存表，删内置模型返回 403 |
+| 模型管理 | `GET /models/list`、`GET /models/list_loaded`、`POST /models/{register,load,unload,delete}` | 内置模型含 `Timer-3.5/3.0`、`Chronos-2`、`toto2.0`、`AutoARIMA`、`Holt-Winters`，视为已加载；`forecast_limits.max_target_count` 中只有 `toto2.0` 为 `null`（支持原生多目标），其余为 `1`；本地桩中 `Chronos-2` 的 `max_covariate_count=50`，其余为 `0`；register/load/unload/delete 改内存表，删内置模型返回 403 |
 | 数据集评估 | `POST /dataset/evaluate/execute`、`GET /dataset/evaluate/list_dimensions` | 维度：`integrity / forecastability / pearson`（`main.py:51-58`） |
 | 数据集治理 | `POST /dataset/govern/execute`、`GET /dataset/govern/list_dimensions` | 维度：`timestamp_repair / causal_mean_imputation / flat_series_removal / zscore_normalization / extreme_value_clipping`（`main.py:60-69`） |
 

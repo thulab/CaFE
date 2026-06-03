@@ -1,3 +1,5 @@
+import json
+
 from fastapi.testclient import TestClient
 import httpx
 
@@ -29,6 +31,50 @@ def test_adapter_returns_horizon_by_dim_forecast():
     assert len(forecast) == 2
     assert all(len(row) == 1 for row in forecast)
     assert all(isinstance(row[0], float) for row in forecast)
+
+
+def test_adapter_sends_history_and_future_covariates():
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "code": 200,
+                "message": "Success",
+                "service_info": {},
+                "data": {"results": [{"columns": ["time", "target"], "data": [["2024-01-01T03:00:00", 3.1]]}]},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://testserver")
+    adapter = TimerRestAdapter(base_url=str(client.base_url), api_prefix="/ai/api/v1", client=client)
+    sample = {
+        **_sample(horizon=1),
+        "covariate_column_names": ["promo", "temp"],
+        "history_cov": [[0.0, 21.0], [1.0, 22.0], [1.0, 23.0]],
+        "future_cov": [[0.0, 24.0]],
+    }
+
+    adapter.forecast(sample, {"model_id": "local", "remote_model_id": "Chronos-2"}, timeout_seconds=30)
+
+    assert captured["history_covs"] == [
+        {
+            "columns": ["time", "promo", "temp"],
+            "data": [
+                ["2024-01-01T00:00:00", 0.0, 21.0],
+                ["2024-01-01T01:00:00", 1.0, 22.0],
+                ["2024-01-01T02:00:00", 1.0, 23.0],
+            ],
+        }
+    ]
+    assert captured["future_covs"] == [
+        {
+            "columns": ["time", "promo", "temp"],
+            "data": [["2024-01-01T03:00:00", 0.0, 24.0]],
+        }
+    ]
 
 
 def test_adapter_is_deterministic():

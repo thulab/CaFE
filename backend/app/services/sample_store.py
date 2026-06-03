@@ -31,9 +31,11 @@ class SampleStore:
         shard_id: str,
         windows: list[SampleWindow],
         target_columns: list[str],
+        covariate_columns: list[str],
         read_result: DatasetReadResult,
     ) -> list[SampleIndex]:
         target_matrix = read_result.column_matrix(target_columns)
+        covariate_matrix = read_result.column_matrix(covariate_columns) if covariate_columns else []
         sample_indexes: list[SampleIndex] = []
         for line_number, window in enumerate(windows):
             sample = SampleIndex(
@@ -44,6 +46,7 @@ class SampleStore:
                 horizon_start=window.horizon_start,
                 horizon_end=window.horizon_end,
                 target_columns=target_columns,
+                covariate_columns=covariate_columns,
                 context_length=window.context_length,
                 horizon=window.horizon,
                 materialized=False,
@@ -53,11 +56,12 @@ class SampleStore:
                 "sample_id": sample.sample_id,
                 "sample_index": line_number,
                 "target_columns": target_columns,
+                "covariate_columns": covariate_columns,
                 "context": [window.context_start, window.context_end],
                 "horizon": [window.horizon_start, window.horizon_end],
             }
             sample.checksum = canonical_json_checksum(
-                self._content(read_result, target_matrix, window, target_columns)
+                self._content(read_result, target_matrix, covariate_matrix, window, target_columns, covariate_columns)
             )
             sample_indexes.append(sample)
         return sample_indexes
@@ -66,18 +70,23 @@ class SampleStore:
         self,
         read_result: DatasetReadResult,
         target_matrix: list[list[float]],
+        covariate_matrix: list[list[float]],
         window: SampleWindow,
         target_columns: list[str],
+        covariate_columns: list[str],
     ) -> dict[str, Any]:
         """checksum 输入：仅样本内容（值/时间戳/列名/行范围），不含随机 sample_id/shard_id。"""
         history = range(window.context_start, window.context_end + 1)
         future = range(window.horizon_start, window.horizon_end + 1)
         return {
             "target_column_names": target_columns,
+            "covariate_column_names": covariate_columns,
             "history_timestamps": [read_result.timestamps[i].isoformat() for i in history],
             "future_timestamps": [read_result.timestamps[i].isoformat() for i in future],
             "target_history": [target_matrix[i] for i in history],
             "target_future": [target_matrix[i] for i in future],
+            "history_cov": [covariate_matrix[i] for i in history] if covariate_columns else [],
+            "future_cov": [covariate_matrix[i] for i in future] if covariate_columns else [],
             "source_row_start": window.source_row_start,
             "source_row_end": window.source_row_end,
         }
@@ -89,6 +98,7 @@ class SampleStore:
     def _assemble(self, session: Session, storage_ref: dict[str, Any]) -> dict[str, Any]:
         shard_id = storage_ref["shard_id"]
         target_columns = storage_ref["target_columns"]
+        covariate_columns = storage_ref.get("covariate_columns") or []
         context_start, context_end = storage_ref["context"]
         horizon_start, horizon_end = storage_ref["horizon"]
         store = SeriesStore()
@@ -98,12 +108,13 @@ class SampleStore:
             "shard_id": shard_id,
             "sample_index": storage_ref["sample_index"],
             "target_column_names": target_columns,
+            "covariate_column_names": covariate_columns,
             "history_timestamps": store.slice_timestamps(session, shard_id, context_start, context_end),
             "future_timestamps": store.slice_timestamps(session, shard_id, horizon_start, horizon_end),
             "target_history": store.slice(session, shard_id, target_columns, context_start, context_end),
             "target_future": store.slice(session, shard_id, target_columns, horizon_start, horizon_end),
-            "history_cov": [],
-            "future_cov": [],
+            "history_cov": store.slice(session, shard_id, covariate_columns, context_start, context_end) if covariate_columns else [],
+            "future_cov": store.slice(session, shard_id, covariate_columns, horizon_start, horizon_end) if covariate_columns else [],
             "source_row_start": context_start,
             "source_row_end": horizon_end,
         }

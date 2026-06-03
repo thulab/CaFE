@@ -10,6 +10,7 @@ class DatasetReadResult:
     rows: list[dict[str, str]]
     timestamps: list[datetime]
     target_columns: list[str]
+    covariate_columns: list[str]
     values: list[list[float]]
     frequency: str
     encoding: str
@@ -21,8 +22,12 @@ class DatasetReadResult:
 
     def column_matrix(self, columns: list[str]) -> list[list[float]]:
         """Return a row-major matrix for the given selected columns, shape [row_count, len(columns)]."""
-        indexes = [self.target_columns.index(column) for column in columns]
+        indexes = [self.value_columns.index(column) for column in columns]
         return [[row[index] for index in indexes] for row in self.values]
+
+    @property
+    def value_columns(self) -> list[str]:
+        return [*self.target_columns, *self.covariate_columns]
 
 
 class DatasetReader(Protocol):
@@ -31,6 +36,7 @@ class DatasetReader(Protocol):
         path: Path,
         time_column: str,
         target_columns: list[str] | None = None,
+        covariate_columns: list[str] | None = None,
         frequency: str | None = None,
     ) -> DatasetReadResult:
         ...

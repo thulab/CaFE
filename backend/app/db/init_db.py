@@ -27,6 +27,22 @@ def _ensure_compat_columns(engine) -> None:
         if "name" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE shard ADD COLUMN name VARCHAR"))
+        if "covariate_columns" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE shard ADD COLUMN covariate_columns JSON DEFAULT '[]'"))
+        if "covariate_dim" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE shard ADD COLUMN covariate_dim INTEGER DEFAULT 0"))
+    if "capabilityblock" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("capabilityblock")}
+        if "covariate_dim" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE capabilityblock ADD COLUMN covariate_dim INTEGER DEFAULT 0"))
+    if "sampleindex" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("sampleindex")}
+        if "covariate_columns" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE sampleindex ADD COLUMN covariate_columns JSON DEFAULT '[]'"))
     if "model" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("model")}
         if "forecast_limits" not in columns:

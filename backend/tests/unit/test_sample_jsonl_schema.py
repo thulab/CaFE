@@ -21,9 +21,9 @@ def test_sample_store_reconstructs_expected_sample_v1_schema():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         SeriesStore().write(
-            session, "shard-1", read_result.timestamps, read_result.target_columns, read_result.values
+            session, "shard-1", read_result.timestamps, read_result.value_columns, read_result.values
         )
-        samples = SampleStore().write_samples("shard-1", windows[:1], ["target"], read_result)
+        samples = SampleStore().write_samples("shard-1", windows[:1], ["target"], [], read_result)
         storage_ref = dict(samples[0].storage_ref)
         sample_id = samples[0].sample_id
         for sample in samples:

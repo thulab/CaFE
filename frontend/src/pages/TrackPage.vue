@@ -53,6 +53,7 @@
                     <th>{{ t('track.window') }}</th>
                     <th>{{ t('track.samples') }}</th>
                     <th>{{ t('track.targets') }}</th>
+                    <th>{{ t('track.covariates') }}</th>
                     <th>{{ t('track.status') }}</th>
                   </tr>
                 </thead>
@@ -66,6 +67,7 @@
                     <td class="muted">{{ windowLabel(shard) }}</td>
                     <td class="muted">{{ formatInt(shard.sample_count ?? 0) }}</td>
                     <td class="muted">{{ targetLabel(shard) }}</td>
+                    <td class="muted">{{ covariateLabel(shard) }}</td>
                     <td><StatusBadge :status="shard.status" /></td>
                   </tr>
                 </tbody>
@@ -315,5 +317,9 @@ function windowLabel(shard: ShardDTO) {
 
 function targetLabel(shard: ShardDTO) {
   return shard.target_columns.join(', ') || t('common.notAvailable');
+}
+
+function covariateLabel(shard: ShardDTO) {
+  return shard.covariate_columns?.length ? shard.covariate_columns.join(', ') : t('common.notAvailable');
 }
 </script>

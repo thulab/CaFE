@@ -16,6 +16,7 @@ class CapabilityBlock(SQLModel, table=True):
     name: str
     task_type: str = "univariate_forecast"
     target_dim: int = 1
+    covariate_dim: int = 0
     shard_count: int = 0
     sample_count: int = 0
     aggregation_policy: str = "mean_over_shards"

@@ -16,6 +16,7 @@ _REQUIRED_KEYS = (
 )
 
 _OPTIONAL_KEYS = (
+    "covariate_column_names",
     "history_cov",
     "future_cov",
 )
@@ -27,7 +28,7 @@ def build_model_input(sample: dict) -> dict:
     The returned dict contains:
     - All keys from ``_REQUIRED_KEYS``.
     - ``horizon``: int derived from ``len(sample["target_future"])``.
-    - ``history_cov`` / ``future_cov`` if present in *sample*.
+    - ``covariate_column_names`` / ``history_cov`` / ``future_cov`` if present in *sample*.
 
     ``target_future`` (the ground-truth answer) is intentionally excluded so
     that it cannot leak into model inference.

@@ -32,7 +32,8 @@
               <div class="detail-item"><dt>{{ t('shard.manifest') }}</dt><dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shortId(shard.dataset_manifest_id) }}</a></dd></div>
               <div class="detail-item"><dt>{{ t('shard.loadJob') }}</dt><dd><a v-if="shard.load_job_id" class="text-link" :href="`#/load-jobs/${shard.load_job_id}`">{{ shortId(shard.load_job_id) }}</a><span v-else class="faint">{{ t('shard.notRecorded') }}</span></dd></div>
               <div class="detail-item"><dt>{{ t('shard.split') }}</dt><dd>{{ t('shard.splitSummary', { context: shard.context_length, horizon: shard.horizon, stride: shard.stride }) }}</dd></div>
-              <div class="detail-item"><dt>{{ t('shard.targets') }}</dt><dd>{{ shard.target_columns.join(', ') }}</dd></div>
+              <div class="detail-item"><dt>{{ t('shard.targets') }}</dt><dd>{{ columnLabel(shard.target_columns) }}</dd></div>
+              <div class="detail-item"><dt>{{ t('shard.covariates') }}</dt><dd>{{ columnLabel(shard.covariate_columns) }}</dd></div>
               <div class="detail-item wide"><dt>{{ t('shard.sourceUri') }}</dt><dd class="mono">{{ shard.source_uri }}</dd></div>
             </dl>
           </div>
@@ -166,5 +167,9 @@ function sampleLabel(sample: SampleIndexDTO) {
 
 function sampleHref(sample: SampleIndexDTO) {
   return `#/shards/${props.shardId}/samples/${encodeURIComponent(sample.sample_id)}`;
+}
+
+function columnLabel(columns?: string[]) {
+  return columns?.length ? columns.join(', ') : t('common.notAvailable');
 }
 </script>

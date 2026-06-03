@@ -41,14 +41,27 @@
 
       <div class="field">
         <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
-        <div class="choice-grid" role="group" :aria-label="t('wizard.columnAndSplitStep.targetColumns')">
-          <label v-for="column in nonTimeColumns" :key="column" class="choice">
-            <input v-model="targets" type="checkbox" :value="column" :aria-label="column" />
-            <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ column }}</span>
-          </label>
-        </div>
+        <ColumnSelectionList
+          v-model:selected="targets"
+          :columns="targetCandidates"
+          :labels="targetListLabels"
+          :selected-count-label="t('wizard.columnAndSplitStep.selectedTargets', { count: targets.length })"
+          search-id="target-column-search"
+        />
         <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
       </div>
+    </div>
+
+    <div class="field">
+      <span class="label">{{ t('wizard.columnAndSplitStep.covariateColumns') }}</span>
+      <ColumnSelectionList
+        v-model:selected="covariates"
+        :columns="covariateCandidates"
+        :labels="covariateListLabels"
+        :selected-count-label="t('wizard.columnAndSplitStep.selectedCovariates', { count: covariates.length })"
+        search-id="covariate-column-search"
+      />
+      <p class="hint">{{ t('wizard.columnAndSplitStep.covariateHint') }}</p>
     </div>
 
     <div class="grid-auto">
@@ -91,6 +104,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../ui/Icon.vue';
+import ColumnSelectionList from '../ui/ColumnSelectionList.vue';
 import { createDatasetManifest, createLoadJob } from '../../api/datasets';
 import { defaultNameFromFilename, goNext, wizardState } from '../../stores/wizard';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
@@ -104,15 +118,21 @@ const timeColumn = ref('time');
 const nonTimeColumns = computed(() => isTsFile.value ? columns.value : columns.value.filter((c) => c !== timeColumn.value));
 
 const targets = ref<string[]>([]);
+const covariates = ref<string[]>([]);
 const context = ref(60);
 const horizon = ref(16);
 const stride = ref(16);
 const maxSamples = ref<number | undefined>(undefined);
 const { text: error, clear: clearError, setKey: setErrorKey, setRaw: setRawError, setError } = useDisplayMessage();
 const busy = ref(false);
+const targetCandidates = computed(() => nonTimeColumns.value.filter((column) => !covariates.value.includes(column)));
+const covariateCandidates = computed(() => nonTimeColumns.value.filter((column) => !targets.value.includes(column)));
+const targetListLabels = computed(() => columnListLabels(t('wizard.columnAndSplitStep.targetSearch'), t('wizard.columnAndSplitStep.selectTargetColumn'), t('wizard.columnAndSplitStep.toggleTargetPage')));
+const covariateListLabels = computed(() => columnListLabels(t('wizard.columnAndSplitStep.covariateSearch'), t('wizard.columnAndSplitStep.selectCovariateColumn'), t('wizard.columnAndSplitStep.toggleCovariatePage')));
 
 watch(nonTimeColumns, (cols) => {
   targets.value = targets.value.filter((target) => cols.includes(target));
+  covariates.value = covariates.value.filter((covariate) => cols.includes(covariate));
 }, { immediate: true });
 
 watch(() => wizardState.preview?.filename, ensureNames, { immediate: true });
@@ -120,6 +140,10 @@ watch(() => wizardState.preview?.filename, ensureNames, { immediate: true });
 async function load() {
   if (targets.value.length === 0 || targets.value.some((target) => !nonTimeColumns.value.includes(target))) {
     setErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
+    return;
+  }
+  if (covariates.value.some((covariate) => !nonTimeColumns.value.includes(covariate)) || covariates.value.some((covariate) => targets.value.includes(covariate))) {
+    setErrorKey('wizard.columnAndSplitStep.errors.invalidCovariates');
     return;
   }
   if (context.value <= 0 || horizon.value <= 0 || stride.value <= 0) {
@@ -138,11 +162,12 @@ async function load() {
     });
     wizardState.manifestId = manifest.dataset_manifest_id;
 
-    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; shard_name?: string; max_samples?: number } = {
+    const splitConfig: { context_length: number; horizon: number; stride?: number; target_columns: string[]; covariate_columns: string[]; shard_name?: string; max_samples?: number } = {
       context_length: context.value,
       horizon: horizon.value,
       stride: stride.value,
       target_columns: [...targets.value],
+      covariate_columns: [...covariates.value],
       shard_name: wizardState.shardName || `${wizardState.datasetName || defaultNameFromFilename(wizardState.preview?.filename)} shard`
     };
     if (maxSamples.value != null && maxSamples.value > 0) {
@@ -170,6 +195,22 @@ function ensureNames() {
   const base = defaultNameFromFilename(wizardState.preview?.filename);
   if (!wizardState.datasetName) wizardState.datasetName = base;
   if (!wizardState.shardName) wizardState.shardName = `${wizardState.datasetName || base} test cases`;
+}
+
+function columnListLabels(search: string, selectItem: string, togglePageSelection: string) {
+  return {
+    search,
+    searchPlaceholder: t('wizard.columnAndSplitStep.columnSearchPlaceholder'),
+    item: t('wizard.columnAndSplitStep.columnName'),
+    details: t('wizard.columnAndSplitStep.columnDetails'),
+    status: t('common.status'),
+    loading: t('common.loading'),
+    empty: t('wizard.columnAndSplitStep.noColumns'),
+    previousPage: t('common.previousPage'),
+    nextPage: t('common.nextPage'),
+    selectItem,
+    togglePageSelection,
+  };
 }
 
 function loadJobErrorMessage(job: { status?: string; error_code?: string | null; error_message?: string | null }) {

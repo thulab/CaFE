@@ -20,7 +20,7 @@ export interface DatasetManifestCreateDTO {
 
 export interface DatasetLoadJobCreateDTO {
   dataset_manifest_id: string;
-  split_config: { context_length: number; horizon: number; stride?: number; target_columns: string[]; max_samples?: number };
+  split_config: { context_length: number; horizon: number; stride?: number; target_columns: string[]; covariate_columns?: string[]; max_samples?: number };
   seed?: number;
 }
 
@@ -76,6 +76,8 @@ export interface ShardDTO {
   row_count: number;
   target_columns: string[];
   target_dim: number;
+  covariate_columns?: string[];
+  covariate_dim?: number;
   frequency?: string | null;
   context_length: number;
   horizon: number;
@@ -110,10 +112,13 @@ export interface SamplePreviewDTO extends SampleWindowMeta {
   sample_id: string;
   shard_id?: string;
   target_column_names?: string[];
+  covariate_column_names?: string[];
   history_timestamps?: string[];
   future_timestamps?: string[];
   target_history: number[][];
   target_future: number[][];
+  history_cov?: number[][];
+  future_cov?: number[][];
 }
 
 export interface RunProgressDTO {
@@ -231,8 +236,11 @@ export interface SampleForecastDTO extends SampleWindowMeta {
   shard_id?: string;
   capability_block_id?: string | null;
   target_column_names?: string[];
+  covariate_column_names?: string[];
   target_history: number[][];
   target_future: number[][];
+  history_cov?: number[][];
+  future_cov?: number[][];
   models: Array<{
     model_id: string;
     model_name?: string;

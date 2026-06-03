@@ -44,7 +44,7 @@ describe('ColumnAndSplitStep', () => {
     await fireEvent.update(screen.getByLabelText('Dataset name'), 'Energy demand');
     await fireEvent.update(screen.getByLabelText('Test case set name'), 'Energy demand validation');
 
-    await fireEvent.click(screen.getByLabelText('target'));
+    await fireEvent.click(screen.getByLabelText('Select target target'));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
@@ -75,13 +75,36 @@ describe('ColumnAndSplitStep', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.click(screen.getByLabelText('target'));
-    await fireEvent.click(screen.getByLabelText('other'));
+    await fireEvent.click(screen.getByLabelText('Select target target'));
+    await fireEvent.click(screen.getByLabelText('Select target other'));
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
     const loadJobBody = JSON.parse(fetchSpy.mock.calls[1]![1]!.body as string);
     expect(loadJobBody.split_config.target_columns).toEqual(['target', 'other']);
+  });
+
+  it('submits selected known-future covariates from the column lists', async () => {
+    wizardState.preview = {
+      upload_id: 'u1',
+      source_uri: '/tmp/data.csv',
+      filename: 'data.csv',
+      columns: [{ name: 'time' }, { name: 'target' }, { name: 'promo' }, { name: 'temperature' }],
+      preview_rows: []
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.click(screen.getByLabelText('Select target target'));
+    await fireEvent.click(screen.getByLabelText('Select covariate promo'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
+
+    await waitFor(() => expect(wizardState.shardId).toBe('s1'));
+    const loadJobBody = JSON.parse(fetchSpy.mock.calls[1]![1]!.body as string);
+    expect(loadJobBody.split_config.target_columns).toEqual(['target']);
+    expect(loadJobBody.split_config.covariate_columns).toEqual(['promo']);
   });
 
   it('keeps the generated manifest payload name stable under Chinese UI', async () => {
@@ -91,7 +114,7 @@ describe('ColumnAndSplitStep', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.click(screen.getByLabelText('target'));
+    await fireEvent.click(screen.getByLabelText('选择目标 target'));
     await fireEvent.click(screen.getByRole('button', { name: '生成测试用例集' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
@@ -114,7 +137,7 @@ describe('ColumnAndSplitStep', () => {
 
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.click(screen.getByLabelText('temperature'));
+    await fireEvent.click(screen.getByLabelText('Select target temperature'));
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s-ts'));
@@ -135,7 +158,7 @@ describe('ColumnAndSplitStep', () => {
       }), { status: 200 }));
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.click(screen.getByLabelText('target'));
+    await fireEvent.click(screen.getByLabelText('Select target target'));
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('tsfile_multiple_devices');
