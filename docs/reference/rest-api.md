@@ -2,7 +2,7 @@
 <!-- 内容更新：修改飞书原文后重新运行同步脚本。 -->
 
 > **来源**：[飞书文档](https://timechor.feishu.cn/docx/CwaMdyCmhovwIGxRbGicKuExnVh)（docx token `CwaMdyCmhovwIGxRbGicKuExnVh`）  
-> **最后同步**：2026-05-25  
+> **最后同步**：2026-06-03
 > **更新方式**：`python3 scripts/sync-feishu-docs.py`
 
 ---
@@ -184,7 +184,7 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
 
 | 字段 | 类型 | 必填 | 默认值 | 说明 |
 | --- | --- | --- | --- | --- |
-| `model_id` | string | 否 | 多变量或带协变量时为 `"Chronos-2"`，否则为 `"Timer-3.5"`；匹配大小写不敏感 | 使用的模型 ID |
+| `model_id` | string | 否 | 带协变量时为 `"Chronos-2"`，多变量目标时为 `"toto2.0"`，否则为 `"Timer-3.5"`；匹配大小写不敏感 | 使用的模型 ID |
 | `targets` | 对象数组 | **是** | — | 每个任务的目标时间序列数据 |
 | `targets[i].columns` | 字符串数组 | 是 | — | 列名（包括时间列） |
 | `targets[i].data` | 二维数组 | 是 | — | 行导向数据 |
@@ -199,20 +199,22 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
 
 | 约束 | Timer-3.5 | Timer-3.0 | Chronos-2 | 错误信息 |
 | --- | --- | --- | --- | --- |
-| `output_length[i]` | [1, 10000] | [1, 720] | [1, 1024] | `Task-{i}'s output length is illegal` |
+| `output_length[i]` | [1, 720] | [1, 720] | [1, 720] | `Task-{i}'s output length is illegal` |
 | 目标输入长度 (`len(targets[i].data)`) | [16, 11520] | [16, 2880] | [16, 8192] | `Task-{i}'s input length is illegal` |
-| 目标变量数 | = 1（仅单变量） | = 1（仅单变量） | [1, 5] | `Task-{i} has {n} targets...` |
+| 目标变量数 | = 1（仅单变量） | = 1（仅单变量） | = 1（仅单变量） | `Task-{i} has {n} targets...` |
 | 历史协变量数量 | 0（被忽略） | 0（被忽略） | [1, 50] | `Task-{i} has {n} history covariates...` |
 | 历史协变量输入长度 | — | — | [16, 8192] | `Task-{i}'s history covariate length is illegal` |
 | 未来协变量数量 | 0（被忽略） | 0（被忽略） | [1, 50] | `Task-{i} has {n} future covariates...` |
-| 未来协变量输入长度 | — | — | [1, 1024] | `Task-{i}'s future covariate length is illegal` |
+| 未来协变量输入长度 | — | — | [1, 720] | `Task-{i}'s future covariate length is illegal` |
 | 模型必须已加载 | — | — | — | `Model [{model_id}] is not available (not loaded)` |
 
 说明：
 
-- Timer-3.5 通过 KV-Cache 自回归把 `output_length` 上限扩展到 10000；单次前向上限仍为 272。
-- Chronos-2 的 `output_length` 上限 1024 即模型单次前向最大值；任一未来协变量的每行长度也不得超过该 1024 步上限。
+- `output_length` 由 REST 层统一限制为 720，对所有模型一致，与各模型更大的原生上限无关（Timer-3.5 的 KV-Cache 自回归、Chronos-2 的 1024 单次前向上限）。Timer-3.5 的单次前向上限仍为 272。
+- 未来协变量覆盖预测时域，因此其每行长度与 `output_length` 共享同一 720 步上限（基础大模型中仅 Chronos-2 接受协变量）。
+- 上述基础大模型在 REST 层均为单变量目标（每个任务一条目标序列）。多变量目标预测由 `toto2.0` 提供（目标数无上限、不支持协变量）；自动选择会将多变量目标输入路由到该模型。
 - Sktime 模型（如 `AutoARIMA`、`Holt-Winters`）沿用 Timer-3.0 的 `output_length` 默认范围 `[1, 720]`。
+- 上述按模型的限制也可通过 `GET /models/list` 在每个模型的 `forecast_limits` 对象中以编程方式获取。
 
 **成功响应 (200):**
 
@@ -303,7 +305,16 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
         "category": "builtin",
         "state": "active",
         "loaded": true,
-        "base_model_id": null
+        "base_model_id": null,
+        "forecast_limits": {
+          "min_input_length": 16,
+          "max_input_length": 11520,
+          "max_future_covs_length": null,
+          "max_output_length": 720,
+          "max_target_count": 1,
+          "max_covariate_count": 0,
+          "default_output_length": 272
+        }
       },
       {
         "model_id": "Timer-3.0",
@@ -311,7 +322,16 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
         "category": "builtin",
         "state": "active",
         "loaded": true,
-        "base_model_id": null
+        "base_model_id": null,
+        "forecast_limits": {
+          "min_input_length": 16,
+          "max_input_length": 2880,
+          "max_future_covs_length": null,
+          "max_output_length": 720,
+          "max_target_count": 1,
+          "max_covariate_count": 0,
+          "default_output_length": 96
+        }
       },
       {
         "model_id": "Chronos-2",
@@ -319,7 +339,16 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
         "category": "builtin",
         "state": "active",
         "loaded": true,
-        "base_model_id": null
+        "base_model_id": null,
+        "forecast_limits": {
+          "min_input_length": 16,
+          "max_input_length": 8192,
+          "max_future_covs_length": 720,
+          "max_output_length": 720,
+          "max_target_count": 1,
+          "max_covariate_count": 50,
+          "default_output_length": 96
+        }
       },
       {
         "model_id": "AutoARIMA",
@@ -327,7 +356,16 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
         "category": "builtin",
         "state": "active",
         "loaded": true,
-        "base_model_id": null
+        "base_model_id": null,
+        "forecast_limits": {
+          "min_input_length": 16,
+          "max_input_length": 2880,
+          "max_future_covs_length": 2880,
+          "max_output_length": 720,
+          "max_target_count": 1,
+          "max_covariate_count": 50,
+          "default_output_length": 96
+        }
       },
       {
         "model_id": "Holt-Winters",
@@ -335,7 +373,16 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
         "category": "builtin",
         "state": "active",
         "loaded": true,
-        "base_model_id": null
+        "base_model_id": null,
+        "forecast_limits": {
+          "min_input_length": 16,
+          "max_input_length": 2880,
+          "max_future_covs_length": 2880,
+          "max_output_length": 720,
+          "max_target_count": 1,
+          "max_covariate_count": 50,
+          "default_output_length": 96
+        }
       }
     ]
   }
@@ -352,6 +399,21 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
 | `state` | string | `"active"`、`"inactive"` 或 `"activating"` |
 | `loaded` | boolean | 模型是否已加载到 GPU |
 | `base_model_id` | string \| null | 该模型所扩展的内置模型 ID |
+| `forecast_limits` | object \| null | 该模型在 REST 层强制的预测请求限制（见下） |
+
+**`forecast_limits`****对象：**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `min_input_length` | int | 最小目标/历史输入长度（时间点数） |
+| `max_input_length` | int | 最大目标/历史输入长度（时间点数） |
+| `max_future_covs_length` | int \| null | 最大未来协变量长度；模型不接受协变量时为 `null` |
+| `max_output_length` | int | 最大预测步长（输出长度） |
+| `max_target_count` | int \| null | 最大目标变量数；`null` 表示无上限（多变量，如 `toto2.0`） |
+| `max_covariate_count` | int | 最大协变量数（历史或未来）；模型不接受协变量时为 `0` |
+| `default_output_length` | int | 省略 `output_length` 时使用的默认预测步长 |
+
+上述取值与 `POST /forecast` 的校验规则一致，便于客户端在提交请求前自行约束输入。
 
 ---
 
@@ -707,7 +769,7 @@ curl -X POST http://localhost:10810/ai/api/v1/models/register \
 {
   "code": 200,
   "message": "Dataset evaluation completed successfully",
-  "service_info": { "timestamp": 1712345678, "version": "0.2.0" },
+  "service_info": { "timestamp": 1712345678, "version": "0.2.1" },
   "data": {
     "overall_score": 82.5,
     "dimension_scores": {
@@ -765,7 +827,7 @@ curl -X POST http://localhost:10810/ai/api/v1/models/register \
 {
   "code": 200,
   "message": "Success",
-  "service_info": { "timestamp": 1712345678, "version": "0.2.0" },
+  "service_info": { "timestamp": 1712345678, "version": "0.2.1" },
   "data": {
     "dimensions": [
       {
@@ -856,7 +918,7 @@ curl -X POST http://localhost:10810/ai/api/v1/models/register \
 {
   "code": 200,
   "message": "Dataset governance completed successfully",
-  "service_info": { "timestamp": 1712345678, "version": "0.2.0" },
+  "service_info": { "timestamp": 1712345678, "version": "0.2.1" },
   "data": {
     "dimension": "causal_mean_imputation",
     "summary": {
@@ -915,7 +977,7 @@ curl -X POST http://localhost:10810/ai/api/v1/models/register \
 {
   "code": 200,
   "message": "Success",
-  "service_info": { "timestamp": 1712345678, "version": "0.2.0" },
+  "service_info": { "timestamp": 1712345678, "version": "0.2.1" },
   "data": {
     "dimensions": [
       {"name": "timestamp_repair", "description": "...", "supported_params": []},

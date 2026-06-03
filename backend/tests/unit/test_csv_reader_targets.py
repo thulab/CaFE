@@ -13,13 +13,13 @@ def test_string_values_are_converted_to_float(tmp_path):
     assert result.column_matrix(["target"]) == [[1.25], [2.5]]
 
 
-def test_multiple_target_columns_are_rejected(tmp_path):
+def test_multiple_target_columns_are_read_in_requested_order(tmp_path):
     path = write_csv(tmp_path, "time,a,b\n2026-01-01 00:00:00,1,2\n2026-01-01 01:00:00,3,4\n")
 
-    with pytest.raises(ApiError) as exc:
-        CsvDatasetReader().read(path, "time", ["a", "b"])
+    result = CsvDatasetReader().read(path, "time", ["b", "a"])
 
-    assert exc.value.error_code == "csv_target_columns_invalid"
+    assert result.target_columns == ["b", "a"]
+    assert result.column_matrix(["b", "a"]) == [[2.0, 1.0], [4.0, 3.0]]
 
 
 @pytest.mark.parametrize(

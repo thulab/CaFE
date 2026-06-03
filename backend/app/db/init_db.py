@@ -27,6 +27,11 @@ def _ensure_compat_columns(engine) -> None:
         if "name" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE shard ADD COLUMN name VARCHAR"))
+    if "model" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("model")}
+        if "forecast_limits" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE model ADD COLUMN forecast_limits JSON DEFAULT '{}'"))
 
 
 def assert_manifest_can_succeed_load(session: Session, dataset_manifest_id: str) -> None:

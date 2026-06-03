@@ -232,7 +232,7 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 - `context_length`（int，必填）
 - `horizon`（int，必填）
 - `stride`（int，可选；缺省取 `horizon`）
-- `target_columns`（list[str]，**必填且恰好 1 个**；MVP 单变量目标列选择。未选择或选择多个时报 `load_target_columns_invalid`；目标列不存在时由 reader 返回格式相关错误码）
+- `target_columns`（list[str]，**必填且至少 1 个，不能重复**；目标列选择。未选择或重复时报 `load_target_columns_invalid`；目标列不存在时由 reader 返回格式相关错误码）
 - `max_samples`（int，可选）：窗口数超过它时沿序列均匀采样（含首尾，可复现）。
 - `shard_name`（str，可选）：前端上传/切片时提供的人类可读切片名称；成功后写入 `Shard.name`，不参与唯一性或执行逻辑。
 
@@ -265,8 +265,8 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `time_range_start` | `str \| None` | `None` | 时间范围起（ISO 8601 字符串） |
 | `time_range_end` | `str \| None` | `None` | 时间范围止（ISO 8601 字符串） |
 | `row_count` | `int` | `0` | 行数 |
-| `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列，MVP 恰好 1 个 |
-| `target_dim` | `int` | `1` | 目标维度 |
+| `target_columns` | `list[str]` | `[]`，**JSON 列** | 被选中的目标列，可为一个或多个 |
+| `target_dim` | `int` | `1` | 目标维度，等于 `target_columns` 数量 |
 | `frequency` | `str \| None` | `None` | 时间频率 |
 | `context_length` | `int` | `0` | 样本历史长度 |
 | `horizon` | `int` | `0` | 预测长度 |
@@ -403,6 +403,7 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | `adapter_type` | `str` | `"timer_service"` | adapter 类型 |
 | `endpoint_uri` | `str \| None` | `None` | 推理服务地址 |
 | `supported_task_types` | `list[str]` | `["univariate_forecast"]`，**JSON 列** | 支持的任务类型 |
+| `forecast_limits` | `dict[str, Any]` | `{}`，**JSON 列** | 远端模型能力限制镜像；当前读取 `max_target_count` 判断多目标支持，`null` 表示不限制目标数，缺失表示不支持多目标 |
 | `input_schema_version` | `str` | `"sample.v1"` | 输入协议版本 |
 | `stub_seed` | `int` | `0` | stub 可复现 seed |
 | `status` | `str` | `"available"` | 见下方枚举 |
@@ -414,8 +415,9 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 **adapter_type**：默认 `"timer_service"`。
 - 注意实际选用哪种 adapter 由**全局配置**决定而非该字段：`get_model_adapter(settings)` 在 `settings.model_adapter == "stub"` 时返回 `StubTimerAdapter`，否则返回 `TimerRestAdapter`（`services/model_adapter.py:13-20`）。
 - `endpoint_uri == "stub://fail"` 是约定的失败注入：会让对应 unit 直接以 `adapter_error` 失败（`run_executor.py:142-143`）。
-- 种子模型由 `seed_mvp_models` 写入（`track_service.py:79-93`），共 5 个：Timer 3.5 / Timer 3.0 / Chronos 2 / toto / TimesFM 2.5，`endpoint_uri` 形如 `stub://timer-service/{slug}`。
+- 种子模型由 `seed_mvp_models` 写入（`track_service.py:79-93`），共 5 个：Timer 3.5 / Timer 3.0 / Chronos 2 / toto / TimesFM 2.5，`endpoint_uri` 形如 `stub://timer-service/{slug}`；其中 `toto` 的 `forecast_limits.max_target_count=null`，其余 MVP 种子模型为 `1`。
 - `remote_model_id(model)` 把本地模型映射为 REST 服务的 model_id，规则为 `{model_family}-{model_version}`（如 `Timer-3.5`），缺失时退回 `name` 或 `model_id`（`model_adapter.py:23-29`）。
+- REST 模式下 `/models` 以 timer-rest-service `/models/list` 为权威来源并同步 `forecast_limits`。创建 run 时若 track 的最大 `target_dim > 1`，缺失 `max_target_count` 或小于目标维度的模型会被 `model_target_dim_unsupported` 拒绝。
 
 ---
 
@@ -694,7 +696,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 ### 6.1 样本视图（sample.v1）
 
-**2026-05-25 SQLite pivot / 2026-06-02 target-only cleanup**：样本不物化为文件。每个 shard 的单变量目标序列逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。MVP 不摄入协变量，`history_cov`/`future_cov` 仍为空。
+**2026-05-25 SQLite pivot / 2026-06-02 target-only cleanup / 2026-06-03 multi-target**：样本不物化为文件。每个 shard 的目标向量序列逐点存在 SQLite `SeriesPoint`（见 §2.5）。`sample.v1` 是 `SampleStore.read_by_ref(session, storage_ref)` 用 `SeriesStore.slice` 按 `SampleIndex.storage_ref` 的行号区间（`(shard_id, row_index)` 范围查询）**现切**出来的内存视图，字段结构如下（`services/sample_store.py` 的 `_assemble`）。MVP 不摄入协变量，`history_cov`/`future_cov` 仍为空。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -788,7 +790,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | --- | --- | --- |
 | `RealDatasetTrackCreateDTO` | `api/routes/wizard.py:13` | `name: str`、`shard_ids: list[str]`、`primary_metric_id: str = "mase"` |
 | `DatasetLoadJobCreateDTO` | `schemas/dataset.py:4` | `dataset_manifest_id: str`、`split_config: dict`、`seed: int = 0` |
-| `ModelDTO` | `schemas/model_registry.py:4` | `model_id: str`、`name: str`、`adapter_type: str` |
+| `ModelDTO` | `schemas/model_registry.py:4` | `model_id: str`、`name: str`、`adapter_type: str`、`forecast_limits: dict` |
 | `RankingRowDTO` | `schemas/ranking.py:4` | `model_id: str`、`metric_value: float`、`rank: int` |
 | `ReportDTO` | `schemas/report.py:4` | `report_id: str`、`benchmarking_run_id: str`、`status: str` |
 | `SamplePreviewDTO` | `schemas/sample.py:4` | `sample_id: str`、`target_history: list[list[float]]`、`target_future: list[list[float]]` |
@@ -895,7 +897,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 数据通路 review（清理 plan 24 项）沉淀的、当前**有意保留**的约束，便于后续接续：
 
 1. **存储已 pivot 为 SQLite**：内部真值源是 `SeriesPoint`（逐点行），TsFile 由「存储格式」降为「输入格式」之一。输入支持 **CSV 或 TsFile**，经 `get_dataset_reader(file_format)` 各自 reader → 统一 `DatasetReadResult` → 写入 `SeriesPoint`。
-2. **单序列 / 单设备边界**（#10，本轮明确排除）：一个 CSV = 一条序列（时间轴严格递增不重复）；TsFile 输入要求**恰好一个设备**（多设备 → `tsfile_multiple_devices`）。多序列/面板需单列一轮设计。
+2. **单序列 / 单设备边界**（#10，本轮明确排除）：一个 CSV = 一条序列（时间轴严格递增不重复）；TsFile 输入要求**恰好一个设备**（多设备 → `tsfile_multiple_devices`），但可选择同设备下的多个目标物理量。多序列/面板需单列一轮设计。
 3. **等间隔校验挡掉日历型频率**（#11）：`_infer_frequency` 要求相邻间隔严格相等，月/季/年（天数不齐）会被 `csv_time_not_equidistant` 拒。连带 MASE 季节 `monthly→12` 现实不可达。本轮按「接受现状 + 文档登记」，未放宽为日历等间隔。
 4. **MASE 季节项 `m=1`**（#13）：`_mase_scale` 用 last-value naive（`m=1`），未按频率推季节 `m`。与 #11 一致（季节 m 大半不可达），m=1 为务实简化，登记为最终决策。
 5. **MASE 缺席可见化**（#14，已实现）：平稳历史（in-sample `scale==0`）下该样本 MASE 无定义。现不再静默缺席——`compute_sample_metrics` 经 `SampleMetrics` 暴露 `mase_unavailable_reason`（`flat_history` / `no_history_diffs`），report 在该 unit 显式标注 `metrics.mase=null` + `mase_unavailable_reason`；榜单仍正确跳过（无 `mase` MetricResult 行即不进 MASE 榜）。

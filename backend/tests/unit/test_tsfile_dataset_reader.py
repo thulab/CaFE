@@ -74,7 +74,17 @@ def test_full_series_paths_must_share_one_device(tmp_path):
     with pytest.raises(ApiError) as exc:
         TsFileDatasetReader().read(path, "time", target_columns=["tsbench.dev1.target", "tsbench.dev2.target"])
 
-    assert exc.value.error_code == "tsfile_target_columns_invalid"
+    assert exc.value.error_code == "tsfile_multiple_devices"
+
+
+def test_multiple_measurements_from_one_device_are_read_as_targets(tmp_path):
+    path = tmp_path / "multi_target.tsfile"
+    _write_tsfile(path, devices=("dev1",), n=4)
+
+    result = TsFileDatasetReader().read(path, "time", target_columns=["target", "extra"])
+
+    assert result.target_columns == ["target", "extra"]
+    assert result.values[0] == [100.0, 20.0]
 
 
 def test_tsfile_epoch_timestamps_are_not_converted_through_local_timezone(tmp_path, monkeypatch):

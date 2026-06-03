@@ -104,6 +104,7 @@ def sync_timer_service_models(session: Session, service_models: list[dict]) -> d
         model.model_version = str(service_model.get("base_model_id") or "")
         model.adapter_type = "timer_service"
         model.endpoint_uri = f"timer://{remote_id}"
+        model.forecast_limits = service_model.get("forecast_limits") or {}
         model.status = str(service_model.get("state") or "unknown")
         model.updated_at = now
         session.add(model)
@@ -128,6 +129,7 @@ def _list_service_models(adapter: TimerRestAdapter) -> list[dict]:
 
 def _local_model_item(model: Model) -> dict:
     item = model.model_dump()
+    item["forecast_limits"] = _forecast_limits_dict(model.forecast_limits)
     item["loaded"] = None
     return item
 
@@ -144,6 +146,11 @@ def _service_model_item(service_model: dict, local_model: Model) -> dict:
             "loaded": bool(service_model.get("loaded")),
             "loading": bool(service_model.get("loading")),
             "base_model_id": service_model.get("base_model_id"),
+            "forecast_limits": _forecast_limits_dict(service_model.get("forecast_limits") or local_model.forecast_limits),
         }
     )
     return item
+
+
+def _forecast_limits_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}

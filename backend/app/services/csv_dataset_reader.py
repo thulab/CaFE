@@ -34,10 +34,10 @@ class CsvDatasetReader:
             raise ApiError("csv_time_column_missing", "time_column was not found", {"time_column": time_column})
 
         selected = list(target_columns or [])
-        if len(selected) != 1:
+        if not selected or len(set(selected)) != len(selected):
             raise ApiError(
                 "csv_target_columns_invalid",
-                "exactly one target column must be selected",
+                "at least one distinct target column must be selected",
                 {"target_columns": selected},
             )
         for target_column in selected:

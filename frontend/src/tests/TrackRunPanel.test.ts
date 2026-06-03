@@ -35,4 +35,50 @@ describe('TrackRunPanel', () => {
     expect(calls).not.toContain('/api/models/m1/load');
     expect(calls).toContain('/api/benchmarking-runs');
   });
+
+  it('disables single-target models when the existing track is multi-target', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/models') {
+        return Promise.resolve(new Response(JSON.stringify({
+          items: [
+            { model_id: 'timer', name: 'Timer 3.0', adapter_type: 'timer_service', forecast_limits: { max_target_count: 1 } },
+            { model_id: 'toto', name: 'toto2.0', adapter_type: 'timer_service', forecast_limits: { max_target_count: null } }
+          ]
+        }), { status: 200 }));
+      }
+      if (url === '/api/tracks/track-1') {
+        return Promise.resolve(new Response(JSON.stringify({
+          track_id: 'track-1',
+          name: 'Multi target',
+          primary_metric_id: 'mase',
+          status: 'active',
+          shard_ids: ['shard-1']
+        }), { status: 200 }));
+      }
+      if (url === '/api/shards/shard-1') {
+        return Promise.resolve(new Response(JSON.stringify({
+          shard_id: 'shard-1',
+          dataset_manifest_id: 'manifest-1',
+          source_uri: '/tmp/multi.csv',
+          status: 'ready',
+          row_count: 20,
+          target_columns: ['load', 'temperature'],
+          target_dim: 2,
+          context_length: 6,
+          horizon: 3,
+          stride: 3,
+          sample_count: 4
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
+    });
+
+    render(TrackRunPanel, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    const timer = await screen.findByLabelText('Timer 3.0') as HTMLInputElement;
+    const toto = await screen.findByLabelText('toto2.0') as HTMLInputElement;
+    await waitFor(() => expect(timer.disabled).toBe(true));
+    expect(toto.disabled).toBe(false);
+  });
 });

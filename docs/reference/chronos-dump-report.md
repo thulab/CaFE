@@ -2,7 +2,7 @@
 <!-- 内容更新：修改飞书原文后重新运行同步脚本。 -->
 
 > **来源**：[飞书文档](https://timechor.feishu.cn/docx/Dd2WdEvXKoLDdox5Ma9cEMb1nBf)（docx token `Dd2WdEvXKoLDdox5Ma9cEMb1nBf`）  
-> **最后同步**：2026-05-25  
+> **最后同步**：2026-06-03
 > **更新方式**：`python3 scripts/sync-feishu-docs.py`
 
 ---

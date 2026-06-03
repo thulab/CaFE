@@ -4,6 +4,10 @@ export interface ModelDTO {
   model_id: string;
   name: string;
   adapter_type: string;
+  forecast_limits?: {
+    max_target_count?: number | null;
+    [key: string]: unknown;
+  } | null;
   loaded?: boolean | null;
   loading?: boolean | null;
   service_state?: string | null;

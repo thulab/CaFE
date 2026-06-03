@@ -40,11 +40,13 @@
       </div>
 
       <div class="field">
-        <label class="label" for="target-select">{{ t('wizard.columnAndSplitStep.targetColumn') }}</label>
-        <select id="target-select" v-model="target" :aria-label="t('wizard.columnAndSplitStep.target')">
-          <option value="">{{ t('wizard.columnAndSplitStep.selectTarget') }}</option>
-          <option v-for="column in nonTimeColumns" :key="column" :value="column">{{ column }}</option>
-        </select>
+        <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
+        <div class="choice-grid" role="group" :aria-label="t('wizard.columnAndSplitStep.targetColumns')">
+          <label v-for="column in nonTimeColumns" :key="column" class="choice">
+            <input v-model="targets" type="checkbox" :value="column" :aria-label="column" />
+            <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ column }}</span>
+          </label>
+        </div>
         <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
       </div>
     </div>
@@ -101,7 +103,7 @@ const isTsFile = computed(() => fileFormat.value === 'tsfile');
 const timeColumn = ref('time');
 const nonTimeColumns = computed(() => isTsFile.value ? columns.value : columns.value.filter((c) => c !== timeColumn.value));
 
-const target = ref('');
+const targets = ref<string[]>([]);
 const context = ref(60);
 const horizon = ref(16);
 const stride = ref(16);
@@ -110,15 +112,13 @@ const { text: error, clear: clearError, setKey: setErrorKey, setRaw: setRawError
 const busy = ref(false);
 
 watch(nonTimeColumns, (cols) => {
-  if (target.value && !cols.includes(target.value)) {
-    target.value = '';
-  }
+  targets.value = targets.value.filter((target) => cols.includes(target));
 }, { immediate: true });
 
 watch(() => wizardState.preview?.filename, ensureNames, { immediate: true });
 
 async function load() {
-  if (!target.value || !nonTimeColumns.value.includes(target.value)) {
+  if (targets.value.length === 0 || targets.value.some((target) => !nonTimeColumns.value.includes(target))) {
     setErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
     return;
   }
@@ -142,7 +142,7 @@ async function load() {
       context_length: context.value,
       horizon: horizon.value,
       stride: stride.value,
-      target_columns: [target.value],
+      target_columns: [...targets.value],
       shard_name: wizardState.shardName || `${wizardState.datasetName || defaultNameFromFilename(wizardState.preview?.filename)} shard`
     };
     if (maxSamples.value != null && maxSamples.value > 0) {

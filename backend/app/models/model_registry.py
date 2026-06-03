@@ -15,6 +15,7 @@ class Model(SQLModel, table=True):
     adapter_type: str = "timer_service"
     endpoint_uri: str | None = None
     supported_task_types: list[str] = Field(default_factory=lambda: ["univariate_forecast"], sa_column=Column(JSON))
+    forecast_limits: dict = Field(default_factory=dict, sa_column=Column(JSON))
     input_schema_version: str = "sample.v1"
     stub_seed: int = 0
     status: str = "available"

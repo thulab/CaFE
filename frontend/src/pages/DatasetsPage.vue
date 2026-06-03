@@ -80,11 +80,13 @@
           </div>
 
           <div class="field">
-            <label class="label" for="dataset-target">{{ t('wizard.columnAndSplitStep.targetColumn') }}</label>
-            <select id="dataset-target" v-model="uploadTarget" :aria-label="t('wizard.columnAndSplitStep.target')">
-              <option value="">{{ t('wizard.columnAndSplitStep.selectTarget') }}</option>
-              <option v-for="column in uploadNonTimeColumns" :key="column" :value="column">{{ column }}</option>
-            </select>
+            <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
+            <div class="choice-grid" role="group" :aria-label="t('wizard.columnAndSplitStep.targetColumns')">
+              <label v-for="column in uploadNonTimeColumns" :key="column" class="choice">
+                <input v-model="uploadTargets" type="checkbox" :value="column" :aria-label="column" />
+                <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ column }}</span>
+              </label>
+            </div>
             <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
           </div>
         </div>
@@ -222,7 +224,7 @@ const createdShardId = ref('');
 const uploadDatasetName = ref('');
 const uploadShardName = ref('');
 const uploadTimeColumn = ref('time');
-const uploadTarget = ref('');
+const uploadTargets = ref<string[]>([]);
 const uploadContext = ref(60);
 const uploadHorizon = ref(16);
 const uploadStride = ref(16);
@@ -249,9 +251,7 @@ const displayItems = computed(() => items.value.map((item) => ({
 })));
 
 watch(uploadNonTimeColumns, (cols) => {
-  if (uploadTarget.value && !cols.includes(uploadTarget.value)) {
-    uploadTarget.value = '';
-  }
+  uploadTargets.value = uploadTargets.value.filter((target) => cols.includes(target));
 }, { immediate: true });
 
 function rowTitle(item: Row): string {
@@ -343,7 +343,7 @@ async function handleUpload(file?: File) {
     uploadDatasetName.value = baseName;
     uploadShardName.value = `${baseName} test cases`;
     uploadTimeColumn.value = uploadColumns.value.includes('time') ? 'time' : uploadColumns.value[0] ?? 'time';
-    uploadTarget.value = '';
+    uploadTargets.value = [];
   } catch (caught) {
     setUploadError(caught, 'wizard.uploadStep.errors.uploadFailed');
   } finally {
@@ -353,7 +353,7 @@ async function handleUpload(file?: File) {
 
 async function createShard() {
   if (!uploadPreview.value) return;
-  if (!uploadTarget.value || !uploadNonTimeColumns.value.includes(uploadTarget.value)) {
+  if (uploadTargets.value.length === 0 || uploadTargets.value.some((target) => !uploadNonTimeColumns.value.includes(target))) {
     setUploadErrorKey('wizard.columnAndSplitStep.errors.selectExactlyOneTarget');
     return;
   }
@@ -375,7 +375,7 @@ async function createShard() {
       context_length: uploadContext.value,
       horizon: uploadHorizon.value,
       stride: uploadStride.value,
-      target_columns: [uploadTarget.value],
+      target_columns: [...uploadTargets.value],
       shard_name: uploadShardName.value || `${uploadDatasetName.value || 'Uploaded dataset'} test cases`
     };
     if (uploadMaxSamples.value != null && uploadMaxSamples.value > 0) splitConfig.max_samples = uploadMaxSamples.value;

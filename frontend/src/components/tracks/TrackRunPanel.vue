@@ -9,10 +9,10 @@
       </div>
       <div v-if="models.length" class="choice-grid" :aria-label="t('wizard.runStep.availableModels')">
         <label v-for="model in models" :key="model.model_id" class="choice">
-          <input v-model="selectedIds" type="checkbox" :value="model.model_id" :aria-label="model.name" />
+          <input v-model="selectedIds" type="checkbox" :value="model.model_id" :aria-label="model.name" :disabled="!isModelCompatible(model)" />
           <span style="display:grid;gap:1px;min-width:0">
             <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ model.name }}</span>
-            <span class="faint" style="font-size:0.74rem">{{ model.adapter_type }}{{ modelStateLabel(model) }}</span>
+            <span class="faint" style="font-size:0.74rem">{{ model.adapter_type }}{{ modelStateLabel(model) }}{{ modelTargetLimitLabel(model) }}</span>
           </span>
         </label>
       </div>
@@ -40,8 +40,11 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listModels, type ModelDTO } from '../../api/models';
 import { createRun } from '../../api/runs';
+import { getShard } from '../../api/datasets';
+import { getTrack } from '../../api/tracks';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
+import { modelMaxTargetCount, modelSupportsTargetDim } from '../../lib/modelLimits';
 import Icon from '../ui/Icon.vue';
 
 const props = defineProps<{ trackId: string }>();
@@ -52,15 +55,21 @@ const models = ref<ModelDTO[]>([]);
 const selectedIds = ref<string[]>([]);
 const runId = ref('');
 const isCreatingRun = ref(false);
+const targetDim = ref(1);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 
-const allSelected = computed(() => models.value.length > 0 && selectedIds.value.length === models.value.length);
+const compatibleModels = computed(() => models.value.filter((model) => isModelCompatible(model)));
+const allSelected = computed(() => compatibleModels.value.length > 0 && selectedIds.value.length === compatibleModels.value.length);
 
-onMounted(loadModels);
+onMounted(async () => {
+  await Promise.all([loadModels(), loadTargetDim()]);
+});
 watch(() => props.trackId, () => {
   runId.value = '';
   clearError();
+  void loadTargetDim();
 });
+watch([models, targetDim], pruneIncompatibleSelections);
 
 async function loadModels() {
   try {
@@ -71,7 +80,7 @@ async function loadModels() {
 }
 
 function toggleAll() {
-  selectedIds.value = allSelected.value ? [] : models.value.map((model) => model.model_id);
+  selectedIds.value = allSelected.value ? [] : compatibleModels.value.map((model) => model.model_id);
 }
 
 async function run() {
@@ -95,5 +104,39 @@ function modelStateLabel(model: ModelDTO) {
   if (model.loading === true) return t('wizard.runStep.modelStateSuffix', { state: t('wizard.runStep.loading') });
   if (model.loaded === false) return t('wizard.runStep.modelStateSuffix', { state: t('wizard.runStep.notLoaded') });
   return '';
+}
+
+function modelTargetLimitLabel(model: ModelDTO) {
+  if (targetDim.value <= 1) return '';
+  const maxTargetCount = modelMaxTargetCount(model);
+  if (maxTargetCount === null) return t('wizard.runStep.targetLimitUnboundedSuffix');
+  const count = maxTargetCount ?? 1;
+  return t(count === 1 ? 'wizard.runStep.targetLimitSuffixOne' : 'wizard.runStep.targetLimitSuffixOther', { count });
+}
+
+function isModelCompatible(model: ModelDTO) {
+  return modelSupportsTargetDim(model, targetDim.value);
+}
+
+function pruneIncompatibleSelections() {
+  const allowed = new Set(compatibleModels.value.map((model) => model.model_id));
+  const kept = selectedIds.value.filter((id) => allowed.has(id));
+  if (kept.length !== selectedIds.value.length) selectedIds.value = kept;
+}
+
+async function loadTargetDim() {
+  try {
+    const track = await getTrack(props.trackId);
+    const shardIds = track.shard_ids ?? [];
+    if (!shardIds.length) {
+      targetDim.value = 1;
+      return;
+    }
+    const shards = await Promise.all(shardIds.map((id) => getShard(id)));
+    targetDim.value = Math.max(1, ...shards.map((shard) => Number(shard.target_dim || shard.target_columns?.length || 1)));
+  } catch (caught) {
+    setError(caught, 'errors.failedToLoadTracks');
+    targetDim.value = 1;
+  }
 }
 </script>

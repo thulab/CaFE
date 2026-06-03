@@ -2,7 +2,7 @@
 <!-- 内容更新：修改飞书原文后重新运行同步脚本。 -->
 
 > **来源**：[飞书文档](https://apache-iotdb-project.feishu.cn/docx/SenJdxlbuoUS5Uxmq7jcOUzdnob)（docx token `SenJdxlbuoUS5Uxmq7jcOUzdnob`）  
-> **最后同步**：2026-05-25  
+> **最后同步**：2026-06-03
 > **更新方式**：`python3 scripts/sync-feishu-docs.py`
 
 ---

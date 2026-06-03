@@ -32,6 +32,8 @@ def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str
     blocks = session.exec(select(CapabilityBlock).where(CapabilityBlock.track_id == track_id)).all()
     if not blocks:
         raise ApiError("track_has_no_blocks", "track has no capability blocks", {"track_id": track_id})
+    target_dim = max((block.target_dim for block in blocks), default=1)
+    _validate_models_support_target_dim(session, model_ids, target_dim)
 
     block_sample_count = sum(block.sample_count for block in blocks)
     run = BenchmarkingRun(
@@ -71,6 +73,40 @@ def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str
     session.commit()
     session.refresh(run)
     return run
+
+
+def _validate_models_support_target_dim(session: Session, model_ids: list[str], target_dim: int) -> None:
+    if target_dim <= 1:
+        return
+    unsupported: list[str] = []
+    limits_by_model: dict[str, dict] = {}
+    for model_id in model_ids:
+        model = session.get(Model, model_id)
+        if model is None:
+            continue
+        limits = model.forecast_limits if isinstance(model.forecast_limits, dict) else {}
+        limits_by_model[model_id] = limits
+        if not _forecast_limits_support_target_dim(limits, target_dim):
+            unsupported.append(model_id)
+    if unsupported:
+        raise ApiError(
+            "model_target_dim_unsupported",
+            "selected model does not support the track target dimension",
+            {"model_ids": unsupported, "target_dim": target_dim, "forecast_limits": limits_by_model},
+            status_code=400,
+        )
+
+
+def _forecast_limits_support_target_dim(limits: dict, target_dim: int) -> bool:
+    if "max_target_count" not in limits:
+        return False
+    max_target_count = limits.get("max_target_count")
+    if max_target_count is None:
+        return True
+    try:
+        return int(max_target_count) >= target_dim
+    except (TypeError, ValueError):
+        return False
 
 
 _TERMINAL_RUN_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}

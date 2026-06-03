@@ -8,11 +8,11 @@ from app.models.ranking import RankingList
 
 
 MVP_STUB_MODELS = [
-    ("Timer 3.5", "Timer", "3.5"),
-    ("Timer 3.0", "Timer", "3.0"),
-    ("Chronos 2", "Chronos", "2"),
-    ("toto", "toto", "mvp"),
-    ("TimesFM 2.5", "TimesFM", "2.5"),
+    ("Timer 3.5", "Timer", "3.5", {"max_target_count": 1}),
+    ("Timer 3.0", "Timer", "3.0", {"max_target_count": 1}),
+    ("Chronos 2", "Chronos", "2", {"max_target_count": 1}),
+    ("toto", "toto", "mvp", {"max_target_count": None}),
+    ("TimesFM 2.5", "TimesFM", "2.5", {"max_target_count": 1}),
 ]
 
 
@@ -107,9 +107,13 @@ def create_track_with_blocks(
 
 
 def seed_mvp_models(session: Session) -> None:
-    existing = {model.name for model in session.exec(select(Model)).all()}
-    for name, family, version in MVP_STUB_MODELS:
+    existing = {model.name: model for model in session.exec(select(Model)).all()}
+    for name, family, version, forecast_limits in MVP_STUB_MODELS:
         if name in existing:
+            model = existing[name]
+            if not isinstance(model.forecast_limits, dict) or not model.forecast_limits:
+                model.forecast_limits = forecast_limits
+                session.add(model)
             continue
         session.add(
             Model(
@@ -117,7 +121,7 @@ def seed_mvp_models(session: Session) -> None:
                 model_family=family,
                 model_version=version,
                 endpoint_uri=f"stub://timer-service/{name.lower().replace(' ', '-')}",
+                forecast_limits=forecast_limits,
             )
         )
-        existing.add(name)
     session.commit()

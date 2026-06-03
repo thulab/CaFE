@@ -230,6 +230,7 @@ export interface SampleForecastDTO extends SampleWindowMeta {
   benchmarking_run_id?: string;
   shard_id?: string;
   capability_block_id?: string | null;
+  target_column_names?: string[];
   target_history: number[][];
   target_future: number[][];
   models: Array<{

@@ -6,7 +6,7 @@
       <label v-if="dimCount > 1" class="field" style="flex-direction:row;align-items:center;gap:8px">
         <span class="faint" style="font-size:0.82rem">{{ t('results.dimension') }}</span>
         <select v-model.number="dim" :aria-label="t('results.targetDimension')" style="min-height:32px;width:auto">
-          <option v-for="d in dimCount" :key="d" :value="d - 1">{{ t('results.dim', { index: d - 1 }) }}</option>
+          <option v-for="d in dimCount" :key="d" :value="d - 1">{{ targetDimLabel(d - 1) }}</option>
         </select>
       </label>
     </div>
@@ -131,6 +131,7 @@ const history = computed(() => props.sample.target_history || []);
 const future = computed(() => props.sample.target_future || []);
 const histLen = computed(() => history.value.length);
 const dimCount = computed(() => Math.max(1, history.value[0]?.length || future.value[0]?.length || 1));
+const targetNames = computed(() => props.sample.target_column_names || []);
 
 const successfulModels = computed(() =>
   props.sample.models.filter((m) => m.status === 'succeeded' && Array.isArray(m.forecast) && m.forecast!.length)
@@ -151,6 +152,10 @@ function at(rows: number[][], idx: number): number | undefined {
   if (!row) return undefined;
   const v = row[dim.value];
   return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+}
+
+function targetDimLabel(index: number): string {
+  return targetNames.value[index] || t('results.dim', { index });
 }
 
 const series = computed<Series[]>(() => {

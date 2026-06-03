@@ -642,6 +642,17 @@ textarea:focus {
   color: var(--primary-text);
 }
 
+.choice:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.choice:has(input:disabled):hover {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
 .choice input {
   accent-color: var(--primary);
   width: 16px;

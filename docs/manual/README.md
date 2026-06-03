@@ -9,8 +9,8 @@
 - 后端：FastAPI + SQLModel + SQLite。
 - 前端：Vue 3 + Vite 7。
 - 数据集：支持 CSV 和单设备表模型 TsFile 输入；内部统一存成 SQLite `SeriesPoint`。
-- 目标列：仅支持单变量单 target column（一次评测必须且只能选 1 个 target）。
-- 模型：REST 模式下以 timer-rest-service 的 `/models/list` 为准；进程内桩模式保留 5 个本地可复现模型。
+- 目标列：真实数据加载支持选择一个或多个 target column；多个 target 会作为同一个目标向量一起切窗、评分和预测。协变量/外生变量仍未接入。
+- 模型：REST 模式下以 timer-rest-service 的 `/models/list` 为准，并读取 `forecast_limits.max_target_count` 判断是否支持多目标；`null` 表示不限制目标数，`1` 表示仅支持单目标。进程内桩模式保留本地可复现模型。
 - 指标：MASE、MSE、MAE，均为 lower is better；榜单主指标为 **MASE**（赛道 `primary_metric_id`）。
 - 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
 - 访问控制：公开榜单可匿名浏览；工作台页面需要登录；写操作、运行评测和用户/角色管理受 RBAC 权限控制。
@@ -154,14 +154,14 @@ TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-syst
 - 必须有 header row，且首行不能看起来像数据行。
 - 列名必须唯一（去掉首列可能的 BOM 后判断）。
 - 分隔符支持逗号 `,`、制表符 `\t`、分号 `;`，系统按首行出现次数自动识别。
-- 必须显式选择时间列和 target 列；二者都要真实存在于列名中。
+- 必须显式选择时间列和至少一个 target 列；所选列都要真实存在于列名中且不能重复。
 - 时间格式必须能被 ISO 8601 解析（如 `YYYY-MM-DD`、`YYYY-MM-DD HH:mm:ss`，末尾 `Z` 会按 UTC 处理）。
 - 时间列必须严格单调递增，不允许重复时间戳。
 - 时间间隔必须等距，系统据此推断 frequency（如 `1h`、`1d`）；推断需要至少 2 个时间戳。
-- MVP 只允许选择 **1 个** target column。
+- 可以选择 **1 个或多个** target column；多目标只表示同一时间轴上的多个预测目标，不表示多序列/面板数据，也不接入协变量。
 - target 值必须能转换为有限浮点数，不允许缺失、非数字、NaN 或 Inf。
 - 切分约束：`context_length + horizon` 不能超过数据行数；`context_length`、`horizon`、`stride` 都必须为正数；`stride` 缺省时等于 `horizon`。
-- TsFile 输入只支持表模型。单设备文件可直接选择物理量列；多 `timeseries_id` 文件需要选择完整 series path（形如 `table.device.value`），每次 load 仍只允许一个设备。
+- TsFile 输入只支持表模型。单设备文件可直接选择一个或多个物理量列；多 `timeseries_id` 文件需要选择同一设备下的完整 series path（形如 `table.device.value`），每次 load 仍只允许一个设备。
 
 仓库中有一个可用于试跑的示例文件：
 
@@ -209,11 +209,11 @@ http://127.0.0.1:5173
    - `Dataset name` 默认为上传文件名，可改成业务可读名称。
    - `Test case set name` 默认为“文件名 test cases”，用于在数据集页、测试用例集详情和赛道选择中识别该集合。
    - `Time column` 下拉选时间列（默认 `time`）。
-   - `Target column` **下拉单选**目标列；MVP 只加载这个单变量目标，不选会提示 “Select exactly one target”。
+   - `Target columns` 勾选一个或多个目标列；不选会提示 “Select at least one target”。
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
    - 点「Generate test case set」：依次创建 dataset manifest、提交 load job 并生成样本，成功后自动进入下一步。若第 2 步跳过上传，本步只显示提示并继续到已有测试用例集选择。
 4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列或 ID，并追加已有集合。点「Create track from selected sets」后，系统基于所选集合创建真实数据评测赛道与默认榜单。
-5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
+5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
 6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
 
 使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。
@@ -407,7 +407,7 @@ CSV 结构 / 编码类：
 - `csv_missing_header`：缺少 header row，或首行被识别为数据行。
 - `csv_duplicate_columns`：列名重复。
 - `csv_time_column_missing`：选择的时间列不存在。
-- `csv_target_columns_invalid`：未选择目标列或选择了多于 1 个目标列。
+- `csv_target_columns_invalid`：未选择目标列，或目标列选择重复。
 - `csv_target_column_missing`：选择的目标列不存在。
 
 时间列类：
@@ -427,11 +427,12 @@ CSV 结构 / 编码类：
 
 切分 / 样本类：
 
-- `load_target_columns_invalid`：load job 未选择 target，或选择了多于 1 个 target。
+- `load_target_columns_invalid`：load job 未选择 target，或 target 选择重复。
 - `split_config_invalid`：`context_length`、`horizon` 或 `stride` 非正数。
 - `split_length_exceeds_rows`：`context_length + horizon` 超过数据行数。
 - `sample_count_empty`：切分配置没有产生任何样本。
 - `dataset_manifest_not_found`：load job 指向的 dataset manifest 不存在。
+- `model_target_dim_unsupported`：选择了多目标测试用例集，但参评模型的 `forecast_limits.max_target_count` 不支持该目标维度；请换用支持多目标的模型或生成单目标测试用例集。
 
 ### 9.4 想重新开始一次干净测试
 

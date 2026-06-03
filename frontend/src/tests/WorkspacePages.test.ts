@@ -123,7 +123,7 @@ describe('workspace pages', () => {
       target: { files: [new File(['tsfile'], 'data.tsfile')] }
     });
     expect((await screen.findAllByText('temperature')).length).toBeGreaterThan(0);
-    await fireEvent.update(screen.getByLabelText('Target'), 'temperature');
+    await fireEvent.click(screen.getByLabelText('temperature'));
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     await waitFor(() => expect(screen.getByText('Test case set ready: shard-9')).toBeTruthy());

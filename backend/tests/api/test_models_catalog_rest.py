@@ -20,6 +20,7 @@ class _FakeTimerRestAdapter:
                 "state": "active",
                 "loaded": self.loaded_by_id["toto2.0"],
                 "base_model_id": None,
+                "forecast_limits": {"max_target_count": None, "max_output_length": 720},
             },
             {
                 "model_id": "Timer-3.0",
@@ -28,6 +29,7 @@ class _FakeTimerRestAdapter:
                 "state": "active",
                 "loaded": self.loaded_by_id["Timer-3.0"],
                 "base_model_id": None,
+                "forecast_limits": {"max_target_count": 1, "max_output_length": 720},
             },
         ]
 
@@ -53,6 +55,7 @@ def test_models_endpoint_uses_timer_service_catalog_in_rest_mode(monkeypatch):
     assert [item["model_id"] for item in items] == ["toto2.0", "Timer-3.0"]
     assert [item["loaded"] for item in items] == [True, False]
     assert [item["remote_model_id"] for item in items] == ["toto2.0", "Timer-3.0"]
+    assert [item["forecast_limits"]["max_target_count"] for item in items] == [None, 1]
 
 
 def test_load_model_endpoint_loads_timer_service_model(monkeypatch):

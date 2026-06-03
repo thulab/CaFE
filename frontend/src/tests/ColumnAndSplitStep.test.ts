@@ -19,7 +19,7 @@ describe('ColumnAndSplitStep', () => {
     vi.restoreAllMocks();
   });
 
-  it('enforces single target and positive split values', async () => {
+  it('enforces target selection and positive split values', async () => {
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
     // context=0 would trigger split validation after a target is selected
@@ -27,7 +27,7 @@ describe('ColumnAndSplitStep', () => {
     // Target not selected (default is empty) → should trigger target error
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
-    expect(screen.getByRole('alert').textContent).toContain('Select exactly one target');
+    expect(screen.getByRole('alert').textContent).toContain('Select at least one target');
   });
 
   it('creates manifest and load job with valid config', async () => {
@@ -44,9 +44,7 @@ describe('ColumnAndSplitStep', () => {
     await fireEvent.update(screen.getByLabelText('Dataset name'), 'Energy demand');
     await fireEvent.update(screen.getByLabelText('Test case set name'), 'Energy demand validation');
 
-    // Select a target from the single-select dropdown
-    const targetSelect = screen.getByLabelText('Target');
-    await fireEvent.update(targetSelect, 'target');
+    await fireEvent.click(screen.getByLabelText('target'));
 
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
@@ -71,6 +69,21 @@ describe('ColumnAndSplitStep', () => {
     });
   });
 
+  it('submits multiple selected target columns', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.click(screen.getByLabelText('target'));
+    await fireEvent.click(screen.getByLabelText('other'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
+
+    await waitFor(() => expect(wizardState.shardId).toBe('s1'));
+    const loadJobBody = JSON.parse(fetchSpy.mock.calls[1]![1]!.body as string);
+    expect(loadJobBody.split_config.target_columns).toEqual(['target', 'other']);
+  });
+
   it('keeps the generated manifest payload name stable under Chinese UI', async () => {
     setLocale('zh-CN');
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
@@ -78,7 +91,7 @@ describe('ColumnAndSplitStep', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ load_job_id: 'j1', status: 'succeeded', output_shard_id: 's1' }), { status: 200 }));
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.update(screen.getByLabelText('目标'), 'target');
+    await fireEvent.click(screen.getByLabelText('target'));
     await fireEvent.click(screen.getByRole('button', { name: '生成测试用例集' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s1'));
@@ -101,7 +114,7 @@ describe('ColumnAndSplitStep', () => {
 
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.update(screen.getByLabelText('Target'), 'temperature');
+    await fireEvent.click(screen.getByLabelText('temperature'));
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     await waitFor(() => expect(wizardState.shardId).toBe('s-ts'));
@@ -122,7 +135,7 @@ describe('ColumnAndSplitStep', () => {
       }), { status: 200 }));
     render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.update(screen.getByLabelText('Target'), 'target');
+    await fireEvent.click(screen.getByLabelText('target'));
     await fireEvent.click(screen.getByRole('button', { name: 'Generate test case set' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('tsfile_multiple_devices');

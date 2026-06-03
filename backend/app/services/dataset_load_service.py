@@ -120,10 +120,10 @@ class DatasetLoadService:
     def _execute_job(self, session: Session, manifest: DatasetManifest, job: DatasetLoadJob) -> DatasetLoadJob:
         config = job.split_config
         target_columns = list(config.get("target_columns") or [])
-        if len(target_columns) != 1:
+        if not target_columns or len(set(target_columns)) != len(target_columns):
             raise ApiError(
                 "load_target_columns_invalid",
-                "exactly one target column must be selected",
+                "at least one distinct target column must be selected",
                 {"target_columns": target_columns},
             )
 

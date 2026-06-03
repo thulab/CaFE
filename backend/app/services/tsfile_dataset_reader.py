@@ -36,10 +36,16 @@ class TsFileDatasetReader:
             ts_ms = [int(value) for value in tf[selected_series[0]].timestamps[:]]
             row_count = len(ts_ms)
             timestamps = [datetime.fromtimestamp(ms / 1000, UTC).replace(tzinfo=None) for ms in ts_ms]
-            column_arrays = {
-                col: [float(v) for v in tf[series_name][0:row_count]]
-                for col, series_name in zip(columns, selected_series, strict=True)
-            }
+            column_arrays = {}
+            for col, series_name in zip(columns, selected_series, strict=True):
+                current_ts = [int(value) for value in tf[series_name].timestamps[:]]
+                if current_ts != ts_ms:
+                    raise ApiError(
+                        "tsfile_target_axis_mismatch",
+                        "selected target series must share the same timestamp axis",
+                        {"target_columns": columns},
+                    )
+                column_arrays[col] = [float(v) for v in tf[series_name][0:row_count]]
         finally:
             tf.__exit__(None, None, None)
 
@@ -74,10 +80,10 @@ def _resolve_series_selection(series: list[str], target_columns: list[str] | Non
     one device from a multi-device file.
     """
     selected_targets = list(target_columns or [])
-    if len(selected_targets) != 1:
+    if not selected_targets or len(set(selected_targets)) != len(selected_targets):
         raise ApiError(
             "tsfile_target_columns_invalid",
-            "exactly one target column must be selected",
+            "at least one distinct target column must be selected",
             {"target_columns": selected_targets},
         )
 
