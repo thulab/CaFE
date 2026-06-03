@@ -70,4 +70,35 @@ describe('SampleForecastPage', () => {
     expect(screen.getByText('Covariates')).toBeTruthy();
     expect(screen.getByText('promo')).toBeTruthy();
   });
+
+  it('links to previous and next forecast samples in the same test case set', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === '/api/samples/s2/forecast?run_id=r1') {
+        return new Response(JSON.stringify({
+          sample_id: 's2',
+          shard_id: 'shard-1',
+          sample_index: 1,
+          target_history: [[1]],
+          target_future: [[2]],
+          models: [
+            { model_id: 'm1', model_name: 'Timer', status: 'succeeded', forecast: [[2.1]], metrics: {} }
+          ],
+          links: { report: 'rep1' }
+        }), { status: 200 });
+      }
+      if (url === '/api/shards/shard-1/samples?limit=1&offset=0') {
+        return new Response(JSON.stringify({ items: [{ sample_id: 's1', sample_index: 0 }], total: 3, limit: 1, offset: 0 }), { status: 200 });
+      }
+      if (url === '/api/shards/shard-1/samples?limit=1&offset=2') {
+        return new Response(JSON.stringify({ items: [{ sample_id: 's3', sample_index: 2 }], total: 3, limit: 1, offset: 2 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 });
+    });
+
+    render(SampleForecastPage, { props: { sampleId: 's2', runId: 'r1', reportId: 'rep1' }, global: { plugins: [i18n] } });
+
+    expect((await screen.findByRole('link', { name: 'Previous sample' })).getAttribute('href')).toBe('#/samples/s1?run_id=r1&report_id=rep1');
+    expect(screen.getByRole('link', { name: 'Next sample' }).getAttribute('href')).toBe('#/samples/s3?run_id=r1&report_id=rep1');
+  });
 });

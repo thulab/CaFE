@@ -25,7 +25,7 @@
       </div>
     </div>
 
-    <div class="grid-2">
+    <div class="stack" style="gap:14px">
       <div v-if="!isTsFile" class="field">
         <label class="label" for="time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
         <select id="time-column" v-model="timeColumn">
@@ -39,29 +39,31 @@
         <p class="hint">{{ t('wizard.columnAndSplitStep.tsfileHint') }}</p>
       </div>
 
-      <div class="field">
-        <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
-        <ColumnSelectionList
-          v-model:selected="targets"
-          :columns="targetCandidates"
-          :labels="targetListLabels"
-          :selected-count-label="t('wizard.columnAndSplitStep.selectedTargets', { count: targets.length })"
-          search-id="target-column-search"
-        />
-        <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
-      </div>
-    </div>
+      <section class="stack" style="gap:16px" :aria-label="t('wizard.columnAndSplitStep.columnRoleSelection')">
+        <div class="field">
+          <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
+          <ColumnSelectionList
+            v-model:selected="targets"
+            :columns="targetCandidates"
+            :labels="targetListLabels"
+            :selected-count-label="t('wizard.columnAndSplitStep.selectedTargets', { count: targets.length })"
+            search-id="target-column-search"
+          />
+          <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
+        </div>
 
-    <div class="field">
-      <span class="label">{{ t('wizard.columnAndSplitStep.covariateColumns') }}</span>
-      <ColumnSelectionList
-        v-model:selected="covariates"
-        :columns="covariateCandidates"
-        :labels="covariateListLabels"
-        :selected-count-label="t('wizard.columnAndSplitStep.selectedCovariates', { count: covariates.length })"
-        search-id="covariate-column-search"
-      />
-      <p class="hint">{{ t('wizard.columnAndSplitStep.covariateHint') }}</p>
+        <div class="field">
+          <span class="label">{{ t('wizard.columnAndSplitStep.covariateColumns') }}</span>
+          <ColumnSelectionList
+            v-model:selected="covariates"
+            :columns="covariateCandidates"
+            :labels="covariateListLabels"
+            :selected-count-label="t('wizard.columnAndSplitStep.selectedCovariates', { count: covariates.length })"
+            search-id="covariate-column-search"
+          />
+          <p class="hint">{{ t('wizard.columnAndSplitStep.covariateHint') }}</p>
+        </div>
+      </section>
     </div>
 
     <div class="grid-auto">

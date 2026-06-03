@@ -10,6 +10,12 @@
         <a class="btn secondary sm" :href="`#/shards/${shardId}`">
           <Icon name="chevronLeft" :size="15" /> {{ t('sampleWindow.backToShard') }}
         </a>
+        <SampleNeighborNav
+          v-if="sample"
+          :shard-id="sample.shard_id || shardId"
+          :sample-index="sample.sample_index"
+          :href-for-sample="sampleWindowHref"
+        />
         <span class="badge mono">{{ sampleTitle }}</span>
       </div>
     </header>
@@ -30,6 +36,7 @@ import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import SampleWindowChart from '../components/results/SampleWindowChart.vue';
+import SampleNeighborNav from '../components/results/SampleNeighborNav.vue';
 import { getSamplePreview } from '../api/samples';
 import type { SamplePreviewDTO } from '../api/types';
 import { useAsyncData } from '../composables/useAsync';
@@ -43,6 +50,10 @@ const sampleTitle = computed(() => {
   if (typeof sample.value?.sample_index === 'number') return t('sampleWindow.windowLabel', { index: sample.value.sample_index + 1 });
   return shortId(props.sampleId);
 });
+
+function sampleWindowHref(sampleId: string) {
+  return `#/shards/${props.shardId}/samples/${encodeURIComponent(sampleId)}`;
+}
 
 onMounted(run);
 </script>

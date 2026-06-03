@@ -30,6 +30,15 @@ describe('ColumnAndSplitStep', () => {
     expect(screen.getByRole('alert').textContent).toContain('Select at least one target');
   });
 
+  it('keeps time selection separate from target and covariate pickers', () => {
+    render(ColumnAndSplitStep, { global: { plugins: [i18n] } });
+
+    const columnRoleSelection = screen.getByLabelText('Target and covariate columns');
+    expect(columnRoleSelection.contains(screen.getByText('Target columns'))).toBe(true);
+    expect(columnRoleSelection.contains(screen.getByText('Known future covariates'))).toBe(true);
+    expect(columnRoleSelection.contains(screen.getByLabelText('Time column'))).toBe(false);
+  });
+
   it('creates manifest and load job with valid config', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({ dataset_manifest_id: 'm1' }), { status: 200 }))

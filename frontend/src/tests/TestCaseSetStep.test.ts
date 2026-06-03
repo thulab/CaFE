@@ -32,6 +32,7 @@ describe('TestCaseSetStep', () => {
               dataset_name: 'Hourly energy',
               source_uri: '/tmp/hourly.csv',
               target_columns: ['target'],
+              covariate_columns: ['promo', 'temperature'],
               context_length: 6,
               horizon: 3,
               stride: 3,
@@ -54,6 +55,7 @@ describe('TestCaseSetStep', () => {
     render(TestCaseSetStep, { global: { plugins: [i18n] } });
 
     expect(await screen.findByText('Hourly generated test cases')).toBeTruthy();
+    expect(screen.getByText('Covariates: promo, temperature')).toBeTruthy();
     expect((screen.getByLabelText('Select Hourly generated test cases') as HTMLInputElement).checked).toBe(true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create track from selected sets' }));
@@ -99,6 +101,7 @@ describe('TestCaseSetStep', () => {
     render(TestCaseSetStep, { global: { plugins: [i18n] } });
 
     expect(await screen.findByText('Energy validation cases')).toBeTruthy();
+    expect(screen.queryByText(/Covariates:/)).toBeNull();
     await fireEvent.update(screen.getByLabelText('Search test case sets'), 'energy');
     await waitFor(() => expect(requests.some((url) => url.includes('q=energy'))).toBe(true));
 

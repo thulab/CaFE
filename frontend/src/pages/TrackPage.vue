@@ -53,7 +53,7 @@
                     <th>{{ t('track.window') }}</th>
                     <th>{{ t('track.samples') }}</th>
                     <th>{{ t('track.targets') }}</th>
-                    <th>{{ t('track.covariates') }}</th>
+                    <th v-if="hasTrackCovariates">{{ t('track.covariates') }}</th>
                     <th>{{ t('track.status') }}</th>
                   </tr>
                 </thead>
@@ -67,7 +67,7 @@
                     <td class="muted">{{ windowLabel(shard) }}</td>
                     <td class="muted">{{ formatInt(shard.sample_count ?? 0) }}</td>
                     <td class="muted">{{ targetLabel(shard) }}</td>
-                    <td class="muted">{{ covariateLabel(shard) }}</td>
+                    <td v-if="hasTrackCovariates" class="muted">{{ covariateLabel(shard) }}</td>
                     <td><StatusBadge :status="shard.status" /></td>
                   </tr>
                 </tbody>
@@ -192,7 +192,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
@@ -231,6 +231,7 @@ const dialog = reactive<{ open: boolean; action: LifecycleAction }>({
   open: false,
   action: 'archive',
 });
+const hasTrackCovariates = computed(() => trackShards.value.some((shard) => Boolean(shard.covariate_columns?.length)));
 
 onMounted(() => {
   void loadTrack();

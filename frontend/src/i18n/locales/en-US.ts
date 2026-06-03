@@ -288,6 +288,7 @@ const enUS = {
       targetColumn: 'Target column',
       targetColumns: 'Target columns',
       covariateColumns: 'Known future covariates',
+      columnRoleSelection: 'Target and covariate columns',
       target: 'Target',
       selectTarget: '— select target —',
       targetHint: 'Selected target columns are generated, scored, and forecast together as one target vector.',
@@ -367,6 +368,7 @@ const enUS = {
       samples: '{count} samples',
       window: '{context}→{horizon} window',
       targets: 'Targets: {targets}',
+      covariates: 'Covariates: {covariates}',
       fallbackTitle: 'Test cases · {target}',
       generatedReady: 'Generated test case set: {name}',
       openGeneratedSet: 'Open generated test case set',
@@ -495,6 +497,11 @@ const enUS = {
     futureStepsOne: '1 future step',
     futureStepsOther: '{count} future steps',
     windowLabel: 'Window #{index}',
+  },
+  sampleNavigation: {
+    label: 'Sample navigation',
+    previous: 'Previous sample',
+    next: 'Next sample',
   },
   loadJob: {
     eyebrow: 'Dataset',

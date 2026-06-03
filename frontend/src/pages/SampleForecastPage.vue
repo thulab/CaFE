@@ -11,6 +11,12 @@
           <Icon name="chevronLeft" :size="15" /> {{ t('sampleForecast.backToReport') }}
         </a>
         <ResumeWizardButton resource-type="sample_forecast" :resource-id="runId" />
+        <SampleNeighborNav
+          v-if="sample"
+          :shard-id="sample.shard_id"
+          :sample-index="sample.sample_index"
+          :href-for-sample="sampleForecastHref"
+        />
         <span class="badge mono">{{ sampleBadge }}</span>
       </div>
     </header>
@@ -48,6 +54,7 @@ import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ForecastChart from '../components/results/ForecastChart.vue';
 import CovariateChart from '../components/results/CovariateChart.vue';
+import SampleNeighborNav from '../components/results/SampleNeighborNav.vue';
 import SampleMetricTable from '../components/results/SampleMetricTable.vue';
 import { getSampleForecast } from '../api/results';
 import type { SampleForecastDTO } from '../api/types';
@@ -67,6 +74,13 @@ const sampleBadge = computed(() => {
   return shortId(props.sampleId);
 });
 const { t } = useI18n();
+
+function sampleForecastHref(sampleId: string) {
+  const params = new URLSearchParams({ run_id: props.runId });
+  const reportId = props.reportId || sample.value?.links?.report;
+  if (reportId) params.set('report_id', reportId);
+  return `#/samples/${encodeURIComponent(sampleId)}?${params.toString()}`;
+}
 
 onMounted(run);
 </script>

@@ -215,7 +215,7 @@ http://127.0.0.1:5173
    - `Known future covariates` 可选一个或多个协变量列；目标列与协变量列互斥，同一列不能两边都选。列很多时同样使用可搜索、可分页列表。
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
    - 点「Generate test case set」：依次创建 dataset manifest、提交 load job 并生成样本，成功后自动进入下一步。若第 2 步跳过上传，本步只显示提示并继续到已有测试用例集选择。
-4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列或 ID，并追加已有集合。点「Create track from selected sets」后，系统基于所选集合创建真实数据评测赛道与默认榜单。
+4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列或 ID，并追加已有集合。列表详情会显示样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列。点「Create track from selected sets」后，系统基于所选集合创建真实数据评测赛道与默认榜单。
 5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
 6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
 
@@ -313,7 +313,7 @@ GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
 - `covariate_column_names`、`history_cov`、`future_cov`：如果样本来自带协变量的测试用例集，会返回协变量列名、历史段和未来已知段。
 - `models[]`：每个模型的 `status`、`forecast`、sample-level 指标（MASE/MSE/MAE；MASE 在平稳历史等场景下可能无定义），失败时附 `error_message`。
 
-前端「样本预测对比」页把历史、真值与各模型预测画在同一张**交互式折线图**上（按真实数据缩放、带坐标轴与网格，各模型用不同颜色、预测用虚线，悬浮显示对应步数值，图例可点选开关各序列，多维目标可切换维度）。如果样本带协变量，页面会在下方另画一张协变量折线图，标出 history 与 future 已知段，便于对照预测表现。页面还会列出每模型指标表（最优值高亮）；非 `succeeded` 的模型以告警条单独列出。
+前端「样本预测对比」页把历史、真值与各模型预测画在同一张**交互式折线图**上（按真实数据缩放、带坐标轴与网格，各模型用不同颜色、预测用虚线，悬浮显示对应步数值，图例可点选开关各序列，多维目标可切换维度）。如果样本带协变量，页面会在下方另画一张协变量折线图，标出 history 与 future 已知段，便于对照预测表现。测试用例样本曲线页和样本预测页都提供上一条 / 下一条样本导航，便于连续检查同一测试用例集内的窗口。页面还会列出每模型指标表（最优值高亮）；非 `succeeded` 的模型以告警条单独列出。
 
 ### 7.4 生命周期接口
 

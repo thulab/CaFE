@@ -65,7 +65,7 @@
           </div>
         </div>
 
-        <div class="grid-2">
+        <div class="stack" style="gap:14px">
           <div v-if="!uploadIsTsFile" class="field">
             <label class="label" for="dataset-time-column">{{ t('wizard.columnAndSplitStep.timeColumn') }}</label>
             <select id="dataset-time-column" v-model="uploadTimeColumn">
@@ -79,29 +79,31 @@
             <p class="hint">{{ t('wizard.columnAndSplitStep.tsfileHint') }}</p>
           </div>
 
-          <div class="field">
-            <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
-            <ColumnSelectionList
-              v-model:selected="uploadTargets"
-              :columns="uploadTargetCandidates"
-              :labels="targetListLabels"
-              :selected-count-label="t('wizard.columnAndSplitStep.selectedTargets', { count: uploadTargets.length })"
-              search-id="dataset-target-column-search"
-            />
-            <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
-          </div>
-        </div>
+          <section class="stack" style="gap:16px" :aria-label="t('wizard.columnAndSplitStep.columnRoleSelection')">
+            <div class="field">
+              <span class="label">{{ t('wizard.columnAndSplitStep.targetColumns') }}</span>
+              <ColumnSelectionList
+                v-model:selected="uploadTargets"
+                :columns="uploadTargetCandidates"
+                :labels="targetListLabels"
+                :selected-count-label="t('wizard.columnAndSplitStep.selectedTargets', { count: uploadTargets.length })"
+                search-id="dataset-target-column-search"
+              />
+              <p class="hint">{{ t('wizard.columnAndSplitStep.targetHint') }}</p>
+            </div>
 
-        <div class="field">
-          <span class="label">{{ t('wizard.columnAndSplitStep.covariateColumns') }}</span>
-          <ColumnSelectionList
-            v-model:selected="uploadCovariates"
-            :columns="uploadCovariateCandidates"
-            :labels="covariateListLabels"
-            :selected-count-label="t('wizard.columnAndSplitStep.selectedCovariates', { count: uploadCovariates.length })"
-            search-id="dataset-covariate-column-search"
-          />
-          <p class="hint">{{ t('wizard.columnAndSplitStep.covariateHint') }}</p>
+            <div class="field">
+              <span class="label">{{ t('wizard.columnAndSplitStep.covariateColumns') }}</span>
+              <ColumnSelectionList
+                v-model:selected="uploadCovariates"
+                :columns="uploadCovariateCandidates"
+                :labels="covariateListLabels"
+                :selected-count-label="t('wizard.columnAndSplitStep.selectedCovariates', { count: uploadCovariates.length })"
+                search-id="dataset-covariate-column-search"
+              />
+              <p class="hint">{{ t('wizard.columnAndSplitStep.covariateHint') }}</p>
+            </div>
+          </section>
         </div>
 
         <div class="grid-auto">

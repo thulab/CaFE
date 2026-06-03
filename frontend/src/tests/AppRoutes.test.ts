@@ -213,6 +213,7 @@ describe('App routes and artifact links', () => {
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(await screen.findByRole('heading', { name: 'Test case set detail' })).toBeTruthy();
     expect(await screen.findByText('sample-1')).toBeTruthy();
+    expect(screen.queryByText('Covariates')).toBeNull();
 
     window.location.hash = '#/runs/run-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));

@@ -288,6 +288,7 @@ const zhCN = {
       targetColumn: '目标列',
       targetColumns: '目标列',
       covariateColumns: '未来已知协变量',
+      columnRoleSelection: '目标列和协变量列',
       target: '目标',
       selectTarget: '— 选择目标 —',
       targetHint: '所选目标列会作为同一个目标向量一起生成、评分和预测。',
@@ -367,6 +368,7 @@ const zhCN = {
       samples: '{count} 个样本',
       window: '{context}→{horizon} 窗口',
       targets: '目标列：{targets}',
+      covariates: '协变量：{covariates}',
       fallbackTitle: '测试用例 · {target}',
       generatedReady: '已生成测试用例集：{name}',
       openGeneratedSet: '查看生成的测试用例集',
@@ -495,6 +497,11 @@ const zhCN = {
     futureStepsOne: '1 个未来点',
     futureStepsOther: '{count} 个未来点',
     windowLabel: '窗口 #{index}',
+  },
+  sampleNavigation: {
+    label: '样本导航',
+    previous: '上一条样本',
+    next: '下一条样本',
   },
   loadJob: {
     eyebrow: '数据集',

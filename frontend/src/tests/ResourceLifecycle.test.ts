@@ -201,5 +201,6 @@ describe('resource lifecycle UI', () => {
     expect(link.getAttribute('href')).toBe('#/shards/shard-1');
     expect(screen.getByText('Energy dataset')).toBeTruthy();
     expect(screen.getByText('Context 60 · Horizon 16 · Stride 16')).toBeTruthy();
+    expect(screen.queryByText('Covariates')).toBeNull();
   });
 });
