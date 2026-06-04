@@ -129,9 +129,20 @@ function mockFetch() {
             sample_count: 4,
             report_id: 'rep-1',
             created_at: '2026-01-01T00:00:00Z'
+          },
+          {
+            benchmarking_run_id: 'run-2',
+            track_id: 'track-1',
+            model_ids: ['model-1'],
+            status: 'running',
+            activity_status: 'model_loading',
+            model_count: 1,
+            task_count: 1,
+            sample_count: 4,
+            created_at: '2026-01-01T00:01:00Z'
           }
         ],
-        total: 1,
+        total: 2,
         limit: 200,
         offset: 0
       }));
@@ -223,7 +234,8 @@ describe('App routes and artifact links', () => {
     window.location.hash = '#/tracks/track-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(await screen.findByRole('heading', { name: 'Track detail' })).toBeTruthy();
-    expect(await screen.findByText('Run · 1 model')).toBeTruthy();
+    expect((await screen.findAllByText('Run · 1 model')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('Loading model')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Open report/ }).getAttribute('href')).toBe('#/reports/rep-1');
     expect((await screen.findAllByText('Lower is better')).length).toBeGreaterThan(0);
 

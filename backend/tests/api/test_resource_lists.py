@@ -5,7 +5,7 @@
 
 from sqlmodel import Session
 
-from app.models.benchmark import BenchmarkingRun
+from app.models.benchmark import BenchmarkingRun, RunEvent
 from app.models.dataset import DatasetManifest, Shard
 from app.models.report import Report
 
@@ -115,6 +115,28 @@ def test_list_runs_supports_track_id_filter(app, client):
     only_a = client.get("/benchmarking-runs", params={"track_id": "track-a"}).json()
     assert only_a["total"] == 2
     assert all(it["track_id"] == "track-a" for it in only_a["items"])
+
+
+def test_list_runs_includes_activity_status_from_recent_events(app, client):
+    with Session(app.state.engine) as session:
+        run_id = _seed_run(session, "track-a")
+        run = session.get(BenchmarkingRun, run_id)
+        assert run is not None
+        run.status = "running"
+        session.add(run)
+        session.add(
+            RunEvent(
+                benchmarking_run_id=run_id,
+                event_type="model_load_started",
+                message="loading model",
+            )
+        )
+        session.commit()
+
+    body = client.get("/benchmarking-runs").json()
+
+    item = next(it for it in body["items"] if it["benchmarking_run_id"] == run_id)
+    assert item["activity_status"] == "model_loading"
 
 
 def test_list_reports_returns_items_with_total(app, client):

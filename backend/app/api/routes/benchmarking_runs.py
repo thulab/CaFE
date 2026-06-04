@@ -20,7 +20,7 @@ from app.services.resource_lifecycle import (
     row_with_archive,
     visible_rows,
 )
-from app.services.run_executor import build_run_progress, cancel_run, create_benchmarking_run, execute_run
+from app.services.run_executor import build_run_activity_status, build_run_progress, cancel_run, create_benchmarking_run, execute_run
 from app.workers.run_queue import RunQueue
 
 router = make_router(prefix="/benchmarking-runs", tags=["benchmarking-runs"])
@@ -81,11 +81,17 @@ def list_runs(
     total = len(rows)
     items = rows[offset : offset + limit]
     return {
-        "items": [row_with_archive(session, RESOURCE_RUN, item, "benchmarking_run_id") for item in items],
+        "items": [_run_summary(session, item) for item in items],
         "total": total,
         "limit": limit,
         "offset": offset,
     }
+
+
+def _run_summary(session: Session, run: BenchmarkingRun) -> dict:
+    data = row_with_archive(session, RESOURCE_RUN, run, "benchmarking_run_id")
+    data["activity_status"] = build_run_activity_status(session, run)
+    return data
 
 
 @router.get("/{benchmarking_run_id}/deletion-impact", tier="perm", perm="run.delete")

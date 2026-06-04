@@ -43,7 +43,7 @@
                 </td>
                 <td>
                   <div class="pill-row">
-                    <StatusBadge :status="run.status" />
+                    <StatusBadge :status="run.activity_status || run.status" />
                     <span v-if="run.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
                   </div>
                 </td>

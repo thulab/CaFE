@@ -21,7 +21,7 @@ describe('RunStep', () => {
     expect((screen.getByRole('button', { name: 'Run' }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('starts five-second polling and stops on terminal status', async () => {
+  it('polls progress and stops on terminal status', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
       const url = String(input);
       if (url === '/api/models') {
@@ -40,9 +40,38 @@ describe('RunStep', () => {
     await fireEvent.click(await screen.findByLabelText('Timer 3.5'));
     await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
     await waitFor(() => expect(wizardState.runId).toBe('r1'));
-    await vi.advanceTimersByTimeAsync(5000);
 
     await waitFor(() => expect(wizardState.reportId).toBe('rep1'));
+  });
+
+  it('shows activity status from progress immediately after starting a run', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/models') {
+        return Promise.resolve(new Response(JSON.stringify({ items: [{ model_id: 'm1', name: 'Timer 3.5', adapter_type: 'timer_service' }] }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs') {
+        return Promise.resolve(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'running' }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs/r1/progress') {
+        return Promise.resolve(new Response(JSON.stringify({
+          benchmarking_run_id: 'r1',
+          status: 'running',
+          activity_status: 'model_loading',
+          progress: { total_models: 1, completed_models: 0, total_tasks: 1, completed_tasks: 0, total_samples: 4, processed_samples: 0, completed_samples: 0, failed_samples: 0 },
+          units: [],
+          tasks: [],
+          recent_events: []
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
+    });
+    render(RunStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.click(await screen.findByLabelText('Timer 3.5'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+    expect(await screen.findByText('Loading model')).toBeTruthy();
   });
 
   it('starts a run without preloading unloaded timer-service models', async () => {
@@ -58,6 +87,16 @@ describe('RunStep', () => {
       }
       if (url === '/api/benchmarking-runs') {
         return Promise.resolve(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'running' }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs/r1/progress') {
+        return Promise.resolve(new Response(JSON.stringify({
+          benchmarking_run_id: 'r1',
+          status: 'running',
+          progress: { total_models: 1, completed_models: 0, total_tasks: 1, completed_tasks: 0, total_samples: 4, processed_samples: 0, completed_samples: 0, failed_samples: 0 },
+          units: [],
+          tasks: [],
+          recent_events: []
+        }), { status: 200 }));
       }
       return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
     });

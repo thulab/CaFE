@@ -225,7 +225,7 @@ describe('workspace pages', () => {
     stubBackend({
       '/benchmarking-runs': {
         items: [
-          { benchmarking_run_id: 'run-9', track_id: 't1', model_ids: ['m1', 'm2'], status: 'running', model_count: 2, task_count: 2, sample_count: 4, created_at: '2026-05-26T13:00:00Z' },
+          { benchmarking_run_id: 'run-9', track_id: 't1', model_ids: ['m1', 'm2'], status: 'running', activity_status: 'model_loading', model_count: 2, task_count: 2, sample_count: 4, created_at: '2026-05-26T13:00:00Z' },
           { benchmarking_run_id: 'run-10', track_id: 't1', model_ids: ['m1'], status: 'queued', model_count: 1, task_count: 1, sample_count: 2, created_at: '2026-05-26T12:00:00Z' }
         ],
         total: 2, limit: 200, offset: 0
@@ -234,6 +234,7 @@ describe('workspace pages', () => {
     render(RunsPage, { global: { plugins: [i18n] } });
     expect((await screen.findAllByText('Run · 2 models')).length).toBeGreaterThan(0);
     expect((await screen.findAllByText('Run · 1 model')).length).toBeGreaterThan(0);
+    expect(await screen.findByText('Loading model')).toBeTruthy();
   });
 
   it('RunDetailPage renders progress details from the backend', async () => {

@@ -134,7 +134,8 @@ async function run() {
     wizardState.runId = created.benchmarking_run_id;
     status.value = created.status;
     void refreshResourceCounts();
-    timer = setInterval(poll, 5000);
+    await poll();
+    if (!TERMINAL.includes(status.value) && !error.value) timer = setInterval(poll, 5000);
   } catch (e) {
     setError(e, 'errors.failedToStartRun');
   } finally {

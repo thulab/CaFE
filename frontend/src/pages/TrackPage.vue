@@ -121,7 +121,7 @@
                       <a class="text-link" :href="`#/runs/${run.benchmarking_run_id}`">{{ runTitle(run.model_count) }}</a>
                       <div class="faint mono" style="font-size:0.74rem">{{ shortId(run.benchmarking_run_id) }}</div>
                     </td>
-                    <td><StatusBadge :status="run.status" /></td>
+                    <td><StatusBadge :status="run.activity_status || run.status" /></td>
                     <td class="muted">{{ formatInt(run.model_count) }}</td>
                     <td class="muted">{{ formatInt(run.task_count) }}</td>
                     <td class="muted">{{ formatInt(run.sample_count) }}</td>

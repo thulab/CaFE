@@ -154,6 +154,29 @@ def test_progress_reports_model_loading_activity_from_latest_event(tmp_path):
         assert progress["activity_status"] == "model_loading"
 
 
+def test_progress_reports_forecasting_after_model_loaded_before_first_sample(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        run.status = "running"
+        session.add(run)
+        session.add(
+            RunEvent(
+                benchmarking_run_id=run.benchmarking_run_id,
+                unit_id="unit-1",
+                event_type="model_loaded",
+                message="model loaded",
+            )
+        )
+        session.commit()
+
+        progress = build_run_progress(session, run.benchmarking_run_id)
+
+        assert progress["activity_status"] == "forecasting"
+
+
 def test_execute_run_forecasts_samples_with_bounded_parallelism(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     init_db(engine)

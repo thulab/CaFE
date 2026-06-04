@@ -200,6 +200,7 @@ export interface BenchmarkingRunSummaryDTO {
   track_id: string;
   model_ids: string[];
   status: string;
+  activity_status?: string;
   archived_at?: string | null;
   model_count: number;
   task_count: number;

@@ -725,12 +725,25 @@ def build_run_progress(session: Session, run_id: str) -> dict:
     }
 
 
+def build_run_activity_status(session: Session, run: BenchmarkingRun) -> str:
+    events = session.exec(
+        select(RunEvent)
+        .where(RunEvent.benchmarking_run_id == run.benchmarking_run_id)
+        .order_by(RunEvent.created_at.desc())
+        .limit(1)
+    ).all()
+    tasks = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).all()
+    processed_samples = sum(int(task.processed_sample_count or 0) for task in tasks)
+    return _activity_status(run.status, events, processed_samples, run.sample_count)
+
+
 def _activity_status(run_status: str, events: list[RunEvent], processed_samples: int, total_samples: int) -> str:
     if run_status in _TERMINAL_RUN_STATUSES:
         return run_status
     latest_event_type = events[0].event_type if events else ""
     activity_by_event = {
         "model_load_started": "model_loading",
+        "model_loaded": "forecasting",
         "model_unload_started": "model_unloading",
         "model_load_failed": "model_loading_failed",
         "model_unload_failed": "model_unloading_failed",

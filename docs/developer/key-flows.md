@@ -254,7 +254,7 @@ sequenceDiagram
 
 **服务重启恢复（recover_interrupted_runs）**：`run_executor.py:78` 把所有处于 `queued / running / cancel_requested` 的 run 统一标记为 `failed` 并发 `interrupted_by_server_restart` 事件——因为执行态只存在于内存线程，重启即丢失，故保守地判失败。入口封装在 `workers/lifecycle.py:6` 的 `recover_runs_on_startup`。
 
-**进度查询**：`GET /benchmarking-runs/{id}/progress`（`build_run_progress`，`run_executor.py:272`）汇总 run/unit/task 计数、各 unit/task 状态、最近 20 条 `RunEvent`、`report_id`。
+**进度查询**：`GET /benchmarking-runs/{id}/progress`（`build_run_progress`，`run_executor.py`）汇总 run/unit/task 计数、各 unit/task 状态、最近 20 条 `RunEvent`、`report_id`，并返回展示态 `activity_status`。`activity_status` 从最近 run event 和样本进度推导，可在持久状态仍为 `running` 时展示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等更细阶段。
 
 ### 2.d 模型推理接入
 
@@ -449,8 +449,8 @@ export TSBENCHMARK_MODEL_ADAPTER=rest    # 或 stub（完全进程内，连桩�
 | POST | `/models/{model_id}/load` | REST 模式调用 timer-rest-service `/models/load` 并等待 loaded |
 | POST | `/wizard/real-dataset-track` | 一步建能力块 + 赛道 + 榜单 |
 | POST | `/benchmarking-runs` | 创建并调度评测运行 |
-| GET | `/benchmarking-runs` | 分页列 run；可用 `track_id` 过滤，`include_archived=true` 时包含归档资源 |
-| GET | `/benchmarking-runs/{benchmarking_run_id}/progress` | 查运行进度 |
+| GET | `/benchmarking-runs` | 分页列 run；可用 `track_id` 过滤，`include_archived=true` 时包含归档资源；列表项含展示态 `activity_status` |
+| GET | `/benchmarking-runs/{benchmarking_run_id}/progress` | 查运行进度，含展示态 `activity_status` |
 | GET | `/benchmarking-runs/{benchmarking_run_id}/deletion-impact` | 预览删除 run 的影响范围 |
 | POST | `/benchmarking-runs/{benchmarking_run_id}/archive` | 归档终态 run |
 | POST | `/benchmarking-runs/{benchmarking_run_id}/restore` | 恢复 run |
