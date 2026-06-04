@@ -423,7 +423,7 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 - `endpoint_uri == "stub://fail"` 是约定的失败注入：会让对应 unit 直接以 `adapter_error` 失败（`run_executor.py:142-143`）。
 - 种子模型由 `seed_mvp_models` 写入（`track_service.py:79-93`），共 5 个：Timer 3.5 / Timer 3.0 / Chronos 2 / toto / TimesFM 2.5，`endpoint_uri` 形如 `stub://timer-service/{slug}`；其中 `toto` 的 `forecast_limits.max_target_count=null`，其余 MVP 种子模型为 `1`；`Chronos 2` 的 `forecast_limits.max_covariate_count=50`，其余为 `0`。
 - `remote_model_id(model)` 把本地模型映射为 REST 服务的 model_id，规则为 `{model_family}-{model_version}`（如 `Timer-3.5`），缺失时退回 `name` 或 `model_id`（`model_adapter.py:23-29`）。
-- REST 模式下 `/models` 以 timer-rest-service `/models/list` 为权威来源并同步 `forecast_limits`。创建 run 时若 track 的最大 `target_dim > 1`，缺失 `max_target_count` 或小于目标维度的模型会被 `model_target_dim_unsupported` 拒绝；若 track 的最大 `covariate_dim > 0`，缺失 `max_covariate_count` 或小于协变量维度的模型会被 `model_covariate_dim_unsupported` 拒绝。
+- REST 模式下 `/models` 以 timer-rest-service `/models/list` 为权威来源并同步 `forecast_limits`；`state=inactive` 的远端模型视为不可用，不对前端展示，也不能被手动加载或用于创建 run。创建 run 时若 track 的最大 `target_dim > 1`，缺失 `max_target_count` 或小于目标维度的模型会被 `model_target_dim_unsupported` 拒绝；若 track 的最大 `covariate_dim > 0`，缺失 `max_covariate_count` 或小于协变量维度的模型会被 `model_covariate_dim_unsupported` 拒绝。
 
 ---
 

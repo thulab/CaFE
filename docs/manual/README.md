@@ -11,7 +11,7 @@
 - 数据集：支持 CSV 和单设备表模型 TsFile 输入；内部统一存成 SQLite `SeriesPoint`。
 - 目标列：真实数据加载支持选择一个或多个 target column；多个 target 会作为同一个目标向量一起切窗、评分和预测。
 - 协变量：支持选择 known-future covariate columns。系统会用同一列名把协变量切成 history 与 future 两段，并在推理请求中分别发送 `history_covs` / `future_covs`。
-- 模型：REST 模式下以 timer-rest-service 的 `/models/list` 为准，并读取 `forecast_limits.max_target_count` 判断是否支持多目标、读取 `forecast_limits.max_covariate_count` 判断是否支持协变量；`max_target_count=null` 表示不限制目标数，`max_covariate_count>0` 表示可接收协变量。进程内桩模式保留本地可复现模型。
+- 模型：REST 模式下以 timer-rest-service 的 `/models/list` 为准，隐藏 `state=inactive` 的不可用模型，并读取 `forecast_limits.max_target_count` 判断是否支持多目标、读取 `forecast_limits.max_covariate_count` 判断是否支持协变量；`max_target_count=null` 表示不限制目标数，`max_covariate_count>0` 表示可接收协变量。进程内桩模式保留本地可复现模型。
 - 指标：MASE、MSE、MAE，均为 lower is better；榜单主指标为 **MASE**（赛道 `primary_metric_id`）。
 - 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
 - 访问控制：公开榜单可匿名浏览；工作台页面需要登录；写操作、运行评测和用户/角色管理受 RBAC 权限控制。
@@ -147,7 +147,7 @@ TSBENCHMARK_MODEL_ADAPTER=stub ./scripts/start-system.sh
 TSBENCHMARK_TIMER_SERVICE_BASE_URL=http://<gpu-host>:<port> ./scripts/start-system.sh
 ```
 
-模型列表（`GET /models`）直接读取真实服务的 `/models/list` 并同步到本地模型镜像。服务不可达时模型列表会返回错误；前端点击 Run 后会先对未加载的已选模型调用后端 `POST /models/{model_id}/load`，后端执行期也会再次兜底确认 loaded。加载失败会写入 run/task 错误而不是卡住后台执行线程。
+模型列表（`GET /models`）直接读取真实服务的 `/models/list` 并同步到本地模型镜像；其中 `state=inactive` 的模型视为不可用，不显示在列表中，也不能通过后端手动加载或创建运行。服务不可达时模型列表会返回错误；前端点击 Run 后会先对未加载的已选模型调用后端 `POST /models/{model_id}/load`，后端执行期也会再次兜底确认 loaded。加载失败会写入 run/task 错误而不是卡住后台执行线程。
 
 ## 5. 数据文件要求
 

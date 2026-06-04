@@ -31,6 +31,15 @@ class _FakeTimerRestAdapter:
                 "base_model_id": None,
                 "forecast_limits": {"max_target_count": 1, "max_output_length": 720},
             },
+            {
+                "model_id": "Timer-2.0",
+                "model_type": "sundial",
+                "category": "builtin",
+                "state": "inactive",
+                "loaded": False,
+                "base_model_id": None,
+                "forecast_limits": {"max_target_count": 1, "max_output_length": 720},
+            },
         ]
 
     def ensure_model_loaded(self, model: dict, timeout_seconds: int = 600) -> None:  # noqa: ARG002
@@ -58,6 +67,24 @@ def test_models_endpoint_uses_timer_service_catalog_in_rest_mode(monkeypatch):
     assert [item["forecast_limits"]["max_target_count"] for item in items] == [None, 1]
 
 
+def test_models_endpoint_hides_inactive_timer_service_models(monkeypatch):
+    monkeypatch.setenv("TSBENCHMARK_MODEL_ADAPTER", "rest")
+    get_settings.cache_clear()
+    _FakeTimerRestAdapter.loaded_by_id = {"toto2.0": True, "Timer-3.0": False}
+    monkeypatch.setattr(model_catalog, "TimerRestAdapter", _FakeTimerRestAdapter)
+
+    app = create_app()
+    client = TestClient(app)
+    token = client.post("/auth/login", json={"username": "admin", "password": "test-admin-pw"}).json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+
+    response = client.get("/models")
+
+    assert response.status_code == 200
+    ids = [item["model_id"] for item in response.json()["items"]]
+    assert "Timer-2.0" not in ids
+
+
 def test_load_model_endpoint_loads_timer_service_model(monkeypatch):
     monkeypatch.setenv("TSBENCHMARK_MODEL_ADAPTER", "rest")
     get_settings.cache_clear()
@@ -74,3 +101,20 @@ def test_load_model_endpoint_loads_timer_service_model(monkeypatch):
     assert response.status_code == 200
     assert response.json()["model_id"] == "Timer-3.0"
     assert response.json()["loaded"] is True
+
+
+def test_load_model_endpoint_rejects_inactive_timer_service_model(monkeypatch):
+    monkeypatch.setenv("TSBENCHMARK_MODEL_ADAPTER", "rest")
+    get_settings.cache_clear()
+    _FakeTimerRestAdapter.loaded_by_id = {"toto2.0": True, "Timer-3.0": False}
+    monkeypatch.setattr(model_catalog, "TimerRestAdapter", _FakeTimerRestAdapter)
+
+    app = create_app()
+    client = TestClient(app)
+    token = client.post("/auth/login", json={"username": "admin", "password": "test-admin-pw"}).json()["access_token"]
+    client.headers["Authorization"] = f"Bearer {token}"
+
+    response = client.post("/models/Timer-2.0/load")
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "model_not_found"

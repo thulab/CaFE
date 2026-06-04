@@ -19,7 +19,7 @@ def list_models_for_backend(session: Session, settings: Settings) -> list[dict]:
     service_models = _list_service_models(adapter)
     local_by_remote_id = sync_timer_service_models(session, service_models)
     items: list[dict] = []
-    for service_model in service_models:
+    for service_model in _available_service_models(service_models):
         remote_id = str(service_model.get("model_id") or "").strip()
         if remote_id in local_by_remote_id:
             items.append(_service_model_item(service_model, local_by_remote_id[remote_id]))
@@ -35,7 +35,7 @@ def ensure_catalog_models_exist(session: Session, settings: Settings, model_ids:
         )
         service_models = _list_service_models(adapter)
         sync_timer_service_models(session, service_models)
-        service_ids = {str(model.get("model_id")) for model in service_models if model.get("model_id")}
+        service_ids = {str(model.get("model_id")) for model in _available_service_models(service_models) if model.get("model_id")}
         missing = [model_id for model_id in model_ids if model_id not in service_ids]
     else:
         missing = [model_id for model_id in model_ids if session.get(Model, model_id) is None]
@@ -56,10 +56,10 @@ def load_model_for_backend(session: Session, settings: Settings, model_id: str) 
         api_prefix=settings.timer_service_api_prefix,
     )
     service_models = _list_service_models(adapter)
-    service_ids = {str(model.get("model_id")) for model in service_models if model.get("model_id")}
+    sync_timer_service_models(session, service_models)
+    service_ids = {str(model.get("model_id")) for model in _available_service_models(service_models) if model.get("model_id")}
     if model_id not in service_ids:
         raise ApiError("model_not_found", "model not found", {"model_ids": [model_id]}, status_code=404)
-    sync_timer_service_models(session, service_models)
 
     try:
         adapter.ensure_model_loaded(
@@ -76,10 +76,14 @@ def load_model_for_backend(session: Session, settings: Settings, model_id: str) 
 
     refreshed = _list_service_models(adapter)
     local_by_remote_id = sync_timer_service_models(session, refreshed)
-    service_model = next((item for item in refreshed if item.get("model_id") == model_id), None)
+    service_model = next((item for item in _available_service_models(refreshed) if item.get("model_id") == model_id), None)
     if service_model is None or model_id not in local_by_remote_id:
         raise ApiError("model_not_found", "model not found after load", {"model_ids": [model_id]}, status_code=404)
     return _service_model_item(service_model, local_by_remote_id[model_id])
+
+
+def _available_service_models(service_models: list[dict]) -> list[dict]:
+    return [model for model in service_models if str(model.get("state") or "").strip().lower() != "inactive"]
 
 
 def sync_timer_service_models(session: Session, service_models: list[dict]) -> dict[str, Model]:
