@@ -27,4 +27,14 @@ describe('StatusBadge', () => {
     renderStatusBadge({ status: 'running', label: 'Custom label' });
     expect(screen.getByText('Custom label')).toBeTruthy();
   });
+
+  it('translates cancel requested status', () => {
+    const badge = renderStatusBadge({ status: 'cancel_requested' });
+    expect(screen.getByText('Cancelling')).toBeTruthy();
+
+    badge.unmount();
+    setLocale('zh-CN');
+    renderStatusBadge({ status: 'cancel_requested' });
+    expect(screen.getByText('正在取消')).toBeTruthy();
+  });
 });

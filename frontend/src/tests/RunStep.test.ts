@@ -110,6 +110,47 @@ describe('RunStep', () => {
     expect(calls).toContain('/api/benchmarking-runs');
   });
 
+  it('keeps polling after cancel is requested until the run is cancelled', async () => {
+    let progressCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/models') {
+        return Promise.resolve(new Response(JSON.stringify({ items: [{ model_id: 'm1', name: 'Timer 3.5', adapter_type: 'timer_service' }] }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs') {
+        return Promise.resolve(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'running' }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs/r1/cancel') {
+        return Promise.resolve(new Response(JSON.stringify({ benchmarking_run_id: 'r1', status: 'cancel_requested' }), { status: 200 }));
+      }
+      if (url === '/api/benchmarking-runs/r1/progress') {
+        progressCalls += 1;
+        const status = progressCalls >= 3 ? 'cancelled' : progressCalls === 2 ? 'cancel_requested' : 'running';
+        return Promise.resolve(new Response(JSON.stringify({
+          benchmarking_run_id: 'r1',
+          status,
+          progress: { total_models: 1, completed_models: 0, total_tasks: 1, completed_tasks: 0, total_samples: 4, processed_samples: 1, completed_samples: 1, failed_samples: 0 },
+          units: [],
+          tasks: [],
+          recent_events: []
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
+    });
+    render(RunStep, { global: { plugins: [i18n] } });
+
+    await fireEvent.click(await screen.findByLabelText('Timer 3.5'));
+    await fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+    await waitFor(() => expect(wizardState.runId).toBe('r1'));
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByText('Cancelling')).toBeTruthy();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await screen.findByText('Cancelled')).toBeTruthy();
+    expect(wizardState.reportId).toBe('');
+  });
+
   it('disables single-target models for a multi-target test case set', async () => {
     wizardState.selectedShardIds = ['shard-1'];
     vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {

@@ -459,15 +459,15 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 - `"created"`：模型定义的默认值（`models/benchmark.py:47`）。
 - `"queued"`：`create_benchmarking_run` 创建时实际写入（`run_executor.py:30`）。
 - `"running"`：开始执行（`run_executor.py:101`）。
-- `"cancel_requested"`：用户请求取消（`run_executor.py:70`）。
-- `"cancelled"`：执行前发现已请求取消则进入 cancelled（`run_executor.py:93`）。
+- `"cancel_requested"`：运行中 run 已收到取消请求，执行器会在模型生命周期、unit/task/shard/sample 调度边界协作式停止。
+- `"cancelled"`：排队/未开始 run 被直接取消，或运行中 run 已确认取消并停止调度；取消 run 不生成 report，也不刷新榜单。
 - `"succeeded"`：全部 unit 成功（`run_executor.py:117`）。
 - `"partial_succeeded"`：部分 unit 成功、部分失败（`run_executor.py:115`）。
 - `"failed"`：全部失败，或服务重启时把未完成 run 标记失败（`run_executor.py:83,119`）。
 
 > 归档状态不写入 `BenchmarkingRun.status`，而是由 `ArchivedResource(resource_type="benchmarking_run")` 表达。归档/永久删除 run 前必须已进入终态：`succeeded`、`partial_succeeded`、`failed` 或 `cancelled`。
 
-终态判定逻辑（`run_executor.py:112-119`）：统计 `unit.status == "succeeded"` 与 `== "failed"` 的数量——同时存在 → `partial_succeeded`；只有成功 → `succeeded`；否则 → `failed`。
+正常执行的终态判定逻辑：统计 `unit.status`——全部 `succeeded` → `succeeded`；存在 `succeeded` 或 `partial_succeeded` 但未全部成功 → `partial_succeeded`；否则 → `failed`。取消路径绕过该判定，直接落 `cancelled`。
 
 ### 4.2 Unit
 
@@ -492,8 +492,9 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 - `"succeeded"`：所有 task metric 非空（`run_executor.py:156`）。
 - `"partial_succeeded"`：部分 task 成功（`run_executor.py:156`）。
 - `"failed"`：`_fail_unit` 整体失败（`run_executor.py:170`，如 `endpoint_uri=="stub://fail"`）。
+- `"cancelled"`：run 取消确认时，尚未到达终态的 unit 会被置为 cancelled。
 
-> spec §4.9 还列出 `skipped` / `cancelled`，但当前 run_executor 未写入这两个值（进度统计在 `build_run_progress` 中把它们纳入「已完成」集合，但执行链路不会产生）。
+> spec §4.9 还列出 `skipped`；当前 run_executor 未写入 `skipped`。
 
 ### 4.3 Task
 
@@ -525,8 +526,9 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 - `"succeeded"`：所有 shard metric 非空（`run_executor.py:192`）。
 - `"partial_succeeded"`：部分 shard 成功（`run_executor.py:192`）。
 - `"failed"`：随 unit 失败被批量置位，并写入 `error_code`/`error_message`（`run_executor.py:165-167`）。
+- `"cancelled"`：run 取消确认时，尚未到达终态的 task 会被置为 cancelled。
 
-> spec §4.10 同样列出 `skipped` / `cancelled`，代码未写入。
+> spec §4.10 同样列出 `skipped`；当前 run_executor 未写入 `skipped`。
 
 ### 4.4 ForecastArtifact
 
@@ -772,7 +774,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `sample_forecast_links_total` | `int` | 读报告 API 返回，分页前的 sample link 总数 |
 | `sample_forecast_links_limit` | `int` | 读报告 API 返回，本次返回的 link limit；未传分页参数时等于总数 |
 | `sample_forecast_links_offset` | `int` | 读报告 API 返回，本次返回的 link offset |
-| `cancellation_reason` | `str \| None` | run 为 `cancelled` 时为 `"cancel_requested"`，否则 `null` |
+| `cancellation_reason` | `str \| None` | 兼容字段；正常执行生成的报告为 `null`。取消 run 不生成报告 |
 
 `model_metrics[*]`（`_unit_metrics`，`report_service.py:50-62`）：`unit_id`、`model_id`、`model_name`、`status`、`metrics`（仅 `result_level=="unit"` 且匹配 unit 的指标，形如 `{"mse":..,"mae":..}`）。
 
@@ -849,13 +851,14 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 创建（`create_benchmarking_run`，`run_executor.py:19-63`）：要求非空 `model_ids` 且 track 有 capability block；按 `模型数 × block 数` 预生成 Unit 与 Task，`status="queued"`。
 
-执行（`execute_run`，`run_executor.py:90-133`）：
-1. 若已 `cancel_requested` → 直接 `cancelled` 并返回。
-2. 否则 `running`，逐 unit → 逐 task → 逐 shard 执行；shard 内按 `TSBENCHMARK_RUN_SAMPLE_PARALLELISM` 做样本级有界并发 forecast，并按 `TSBENCHMARK_RUN_PROGRESS_UPDATE_INTERVAL_SAMPLES` 刷新 `Task.processed_sample_count/failed_sample_count`。每 sample 产 forecast 后算 sample 指标，单个 sample 的 adapter 或指标错误会写成 `forecast.v1` 失败行，不中断后续样本；shard/task/unit 逐层聚合成功样本的指标。
-3. 终态判定（§4.1），写 RunEvent，调 `generate_run_report` 生成报告，回填 `run.report_id`。
-4. 非 cancelled 时对 `mase`/`mse`/`mae` 各刷新一次榜单。
+执行（`execute_run`）：
+1. 若 run 已终态则直接返回；若已 `cancel_requested` → 标记 `cancelled` 并返回。
+2. 否则置 `running`，逐 unit → 逐 task → 逐 shard 执行；shard 内按 `TSBENCHMARK_RUN_SAMPLE_PARALLELISM` 做样本级有界并发 forecast，并按 `TSBENCHMARK_RUN_PROGRESS_UPDATE_INTERVAL_SAMPLES` 刷新 `Task.processed_sample_count/failed_sample_count`。每 sample 产 forecast 后算 sample 指标，单个 sample 的 adapter 或指标错误会写成 `forecast.v1` 失败行，不中断后续样本；shard/task/unit 逐层聚合成功样本的指标。
+3. 执行器会在模型加载/卸载、unit/task/shard 边界和样本调度间隙检查取消请求；并发样本执行采用有界滚动提交，取消后不再提交新样本。已发出的单次 forecast 请求不被强杀，会等待其返回或超时。
+4. 非取消路径完成后做终态判定（§4.1），写 RunEvent，调 `generate_run_report` 生成报告，回填 `run.report_id`。
+5. 仅非取消路径会对 `mase`/`mse`/`mae` 各刷新一次榜单。
 
-取消（`cancel_run`，`run_executor.py:66-75`）：协作式取消——置 `cancel_requested=True`、`cancel_requested_at`、`status="cancel_requested"`，写 warning 事件。
+取消（`cancel_run`）：排队/未开始 run 会立即进入终态 `cancelled`；运行中 run 先置 `cancel_requested=True`、`cancel_requested_at`、`status="cancel_requested"` 并写 warning 事件，随后由执行器协作式收敛到 `cancelled`。取消 run 的 `report_id` 保持 `None`，不会写 report，也不会产生新的 `RankingEntry`。
 
 崩溃恢复（`recover_interrupted_runs`，`run_executor.py:78-87`）：服务启动时把仍处于 `queued`/`running`/`cancel_requested` 的 run 标记 `failed` 并写 `interrupted_by_server_restart` 事件。
 
@@ -900,7 +903,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 1. **DatasetLoadJob 的 `validating` / `materializing_samples` 不是 `status` 值**，而是 `current_step` 字段的取值；`status` 实际只取 `created/loading/succeeded/failed`（spec §4.2 把它们画进 status 状态机）。
 2. **多数实体的 `status` 枚举代码只实现了「快乐路径」子集**：`DatasetManifest`（仅 `ready_to_load/loaded`）、`Shard`（仅 `created/ready`）、`CapabilityBlock`/`Track`（仅 `ready`）、`Model`（仅 `available`）。spec 中列出的 `draft/disabled/registered/failed` 等当前无代码写入。
-3. **Unit / Task 的 `skipped` / `cancelled` 状态未实现**：run_executor 不会写入这两个值，尽管 `build_run_progress` 的进度统计把它们算作「已完成」（spec §4.9/§4.10 列出）。
+3. **Unit / Task 的 `skipped` 状态未实现**：run_executor 不会写入 `skipped`；`cancelled` 仅在 run 取消确认时用于尚未终态的 unit/task。
 4. **`SampleIndex` 字段名是 `sample_metadata`，不是 spec §4.4 写的 `metadata`**（规避 SQLAlchemy 保留名）。
 5. **指标在执行链路里用 name（`"mse"`/`"mae"`）作业务键**，`MetricResult.metric_id`/`RankingEntry.metric_id` 存的是指标 name 而非 `MetricDefinition.metric_id`（UUID）。
 6. **聚合标签命名**：task 级写 `mean_over_tasks`、unit 级写 `mean_over_units`（即「本层级复数」），而非直觉上的「下层复数」；spec §4.13 仅举例 `mean_over_samples/mean_over_shards`，未覆盖这两个值。

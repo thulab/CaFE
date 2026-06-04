@@ -3,6 +3,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select
 
+from app.core.errors import ApiError
 from app.models.benchmark import BenchmarkingRun, ForecastArtifact, Task, Unit
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
@@ -14,6 +15,8 @@ from app.services.sample_store import SampleStore
 
 def generate_run_report(session: Session, run_id: str, runtime_dir: Path) -> Report:
     run = session.get(BenchmarkingRun, run_id)
+    if run.status == "cancelled":
+        raise ApiError("cancelled_run_has_no_report", "cancelled runs do not generate reports", {"benchmarking_run_id": run_id}, 409)
     report_dir = Path(runtime_dir) / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     output = report_dir / f"{run_id}.json"

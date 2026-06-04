@@ -78,6 +78,7 @@ const enUS = {
     in_progress: 'In progress',
     processing: 'Processing',
     queued: 'Queued',
+    cancel_requested: 'Cancelling',
     pending: 'Pending',
     idle: 'Idle',
     failed: 'Failed',

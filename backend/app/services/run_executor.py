@@ -162,8 +162,14 @@ def _forecast_limits_support_covariate_dim(limits: dict, covariate_dim: int) -> 
 _TERMINAL_RUN_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}
 
 
+class _RunCancelled(Exception):
+    pass
+
+
 def cancel_run(session: Session, run_id: str) -> BenchmarkingRun:
     run = session.get(BenchmarkingRun, run_id)
+    if run.status == "cancelled":
+        return run
     if run.status in _TERMINAL_RUN_STATUSES:
         raise ApiError(
             "run_in_terminal_state",
@@ -175,8 +181,16 @@ def cancel_run(session: Session, run_id: str) -> BenchmarkingRun:
         return run
     run.cancel_requested = True
     run.cancel_requested_at = utc_now()
-    run.status = "cancel_requested"
     session.add(RunEvent(benchmarking_run_id=run_id, level="warning", event_type="cancel_requested", message="cancel requested"))
+    if run.status in {"created", "queued"}:
+        run.status = "cancelled"
+        run.finished_at = utc_now()
+        session.add(RunEvent(benchmarking_run_id=run_id, level="warning", event_type="cancelled", message="run cancelled"))
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run
+    run.status = "cancel_requested"
     session.add(run)
     session.commit()
     session.refresh(run)
@@ -197,61 +211,97 @@ def recover_interrupted_runs(session: Session) -> None:
 
 def execute_run(session: Session, run_id: str, runtime_dir: Path) -> BenchmarkingRun:
     run = session.get(BenchmarkingRun, run_id)
+    if run.status in _TERMINAL_RUN_STATUSES:
+        return run
     if run.cancel_requested:
-        run.status = "cancelled"
-        run.finished_at = utc_now()
-        session.add(RunEvent(benchmarking_run_id=run_id, level="warning", event_type="cancelled", message="run cancelled"))
+        return _finish_cancelled_run(session, run_id)
+
+    try:
+        run.status = "running"
+        run.started_at = run.started_at or utc_now()
+        session.add(RunEvent(benchmarking_run_id=run_id, message="run started"))
         session.add(run)
         session.commit()
+
+        settings = get_settings()
+        adapter = get_model_adapter(settings)
+        _raise_if_cancel_requested(session, run)
+        if _uses_sequential_model_lifecycle(settings):
+            _unload_all_models_before_run(session, run, adapter, settings.timer_service_model_load_timeout_seconds)
+            _raise_if_cancel_requested(session, run)
+        units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all()
+        for unit in units:
+            _raise_if_cancel_requested(session, run)
+            _execute_unit(session, run, unit, Path(runtime_dir), adapter, settings)
+            _raise_if_cancel_requested(session, run)
+
+        statuses = [unit.status for unit in units]
+        succeeded = len([status for status in statuses if status == "succeeded"])
+        partial = len([status for status in statuses if status == "partial_succeeded"])
+        if succeeded == len(statuses):
+            terminal_status = "succeeded"
+        elif succeeded or partial:
+            # 既有成功（或部分成功），又有未完全成功的 unit → 部分成功。
+            terminal_status = "partial_succeeded"
+        else:
+            terminal_status = "failed"
+
+        _raise_if_cancel_requested(session, run)
+        from app.services.ranking_service import refresh_ranking
+        from app.services.report_service import generate_run_report
+
+        # 竞态防护：终态 status / report_id / 三张榜单必须在同一次提交里一起对外可见，
+        # 否则轮询可能看到 run 已 succeeded、却查不到榜单。先在内存里置终态（refresh_ranking
+        # 经 session 标识映射即可读到，用于筛选 valid rows），各榜单 commit=False 只挂起不提交，
+        # 最后由 generate_run_report 的提交一次性落盘 status + report_id + 全部榜单。
+        run.status = terminal_status
+        run.finished_at = utc_now()
+        run.updated_at = utc_now()
+        session.add(RunEvent(benchmarking_run_id=run_id, message=f"run {terminal_status}"))
+        session.add(run)
+        for metric_id in METRIC_NAMES:
+            refresh_ranking(session, run.track_id, metric_id, commit=False)
+        generate_run_report(session, run_id, runtime_dir)  # 记录终态、置 report_id，并一次性提交（含挂起的榜单）
         session.refresh(run)
         return run
-
-    run.status = "running"
-    run.started_at = run.started_at or utc_now()
-    session.add(RunEvent(benchmarking_run_id=run_id, message="run started"))
-    session.add(run)
-    session.commit()
-
-    settings = get_settings()
-    adapter = get_model_adapter(settings)
-    if _uses_sequential_model_lifecycle(settings):
-        _unload_all_models_before_run(session, run, adapter, settings.timer_service_model_load_timeout_seconds)
-    units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all()
-    for unit in units:
-        _execute_unit(session, run, unit, Path(runtime_dir), adapter, settings)
-
-    statuses = [unit.status for unit in units]
-    succeeded = len([status for status in statuses if status == "succeeded"])
-    partial = len([status for status in statuses if status == "partial_succeeded"])
-    if succeeded == len(statuses):
-        terminal_status = "succeeded"
-    elif succeeded or partial:
-        # 既有成功（或部分成功），又有未完全成功的 unit → 部分成功。
-        terminal_status = "partial_succeeded"
-    else:
-        terminal_status = "failed"
-
-    from app.services.ranking_service import refresh_ranking
-    from app.services.report_service import generate_run_report
-
-    # 竞态防护：终态 status / report_id / 三张榜单必须在同一次提交里一起对外可见，
-    # 否则轮询可能看到 run 已 succeeded、却查不到榜单。先在内存里置终态（refresh_ranking
-    # 经 session 标识映射即可读到，用于筛选 valid rows），各榜单 commit=False 只挂起不提交，
-    # 最后由 generate_run_report 的提交一次性落盘 status + report_id + 全部榜单。
-    run.status = terminal_status
-    run.finished_at = utc_now()
-    run.updated_at = utc_now()
-    session.add(RunEvent(benchmarking_run_id=run_id, message=f"run {terminal_status}"))
-    session.add(run)
-    for metric_id in METRIC_NAMES:
-        refresh_ranking(session, run.track_id, metric_id, commit=False)
-    generate_run_report(session, run_id, runtime_dir)  # 记录终态、置 report_id，并一次性提交（含挂起的榜单）
-    session.refresh(run)
-    return run
+    except _RunCancelled:
+        return _finish_cancelled_run(session, run_id)
 
 
 def _uses_sequential_model_lifecycle(settings) -> bool:
     return settings.model_lifecycle_mode != "keep_loaded"
+
+
+def _raise_if_cancel_requested(session: Session, run: BenchmarkingRun) -> None:
+    session.refresh(run)
+    if run.cancel_requested or run.status == "cancel_requested":
+        raise _RunCancelled()
+
+
+def _finish_cancelled_run(session: Session, run_id: str) -> BenchmarkingRun:
+    run = session.get(BenchmarkingRun, run_id)
+    if run.status == "cancelled":
+        return run
+    for task in session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).all():
+        if task.status not in _TERMINAL_RUN_STATUSES:
+            task.status = "cancelled"
+            task.finished_at = utc_now()
+            session.add(task)
+    for unit in session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all():
+        if unit.status not in _TERMINAL_RUN_STATUSES:
+            unit.status = "cancelled"
+            unit.finished_at = utc_now()
+            session.add(unit)
+    run.cancel_requested = True
+    run.cancel_requested_at = run.cancel_requested_at or utc_now()
+    run.status = "cancelled"
+    run.finished_at = utc_now()
+    run.updated_at = utc_now()
+    session.add(RunEvent(benchmarking_run_id=run_id, level="warning", event_type="cancelled", message="run cancelled"))
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    return run
 
 
 def _unload_all_models_before_run(session: Session, run: BenchmarkingRun, adapter: ModelAdapter, timeout_seconds: int) -> None:
@@ -301,6 +351,7 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
         "stub_seed": model.stub_seed,
     }
     try:
+        _raise_if_cancel_requested(session, run)
         ensure_model_loaded = getattr(adapter, "ensure_model_loaded", None)
         if ensure_model_loaded is not None:
             _add_run_event(
@@ -336,11 +387,14 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
                 message=f"model {model_payload['remote_model_id']} loaded",
                 payload={"model_id": model.model_id, "remote_model_id": model_payload["remote_model_id"]},
             )
+            _raise_if_cancel_requested(session, run)
 
         tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
         task_metrics: list[dict[str, float] | None] = []
         for task in tasks:
+            _raise_if_cancel_requested(session, run)
             task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
+            _raise_if_cancel_requested(session, run)
         for metric_name in METRIC_NAMES:
             aggregated = aggregate_metric(task_metrics, metric_name)
             if aggregated:
@@ -442,11 +496,14 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
     task.failed_sample_count = 0
     session.add(task)
     session.commit()
+    _raise_if_cancel_requested(session, run)
     block = session.get(CapabilityBlock, task.capability_block_id)
     shards = shards_for_capability_block(session, block.capability_block_id)
     shard_metrics: list[dict[str, float] | None] = []
     for shard in shards:
+        _raise_if_cancel_requested(session, run)
         shard_metrics.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir, adapter))
+        _raise_if_cancel_requested(session, run)
     task_result: dict[str, float] = {}
     for metric_name in METRIC_NAMES:
         aggregated = aggregate_metric(shard_metrics, metric_name)
@@ -461,6 +518,7 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
 
 
 def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, shard: Shard, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
+    _raise_if_cancel_requested(session, run)
     samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard.shard_id).order_by(SampleIndex.sample_index)).all()
     store = SampleStore()
     model_payload = {
@@ -528,19 +586,40 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
 
     if parallelism == 1 or len(prepared_samples) <= 1:
         for prepared in prepared_samples:
+            _raise_if_cancel_requested(session, run)
             handle_outcome(prepared, _forecast_prepared_sample(adapter, prepared, model_payload, timeout_seconds))
             if processed_count % progress_interval == 0:
                 _record_task_sample_progress(session, task, processed_count, failed_count)
+            _raise_if_cancel_requested(session, run)
     else:
         with ThreadPoolExecutor(max_workers=parallelism) as executor:
-            futures = {
-                executor.submit(_forecast_prepared_sample, adapter, prepared, model_payload, timeout_seconds): prepared
-                for prepared in prepared_samples
-            }
-            for future in as_completed(futures):
-                handle_outcome(futures[future], future.result())
-                if processed_count % progress_interval == 0:
-                    _record_task_sample_progress(session, task, processed_count, failed_count)
+            sample_iter = iter(prepared_samples)
+            futures = {}
+
+            def submit_next() -> bool:
+                _raise_if_cancel_requested(session, run)
+                try:
+                    prepared = next(sample_iter)
+                except StopIteration:
+                    return False
+                futures[executor.submit(_forecast_prepared_sample, adapter, prepared, model_payload, timeout_seconds)] = prepared
+                return True
+
+            try:
+                for _ in range(min(parallelism, len(prepared_samples))):
+                    submit_next()
+                while futures:
+                    future = next(as_completed(list(futures)))
+                    prepared = futures.pop(future)
+                    handle_outcome(prepared, future.result())
+                    if processed_count % progress_interval == 0:
+                        _record_task_sample_progress(session, task, processed_count, failed_count)
+                    _raise_if_cancel_requested(session, run)
+                    submit_next()
+            except _RunCancelled:
+                for future in futures:
+                    future.cancel()
+                raise
     _record_task_sample_progress(session, task, processed_count, failed_count)
 
     session.add_all(metric_rows)

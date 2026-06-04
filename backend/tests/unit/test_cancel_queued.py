@@ -1,9 +1,10 @@
 """#19 — cancelling a QUEUED run must not wedge the queue.
 
-``cancel_run`` only flips the run's status to ``cancel_requested``. If the
-cancelled run is still *queued* (not the one running), the queue pointer
-would later advance to it via ``complete`` but nobody starts a thread for
-it, so the queue stalls forever and no later run ever executes.
+``cancel_run`` must drive a still-queued run straight to terminal
+``cancelled`` and remove it from the queue. If the cancelled run remains in
+the queue, the queue pointer would later advance to it via ``complete`` but
+nobody starts a thread for it, so the queue stalls forever and no later run
+ever executes.
 
 The fix removes a still-queued cancelled run from the queue (via
 ``RunQueue.remove``) so the drain logic skips it. Cancelling the
@@ -67,15 +68,16 @@ def test_cancelling_queued_run_does_not_wedge_queue(tmp_path):
 
     # Cancel the still-queued run B: drop it from the queue so drain skips it.
     with Session(engine) as session:
-        cancel_run(session, run_b_id)
+        cancelled = cancel_run(session, run_b_id)
+        assert cancelled.status == "cancelled"
     queue.remove(run_b_id)
 
-    # Drain run A. B must NOT execute (stays cancel_requested).
+    # Drain run A. B must NOT execute (stays cancelled).
     _execute_in_background(engine, run_a_id, tmp_path / "runtime", queue)
     assert _wait_terminal(engine, run_a_id) in TERMINAL
 
     with Session(engine) as session:
-        assert session.get(BenchmarkingRun, run_b_id).status == "cancel_requested"
+        assert session.get(BenchmarkingRun, run_b_id).status == "cancelled"
 
     # Queue must be drained, not stuck on the cancelled run.
     assert queue.running_run_id is None

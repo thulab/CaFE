@@ -51,6 +51,7 @@ const MAP: Record<string, { variant: Variant; icon?: string }> = {
   in_progress: { variant: 'primary', icon: 'refresh' },
   processing: { variant: 'primary', icon: 'refresh' },
   queued: { variant: 'info', icon: 'clock' },
+  cancel_requested: { variant: 'warning', icon: 'clock' },
   pending: { variant: 'neutral', icon: 'clock' },
   idle: { variant: 'neutral', icon: 'clock' },
   failed: { variant: 'danger', icon: 'x' },

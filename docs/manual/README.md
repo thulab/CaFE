@@ -218,8 +218,8 @@ http://127.0.0.1:5173
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
    - 点「Generate test case set」：依次创建 dataset manifest、提交 load job 并生成样本，成功后自动进入下一步。若第 2 步跳过上传，本步只显示提示并继续到已有测试用例集选择。
 4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列或 ID，并追加已有集合。列表详情会显示样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列。点「Create track from selected sets」后，系统基于所选集合创建真实数据评测赛道与默认榜单。
-5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数；样本进度按 `processed_samples`（成功 + 失败）推进，`completed_samples` 仅表示成功样本。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消。
-6. **Open report**：run 到达终态（`succeeded` / `partial_succeeded` / `failed` / `cancelled`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。
+5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数；样本进度按 `processed_samples`（成功 + 失败）推进，`completed_samples` 仅表示成功样本。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消，页面会显示「正在取消」并继续轮询直到 run 变为 `cancelled`。
+6. **Open report**：run 到达非取消终态（`succeeded` / `partial_succeeded` / `failed`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。`cancelled` run 不生成报告、不进入榜单，可从「Run detail」查看取消事件和已处理进度。
 
 使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。
 
@@ -296,7 +296,7 @@ GET /reports/{report_id}?sample_link_limit=10&sample_link_offset=0
 - `task_summaries`：task 摘要（含 task 级指标、`error_code`、`error_message`）。
 - `sample_forecast_links`：按样本去重后的预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id(s)`，并尽量附带 `sample_index`、行号窗口和预测时间戳范围，方便前端显示可读样本名称。大型 run 可用 `sample_link_limit` / `sample_link_offset` 分页读取；响应同时给出 `sample_forecast_links_total`、`sample_forecast_links_limit`、`sample_forecast_links_offset`。
 - `status`：run 终态。
-- `cancellation_reason`：取消运行时为 `cancel_requested`，否则为 `null`。
+- `cancellation_reason`：兼容字段；正常执行报告中为 `null`。取消运行不生成报告。
 - `benchmarking_run_id`、`track_id`、`report_id`。报告页右上角提供返回赛道入口，便于回到该 track 的榜单视图。
 
 ### 7.3 样本预测（sample forecast）

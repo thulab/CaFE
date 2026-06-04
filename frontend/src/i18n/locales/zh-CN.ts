@@ -78,6 +78,7 @@ const zhCN = {
     in_progress: '进行中',
     processing: '处理中',
     queued: '排队中',
+    cancel_requested: '正在取消',
     pending: '待处理',
     idle: '空闲',
     failed: '失败',

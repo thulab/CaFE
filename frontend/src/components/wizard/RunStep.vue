@@ -39,7 +39,8 @@
     <div class="wizard-foot" style="padding:0;border:0">
       <div class="pill-row">
         <a v-if="runId" class="btn secondary sm" :href="`#/runs/${runId}`"><Icon name="external" :size="15" /> {{ t('wizard.runStep.openRun') }}</a>
-        <button v-if="isRunning" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>
+        <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>
+        <button v-else-if="isCancelling" class="btn sm" type="button" disabled><Icon name="ban" :size="15" /> {{ t('runs.detail.cancelling') }}</button>
       </div>
       <button class="btn" type="button" :disabled="selectedIds.length === 0 || !wizardState.trackId || isCreatingRun || isRunning" @click="run">
         <span v-if="isCreatingRun || isRunning" class="spinner" /> <Icon v-else name="play" :size="16" /> {{ t('wizard.runStep.run') }}
@@ -83,6 +84,8 @@ const selectedIds = computed({
   }
 });
 const isRunning = computed(() => !TERMINAL.includes(status.value) && Boolean(runId.value));
+const isCancelling = computed(() => status.value === 'cancel_requested' || progress.value?.status === 'cancel_requested');
+const canCancel = computed(() => isRunning.value && !isCancelling.value);
 const displayStatus = computed(() => progress.value?.activity_status || status.value);
 const compatibleModels = computed(() => models.value.filter((model) => isModelCompatible(model)));
 const allSelected = computed(() => compatibleModels.value.length > 0 && selectedIds.value.length === compatibleModels.value.length);
@@ -214,7 +217,12 @@ async function onCancel() {
   try {
     const res = await cancelRun(wizardState.runId);
     status.value = res.status;
-    stopPolling();
+    if (TERMINAL.includes(res.status)) {
+      stopPolling();
+      return;
+    }
+    await poll();
+    if (!TERMINAL.includes(status.value) && !error.value && !timer) timer = setInterval(poll, 5000);
   } catch (e) {
     setError(e, 'errors.failedToCancelRun');
   }
