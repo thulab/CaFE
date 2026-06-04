@@ -1,4 +1,6 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 
 from sqlmodel import Session, select
 
@@ -21,6 +23,21 @@ from app.services.track_service import shards_for_capability_block
 
 # 计算并入榜的指标集合：mase 为主排名，mse/mae 为诊断。
 METRIC_NAMES = ["mase", "mse", "mae"]
+
+
+@dataclass(frozen=True)
+class _PreparedSample:
+    sample_id: str
+    sample_index: int
+    sample: dict
+    model_input: dict
+
+
+@dataclass(frozen=True)
+class _ForecastOutcome:
+    forecast: list[list[float]] | None = None
+    error_code: str | None = None
+    error_message: str | None = None
 
 
 def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str]) -> BenchmarkingRun:
@@ -421,6 +438,8 @@ def _fail_unit(session: Session, unit: Unit, code: str, message: str) -> None:
 def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
     task.status = "running"
     task.started_at = utc_now()
+    task.processed_sample_count = 0
+    task.failed_sample_count = 0
     session.add(task)
     session.commit()
     block = session.get(CapabilityBlock, task.capability_block_id)
@@ -449,44 +468,83 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
         "remote_model_id": remote_model_id(model),
         "stub_seed": model.stub_seed if model else 0,
     }
-    timeout_seconds = get_settings().sample_forecast_timeout_seconds
-    rows = []
-    sample_metrics = []
+    settings = get_settings()
+    timeout_seconds = settings.sample_forecast_timeout_seconds
+    parallelism = max(1, int(settings.run_sample_parallelism or 1))
+    progress_interval = max(1, int(settings.run_progress_update_interval_samples or 1))
+    prepared_samples: list[_PreparedSample] = []
     for sample_index in samples:
-        sample = store.read_by_ref(session, sample_index.storage_ref)
-        model_input = build_model_input(sample)
-        try:
-            forecast = adapter.forecast(model_input, model_payload, timeout_seconds=timeout_seconds)
-        except Exception as error:  # noqa: BLE001 — adapter failure must not crash the run
-            # 单样本预测失败：写一条 forecast 失败行、该样本计为失败，但不崩整 run。
-            rows.append(
-                {
-                    "sample_id": sample_index.sample_id,
-                    "unit_id": unit.unit_id,
-                    "status": "failed",
-                    "forecast": None,
-                    "future_timestamps": sample["future_timestamps"],
-                    "metrics": {},
-                    "error_code": "adapter_error",
-                    "error_message": str(error),
-                }
+        with session.no_autoflush:
+            sample = store.read_by_ref(session, sample_index.storage_ref)
+        prepared_samples.append(
+            _PreparedSample(
+                sample_id=sample_index.sample_id,
+                sample_index=sample_index.sample_index,
+                sample=sample,
+                model_input=build_model_input(sample),
             )
+        )
+
+    rows_with_order: list[tuple[int, dict]] = []
+    sample_metrics: list[dict[str, float] | None] = []
+    metric_rows: list[MetricResult] = []
+    processed_count = 0
+    failed_count = 0
+
+    def handle_outcome(prepared: _PreparedSample, outcome: _ForecastOutcome) -> None:
+        nonlocal processed_count, failed_count
+        sample = prepared.sample
+        processed_count += 1
+        if outcome.error_code:
+            failed_count += 1
+            rows_with_order.append((prepared.sample_index, _failed_forecast_row(unit, prepared, sample, outcome.error_code, outcome.error_message or "")))
             sample_metrics.append(None)
-            continue
-        metrics = compute_sample_metrics(sample["target_future"], forecast, sample["target_history"])
+            return
+
+        try:
+            metrics = compute_sample_metrics(sample["target_future"], outcome.forecast or [], sample["target_history"])
+        except Exception as error:  # noqa: BLE001 — bad output for one sample must not stop later samples
+            failed_count += 1
+            rows_with_order.append((prepared.sample_index, _failed_forecast_row(unit, prepared, sample, "metric_error", str(error))))
+            sample_metrics.append(None)
+            return
+
         for metric_name, value in metrics.items():
-            session.add(_metric(metric_name, "sample", run, unit, task, model.model_id, value, shard.shard_id, sample_index.sample_id, task.capability_block_id))
-        rows.append(
-            {
-                "sample_id": sample_index.sample_id,
-                "unit_id": unit.unit_id,
-                "status": "succeeded",
-                "forecast": forecast,
-                "future_timestamps": sample["future_timestamps"],
-                "metrics": metrics,
-            }
+            metric_rows.append(_metric(metric_name, "sample", run, unit, task, model.model_id, value, shard.shard_id, prepared.sample_id, task.capability_block_id))
+        rows_with_order.append(
+            (
+                prepared.sample_index,
+                {
+                    "sample_id": prepared.sample_id,
+                    "unit_id": unit.unit_id,
+                    "status": "succeeded",
+                    "forecast": outcome.forecast,
+                    "future_timestamps": sample["future_timestamps"],
+                    "metrics": metrics,
+                },
+            )
         )
         sample_metrics.append(metrics)
+
+    if parallelism == 1 or len(prepared_samples) <= 1:
+        for prepared in prepared_samples:
+            handle_outcome(prepared, _forecast_prepared_sample(adapter, prepared, model_payload, timeout_seconds))
+            if processed_count % progress_interval == 0:
+                _record_task_sample_progress(session, task, processed_count, failed_count)
+    else:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+            futures = {
+                executor.submit(_forecast_prepared_sample, adapter, prepared, model_payload, timeout_seconds): prepared
+                for prepared in prepared_samples
+            }
+            for future in as_completed(futures):
+                handle_outcome(futures[future], future.result())
+                if processed_count % progress_interval == 0:
+                    _record_task_sample_progress(session, task, processed_count, failed_count)
+    _record_task_sample_progress(session, task, processed_count, failed_count)
+
+    session.add_all(metric_rows)
+    rows = [row for _sample_order, row in sorted(rows_with_order, key=lambda item: item[0])]
     artifact = ForecastStore(runtime_dir / "forecasts").write_forecasts(
         run.benchmarking_run_id,
         task.task_id,
@@ -504,6 +562,34 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
             shard_result[metric_name] = aggregated["value"]
     session.commit()
     return shard_result or None
+
+
+def _forecast_prepared_sample(adapter: ModelAdapter, prepared: _PreparedSample, model_payload: dict, timeout_seconds: int) -> _ForecastOutcome:
+    try:
+        return _ForecastOutcome(forecast=adapter.forecast(prepared.model_input, model_payload, timeout_seconds=timeout_seconds))
+    except Exception as error:  # noqa: BLE001 — adapter failure must not crash the run
+        return _ForecastOutcome(error_code="adapter_error", error_message=str(error))
+
+
+def _failed_forecast_row(unit: Unit, prepared: _PreparedSample, sample: dict, error_code: str, error_message: str) -> dict:
+    return {
+        "sample_id": prepared.sample_id,
+        "unit_id": unit.unit_id,
+        "status": "failed",
+        "forecast": None,
+        "future_timestamps": sample["future_timestamps"],
+        "metrics": {},
+        "error_code": error_code,
+        "error_message": error_message,
+    }
+
+
+def _record_task_sample_progress(session: Session, task: Task, processed_sample_count: int, failed_sample_count: int) -> None:
+    task.processed_sample_count = processed_sample_count
+    task.failed_sample_count = failed_sample_count
+    task.updated_at = utc_now()
+    session.add(task)
+    session.commit()
 
 
 def _metric(
@@ -533,31 +619,44 @@ def _metric(
     )
 
 
-def _sample_counts(session: Session, run_id: str) -> tuple[int, int, dict[str, int]]:
+def _sample_counts(session: Session, run_id: str) -> tuple[int, int, int, dict[str, int], dict[str, int], dict[str, int]]:
     """Count per-sample forecast rows actually written for a run.
 
-    Returns ``(completed, failed, completed_by_task)`` where completed = rows
-    with status ``succeeded`` and failed = rows with status ``failed``, read
-    back from the JSONL forecast artifacts produced during ``_execute_shard``.
+    Returns ``(completed, failed, processed, completed_by_task, failed_by_task, processed_by_task)``.
+    During a running task, task counters are visible before the forecast JSONL
+    artifact is written; after artifact write, JSONL remains the source of
+    truth and counters are only used when they are ahead.
     """
     from app.services.forecast_store import ForecastStore
 
+    tasks = session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).all()
     artifacts = session.exec(
         select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)
     ).all()
-    completed = 0
-    failed = 0
-    completed_by_task: dict[str, int] = {}
+    succeeded_by_task: dict[str, int] = {task.task_id: 0 for task in tasks}
+    failed_by_task: dict[str, int] = {task.task_id: 0 for task in tasks}
+    processed_by_task: dict[str, int] = {task.task_id: 0 for task in tasks}
     for artifact in artifacts:
         try:
             rows = ForecastStore(Path(artifact.storage_uri).parent).read_forecasts(artifact.storage_uri)
         except FileNotFoundError:
             continue
         artifact_completed = sum(1 for row in rows if row.get("status") == "succeeded")
-        completed += artifact_completed
-        failed += sum(1 for row in rows if row.get("status") == "failed")
-        completed_by_task[artifact.task_id] = completed_by_task.get(artifact.task_id, 0) + artifact_completed
-    return completed, failed, completed_by_task
+        artifact_failed = sum(1 for row in rows if row.get("status") == "failed")
+        succeeded_by_task[artifact.task_id] = succeeded_by_task.get(artifact.task_id, 0) + artifact_completed
+        failed_by_task[artifact.task_id] = failed_by_task.get(artifact.task_id, 0) + artifact_failed
+        processed_by_task[artifact.task_id] = processed_by_task.get(artifact.task_id, 0) + artifact_completed + artifact_failed
+    for task in tasks:
+        task_processed = int(task.processed_sample_count or 0)
+        task_failed = int(task.failed_sample_count or 0)
+        task_succeeded = max(0, task_processed - task_failed)
+        succeeded_by_task[task.task_id] = max(succeeded_by_task.get(task.task_id, 0), task_succeeded)
+        failed_by_task[task.task_id] = max(failed_by_task.get(task.task_id, 0), task_failed)
+        processed_by_task[task.task_id] = max(processed_by_task.get(task.task_id, 0), task_processed)
+    completed = sum(succeeded_by_task.values())
+    failed = sum(failed_by_task.values())
+    processed = sum(processed_by_task.values())
+    return completed, failed, processed, succeeded_by_task, failed_by_task, processed_by_task
 
 
 def build_run_progress(session: Session, run_id: str) -> dict:
@@ -565,7 +664,7 @@ def build_run_progress(session: Session, run_id: str) -> dict:
     units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run_id)).all()
     tasks = session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).all()
     events = session.exec(select(RunEvent).where(RunEvent.benchmarking_run_id == run_id).order_by(RunEvent.created_at.desc()).limit(20)).all()
-    completed_samples, failed_samples, completed_by_task = _sample_counts(session, run_id)
+    completed_samples, failed_samples, processed_samples, completed_by_task, failed_by_task, processed_by_task = _sample_counts(session, run_id)
     return {
         "benchmarking_run_id": run.benchmarking_run_id,
         "status": run.status,
@@ -577,6 +676,7 @@ def build_run_progress(session: Session, run_id: str) -> dict:
             "total_samples": run.sample_count,
             "completed_samples": completed_samples,
             "failed_samples": failed_samples,
+            "processed_samples": processed_samples,
         },
         "units": [
             {
@@ -601,6 +701,8 @@ def build_run_progress(session: Session, run_id: str) -> dict:
                 "shard_count": task.shard_count,
                 "sample_count": task.sample_count,
                 "completed_sample_count": completed_by_task.get(task.task_id, 0),
+                "failed_sample_count": failed_by_task.get(task.task_id, 0),
+                "processed_sample_count": processed_by_task.get(task.task_id, 0),
                 "metrics": {},
                 "error_code": task.error_code,
                 "error_message": task.error_message,

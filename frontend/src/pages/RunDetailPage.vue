@@ -34,8 +34,8 @@
           </div>
           <div class="stat-tile">
             <span class="stat-label">{{ t('runs.detail.samples') }}</span>
-            <span class="stat-value">{{ formatInt(p.completed_samples ?? 0) }}<span class="faint" style="font-size:1rem"> / {{ formatInt(p.total_samples ?? 0) }}</span></span>
-            <div class="progress" style="margin-top:8px"><span :style="{ width: pct(p.completed_samples, p.total_samples) + '%' }" /></div>
+            <span class="stat-value">{{ formatInt(p.processed_samples ?? p.completed_samples ?? 0) }}<span class="faint" style="font-size:1rem"> / {{ formatInt(p.total_samples ?? 0) }}</span></span>
+            <div class="progress" style="margin-top:8px"><span :style="{ width: pct(p.processed_samples ?? p.completed_samples, p.total_samples) + '%' }" /></div>
           </div>
           <div class="stat-tile">
             <span class="stat-label">{{ t('runs.detail.failedSamples') }}</span>
@@ -74,7 +74,7 @@
                   <tr v-for="task in progress.tasks" :key="String(task.task_id)">
                     <td>{{ task.capability_block_name || task.capability_block_id }}</td>
                     <td><StatusBadge :status="String(task.status)" /></td>
-                    <td class="num">{{ formatInt(task.completed_sample_count ?? 0) }} / {{ formatInt(task.sample_count ?? 0) }}</td>
+                    <td class="num">{{ formatInt(task.processed_sample_count ?? task.completed_sample_count ?? 0) }} / {{ formatInt(task.sample_count ?? 0) }}</td>
                     <td class="mono faint">{{ shortId(String(task.task_id)) }}</td>
                   </tr>
                   <tr v-if="!progress.tasks.length"><td colspan="4" class="empty-state">{{ t('runs.detail.noTasks') }}</td></tr>

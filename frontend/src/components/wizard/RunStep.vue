@@ -30,7 +30,7 @@
       <div v-if="progress" class="pill-row">
         <span class="badge"><Icon name="layers" :size="13" />{{ t('wizard.runStep.modelsProgress', { done: progress.progress.completed_models ?? 0, total: progress.progress.total_models ?? selectedIds.length }) }}</span>
         <span class="badge"><Icon name="list" :size="13" />{{ t('wizard.runStep.tasksProgress', { done: progress.progress.completed_tasks ?? 0, total: progress.progress.total_tasks ?? 0 }) }}</span>
-        <span class="badge"><Icon name="gauge" :size="13" />{{ t('wizard.runStep.samplesProgress', { done: progress.progress.completed_samples ?? 0, total: progress.progress.total_samples ?? 0 }) }}</span>
+        <span class="badge"><Icon name="gauge" :size="13" />{{ t('wizard.runStep.samplesProgress', { done: progress.progress.processed_samples ?? progress.progress.completed_samples ?? 0, total: progress.progress.total_samples ?? 0 }) }}</span>
       </div>
     </div>
 
@@ -90,6 +90,9 @@ const runningPct = computed(() => {
   if (status.value === 'succeeded') return 100;
   const p = progress.value?.progress;
   if (!p) return isRunning.value ? 8 : 0;
+  if (p.total_samples) {
+    return percent(Number(p.processed_samples ?? p.completed_samples ?? 0), Number(p.total_samples ?? 0));
+  }
   return percent(Number(p.completed_tasks ?? 0), Number(p.total_tasks ?? 0));
 });
 

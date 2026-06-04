@@ -104,6 +104,8 @@ inputs with margin.
 | `TSBENCHMARK_TIMER_SERVICE_MODEL_LOAD_TIMEOUT_SECONDS` | `600` | no | Timeout for model load/unload calls. |
 | `TSBENCHMARK_MODEL_LIFECYCLE_MODE` | `sequential_unload` | no | `sequential_unload` reduces peak GPU memory; `keep_loaded` leaves models resident. |
 | `TSBENCHMARK_SAMPLE_FORECAST_TIMEOUT_SECONDS` | `300` | no | Timeout for a single sample forecast request. |
+| `TSBENCHMARK_RUN_SAMPLE_PARALLELISM` | `4` | no | Maximum concurrent sample forecast requests within one task. |
+| `TSBENCHMARK_RUN_PROGRESS_UPDATE_INTERVAL_SAMPLES` | `10` | no | Sample interval for persisting in-flight task progress. |
 
 ### Docker Compose
 

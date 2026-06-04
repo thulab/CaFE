@@ -38,6 +38,14 @@ def _ensure_compat_columns(engine) -> None:
         if "covariate_dim" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE capabilityblock ADD COLUMN covariate_dim INTEGER DEFAULT 0"))
+    if "task" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("task")}
+        if "processed_sample_count" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE task ADD COLUMN processed_sample_count INTEGER DEFAULT 0"))
+        if "failed_sample_count" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE task ADD COLUMN failed_sample_count INTEGER DEFAULT 0"))
     if "sampleindex" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("sampleindex")}
         if "covariate_columns" not in columns:

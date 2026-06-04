@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     runtime_dir: Path = Path("runtime")
     database_url: str = "sqlite:///runtime/tsbenchmark.db"
     sample_forecast_timeout_seconds: int = 300
+    run_sample_parallelism: int = 4
+    run_progress_update_interval_samples: int = 10
 
     # Authentication / RBAC
     # auth_secret 必填用于签发与验证 JWT；缺省时启动时 main.py 拒绝启动。

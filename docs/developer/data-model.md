@@ -509,6 +509,8 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | `status` | `str` | `"created"` | 见下方枚举 |
 | `shard_count` | `int` | `0` | shard 数 |
 | `sample_count` | `int` | `0` | 样本数 |
+| `processed_sample_count` | `int` | `0` | 运行中已处理样本数（成功 + 失败），用于 artifact 写入前的进度可见性 |
+| `failed_sample_count` | `int` | `0` | 运行中已失败样本数 |
 | `aggregation_policy` | `str` | `"mean_over_shards"` | shard 聚合策略 |
 | `error_code` | `str \| None` | `None` | 失败错误码 |
 | `error_message` | `str \| None` | `None` | 失败说明 |
@@ -804,6 +806,8 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 > spec §3.2 / §7 还提到 `SampleForecastDTO`、`RunProgressDTO` 等读模型，但当前它们没有独立的 schema 类——而是由 service 直接构造 `dict` 返回（`build_sample_forecast`、`build_run_progress`）。
 
+`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
+
 ---
 
 ## 8. 关键不变量与生命周期
@@ -840,7 +844,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 执行（`execute_run`，`run_executor.py:90-133`）：
 1. 若已 `cancel_requested` → 直接 `cancelled` 并返回。
-2. 否则 `running`，逐 unit → 逐 task → 逐 shard → 逐 sample 执行；每 sample 调 adapter 产 forecast、算 sample 指标、写 forecast 行；shard/task/unit 逐层聚合写指标。
+2. 否则 `running`，逐 unit → 逐 task → 逐 shard 执行；shard 内按 `TSBENCHMARK_RUN_SAMPLE_PARALLELISM` 做样本级有界并发 forecast，并按 `TSBENCHMARK_RUN_PROGRESS_UPDATE_INTERVAL_SAMPLES` 刷新 `Task.processed_sample_count/failed_sample_count`。每 sample 产 forecast 后算 sample 指标，单个 sample 的 adapter 或指标错误会写成 `forecast.v1` 失败行，不中断后续样本；shard/task/unit 逐层聚合成功样本的指标。
 3. 终态判定（§4.1），写 RunEvent，调 `generate_run_report` 生成报告，回填 `run.report_id`。
 4. 非 cancelled 时对 `mase`/`mse`/`mae` 各刷新一次榜单。
 
