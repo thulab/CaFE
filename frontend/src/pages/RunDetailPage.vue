@@ -7,7 +7,7 @@
         <p class="page-sub">{{ t('runs.detail.subtitle') }}</p>
       </div>
       <div class="head-actions">
-        <StatusBadge v-if="progress" :status="progress.status" big />
+        <StatusBadge v-if="progress" :status="progress.activity_status || progress.status" big />
         <span v-if="progress?.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
         <ResumeWizardButton resource-type="run" :resource-id="runId" />
         <button v-if="canCancel" class="btn danger sm" type="button" @click="onCancel"><Icon name="ban" :size="15" /> {{ t('common.cancel') }}</button>

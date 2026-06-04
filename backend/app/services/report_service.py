@@ -46,8 +46,19 @@ def generate_run_report(session: Session, run_id: str, runtime_dir: Path) -> Rep
     return report
 
 
-def read_report(report: Report) -> dict:
-    return json.loads(Path(report.storage_uri).read_text(encoding="utf-8"))
+def read_report(report: Report, sample_link_limit: int | None = None, sample_link_offset: int = 0) -> dict:
+    payload = json.loads(Path(report.storage_uri).read_text(encoding="utf-8"))
+    links = list(payload.get("sample_forecast_links") or [])
+    total = len(links)
+    offset = max(0, int(sample_link_offset or 0))
+    limit = int(sample_link_limit) if sample_link_limit is not None else None
+    if limit is not None:
+        limit = max(0, limit)
+        payload["sample_forecast_links"] = links[offset : offset + limit]
+    payload["sample_forecast_links_total"] = total
+    payload["sample_forecast_links_limit"] = limit if limit is not None else total
+    payload["sample_forecast_links_offset"] = offset
+    return payload
 
 
 def _unit_metrics(session: Session, unit: Unit, metrics: list[MetricResult]) -> dict:

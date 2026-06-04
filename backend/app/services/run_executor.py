@@ -665,9 +665,11 @@ def build_run_progress(session: Session, run_id: str) -> dict:
     tasks = session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).all()
     events = session.exec(select(RunEvent).where(RunEvent.benchmarking_run_id == run_id).order_by(RunEvent.created_at.desc()).limit(20)).all()
     completed_samples, failed_samples, processed_samples, completed_by_task, failed_by_task, processed_by_task = _sample_counts(session, run_id)
+    activity_status = _activity_status(run.status, events, processed_samples, run.sample_count)
     return {
         "benchmarking_run_id": run.benchmarking_run_id,
         "status": run.status,
+        "activity_status": activity_status,
         "progress": {
             "total_models": run.model_count,
             "completed_models": len([unit for unit in units if unit.status in {"succeeded", "failed", "partial_succeeded", "cancelled"}]),
@@ -721,3 +723,22 @@ def build_run_progress(session: Session, run_id: str) -> dict:
         "report_id": run.report_id,
         "ranking_list_id": run.ranking_list_id,
     }
+
+
+def _activity_status(run_status: str, events: list[RunEvent], processed_samples: int, total_samples: int) -> str:
+    if run_status in _TERMINAL_RUN_STATUSES:
+        return run_status
+    latest_event_type = events[0].event_type if events else ""
+    activity_by_event = {
+        "model_load_started": "model_loading",
+        "model_unload_started": "model_unloading",
+        "model_load_failed": "model_loading_failed",
+        "model_unload_failed": "model_unloading_failed",
+    }
+    if latest_event_type in activity_by_event:
+        return activity_by_event[latest_event_type]
+    if run_status == "running":
+        if total_samples and processed_samples >= total_samples:
+            return "finalizing"
+        return "forecasting" if processed_samples else "running"
+    return run_status

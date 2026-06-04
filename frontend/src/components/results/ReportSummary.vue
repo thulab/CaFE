@@ -103,11 +103,11 @@
               </table>
             </div>
             <div class="sample-pager" :aria-label="t('results.samplePagination')">
-              <button class="btn ghost sm" type="button" :disabled="samplePage <= 1" @click="samplePage -= 1">
+              <button class="btn ghost sm" type="button" :disabled="activeSamplePage <= 1" @click="goSamplePage(activeSamplePage - 1)">
                 <Icon name="chevronLeft" :size="14" /> {{ t('results.previousPage') }}
               </button>
-              <span class="status-line">{{ t('results.pageStatus', { page: samplePage, pages: samplePageCount }) }}</span>
-              <button class="btn ghost sm" type="button" :disabled="samplePage >= samplePageCount" @click="samplePage += 1">
+              <span class="status-line">{{ t('results.pageStatus', { page: activeSamplePage, pages: samplePageCount }) }}</span>
+              <button class="btn ghost sm" type="button" :disabled="activeSamplePage >= samplePageCount" @click="goSamplePage(activeSamplePage + 1)">
                 {{ t('results.nextPage') }} <Icon name="chevronRight" :size="14" />
               </button>
             </div>
@@ -129,6 +129,7 @@ import { useFormat } from '../../composables/useFormat';
 import { shortId } from '../../lib/format';
 
 const props = defineProps<{ report: ReportDTO }>();
+const emit = defineEmits<{ (event: 'sample-page-change', page: number): void }>();
 const { modelName } = useModels();
 const { t } = useI18n();
 const { formatNumber, formatInt, locale } = useFormat();
@@ -227,22 +228,57 @@ const sampleLinks = computed(() => {
   });
 });
 
-const samplePageCount = computed(() => Math.max(1, Math.ceil(sampleLinks.value.length / SAMPLE_PAGE_SIZE)));
+const serverSampleTotal = computed(() => {
+  const total = props.report.sample_forecast_links_total;
+  return typeof total === 'number' && Number.isFinite(total) ? Math.max(0, total) : null;
+});
+const serverSampleLimit = computed(() => {
+  const limit = props.report.sample_forecast_links_limit;
+  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0 ? limit : SAMPLE_PAGE_SIZE;
+});
+const serverSampleOffset = computed(() => {
+  const offset = props.report.sample_forecast_links_offset;
+  return typeof offset === 'number' && Number.isFinite(offset) ? Math.max(0, offset) : 0;
+});
+const serverPagedSamples = computed(() => serverSampleTotal.value !== null);
+const samplePageCount = computed(() => {
+  const total = serverSampleTotal.value ?? sampleLinks.value.length;
+  const pageSize = serverPagedSamples.value ? serverSampleLimit.value : SAMPLE_PAGE_SIZE;
+  return Math.max(1, Math.ceil(total / pageSize));
+});
+const activeSamplePage = computed(() => {
+  if (!serverPagedSamples.value) return samplePage.value;
+  return Math.floor(serverSampleOffset.value / serverSampleLimit.value) + 1;
+});
 const visibleSampleLinks = computed(() => {
+  if (serverPagedSamples.value) return sampleLinks.value;
   const start = (samplePage.value - 1) * SAMPLE_PAGE_SIZE;
   return sampleLinks.value.slice(start, start + SAMPLE_PAGE_SIZE);
 });
 
 const samplePageLabel = computed(() => {
-  if (!sampleLinks.value.length) return '';
-  const start = (samplePage.value - 1) * SAMPLE_PAGE_SIZE + 1;
-  const end = Math.min(samplePage.value * SAMPLE_PAGE_SIZE, sampleLinks.value.length);
-  return t('results.samplePageRange', { start, end, total: sampleLinks.value.length });
+  const total = serverSampleTotal.value ?? sampleLinks.value.length;
+  if (!total) return '';
+  const start = serverPagedSamples.value ? serverSampleOffset.value + 1 : (samplePage.value - 1) * SAMPLE_PAGE_SIZE + 1;
+  const end = serverPagedSamples.value
+    ? Math.min(serverSampleOffset.value + sampleLinks.value.length, total)
+    : Math.min(samplePage.value * SAMPLE_PAGE_SIZE, total);
+  return t('results.samplePageRange', { start, end, total });
 });
 
 watch(samplePageCount, (count) => {
+  if (serverPagedSamples.value) return;
   if (samplePage.value > count) samplePage.value = count;
 });
+
+function goSamplePage(page: number) {
+  const next = Math.max(1, Math.min(page, samplePageCount.value));
+  if (serverPagedSamples.value) {
+    emit('sample-page-change', next);
+    return;
+  }
+  samplePage.value = next;
+}
 
 function sortBy(key: string) {
   if (sortKey.value === key) {

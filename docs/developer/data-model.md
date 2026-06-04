@@ -769,6 +769,9 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `model_metrics` | `list[dict]` | 每个 unit 一项（见下） |
 | `task_summaries` | `list[dict]` | 每个 task 一项（见下） |
 | `sample_forecast_links` | `list[dict]` | 按 sample 去重后的 sample → forecast artifact 链接，含窗口/时间戳展示元数据 |
+| `sample_forecast_links_total` | `int` | 读报告 API 返回，分页前的 sample link 总数 |
+| `sample_forecast_links_limit` | `int` | 读报告 API 返回，本次返回的 link limit；未传分页参数时等于总数 |
+| `sample_forecast_links_offset` | `int` | 读报告 API 返回，本次返回的 link offset |
 | `cancellation_reason` | `str \| None` | run 为 `cancelled` 时为 `"cancel_requested"`，否则 `null` |
 
 `model_metrics[*]`（`_unit_metrics`，`report_service.py:50-62`）：`unit_id`、`model_id`、`model_name`、`status`、`metrics`（仅 `result_level=="unit"` 且匹配 unit 的指标，形如 `{"mse":..,"mae":..}`）。
@@ -776,6 +779,8 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 `task_summaries[*]`（`_task_summary`，`report_service.py:65-79`）：`task_id`、`unit_id`、`model_id`、`capability_block_id`、`status`、`error_code`、`error_message`、`metrics`（仅 `result_level=="task"` 且匹配 task）。
 
 `sample_forecast_links[*]`（`_sample_links`，`report_service.py`）：逐个读取 ForecastArtifact 文件并按 `(run_id, sample_id)` 去重，产出 `{"sample_id":..,"run_id":..,"forecast_artifact_id":..,"forecast_artifact_ids":[..],"model_count":..}`；若 `SampleIndex` 可读，还会补 `sample_index`、`context_start/end`、`horizon_start/end`、`history_start/end_at`、`forecast_start/end_at`，供报告页分页展示为可读窗口名称，而不是裸 ID。
+
+`GET /reports/{report_id}` 支持 `sample_link_limit` / `sample_link_offset` 对 `sample_forecast_links` 做响应分页。报告产物文件本身仍保存完整链接列表，分页发生在 `read_report(...)` 返回 API payload 时。
 
 > 报告 DB 实体（`Report`）的 `summary` 字段与此 JSON 不同：`summary` 只存 `{status, model_count, task_count}`（§5.3），完整内容落在 `storage_uri` 指向的 JSON 文件里。
 
@@ -806,7 +811,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 > spec §3.2 / §7 还提到 `SampleForecastDTO`、`RunProgressDTO` 等读模型，但当前它们没有独立的 schema 类——而是由 service 直接构造 `dict` 返回（`build_sample_forecast`、`build_run_progress`）。
 
-`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
+`RunProgressDTO` 顶层包含持久状态 `status` 与展示态 `activity_status`。`activity_status` 由最近 run event 和样本进度推导，可显示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等，不改变 run 状态机。`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
 
 ---
 

@@ -13,7 +13,7 @@ from sqlmodel import Session, create_engine, select
 
 from app.core.config import get_settings
 from app.db.init_db import init_db
-from app.models.benchmark import ForecastArtifact, Task
+from app.models.benchmark import ForecastArtifact, RunEvent, Task
 from app.services.forecast_store import ForecastStore
 from app.services.run_executor import build_run_progress, create_benchmarking_run, execute_run
 from app.services.stub_timer_adapter import StubTimerAdapter
@@ -129,6 +129,29 @@ def test_progress_reports_in_flight_task_samples_before_artifact_is_written(tmp_
         assert progress["tasks"][0]["processed_sample_count"] == 3
         assert progress["tasks"][0]["completed_sample_count"] == 2
         assert progress["tasks"][0]["failed_sample_count"] == 1
+
+
+def test_progress_reports_model_loading_activity_from_latest_event(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        run.status = "running"
+        session.add(run)
+        session.add(
+            RunEvent(
+                benchmarking_run_id=run.benchmarking_run_id,
+                unit_id="unit-1",
+                event_type="model_load_started",
+                message="loading model",
+            )
+        )
+        session.commit()
+
+        progress = build_run_progress(session, run.benchmarking_run_id)
+
+        assert progress["activity_status"] == "model_loading"
 
 
 def test_execute_run_forecasts_samples_with_bounded_parallelism(tmp_path, monkeypatch):

@@ -287,16 +287,17 @@ runtime/reports/{run_id}.json
 
 ```text
 GET /reports/{report_id}
+GET /reports/{report_id}?sample_link_limit=10&sample_link_offset=0
 ```
 
 返回字段包括：
 
 - `model_metrics`：模型（unit）级指标表。
 - `task_summaries`：task 摘要（含 task 级指标、`error_code`、`error_message`）。
-- `sample_forecast_links`：按样本去重后的预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id(s)`，并尽量附带 `sample_index`、行号窗口和预测时间戳范围，方便前端显示可读样本名称。
+- `sample_forecast_links`：按样本去重后的预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id(s)`，并尽量附带 `sample_index`、行号窗口和预测时间戳范围，方便前端显示可读样本名称。大型 run 可用 `sample_link_limit` / `sample_link_offset` 分页读取；响应同时给出 `sample_forecast_links_total`、`sample_forecast_links_limit`、`sample_forecast_links_offset`。
 - `status`：run 终态。
 - `cancellation_reason`：取消运行时为 `cancel_requested`，否则为 `null`。
-- `benchmarking_run_id`、`track_id`、`report_id`。
+- `benchmarking_run_id`、`track_id`、`report_id`。报告页右上角提供返回赛道入口，便于回到该 track 的榜单视图。
 
 ### 7.3 样本预测（sample forecast）
 

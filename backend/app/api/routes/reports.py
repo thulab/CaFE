@@ -31,10 +31,15 @@ def list_reports(
 
 
 @router.get("/{report_id}", tier="authed")
-def get_report(report_id: str, session: Session = Depends(get_db_session)) -> dict:
+def get_report(
+    report_id: str,
+    sample_link_limit: int | None = None,
+    sample_link_offset: int = 0,
+    session: Session = Depends(get_db_session),
+) -> dict:
     report = session.get(Report, report_id)
     if report is None:
         raise ApiError("resource_not_found", "resource not found", {"resource_type": "report", "resource_id": report_id}, 404)
-    payload = read_report(report)
+    payload = read_report(report, sample_link_limit=sample_link_limit, sample_link_offset=sample_link_offset)
     payload["report_id"] = report.report_id
     return payload

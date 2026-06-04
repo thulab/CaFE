@@ -5,7 +5,7 @@ from sqlmodel import select
 
 from app.db.init_db import init_db
 from app.models.sample import SampleIndex
-from app.services.report_service import generate_run_report
+from app.services.report_service import generate_run_report, read_report
 from app.services.run_executor import create_benchmarking_run, execute_run
 from tests.run_helpers import create_loaded_track_with_models
 
@@ -46,3 +46,21 @@ def test_report_sample_links_are_unique_and_readable_across_models(tmp_path):
         assert all("sample_index" in link for link in links)
         assert all("horizon_start" in link and "horizon_end" in link for link in links)
         assert all("forecast_start_at" in link and "forecast_end_at" in link for link in links)
+
+
+def test_read_report_paginates_sample_forecast_links(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=2)
+        run = create_benchmarking_run(session, track.track_id, [model.model_id for model in models])
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        report = generate_run_report(session, run.benchmarking_run_id, tmp_path / "runtime")
+        payload = read_report(report, sample_link_limit=2, sample_link_offset=1)
+
+        assert payload["sample_forecast_links_total"] == len(session.exec(select(SampleIndex)).all())
+        assert payload["sample_forecast_links_limit"] == 2
+        assert payload["sample_forecast_links_offset"] == 1
+        assert len(payload["sample_forecast_links"]) == 2
+        assert payload["sample_forecast_links"][0]["sample_index"] == 1

@@ -31,8 +31,10 @@ export function getRanking(trackId: string, metric: string, policy: string): Pro
   return apiRequest<RankingDTO>(`/tracks/${trackId}/ranking?metric=${encodeURIComponent(metric)}&policy=${encodeURIComponent(policy)}`);
 }
 
-export function getReport(reportId: string): Promise<ReportDTO> {
-  return apiRequest<ReportDTO>(`/reports/${reportId}`);
+export function getReport(reportId: string, params: { sampleLinkLimit?: number; sampleLinkOffset?: number } = {}): Promise<ReportDTO> {
+  return apiRequest<ReportDTO>(
+    `/reports/${reportId}${buildListQuery({ sample_link_limit: params.sampleLinkLimit, sample_link_offset: params.sampleLinkOffset })}`
+  );
 }
 
 export function getSampleForecast(sampleId: string, runId: string): Promise<SampleForecastDTO> {

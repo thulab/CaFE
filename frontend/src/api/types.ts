@@ -124,6 +124,7 @@ export interface SamplePreviewDTO extends SampleWindowMeta {
 export interface RunProgressDTO {
   benchmarking_run_id: string;
   status: string;
+  activity_status?: string;
   progress: Record<string, number>;
   units: Array<Record<string, unknown>>;
   tasks: Array<Record<string, unknown>>;
@@ -178,9 +179,13 @@ export interface SampleForecastLinkDTO extends SampleWindowMeta {
 
 export interface ReportDTO {
   report_id: string;
+  track_id?: string;
   model_metrics: Array<Record<string, unknown>>;
   task_summaries: Array<Record<string, unknown>>;
   sample_forecast_links: SampleForecastLinkDTO[];
+  sample_forecast_links_total?: number;
+  sample_forecast_links_limit?: number;
+  sample_forecast_links_offset?: number;
 }
 
 export interface ListResponse<T> {

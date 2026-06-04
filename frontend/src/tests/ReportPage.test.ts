@@ -10,12 +10,22 @@ describe('ReportPage', () => {
   });
 
   it('shows model metrics, task errors, and sample forecast links', async () => {
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
-      report_id: 'rep1',
-      model_metrics: [{ model_id: 'm1', metrics: { mse: 0.2, mae: 0.3 } }],
-      task_summaries: [{ task_id: 'task-1', status: 'failed', error_message: 'boom', metrics: {} }],
-      sample_forecast_links: [{ sample_id: 's1', run_id: 'r1', sample_index: 0, horizon_start: 6, horizon_end: 8, forecast_start_at: '2026-01-01T06:00:00', forecast_end_at: '2026-01-01T08:00:00', model_count: 1 }]
-    }), { status: 200 }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/reports/rep1?sample_link_limit=10&sample_link_offset=0') {
+        return Promise.resolve(new Response(JSON.stringify({
+          report_id: 'rep1',
+          track_id: 'track-1',
+          model_metrics: [{ model_id: 'm1', metrics: { mse: 0.2, mae: 0.3 } }],
+          task_summaries: [{ task_id: 'task-1', status: 'failed', error_message: 'boom', metrics: {} }],
+          sample_forecast_links: [{ sample_id: 's1', run_id: 'r1', sample_index: 0, horizon_start: 6, horizon_end: 8, forecast_start_at: '2026-01-01T06:00:00', forecast_end_at: '2026-01-01T08:00:00', model_count: 1 }],
+          sample_forecast_links_total: 1,
+          sample_forecast_links_limit: 10,
+          sample_forecast_links_offset: 0,
+        }), { status: 200 }));
+      }
+      return Promise.reject(new Error(`unexpected URL ${url}`));
+    });
 
     render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
 
@@ -24,6 +34,7 @@ describe('ReportPage', () => {
     expect(screen.getByText('Window #1')).toBeTruthy();
     expect(screen.getByText('Forecast rows 6-8')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Open/ }).getAttribute('href')).toBe('#/samples/s1?run_id=r1&report_id=rep1');
+    expect(screen.getByRole('link', { name: 'Back to track' }).getAttribute('href')).toBe('#/tracks/track-1');
   });
 
   it('sorts model metrics by clicked metric headers', async () => {

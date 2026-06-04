@@ -23,7 +23,7 @@
     <!-- Live progress -->
     <div v-if="runId" class="card pad" style="display:grid;gap:12px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-        <StatusBadge :status="status" big />
+        <StatusBadge :status="displayStatus" big />
         <span class="status-line">{{ t('wizard.runStep.percentComplete', { percent: runningPct }) }}</span>
       </div>
       <div class="progress" :class="progressVariant"><span :style="{ width: runningPct + '%' }" /></div>
@@ -83,6 +83,7 @@ const selectedIds = computed({
   }
 });
 const isRunning = computed(() => !TERMINAL.includes(status.value) && Boolean(runId.value));
+const displayStatus = computed(() => progress.value?.activity_status || status.value);
 const compatibleModels = computed(() => models.value.filter((model) => isModelCompatible(model)));
 const allSelected = computed(() => compatibleModels.value.length > 0 && selectedIds.value.length === compatibleModels.value.length);
 
