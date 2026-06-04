@@ -13,7 +13,7 @@ from sqlmodel import Session, create_engine, select
 
 from app.core.config import get_settings
 from app.db.init_db import init_db
-from app.models.benchmark import ForecastArtifact, RunEvent, Task
+from app.models.benchmark import ForecastArtifact, RunEvent, Task, Unit
 from app.services.forecast_store import ForecastStore
 from app.services.run_executor import build_run_progress, create_benchmarking_run, execute_run
 from app.services.stub_timer_adapter import StubTimerAdapter
@@ -175,6 +175,58 @@ def test_progress_reports_forecasting_after_model_loaded_before_first_sample(tmp
         progress = build_run_progress(session, run.benchmarking_run_id)
 
         assert progress["activity_status"] == "forecasting"
+
+
+def test_progress_reports_unit_activity_status_from_unit_events(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        unit = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).one()
+        run.status = "running"
+        unit.status = "running"
+        session.add(run)
+        session.add(unit)
+        session.add(
+            RunEvent(
+                benchmarking_run_id=run.benchmarking_run_id,
+                unit_id=unit.unit_id,
+                event_type="model_load_started",
+                message="loading model",
+            )
+        )
+        session.commit()
+
+        progress = build_run_progress(session, run.benchmarking_run_id)
+
+        assert progress["units"][0]["activity_status"] == "model_loading"
+
+
+def test_progress_prioritizes_unit_unload_event_over_terminal_unit_status(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        unit = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).one()
+        run.status = "running"
+        unit.status = "succeeded"
+        session.add(run)
+        session.add(unit)
+        session.add(
+            RunEvent(
+                benchmarking_run_id=run.benchmarking_run_id,
+                unit_id=unit.unit_id,
+                event_type="model_unload_started",
+                message="unloading model",
+            )
+        )
+        session.commit()
+
+        progress = build_run_progress(session, run.benchmarking_run_id)
+
+        assert progress["units"][0]["activity_status"] == "model_unloading"
 
 
 def test_execute_run_forecasts_samples_with_bounded_parallelism(tmp_path, monkeypatch):

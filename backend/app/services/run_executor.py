@@ -686,6 +686,7 @@ def build_run_progress(session: Session, run_id: str) -> dict:
                 "model_id": unit.model_id,
                 "model_name": (session.get(Model, unit.model_id).name if session.get(Model, unit.model_id) else unit.model_id),
                 "status": unit.status,
+                "activity_status": _unit_activity_status(session, unit, tasks, processed_by_task),
                 "task_count": unit.task_count,
                 "completed_task_count": len([task for task in tasks if task.unit_id == unit.unit_id and task.status in {"succeeded", "failed", "partial_succeeded", "cancelled"}]),
                 "metrics": {},
@@ -737,9 +738,19 @@ def build_run_activity_status(session: Session, run: BenchmarkingRun) -> str:
     return _activity_status(run.status, events, processed_samples, run.sample_count)
 
 
-def _activity_status(run_status: str, events: list[RunEvent], processed_samples: int, total_samples: int) -> str:
-    if run_status in _TERMINAL_RUN_STATUSES:
-        return run_status
+def _unit_activity_status(session: Session, unit: Unit, tasks: list[Task], processed_by_task: dict[str, int]) -> str:
+    events = session.exec(
+        select(RunEvent)
+        .where(RunEvent.benchmarking_run_id == unit.benchmarking_run_id)
+        .where(RunEvent.unit_id == unit.unit_id)
+        .order_by(RunEvent.created_at.desc())
+        .limit(1)
+    ).all()
+    processed_samples = sum(int(processed_by_task.get(task.task_id, 0)) for task in tasks if task.unit_id == unit.unit_id)
+    return _activity_status(unit.status, events, processed_samples, unit.sample_count, prefer_event=True)
+
+
+def _activity_status(run_status: str, events: list[RunEvent], processed_samples: int, total_samples: int, prefer_event: bool = False) -> str:
     latest_event_type = events[0].event_type if events else ""
     activity_by_event = {
         "model_load_started": "model_loading",
@@ -748,6 +759,10 @@ def _activity_status(run_status: str, events: list[RunEvent], processed_samples:
         "model_load_failed": "model_loading_failed",
         "model_unload_failed": "model_unloading_failed",
     }
+    if prefer_event and latest_event_type in activity_by_event:
+        return activity_by_event[latest_event_type]
+    if run_status in _TERMINAL_RUN_STATUSES:
+        return run_status
     if latest_event_type in activity_by_event:
         return activity_by_event[latest_event_type]
     if run_status == "running":

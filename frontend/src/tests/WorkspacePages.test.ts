@@ -241,11 +241,12 @@ describe('workspace pages', () => {
     stubBackend({
       '/benchmarking-runs/run-9/progress': {
         benchmarking_run_id: 'run-9',
-        status: 'succeeded',
-        progress: { total_models: 1, completed_models: 1, total_tasks: 1, completed_tasks: 1, total_samples: 4, completed_samples: 4, failed_samples: 0 },
-        units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: 'succeeded', task_count: 1, completed_task_count: 1, metrics: {} }],
-        tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: 'succeeded', shard_count: 1, sample_count: 4, completed_sample_count: 4, metrics: {} }],
-        recent_events: [{ created_at: '2026-05-26T13:05:00Z', message: 'run succeeded', event_type: 'status_changed', level: 'info' }],
+        status: 'running',
+        activity_status: 'model_loading',
+        progress: { total_models: 1, completed_models: 0, total_tasks: 1, completed_tasks: 0, total_samples: 4, completed_samples: 0, processed_samples: 0, failed_samples: 0 },
+        units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: 'running', activity_status: 'forecasting', task_count: 1, completed_task_count: 0, metrics: {} }],
+        tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: 'running', shard_count: 1, sample_count: 4, completed_sample_count: 0, processed_sample_count: 0, metrics: {} }],
+        recent_events: [{ created_at: '2026-05-26T13:05:00Z', message: 'run active', event_type: 'status_changed', level: 'info' }],
         report_id: 'rep-1',
         ranking_list_id: 'rank-1'
       }
@@ -254,7 +255,9 @@ describe('workspace pages', () => {
 
     expect(screen.getByRole('heading', { name: 'Benchmarking run' })).toBeTruthy();
     expect(await screen.findByText('Timer 3.5')).toBeTruthy();
-    expect(screen.getByText('run succeeded')).toBeTruthy();
+    expect(screen.getByText('Forecasting')).toBeTruthy();
+    expect(screen.queryByText('Loading model')).toBeNull();
+    expect(screen.getByText('run active')).toBeTruthy();
   });
 
   it('renders workspace page chrome in Chinese when locale changes', async () => {

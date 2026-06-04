@@ -254,7 +254,7 @@ sequenceDiagram
 
 **服务重启恢复（recover_interrupted_runs）**：`run_executor.py:78` 把所有处于 `queued / running / cancel_requested` 的 run 统一标记为 `failed` 并发 `interrupted_by_server_restart` 事件——因为执行态只存在于内存线程，重启即丢失，故保守地判失败。入口封装在 `workers/lifecycle.py:6` 的 `recover_runs_on_startup`。
 
-**进度查询**：`GET /benchmarking-runs/{id}/progress`（`build_run_progress`，`run_executor.py`）汇总 run/unit/task 计数、各 unit/task 状态、最近 20 条 `RunEvent`、`report_id`，并返回展示态 `activity_status`。`activity_status` 从最近 run event 和样本进度推导，可在持久状态仍为 `running` 时展示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等更细阶段。
+**进度查询**：`GET /benchmarking-runs/{id}/progress`（`build_run_progress`，`run_executor.py`）汇总 run/unit/task 计数、各 unit/task 状态、最近 20 条 `RunEvent`、`report_id`，并返回展示态 `activity_status`。顶层 `activity_status` 从最近 run event 和样本进度推导；`units[*].activity_status` 按 `unit_id` 推导每个模型的加载、预测、卸载阶段。运行详情页顶部使用持久 `status` 表达 run 粗状态，单元列表使用 unit 级 `activity_status` 表达模型细状态。
 
 ### 2.d 模型推理接入
 

@@ -811,7 +811,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 > spec §3.2 / §7 还提到 `SampleForecastDTO`、`RunProgressDTO` 等读模型，但当前它们没有独立的 schema 类——而是由 service 直接构造 `dict` 返回（`build_sample_forecast`、`build_run_progress`）。
 
-`RunProgressDTO` 顶层包含持久状态 `status` 与展示态 `activity_status`。`activity_status` 由最近 run event 和样本进度推导，可显示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等，不改变 run 状态机；模型 `model_loaded` 后、第一条样本进度落盘前也显示 `forecasting`，避免界面退回普通 `running`。`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
+`RunProgressDTO` 顶层包含持久状态 `status` 与 run 级展示态 `activity_status`。`activity_status` 由最近 run event 和样本进度推导，可显示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等，不改变 run 状态机；模型 `model_loaded` 后、第一条样本进度落盘前也显示 `forecasting`，避免界面退回普通 `running`。`RunProgressDTO.units[*]` 也包含按 `unit_id` 推导的 `activity_status`，供运行详情页“单元”列表显示每个模型的加载/预测/卸载阶段；unit 级推导会让 `model_unload_started` 等模型生命周期事件优先于 unit 已落盘的终态展示。`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
 
 `GET /benchmarking-runs` 的列表项在 run 表字段之外也返回 `activity_status`，使用同一套展示态推导逻辑，供工作台运行列表和赛道详情运行列表显示“模型加载中/预测中/模型卸载中”等阶段。
 
