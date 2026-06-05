@@ -8,8 +8,8 @@
 
 | 篇目 | 内容 |
 | --- | --- |
-| [架构与关键流程](./key-flows.md) | 系统分层架构、错误信封、六大关键流程（数据集接入与样本物化 / 赛道与能力块 / **评测运行执行** / 模型推理接入 / 榜单计算 / 样本预测视图）、本地桩服务行为、API 端点速查表、扩展指引 |
-| [数据模型](./data-model.md) | 全部 23 个 SQLModel 实体设计（字段表 + 状态枚举 + ER 图）、3 类落盘产物（sample.v1 / forecast.v1 / report JSON）、传输层 DTO、关键不变量与生命周期 |
+| [架构与关键流程](./key-flows.md) | 系统分层架构、错误信封、关键流程（数据集接入与样本物化 / 合成测试用例生成 / 赛道与能力块 / **评测运行执行** / 模型推理接入 / 榜单计算 / 样本预测视图）、本地桩服务行为、API 端点速查表、扩展指引 |
+| [数据模型](./data-model.md) | 全部 25 个 SQLModel 实体设计（字段表 + 状态枚举 + ER 图）、3 类落盘产物（sample.v1 / forecast.v1 / report JSON）、传输层 DTO、关键不变量与生命周期 |
 | [Docker 部署与环境变量](./deployment.md) | Docker Compose 部署、外部推理服务地址配置、runtime volume、镜像发布，以及完整 `TSBENCHMARK_*` 环境变量表 |
 
 ## 系统速览
@@ -18,7 +18,7 @@
 flowchart LR
   FE["前端 Vue3 + Vite<br/>(/api 代理)"] -->|HTTP| BE["后端 FastAPI<br/>routes → services → models / workers"]
   BE -->|SQLModel| DB[("SQLite<br/>tsbenchmark.db")]
-  BE -->|读写| RT[["runtime/ 产物<br/>uploads / samples / forecasts / reports"]]
+  BE -->|读写| RT[["runtime/ 产物<br/>uploads / synthetic / forecasts / reports"]]
   BE -->|"ModelAdapter (rest)"| SVC["timer-rest-service<br/>(真实推理服务)"]
   BE -.->|"本地替身"| STUB["backend/stub_service<br/>(REST 桩)"]
   BE -.->|"ModelAdapter (stub)"| INPROC["进程内 StubTimerAdapter"]
@@ -32,7 +32,8 @@ flowchart LR
 ## 核心数据层级
 
 ```
-DatasetManifest → DatasetLoadJob → Shard(real) → SampleIndex      （数据侧）
+DatasetManifest → DatasetLoadJob → Shard(real) → SampleIndex      （真实数据侧）
+Synthetic generator → Shard(synthetic) → SampleIndex              （合成数据侧）
 Track → CapabilityBlock → CapabilityBlockShard → Shard → SampleIndex （组织侧）
 BenchmarkingRun → Unit(按模型) → Task(按能力块) → Shard → Sample  （执行侧）
 MetricResult：单表多层级（sample / shard / task / unit）

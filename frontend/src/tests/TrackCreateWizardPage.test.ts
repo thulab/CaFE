@@ -44,8 +44,8 @@ describe('TrackCreateWizardPage', () => {
           offset: 0
         });
       }
-      if (url === '/api/wizard/real-dataset-track') {
-        return jsonResponse({ track_id: 'track-1', capability_block_id: 'block-1', ranking_list_id: 'ranking-1' });
+      if (url === '/api/wizard/track-from-shards') {
+        return jsonResponse({ track_id: 'track-1', capability_block_id: 'block-1', capability_block_ids: ['block-1'], ranking_list_id: 'ranking-1' });
       }
       return jsonResponse({});
     });
@@ -57,7 +57,8 @@ describe('TrackCreateWizardPage', () => {
 
     await fireEvent.update(screen.getByLabelText('Track name'), 'Energy benchmark');
     await fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Skip upload' }));
+    await fireEvent.click(screen.getByRole('button', { name: /Reuse existing sets/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Choose existing test case sets' }));
 
     expect(await screen.findByText('Energy validation cases')).toBeTruthy();
@@ -65,7 +66,7 @@ describe('TrackCreateWizardPage', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create track from selected sets' }));
 
     await waitFor(() => expect(window.location.hash).toBe('#/tracks/track-1'));
-    const post = calls.find((call) => call.url === '/api/wizard/real-dataset-track');
+    const post = calls.find((call) => call.url === '/api/wizard/track-from-shards');
     expect(post?.body).toEqual({ name: 'Energy benchmark', shard_ids: ['shard-1'], primary_metric_id: 'mase' });
     expect(wizardState.flow).toBe('evaluation');
     expect(wizardState.entryMode).toBe('');

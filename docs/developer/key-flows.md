@@ -10,7 +10,7 @@
 
 ## 1. 系统架构总览
 
-TSBenchmark MVP 由三个进程协作：Vue/Vite 前端、FastAPI 后端、外部 timer-rest-service（推理/模型/数据集治理服务；本地用 `backend/stub_service` 桩替代）。后端用 SQLite 持久化结构化状态，用 `runtime/` 目录持久化大块产物（样本、预测、报告、上传文件）。
+TSBenchmark MVP 由三个进程协作：Vue/Vite 前端、FastAPI 后端、外部 timer-rest-service（推理/模型/数据集治理服务；本地用 `backend/stub_service` 桩替代）。后端用 SQLite 持久化结构化状态，用 `runtime/` 目录持久化大块产物（合成生成摘要、预测、报告、上传文件）。
 
 ```mermaid
 flowchart LR
@@ -39,7 +39,7 @@ flowchart LR
 
     subgraph STORE["持久化"]
         DB[("SQLite<br/>runtime/tsbenchmark.db")]
-        FS["runtime/ 产物目录<br/>uploads · samples · forecasts · reports"]
+        FS["runtime/ 产物目录<br/>uploads · synthetic · forecasts · reports"]
     end
 
     UI -->|HTTP JSON| R
@@ -65,7 +65,7 @@ flowchart LR
 
 1. 注册全局错误处理器 `api_error_handler`（`main.py:16`）。
 2. 校验 `TSBENCHMARK_AUTH_SECRET`：缺省时直接拒绝启动，避免静默使用弱 JWT 密钥（`main.py:19-22`）。
-3. 创建 `runtime/` 下子目录：`uploads / samples / forecasts / reports`（`main.py:23-27`，目录路径由 `Settings` 的 computed_field 派生）。
+3. 创建 `runtime/` 下子目录：`uploads / samples / synthetic / forecasts / reports`（目录路径由 `Settings` 的 computed_field 派生，synthetic 目录存生成摘要）。
 4. 建 DB 引擎并存到 `app.state.engine`（`main.py:28`，`db/session.py:8`）。
 5. 建进程内运行队列 `RunQueue` 存到 `app.state.run_queue`（`main.py:29`）。
 6. `init_db` 通过 `SQLModel.metadata.create_all` 建表（`db/init_db.py:13`）。
@@ -147,30 +147,50 @@ sequenceDiagram
     DLS-->>C: DatasetLoadJob
 ```
 
-### 2.b 赛道与能力块
+### 2.b 合成测试用例生成
 
-**入口**：`POST /capability-blocks` + `POST /tracks`，或一步式 `POST /wizard/real-dataset-track`
-**服务**：`create_real_capability_block` → `create_track_with_blocks`（均在 `services/track_service.py`）
-**产物实体**：`CapabilityBlock`（real）→ `Track` + `RankingList`
+**入口**：`GET /synthetic/capabilities` → `POST /synthetic/shards`
+**服务**：`SyntheticGenerationService` → `SeriesStore` + `SampleStore`
+**产物实体**：`DatasetManifest(source_type=synthetic)` → `Shard(synthetic)` + N×`SeriesPoint` + N×`SampleIndex`
 
-`create_real_capability_block`（`track_service.py:19`）把一组 real `Shard` 聚合成一个 `CapabilityBlock`（block_type=`real`, capability_type=`real_data`），累加 `sample_count`、取最大 `target_dim` 与最大 `covariate_dim`，并通过 `CapabilityBlockShard` 写入 block → shard 关联；不再写 `Shard.capability_block_id`，因此同一 shard 可被多条赛道复用。校验：至少一个 shard（`capability_block_requires_shard`）、shard 都存在（`shard_not_found`）。
+合成数据是“测试用例集”的另一种来源，而不是独立执行路径。前端在数据来源步骤选择“生成合成数据”后，读取 `/synthetic/capabilities` 获取能力目录，再把一组共享参数提交给 `/synthetic/shards`：`capabilities / context_length / horizon / sample_count / difficulty / season_length / target_dim / seed / frequency`。
+
+当前第一版每个能力维度生成一个 synthetic shard；单变量能力固定 `target_dim=1`，多变量能力使用请求的目标维度（至少 2），`covariate_response` 生成 known-future 协变量列 `weather/event`。真实数据锚定暂不暴露到前端，后端在 `generation_config` 和 `sample_metadata` 中记录固定 mock anchor：`anchor_mode=fixed_mock`、`anchor_source_uri=synthetic-anchor://builtin/mock-v1`。
+
+生成服务把每个 synthetic sample 当作一段长度为 `context_length + horizon` 的完整序列，并把同一个 shard 内的样本按行号连续拼接：
+
+```text
+sample i row_start = i * (context + horizon)
+context = [row_start, row_start + context - 1]
+horizon = [row_start + context, row_start + context + horizon - 1]
+```
+
+随后沿用真实数据的 `SeriesPoint` 与 `SampleIndex` 指针存储。读取样本、构造模型输入、forecast、指标、报告和样本曲线都不需要识别合成数据的特殊格式。能力 ID、难度、seed、latent 参数和 realized features 写入 `SampleIndex.sample_metadata`；shard 级参数摘要写入 `Shard.generation_config` 与 `runtime/synthetic/*.json`。
+
+### 2.c 赛道与能力块
+
+**入口**：`POST /capability-blocks` + `POST /tracks`，一步式 `POST /wizard/real-dataset-track`，或通用 `POST /wizard/track-from-shards`
+**服务**：`create_capability_block_from_shards` / `create_track_from_shards` → `create_track_with_blocks`（均在 `services/track_service.py`）
+**产物实体**：`CapabilityBlock`（real 或 synthetic）→ `Track` + `RankingList`
+
+`create_real_capability_block` 是真实数据兼容入口，把一组 real `Shard` 聚合成一个 `CapabilityBlock`（block_type=`real`, capability_type=`real_data`）。`create_track_from_shards` 是新向导使用的通用入口：它按 shard 类型和 `capability_type` 自动分组，真实数据归到一个 `real_data` block，合成数据按能力维度拆成多个 synthetic block。每个 block 累加 `sample_count`、取最大 `target_dim` 与最大 `covariate_dim`，并通过 `CapabilityBlockShard` 写入 block → shard 关联；不再写 `Shard.capability_block_id`，因此同一 shard 可被多条赛道复用。校验：至少一个 shard（`capability_block_requires_shard` / `track_requires_shard`）、shard 都存在（`shard_not_found`）。
 
 `create_track_with_blocks`（`track_service.py:50`）建 `Track`，把 block 的 `track_id` 指过去，并**同时创建一个 `RankingList`**（`default_metric_id` = `primary_metric_id`）。前端向导会显式传入赛道名称和主指标（`mase` / `mse` / `mae`），因此榜单默认视图跟随用户创建赛道时的选择。返回 `(track, ranking)`。校验至少一个 block（`track_requires_block`）、block 都存在（`capability_block_not_found`）。
 
-向导端点 `POST /wizard/real-dataset-track`（`routes/wizard.py:17`）把两步串起来，一次返回 `track_id / capability_block_id / ranking_list_id`。
+向导端点 `POST /wizard/real-dataset-track` 保持向后兼容，只创建真实数据 block；新端点 `POST /wizard/track-from-shards` 返回 `track_id / capability_block_ids / ranking_list_id`，前端真实和合成路径都使用它。
 
 ```mermaid
 flowchart LR
-    Shards["ready real Shards"] --> CRB["create_real_capability_block"]
-    CRB --> CB["CapabilityBlock (real)"]
+    Shards["ready Shards<br/>real or synthetic"] --> CRB["create_track_from_shards"]
+    CRB --> CB["CapabilityBlock(s)<br/>real_data or synthetic capability"]
     CB --> CTB["create_track_with_blocks"]
     CTB --> T["Track"]
     CTB --> RL["RankingList"]
-    Wizard["POST /wizard/real-dataset-track"] -.串联.-> CRB
+    Wizard["POST /wizard/track-from-shards"] -.分组.-> CRB
     Wizard -.串联.-> CTB
 ```
 
-### 2.c 评测运行执行（核心）
+### 2.d 评测运行执行（核心）
 
 **入口**：`POST /benchmarking-runs`（`routes/benchmarking_runs.py:22`）
 **服务**：`create_benchmarking_run` → `RunQueue` → 后台 `threading.Thread` → `execute_run` →（逐层）`_execute_unit` → `_execute_task` → `_execute_shard` → `adapter.forecast` + `compute_sample_metrics` + `ForecastStore` → `aggregate_metric` → `generate_run_report` → `refresh_ranking`
@@ -256,7 +276,7 @@ sequenceDiagram
 
 **进度查询**：`GET /benchmarking-runs/{id}/progress`（`build_run_progress`，`run_executor.py`）汇总 run/unit/task 计数、各 unit/task 状态、最近 20 条 `RunEvent`、`report_id`，并返回展示态 `activity_status`。顶层 `activity_status` 从最近 run event 和样本进度推导；`units[*].activity_status` 按 `unit_id` 推导每个模型的加载、预测、卸载阶段。运行详情页顶部使用持久 `status` 表达 run 粗状态，单元列表使用 unit 级 `activity_status` 表达模型细状态。
 
-### 2.d 模型推理接入
+### 2.e 模型推理接入
 
 **协议**：`ModelAdapter`（`services/model_adapter.py`）定义模型生命周期与推理方法：`unload_all_models(timeout_seconds)`、`ensure_model_loaded(model, timeout_seconds)`、`forecast(sample, model, timeout_seconds) -> list[list[float]]`、`unload_model(model, timeout_seconds)`。执行器默认用 `unload_all → load one → forecast all samples for that model → unload one` 的顺序控制显存峰值。
 
@@ -293,7 +313,7 @@ flowchart TB
     RA -. 错误 .-> ERR["TimerServiceError"]
 ```
 
-### 2.e 榜单计算
+### 2.f 榜单计算
 
 **入口**：刷新由 `execute_run` 收尾调用 `refresh_ranking`；查询走 `GET /tracks/{track_id}/ranking`（`routes/ranking_lists.py:10` → `query_ranking`）。
 **服务**：`services/ranking_service.py`。
@@ -308,7 +328,7 @@ flowchart TB
 
 `execute_run` 默认对 `METRIC_NAMES=["mase", "mse", "mae"]` 都刷新（`run_executor.py`）。`query_ranking`（`ranking_service.py`）按 `(metric_id, policy)` 取条目并按 `rank` 返回；**路由默认 `metric` 跟随 `Track.primary_metric_id`（即 `mase`）、`policy` 跟随 `default_ranking_policy`**（`routes/ranking_lists.py`，2026-05-25 起）。
 
-### 2.f 样本预测视图
+### 2.g 样本预测视图
 
 **入口**：`GET /samples/{sample_id}/forecast?run_id=...`（`routes/samples.py:19`）；另有 `GET /samples/{sample_id}/preview` 仅回原始样本。
 **服务**：`build_sample_forecast`（`services/sample_forecast_service.py:11`）。
@@ -330,7 +350,7 @@ flowchart LR
     FS --> OUT
 ```
 
-### 2.g 资源生命周期：归档、恢复、影响预览、物理删除
+### 2.h 资源生命周期：归档、恢复、影响预览、物理删除
 
 **入口**：`GET /{resource}/{id}/deletion-impact`、`POST /{resource}/{id}/archive`、`POST /{resource}/{id}/restore`、`DELETE /{resource}/{id}?cascade=true`
 **服务**：`services/resource_lifecycle.py`

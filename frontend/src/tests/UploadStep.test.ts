@@ -37,13 +37,15 @@ describe('UploadStep', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bad CSV'));
   });
 
-  it('can skip upload and continue to existing test case selection', async () => {
+  it('can reuse existing test case sets and continue', async () => {
     wizardState.step = 1;
     render(UploadStep, { global: { plugins: [i18n] } });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Skip upload' }));
+    await fireEvent.click(screen.getByRole('button', { name: /Reuse existing sets/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Next' }));
 
     expect(wizardState.dataUploadSkipped).toBe(true);
+    expect(wizardState.dataSource).toBe('existing');
     expect(wizardState.preview).toBeNull();
     expect(wizardState.step).toBe(2);
   });

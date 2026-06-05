@@ -42,7 +42,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listShards } from '../../api/datasets';
-import { createRealDatasetTrack } from '../../api/tracks';
+import { createTrackFromShards } from '../../api/tracks';
 import type { ShardDTO } from '../../api/types';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { formatInt } from '../../lib/format';
@@ -82,12 +82,20 @@ watch([search, offset], loadShards, { immediate: true });
 
 const items = computed<SelectablePagedListItem[]>(() => shards.value.map((shard) => {
   const meta = [
+    shard.shard_type === 'synthetic' ? t('wizard.testCaseSetStep.synthetic') : t('wizard.testCaseSetStep.real'),
     t('wizard.testCaseSetStep.samples', { count: formatInt(shard.sample_count, locale.value) }),
     t('wizard.testCaseSetStep.window', { context: shard.context_length, horizon: shard.horizon }),
     t('wizard.testCaseSetStep.targets', { targets: shard.target_columns.join(', ') || '—' }),
   ];
   if (shard.covariate_columns?.length) {
     meta.push(t('wizard.testCaseSetStep.covariates', { covariates: shard.covariate_columns.join(', ') }));
+  }
+  if (shard.shard_type === 'synthetic') {
+    const config = shard.generation_config || {};
+    const capability = stringConfig(config.capability_label) || stringConfig(config.capability_id) || shard.capability_type || '';
+    if (capability) meta.push(t('wizard.testCaseSetStep.capability', { capability }));
+    if (config.difficulty) meta.push(t('wizard.testCaseSetStep.difficulty', { difficulty: config.difficulty }));
+    if (config.seed !== undefined) meta.push(t('wizard.testCaseSetStep.seed', { seed: config.seed }));
   }
   return {
     id: shard.shard_id,
@@ -143,13 +151,13 @@ async function createTrack() {
   clearError();
   busy.value = true;
   try {
-    const result = await createRealDatasetTrack({
+    const result = await createTrackFromShards({
       name: wizardState.trackName,
       shard_ids: wizardState.selectedShardIds,
       primary_metric_id: wizardState.primaryMetric
     });
     wizardState.trackId = result.track_id;
-    wizardState.capabilityBlockId = result.capability_block_id;
+    wizardState.capabilityBlockId = result.capability_block_id || result.capability_block_ids?.[0] || '';
     wizardState.rankingListId = result.ranking_list_id;
     if (props.completion === 'open-track') {
       const trackId = result.track_id;
@@ -167,5 +175,9 @@ async function createTrack() {
 
 function shardTitle(shard: ShardDTO) {
   return t('wizard.testCaseSetStep.fallbackTitle', { target: shard.target_columns?.[0] || shard.shard_id });
+}
+
+function stringConfig(value: unknown) {
+  return typeof value === 'string' ? value : '';
 }
 </script>

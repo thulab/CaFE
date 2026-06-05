@@ -103,6 +103,7 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import ExistingTrackRunPanel from '../components/tracks/ExistingTrackRunPanel.vue';
 import UploadStep from '../components/wizard/UploadStep.vue';
 import ColumnAndSplitStep from '../components/wizard/ColumnAndSplitStep.vue';
+import SyntheticConfigStep from '../components/wizard/SyntheticConfigStep.vue';
 import TrackStep from '../components/wizard/TrackStep.vue';
 import TestCaseSetStep from '../components/wizard/TestCaseSetStep.vue';
 import RunStep from '../components/wizard/RunStep.vue';
@@ -117,12 +118,17 @@ onMounted(() => {
 
 const stepDefs = computed(() => [
   { title: t('wizard.steps.createTrack.title'), kicker: t('wizard.steps.createTrack.kicker'), description: t('wizard.steps.createTrack.description'), component: TrackStep, complete: () => Boolean(wizardState.trackName && wizardState.primaryMetric) },
-  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, complete: () => Boolean(wizardState.preview || wizardState.dataUploadSkipped) },
-  { title: t('wizard.steps.configureSplit.title'), kicker: t('wizard.steps.configureSplit.kicker'), description: t('wizard.steps.configureSplit.description'), component: ColumnAndSplitStep, complete: () => Boolean(wizardState.shardId || wizardState.dataUploadSkipped) },
+  { title: t('wizard.steps.uploadCsv.title'), kicker: t('wizard.steps.uploadCsv.kicker'), description: t('wizard.steps.uploadCsv.description'), component: UploadStep, complete: () => Boolean(wizardState.preview || wizardState.dataUploadSkipped || wizardState.dataSource === 'synthetic') },
+  { title: dataConfigTitle.value, kicker: dataConfigKicker.value, description: dataConfigDescription.value, component: dataConfigComponent.value, complete: () => Boolean(wizardState.shardId || wizardState.dataUploadSkipped) },
   { title: t('wizard.steps.selectTestCases.title'), kicker: t('wizard.steps.selectTestCases.kicker'), description: t('wizard.steps.selectTestCases.description'), component: TestCaseSetStep, complete: () => Boolean(wizardState.trackId) },
   { title: t('wizard.steps.runModels.title'), kicker: t('wizard.steps.runModels.kicker'), description: t('wizard.steps.runModels.description'), component: RunStep, complete: () => Boolean(wizardState.reportId) },
   { title: t('wizard.steps.openReport.title'), kicker: t('wizard.steps.openReport.kicker'), description: t('wizard.steps.openReport.description'), component: ResultStep, complete: () => Boolean(wizardState.reportId) }
 ]);
+
+const dataConfigComponent = computed(() => wizardState.dataSource === 'synthetic' ? SyntheticConfigStep : ColumnAndSplitStep);
+const dataConfigTitle = computed(() => wizardState.dataSource === 'synthetic' ? t('wizard.steps.generateSynthetic.title') : t('wizard.steps.configureSplit.title'));
+const dataConfigKicker = computed(() => wizardState.dataSource === 'synthetic' ? t('wizard.steps.generateSynthetic.kicker') : t('wizard.steps.configureSplit.kicker'));
+const dataConfigDescription = computed(() => wizardState.dataSource === 'synthetic' ? t('wizard.steps.generateSynthetic.description') : t('wizard.steps.configureSplit.description'));
 
 const current = computed(() => wizardState.step);
 

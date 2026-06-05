@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from sqlmodel import Session
 
-from app.api.routes import auth, benchmarking_runs, capability_blocks, dataset_load_jobs, dataset_manifests, models, ranking_lists, reports, roles, samples, shards, tracks, users, wizard
+from app.api.routes import auth, benchmarking_runs, capability_blocks, dataset_load_jobs, dataset_manifests, models, ranking_lists, reports, roles, samples, shards, synthetic, tracks, users, wizard
 from app.core.config import get_settings
 from app.core.errors import ApiError, api_error_handler
 from app.db.init_db import init_db
@@ -25,6 +25,7 @@ def create_app() -> FastAPI:
     settings.samples_dir.mkdir(parents=True, exist_ok=True)
     settings.forecasts_dir.mkdir(parents=True, exist_ok=True)
     settings.reports_dir.mkdir(parents=True, exist_ok=True)
+    (settings.runtime_dir / "synthetic").mkdir(parents=True, exist_ok=True)
     app.state.engine = create_db_engine(settings.database_url)
     app.state.run_queue = RunQueue()
     init_db(app.state.engine)
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(dataset_manifests.router)
     app.include_router(dataset_load_jobs.router)
     app.include_router(shards.router)
+    app.include_router(synthetic.router)
     app.include_router(samples.router)
     app.include_router(capability_blocks.router)
     app.include_router(tracks.router)

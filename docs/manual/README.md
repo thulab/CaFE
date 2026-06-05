@@ -8,9 +8,10 @@
 
 - 后端：FastAPI + SQLModel + SQLite。
 - 前端：Vue 3 + Vite 7。
-- 数据集：支持 CSV 和单设备表模型 TsFile 输入；内部统一存成 SQLite `SeriesPoint`。
+- 数据集：支持 CSV 和单设备表模型 TsFile 输入，也支持生成合成测试用例集；内部统一存成 SQLite `SeriesPoint`。
 - 目标列：真实数据加载支持选择一个或多个 target column；多个 target 会作为同一个目标向量一起切窗、评分和预测。
 - 协变量：支持选择 known-future covariate columns。系统会用同一列名把协变量切成 history 与 future 两段，并在推理请求中分别发送 `history_covs` / `future_covs`。
+- 合成数据：在新建评测向导中选择“生成合成数据”后，可选择一个或多个能力维度并指定共享参数。当前真实数据锚定由后端固定 mock 数据源提供，前端不暴露 anchor 选择。
 - 模型：REST 模式下以 timer-rest-service 的 `/models/list` 为准，隐藏 `state=inactive` 的不可用模型，并读取 `forecast_limits.max_target_count` 判断是否支持多目标、读取 `forecast_limits.max_covariate_count` 判断是否支持协变量；`max_target_count=null` 表示不限制目标数，`max_covariate_count>0` 表示可接收协变量。进程内桩模式保留本地可复现模型。
 - 指标：MASE、MSE、MAE，均为 lower is better；榜单主指标为 **MASE**（赛道 `primary_metric_id`）。
 - 推理方式：实际推理通过外部 **timer-rest-service** 的 REST API 完成；本地无真实服务时可用桩程序顶上（见第 4 节）。
@@ -208,16 +209,29 @@ http://127.0.0.1:5173
 选择创建新赛道后，向导左侧是**分步进度条**（每完成一步解锁下一步，已完成的步骤可点击回看），右侧是当前步骤卡片，底部有「Back」按钮；右侧常驻的「Created artifacts」面板会随流程累积各产物的快捷链接。完整流程如下：
 
 1. **Create track**：填写赛道名称并选择主指标（MASE / MSE / MAE，均为 lower is better），点「Continue」进入数据步骤。此时还不会创建后端赛道，避免产生没有绑定数据的半成品赛道。
-2. **Upload data**：把 CSV / TsFile **拖入**虚线框，或点「Choose file」选择。上传成功后显示列数 / 预览行徽章和预览表（含每列推断类型），并默认把文件名（去掉扩展名）作为数据集名称和测试用例集名称的基础，点「Next」继续；如果已有可复用测试用例集，也可以点「Skip upload」直接进入选择。
-3. **Generate test cases**：
+2. **Choose data source**：选择本次评测的数据来源：
+   - **Upload real data**：把 CSV / TsFile 拖入虚线框，或点「Choose file」选择。上传成功后显示列数 / 预览行徽章和预览表，并默认把文件名（去掉扩展名）作为数据集名称和测试用例集名称的基础。
+   - **Generate synthetic data**：跳过上传，进入合成数据配置。
+   - **Reuse existing sets**：不生成新数据，直接选择已有测试用例集。
+3. **Generate test cases / Generate synthetic test cases**：
+   真实数据路径：
    - `Dataset name` 默认为上传文件名，可改成业务可读名称。
    - `Test case set name` 默认为“文件名 test cases”，用于在数据集页、测试用例集详情和赛道选择中识别该集合。
    - `Time column` 下拉选时间列（默认 `time`）。
    - `Target columns` 勾选一个或多个目标列；不选会提示 “Select at least one target”。列很多时可用搜索框和分页按钮定位。
    - `Known future covariates` 可选一个或多个协变量列；目标列与协变量列互斥，同一列不能两边都选。列很多时同样使用可搜索、可分页列表。
    - 填切分参数 `Context`（历史窗口长度，默认 `6`）、`Horizon`（预测长度，默认 `3`）、`Stride`（滑动步长，默认 `3`）、`Max samples`（可选，留空不限）。
-   - 点「Generate test case set」：依次创建 dataset manifest、提交 load job 并生成样本，成功后自动进入下一步。若第 2 步跳过上传，本步只显示提示并继续到已有测试用例集选择。
-4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列或 ID，并追加已有集合。列表详情会显示样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列。点「Create track from selected sets」后，系统基于所选集合创建真实数据评测赛道与默认榜单。
+   - 点「Generate test case set」：依次创建 dataset manifest、提交 load job 并生成样本，成功后自动进入下一步。
+
+   合成数据路径：
+   - `Test case set name` 是生成集合的名称前缀；多选能力时，每个能力维度生成一个测试用例集。
+   - `Capabilities` 可多选。当前内置能力包括趋势、多季节性、状态切换、长记忆非线性、间歇异方差、公共因子、lead-lag、协同状态切换和协变量响应。
+   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Difficulty`、`Season length`、`Target dimension`、`Seed`、`Frequency`。单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
+   - `Covariate response` 会生成 known-future 协变量 `weather` 和 `event`，结果页会在目标预测图下方单独显示协变量曲线。
+   - 点「Generate synthetic test cases」后，后端生成 synthetic shard，并自动预选到下一步。
+
+   如果第 2 步选择复用已有集合，本步只显示提示并继续到已有测试用例集选择。
+4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列、能力维度或 ID，并追加已有集合。列表详情会显示真实/合成类型、样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列，合成集合还会显示能力、难度和 seed。点「Create track from selected sets」后，系统基于所选集合创建评测赛道与默认榜单；合成集合会按能力维度自动拆成多个 capability block。
 5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数；样本进度按 `processed_samples`（成功 + 失败）推进，`completed_samples` 仅表示成功样本。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消，页面会显示「正在取消」并继续轮询直到 run 变为 `cancelled`。
 6. **Open report**：run 到达非取消终态（`succeeded` / `partial_succeeded` / `failed`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。`cancelled` run 不生成报告、不进入榜单，可从「Run detail」查看取消事件和已处理进度。
 

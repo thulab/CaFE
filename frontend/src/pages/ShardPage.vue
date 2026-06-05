@@ -29,6 +29,10 @@
             <dl class="detail-grid">
               <div class="detail-item"><dt>{{ t('shard.shardId') }}</dt><dd class="mono">{{ shard.shard_id }}</dd></div>
               <div v-if="shard.name" class="detail-item"><dt>{{ t('shard.name') }}</dt><dd>{{ shard.name }}</dd></div>
+              <div class="detail-item"><dt>{{ t('shard.type') }}</dt><dd>{{ shard.shard_type === 'synthetic' ? t('shard.synthetic') : t('shard.real') }}</dd></div>
+              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.capability') }}</dt><dd>{{ syntheticConfigLabel('capability_label') || syntheticConfigLabel('capability_id') || shard.capability_type }}</dd></div>
+              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.difficulty') }}</dt><dd>{{ syntheticConfigValue('difficulty') }}</dd></div>
+              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.seed') }}</dt><dd>{{ syntheticConfigValue('seed') }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.manifest') }}</dt><dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shortId(shard.dataset_manifest_id) }}</a></dd></div>
               <div class="detail-item"><dt>{{ t('shard.loadJob') }}</dt><dd><a v-if="shard.load_job_id" class="text-link" :href="`#/load-jobs/${shard.load_job_id}`">{{ shortId(shard.load_job_id) }}</a><span v-else class="faint">{{ t('shard.notRecorded') }}</span></dd></div>
               <div class="detail-item"><dt>{{ t('shard.split') }}</dt><dd>{{ t('shard.splitSummary', { context: shard.context_length, horizon: shard.horizon, stride: shard.stride }) }}</dd></div>
@@ -171,5 +175,16 @@ function sampleHref(sample: SampleIndexDTO) {
 
 function columnLabel(columns?: string[]) {
   return columns?.length ? columns.join(', ') : t('common.notAvailable');
+}
+
+function syntheticConfigLabel(key: string) {
+  const value = shard.value?.generation_config?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function syntheticConfigValue(key: string) {
+  const value = shard.value?.generation_config?.[key];
+  if (value === undefined || value === null || value === '') return t('common.notAvailable');
+  return String(value);
 }
 </script>

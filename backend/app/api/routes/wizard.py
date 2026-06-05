@@ -6,12 +6,18 @@ from app.api.deps import get_db_session
 from app.api.router_factory import make_router
 from app.models.benchmark import CapabilityBlock, CapabilityBlockShard
 from app.models.dataset import Shard
-from app.services.track_service import create_real_capability_block, create_track_with_blocks
+from app.services.track_service import create_real_capability_block, create_track_from_shards, create_track_with_blocks
 
 router = make_router(prefix="/wizard", tags=["wizard"])
 
 
 class RealDatasetTrackCreate(BaseModel):
+    name: str
+    shard_ids: list[str]
+    primary_metric_id: str = "mase"
+
+
+class TrackFromShardsCreate(BaseModel):
     name: str
     shard_ids: list[str]
     primary_metric_id: str = "mase"
@@ -46,5 +52,22 @@ def create_real_dataset_track(payload: RealDatasetTrackCreate, session: Session 
     return {
         "track_id": track.track_id,
         "capability_block_id": block.capability_block_id,
+        "ranking_list_id": ranking.ranking_list_id,
+    }
+
+
+@router.post("/track-from-shards", tier="perm", perm="run.execute")
+def create_track_from_selected_shards(payload: TrackFromShardsCreate, session: Session = Depends(get_db_session)) -> dict:
+    track, ranking, blocks = create_track_from_shards(
+        session,
+        payload.name,
+        payload.shard_ids,
+        payload.primary_metric_id,
+    )
+    block_ids = [block.capability_block_id for block in blocks]
+    return {
+        "track_id": track.track_id,
+        "capability_block_id": block_ids[0] if block_ids else None,
+        "capability_block_ids": block_ids,
         "ranking_list_id": ranking.ranking_list_id,
     }

@@ -44,7 +44,7 @@ def utc_now() -> datetime:
 | --- | --- | --- |
 | `DatasetManifest` | `backend/app/models/dataset.py:11` | 描述真实数据源（**CSV 或 TsFile** 文件、列配置） |
 | `DatasetLoadJob` | `backend/app/models/dataset.py:28` | 一次数据加载/校验/切分/索引任务 |
-| `Shard` | `backend/app/models/dataset.py:47` | 统一数据单元；MVP 用 `shard_type=real`，前端展示为“测试用例集” |
+| `Shard` | `backend/app/models/dataset.py:47` | 统一数据单元；真实或合成测试用例集，前端展示为“测试用例集” |
 | `SeriesPoint` | `backend/app/models/series_point.py:11` | per-shard 原始序列逐点行存储（**SQLite 单一真值源**） |
 | `SampleIndex` | `backend/app/models/sample.py:11` | 样本切片位置（行号区间指针，值在 `SeriesPoint`） |
 | `CapabilityBlock` | `backend/app/models/benchmark.py:11` | 统一能力块；MVP 用 `block_type=real` |
@@ -127,6 +127,8 @@ erDiagram
 ```text
 DatasetManifest → DatasetLoadJob → Shard(real) → SeriesPoint（逐点真值）
                                          ↓        ↘ SampleIndex（行号区间指针 → 现切自 SeriesPoint）
+Synthetic generator → Shard(synthetic) → SeriesPoint（逐点真值）
+                                      ↘ SampleIndex（行号区间指针 → 现切自 SeriesPoint）
 Track → CapabilityBlock → CapabilityBlockShard → Shard → SampleIndex
 ```
 
@@ -175,9 +177,9 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `dataset_manifest_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
 | `name` | `str` | 必填 | 数据集展示名 |
 | `domain` | `str` | 必填 | 数据领域 |
-| `source_type` | `str` | `"managed_file"` | MVP 固定为托管上传文件 |
-| `source_uri` | `str` | 必填 | 原始数据位置（`runtime/uploads/` 下） |
-| `file_format` | `str` | `"csv"` | 输入格式；当前支持 `csv` / `tsfile` |
+| `source_type` | `str` | `"managed_file"` | `managed_file` / `synthetic` |
+| `source_uri` | `str` | 必填 | 原始数据位置；真实上传为 `runtime/uploads/` 路径，合成数据为 `synthetic://<generation_id>` |
+| `file_format` | `str` | `"csv"` | 输入格式；真实数据支持 `csv` / `tsfile`，合成数据写 `synthetic` |
 | `time_column` | `str` | 必填 | 时间列列名 |
 | `frequency` | `str \| None` | `None` | 时间频率；load 成功后由推断结果回填 |
 | `timezone` | `str \| None` | `None` | 仅作元数据，不做时区转换 |
@@ -257,12 +259,13 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | --- | --- | --- | --- |
 | `shard_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
 | `name` | `str \| None` | `None` | 测试用例集展示名；来自 `split_config.shard_name`，列表和详情优先展示该值 |
-| `shard_type` | `str` | `"real"` | MVP 固定 real |
+| `shard_type` | `str` | `"real"` | `real` / `synthetic` |
+| `capability_type` | `str \| None` | `None`，`index=True` | 合成 shard 的能力维度 ID；真实数据通常为空 |
 | `dataset_manifest_id` | `str` | `index=True`（逻辑外键 → DatasetManifest） | 数据来源 |
 | `load_job_id` | `str \| None` | `None`，`index=True`（逻辑外键 → DatasetLoadJob） | 产生该 shard 的 job |
 | `capability_block_id` | `str \| None` | `None`，`index=True`（逻辑外键 → CapabilityBlock） | 兼容旧数据的单归属字段；新链路通过 `CapabilityBlockShard` 关联，可为 None |
-| `source_uri` | `str` | 必填 | 原始数据位置（CSV 或 TsFile 输入文件） |
-| `storage_uri` | `str \| None` | `None` | 规范化产物位置（**2026-05-25 SQLite pivot 后不再写**；真值在 `SeriesPoint`） |
+| `source_uri` | `str` | 必填 | 原始数据位置；真实数据为文件路径，合成数据为 `synthetic://<generation_id>` |
+| `storage_uri` | `str \| None` | `None` | 规范化产物位置；真实数据通常为空，合成数据写入 `runtime/synthetic/*.json` 生成摘要 |
 | `checksum` | `str \| None` | `None` | 校验值 |
 | `time_range_start` | `str \| None` | `None` | 时间范围起（ISO 8601 字符串） |
 | `time_range_end` | `str \| None` | `None` | 时间范围止（ISO 8601 字符串） |
@@ -276,11 +279,14 @@ ArchivedResource(resource_type, resource_id) → DatasetManifest / Shard / Track
 | `horizon` | `int` | `0` | 预测长度 |
 | `stride` | `int` | `0` | 滑窗步长 |
 | `sample_count` | `int` | `0` | 样本数 |
+| `generation_config` | `dict[str, Any]` | `{}`，**JSON 列** | 合成生成配置摘要；真实数据通常为空 |
 | `status` | `str` | `"created"` | 见下方枚举 |
 | `created_at` | `datetime` | `utc_now` | |
 | `updated_at` | `datetime` | `utc_now` | |
 
-**shard_type 取值**：`"real"`（默认值；`init_db.py:37` 的唯一性断言也按 `shard_type=="real"` 过滤）。spec §2.2 预留 `synthetic`，当前代码未写入。
+**shard_type 取值**：
+- `"real"`：真实 CSV / TsFile 经 load job 切分生成。
+- `"synthetic"`：`POST /synthetic/shards` 按能力维度和共享参数生成；同一次请求可产生多个 synthetic shard。
 
 > 2026-05-28 起，Shard 是可复用数据切片；同一 shard 可以通过多条 `CapabilityBlockShard` 记录挂到不同 capability block / track。`Shard.capability_block_id` 仅用于旧数据 fallback。
 
@@ -346,8 +352,8 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | --- | --- | --- | --- |
 | `capability_block_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
 | `track_id` | `str \| None` | `None`，`index=True`（逻辑外键 → Track） | 所属 Track；挂到 Track 前为 None |
-| `block_type` | `str` | `"real"` | MVP 固定 real |
-| `capability_type` | `str` | `"real_data"` | 能力类型 |
+| `block_type` | `str` | `"real"` | `real` / `synthetic` |
+| `capability_type` | `str` | `"real_data"` | 能力类型；真实数据为 `real_data`，合成数据为能力维度 ID |
 | `name` | `str` | 必填 | 展示名 |
 | `task_type` | `str` | `"univariate_forecast"` | 任务类型 |
 | `target_dim` | `int` | `1` | 目标维度 |
@@ -355,11 +361,12 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | `shard_count` | `int` | `0` | shard 数 |
 | `sample_count` | `int` | `0` | 汇总样本数 |
 | `aggregation_policy` | `str` | `"mean_over_shards"` | shard 聚合策略 |
+| `generation_config` | `dict[str, Any]` | `{}`，**JSON 列** | 合成能力块的生成配置摘要 |
 | `status` | `str` | `"ready"` | 见下方枚举 |
 | `created_at` | `datetime` | `utc_now` | |
 | `updated_at` | `datetime` | `utc_now` | |
 
-`block_type`/`capability_type` 在 `services/track_service.py:32-33` 创建时显式赋为 `"real"` / `"real_data"`。
+`block_type`/`capability_type` 由 `services/track_service.py` 创建能力块时写入。真实数据为 `"real"` / `"real_data"`；合成数据由 `/wizard/track-from-shards` 按 `Shard.capability_type` 自动拆成多个 synthetic block。
 **status 取值**：仅 `"ready"`（默认值，`models/benchmark.py:22`），代码无其它写入。spec §4.5 预留 `draft / disabled`。
 
 ### 3.1.1 CapabilityBlockShard
@@ -382,7 +389,7 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 | --- | --- | --- | --- |
 | `track_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
 | `name` | `str` | 必填 | 赛道名 |
-| `track_type` | `str` | `"real_dataset"` | MVP 固定 |
+| `track_type` | `str` | `"real_dataset"` | `real_dataset` / `synthetic_dataset` / `mixed_dataset` |
 | `description` | `str \| None` | `None` | 描述 |
 | `primary_metric_id` | `str` | `"mase"` | 默认榜单指标（**2026-05-25 起切为 mase 主排名**；mse/mae 降为诊断） |
 | `default_ranking_policy` | `str` | `"latest_valid_result"` | 默认榜单策略 |

@@ -668,6 +668,97 @@ textarea:focus {
   border-radius: var(--radius-sm);
 }
 
+.source-mode-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.source-mode {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-height: 104px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.source-mode:hover {
+  border-color: var(--primary-border);
+  background: var(--surface-hover);
+}
+
+.source-mode.is-active {
+  border-color: var(--primary-border);
+  background: var(--primary-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.source-title,
+.capability-title {
+  display: block;
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 750;
+}
+
+.source-desc,
+.capability-desc {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.capability-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.capability-card {
+  display: grid;
+  gap: 8px;
+  min-height: 138px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.capability-card:hover {
+  background: var(--surface-hover);
+  border-color: var(--primary-border);
+}
+
+.capability-card.is-selected {
+  background: var(--primary-soft);
+  border-color: var(--primary-border);
+}
+
+.capability-card input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
+.capability-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 /* ======================= Page scaffolding ================================= */
 .page {
   max-width: 1220px;
@@ -1627,6 +1718,7 @@ th.num {
   .app-topbar { padding: 10px 16px; }
   .page-head h1 { font-size: 1.5rem; }
   .entry-grid,
+  .source-mode-grid,
   .grid-2,
   .detail-grid { grid-template-columns: 1fr; }
   .step-card-head { grid-template-columns: 40px minmax(0, 1fr); }

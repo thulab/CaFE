@@ -103,9 +103,13 @@ def _filter_shards(rows: list[Shard], manifest_names: dict[str, str], query: str
         values = [
             row.name or "",
             row.shard_id,
+            row.shard_type or "",
+            row.capability_type or "",
             row.source_uri,
             manifest_names.get(row.dataset_manifest_id, ""),
             " ".join(row.target_columns or []),
+            " ".join(row.covariate_columns or []),
+            str((row.generation_config or {}).get("capability_label") or ""),
         ]
         return any(needle in value.lower() for value in values)
 

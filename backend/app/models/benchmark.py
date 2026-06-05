@@ -20,6 +20,7 @@ class CapabilityBlock(SQLModel, table=True):
     shard_count: int = 0
     sample_count: int = 0
     aggregation_policy: str = "mean_over_shards"
+    generation_config: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "ready"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

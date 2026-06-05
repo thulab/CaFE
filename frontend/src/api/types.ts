@@ -66,6 +66,7 @@ export interface ShardDTO {
   name?: string | null;
   dataset_name?: string | null;
   shard_type?: string;
+  capability_type?: string | null;
   dataset_manifest_id: string;
   load_job_id?: string | null;
   capability_block_id?: string | null;
@@ -83,10 +84,40 @@ export interface ShardDTO {
   horizon: number;
   stride: number;
   sample_count: number;
+  generation_config?: Record<string, unknown>;
   status: string;
   archived_at?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface SyntheticCapabilityDTO {
+  capability_id: string;
+  label: string;
+  description: string;
+  task_type: string;
+  target_dim_mode: 'fixed_1' | 'multi' | 'covariate' | string;
+  covariate_columns: string[];
+  default_params?: Record<string, number | string>;
+  limits?: Record<string, { min?: number; max?: number }>;
+}
+
+export interface SyntheticShardGenerateDTO {
+  name: string;
+  capabilities: string[];
+  context_length: number;
+  horizon: number;
+  sample_count: number;
+  difficulty: number;
+  season_length: number;
+  target_dim: number;
+  seed: number;
+  frequency: string;
+}
+
+export interface SyntheticShardGenerateResponseDTO {
+  items: ShardDTO[];
+  shard_ids: string[];
 }
 
 export interface SampleIndexDTO {

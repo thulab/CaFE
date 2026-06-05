@@ -18,3 +18,10 @@ export function createRealDatasetTrack(payload: { name: string; shard_ids: strin
     body: JSON.stringify(payload)
   });
 }
+
+export function createTrackFromShards(payload: { name: string; shard_ids: string[]; primary_metric_id: string }) {
+  return apiRequest<{ track_id: string; capability_block_id?: string | null; capability_block_ids?: string[]; ranking_list_id: string }>('/wizard/track-from-shards', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}

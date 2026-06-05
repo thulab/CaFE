@@ -33,11 +33,20 @@ def _ensure_compat_columns(engine) -> None:
         if "covariate_dim" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE shard ADD COLUMN covariate_dim INTEGER DEFAULT 0"))
+        if "capability_type" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE shard ADD COLUMN capability_type VARCHAR"))
+        if "generation_config" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE shard ADD COLUMN generation_config JSON DEFAULT '{}'"))
     if "capabilityblock" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("capabilityblock")}
         if "covariate_dim" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE capabilityblock ADD COLUMN covariate_dim INTEGER DEFAULT 0"))
+        if "generation_config" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE capabilityblock ADD COLUMN generation_config JSON DEFAULT '{}'"))
     if "task" in inspector.get_table_names():
         columns = {column["name"] for column in inspector.get_columns("task")}
         if "processed_sample_count" not in columns:

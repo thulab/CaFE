@@ -17,7 +17,7 @@ describe('TestCaseSetStep', () => {
     vi.restoreAllMocks();
   });
 
-  it('preselects a generated test case set and creates a real-dataset track', async () => {
+  it('preselects a generated test case set and creates a track from shards', async () => {
     wizardState.shardId = 'shard-generated';
     wizardState.selectedShardIds = ['shard-generated'];
     wizardState.step = 3;
@@ -46,8 +46,8 @@ describe('TestCaseSetStep', () => {
           offset: 0
         });
       }
-      if (url === '/api/wizard/real-dataset-track') {
-        return jsonResponse({ track_id: 'track-1', capability_block_id: 'block-1', ranking_list_id: 'ranking-1' });
+      if (url === '/api/wizard/track-from-shards') {
+        return jsonResponse({ track_id: 'track-1', capability_block_id: 'block-1', capability_block_ids: ['block-1'], ranking_list_id: 'ranking-1' });
       }
       return jsonResponse({});
     });
@@ -61,7 +61,7 @@ describe('TestCaseSetStep', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Create track from selected sets' }));
 
     await waitFor(() => expect(wizardState.trackId).toBe('track-1'));
-    const postCall = fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/wizard/real-dataset-track');
+    const postCall = fetchSpy.mock.calls.find((call) => String(call[0]) === '/api/wizard/track-from-shards');
     const body = JSON.parse(postCall![1]!.body as string);
     expect(body).toEqual({ name: 'Hourly energy benchmark', shard_ids: ['shard-generated'], primary_metric_id: 'mse' });
     expect(wizardState.step).toBe(4);

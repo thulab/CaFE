@@ -47,6 +47,7 @@ class Shard(SQLModel, table=True):
     shard_id: str = Field(default_factory=new_id, primary_key=True)
     name: str | None = None
     shard_type: str = "real"
+    capability_type: str | None = Field(default=None, index=True)
     dataset_manifest_id: str = Field(index=True)
     load_job_id: str | None = Field(default=None, index=True)
     capability_block_id: str | None = Field(default=None, index=True)
@@ -65,6 +66,7 @@ class Shard(SQLModel, table=True):
     horizon: int = 0
     stride: int = 0
     sample_count: int = 0
+    generation_config: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     status: str = "created"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

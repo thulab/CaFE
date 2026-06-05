@@ -4,6 +4,7 @@ import type { MessageState } from '../lib/errors';
 
 export type WizardEntryMode = '' | 'new-track' | 'existing-track';
 export type WizardFlow = 'evaluation' | 'track';
+export type WizardDataSource = 'upload' | 'synthetic' | 'existing';
 export type WizardResourceType = 'dataset_manifest' | 'load_job' | 'shard' | 'track' | 'ranking' | 'run' | 'report' | 'sample_forecast';
 export const WIZARD_STORAGE_KEY = 'tsbenchmark:wizard:draft:v1';
 
@@ -12,6 +13,7 @@ type WizardSnapshot = {
   entryMode: WizardEntryMode;
   step: number;
   preview: UploadPreviewDTO | null;
+  dataSource: WizardDataSource;
   dataUploadSkipped: boolean;
   sourceUri: string;
   datasetName: string;
@@ -23,6 +25,7 @@ type WizardSnapshot = {
   loadJobId: string;
   shardId: string;
   selectedShardIds: string[];
+  syntheticCapabilityIds: string[];
   trackId: string;
   capabilityBlockId: string;
   rankingListId: string;
@@ -35,6 +38,7 @@ export const wizardState = reactive({
   entryMode: '' as WizardEntryMode,
   step: 0,
   preview: null as UploadPreviewDTO | null,
+  dataSource: 'upload' as WizardDataSource,
   dataUploadSkipped: false,
   sourceUri: '',
   datasetName: '',
@@ -46,6 +50,7 @@ export const wizardState = reactive({
   loadJobId: '',
   shardId: '',
   selectedShardIds: [] as string[],
+  syntheticCapabilityIds: [] as string[],
   trackId: '',
   capabilityBlockId: '',
   rankingListId: '',
@@ -88,6 +93,7 @@ export function resetWizard(flow: WizardFlow = 'evaluation') {
   wizardState.entryMode = '';
   wizardState.step = 0;
   wizardState.preview = null;
+  wizardState.dataSource = 'upload';
   wizardState.dataUploadSkipped = false;
   wizardState.sourceUri = '';
   wizardState.datasetName = '';
@@ -99,6 +105,7 @@ export function resetWizard(flow: WizardFlow = 'evaluation') {
   wizardState.loadJobId = '';
   wizardState.shardId = '';
   wizardState.selectedShardIds = [];
+  wizardState.syntheticCapabilityIds = [];
   wizardState.trackId = '';
   wizardState.capabilityBlockId = '';
   wizardState.rankingListId = '';
@@ -126,6 +133,7 @@ export function hasWizardDraft() {
   return Boolean(
     wizardState.entryMode ||
     wizardState.preview ||
+    wizardState.dataSource !== 'upload' ||
     wizardState.manifestId ||
     wizardState.loadJobId ||
     wizardState.shardId ||
@@ -185,6 +193,7 @@ function applySnapshot(value: Partial<WizardSnapshot>) {
   wizardState.entryMode = normalizeEntryMode(value.entryMode);
   wizardState.step = clampStep(value.step);
   wizardState.preview = value.preview ?? null;
+  wizardState.dataSource = normalizeDataSource(value.dataSource);
   wizardState.dataUploadSkipped = Boolean(value.dataUploadSkipped);
   wizardState.sourceUri = stringValue(value.sourceUri);
   wizardState.datasetName = stringValue(value.datasetName);
@@ -196,6 +205,7 @@ function applySnapshot(value: Partial<WizardSnapshot>) {
   wizardState.loadJobId = stringValue(value.loadJobId);
   wizardState.shardId = stringValue(value.shardId);
   wizardState.selectedShardIds = Array.isArray(value.selectedShardIds) ? value.selectedShardIds.filter((item) => typeof item === 'string') : [];
+  wizardState.syntheticCapabilityIds = Array.isArray(value.syntheticCapabilityIds) ? value.syntheticCapabilityIds.filter((item) => typeof item === 'string') : [];
   wizardState.trackId = stringValue(value.trackId);
   wizardState.capabilityBlockId = stringValue(value.capabilityBlockId);
   wizardState.rankingListId = stringValue(value.rankingListId);
@@ -211,6 +221,7 @@ function snapshot(): WizardSnapshot {
     entryMode: wizardState.entryMode,
     step: wizardState.step,
     preview: wizardState.preview,
+    dataSource: wizardState.dataSource,
     dataUploadSkipped: wizardState.dataUploadSkipped,
     sourceUri: wizardState.sourceUri,
     datasetName: wizardState.datasetName,
@@ -222,6 +233,7 @@ function snapshot(): WizardSnapshot {
     loadJobId: wizardState.loadJobId,
     shardId: wizardState.shardId,
     selectedShardIds: [...wizardState.selectedShardIds],
+    syntheticCapabilityIds: [...wizardState.syntheticCapabilityIds],
     trackId: wizardState.trackId,
     capabilityBlockId: wizardState.capabilityBlockId,
     rankingListId: wizardState.rankingListId,
@@ -250,4 +262,10 @@ function normalizeEntryMode(value: unknown): WizardEntryMode {
 
 function normalizeFlow(value: unknown): WizardFlow {
   return value === 'track' ? 'track' : 'evaluation';
+}
+
+function normalizeDataSource(value: unknown): WizardDataSource {
+  if (value === 'synthetic') return 'synthetic';
+  if (value === 'existing') return 'existing';
+  return 'upload';
 }

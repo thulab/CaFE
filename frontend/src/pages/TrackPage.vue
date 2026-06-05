@@ -63,7 +63,7 @@
                       <a class="text-link" :href="`#/shards/${shard.shard_id}`">{{ shardTitle(shard) }}</a>
                       <div class="faint mono" style="font-size:0.74rem">{{ shortId(shard.shard_id) }}</div>
                     </td>
-                    <td class="muted">{{ shard.dataset_name || shard.source_uri || t('common.notAvailable') }}</td>
+                    <td class="muted">{{ datasetLabel(shard) }}</td>
                     <td class="muted">{{ windowLabel(shard) }}</td>
                     <td class="muted">{{ formatInt(shard.sample_count ?? 0) }}</td>
                     <td class="muted">{{ targetLabel(shard) }}</td>
@@ -322,5 +322,14 @@ function targetLabel(shard: ShardDTO) {
 
 function covariateLabel(shard: ShardDTO) {
   return shard.covariate_columns?.length ? shard.covariate_columns.join(', ') : t('common.notAvailable');
+}
+
+function datasetLabel(shard: ShardDTO) {
+  if (shard.shard_type === 'synthetic') {
+    const config = shard.generation_config || {};
+    const capability = typeof config.capability_label === 'string' ? config.capability_label : shard.capability_type;
+    return capability ? t('track.syntheticCapability', { capability }) : t('track.syntheticData');
+  }
+  return shard.dataset_name || shard.source_uri || t('common.notAvailable');
 }
 </script>
