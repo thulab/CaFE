@@ -2,7 +2,7 @@
 <!-- 内容更新：修改飞书原文后重新运行同步脚本。 -->
 
 > **来源**：[飞书文档](https://timechor.feishu.cn/docx/CwaMdyCmhovwIGxRbGicKuExnVh)（docx token `CwaMdyCmhovwIGxRbGicKuExnVh`）  
-> **最后同步**：2026-06-03
+> **最后同步**：2026-06-04  
 > **更新方式**：`python3 scripts/sync-feishu-docs.py`
 
 ---
@@ -212,7 +212,8 @@ Coordinator 在每次发布路由表时同步广播这份预期集合，Uvicorn 
 
 - `output_length` 由 REST 层统一限制为 720，对所有模型一致，与各模型更大的原生上限无关（Timer-3.5 的 KV-Cache 自回归、Chronos-2 的 1024 单次前向上限）。Timer-3.5 的单次前向上限仍为 272。
 - 未来协变量覆盖预测时域，因此其每行长度与 `output_length` 共享同一 720 步上限（基础大模型中仅 Chronos-2 接受协变量）。
-- 上述基础大模型在 REST 层均为单变量目标（每个任务一条目标序列）。多变量目标预测由 `toto2.0` 提供（目标数无上限、不支持协变量）；自动选择会将多变量目标输入路由到该模型。
+- 上述基础大模型在 REST 层均为单变量目标（每个
+- 任务一条目标序列）。多变量目标预测由 `toto2.0` 提供（目标数无上限、不支持协变量）；自动选择会将多变量目标输入路由到该模型。
 - Sktime 模型（如 `AutoARIMA`、`Holt-Winters`）沿用 Timer-3.0 的 `output_length` 默认范围 `[1, 720]`。
 - 上述按模型的限制也可通过 `GET /models/list` 在每个模型的 `forecast_limits` 对象中以编程方式获取。
 
