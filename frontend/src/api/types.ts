@@ -208,11 +208,44 @@ export interface SampleForecastLinkDTO extends SampleWindowMeta {
   model_count?: number | null;
 }
 
+export interface CapabilityBlockReportDTO {
+  capability_block_id: string;
+  name: string;
+  block_type: string;
+  capability_type: string;
+  capability_label?: string | null;
+  task_type?: string | null;
+  target_dim?: number | null;
+  covariate_dim?: number | null;
+  shard_count?: number | null;
+  sample_count?: number | null;
+  aggregation_policy?: string | null;
+  generation_config?: Record<string, unknown>;
+  shard_ids?: string[];
+}
+
+export interface CapabilityMetricReportDTO {
+  task_id: string;
+  unit_id: string;
+  model_id: string;
+  model_name?: string | null;
+  capability_block_id: string;
+  status: string;
+  sample_count?: number | null;
+  processed_sample_count?: number | null;
+  failed_sample_count?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  metrics: Record<string, unknown>;
+}
+
 export interface ReportDTO {
   report_id: string;
   track_id?: string;
   model_metrics: Array<Record<string, unknown>>;
   task_summaries: Array<Record<string, unknown>>;
+  capability_blocks?: CapabilityBlockReportDTO[];
+  capability_metrics?: CapabilityMetricReportDTO[];
   sample_forecast_links: SampleForecastLinkDTO[];
   sample_forecast_links_total?: number;
   sample_forecast_links_limit?: number;

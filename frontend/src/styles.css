@@ -1617,6 +1617,140 @@ th.num {
 
 .chart-hover-x { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 4 4; }
 
+/* ======================= Capability profile =============================== */
+.capability-profile-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 220px));
+  gap: 12px;
+  align-items: end;
+}
+
+.capability-model-selectors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.capability-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.capability-model-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.capability-model-chip.is-off { opacity: 0.46; }
+
+.capability-model-chip input {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+}
+
+.capability-model-chip .swatch,
+.swatch-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  flex: none;
+}
+
+.capability-profile-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 16px;
+  align-items: start;
+}
+
+.capability-radar-wrap {
+  min-width: 0;
+}
+
+.capability-radar {
+  max-height: 420px;
+}
+
+.capability-radar .radar-grid polygon,
+.capability-radar .radar-grid line {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+
+.capability-radar .radar-labels text {
+  fill: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.capability-radar .radar-area {
+  fill-opacity: 0.12;
+  stroke-opacity: 0.75;
+  stroke-width: 1.6;
+}
+
+.capability-radar .radar-line {
+  fill: none;
+  stroke-width: 2.2;
+}
+
+.capability-radar-side {
+  display: grid;
+  gap: 8px;
+}
+
+.capability-radar-side .detail-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.capability-series-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.capability-matrix {
+  min-width: 760px;
+}
+
+.capability-metric-cell {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+  min-width: 92px;
+}
+
+.capability-score-bar {
+  display: block;
+  width: 82px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.capability-score-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+}
+
 /* ======================= Misc ============================================= */
 .text-link {
   color: var(--primary-text);
@@ -1720,7 +1854,8 @@ th.num {
   .entry-grid,
   .source-mode-grid,
   .grid-2,
-  .detail-grid { grid-template-columns: 1fr; }
+  .detail-grid,
+  .capability-profile-layout { grid-template-columns: 1fr; }
   .step-card-head { grid-template-columns: 40px minmax(0, 1fr); }
   .step-card-head .badge { grid-column: 1 / -1; justify-self: start; }
 }

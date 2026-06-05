@@ -308,6 +308,8 @@ GET /reports/{report_id}?sample_link_limit=10&sample_link_offset=0
 
 - `model_metrics`：模型（unit）级指标表。
 - `task_summaries`：task 摘要（含 task 级指标、`error_code`、`error_message`）。
+- `capability_blocks`：本次 run 涉及的能力测试块元数据，含 `block_type`（`synthetic` / `real`）、`capability_type`、展示名、样本数、目标维度和协变量维度。
+- `capability_metrics`：每个模型在每个能力测试块上的 task 级指标，用于报告页展示能力画像。报告页默认用合成能力维度绘制雷达图；同一能力维度有多个测试块时按样本数加权聚合。真实数据不进入默认雷达轴，但会在“全部测试组”分解表中展示。
 - `sample_forecast_links`：按样本去重后的预测链接列表，每项含 `sample_id`、`run_id`、`forecast_artifact_id(s)`，并尽量附带 `sample_index`、行号窗口和预测时间戳范围，方便前端显示可读样本名称。大型 run 可用 `sample_link_limit` / `sample_link_offset` 分页读取；响应同时给出 `sample_forecast_links_total`、`sample_forecast_links_limit`、`sample_forecast_links_offset`。
 - `status`：run 终态。
 - `cancellation_reason`：兼容字段；正常执行报告中为 `null`。取消运行不生成报告。

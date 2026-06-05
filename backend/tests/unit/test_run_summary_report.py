@@ -4,6 +4,9 @@ from sqlmodel import Session, create_engine
 from sqlmodel import select
 
 from app.db.init_db import init_db
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, Task, Track, Unit
+from app.models.metric import MetricResult
+from app.models.model_registry import Model
 from app.models.sample import SampleIndex
 from app.services.report_service import generate_run_report, read_report
 from app.services.run_executor import create_benchmarking_run, execute_run
@@ -26,6 +29,135 @@ def test_succeeded_run_generates_summary_report_json(tmp_path):
         assert payload["model_metrics"][0]["model_id"] == models[0].model_id
         assert payload["task_summaries"][0]["status"] == "succeeded"
         assert payload["sample_forecast_links"]
+
+
+def test_report_includes_capability_blocks_and_per_model_capability_metrics(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track = Track(name="mixed track", track_type="mixed_dataset")
+        model = Model(name="Timer profile", model_family="Timer", model_version="profile", endpoint_uri="stub://profile")
+        session.add(track)
+        session.add(model)
+        session.commit()
+        session.refresh(track)
+        session.refresh(model)
+
+        real_block = CapabilityBlock(
+            track_id=track.track_id,
+            name="real validation",
+            block_type="real",
+            capability_type="real_data",
+            shard_count=1,
+            sample_count=5,
+        )
+        trend_block = CapabilityBlock(
+            track_id=track.track_id,
+            name="synthetic trend",
+            block_type="synthetic",
+            capability_type="trend",
+            shard_count=2,
+            sample_count=7,
+            generation_config={
+                "schema_version": "capability_block_generation.v1",
+                "capability_id": "trend",
+                "shard_generation_configs": [{"capability_label": "Trend"}],
+            },
+        )
+        session.add(real_block)
+        session.add(trend_block)
+        session.commit()
+        session.refresh(real_block)
+        session.refresh(trend_block)
+
+        run = BenchmarkingRun(
+            track_id=track.track_id,
+            model_ids=[model.model_id],
+            status="succeeded",
+            model_count=1,
+            task_count=2,
+            sample_count=12,
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+
+        unit = Unit(
+            benchmarking_run_id=run.benchmarking_run_id,
+            model_id=model.model_id,
+            status="succeeded",
+            task_count=2,
+            sample_count=12,
+        )
+        session.add(unit)
+        session.commit()
+        session.refresh(unit)
+
+        real_task = Task(
+            benchmarking_run_id=run.benchmarking_run_id,
+            unit_id=unit.unit_id,
+            model_id=model.model_id,
+            capability_block_id=real_block.capability_block_id,
+            status="succeeded",
+            sample_count=5,
+            processed_sample_count=5,
+        )
+        trend_task = Task(
+            benchmarking_run_id=run.benchmarking_run_id,
+            unit_id=unit.unit_id,
+            model_id=model.model_id,
+            capability_block_id=trend_block.capability_block_id,
+            status="succeeded",
+            sample_count=7,
+            processed_sample_count=7,
+        )
+        session.add(real_task)
+        session.add(trend_task)
+        session.commit()
+        session.refresh(real_task)
+        session.refresh(trend_task)
+
+        session.add(
+            MetricResult(
+                metric_id="mase",
+                result_level="task",
+                benchmarking_run_id=run.benchmarking_run_id,
+                unit_id=unit.unit_id,
+                task_id=real_task.task_id,
+                model_id=model.model_id,
+                capability_block_id=real_block.capability_block_id,
+                value=0.9,
+            )
+        )
+        session.add(
+            MetricResult(
+                metric_id="mase",
+                result_level="task",
+                benchmarking_run_id=run.benchmarking_run_id,
+                unit_id=unit.unit_id,
+                task_id=trend_task.task_id,
+                model_id=model.model_id,
+                capability_block_id=trend_block.capability_block_id,
+                value=0.4,
+            )
+        )
+        session.commit()
+
+        generate_run_report(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        payload = json.loads((tmp_path / "runtime" / "reports" / f"{run.benchmarking_run_id}.json").read_text())
+        assert {block["capability_type"] for block in payload["capability_blocks"]} == {"real_data", "trend"}
+        trend_summary = next(block for block in payload["capability_blocks"] if block["capability_type"] == "trend")
+        assert trend_summary["capability_label"] == "Trend"
+        assert trend_summary["sample_count"] == 7
+
+        profile = {
+            item["capability_block_id"]: item
+            for item in payload["capability_metrics"]
+        }
+        assert profile[real_block.capability_block_id]["metrics"]["mase"] == 0.9
+        assert profile[trend_block.capability_block_id]["metrics"]["mase"] == 0.4
+        assert profile[trend_block.capability_block_id]["model_name"] == "Timer profile"
 
 
 def test_report_sample_links_are_unique_and_readable_across_models(tmp_path):

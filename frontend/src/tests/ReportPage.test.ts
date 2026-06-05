@@ -67,6 +67,46 @@ describe('ReportPage', () => {
     expect(names()).toEqual(['model-b', 'model-c', 'model-a']);
   });
 
+  it('renders capability radar and all-test-group breakdown from report capability metrics', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      report_id: 'rep1',
+      model_metrics: [
+        { model_id: 'model-a', model_name: 'Timer A', metrics: { mase: 0.4 } },
+        { model_id: 'model-b', model_name: 'Timer B', metrics: { mase: 0.3 } },
+      ],
+      capability_blocks: [
+        { capability_block_id: 'block-trend', name: 'Trend set', block_type: 'synthetic', capability_type: 'trend', capability_label: 'Trend', sample_count: 20 },
+        { capability_block_id: 'block-season', name: 'Season set', block_type: 'synthetic', capability_type: 'multi_seasonal', capability_label: 'Multi-seasonal', sample_count: 20 },
+        { capability_block_id: 'block-cov', name: 'Covariate set', block_type: 'synthetic', capability_type: 'covariate_response', capability_label: 'Covariate response', sample_count: 20 },
+        { capability_block_id: 'block-real', name: 'Real validation', block_type: 'real', capability_type: 'real_data', capability_label: 'Real data', sample_count: 12 },
+      ],
+      capability_metrics: [
+        { task_id: 'ta', unit_id: 'ua', model_id: 'model-a', model_name: 'Timer A', capability_block_id: 'block-trend', status: 'succeeded', sample_count: 20, metrics: { mase: 0.2 } },
+        { task_id: 'tb', unit_id: 'ub', model_id: 'model-b', model_name: 'Timer B', capability_block_id: 'block-trend', status: 'succeeded', sample_count: 20, metrics: { mase: 0.4 } },
+        { task_id: 'tc', unit_id: 'ua', model_id: 'model-a', model_name: 'Timer A', capability_block_id: 'block-season', status: 'succeeded', sample_count: 20, metrics: { mase: 0.5 } },
+        { task_id: 'td', unit_id: 'ub', model_id: 'model-b', model_name: 'Timer B', capability_block_id: 'block-season', status: 'succeeded', sample_count: 20, metrics: { mase: 0.3 } },
+        { task_id: 'te', unit_id: 'ua', model_id: 'model-a', model_name: 'Timer A', capability_block_id: 'block-cov', status: 'succeeded', sample_count: 20, metrics: { mase: 0.6 } },
+        { task_id: 'tf', unit_id: 'ub', model_id: 'model-b', model_name: 'Timer B', capability_block_id: 'block-cov', status: 'succeeded', sample_count: 20, metrics: { mase: 0.4 } },
+        { task_id: 'tg', unit_id: 'ua', model_id: 'model-a', model_name: 'Timer A', capability_block_id: 'block-real', status: 'succeeded', sample_count: 12, metrics: { mase: 0.7 } },
+        { task_id: 'th', unit_id: 'ub', model_id: 'model-b', model_name: 'Timer B', capability_block_id: 'block-real', status: 'succeeded', sample_count: 12, metrics: { mase: 0.8 } },
+      ],
+      task_summaries: [],
+      sample_forecast_links: []
+    }), { status: 200 }));
+
+    render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Capability profile')).toBeTruthy();
+    expect(screen.getByRole('img', { name: /Capability radar/ })).toBeTruthy();
+    expect(screen.getAllByText('Trend').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Real validation')).toBeNull();
+
+    await fireEvent.update(screen.getByLabelText('Scope'), 'all');
+
+    expect(screen.getByText('Real validation')).toBeTruthy();
+    expect(screen.getByText('Real data')).toBeTruthy();
+  });
+
   it('deduplicates sample forecast links and paginates them by window order', async () => {
     const links = Array.from({ length: 12 }, (_, index) => ({
       sample_id: `s${index + 1}`,

@@ -777,15 +777,21 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `status` | `str` | run 终态 |
 | `model_metrics` | `list[dict]` | 每个 unit 一项（见下） |
 | `task_summaries` | `list[dict]` | 每个 task 一项（见下） |
+| `capability_blocks` | `list[dict]` | 本次 run 涉及的能力测试块元数据（见下） |
+| `capability_metrics` | `list[dict]` | 每个模型在每个能力测试块上的 task 级指标（见下） |
 | `sample_forecast_links` | `list[dict]` | 按 sample 去重后的 sample → forecast artifact 链接，含窗口/时间戳展示元数据 |
 | `sample_forecast_links_total` | `int` | 读报告 API 返回，分页前的 sample link 总数 |
 | `sample_forecast_links_limit` | `int` | 读报告 API 返回，本次返回的 link limit；未传分页参数时等于总数 |
 | `sample_forecast_links_offset` | `int` | 读报告 API 返回，本次返回的 link offset |
 | `cancellation_reason` | `str \| None` | 兼容字段；正常执行生成的报告为 `null`。取消 run 不生成报告 |
 
-`model_metrics[*]`（`_unit_metrics`，`report_service.py:50-62`）：`unit_id`、`model_id`、`model_name`、`status`、`metrics`（仅 `result_level=="unit"` 且匹配 unit 的指标，形如 `{"mse":..,"mae":..}`）。
+`model_metrics[*]`（`_unit_metrics`，`report_service.py`）：`unit_id`、`model_id`、`model_name`、`status`、`metrics`（仅 `result_level=="unit"` 且匹配 unit 的指标，形如 `{"mse":..,"mae":..}`）。
 
-`task_summaries[*]`（`_task_summary`，`report_service.py:65-79`）：`task_id`、`unit_id`、`model_id`、`capability_block_id`、`status`、`error_code`、`error_message`、`metrics`（仅 `result_level=="task"` 且匹配 task）。
+`task_summaries[*]`（`_task_summary`，`report_service.py`）：`task_id`、`unit_id`、`model_id`、`capability_block_id`、`status`、`sample_count`、`processed_sample_count`、`failed_sample_count`、`error_code`、`error_message`、`metrics`（仅 `result_level=="task"` 且匹配 task）。
+
+`capability_blocks[*]`（`_capability_block_summary`，`report_service.py`）：`capability_block_id`、`name`、`block_type`、`capability_type`、`capability_label`、`task_type`、`target_dim`、`covariate_dim`、`shard_count`、`sample_count`、`aggregation_policy`、`generation_config`、`shard_ids`。前端报告页用它把 task 指标还原到“能力维度 / 测试组”语义；历史报告没有该字段时能力画像区域不显示。
+
+`capability_metrics[*]`（`_capability_metric`，`report_service.py`）：`task_id`、`unit_id`、`model_id`、`model_name`、`capability_block_id`、`status`、`sample_count`、`processed_sample_count`、`failed_sample_count`、`error_code`、`error_message`、`metrics`。这些值与 `task_summaries` 的 task 指标同源，单独展开是为了让前端不用从 task 摘要反查模型名与 block 上下文。报告页默认只用 synthetic block 聚合出能力雷达；同一 `capability_type` 多个 block 时按 `sample_count` 加权。真实数据 block 保留在“全部测试组”分解表中，不进入默认雷达轴。
 
 `sample_forecast_links[*]`（`_sample_links`，`report_service.py`）：逐个读取 ForecastArtifact 文件并按 `(run_id, sample_id)` 去重，产出 `{"sample_id":..,"run_id":..,"forecast_artifact_id":..,"forecast_artifact_ids":[..],"model_count":..}`；若 `SampleIndex` 可读，还会补 `sample_index`、`context_start/end`、`horizon_start/end`、`history_start/end_at`、`forecast_start/end_at`，供报告页分页展示为可读窗口名称，而不是裸 ID。
 

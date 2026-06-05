@@ -48,6 +48,8 @@
       </div>
     </article>
 
+    <CapabilityProfile :report="report" />
+
     <div class="grid-2">
       <article class="card">
         <header class="card-head"><h2 class="card-title">{{ t('results.taskOutcomes') }}</h2><span class="badge">{{ formatInt(report.task_summaries.length) }}</span></header>
@@ -127,6 +129,7 @@ import type { ReportDTO, SampleForecastLinkDTO } from '../../api/types';
 import { useModels } from '../../composables/useModels';
 import { useFormat } from '../../composables/useFormat';
 import { shortId } from '../../lib/format';
+import CapabilityProfile from './CapabilityProfile.vue';
 
 const props = defineProps<{ report: ReportDTO }>();
 const emit = defineEmits<{ (event: 'sample-page-change', page: number): void }>();
