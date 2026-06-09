@@ -12,6 +12,9 @@ x-backend-image: &backend-image
   build:
     context: .
     dockerfile: backend/Dockerfile
+    network: host
+    extra_hosts:
+      - "mirrors.aliyun.com:103.151.149.20"
   image: tsbenchmark-backend:latest
 
 services:
@@ -41,6 +44,7 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      network: host
     image: tsbenchmark-frontend:latest
     container_name: tsbenchmark-frontend
     ports:
