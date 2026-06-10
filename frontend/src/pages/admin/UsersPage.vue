@@ -75,13 +75,13 @@
         @retry="refresh"
       >
         <div class="table-wrap">
-          <table class="data">
+          <table class="data table-fixed">
             <thead>
               <tr>
-                <th>{{ t('admin.users.username') }}</th>
-                <th>{{ t('admin.users.email') }}</th>
-                <th>{{ t('admin.users.role') }}</th>
-                <th>{{ t('admin.users.status') }}</th>
+                <th class="col-28">{{ t('admin.users.username') }}</th>
+                <th class="col-28">{{ t('admin.users.email') }}</th>
+                <th class="col-20">{{ t('admin.users.role') }}</th>
+                <th class="col-14">{{ t('admin.users.status') }}</th>
                 <th style="width:48px" :aria-label="t('admin.users.actions')"></th>
               </tr>
             </thead>
@@ -94,12 +94,12 @@
                 @click="selectUser(u)"
               >
                 <td>
-                  <span style="font-weight:600">{{ u.username }}</span>
+                  <span class="cell-wrap" style="font-weight:600" :title="u.username">{{ u.username }}</span>
                   <span v-if="u.is_superuser" class="badge sm primary" style="margin-left:6px">{{ t('admin.users.superuser') }}</span>
-                  <div class="faint mono" style="font-size:0.74rem">{{ shortId(u.user_id) }}</div>
+                  <div class="faint mono cell-id">{{ shortId(u.user_id) }}</div>
                 </td>
-                <td class="muted">{{ u.email || t('common.notAvailable') }}</td>
-                <td class="muted">{{ u.role_names.join(', ') || t('common.notAvailable') }}</td>
+                <td class="muted"><span class="cell-wrap" :title="u.email || t('common.notAvailable')">{{ u.email || t('common.notAvailable') }}</span></td>
+                <td class="muted"><span class="cell-wrap" :title="u.role_names.join(', ') || t('common.notAvailable')">{{ u.role_names.join(', ') || t('common.notAvailable') }}</span></td>
                 <td>
                   <span class="badge sm" :class="u.is_active ? 'success' : 'neutral'">
                     {{ u.is_active ? t('admin.users.active') : t('admin.users.disabled') }}

@@ -52,7 +52,7 @@
                 <thead><tr><th>{{ t('runs.detail.model') }}</th><th>{{ t('runs.detail.status') }}</th><th class="num">{{ t('runs.detail.tasks') }}</th><th>{{ t('runs.detail.unit') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="unit in progress.units" :key="String(unit.unit_id)">
-                    <td style="font-weight:600">{{ unit.model_name || unit.model_id }}</td>
+                    <td><span class="cell-wrap" style="font-weight:600" :title="unit.model_name || unit.model_id">{{ unit.model_name || unit.model_id }}</span></td>
                     <td><StatusBadge :status="String(unit.activity_status || unit.status)" /></td>
                     <td class="num">{{ formatInt(unit.completed_task_count ?? 0) }} / {{ formatInt(unit.task_count ?? 0) }}</td>
                     <td class="mono faint">{{ shortId(String(unit.unit_id)) }}</td>
@@ -72,7 +72,7 @@
                 <thead><tr><th>{{ t('runs.detail.capability') }}</th><th>{{ t('runs.detail.status') }}</th><th class="num">{{ t('runs.detail.samples') }}</th><th>{{ t('runs.detail.task') }}</th></tr></thead>
                 <tbody>
                   <tr v-for="task in progress.tasks" :key="String(task.task_id)">
-                    <td>{{ task.capability_block_name || task.capability_block_id }}</td>
+                    <td><span class="cell-wrap" :title="task.capability_block_name || task.capability_block_id">{{ task.capability_block_name || task.capability_block_id }}</span></td>
                     <td><StatusBadge :status="String(task.status)" /></td>
                     <td class="num">{{ formatInt(task.processed_sample_count ?? task.completed_sample_count ?? 0) }} / {{ formatInt(task.sample_count ?? 0) }}</td>
                     <td class="mono faint">{{ shortId(String(task.task_id)) }}</td>

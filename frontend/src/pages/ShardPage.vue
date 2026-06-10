@@ -38,7 +38,7 @@
               <div class="detail-item"><dt>{{ t('shard.split') }}</dt><dd>{{ t('shard.splitSummary', { context: shard.context_length, horizon: shard.horizon, stride: shard.stride }) }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.targets') }}</dt><dd>{{ columnLabel(shard.target_columns) }}</dd></div>
               <div v-if="shard.covariate_columns?.length" class="detail-item"><dt>{{ t('shard.covariates') }}</dt><dd>{{ columnLabel(shard.covariate_columns) }}</dd></div>
-              <div class="detail-item wide"><dt>{{ t('shard.sourceUri') }}</dt><dd class="mono">{{ shard.source_uri }}</dd></div>
+              <div class="detail-item wide"><dt>{{ t('shard.sourceUri') }}</dt><dd class="mono break-anywhere">{{ shard.source_uri }}</dd></div>
             </dl>
           </div>
         </article>

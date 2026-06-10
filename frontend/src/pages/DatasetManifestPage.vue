@@ -29,7 +29,7 @@
               <div class="detail-item"><dt>{{ t('datasetManifest.frequency') }}</dt><dd>{{ manifest.frequency || t('common.notAvailable') }}</dd></div>
               <div class="detail-item"><dt>{{ t('datasetManifest.timezone') }}</dt><dd>{{ manifest.timezone || t('common.notAvailable') }}</dd></div>
               <div class="detail-item"><dt>{{ t('datasetManifest.created') }}</dt><dd>{{ formatDateTime(manifest.created_at) }}</dd></div>
-              <div class="detail-item wide"><dt>{{ t('datasetManifest.sourceUri') }}</dt><dd class="mono">{{ manifest.source_uri }}</dd></div>
+              <div class="detail-item wide"><dt>{{ t('datasetManifest.sourceUri') }}</dt><dd class="mono break-anywhere">{{ manifest.source_uri }}</dd></div>
             </dl>
           </div>
         </article>

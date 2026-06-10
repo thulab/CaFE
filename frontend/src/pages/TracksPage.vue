@@ -31,36 +31,36 @@
         @retry="load"
       >
         <div class="table-wrap">
-          <table class="data">
+          <table class="data table-fixed">
             <thead>
               <tr>
-                <th>{{ t('tracks.track') }}</th>
-                <th>{{ t('tracks.metric') }}</th>
-                <th>{{ t('tracks.shards') }}</th>
-                <th>{{ t('tracks.samples') }}</th>
-                <th>{{ t('tracks.status') }}</th>
-                <th>{{ t('tracks.created') }}</th>
-                <th>{{ t('common.actions') }}</th>
+                <th class="col-28">{{ t('tracks.track') }}</th>
+                <th class="col-10">{{ t('tracks.metric') }}</th>
+                <th class="col-8">{{ t('tracks.shards') }}</th>
+                <th class="col-8">{{ t('tracks.samples') }}</th>
+                <th class="col-14">{{ t('tracks.status') }}</th>
+                <th class="col-14">{{ t('tracks.created') }}</th>
+                <th class="col-18">{{ t('common.actions') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="track in tracks" :key="track.track_id">
                 <td>
-                  <a class="text-link" :href="`#/tracks/${track.track_id}`">{{ track.name }}</a>
-                  <div class="faint mono" style="font-size:0.74rem">{{ shortId(track.track_id) }}</div>
+                  <a class="text-link cell-title" :href="`#/tracks/${track.track_id}`" :title="track.name">{{ track.name }}</a>
+                  <div class="faint mono cell-id">{{ shortId(track.track_id) }}</div>
                 </td>
                 <td><span class="badge primary">{{ track.primary_metric_id.toUpperCase() }}</span></td>
                 <td class="muted">{{ formatInt(track.shard_count ?? track.shard_ids?.length ?? 0) }}</td>
                 <td class="muted">{{ formatInt(track.sample_count ?? 0) }}</td>
                 <td>
-                  <div class="pill-row">
+                  <div class="pill-row cell-tags">
                     <StatusBadge :status="track.status" />
                     <span v-if="track.archived_at" class="badge warning">{{ t('lifecycle.archived') }}</span>
                   </div>
                 </td>
                 <td class="muted nowrap" :title="track.created_at ? formatDateTime(track.created_at) : ''">{{ track.created_at ? timeAgo(track.created_at) : t('common.notAvailable') }}</td>
                 <td>
-                  <div class="pill-row">
+                  <div class="pill-row cell-tags">
                     <button v-if="!track.archived_at" class="btn secondary sm" type="button" @click="openLifecycle('archive', 'track', track.track_id)">{{ t('lifecycle.archive') }}</button>
                     <button v-else class="btn secondary sm" type="button" @click="openLifecycle('restore', 'track', track.track_id)">{{ t('lifecycle.restore') }}</button>
                     <button class="btn danger sm" type="button" @click="openLifecycle('purge', 'track', track.track_id)">{{ t('lifecycle.permanentDelete') }}</button>

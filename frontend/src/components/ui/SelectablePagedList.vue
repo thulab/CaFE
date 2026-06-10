@@ -13,15 +13,15 @@
     </div>
 
     <div class="table-wrap">
-      <table v-if="items.length" class="data selectable-data">
+      <table v-if="items.length" class="data table-fixed selectable-data">
         <thead>
           <tr>
             <th class="select-col">
               <input type="checkbox" :aria-label="labels.togglePageSelection" :checked="allCurrentPageSelected" @change="togglePage" />
             </th>
-            <th>{{ labels.item }}</th>
-            <th>{{ labels.details }}</th>
-            <th>{{ labels.status }}</th>
+            <th class="col-42">{{ labels.item }}</th>
+            <th class="col-34">{{ labels.details }}</th>
+            <th class="col-16">{{ labels.status }}</th>
           </tr>
         </thead>
         <tbody>
@@ -36,13 +36,13 @@
             </td>
             <td>
               <div class="selectable-main">
-                <a v-if="item.href" class="selectable-title text-link" :href="item.href">{{ item.title }}</a>
-                <span v-else class="selectable-title">{{ item.title }}</span>
-                <span v-if="item.description" class="faint">{{ item.description }}</span>
+                <a v-if="item.href" class="selectable-title text-link cell-title" :href="item.href" :title="item.title">{{ item.title }}</a>
+                <span v-else class="selectable-title cell-title" :title="item.title">{{ item.title }}</span>
+                <span v-if="item.description" class="faint cell-subtitle" :title="item.description">{{ item.description }}</span>
               </div>
             </td>
             <td>
-              <div v-if="item.meta?.length" class="pill-row">
+              <div v-if="item.meta?.length" class="pill-row cell-tags">
                 <span v-for="meta in item.meta" :key="meta" class="badge">{{ meta }}</span>
               </div>
               <span v-else class="faint">—</span>

@@ -16,9 +16,9 @@
             <span class="rank-badge" :class="medal(row.rank)">{{ row.rank }}</span>
           </td>
           <td>
-            <span style="font-weight:600">{{ modelName(row.model_id) }}</span>
+            <span class="cell-wrap" style="font-weight:600" :title="modelName(row.model_id)">{{ modelName(row.model_id) }}</span>
             <Icon v-if="row.rank === 1" name="trophy" :size="14" style="margin-left:6px;color:var(--success)" />
-            <div v-if="modelName(row.model_id) !== row.model_id" class="faint mono" style="font-size:0.74rem">{{ shortId(row.model_id) }}</div>
+            <div v-if="modelName(row.model_id) !== row.model_id" class="faint mono cell-id">{{ shortId(row.model_id) }}</div>
           </td>
           <td class="num">{{ formatNumber(row.metric_value) }}</td>
           <td>

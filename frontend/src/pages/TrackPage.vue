@@ -45,29 +45,31 @@
             @retry="loadTrackShards"
           >
             <div class="table-wrap">
-              <table class="data">
+              <table class="data table-fixed track-shards-table">
                 <thead>
                   <tr>
-                    <th>{{ t('track.testCaseSet') }}</th>
-                    <th>{{ t('track.dataset') }}</th>
-                    <th>{{ t('track.window') }}</th>
-                    <th>{{ t('track.samples') }}</th>
-                    <th>{{ t('track.targets') }}</th>
-                    <th v-if="hasTrackCovariates">{{ t('track.covariates') }}</th>
-                    <th>{{ t('track.status') }}</th>
+                    <th :class="hasTrackCovariates ? 'col-24' : 'col-28'">{{ t('track.testCaseSet') }}</th>
+                    <th :class="hasTrackCovariates ? 'col-22' : 'col-26'">{{ t('track.dataset') }}</th>
+                    <th :class="hasTrackCovariates ? 'col-12' : 'col-14'">{{ t('track.window') }}</th>
+                    <th class="col-8 num">{{ t('track.samples') }}</th>
+                    <th :class="hasTrackCovariates ? 'col-12' : 'col-14'">{{ t('track.targets') }}</th>
+                    <th v-if="hasTrackCovariates" class="col-12">{{ t('track.covariates') }}</th>
+                    <th class="col-10">{{ t('track.status') }}</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="shard in trackShards" :key="shard.shard_id">
                     <td>
-                      <a class="text-link" :href="`#/shards/${shard.shard_id}`">{{ shardTitle(shard) }}</a>
-                      <div class="faint mono" style="font-size:0.74rem">{{ shortId(shard.shard_id) }}</div>
+                      <div class="cell-stack">
+                        <a class="text-link cell-title" :href="`#/shards/${shard.shard_id}`" :title="shardTitle(shard)">{{ shardTitle(shard) }}</a>
+                        <div class="faint mono cell-id">{{ shortId(shard.shard_id) }}</div>
+                      </div>
                     </td>
-                    <td class="muted">{{ datasetLabel(shard) }}</td>
-                    <td class="muted">{{ windowLabel(shard) }}</td>
-                    <td class="muted">{{ formatInt(shard.sample_count ?? 0) }}</td>
-                    <td class="muted">{{ targetLabel(shard) }}</td>
-                    <td v-if="hasTrackCovariates" class="muted">{{ covariateLabel(shard) }}</td>
+                    <td class="muted"><span class="cell-subtitle" :title="datasetLabel(shard)">{{ datasetLabel(shard) }}</span></td>
+                    <td class="muted"><span class="cell-wrap" :title="windowLabel(shard)">{{ windowLabel(shard) }}</span></td>
+                    <td class="muted num">{{ formatInt(shard.sample_count ?? 0) }}</td>
+                    <td class="muted"><span class="cell-wrap" :title="targetLabel(shard)">{{ targetLabel(shard) }}</span></td>
+                    <td v-if="hasTrackCovariates" class="muted"><span class="cell-wrap" :title="covariateLabel(shard)">{{ covariateLabel(shard) }}</span></td>
                     <td><StatusBadge :status="shard.status" /></td>
                   </tr>
                 </tbody>

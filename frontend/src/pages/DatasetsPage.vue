@@ -154,26 +154,26 @@
           <span class="status-line">{{ t('datasets.emptyUploadHint') }}</span>
         </template>
         <div class="table-wrap">
-          <table class="data">
-            <thead><tr><th>{{ t('datasets.artifact') }}</th><th>{{ t('datasets.type') }}</th><th>{{ t('datasets.detail') }}</th><th>{{ t('datasets.created') }}</th><th>{{ t('common.actions') }}</th></tr></thead>
+          <table class="data table-fixed">
+            <thead><tr><th class="col-28">{{ t('datasets.artifact') }}</th><th class="col-14">{{ t('datasets.type') }}</th><th class="col-24">{{ t('datasets.detail') }}</th><th class="col-14">{{ t('datasets.created') }}</th><th class="col-20">{{ t('common.actions') }}</th></tr></thead>
             <tbody>
               <tr v-for="item in displayItems" :key="`${item.kind}-${item.id}`">
                 <td>
-                  <a class="text-link" :href="item.href">
+                  <a class="text-link cell-title" :href="item.href" :title="item.title">
                     <Icon :name="kindIcon(item.kind)" :size="14" style="vertical-align:-2px;margin-right:6px" />{{ item.title }}
                   </a>
-                  <div class="faint mono" style="font-size:0.74rem">{{ shortId(item.id) }}</div>
+                  <div class="faint mono cell-id">{{ shortId(item.id) }}</div>
                 </td>
                 <td>
-                  <div class="pill-row">
+                  <div class="pill-row cell-tags">
                     <span class="badge" :class="item.kind === 'shard' ? 'primary' : ''">{{ t(`datasets.kind.${item.kind}`) }}</span>
                     <span v-if="item.archivedAt" class="badge warning">{{ t('lifecycle.archived') }}</span>
                   </div>
                 </td>
-                <td class="muted">{{ item.subtitle || t('common.notAvailable') }}</td>
+                <td class="muted"><span class="cell-subtitle" :title="item.subtitle || t('common.notAvailable')">{{ item.subtitle || t('common.notAvailable') }}</span></td>
                 <td class="muted nowrap" :title="item.createdAt ? formatDateTime(item.createdAt) : ''">{{ item.createdAt ? timeAgo(item.createdAt) : t('common.notAvailable') }}</td>
                 <td>
-                  <div class="pill-row">
+                  <div class="pill-row cell-tags">
                     <button v-if="!item.archivedAt" class="btn secondary sm" type="button" @click="openLifecycle('archive', item)">{{ t('lifecycle.archive') }}</button>
                     <button v-else class="btn secondary sm" type="button" @click="openLifecycle('restore', item)">{{ t('lifecycle.restore') }}</button>
                     <button class="btn danger sm" type="button" @click="openLifecycle('purge', item)">{{ t('lifecycle.permanentDelete') }}</button>

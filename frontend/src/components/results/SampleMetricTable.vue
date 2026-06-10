@@ -11,7 +11,7 @@
       </thead>
       <tbody>
         <tr v-for="m in rows" :key="m.model_id" :class="{ 'is-winner': m.isBest }">
-          <td style="font-weight:600">{{ m.name }}</td>
+          <td><span class="cell-wrap" style="font-weight:600" :title="m.name">{{ m.name }}</span></td>
           <td><StatusBadge :status="m.status" /></td>
           <td v-for="key in metricKeys" :key="key" class="num">
             <span :style="m.best[key] ? 'font-weight:700;color:var(--success-text)' : ''">{{ format(m.metrics[key]) }}</span>

@@ -34,8 +34,8 @@
             <tbody>
               <tr v-for="m in rows" :key="m.id">
                 <td>
-                  <span style="font-weight:600">{{ m.name }}</span>
-                  <div v-if="m.name !== m.id" class="faint mono" style="font-size:0.74rem">{{ shortId(m.id) }}</div>
+                  <span class="cell-wrap" style="font-weight:600" :title="m.name">{{ m.name }}</span>
+                  <div v-if="m.name !== m.id" class="faint mono cell-id">{{ shortId(m.id) }}</div>
                 </td>
                 <td v-for="key in metricKeys" :key="key" class="num">
                   <span :style="m.best[key] ? 'font-weight:700;color:var(--success-text)' : ''">{{ formatNumber(m.metrics[key]) }}</span>
