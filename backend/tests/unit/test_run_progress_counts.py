@@ -14,9 +14,13 @@ from sqlmodel import Session, create_engine, select
 from app.core.config import get_settings
 from app.db.init_db import init_db
 from app.models.benchmark import ForecastArtifact, RunEvent, Task, Unit
+from app.models.dataset import DatasetManifest
+from app.models.model_registry import Model
+from app.services.dataset_load_service import DatasetLoadService
 from app.services.forecast_store import ForecastStore
 from app.services.run_executor import build_run_progress, create_benchmarking_run, execute_run
 from app.services.stub_timer_adapter import StubTimerAdapter
+from app.services.track_service import create_real_capability_block, create_track_with_blocks
 from tests.run_helpers import create_loaded_track_with_models
 
 
@@ -57,6 +61,35 @@ def _row_status_counts(forecasts_dir, artifacts):
             elif row["status"] == "failed":
                 failed += 1
     return succeeded, failed
+
+
+def _create_loaded_track_with_two_shards(session: Session, runtime_dir):
+    source = runtime_dir.parent / "valid_hourly_20.csv"
+    source.write_text(
+        "time,target\n"
+        + "\n".join(f"2024-01-01 {hour:02d}:00:00,{hour}" for hour in range(20)),
+        encoding="utf-8",
+    )
+    shard_ids = []
+    for index in range(2):
+        manifest = DatasetManifest(
+            name=f"multi-shard-demo-{index}",
+            domain="energy",
+            source_uri=str(source),
+            time_column="time",
+        )
+        session.add(manifest)
+        session.commit()
+        session.refresh(manifest)
+        job = DatasetLoadService(runtime_dir).create_load_job(
+            session,
+            manifest.dataset_manifest_id,
+            {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]},
+        )
+        shard_ids.append(job.output_shard_id)
+    block = create_real_capability_block(session, "real block", shard_ids)
+    track, _ranking = create_track_with_blocks(session, "multi shard track", [block.capability_block_id], "mase")
+    return track
 
 
 def test_progress_counts_completed_samples_on_success(tmp_path):
@@ -106,6 +139,29 @@ def test_progress_counts_failed_samples_on_adapter_failure(tmp_path, monkeypatch
         assert progress["progress"]["failed_samples"] == expected_failed
         assert progress["progress"]["completed_samples"] == expected_completed
         assert progress["progress"]["processed_samples"] == expected_completed + expected_failed
+
+
+def test_execute_run_persists_cumulative_task_sample_counts_across_shards(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track = _create_loaded_track_with_two_shards(session, tmp_path / "runtime")
+        model = Model(name="Model 0", model_family="Timer", model_version="0", endpoint_uri="stub://0")
+        session.add(model)
+        session.commit()
+        session.refresh(model)
+
+        run = create_benchmarking_run(session, track.track_id, [model.model_id])
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        task = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).one()
+        artifacts = session.exec(
+            select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)
+        ).all()
+        expected_completed, expected_failed = _row_status_counts(tmp_path / "runtime" / "forecasts", artifacts)
+
+        assert task.processed_sample_count == expected_completed + expected_failed
+        assert task.failed_sample_count == expected_failed
 
 
 def test_progress_reports_in_flight_task_samples_before_artifact_is_written(tmp_path):

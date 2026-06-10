@@ -9,6 +9,7 @@ from app.models.metric import MetricResult
 from app.models.model_registry import Model
 from app.models.report import Report
 from app.models.sample import SampleIndex
+from app.models.series_point import SeriesPoint
 from app.services.metric_service import _mase_scale
 from app.services.sample_store import SampleStore
 
@@ -24,15 +25,16 @@ def generate_run_report(session: Session, run_id: str, runtime_dir: Path) -> Rep
     tasks = session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).all()
     metrics = session.exec(select(MetricResult).where(MetricResult.benchmarking_run_id == run_id)).all()
     artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)).all()
+    task_sample_counts = _task_sample_counts_from_artifacts(artifacts)
 
     payload = {
         "benchmarking_run_id": run_id,
         "track_id": run.track_id,
         "status": run.status,
         "model_metrics": [_unit_metrics(session, unit, metrics) for unit in units],
-        "task_summaries": [_task_summary(task, metrics) for task in tasks],
+        "task_summaries": [_task_summary(task, metrics, task_sample_counts) for task in tasks],
         "capability_blocks": _capability_blocks(session, tasks),
-        "capability_metrics": [_capability_metric(session, task, metrics) for task in tasks],
+        "capability_metrics": [_capability_metric(session, task, metrics, task_sample_counts) for task in tasks],
         "sample_forecast_links": _sample_links(session, run_id, artifacts),
         "cancellation_reason": "cancel_requested" if run.status == "cancelled" else None,
     }
@@ -135,7 +137,8 @@ def _unit_sample_ids(session: Session, unit: Unit) -> list[str]:
     return [sample.sample_id for sample in samples]
 
 
-def _task_summary(task: Task, metrics: list[MetricResult]) -> dict:
+def _task_summary(task: Task, metrics: list[MetricResult], task_sample_counts: dict[str, dict[str, int]] | None = None) -> dict:
+    counts = _task_sample_counts(task, task_sample_counts)
     return {
         "task_id": task.task_id,
         "unit_id": task.unit_id,
@@ -143,8 +146,8 @@ def _task_summary(task: Task, metrics: list[MetricResult]) -> dict:
         "capability_block_id": task.capability_block_id,
         "status": task.status,
         "sample_count": task.sample_count,
-        "processed_sample_count": task.processed_sample_count,
-        "failed_sample_count": task.failed_sample_count,
+        "processed_sample_count": counts["processed"],
+        "failed_sample_count": counts["failed"],
         "error_code": task.error_code,
         "error_message": task.error_message,
         "metrics": {
@@ -197,8 +200,9 @@ def _capability_label(block: CapabilityBlock) -> str:
     return block.capability_type.replace("_", " ").title()
 
 
-def _capability_metric(session: Session, task: Task, metrics: list[MetricResult]) -> dict:
+def _capability_metric(session: Session, task: Task, metrics: list[MetricResult], task_sample_counts: dict[str, dict[str, int]] | None = None) -> dict:
     model = session.get(Model, task.model_id)
+    counts = _task_sample_counts(task, task_sample_counts)
     return {
         "task_id": task.task_id,
         "unit_id": task.unit_id,
@@ -207,8 +211,8 @@ def _capability_metric(session: Session, task: Task, metrics: list[MetricResult]
         "capability_block_id": task.capability_block_id,
         "status": task.status,
         "sample_count": task.sample_count,
-        "processed_sample_count": task.processed_sample_count,
-        "failed_sample_count": task.failed_sample_count,
+        "processed_sample_count": counts["processed"],
+        "failed_sample_count": counts["failed"],
         "error_code": task.error_code,
         "error_message": task.error_message,
         "metrics": {
@@ -216,6 +220,33 @@ def _capability_metric(session: Session, task: Task, metrics: list[MetricResult]
             for metric in metrics
             if metric.result_level == "task" and metric.task_id == task.task_id
         },
+    }
+
+
+def _task_sample_counts_from_artifacts(artifacts: list[ForecastArtifact]) -> dict[str, dict[str, int]]:
+    counts_by_task: dict[str, dict[str, int]] = {}
+    for artifact in artifacts:
+        counts = counts_by_task.setdefault(artifact.task_id, {"processed": 0, "failed": 0})
+        try:
+            with Path(artifact.storage_uri).open(encoding="utf-8") as file:
+                for line in file:
+                    row = json.loads(line)
+                    if row.get("status") in {"succeeded", "failed"}:
+                        counts["processed"] += 1
+                    if row.get("status") == "failed":
+                        counts["failed"] += 1
+        except FileNotFoundError:
+            continue
+    return counts_by_task
+
+
+def _task_sample_counts(task: Task, task_sample_counts: dict[str, dict[str, int]] | None = None) -> dict[str, int]:
+    counts = (task_sample_counts or {}).get(task.task_id)
+    if counts and counts["processed"] > 0:
+        return counts
+    return {
+        "processed": int(task.processed_sample_count or 0),
+        "failed": int(task.failed_sample_count or 0),
     }
 
 
@@ -258,18 +289,35 @@ def _sample_link(session: Session, run_id: str, sample_id: str, forecast_artifac
             "horizon_end": sample_index.horizon_end,
         }
     )
-    try:
-        sample = SampleStore().read_by_ref(session, sample_index.storage_ref)
-    except Exception:  # noqa: BLE001 — report generation must tolerate missing sample detail metadata
-        return link
-    history_timestamps = sample.get("history_timestamps") or []
-    future_timestamps = sample.get("future_timestamps") or []
+    history_start_at, history_end_at, forecast_start_at, forecast_end_at = _sample_time_bounds(session, sample_index)
     link.update(
         {
-            "history_start_at": history_timestamps[0] if history_timestamps else None,
-            "history_end_at": history_timestamps[-1] if history_timestamps else None,
-            "forecast_start_at": future_timestamps[0] if future_timestamps else None,
-            "forecast_end_at": future_timestamps[-1] if future_timestamps else None,
+            "history_start_at": history_start_at,
+            "history_end_at": history_end_at,
+            "forecast_start_at": forecast_start_at,
+            "forecast_end_at": forecast_end_at,
         }
     )
     return link
+
+
+def _sample_time_bounds(session: Session, sample_index: SampleIndex) -> tuple[str | None, str | None, str | None, str | None]:
+    wanted = {
+        sample_index.context_start,
+        sample_index.context_end,
+        sample_index.horizon_start,
+        sample_index.horizon_end,
+    }
+    rows = session.exec(
+        select(SeriesPoint).where(
+            SeriesPoint.shard_id == sample_index.shard_id,
+            SeriesPoint.row_index.in_(wanted),
+        )
+    ).all()
+    by_index = {row.row_index: row.ts for row in rows}
+    return (
+        by_index.get(sample_index.context_start),
+        by_index.get(sample_index.context_end),
+        by_index.get(sample_index.horizon_start),
+        by_index.get(sample_index.horizon_end),
+    )

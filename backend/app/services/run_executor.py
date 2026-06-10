@@ -546,6 +546,8 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
     rows_with_order: list[tuple[int, dict]] = []
     sample_metrics: list[dict[str, float] | None] = []
     metric_rows: list[MetricResult] = []
+    base_processed_count = int(task.processed_sample_count or 0)
+    base_failed_count = int(task.failed_sample_count or 0)
     processed_count = 0
     failed_count = 0
 
@@ -589,7 +591,7 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
             _raise_if_cancel_requested(session, run)
             handle_outcome(prepared, _forecast_prepared_sample(adapter, prepared, model_payload, timeout_seconds))
             if processed_count % progress_interval == 0:
-                _record_task_sample_progress(session, task, processed_count, failed_count)
+                _record_task_sample_progress(session, task, base_processed_count + processed_count, base_failed_count + failed_count)
             _raise_if_cancel_requested(session, run)
     else:
         with ThreadPoolExecutor(max_workers=parallelism) as executor:
@@ -613,14 +615,14 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
                     prepared = futures.pop(future)
                     handle_outcome(prepared, future.result())
                     if processed_count % progress_interval == 0:
-                        _record_task_sample_progress(session, task, processed_count, failed_count)
+                        _record_task_sample_progress(session, task, base_processed_count + processed_count, base_failed_count + failed_count)
                     _raise_if_cancel_requested(session, run)
                     submit_next()
             except _RunCancelled:
                 for future in futures:
                     future.cancel()
                 raise
-    _record_task_sample_progress(session, task, processed_count, failed_count)
+    _record_task_sample_progress(session, task, base_processed_count + processed_count, base_failed_count + failed_count)
 
     session.add_all(metric_rows)
     rows = [row for _sample_order, row in sorted(rows_with_order, key=lambda item: item[0])]

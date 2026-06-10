@@ -4,7 +4,7 @@ from sqlmodel import Session, create_engine
 from sqlmodel import select
 
 from app.db.init_db import init_db
-from app.models.benchmark import BenchmarkingRun, CapabilityBlock, Task, Track, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, Task, Track, Unit
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
 from app.models.sample import SampleIndex
@@ -29,6 +29,40 @@ def test_succeeded_run_generates_summary_report_json(tmp_path):
         assert payload["model_metrics"][0]["model_id"] == models[0].model_id
         assert payload["task_summaries"][0]["status"] == "succeeded"
         assert payload["sample_forecast_links"]
+
+
+def test_report_task_counts_use_forecast_artifacts_when_task_counter_is_stale(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        artifacts = session.exec(
+            select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)
+        ).all()
+        rows = []
+        for artifact in artifacts:
+            with open(artifact.storage_uri, encoding="utf-8") as file:
+                rows.extend(json.loads(line) for line in file)
+        expected_processed = len(rows)
+        expected_failed = len([row for row in rows if row["status"] == "failed"])
+        assert expected_processed > 1
+
+        task = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).one()
+        task.processed_sample_count = 1
+        task.failed_sample_count = 1
+        session.add(task)
+        session.commit()
+
+        generate_run_report(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        payload = json.loads((tmp_path / "runtime" / "reports" / f"{run.benchmarking_run_id}.json").read_text())
+        assert payload["task_summaries"][0]["processed_sample_count"] == expected_processed
+        assert payload["task_summaries"][0]["failed_sample_count"] == expected_failed
+        assert payload["capability_metrics"][0]["processed_sample_count"] == expected_processed
+        assert payload["capability_metrics"][0]["failed_sample_count"] == expected_failed
 
 
 def test_report_includes_capability_blocks_and_per_model_capability_metrics(tmp_path):
@@ -178,6 +212,29 @@ def test_report_sample_links_are_unique_and_readable_across_models(tmp_path):
         assert all("sample_index" in link for link in links)
         assert all("horizon_start" in link and "horizon_end" in link for link in links)
         assert all("forecast_start_at" in link and "forecast_end_at" in link for link in links)
+
+
+def test_report_sample_links_do_not_materialize_full_sample_values(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        def fail_read_by_ref(self, session, storage_ref):  # noqa: ANN001, ANN202
+            raise AssertionError("report generation should not materialize full sample values for links")
+
+        monkeypatch.setattr("app.services.report_service.SampleStore.read_by_ref", fail_read_by_ref)
+
+        report = generate_run_report(session, run.benchmarking_run_id, tmp_path / "runtime")
+        payload = read_report(report, sample_link_limit=1)
+
+        link = payload["sample_forecast_links"][0]
+        assert link["history_start_at"]
+        assert link["history_end_at"]
+        assert link["forecast_start_at"]
+        assert link["forecast_end_at"]
 
 
 def test_read_report_paginates_sample_forecast_links(tmp_path):
