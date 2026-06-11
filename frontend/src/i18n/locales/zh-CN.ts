@@ -472,10 +472,15 @@ const zhCN = {
     allTypes: '全部类型',
     boardCountOne: '{count} 个榜单',
     boardCountOther: '{count} 个榜单',
+    public: '公开',
+    hidden: '已隐藏',
+    hideFromPublic: '对匿名隐藏',
+    makePublic: '公开显示',
     noLeaderboards: '暂无排行榜',
     noLeaderboardsDesc: '在赛道上运行模型后会生成排行榜。',
     errors: {
       failedToLoad: '加载排行榜失败',
+      failedToUpdateVisibility: '更新排行榜可见性失败',
     },
   },
   ranking: {

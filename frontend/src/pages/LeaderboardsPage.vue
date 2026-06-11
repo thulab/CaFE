@@ -34,8 +34,18 @@
         :empty-desc="t('leaderboards.noLeaderboardsDesc')"
         @retry="load"
       >
-        <div class="grid-auto">
-          <LeaderboardCard v-for="item in filtered" :key="item.ranking_list_id" :item="item" />
+        <div class="stack">
+          <p v-if="actionError" class="alert" role="alert"><Icon class="alert-ico" name="alert" :size="16" />{{ actionError }}</p>
+          <div class="grid-auto">
+            <LeaderboardCard
+              v-for="item in filtered"
+              :key="item.ranking_list_id"
+              :item="item"
+              :manageable="canManageRanking"
+              :busy="busyRankingListId === item.ranking_list_id"
+              @visibility-change="setPublicVisibility(item, $event)"
+            />
+          </div>
         </div>
       </StateBlock>
     </section>
@@ -48,16 +58,20 @@ import { useI18n } from 'vue-i18n';
 import Icon from '../components/ui/Icon.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import LeaderboardCard from '../components/results/LeaderboardCard.vue';
-import { listRankingLists, type LeaderboardItem } from '../api/results';
+import { listRankingLists, setRankingPublicVisible, type LeaderboardItem } from '../api/results';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
+import { has } from '../stores/auth';
 
 const items = ref<LeaderboardItem[]>([]);
 const loading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { text: actionError, clear: clearActionError, setError: setActionError } = useDisplayMessage();
 const query = ref('');
 const typeFilter = ref('');
+const busyRankingListId = ref('');
 const { t } = useI18n();
 
+const canManageRanking = computed(() => has('track.manage'));
 const trackTypes = computed(() => Array.from(new Set(items.value.map((i) => i.track_type))).sort());
 
 const filtered = computed(() => {
@@ -83,6 +97,23 @@ async function load() {
     setError(e, 'leaderboards.errors.failedToLoad');
   } finally {
     loading.value = false;
+  }
+}
+
+async function setPublicVisibility(item: LeaderboardItem, publicVisible: boolean) {
+  busyRankingListId.value = item.ranking_list_id;
+  clearActionError();
+  try {
+    const updated = await setRankingPublicVisible(item.ranking_list_id, publicVisible);
+    items.value = items.value.map((candidate) =>
+      candidate.ranking_list_id === item.ranking_list_id
+        ? { ...candidate, public_visible: updated.public_visible, updated_at: updated.updated_at }
+        : candidate
+    );
+  } catch (e) {
+    setActionError(e, 'leaderboards.errors.failedToUpdateVisibility');
+  } finally {
+    busyRankingListId.value = '';
   }
 }
 </script>

@@ -166,6 +166,11 @@ export interface RunProgressDTO {
 }
 
 export interface RankingDTO {
+  track_id?: string;
+  ranking_list_id?: string | null;
+  metric?: string;
+  policy?: string;
+  public_visible?: boolean;
   items: Array<{ model_id: string; rank: number; metric_value: number }>;
 }
 

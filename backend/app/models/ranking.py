@@ -13,6 +13,7 @@ class RankingList(SQLModel, table=True):
     default_metric_id: str
     default_policy: str = "latest_valid_result"
     supported_policies: list[str] = Field(default_factory=lambda: ["latest_valid_result", "best_result"], sa_column=Column(JSON))
+    public_visible: bool = True
     status: str = "active"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

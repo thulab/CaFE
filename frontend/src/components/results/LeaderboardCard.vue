@@ -4,6 +4,7 @@
       <h3 style="margin:0;font-size:1.05rem;font-weight:700">{{ item.track_name }}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
         <span class="badge neutral">{{ item.track_type }} · {{ item.primary_metric_id.toUpperCase() }}</span>
+        <span v-if="manageable" class="badge" :class="isPublic ? 'success' : 'warning'">{{ isPublic ? t('leaderboards.public') : t('leaderboards.hidden') }}</span>
         <span class="faint" style="font-size:0.78rem">{{ t('results.updated', { time: timeAgo(item.updated_at) }) }}</span>
       </div>
     </header>
@@ -30,9 +31,22 @@
       {{ t('results.modelRunCount', { models: modelCountLabel, runs: runCountLabel }) }}
     </div>
 
-    <a class="btn secondary sm" :href="`#/tracks/${item.track_id}/ranking`" style="align-self:flex-start">
-      {{ t('results.viewFullBoard') }} <Icon name="arrowRight" :size="14" />
-    </a>
+    <footer style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <a class="btn secondary sm" :href="`#/tracks/${item.track_id}/ranking`">
+        {{ t('results.viewFullBoard') }} <Icon name="arrowRight" :size="14" />
+      </a>
+      <button
+        v-if="manageable"
+        class="btn ghost sm"
+        type="button"
+        :disabled="busy"
+        @click="$emit('visibility-change', !isPublic)"
+      >
+        <span v-if="busy" class="spinner" />
+        <Icon v-else :name="isPublic ? 'eyeOff' : 'eye'" :size="14" />
+        {{ isPublic ? t('leaderboards.hideFromPublic') : t('leaderboards.makePublic') }}
+      </button>
+    </footer>
   </article>
 </template>
 
@@ -44,12 +58,18 @@ import { useModels } from '../../composables/useModels';
 import { useFormat } from '../../composables/useFormat';
 import type { LeaderboardItem } from '../../api/results';
 
-const props = defineProps<{ item: LeaderboardItem }>();
+const props = withDefaults(defineProps<{ item: LeaderboardItem; manageable?: boolean; busy?: boolean }>(), {
+  manageable: false,
+  busy: false,
+});
+
+defineEmits<{ (event: 'visibility-change', publicVisible: boolean): void }>();
 
 const { modelName } = useModels();
 const { t } = useI18n();
 const { formatNumber, timeAgo } = useFormat();
 
+const isPublic = computed(() => props.item.public_visible !== false);
 const sorted = computed(() => [...props.item.top].sort((a, b) => a.rank - b.rank));
 const maxValue = computed(() => Math.max(...props.item.top.map((t) => Math.abs(t.metric_value)), 1e-9));
 const modelCountLabel = computed(() =>

@@ -274,6 +274,8 @@ GET /tracks/{track_id}/ranking?metric=mse&policy=latest_valid_result
 - `metric`：`mase` / `mse` / `mae`（缺省跟随赛道主指标，当前为 `mase`）。
 - `policy`：`latest_valid_result`（默认）或 `best_result`。
 
+管理员可在排行榜总览或赛道排名页临时切换某个榜单是否对匿名访客公开。隐藏后，未登录用户不会在排行榜总览中看到该榜，直接访问对应赛道排名也会返回不可见；已登录用户仍可查看。该开关是临时管理入口，后续会随整体权限管理重新整理。
+
 > 前端在「赛道详情」内嵌榜单与独立「排行（Ranking）」页都提供 `metric` / `policy` 下拉，并用**条形图 + 榜单表**（冠军高亮、奖牌序号、数值格式化）展示，模型 ID 会解析为模型名。
 
 返回结构：

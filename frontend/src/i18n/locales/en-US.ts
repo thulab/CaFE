@@ -472,10 +472,15 @@ const enUS = {
     allTypes: 'All types',
     boardCountOne: '{count} board',
     boardCountOther: '{count} boards',
+    public: 'Public',
+    hidden: 'Hidden',
+    hideFromPublic: 'Hide from public',
+    makePublic: 'Make public',
     noLeaderboards: 'No leaderboards yet',
     noLeaderboardsDesc: 'Run models on a track to populate one.',
     errors: {
       failedToLoad: 'Failed to load leaderboards',
+      failedToUpdateVisibility: 'Failed to update leaderboard visibility',
     },
   },
   ranking: {

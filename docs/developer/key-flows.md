@@ -326,7 +326,7 @@ flowchart TB
    - `best_result`（`_select_best`，`ranking_service.py:81`）：每个 model 取 `value` 最小的有效结果。
 3. **排序策略**：按 `metric_value` 升序（`sorted(..., key=lambda item: item["value"])`），即 **lower is better**（mse / mae 越小排名越靠前），`rank` 从 1 起。
 
-`execute_run` 默认对 `METRIC_NAMES=["mase", "mse", "mae"]` 都刷新（`run_executor.py`）。`query_ranking`（`ranking_service.py`）按 `(metric_id, policy)` 取条目并按 `rank` 返回；**路由默认 `metric` 跟随 `Track.primary_metric_id`（即 `mase`）、`policy` 跟随 `default_ranking_policy`**（`routes/ranking_lists.py`，2026-05-25 起）。
+`execute_run` 默认对 `METRIC_NAMES=["mase", "mse", "mae"]` 都刷新（`run_executor.py`）。`query_ranking`（`ranking_service.py`）按 `(metric_id, policy)` 取条目并按 `rank` 返回；**路由默认 `metric` 跟随 `Track.primary_metric_id`（即 `mase`）、`policy` 跟随 `default_ranking_policy`**（`routes/ranking_lists.py`，2026-05-25 起）。临时公开开关 `RankingList.public_visible` 由 `PATCH /ranking-lists/{ranking_list_id}/visibility`（当前复用 `track.manage` 权限）维护；为 `False` 时匿名 `/ranking-lists` 会过滤该榜，匿名直连 `/tracks/{track_id}/ranking` 返回 404，登录用户仍可见。后续完整权限模型重构时应统一收敛这段逻辑。
 
 ### 2.g 样本预测视图
 
@@ -464,6 +464,7 @@ export TSBENCHMARK_MODEL_ADAPTER=rest    # 或 stub（完全进程内，连桩�
 | POST | `/tracks/{track_id}/restore` | 恢复 track |
 | DELETE | `/tracks/{track_id}` | 管理员物理删除 track（有 run 需 `cascade=true`） |
 | GET | `/tracks/{track_id}/ranking` | 查榜（`metric` / `policy` 可选） |
+| PATCH | `/ranking-lists/{ranking_list_id}/visibility` | 临时切换榜单匿名可见性（当前复用 `track.manage`） |
 | POST | `/models` | 创建模型 |
 | GET | `/models` | REST 模式列 timer-rest-service 模型目录并同步本地镜像；stub 模式列本地模型 |
 | POST | `/models/{model_id}/load` | REST 模式调用 timer-rest-service `/models/load` 并等待 loaded |

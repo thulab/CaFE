@@ -679,6 +679,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 | `default_metric_id` | `str` | 必填 | 默认排序指标（来自 `Track.primary_metric_id`） |
 | `default_policy` | `str` | `"latest_valid_result"` | 默认策略 |
 | `supported_policies` | `list[str]` | `["latest_valid_result","best_result"]`，**JSON 列** | 支持策略 |
+| `public_visible` | `bool` | `True` | 临时公开开关；`False` 时匿名 `/ranking-lists` 和 `/tracks/{track_id}/ranking` 不展示该榜，登录用户仍可见 |
 | `status` | `str` | `"active"` | 默认 active（spec 预留 `disabled`） |
 | `created_at` | `datetime` | `utc_now` | |
 | `updated_at` | `datetime` | `utc_now` | |

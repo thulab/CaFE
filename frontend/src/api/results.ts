@@ -17,6 +17,7 @@ export interface LeaderboardItem {
   track_type: string;
   primary_metric_id: string;
   default_policy: string;
+  public_visible: boolean;
   updated_at: string;
   model_count: number;
   run_count: number;
@@ -43,6 +44,23 @@ export function getSampleForecast(sampleId: string, runId: string): Promise<Samp
 
 export function listRankingLists(): Promise<LeaderboardListDTO> {
   return apiRequest<LeaderboardListDTO>('/ranking-lists');
+}
+
+export function setRankingPublicVisible(rankingListId: string, publicVisible: boolean): Promise<{
+  ranking_list_id: string;
+  track_id: string;
+  public_visible: boolean;
+  updated_at: string;
+}> {
+  return apiRequest<{
+    ranking_list_id: string;
+    track_id: string;
+    public_visible: boolean;
+    updated_at: string;
+  }>(`/ranking-lists/${encodeURIComponent(rankingListId)}/visibility`, {
+    method: 'PATCH',
+    body: JSON.stringify({ public_visible: publicVisible })
+  });
 }
 
 export function listReports(

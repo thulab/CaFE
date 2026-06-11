@@ -1,34 +1,59 @@
-from fastapi import Depends
+from fastapi import Depends, Request
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.api.deps import get_db_session
 from app.api.router_factory import make_router
+from app.core.errors import ApiError
+from app.core.time import utc_now
 from app.models.benchmark import Track
 from app.models.model_registry import Model
+from app.models.auth import User
 from app.models.ranking import RankingEntry, RankingList
 from app.services.ranking_service import query_ranking
 
 router = make_router(tags=["ranking-lists"])
 
 
+class RankingVisibilityUpdate(BaseModel):
+    public_visible: bool
+
+
 @router.get("/tracks/{track_id}/ranking", tier="public")
-def get_track_ranking(track_id: str, metric: str | None = None, policy: str | None = None, session: Session = Depends(get_db_session)) -> dict:
+def get_track_ranking(
+    track_id: str,
+    request: Request,
+    metric: str | None = None,
+    policy: str | None = None,
+    session: Session = Depends(get_db_session),
+) -> dict:
     track = session.get(Track, track_id)
+    ranking_list = _ranking_for_track(session, track_id)
+    if ranking_list is not None and not ranking_list.public_visible and _active_user(request) is None:
+        raise ApiError("ranking_not_found", "ranking not found", {"track_id": track_id}, 404)
     resolved_metric = metric or (track.primary_metric_id if track else "mase")
     resolved_policy = policy or (track.default_ranking_policy if track else "latest_valid_result")
     entries = query_ranking(session, track_id, resolved_metric, resolved_policy)
-    return {"track_id": track_id, "metric": resolved_metric, "policy": resolved_policy, "items": entries}
+    return {
+        "track_id": track_id,
+        "ranking_list_id": ranking_list.ranking_list_id if ranking_list else None,
+        "public_visible": ranking_list.public_visible if ranking_list else True,
+        "metric": resolved_metric,
+        "policy": resolved_policy,
+        "items": entries,
+    }
 
 
 @router.get("/ranking-lists", tier="public")
-def list_ranking_lists(session: Session = Depends(get_db_session)) -> dict:
+def list_ranking_lists(request: Request, session: Session = Depends(get_db_session)) -> dict:
     """榜单总览：每个 active 的 RankingList 一张卡，附 Top 3 + 计数。
 
     供匿名访客 LeaderboardsPage 直接渲染。
     """
-    ranking_lists = session.exec(
-        select(RankingList).where(RankingList.status == "active").order_by(RankingList.updated_at.desc())
-    ).all()
+    query = select(RankingList).where(RankingList.status == "active")
+    if _active_user(request) is None:
+        query = query.where(RankingList.public_visible == True)  # noqa: E712 - SQLModel expression
+    ranking_lists = session.exec(query.order_by(RankingList.updated_at.desc())).all()
 
     # 匿名用户也走这个端点（tier=public），无法再调 tier=authed 的 /models 拿名字，
     # 所以在这里就把 top 项里出现的 model_id 一次性解析成 model_name 内嵌返回。
@@ -63,6 +88,7 @@ def list_ranking_lists(session: Session = Depends(get_db_session)) -> dict:
                 "track_type": track.track_type,
                 "primary_metric_id": track.primary_metric_id,
                 "default_policy": rl.default_policy,
+                "public_visible": rl.public_visible,
                 "updated_at": rl.updated_at,
                 "model_count": model_count,
                 "run_count": run_count,
@@ -78,3 +104,36 @@ def list_ranking_lists(session: Session = Depends(get_db_session)) -> dict:
             }
         )
     return {"items": items}
+
+
+@router.patch("/ranking-lists/{ranking_list_id}/visibility", tier="perm", perm="track.manage")
+def update_ranking_visibility(
+    ranking_list_id: str,
+    payload: RankingVisibilityUpdate,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    ranking_list = session.get(RankingList, ranking_list_id)
+    if ranking_list is None:
+        raise ApiError("ranking_not_found", "ranking not found", {"ranking_list_id": ranking_list_id}, 404)
+    ranking_list.public_visible = payload.public_visible
+    ranking_list.updated_at = utc_now()
+    session.add(ranking_list)
+    session.commit()
+    session.refresh(ranking_list)
+    return {
+        "ranking_list_id": ranking_list.ranking_list_id,
+        "track_id": ranking_list.track_id,
+        "public_visible": ranking_list.public_visible,
+        "updated_at": ranking_list.updated_at,
+    }
+
+
+def _ranking_for_track(session: Session, track_id: str) -> RankingList | None:
+    return session.exec(select(RankingList).where(RankingList.track_id == track_id)).first()
+
+
+def _active_user(request: Request) -> User | None:
+    user = getattr(request.state, "user", None)
+    if user is None or not user.is_active:
+        return None
+    return user

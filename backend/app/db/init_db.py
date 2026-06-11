@@ -65,6 +65,11 @@ def _ensure_compat_columns(engine) -> None:
         if "forecast_limits" not in columns:
             with engine.begin() as connection:
                 connection.execute(text("ALTER TABLE model ADD COLUMN forecast_limits JSON DEFAULT '{}'"))
+    if "rankinglist" in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns("rankinglist")}
+        if "public_visible" not in columns:
+            with engine.begin() as connection:
+                connection.execute(text("ALTER TABLE rankinglist ADD COLUMN public_visible BOOLEAN DEFAULT 1"))
 
 
 def assert_manifest_can_succeed_load(session: Session, dataset_manifest_id: str) -> None:

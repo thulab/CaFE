@@ -37,3 +37,34 @@ def test_ranking_lists_top_carries_model_name_for_anonymous(client, anon_client)
     assert top, "expected at least one ranked entry"
     assert top[0]["model_id"] == model_id
     assert top[0]["model_name"] == model_name
+
+
+def test_hidden_ranking_is_invisible_to_anonymous_but_visible_to_admin(client, anon_client):
+    track_id, _model_id = create_track(client)
+    board = next(item for item in client.get("/ranking-lists").json()["items"] if item["track_id"] == track_id)
+
+    update = client.patch(f"/ranking-lists/{board['ranking_list_id']}/visibility", json={"public_visible": False})
+
+    assert update.status_code == 200
+    assert update.json()["public_visible"] is False
+    assert [item for item in anon_client.get("/ranking-lists").json()["items"] if item["track_id"] == track_id] == []
+
+    direct = anon_client.get(f"/tracks/{track_id}/ranking")
+    assert direct.status_code == 404
+    assert direct.json()["error_code"] == "ranking_not_found"
+
+    admin_direct = client.get(f"/tracks/{track_id}/ranking")
+    assert admin_direct.status_code == 200
+    assert admin_direct.json()["public_visible"] is False
+    admin_boards = [item for item in client.get("/ranking-lists").json()["items"] if item["track_id"] == track_id]
+    assert admin_boards and admin_boards[0]["public_visible"] is False
+
+
+def test_viewer_cannot_update_ranking_visibility(client, viewer_client):
+    track_id, _model_id = create_track(client)
+    board = next(item for item in client.get("/ranking-lists").json()["items"] if item["track_id"] == track_id)
+
+    response = viewer_client.patch(f"/ranking-lists/{board['ranking_list_id']}/visibility", json={"public_visible": False})
+
+    assert response.status_code == 403
+    assert response.json()["details"]["required_permission"] == "track.manage"
