@@ -1,5 +1,20 @@
 // Display formatting helpers shared across views. Pure functions, no deps.
 
+const ISO_DATETIME_WITHOUT_TZ = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?$/;
+const ISO_DATETIME_TZ_SUFFIX = /(Z|[+-]\d{2}:?\d{2})$/i;
+
+export function parseDateTime(value?: string | null): Date | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  // Backend timestamps are UTC. SQLite drops tzinfo on read, so Python/FastAPI
+  // may return "2026-..." without a Z suffix; browsers parse that as local time.
+  const normalized = ISO_DATETIME_WITHOUT_TZ.test(trimmed) && !ISO_DATETIME_TZ_SUFFIX.test(trimmed)
+    ? `${trimmed.replace(' ', 'T')}Z`
+    : trimmed;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /** Format a metric/number compactly with sensible precision. */
 export function formatNumber(value: unknown, digits = 4, locale?: string): string {
   if (value === null || value === undefined || value === '') return '—';
@@ -22,8 +37,8 @@ export function formatInt(value: unknown, locale?: string): string {
 /** Absolute timestamp, locale-aware. */
 export function formatDateTime(value?: string | null, locale?: string): string {
   if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
+  const d = parseDateTime(value);
+  if (!d) return value;
   return d.toLocaleString(locale, {
     year: 'numeric', month: 'short', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit'
@@ -33,8 +48,8 @@ export function formatDateTime(value?: string | null, locale?: string): string {
 /** Human relative time string. */
 export function timeAgo(value?: string | null, locale?: string): string {
   if (!value) return '';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '';
+  const d = parseDateTime(value);
+  if (!d) return '';
   const seconds = Math.round((d.getTime() - Date.now()) / 1000);
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
   const abs = Math.abs(seconds);

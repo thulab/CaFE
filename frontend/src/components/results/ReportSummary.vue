@@ -128,7 +128,7 @@ import StatusBadge from '../ui/StatusBadge.vue';
 import type { ReportDTO, SampleForecastLinkDTO } from '../../api/types';
 import { useModels } from '../../composables/useModels';
 import { useFormat } from '../../composables/useFormat';
-import { shortId } from '../../lib/format';
+import { parseDateTime, shortId } from '../../lib/format';
 import CapabilityProfile from './CapabilityProfile.vue';
 
 const props = defineProps<{ report: ReportDTO }>();
@@ -315,8 +315,8 @@ function sampleTimeSummary(link: SampleForecastLinkDTO) {
 }
 
 function compactDateTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = parseDateTime(value);
+  if (!date) return value;
   return date.toLocaleString(locale.value, {
     month: 'short',
     day: '2-digit',
