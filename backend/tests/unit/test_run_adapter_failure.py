@@ -13,6 +13,7 @@ from app.db.init_db import init_db
 from app.models.benchmark import FailedSampleRerunJob, ForecastArtifact, Task, Unit
 from app.models.dataset import DatasetManifest
 from app.models.model_registry import Model
+from app.services import run_executor as run_executor_module
 from app.services.dataset_load_service import DatasetLoadService
 from app.services.forecast_store import ForecastStore
 from app.services.ranking_service import query_ranking
@@ -193,12 +194,44 @@ def test_failed_samples_can_be_inspected_and_rerun_into_valid_ranking(tmp_path, 
         assert failures["items"][0]["model_id"] == models[0].model_id
         assert failures["items"][0]["error_code"] == "metric_error"
         assert "same flattened length" in failures["items"][0]["error_message"]
+        failed_sample_id = failures["items"][0]["sample_id"]
         assert query_ranking(session, track.track_id, "mse", "latest_valid_result") == []
 
         monkeypatch.setattr(
             "app.services.run_executor.get_model_adapter",
             lambda settings: StubTimerAdapter(),
         )
+        sample_metric_writes: list[str | None] = []
+        real_metric = run_executor_module._metric
+
+        def capture_metric(  # noqa: ANN001, ANN202
+            metric_name,
+            level,
+            run_arg,
+            unit,
+            task,
+            model_id,
+            value,
+            shard_id=None,
+            sample_id=None,
+            capability_block_id=None,
+        ):
+            if level == "sample":
+                sample_metric_writes.append(sample_id)
+            return real_metric(
+                metric_name,
+                level,
+                run_arg,
+                unit,
+                task,
+                model_id,
+                value,
+                shard_id,
+                sample_id,
+                capability_block_id,
+            )
+
+        monkeypatch.setattr(run_executor_module, "_metric", capture_metric)
 
         result = rerun_failed_samples(session, run.benchmarking_run_id, tmp_path / "runtime")
 
@@ -215,6 +248,8 @@ def test_failed_samples_can_be_inspected_and_rerun_into_valid_ranking(tmp_path, 
         assert remaining["total"] == 0
         assert remaining["summary"] == []
         assert query_ranking(session, track.track_id, "mse", "latest_valid_result")
+        assert sample_metric_writes
+        assert set(sample_metric_writes) == {failed_sample_id}
 
         artifacts = session.exec(
             select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)

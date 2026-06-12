@@ -380,6 +380,84 @@ describe('workspace pages', () => {
     expect(screen.queryByText('Window #3')).toBeNull();
   });
 
+  it('RunDetailPage clears stale failure details when the selected reason is gone', async () => {
+    let summaryCalls = 0;
+    let detailCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = url.replace(/^\/api/, '').split('?')[0];
+      const query = new URL(url, 'http://test.local').searchParams;
+      if (path === '/benchmarking-runs/run-failed/progress') {
+        return jsonResponse({
+          benchmarking_run_id: 'run-failed',
+          status: 'partial_succeeded',
+          progress: { total_models: 1, completed_models: 1, total_tasks: 1, completed_tasks: 1, total_samples: 4, completed_samples: 3, processed_samples: 4, failed_samples: 1 },
+          units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: 'partial_succeeded', task_count: 1, completed_task_count: 1, metrics: {} }],
+          tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: 'partial_succeeded', shard_count: 1, sample_count: 4, completed_sample_count: 3, processed_sample_count: 4, metrics: {} }],
+          recent_events: [],
+          report_id: 'rep-1',
+          ranking_list_id: 'rank-1'
+        });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples/rerun') {
+        return jsonResponse({ active: null });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples') {
+        const wantsDetails = query.get('error_code') === 'adapter_error';
+        if (wantsDetails) {
+          detailCalls += 1;
+          if (detailCalls > 1) return jsonResponse({ detail: 'stale filter' }, 500);
+          return jsonResponse({
+            total: 1,
+            limit: 50,
+            offset: 0,
+            summary: [{ error_code: 'adapter_error', error_message: 'adapter boom', count: 1, model_count: 1, capability_count: 1, sample_count: 1 }],
+            items: [{
+              forecast_artifact_id: 'artifact-1',
+              sample_id: 'sample-1',
+              sample_index: 1,
+              model_id: 'm1',
+              model_name: 'Timer 3.5',
+              unit_id: 'unit-1',
+              task_id: 'task-1',
+              capability_block_id: 'block-1',
+              capability_block_name: 'Real data',
+              shard_id: 'shard-1',
+              error_code: 'adapter_error',
+              error_message: 'adapter boom'
+            }]
+          });
+        }
+        summaryCalls += 1;
+        if (summaryCalls === 1) {
+          return jsonResponse({
+            total: 1,
+            limit: 0,
+            offset: 0,
+            summary: [{ error_code: 'adapter_error', error_message: 'adapter boom', count: 1, model_count: 1, capability_count: 1, sample_count: 1 }],
+            items: []
+          });
+        }
+        return jsonResponse({ total: 0, limit: 0, offset: 0, summary: [], items: [] });
+      }
+      return jsonResponse({});
+    });
+
+    render(RunDetailPage, { props: { runId: 'run-failed' }, global: { plugins: [i18n] } });
+
+    await fireEvent.click(await screen.findByRole('button', { name: /Failed samples/ }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'View samples' }));
+
+    expect(await screen.findByText('Window #2')).toBeTruthy();
+
+    const panel = screen.getByRole('heading', { name: 'Failed sample reasons' }).closest('article');
+    await fireEvent.click(within(panel as HTMLElement).getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('No failed samples')).toBeTruthy();
+    expect(screen.queryByText('Window #2')).toBeNull();
+    expect(detailCalls).toBe(1);
+  });
+
   it('renders workspace page chrome in Chinese when locale changes', async () => {
     setLocale('zh-CN');
     stubBackend({});

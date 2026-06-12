@@ -340,7 +340,15 @@ async function refreshFailedSamplePanel() {
     const summary = await getFailedSamples(props.runId, { limit: 0 });
     failedSummary.value = summary.summary;
     failedSamplesTotal.value = summary.total;
-    if (selectedFailure.value) {
+    if (summary.total <= 0 || summary.summary.length === 0) {
+      collapseFailedSampleDetails();
+    } else if (selectedFailure.value) {
+      const refreshedGroup = summary.summary.find((group) => failureGroupKey(group) === failureGroupKey(selectedFailure.value!));
+      if (!refreshedGroup) {
+        collapseFailedSampleDetails();
+        return;
+      }
+      selectedFailure.value = refreshedGroup;
       await loadFailedSampleDetails();
     } else {
       failedSamples.value = [];
@@ -412,6 +420,7 @@ async function refreshActiveRerun() {
       stopRerunPolling();
       await load();
       await refreshFailedSamplePanel();
+      activeRerun.value = null;
       rerunMessage.value = t('runs.detail.rerunComplete', { count: formatInt(job.processed_samples), remaining: formatInt(job.failed_samples) });
     }
   } catch (e) {

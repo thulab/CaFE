@@ -963,6 +963,7 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path, job: 
     settings = get_settings()
     adapter = get_model_adapter(settings)
     touched_unit_ids: set[str] = set()
+    changed_sample_ids: set[str] = set()
     rerun_count = 0
     artifacts_by_unit: dict[str, list[tuple[ForecastArtifact, list[dict]]]] = {}
     for artifact, rows in artifacts_with_failures:
@@ -996,6 +997,9 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path, job: 
                     if row.get("status") != "failed":
                         updated_rows.append(row)
                         continue
+                    sample_id = row.get("sample_id")
+                    if sample_id is not None:
+                        changed_sample_ids.add(str(sample_id))
                     rerun_count += 1
                     if load_error is not None:
                         updated_row = _failed_record_from_existing(row, "model_load_error", str(load_error))
@@ -1025,7 +1029,7 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path, job: 
     if touched_unit_ids:
         if job is not None:
             _update_rerun_job(session, job, activity_status="rebuilding_metrics")
-        _rebuild_metrics_for_units(session, run, touched_unit_ids)
+        _rebuild_metrics_for_units(session, run, touched_unit_ids, changed_sample_ids)
         if job is not None:
             _update_rerun_job(session, job, activity_status="refreshing_report")
         _finalize_run_after_rerun(session, run, runtime_dir)
@@ -1112,14 +1116,41 @@ def _failed_record_from_existing(row: dict, error_code: str, error_message: str)
     }
 
 
-def _rebuild_metrics_for_units(session: Session, run: BenchmarkingRun, unit_ids: set[str]) -> None:
-    existing = session.exec(
+def _rebuild_metrics_for_units(
+    session: Session,
+    run: BenchmarkingRun,
+    unit_ids: set[str],
+    changed_sample_ids: set[str] | None = None,
+) -> None:
+    aggregate_metrics = session.exec(
         select(MetricResult).where(
             MetricResult.benchmarking_run_id == run.benchmarking_run_id,
             MetricResult.unit_id.in_(unit_ids),
+            MetricResult.result_level != "sample",
         )
     ).all()
-    for metric in existing:
+    for metric in aggregate_metrics:
+        session.delete(metric)
+    if changed_sample_ids is None:
+        sample_metrics = session.exec(
+            select(MetricResult).where(
+                MetricResult.benchmarking_run_id == run.benchmarking_run_id,
+                MetricResult.unit_id.in_(unit_ids),
+                MetricResult.result_level == "sample",
+            )
+        ).all()
+    elif changed_sample_ids:
+        sample_metrics = session.exec(
+            select(MetricResult).where(
+                MetricResult.benchmarking_run_id == run.benchmarking_run_id,
+                MetricResult.unit_id.in_(unit_ids),
+                MetricResult.result_level == "sample",
+                MetricResult.sample_id.in_(list(changed_sample_ids)),
+            )
+        ).all()
+    else:
+        sample_metrics = []
+    for metric in sample_metrics:
         session.delete(metric)
     session.flush()
     for unit_id in unit_ids:
@@ -1129,7 +1160,7 @@ def _rebuild_metrics_for_units(session: Session, run: BenchmarkingRun, unit_ids:
         task_results: list[_TaskExecutionResult] = []
         tasks = session.exec(select(Task).where(Task.unit_id == unit_id)).all()
         for task in tasks:
-            task_results.append(_rebuild_task_metrics_from_artifacts(session, run, unit, task))
+            task_results.append(_rebuild_task_metrics_from_artifacts(session, run, unit, task, changed_sample_ids))
         for metric_name in METRIC_NAMES:
             aggregated = aggregate_metric([result.metrics for result in task_results], metric_name)
             if aggregated:
@@ -1146,7 +1177,13 @@ def _rebuild_metrics_for_units(session: Session, run: BenchmarkingRun, unit_ids:
     session.commit()
 
 
-def _rebuild_task_metrics_from_artifacts(session: Session, run: BenchmarkingRun, unit: Unit, task: Task) -> _TaskExecutionResult:
+def _rebuild_task_metrics_from_artifacts(
+    session: Session,
+    run: BenchmarkingRun,
+    unit: Unit,
+    task: Task,
+    changed_sample_ids: set[str] | None = None,
+) -> _TaskExecutionResult:
     artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.task_id == task.task_id)).all()
     shard_results: list[_ShardExecutionResult] = []
     processed_total = 0
@@ -1161,8 +1198,23 @@ def _rebuild_task_metrics_from_artifacts(session: Session, run: BenchmarkingRun,
                 processed += 1
                 metrics = {key: float(value) for key, value in (row.get("metrics") or {}).items()}
                 sample_metrics.append(metrics)
-                for metric_name, value in metrics.items():
-                    session.add(_metric(metric_name, "sample", run, unit, task, artifact.model_id, value, artifact.shard_id, row.get("sample_id"), task.capability_block_id))
+                sample_id = row.get("sample_id")
+                if changed_sample_ids is None or (sample_id is not None and str(sample_id) in changed_sample_ids):
+                    for metric_name, value in metrics.items():
+                        session.add(
+                            _metric(
+                                metric_name,
+                                "sample",
+                                run,
+                                unit,
+                                task,
+                                artifact.model_id,
+                                value,
+                                artifact.shard_id,
+                                str(sample_id) if sample_id is not None else None,
+                                task.capability_block_id,
+                            )
+                        )
             elif row.get("status") == "failed":
                 processed += 1
                 failed += 1
