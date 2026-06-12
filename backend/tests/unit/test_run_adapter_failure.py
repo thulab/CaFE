@@ -11,6 +11,9 @@ from sqlmodel import Session, create_engine, select
 
 from app.db.init_db import init_db
 from app.models.benchmark import FailedSampleRerunJob, ForecastArtifact, Task, Unit
+from app.models.dataset import DatasetManifest
+from app.models.model_registry import Model
+from app.services.dataset_load_service import DatasetLoadService
 from app.services.forecast_store import ForecastStore
 from app.services.ranking_service import query_ranking
 from app.services.run_executor import (
@@ -23,6 +26,7 @@ from app.services.run_executor import (
     start_failed_sample_rerun,
 )
 from app.services.stub_timer_adapter import StubTimerAdapter
+from app.services.track_service import create_real_capability_block, create_track_with_blocks
 from app.workers.run_queue import RunQueue
 from tests.run_helpers import create_loaded_track_with_models
 
@@ -56,12 +60,57 @@ class _LoadFailingAdapter:
         raise AssertionError("forecast should not be called when model load fails")
 
 
+class _LifecycleCountingAdapter:
+    def __init__(self):
+        self._stub = StubTimerAdapter()
+        self.load_calls = 0
+        self.unload_calls = 0
+
+    def ensure_model_loaded(self, model, timeout_seconds):  # noqa: ANN001, ANN201, ARG002
+        self.load_calls += 1
+
+    def unload_model(self, model, timeout_seconds):  # noqa: ANN001, ANN201, ARG002
+        self.unload_calls += 1
+
+    def forecast(self, sample, model, timeout_seconds):  # noqa: ANN001, ANN201
+        return self._stub.forecast(sample, model, timeout_seconds)
+
+
 def _all_forecast_rows(forecasts_dir, artifacts: list[ForecastArtifact]) -> list[dict]:
     store = ForecastStore(forecasts_dir)
     rows: list[dict] = []
     for artifact in artifacts:
         rows.extend(store.read_forecasts(artifact.storage_uri))
     return rows
+
+
+def _create_loaded_track_with_two_shards(session: Session, runtime_dir):
+    source = runtime_dir.parent / "valid_hourly_20.csv"
+    source.write_text(
+        "time,target\n"
+        + "\n".join(f"2024-01-01 {hour:02d}:00:00,{hour}" for hour in range(20)),
+        encoding="utf-8",
+    )
+    shard_ids = []
+    for index in range(2):
+        manifest = DatasetManifest(
+            name=f"multi-shard-demo-{index}",
+            domain="energy",
+            source_uri=str(source),
+            time_column="time",
+        )
+        session.add(manifest)
+        session.commit()
+        session.refresh(manifest)
+        job = DatasetLoadService(runtime_dir).create_load_job(
+            session,
+            manifest.dataset_manifest_id,
+            {"context_length": 6, "horizon": 3, "stride": 3, "target_columns": ["target"]},
+        )
+        shard_ids.append(job.output_shard_id)
+    block = create_real_capability_block(session, "real block", shard_ids)
+    track, ranking = create_track_with_blocks(session, "multi shard track", [block.capability_block_id], "mase")
+    return track, ranking
 
 
 def test_adapter_failure_does_not_crash_run_and_marks_sample_failed(tmp_path, monkeypatch):
@@ -255,6 +304,42 @@ def test_failed_sample_rerun_job_tracks_progress_and_blocks_duplicate(tmp_path, 
         assert job.failed_samples == 0
         assert get_active_failed_sample_rerun_job(session, run.benchmarking_run_id) is None
         assert session.exec(select(FailedSampleRerunJob)).one().rerun_job_id == job.rerun_job_id
+
+
+def test_failed_sample_rerun_loads_model_once_per_unit_across_artifacts(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking = _create_loaded_track_with_two_shards(session, tmp_path / "runtime")
+        model = Model(name="Lifecycle Model", model_family="Timer", model_version="life", endpoint_uri="stub://lifecycle")
+        session.add(model)
+        session.commit()
+        session.refresh(model)
+        run = create_benchmarking_run(session, track.track_id, [model.model_id])
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: _AlwaysRaisingAdapter(),
+        )
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        artifacts = session.exec(
+            select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)
+        ).all()
+        assert len(artifacts) == 2
+        assert list_failed_samples(session, run.benchmarking_run_id, limit=0)["total"] > 1
+
+        adapter = _LifecycleCountingAdapter()
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: adapter,
+        )
+
+        result = rerun_failed_samples(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        assert result["remaining_failed_samples"] == 0
+        assert adapter.load_calls == 1
+        assert adapter.unload_calls == 1
 
 
 def test_model_load_failure_marks_unit_failed_without_forecast(tmp_path, monkeypatch):

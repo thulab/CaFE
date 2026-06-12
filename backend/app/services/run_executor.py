@@ -964,18 +964,22 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path, job: 
     adapter = get_model_adapter(settings)
     touched_unit_ids: set[str] = set()
     rerun_count = 0
+    artifacts_by_unit: dict[str, list[tuple[ForecastArtifact, list[dict]]]] = {}
     for artifact, rows in artifacts_with_failures:
-        unit = session.get(Unit, artifact.unit_id)
-        model = session.get(Model, artifact.model_id)
+        artifacts_by_unit.setdefault(artifact.unit_id, []).append((artifact, rows))
+    for unit_artifacts in artifacts_by_unit.values():
+        first_artifact = unit_artifacts[0][0]
+        unit = session.get(Unit, first_artifact.unit_id)
+        model = session.get(Model, first_artifact.model_id)
         model_payload = {
-            "model_id": artifact.model_id,
-            "remote_model_id": remote_model_id(model) if model else artifact.model_id,
+            "model_id": first_artifact.model_id,
+            "remote_model_id": remote_model_id(model) if model else first_artifact.model_id,
             "stub_seed": model.stub_seed if model else 0,
         }
         load_error: Exception | None = None
         ensure_model_loaded = getattr(adapter, "ensure_model_loaded", None)
         if model is None:
-            load_error = RuntimeError(f"model not found: {artifact.model_id}")
+            load_error = RuntimeError(f"model not found: {first_artifact.model_id}")
         elif ensure_model_loaded is not None:
             if job is not None:
                 _update_rerun_job(session, job, activity_status="model_loading")
@@ -985,36 +989,39 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path, job: 
                 load_error = error
         if job is not None:
             _update_rerun_job(session, job, activity_status="forecasting")
-        updated_rows: list[dict] = []
-        for row in rows:
-            if row.get("status") != "failed":
-                updated_rows.append(row)
-                continue
-            rerun_count += 1
-            if load_error is not None:
-                updated_row = _failed_record_from_existing(row, "model_load_error", str(load_error))
-                updated_rows.append(updated_row)
-                if job is not None:
-                    _update_rerun_job(session, job, processed_delta=1, failed_delta=1)
-                continue
-            try:
-                prepared = _prepare_sample_by_id(session, str(row.get("sample_id")))
-                outcome = _forecast_prepared_sample(adapter, prepared, model_payload, settings.sample_forecast_timeout_seconds)
-                updated_row = _record_from_rerun_outcome(run, unit, artifact, prepared, outcome)
-            except Exception as error:  # noqa: BLE001 - one corrupt sample should not block other failed samples
-                updated_row = _failed_record_from_existing(row, "rerun_error", str(error))
-            updated_rows.append(updated_row)
-            if job is not None:
-                if updated_row.get("status") == "succeeded":
-                    _update_rerun_job(session, job, processed_delta=1, succeeded_delta=1)
-                else:
-                    _update_rerun_job(session, job, processed_delta=1, failed_delta=1)
-        store = ForecastStore(Path(artifact.storage_uri).parent)
-        artifact.sample_count, artifact.checksum = store.overwrite_forecasts(artifact.storage_uri, updated_rows)
-        session.add(artifact)
-        touched_unit_ids.add(artifact.unit_id)
-        if unit is not None and _uses_sequential_model_lifecycle(settings):
-            _unload_model_after_unit(session, run, unit, model_payload, adapter, settings.timer_service_model_load_timeout_seconds)
+        try:
+            for artifact, rows in unit_artifacts:
+                updated_rows: list[dict] = []
+                for row in rows:
+                    if row.get("status") != "failed":
+                        updated_rows.append(row)
+                        continue
+                    rerun_count += 1
+                    if load_error is not None:
+                        updated_row = _failed_record_from_existing(row, "model_load_error", str(load_error))
+                        updated_rows.append(updated_row)
+                        if job is not None:
+                            _update_rerun_job(session, job, processed_delta=1, failed_delta=1)
+                        continue
+                    try:
+                        prepared = _prepare_sample_by_id(session, str(row.get("sample_id")))
+                        outcome = _forecast_prepared_sample(adapter, prepared, model_payload, settings.sample_forecast_timeout_seconds)
+                        updated_row = _record_from_rerun_outcome(run, unit, artifact, prepared, outcome)
+                    except Exception as error:  # noqa: BLE001 - one corrupt sample should not block other failed samples
+                        updated_row = _failed_record_from_existing(row, "rerun_error", str(error))
+                    updated_rows.append(updated_row)
+                    if job is not None:
+                        if updated_row.get("status") == "succeeded":
+                            _update_rerun_job(session, job, processed_delta=1, succeeded_delta=1)
+                        else:
+                            _update_rerun_job(session, job, processed_delta=1, failed_delta=1)
+                store = ForecastStore(Path(artifact.storage_uri).parent)
+                artifact.sample_count, artifact.checksum = store.overwrite_forecasts(artifact.storage_uri, updated_rows)
+                session.add(artifact)
+                touched_unit_ids.add(artifact.unit_id)
+        finally:
+            if unit is not None and _uses_sequential_model_lifecycle(settings):
+                _unload_model_after_unit(session, run, unit, model_payload, adapter, settings.timer_service_model_load_timeout_seconds)
     if touched_unit_ids:
         if job is not None:
             _update_rerun_job(session, job, activity_status="rebuilding_metrics")
