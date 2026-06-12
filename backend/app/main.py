@@ -9,6 +9,7 @@ from app.db.init_db import init_db
 from app.db.session import create_db_engine
 from app.services.auth_service import seed_admin_if_empty, seed_permissions, seed_system_roles
 from app.services.track_service import seed_mvp_models
+from app.workers.lifecycle import recover_runs_on_startup
 from app.workers.run_queue import RunQueue
 
 
@@ -34,6 +35,7 @@ def create_app() -> FastAPI:
         seed_system_roles(session)
         seed_admin_if_empty(session, settings.admin_password)
         seed_mvp_models(session)
+        recover_runs_on_startup(session)
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(roles.router)

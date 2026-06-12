@@ -374,6 +374,10 @@ describe('workspace pages', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'View samples' }));
 
     expect(await screen.findByText('Window #3')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Collapse details' }));
+
+    expect(screen.queryByText('Window #3')).toBeNull();
   });
 
   it('renders workspace page chrome in Chinese when locale changes', async () => {

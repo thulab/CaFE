@@ -1,7 +1,8 @@
 from sqlmodel import Session, create_engine
 
 from app.db.init_db import init_db
-from app.models.benchmark import FailedSampleRerunJob
+from app.main import create_app
+from app.models.benchmark import BenchmarkingRun, FailedSampleRerunJob
 from app.services.run_executor import create_benchmarking_run, recover_interrupted_runs
 from tests.run_helpers import create_loaded_track_with_models
 
@@ -49,3 +50,30 @@ def test_startup_recovery_marks_active_failed_sample_reruns_interrupted(tmp_path
         assert job.activity_status == "failed"
         assert job.error_code == "interrupted_by_server_restart"
         assert job.finished_at is not None
+
+
+def test_app_startup_recovers_active_failed_sample_rerun_jobs():
+    app = create_app()
+    with Session(app.state.engine) as session:
+        run = BenchmarkingRun(track_id="track-recovery", status="partial_succeeded")
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        job = FailedSampleRerunJob(
+            benchmarking_run_id=run.benchmarking_run_id,
+            status="running",
+            activity_status="model_loading",
+            total_samples=2,
+            processed_samples=0,
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.rerun_job_id
+
+    restarted = create_app()
+
+    with Session(restarted.state.engine) as session:
+        job = session.get(FailedSampleRerunJob, job_id)
+        assert job.status == "failed"
+        assert job.activity_status == "failed"
+        assert job.error_code == "interrupted_by_server_restart"

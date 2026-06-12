@@ -993,6 +993,7 @@ const enUS = {
       failureReasonSummary: 'Failure reason summary',
       failedSampleDetails: 'Failed sample details',
       viewSamples: 'View samples',
+      collapseSamples: 'Collapse details',
       noFailedSamples: 'No failed samples',
       noFailedSamplesDesc: 'This run has no recorded failed samples.',
       errorCode: 'Error code',

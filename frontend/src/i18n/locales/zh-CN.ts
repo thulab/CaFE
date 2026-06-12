@@ -993,6 +993,7 @@ const zhCN = {
       failureReasonSummary: '失败原因统计',
       failedSampleDetails: '失败样本明细',
       viewSamples: '查看样本',
+      collapseSamples: '收起明细',
       noFailedSamples: '暂无失败样本',
       noFailedSamplesDesc: '当前运行没有记录失败样本。',
       errorCode: '错误码',

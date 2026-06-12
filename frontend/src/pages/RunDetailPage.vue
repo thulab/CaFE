@@ -124,6 +124,9 @@
                       <button class="btn secondary sm" type="button" :disabled="failedSamplesOffset <= 0 || failedSamplesLoading" @click="changeFailedSamplePage(-1)">{{ t('results.previousPage') }}</button>
                       <span class="status-line">{{ t('results.pageStatus', { page: failedSamplePage, pages: failedSamplePageCount }) }}</span>
                       <button class="btn secondary sm" type="button" :disabled="failedSamplePage >= failedSamplePageCount || failedSamplesLoading" @click="changeFailedSamplePage(1)">{{ t('results.nextPage') }}</button>
+                      <button class="btn ghost sm" type="button" @click="collapseFailedSampleDetails">
+                        <Icon name="x" :size="14" /> {{ t('runs.detail.collapseSamples') }}
+                      </button>
                     </div>
                   </div>
                   <div class="table-wrap">
@@ -442,6 +445,13 @@ async function selectFailureGroup(group: FailedSampleSummaryDTO) {
 async function changeFailedSamplePage(delta: number) {
   failedSamplesOffset.value = Math.max(0, failedSamplesOffset.value + delta * FAILED_SAMPLE_PAGE_SIZE);
   await loadFailedSampleDetails();
+}
+
+function collapseFailedSampleDetails() {
+  selectedFailure.value = null;
+  failedSamples.value = [];
+  failedDetailsTotal.value = 0;
+  failedSamplesOffset.value = 0;
 }
 
 async function loadFailedSampleDetails() {
