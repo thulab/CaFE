@@ -57,11 +57,11 @@
                 <li v-for="item in recents.slice(0, 8)" :key="`${item.kind}-${item.id}`">
                   <a :href="item.href">
                     <Icon class="art-ico" :name="kindIcon(item.kind)" :size="16" />
-                    <span style="min-width:0">
-                      <span class="nowrap" style="display:block;overflow:hidden;text-overflow:ellipsis;font-weight:600">{{ activityTitle(item) }}</span>
-                      <span class="faint" style="font-size:0.76rem">{{ t(`home.kind.${item.kind}`) }} · {{ timeAgo(item.createdAt) }}</span>
+                    <span class="artifact-main">
+                      <span class="artifact-title cell-title" :title="activityTitle(item)">{{ activityTitle(item) }}</span>
+                      <span class="faint artifact-meta">{{ t(`home.kind.${item.kind}`) }} · {{ timeAgo(item.createdAt) }}</span>
                     </span>
-                    <Icon name="arrowRight" :size="14" style="margin-left:auto;opacity:.5" />
+                    <Icon class="artifact-arrow" name="arrowRight" :size="14" />
                   </a>
                 </li>
               </ul>

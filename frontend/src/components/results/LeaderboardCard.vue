@@ -1,7 +1,7 @@
 <template>
   <article class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px">
     <header style="display:flex;flex-direction:column;gap:4px">
-      <h3 style="margin:0;font-size:1.05rem;font-weight:700">{{ item.track_name }}</h3>
+      <h3 class="cell-title" style="margin:0;font-size:1.05rem;font-weight:700" :title="item.track_name">{{ item.track_name }}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
         <span class="badge neutral">{{ item.track_type }} · {{ item.primary_metric_id.toUpperCase() }}</span>
         <span v-if="manageable" class="badge" :class="isPublic ? 'success' : 'warning'">{{ isPublic ? t('leaderboards.public') : t('leaderboards.hidden') }}</span>
