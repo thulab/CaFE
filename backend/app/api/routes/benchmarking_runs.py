@@ -25,9 +25,12 @@ from app.services.run_executor import (
     build_run_progress,
     cancel_run,
     create_benchmarking_run,
+    execute_failed_sample_rerun_job,
     execute_run,
+    get_active_failed_sample_rerun_job,
+    get_failed_sample_rerun_job,
     list_failed_samples,
-    rerun_failed_samples,
+    start_failed_sample_rerun,
 )
 from app.workers.run_queue import RunQueue
 
@@ -71,6 +74,11 @@ def _execute_in_background(engine, run_id: str, runtime_dir: Path, queue: RunQue
                 args=(engine, next_run_id, runtime_dir, queue),
                 daemon=True,
             ).start()
+
+
+def _execute_failed_sample_rerun_in_background(engine, rerun_job_id: str, runtime_dir: Path) -> None:
+    with Session(engine) as session:
+        execute_failed_sample_rerun_job(session, rerun_job_id, runtime_dir)
 
 
 @router.get("", tier="authed")
@@ -132,13 +140,62 @@ def get_run_progress(benchmarking_run_id: str, session: Session = Depends(get_db
 
 
 @router.get("/{benchmarking_run_id}/failed-samples", tier="authed")
-def get_failed_samples(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
-    return list_failed_samples(session, benchmarking_run_id)
+def get_failed_samples(
+    benchmarking_run_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    return list_failed_samples(session, benchmarking_run_id, limit=limit, offset=offset, error_code=error_code, error_message=error_message)
 
 
 @router.post("/{benchmarking_run_id}/failed-samples/rerun", tier="perm", perm="run.execute")
-def rerun_failed_run_samples(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
-    return rerun_failed_samples(session, benchmarking_run_id, get_settings().runtime_dir)
+def rerun_failed_run_samples(benchmarking_run_id: str, request: Request, session: Session = Depends(get_db_session)) -> dict:
+    job = start_failed_sample_rerun(session, benchmarking_run_id)
+    if job.status == "queued":
+        threading.Thread(
+            target=_execute_failed_sample_rerun_in_background,
+            args=(request.app.state.engine, job.rerun_job_id, get_settings().runtime_dir),
+            daemon=True,
+        ).start()
+    return _rerun_job_payload(job)
+
+
+@router.get("/{benchmarking_run_id}/failed-samples/rerun", tier="authed")
+def get_active_failed_sample_rerun(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    if session.get(BenchmarkingRun, benchmarking_run_id) is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": RESOURCE_RUN, "resource_id": benchmarking_run_id}, 404)
+    job = get_active_failed_sample_rerun_job(session, benchmarking_run_id)
+    return {"active": _rerun_job_payload(job) if job else None}
+
+
+@router.get("/{benchmarking_run_id}/failed-samples/rerun/{rerun_job_id}", tier="authed")
+def get_failed_sample_rerun(benchmarking_run_id: str, rerun_job_id: str, session: Session = Depends(get_db_session)) -> dict:
+    job = get_failed_sample_rerun_job(session, rerun_job_id)
+    if job.benchmarking_run_id != benchmarking_run_id:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": "failed_sample_rerun_job", "resource_id": rerun_job_id}, 404)
+    return _rerun_job_payload(job)
+
+
+def _rerun_job_payload(job) -> dict:
+    return {
+        "rerun_job_id": job.rerun_job_id,
+        "benchmarking_run_id": job.benchmarking_run_id,
+        "status": job.status,
+        "activity_status": job.activity_status,
+        "total_samples": job.total_samples,
+        "processed_samples": job.processed_samples,
+        "succeeded_samples": job.succeeded_samples,
+        "failed_samples": job.failed_samples,
+        "error_code": job.error_code,
+        "error_message": job.error_message,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+    }
 
 
 @router.post("/{benchmarking_run_id}/cancel", tier="perm", perm="run.cancel")

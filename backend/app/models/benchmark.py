@@ -115,6 +115,23 @@ class ForecastArtifact(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class FailedSampleRerunJob(SQLModel, table=True):
+    rerun_job_id: str = Field(default_factory=new_id, primary_key=True)
+    benchmarking_run_id: str = Field(index=True)
+    status: str = "queued"
+    activity_status: str = "queued"
+    total_samples: int = 0
+    processed_samples: int = 0
+    succeeded_samples: int = 0
+    failed_samples: int = 0
+    error_code: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class RunEvent(SQLModel, table=True):
     run_event_id: str = Field(default_factory=new_id, primary_key=True)
     benchmarking_run_id: str = Field(index=True)

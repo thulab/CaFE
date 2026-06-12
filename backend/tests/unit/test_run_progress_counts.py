@@ -141,6 +141,27 @@ def test_progress_counts_failed_samples_on_adapter_failure(tmp_path, monkeypatch
         assert progress["progress"]["processed_samples"] == expected_completed + expected_failed
 
 
+def test_progress_uses_artifact_counts_over_stale_terminal_task_counters(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+        run_id = run.benchmarking_run_id
+
+        execute_run(session, run_id, tmp_path / "runtime")
+
+        task = session.exec(select(Task).where(Task.benchmarking_run_id == run_id)).one()
+        task.failed_sample_count = 2
+        task.processed_sample_count = task.sample_count
+        session.add(task)
+        session.commit()
+
+        progress = build_run_progress(session, run_id)
+        assert progress["progress"]["failed_samples"] == 0
+        assert progress["tasks"][0]["failed_sample_count"] == 0
+
+
 def test_execute_run_persists_cumulative_task_sample_counts_across_shards(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     init_db(engine)

@@ -182,14 +182,42 @@ export interface FailedSampleDTO {
   task_status?: string | null;
 }
 
+export interface FailedSampleSummaryDTO {
+  error_code?: string | null;
+  error_message?: string | null;
+  count: number;
+  model_count: number;
+  capability_count: number;
+  sample_count: number;
+}
+
 export interface FailedSamplesDTO {
   items: FailedSampleDTO[];
   total: number;
+  limit: number;
+  offset: number;
+  summary: FailedSampleSummaryDTO[];
 }
 
 export interface RerunFailedSamplesDTO {
-  rerun_samples: number;
-  remaining_failed_samples: number;
+  rerun_job_id: string;
+  benchmarking_run_id: string;
+  status: string;
+  activity_status: string;
+  total_samples: number;
+  processed_samples: number;
+  succeeded_samples: number;
+  failed_samples: number;
+  error_code?: string | null;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface ActiveRerunFailedSamplesDTO {
+  active: RerunFailedSamplesDTO | null;
 }
 
 export interface RankingDTO {

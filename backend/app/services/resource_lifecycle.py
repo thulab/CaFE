@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.core.config import get_settings
 from app.core.errors import ApiError
-from app.models.benchmark import BenchmarkingRun, CapabilityBlock, CapabilityBlockShard, ForecastArtifact, RunEvent, Task, Track, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, CapabilityBlockShard, FailedSampleRerunJob, ForecastArtifact, RunEvent, Task, Track, Unit
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
 from app.models.lifecycle import ArchivedResource
 from app.models.metric import MetricResult
@@ -37,6 +37,7 @@ AFFECTED_KEYS = [
     "ranking_entries",
     "forecast_artifacts",
     "metric_results",
+    "failed_sample_rerun_jobs",
     "run_events",
 ]
 
@@ -199,6 +200,7 @@ def purge_run(session: Session, run_id: str, commit: bool = True) -> dict[str, A
     _delete_reports(session, run_ids=[run_id])
     _delete_where(session, RankingEntry, RankingEntry.benchmarking_run_id == run_id)
     _delete_where(session, MetricResult, MetricResult.benchmarking_run_id == run_id)
+    _delete_where(session, FailedSampleRerunJob, FailedSampleRerunJob.benchmarking_run_id == run_id)
     _delete_where(session, RunEvent, RunEvent.benchmarking_run_id == run_id)
     _delete_where(session, Task, Task.benchmarking_run_id == run_id)
     _delete_where(session, Unit, Unit.benchmarking_run_id == run_id)
@@ -296,6 +298,7 @@ def _counts_for_scope(
     counts["ranking_entries"] = _count_ranking_entries(session, track_ids, run_ids, ranking_list_ids)
     counts["forecast_artifacts"] = _count_forecast_artifacts(session, run_ids, shard_ids)
     counts["metric_results"] = _count_metric_results(session, run_ids, shard_ids, sample_ids, block_ids)
+    counts["failed_sample_rerun_jobs"] = _count_where(session, FailedSampleRerunJob, FailedSampleRerunJob.benchmarking_run_id.in_(run_ids)) if run_ids else 0
     counts["run_events"] = _count_where(session, RunEvent, RunEvent.benchmarking_run_id.in_(run_ids)) if run_ids else 0
     return counts
 

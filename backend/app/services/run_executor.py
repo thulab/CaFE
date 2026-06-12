@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.core.errors import ApiError
 from app.core.time import utc_now
-from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, RunEvent, Task, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlock, FailedSampleRerunJob, ForecastArtifact, RunEvent, Task, Unit
 from app.models.dataset import Shard
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
@@ -173,6 +173,7 @@ def _forecast_limits_support_covariate_dim(limits: dict, covariate_dim: int) -> 
 
 
 _TERMINAL_RUN_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}
+_ACTIVE_RERUN_STATUSES = {"queued", "running"}
 
 
 class _RunCancelled(Exception):
@@ -214,11 +215,32 @@ def recover_interrupted_runs(session: Session) -> None:
     unfinished = session.exec(
         select(BenchmarkingRun).where(BenchmarkingRun.status.in_(["queued", "running", "cancel_requested"]))
     ).all()
+    now = utc_now()
     for run in unfinished:
         run.status = "failed"
-        run.finished_at = utc_now()
+        run.finished_at = now
         session.add(RunEvent(benchmarking_run_id=run.benchmarking_run_id, level="error", event_type="interrupted_by_server_restart", message="run interrupted by server restart"))
         session.add(run)
+    active_reruns = session.exec(
+        select(FailedSampleRerunJob).where(FailedSampleRerunJob.status.in_(_ACTIVE_RERUN_STATUSES))
+    ).all()
+    for job in active_reruns:
+        job.status = "failed"
+        job.activity_status = "failed"
+        job.error_code = "interrupted_by_server_restart"
+        job.error_message = "failed sample rerun interrupted by server restart"
+        job.finished_at = now
+        job.updated_at = now
+        session.add(job)
+        session.add(
+            RunEvent(
+                benchmarking_run_id=job.benchmarking_run_id,
+                level="error",
+                event_type="failed_sample_rerun_interrupted",
+                message="failed sample rerun interrupted by server restart",
+                payload={"rerun_job_id": job.rerun_job_id},
+            )
+        )
     session.commit()
 
 
@@ -687,10 +709,38 @@ def _record_task_sample_progress(session: Session, task: Task, processed_sample_
     session.commit()
 
 
-def list_failed_samples(session: Session, run_id: str) -> dict:
+def list_failed_samples(
+    session: Session,
+    run_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    error_code: str | None = None,
+    error_message: str | None = None,
+) -> dict:
     run = session.get(BenchmarkingRun, run_id)
     if run is None:
         raise ApiError("resource_not_found", "resource not found", {"resource_type": "benchmarking_run", "resource_id": run_id}, 404)
+    items = _failed_sample_items(session, run_id)
+    summary = _failed_sample_summary(items)
+    filtered = [
+        item
+        for item in items
+        if (error_code is None or item.get("error_code") == error_code)
+        and (error_message is None or item.get("error_message") == error_message)
+    ]
+    total = len(filtered)
+    safe_limit = min(max(int(limit or 0), 0), 200)
+    safe_offset = max(int(offset or 0), 0)
+    return {
+        "items": filtered[safe_offset : safe_offset + safe_limit],
+        "total": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "summary": summary,
+    }
+
+
+def _failed_sample_items(session: Session, run_id: str) -> list[dict]:
     items: list[dict] = []
     for artifact in session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)).all():
         store = ForecastStore(Path(artifact.storage_uri).parent)
@@ -725,16 +775,178 @@ def list_failed_samples(session: Session, run_id: str) -> dict:
                 }
             )
     items.sort(key=lambda item: (item.get("model_name") or "", item.get("sample_index") is None, item.get("sample_index") or 0, item.get("sample_id") or ""))
-    return {"items": items, "total": len(items)}
+    return items
 
 
-def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path) -> dict:
+def _failed_sample_summary(items: list[dict]) -> list[dict]:
+    groups: dict[tuple[str | None, str | None], dict] = {}
+    for item in items:
+        key = (item.get("error_code"), item.get("error_message"))
+        group = groups.setdefault(
+            key,
+            {
+                "error_code": item.get("error_code"),
+                "error_message": item.get("error_message"),
+                "count": 0,
+                "_model_ids": set(),
+                "_capability_ids": set(),
+                "_sample_ids": set(),
+            },
+        )
+        group["count"] += 1
+        if item.get("model_id"):
+            group["_model_ids"].add(item["model_id"])
+        if item.get("capability_block_id"):
+            group["_capability_ids"].add(item["capability_block_id"])
+        if item.get("sample_id"):
+            group["_sample_ids"].add(item["sample_id"])
+    summary = []
+    for group in groups.values():
+        summary.append(
+            {
+                "error_code": group["error_code"],
+                "error_message": group["error_message"],
+                "count": group["count"],
+                "model_count": len(group["_model_ids"]),
+                "capability_count": len(group["_capability_ids"]),
+                "sample_count": len(group["_sample_ids"]),
+            }
+        )
+    return sorted(summary, key=lambda item: (-int(item["count"]), item.get("error_code") or "", item.get("error_message") or ""))
+
+
+def start_failed_sample_rerun(session: Session, run_id: str) -> FailedSampleRerunJob:
+    run = _rerunnable_run(session, run_id)
+    active = get_active_failed_sample_rerun_job(session, run_id)
+    if active is not None:
+        raise ApiError(
+            "failed_sample_rerun_active",
+            "failed sample rerun is already active for this run",
+            {"run_id": run_id, "rerun_job_id": active.rerun_job_id},
+            409,
+        )
+    total = len(_failed_sample_items(session, run_id))
+    now = utc_now()
+    job = FailedSampleRerunJob(
+        benchmarking_run_id=run.benchmarking_run_id,
+        total_samples=total,
+        status="succeeded" if total == 0 else "queued",
+        activity_status="succeeded" if total == 0 else "queued",
+        finished_at=now if total == 0 else None,
+    )
+    session.add(job)
+    session.add(
+        RunEvent(
+            benchmarking_run_id=run.benchmarking_run_id,
+            event_type="failed_sample_rerun_queued",
+            message=f"failed sample rerun queued for {total} samples",
+            payload={"rerun_job_id": job.rerun_job_id, "total_samples": total},
+        )
+    )
+    session.commit()
+    session.refresh(job)
+    return job
+
+
+def get_active_failed_sample_rerun_job(session: Session, run_id: str) -> FailedSampleRerunJob | None:
+    return session.exec(
+        select(FailedSampleRerunJob)
+        .where(
+            FailedSampleRerunJob.benchmarking_run_id == run_id,
+            FailedSampleRerunJob.status.in_(_ACTIVE_RERUN_STATUSES),
+        )
+        .order_by(FailedSampleRerunJob.created_at.desc())
+    ).first()
+
+
+def get_failed_sample_rerun_job(session: Session, job_id: str) -> FailedSampleRerunJob:
+    job = session.get(FailedSampleRerunJob, job_id)
+    if job is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": "failed_sample_rerun_job", "resource_id": job_id}, 404)
+    return job
+
+
+def execute_failed_sample_rerun_job(session: Session, job_id: str, runtime_dir: Path) -> FailedSampleRerunJob:
+    job = get_failed_sample_rerun_job(session, job_id)
+    if job.status not in _ACTIVE_RERUN_STATUSES:
+        return job
+    try:
+        _update_rerun_job(session, job, status="running", activity_status="model_loading", started=True)
+        result = rerun_failed_samples(session, job.benchmarking_run_id, runtime_dir, job=job)
+        terminal_status = "succeeded" if int(result["remaining_failed_samples"]) == 0 else "partial_succeeded"
+        _update_rerun_job(
+            session,
+            job,
+            status=terminal_status,
+            activity_status=terminal_status,
+            failed_samples=int(result["remaining_failed_samples"]),
+            finished=True,
+        )
+    except Exception as error:  # noqa: BLE001 - background job state must capture unexpected failures
+        _update_rerun_job(
+            session,
+            job,
+            status="failed",
+            activity_status="failed",
+            error_code="rerun_job_error",
+            error_message=str(error),
+            finished=True,
+        )
+    return job
+
+
+def _rerunnable_run(session: Session, run_id: str) -> BenchmarkingRun:
     run = session.get(BenchmarkingRun, run_id)
     if run is None:
         raise ApiError("resource_not_found", "resource not found", {"resource_type": "benchmarking_run", "resource_id": run_id}, 404)
     if run.status not in _TERMINAL_RUN_STATUSES or run.status == "cancelled":
         raise ApiError("run_not_terminal", "run must be terminal before rerunning failed samples", {"run_id": run_id, "status": run.status}, 409)
+    return run
 
+
+def _update_rerun_job(
+    session: Session,
+    job: FailedSampleRerunJob,
+    *,
+    status: str | None = None,
+    activity_status: str | None = None,
+    processed_delta: int = 0,
+    succeeded_delta: int = 0,
+    failed_delta: int = 0,
+    failed_samples: int | None = None,
+    error_code: str | None = None,
+    error_message: str | None = None,
+    started: bool = False,
+    finished: bool = False,
+) -> None:
+    if status is not None:
+        job.status = status
+    if activity_status is not None:
+        job.activity_status = activity_status
+    if processed_delta:
+        job.processed_samples += processed_delta
+    if succeeded_delta:
+        job.succeeded_samples += succeeded_delta
+    if failed_delta:
+        job.failed_samples += failed_delta
+    if failed_samples is not None:
+        job.failed_samples = failed_samples
+    if error_code is not None:
+        job.error_code = error_code
+    if error_message is not None:
+        job.error_message = error_message
+    now = utc_now()
+    if started and job.started_at is None:
+        job.started_at = now
+    if finished:
+        job.finished_at = now
+    job.updated_at = now
+    session.add(job)
+    session.commit()
+
+
+def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path, job: FailedSampleRerunJob | None = None) -> dict:
+    run = _rerunnable_run(session, run_id)
     artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)).all()
     artifacts_with_failures: list[tuple[ForecastArtifact, list[dict]]] = []
     for artifact in artifacts:
@@ -765,10 +977,14 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path) -> di
         if model is None:
             load_error = RuntimeError(f"model not found: {artifact.model_id}")
         elif ensure_model_loaded is not None:
+            if job is not None:
+                _update_rerun_job(session, job, activity_status="model_loading")
             try:
                 ensure_model_loaded(model_payload, timeout_seconds=settings.timer_service_model_load_timeout_seconds)
             except Exception as error:  # noqa: BLE001 - rerun records failures per sample instead of aborting the whole request
                 load_error = error
+        if job is not None:
+            _update_rerun_job(session, job, activity_status="forecasting")
         updated_rows: list[dict] = []
         for row in rows:
             if row.get("status") != "failed":
@@ -776,14 +992,23 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path) -> di
                 continue
             rerun_count += 1
             if load_error is not None:
-                updated_rows.append(_failed_record_from_existing(row, "model_load_error", str(load_error)))
+                updated_row = _failed_record_from_existing(row, "model_load_error", str(load_error))
+                updated_rows.append(updated_row)
+                if job is not None:
+                    _update_rerun_job(session, job, processed_delta=1, failed_delta=1)
                 continue
             try:
                 prepared = _prepare_sample_by_id(session, str(row.get("sample_id")))
                 outcome = _forecast_prepared_sample(adapter, prepared, model_payload, settings.sample_forecast_timeout_seconds)
-                updated_rows.append(_record_from_rerun_outcome(run, unit, artifact, prepared, outcome))
+                updated_row = _record_from_rerun_outcome(run, unit, artifact, prepared, outcome)
             except Exception as error:  # noqa: BLE001 - one corrupt sample should not block other failed samples
-                updated_rows.append(_failed_record_from_existing(row, "rerun_error", str(error)))
+                updated_row = _failed_record_from_existing(row, "rerun_error", str(error))
+            updated_rows.append(updated_row)
+            if job is not None:
+                if updated_row.get("status") == "succeeded":
+                    _update_rerun_job(session, job, processed_delta=1, succeeded_delta=1)
+                else:
+                    _update_rerun_job(session, job, processed_delta=1, failed_delta=1)
         store = ForecastStore(Path(artifact.storage_uri).parent)
         artifact.sample_count, artifact.checksum = store.overwrite_forecasts(artifact.storage_uri, updated_rows)
         session.add(artifact)
@@ -791,9 +1016,13 @@ def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path) -> di
         if unit is not None and _uses_sequential_model_lifecycle(settings):
             _unload_model_after_unit(session, run, unit, model_payload, adapter, settings.timer_service_model_load_timeout_seconds)
     if touched_unit_ids:
+        if job is not None:
+            _update_rerun_job(session, job, activity_status="rebuilding_metrics")
         _rebuild_metrics_for_units(session, run, touched_unit_ids)
+        if job is not None:
+            _update_rerun_job(session, job, activity_status="refreshing_report")
         _finalize_run_after_rerun(session, run, runtime_dir)
-    remaining_failed = list_failed_samples(session, run_id)["total"]
+    remaining_failed = list_failed_samples(session, run_id, limit=0)["total"]
     return {"rerun_samples": rerun_count, "remaining_failed_samples": remaining_failed}
 
 
@@ -1044,6 +1273,10 @@ def _sample_counts(session: Session, run_id: str) -> tuple[int, int, int, dict[s
         task_processed = int(task.processed_sample_count or 0)
         task_failed = int(task.failed_sample_count or 0)
         task_succeeded = max(0, task_processed - task_failed)
+        has_artifact_counts = processed_by_task.get(task.task_id, 0) > 0
+        is_terminal_task = task.status in {"succeeded", "failed", "partial_succeeded", "cancelled"}
+        if has_artifact_counts and is_terminal_task:
+            continue
         succeeded_by_task[task.task_id] = max(succeeded_by_task.get(task.task_id, 0), task_succeeded)
         failed_by_task[task.task_id] = max(failed_by_task.get(task.task_id, 0), task_failed)
         processed_by_task[task.task_id] = max(processed_by_task.get(task.task_id, 0), task_processed)

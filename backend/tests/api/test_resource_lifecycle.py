@@ -1,7 +1,7 @@
 from sqlmodel import Session, select
 
 from app.core.config import get_settings
-from app.models.benchmark import BenchmarkingRun, CapabilityBlockShard, ForecastArtifact, Task, Unit
+from app.models.benchmark import BenchmarkingRun, CapabilityBlockShard, FailedSampleRerunJob, ForecastArtifact, Task, Unit
 from app.models.dataset import DatasetLoadJob, DatasetManifest, Shard
 from app.models.metric import MetricResult
 from app.models.ranking import RankingEntry, RankingList
@@ -124,6 +124,9 @@ def test_non_cascade_track_purge_with_runs_returns_409(app, client):
 
 def test_cascade_track_purge_removes_runs_reports_and_ranking(app, client):
     ids = _executed_chain(app)
+    with Session(app.state.engine) as session:
+        session.add(FailedSampleRerunJob(benchmarking_run_id=ids["run_id"], status="succeeded", activity_status="succeeded"))
+        session.commit()
 
     response = client.delete(f"/tracks/{ids['track_id']}", params={"cascade": True})
     assert response.status_code == 200, response.text
@@ -140,6 +143,7 @@ def test_cascade_track_purge_removes_runs_reports_and_ranking(app, client):
         assert session.exec(select(RankingEntry)).all() == []
         assert session.exec(select(ForecastArtifact)).all() == []
         assert session.exec(select(MetricResult)).all() == []
+        assert session.exec(select(FailedSampleRerunJob)).all() == []
 
 
 def test_cascade_dataset_purge_removes_downstream_track_and_data(app, client):

@@ -47,6 +47,8 @@ const MAP: Record<string, { variant: Variant; icon?: string }> = {
   model_loading_failed: { variant: 'danger', icon: 'alert' },
   model_unloading_failed: { variant: 'warning', icon: 'alert' },
   forecasting: { variant: 'primary', icon: 'refresh' },
+  rebuilding_metrics: { variant: 'info', icon: 'refresh' },
+  refreshing_report: { variant: 'info', icon: 'refresh' },
   finalizing: { variant: 'info', icon: 'clock' },
   in_progress: { variant: 'primary', icon: 'refresh' },
   processing: { variant: 'primary', icon: 'refresh' },

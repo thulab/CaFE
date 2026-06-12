@@ -48,8 +48,8 @@
           <header class="card-head">
             <h2 class="card-title">{{ t('runs.detail.failedSampleReasons') }}</h2>
             <div class="head-actions">
-              <span class="badge danger">{{ formatInt(failedSamples.length) }}</span>
-              <button class="btn ghost sm" type="button" :disabled="failedSamplesLoading" @click="loadFailedSamples">
+              <span class="badge danger">{{ formatInt(failedSamplesTotal) }}</span>
+              <button class="btn ghost sm" type="button" :disabled="failedSamplesLoading" @click="refreshFailedSamplePanel">
                 <Icon name="refresh" :size="14" /> {{ t('common.retry') }}
               </button>
               <button v-if="canRerunFailures" class="btn secondary sm" type="button" :disabled="rerunBusy" @click="onRerunFailedSamples">
@@ -60,45 +60,104 @@
           </header>
           <div class="card-body">
             <p v-if="rerunMessage" class="note-success"><Icon name="checkCircle" :size="16" />{{ rerunMessage }}</p>
+            <section v-if="activeRerun" class="rerun-progress-panel">
+              <div class="rerun-progress-head">
+                <div>
+                  <p class="panel-kicker">{{ t('runs.detail.rerunningFailedSamples') }}</p>
+                  <p class="status-line">{{ t('runs.detail.rerunSampleProgress') }} {{ formatInt(activeRerun.processed_samples) }} / {{ formatInt(activeRerun.total_samples) }}</p>
+                </div>
+                <StatusBadge :status="activeRerun.activity_status || activeRerun.status" />
+              </div>
+              <div class="progress striped"><span :style="{ width: pct(activeRerun.processed_samples, activeRerun.total_samples) + '%' }" /></div>
+              <div class="mini-stat-row">
+                <span>{{ t('runs.detail.rerunSucceeded') }} <strong>{{ formatInt(activeRerun.succeeded_samples) }}</strong></span>
+                <span>{{ t('runs.detail.rerunStillFailed') }} <strong>{{ formatInt(activeRerun.failed_samples) }}</strong></span>
+                <span>{{ t('runs.detail.rerunPending') }} <strong>{{ formatInt(rerunPending) }}</strong></span>
+              </div>
+            </section>
             <StateBlock
-              :loading="failedSamplesLoading"
+              :loading="failedSamplesLoading && failedSummary.length === 0"
               :error="failedSamplesError || ''"
-              :empty="!failedSamplesLoading && !failedSamplesError && failedSamples.length === 0"
+              :empty="!failedSamplesLoading && !failedSamplesError && failedSummary.length === 0"
               empty-icon="checkCircle"
               :empty-title="t('runs.detail.noFailedSamples')"
               :empty-desc="t('runs.detail.noFailedSamplesDesc')"
-              @retry="loadFailedSamples"
+              @retry="refreshFailedSamplePanel"
             >
-              <div class="table-wrap">
-                <table class="data table-fixed">
-                  <thead>
-                    <tr>
-                      <th class="col-14">{{ t('runs.detail.sample') }}</th>
-                      <th class="col-20">{{ t('runs.detail.model') }}</th>
-                      <th class="col-20">{{ t('runs.detail.capability') }}</th>
-                      <th class="col-14">{{ t('runs.detail.errorCode') }}</th>
-                      <th class="col-24">{{ t('runs.detail.errorReason') }}</th>
-                      <th class="col-8">{{ t('common.actions') }}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="item in failedSamples" :key="`${item.forecast_artifact_id}-${item.sample_id}`">
-                      <td>
-                        <span class="cell-wrap" style="font-weight:600">{{ failedSampleLabel(item) }}</span>
-                        <div class="faint mono cell-id">{{ shortId(item.sample_id) }}</div>
-                      </td>
-                      <td><span class="cell-wrap" :title="item.model_name || item.model_id">{{ item.model_name || item.model_id }}</span></td>
-                      <td><span class="cell-wrap" :title="item.capability_block_name || item.capability_block_id || ''">{{ item.capability_block_name || item.capability_block_id || t('common.notAvailable') }}</span></td>
-                      <td><span class="cell-wrap mono">{{ item.error_code || t('common.notAvailable') }}</span></td>
-                      <td><span class="cell-wrap" :title="item.error_message || ''">{{ item.error_message || t('common.notAvailable') }}</span></td>
-                      <td>
-                        <a class="btn secondary sm" :href="sampleHref(item)">
-                          <Icon name="lineChart" :size="14" /> {{ t('common.open') }}
-                        </a>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+              <div class="stack compact">
+                <section>
+                  <h3 class="section-label">{{ t('runs.detail.failureReasonSummary') }}</h3>
+                  <div class="table-wrap">
+                    <table class="data table-fixed">
+                      <thead>
+                        <tr>
+                          <th class="col-16">{{ t('runs.detail.errorCode') }}</th>
+                          <th class="col-32">{{ t('runs.detail.errorReason') }}</th>
+                          <th class="num col-10">{{ t('runs.detail.failedSamples') }}</th>
+                          <th class="num col-10">{{ t('runs.detail.models') }}</th>
+                          <th class="num col-12">{{ t('runs.detail.capability') }}</th>
+                          <th class="col-20">{{ t('common.actions') }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="group in failedSummary" :key="failureGroupKey(group)">
+                          <td><span class="cell-wrap mono">{{ group.error_code || t('common.notAvailable') }}</span></td>
+                          <td><span class="cell-wrap" :title="group.error_message || ''">{{ group.error_message || t('common.notAvailable') }}</span></td>
+                          <td class="num">{{ formatInt(group.count) }}</td>
+                          <td class="num">{{ formatInt(group.model_count) }}</td>
+                          <td class="num">{{ formatInt(group.capability_count) }}</td>
+                          <td>
+                            <button class="btn secondary sm" type="button" @click="selectFailureGroup(group)">
+                              <Icon name="list" :size="14" /> {{ t('runs.detail.viewSamples') }}
+                            </button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section v-if="selectedFailure">
+                  <div class="sample-pager">
+                    <h3 class="section-label">{{ t('runs.detail.failedSampleDetails') }}</h3>
+                    <div class="head-actions">
+                      <button class="btn secondary sm" type="button" :disabled="failedSamplesOffset <= 0 || failedSamplesLoading" @click="changeFailedSamplePage(-1)">{{ t('results.previousPage') }}</button>
+                      <span class="status-line">{{ t('results.pageStatus', { page: failedSamplePage, pages: failedSamplePageCount }) }}</span>
+                      <button class="btn secondary sm" type="button" :disabled="failedSamplePage >= failedSamplePageCount || failedSamplesLoading" @click="changeFailedSamplePage(1)">{{ t('results.nextPage') }}</button>
+                    </div>
+                  </div>
+                  <div class="table-wrap">
+                    <table class="data table-fixed">
+                      <thead>
+                        <tr>
+                          <th class="col-14">{{ t('runs.detail.sample') }}</th>
+                          <th class="col-20">{{ t('runs.detail.model') }}</th>
+                          <th class="col-20">{{ t('runs.detail.capability') }}</th>
+                          <th class="col-14">{{ t('runs.detail.errorCode') }}</th>
+                          <th class="col-24">{{ t('runs.detail.errorReason') }}</th>
+                          <th class="col-8">{{ t('common.actions') }}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr v-for="item in failedSamples" :key="`${item.forecast_artifact_id}-${item.sample_id}`">
+                          <td>
+                            <span class="cell-wrap" style="font-weight:600">{{ failedSampleLabel(item) }}</span>
+                            <div class="faint mono cell-id">{{ shortId(item.sample_id) }}</div>
+                          </td>
+                          <td><span class="cell-wrap" :title="item.model_name || item.model_id">{{ item.model_name || item.model_id }}</span></td>
+                          <td><span class="cell-wrap" :title="item.capability_block_name || item.capability_block_id || ''">{{ item.capability_block_name || item.capability_block_id || t('common.notAvailable') }}</span></td>
+                          <td><span class="cell-wrap mono">{{ item.error_code || t('common.notAvailable') }}</span></td>
+                          <td><span class="cell-wrap" :title="item.error_message || ''">{{ item.error_message || t('common.notAvailable') }}</span></td>
+                          <td>
+                            <a class="btn secondary sm" :href="sampleHref(item)">
+                              <Icon name="lineChart" :size="14" /> {{ t('common.open') }}
+                            </a>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
               </div>
             </StateBlock>
           </div>
@@ -178,8 +237,8 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import { ApiError } from '../api/client';
-import { cancelRun, getFailedSamples, getRunProgress, rerunFailedSamples } from '../api/runs';
-import type { FailedSampleDTO, RunProgressDTO } from '../api/types';
+import { cancelRun, getActiveFailedSampleRerun, getFailedSampleRerun, getFailedSamples, getRunProgress, rerunFailedSamples } from '../api/runs';
+import type { FailedSampleDTO, FailedSampleSummaryDTO, RerunFailedSamplesDTO, RunProgressDTO } from '../api/types';
 import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
@@ -189,17 +248,26 @@ import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{ runId: string }>();
 const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
+const ACTIVE_RERUN = ['queued', 'running'];
+const FAILED_SAMPLE_PAGE_SIZE = 50;
 
 const progress = ref<RunProgressDTO | null>(null);
 const loading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 const { text: failedSamplesError, clear: clearFailedSamplesError, setError: setFailedSamplesError } = useDisplayMessage();
 let timer: ReturnType<typeof setInterval> | undefined;
+let rerunTimer: ReturnType<typeof setInterval> | undefined;
 const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
 const failedSamplesOpen = ref(false);
 const failedSamplesLoading = ref(false);
 const failedSamples = ref<FailedSampleDTO[]>([]);
+const failedSummary = ref<FailedSampleSummaryDTO[]>([]);
+const failedSamplesTotal = ref(0);
+const failedDetailsTotal = ref(0);
+const failedSamplesOffset = ref(0);
+const selectedFailure = ref<FailedSampleSummaryDTO | null>(null);
+const activeRerun = ref<RerunFailedSamplesDTO | null>(null);
 const rerunBusy = ref(false);
 const rerunMessage = ref('');
 const dialog = reactive<{ open: boolean; action: LifecycleAction }>({
@@ -213,16 +281,24 @@ const isPolling = computed(() => Boolean(progress.value) && !TERMINAL.includes(p
 // 可发起取消：仅 queued / running；cancel_requested 已经请求过了，不再可点。
 const canCancel = computed(() => progress.value?.status === 'queued' || progress.value?.status === 'running');
 const isCancelling = computed(() => progress.value?.status === 'cancel_requested');
-const canRerunFailures = computed(() => has('run.execute') && failedSamples.value.length > 0 && !isPolling.value);
+const isRerunActive = computed(() => Boolean(activeRerun.value) && ACTIVE_RERUN.includes(activeRerun.value!.status));
+const canRerunFailures = computed(() => has('run.execute') && failedSamplesTotal.value > 0 && !isPolling.value && !isRerunActive.value);
+const rerunPending = computed(() => Math.max(0, Number(activeRerun.value?.total_samples ?? 0) - Number(activeRerun.value?.processed_samples ?? 0)));
+const failedSamplePage = computed(() => Math.floor(failedSamplesOffset.value / FAILED_SAMPLE_PAGE_SIZE) + 1);
+const failedSamplePageCount = computed(() => Math.max(1, Math.ceil(failedDetailsTotal.value / FAILED_SAMPLE_PAGE_SIZE)));
 
 onMounted(load);
-onBeforeUnmount(stopPolling);
+onBeforeUnmount(() => {
+  stopPolling();
+  stopRerunPolling();
+});
 
 async function load() {
   loading.value = true;
   clearError();
   try {
     progress.value = await getRunProgress(props.runId);
+    await loadActiveRerun();
     if (isPolling.value && !timer) timer = setInterval(load, 4000);
     if (!isPolling.value) stopPolling();
   } catch (e) {
@@ -250,15 +326,23 @@ async function onCancel() {
 async function openFailedSamples() {
   if ((p.value.failed_samples ?? 0) <= 0) return;
   failedSamplesOpen.value = true;
-  await loadFailedSamples();
+  await refreshFailedSamplePanel();
 }
 
-async function loadFailedSamples() {
+async function refreshFailedSamplePanel() {
   failedSamplesLoading.value = true;
   clearFailedSamplesError();
   rerunMessage.value = '';
   try {
-    failedSamples.value = (await getFailedSamples(props.runId)).items;
+    const summary = await getFailedSamples(props.runId, { limit: 0 });
+    failedSummary.value = summary.summary;
+    failedSamplesTotal.value = summary.total;
+    if (selectedFailure.value) {
+      await loadFailedSampleDetails();
+    } else {
+      failedSamples.value = [];
+      failedDetailsTotal.value = 0;
+    }
   } catch (e) {
     setFailedSamplesError(e, 'runs.detail.errors.failedToLoadFailedSamples');
   } finally {
@@ -271,10 +355,10 @@ async function onRerunFailedSamples() {
   clearFailedSamplesError();
   rerunMessage.value = '';
   try {
-    const result = await rerunFailedSamples(props.runId);
-    await load();
-    await loadFailedSamples();
-    rerunMessage.value = t('runs.detail.rerunComplete', { count: formatInt(result.rerun_samples), remaining: formatInt(result.remaining_failed_samples) });
+    activeRerun.value = await rerunFailedSamples(props.runId);
+    failedSamplesOpen.value = true;
+    await refreshFailedSamplePanel();
+    startRerunPolling();
   } catch (e) {
     setFailedSamplesError(e, 'runs.detail.errors.failedToRerunFailedSamples');
   } finally {
@@ -287,6 +371,52 @@ function stopPolling() {
   timer = undefined;
 }
 
+function startRerunPolling() {
+  if (!isRerunActive.value) {
+    stopRerunPolling();
+    return;
+  }
+  if (!rerunTimer) rerunTimer = setInterval(refreshActiveRerun, 2000);
+}
+
+function stopRerunPolling() {
+  if (rerunTimer) clearInterval(rerunTimer);
+  rerunTimer = undefined;
+}
+
+async function loadActiveRerun() {
+  try {
+    activeRerun.value = (await getActiveFailedSampleRerun(props.runId)).active;
+    if (activeRerun.value) {
+      failedSamplesOpen.value = true;
+      await refreshFailedSamplePanel();
+      startRerunPolling();
+    } else {
+      stopRerunPolling();
+    }
+  } catch (_error) {
+    activeRerun.value = null;
+    stopRerunPolling();
+  }
+}
+
+async function refreshActiveRerun() {
+  if (!activeRerun.value) return;
+  try {
+    const job = await getFailedSampleRerun(props.runId, activeRerun.value.rerun_job_id);
+    activeRerun.value = job;
+    if (!isRerunActive.value) {
+      stopRerunPolling();
+      await load();
+      await refreshFailedSamplePanel();
+      rerunMessage.value = t('runs.detail.rerunComplete', { count: formatInt(job.processed_samples), remaining: formatInt(job.failed_samples) });
+    }
+  } catch (e) {
+    setFailedSamplesError(e, 'runs.detail.errors.failedToLoadFailedSamples');
+    stopRerunPolling();
+  }
+}
+
 function openLifecycle(action: LifecycleAction) {
   dialog.action = action;
   dialog.open = true;
@@ -297,6 +427,33 @@ const pct = (a: unknown, b: unknown) => percent(Number(a ?? 0), Number(b ?? 0));
 function failedSampleLabel(item: FailedSampleDTO) {
   if (typeof item.sample_index === 'number') return t('results.sampleWindowLabel', { index: item.sample_index + 1 });
   return t('results.sampleFallbackLabel', { id: shortId(item.sample_id) });
+}
+
+function failureGroupKey(group: FailedSampleSummaryDTO) {
+  return `${group.error_code || ''}:${group.error_message || ''}`;
+}
+
+async function selectFailureGroup(group: FailedSampleSummaryDTO) {
+  selectedFailure.value = group;
+  failedSamplesOffset.value = 0;
+  await loadFailedSampleDetails();
+}
+
+async function changeFailedSamplePage(delta: number) {
+  failedSamplesOffset.value = Math.max(0, failedSamplesOffset.value + delta * FAILED_SAMPLE_PAGE_SIZE);
+  await loadFailedSampleDetails();
+}
+
+async function loadFailedSampleDetails() {
+  if (!selectedFailure.value) return;
+  const page = await getFailedSamples(props.runId, {
+    limit: FAILED_SAMPLE_PAGE_SIZE,
+    offset: failedSamplesOffset.value,
+    error_code: selectedFailure.value.error_code,
+    error_message: selectedFailure.value.error_message,
+  });
+  failedSamples.value = page.items;
+  failedDetailsTotal.value = page.total;
 }
 
 function sampleHref(item: FailedSampleDTO) {

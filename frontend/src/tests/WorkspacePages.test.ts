@@ -260,27 +260,88 @@ describe('workspace pages', () => {
     expect(screen.getByText('run active')).toBeTruthy();
   });
 
-  it('RunDetailPage opens failed sample reasons and reruns failures', async () => {
-    let failedCount = 1;
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+  it('RunDetailPage restores active failed-sample rerun progress after refresh', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
       const path = url.replace(/^\/api/, '').split('?')[0];
       if (path === '/benchmarking-runs/run-failed/progress') {
         return jsonResponse({
           benchmarking_run_id: 'run-failed',
-          status: failedCount > 0 ? 'partial_succeeded' : 'succeeded',
-          progress: { total_models: 1, completed_models: 1, total_tasks: 1, completed_tasks: 1, total_samples: 4, completed_samples: 4 - failedCount, processed_samples: 4, failed_samples: failedCount },
-          units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: failedCount > 0 ? 'partial_succeeded' : 'succeeded', task_count: 1, completed_task_count: 1, metrics: {} }],
-          tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: failedCount > 0 ? 'partial_succeeded' : 'succeeded', shard_count: 1, sample_count: 4, completed_sample_count: 4 - failedCount, processed_sample_count: 4, metrics: {} }],
+          status: 'partial_succeeded',
+          progress: { total_models: 1, completed_models: 1, total_tasks: 1, completed_tasks: 1, total_samples: 10, completed_samples: 7, processed_samples: 10, failed_samples: 3 },
+          units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: 'partial_succeeded', task_count: 1, completed_task_count: 1, metrics: {} }],
+          tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: 'partial_succeeded', shard_count: 1, sample_count: 10, completed_sample_count: 7, processed_sample_count: 10, metrics: {} }],
           recent_events: [],
           report_id: 'rep-1',
           ranking_list_id: 'rank-1'
         });
       }
-      if (path === '/benchmarking-runs/run-failed/failed-samples' && init?.method !== 'POST') {
+      if (path === '/benchmarking-runs/run-failed/failed-samples') {
         return jsonResponse({
-          total: failedCount,
-          items: failedCount > 0
+          total: 3,
+          limit: 0,
+          offset: 0,
+          summary: [{ error_code: 'adapter_error', error_message: 'adapter boom', count: 3, model_count: 1, capability_count: 1, sample_count: 3 }],
+          items: []
+        });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples/rerun') {
+        return jsonResponse({
+          active: {
+            rerun_job_id: 'job-1',
+            benchmarking_run_id: 'run-failed',
+            status: 'running',
+            activity_status: 'forecasting',
+            total_samples: 10,
+            processed_samples: 3,
+            succeeded_samples: 2,
+            failed_samples: 1,
+            error_code: null,
+            error_message: null,
+            created_at: '2026-05-26T13:10:00Z',
+            updated_at: '2026-05-26T13:10:05Z'
+          }
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(RunDetailPage, { props: { runId: 'run-failed' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Rerunning failed samples')).toBeTruthy();
+    expect(await screen.findByText('Sample progress 3 / 10')).toBeTruthy();
+    expect(await screen.findByText('Forecasting')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Rerun failed samples' })).toBeNull();
+  });
+
+  it('RunDetailPage shows failure reason summary before paginated sample details', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = url.replace(/^\/api/, '').split('?')[0];
+      const query = new URL(url, 'http://test.local').searchParams;
+      if (path === '/benchmarking-runs/run-failed/progress') {
+        return jsonResponse({
+          benchmarking_run_id: 'run-failed',
+          status: 'partial_succeeded',
+          progress: { total_models: 1, completed_models: 1, total_tasks: 1, completed_tasks: 1, total_samples: 4, completed_samples: 1, processed_samples: 4, failed_samples: 3 },
+          units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: 'partial_succeeded', task_count: 1, completed_task_count: 1, metrics: {} }],
+          tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: 'partial_succeeded', shard_count: 1, sample_count: 4, completed_sample_count: 1, processed_sample_count: 4, metrics: {} }],
+          recent_events: [],
+          report_id: 'rep-1',
+          ranking_list_id: 'rank-1'
+        });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples/rerun') {
+        return jsonResponse({ active: null });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples') {
+        const wantsDetails = query.get('error_code') === 'adapter_error';
+        return jsonResponse({
+          total: wantsDetails ? 3 : 3,
+          limit: wantsDetails ? 50 : 0,
+          offset: 0,
+          summary: [{ error_code: 'adapter_error', error_message: 'adapter boom', count: 3, model_count: 1, capability_count: 1, sample_count: 3 }],
+          items: wantsDetails
             ? [{
                 forecast_artifact_id: 'artifact-1',
                 sample_id: 'sample-1',
@@ -292,15 +353,11 @@ describe('workspace pages', () => {
                 capability_block_id: 'block-1',
                 capability_block_name: 'Real data',
                 shard_id: 'shard-1',
-                error_code: 'metric_error',
-                error_message: 'forecast and target must have the same flattened length'
+                error_code: 'adapter_error',
+                error_message: 'adapter boom'
               }]
             : []
         });
-      }
-      if (path === '/benchmarking-runs/run-failed/failed-samples/rerun' && init?.method === 'POST') {
-        failedCount = 0;
-        return jsonResponse({ rerun_samples: 1, remaining_failed_samples: 0 });
       }
       return jsonResponse({});
     });
@@ -309,17 +366,14 @@ describe('workspace pages', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: /Failed samples/ }));
 
-    expect(await screen.findByText('Failed sample reasons')).toBeTruthy();
-    expect(await screen.findByText('metric_error')).toBeTruthy();
-    expect(await screen.findByText('forecast and target must have the same flattened length')).toBeTruthy();
+    expect(await screen.findByText('Failure reason summary')).toBeTruthy();
+    expect(await screen.findByText('adapter_error')).toBeTruthy();
+    expect(await screen.findByText('adapter boom')).toBeTruthy();
+    expect(screen.queryByText('Window #3')).toBeNull();
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Rerun failed samples' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'View samples' }));
 
-    await waitFor(() => {
-      expect(fetchSpy.mock.calls.some((call) => String(call[0]) === '/api/benchmarking-runs/run-failed/failed-samples/rerun' && call[1]?.method === 'POST')).toBe(true);
-    });
-    expect(await screen.findByText('Reran 1 failed samples; 0 still failing.')).toBeTruthy();
-    expect(await screen.findByText('No failed samples')).toBeTruthy();
+    expect(await screen.findByText('Window #3')).toBeTruthy();
   });
 
   it('renders workspace page chrome in Chinese when locale changes', async () => {

@@ -38,7 +38,7 @@ def utc_now() -> datetime:
 
 ## 1. 总览
 
-### 1.1 SQLModel 表实体清单（25 个）
+### 1.1 SQLModel 表实体清单（26 个）
 
 | 实体 | 文件 | 职责 |
 | --- | --- | --- |
@@ -55,7 +55,8 @@ def utc_now() -> datetime:
 | `Unit` | `backend/app/models/benchmark.py:63` | 某模型在某次 run 中的完整结果 |
 | `Task` | `backend/app/models/benchmark.py:76` | 某模型在某 `CapabilityBlock` 上的结果 |
 | `ForecastArtifact` | `backend/app/models/benchmark.py:94` | 预测产物位置与 schema |
-| `RunEvent` | `backend/app/models/benchmark.py:108` | run/unit/task 过程事件与日志 |
+| `FailedSampleRerunJob` | `backend/app/models/benchmark.py:118` | 失败样本后台重跑任务与进度 |
+| `RunEvent` | `backend/app/models/benchmark.py:135` | run/unit/task 过程事件与日志 |
 | `MetricDefinition` | `backend/app/models/metric.py:10` | 指标注册表（MVP: mse / mae） |
 | `MetricResult` | `backend/app/models/metric.py:24` | 统一多层级指标结果 |
 | `Report` | `backend/app/models/report.py:11` | 基础评测报告 |
@@ -91,6 +92,7 @@ erDiagram
     Task ||--o{ ForecastArtifact : "task_id"
     Shard ||--o{ ForecastArtifact : "shard_id"
     BenchmarkingRun ||--o| Report : "benchmarking_run_id"
+    BenchmarkingRun ||--o{ FailedSampleRerunJob : "benchmarking_run_id"
     BenchmarkingRun ||--o{ RunEvent : "benchmarking_run_id"
 
     Model ||--o{ Unit : "model_id"
@@ -137,6 +139,7 @@ Track → CapabilityBlock → CapabilityBlockShard → Shard → SampleIndex
 ```text
 BenchmarkingRun → Unit → Task → (遍历 CapabilityBlock 下的 Shard) → ForecastArtifact
                                                                    → MetricResult(sample/shard/task/unit)
+BenchmarkingRun → FailedSampleRerunJob（失败样本后台重跑进度）
 ```
 
 `MetricResult` 是**单表多层级**：通过 `result_level` 字段区分 `sample` / `shard` / `task` / `unit`（MVP 实际写入这四级；定义上还预留 `run` / `ranking`）。
@@ -557,9 +560,41 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 
 写入见 `services/forecast_store.py:46-56`：`storage_uri` 为 `forecasts/{run_id}/{task_id}/{model_id}_{shard_id}.jsonl`，`sample_count=len(rows)`，`checksum` 为逐行累积的 sha256。`unit_id` 在写入返回后由 `run_executor.py:233` 补齐。
 
-### 4.5 RunEvent
+### 4.5 FailedSampleRerunJob
 
-run/unit/task 过程事件与日志。源文件 `backend/app/models/benchmark.py:108`。
+失败样本后台重跑任务与进度。源文件 `backend/app/models/benchmark.py:118`。
+
+| 字段 | 类型 | 默认值/约束 | 说明 |
+| --- | --- | --- | --- |
+| `rerun_job_id` | `str` | **主键**，`default_factory=new_id` | UUID4 |
+| `benchmarking_run_id` | `str` | `index=True`（逻辑外键 → BenchmarkingRun） | 被重跑的 run |
+| `status` | `str` | `"queued"` | 任务持久状态，见下方枚举 |
+| `activity_status` | `str` | `"queued"` | 前端展示阶段 |
+| `total_samples` | `int` | `0` | 创建任务时扫描到的失败样本数 |
+| `processed_samples` | `int` | `0` | 已处理失败样本数（成功 + 仍失败） |
+| `succeeded_samples` | `int` | `0` | 重跑后修复成功的样本数 |
+| `failed_samples` | `int` | `0` | 重跑后仍失败的样本数；终态时等于当前剩余失败样本数 |
+| `error_code` | `str \| None` | `None` | job 级失败错误码 |
+| `error_message` | `str \| None` | `None` | job 级失败说明 |
+| `started_at` | `datetime \| None` | `None` | |
+| `finished_at` | `datetime \| None` | `None` | |
+| `created_at` | `datetime` | `utc_now` | |
+| `updated_at` | `datetime` | `utc_now` | |
+
+**status 取值**（来自 `services/run_executor.py`）：
+- `"queued"`：`start_failed_sample_rerun` 创建任务，等待后台线程执行。
+- `"running"`：后台线程已接管。
+- `"succeeded"`：重跑后没有剩余失败样本，或创建时已无失败样本。
+- `"partial_succeeded"`：重跑执行完成，但仍存在失败样本。
+- `"failed"`：后台任务自身异常，或服务重启恢复时发现 active job。
+
+**activity_status 取值**：除终态外，还会写入 `"model_loading"`、`"forecasting"`、`"rebuilding_metrics"`、`"refreshing_report"`，用于运行详情页展示重跑阶段。服务重启时，所有 `queued/running` 的重跑 job 会被 `recover_interrupted_runs` 标记为 `failed / interrupted_by_server_restart`，避免前端刷新后看到永远运行中的任务。
+
+同一 run 只允许一个 active job（`queued/running`）。物理删除 run 时会一并删除该 run 的 `FailedSampleRerunJob` 记录。
+
+### 4.6 RunEvent
+
+run/unit/task 过程事件与日志。源文件 `backend/app/models/benchmark.py:135`。
 
 | 字段 | 类型 | 默认值/约束 | 说明 |
 | --- | --- | --- | --- |
@@ -573,13 +608,15 @@ run/unit/task 过程事件与日志。源文件 `backend/app/models/benchmark.py
 | `payload` | `dict[str, Any]` | `{}`，**JSON 列** | 结构化补充 |
 | `created_at` | `datetime` | `utc_now` | |
 
-**level 取值**（代码实际使用）：`"info"`（默认/run 排队、开始、完成）、`"warning"`（取消相关，`run_executor.py:71,95`）、`"error"`（重启中断，`run_executor.py:85`）。
+**level 取值**（代码实际使用）：`"info"`（默认/run 排队、开始、完成、失败样本重跑排队）、`"warning"`（取消相关）、`"error"`（重启中断、失败样本重跑中断）。
 
 **event_type 取值**（代码实际使用）：
 - `"status_changed"`：默认值。
 - `"cancel_requested"`：请求取消（`run_executor.py:71`）。
 - `"cancelled"`：取消完成（`run_executor.py:95`）。
 - `"interrupted_by_server_restart"`：服务重启中断（`run_executor.py:85`）。
+- `"failed_sample_rerun_queued"`：失败样本重跑任务已创建。
+- `"failed_sample_rerun_interrupted"`：服务重启时发现 active 重跑任务并标记失败。
 
 ---
 
@@ -829,7 +866,9 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 
 `RunProgressDTO` 顶层包含持久状态 `status` 与 run 级展示态 `activity_status`。`activity_status` 由最近 run event 和样本进度推导，可显示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等，不改变 run 状态机；模型 `model_loaded` 后、第一条样本进度落盘前也显示 `forecasting`，避免界面退回普通 `running`。`RunProgressDTO.units[*]` 也包含按 `unit_id` 推导的 `activity_status`，供运行详情页“单元”列表显示每个模型的加载/预测/卸载阶段；unit 级推导会让 `model_unload_started` 等模型生命周期事件优先于 unit 已落盘的终态展示。`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
 
-`FailedSamplesDTO` 由 `list_failed_samples` 直接构造：扫描 run 的 `ForecastArtifact.storage_uri`，返回 `status=="failed"` 的 forecast 行，并补充 `sample_index`、`model_name`、`capability_block_name`、`unit_status`、`task_status` 等展示字段。`rerun_failed_samples` 只覆盖这些失败行；覆盖后会重建相关指标、更新 task/unit/run 状态、刷新报告与榜单。
+`FailedSamplesDTO` 由 `list_failed_samples` 直接构造：扫描 run 的 `ForecastArtifact.storage_uri`，返回 `items/total/limit/offset/summary`。`summary` 按 `(error_code, error_message)` 聚合，包含 `count/model_count/capability_count/sample_count`，用于前端先展示错误原因统计；`items` 是分页后的失败 forecast 行，并补充 `sample_index`、`model_name`、`capability_block_name`、`unit_status`、`task_status` 等展示字段。接口支持 `limit/offset/error_code/error_message` 参数；默认明细上限为 50，`limit=0` 可只取统计。
+
+`FailedSampleRerunJobDTO` 由 `FailedSampleRerunJob` 序列化：`POST /benchmarking-runs/{id}/failed-samples/rerun` 只创建后台 job 并返回 `rerun_job_id/status/activity_status/total_samples/processed_samples/succeeded_samples/failed_samples/error_code/error_message/*_at`，不会阻塞等待全部样本重跑完成。`GET /benchmarking-runs/{id}/failed-samples/rerun` 返回当前 active job（没有则 `active=null`），`GET /benchmarking-runs/{id}/failed-samples/rerun/{job_id}` 查询指定 job。实际重跑逻辑只覆盖失败行；覆盖后会重建相关指标、更新 task/unit/run 状态、刷新报告与榜单。
 
 `GET /benchmarking-runs` 的列表项在 run 表字段之外也返回 `activity_status`，使用同一套展示态推导逻辑，供工作台运行列表和赛道详情运行列表显示“模型加载中/预测中/模型卸载中”等阶段。
 

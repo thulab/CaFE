@@ -10,10 +10,18 @@ When ``adapter.forecast`` raises for a sample, the executor must:
 from sqlmodel import Session, create_engine, select
 
 from app.db.init_db import init_db
-from app.models.benchmark import ForecastArtifact, Task, Unit
+from app.models.benchmark import FailedSampleRerunJob, ForecastArtifact, Task, Unit
 from app.services.forecast_store import ForecastStore
 from app.services.ranking_service import query_ranking
-from app.services.run_executor import create_benchmarking_run, execute_run, list_failed_samples, rerun_failed_samples
+from app.services.run_executor import (
+    create_benchmarking_run,
+    execute_failed_sample_rerun_job,
+    execute_run,
+    get_active_failed_sample_rerun_job,
+    list_failed_samples,
+    rerun_failed_samples,
+    start_failed_sample_rerun,
+)
 from app.services.stub_timer_adapter import StubTimerAdapter
 from app.workers.run_queue import RunQueue
 from tests.run_helpers import create_loaded_track_with_models
@@ -149,11 +157,14 @@ def test_failed_samples_can_be_inspected_and_rerun_into_valid_ranking(tmp_path, 
         unit = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).one()
         task = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).one()
         assert result == {"rerun_samples": 1, "remaining_failed_samples": 0}
-        assert list_failed_samples(session, run.benchmarking_run_id) == {"items": [], "total": 0}
         assert run.status == "succeeded"
         assert unit.status == "succeeded"
         assert task.status == "succeeded"
         assert task.failed_sample_count == 0
+        remaining = list_failed_samples(session, run.benchmarking_run_id)
+        assert remaining["items"] == []
+        assert remaining["total"] == 0
+        assert remaining["summary"] == []
         assert query_ranking(session, track.track_id, "mse", "latest_valid_result")
 
         artifacts = session.exec(
@@ -161,6 +172,89 @@ def test_failed_samples_can_be_inspected_and_rerun_into_valid_ranking(tmp_path, 
         ).all()
         rows = _all_forecast_rows(tmp_path / "runtime" / "forecasts", artifacts)
         assert all(row["status"] == "succeeded" for row in rows)
+
+
+def test_failed_sample_summary_groups_and_paginates_details(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: _AlwaysRaisingAdapter(),
+        )
+
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        failures = list_failed_samples(session, run.benchmarking_run_id, limit=2, offset=1)
+        assert failures["total"] == 4
+        assert failures["limit"] == 2
+        assert failures["offset"] == 1
+        assert len(failures["items"]) == 2
+        assert failures["summary"] == [
+            {
+                "error_code": "adapter_error",
+                "error_message": "adapter boom",
+                "count": 4,
+                "model_count": 1,
+                "capability_count": 1,
+                "sample_count": 4,
+            }
+        ]
+
+        filtered = list_failed_samples(
+            session,
+            run.benchmarking_run_id,
+            limit=50,
+            offset=0,
+            error_code="adapter_error",
+            error_message="adapter boom",
+        )
+        assert filtered["total"] == 4
+        assert {item["error_code"] for item in filtered["items"]} == {"adapter_error"}
+
+
+def test_failed_sample_rerun_job_tracks_progress_and_blocks_duplicate(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: _FirstBadShapeAdapter(),
+        )
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        job = start_failed_sample_rerun(session, run.benchmarking_run_id)
+        assert job.status == "queued"
+        assert job.total_samples == 1
+        assert get_active_failed_sample_rerun_job(session, run.benchmarking_run_id).rerun_job_id == job.rerun_job_id
+
+        try:
+            start_failed_sample_rerun(session, run.benchmarking_run_id)
+        except Exception as error:  # noqa: BLE001
+            assert getattr(error, "error_code", "") == "failed_sample_rerun_active"
+        else:
+            raise AssertionError("expected duplicate rerun to be rejected")
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: StubTimerAdapter(),
+        )
+        execute_failed_sample_rerun_job(session, job.rerun_job_id, tmp_path / "runtime")
+
+        session.refresh(job)
+        assert job.status == "succeeded"
+        assert job.activity_status == "succeeded"
+        assert job.processed_samples == 1
+        assert job.succeeded_samples == 1
+        assert job.failed_samples == 0
+        assert get_active_failed_sample_rerun_job(session, run.benchmarking_run_id) is None
+        assert session.exec(select(FailedSampleRerunJob)).one().rerun_job_id == job.rerun_job_id
 
 
 def test_model_load_failure_marks_unit_failed_without_forecast(tmp_path, monkeypatch):
