@@ -1,6 +1,6 @@
 import { apiRequest } from './client';
 import { type ListParams, buildListQuery } from './shared';
-import type { BenchmarkingRunSummaryDTO, ListResponse, RunProgressDTO } from './types';
+import type { BenchmarkingRunSummaryDTO, FailedSamplesDTO, ListResponse, RerunFailedSamplesDTO, RunProgressDTO } from './types';
 
 export function createRun(payload: { track_id: string; model_ids: string[] }) {
   return apiRequest<{ benchmarking_run_id: string; status: string; created_at?: string }>('/benchmarking-runs', {
@@ -15,6 +15,16 @@ export function getRunProgress(runId: string): Promise<RunProgressDTO> {
 
 export function cancelRun(runId: string) {
   return apiRequest<{ benchmarking_run_id: string; status: string }>(`/benchmarking-runs/${runId}/cancel`, {
+    method: 'POST'
+  });
+}
+
+export function getFailedSamples(runId: string): Promise<FailedSamplesDTO> {
+  return apiRequest<FailedSamplesDTO>(`/benchmarking-runs/${runId}/failed-samples`);
+}
+
+export function rerunFailedSamples(runId: string): Promise<RerunFailedSamplesDTO> {
+  return apiRequest<RerunFailedSamplesDTO>(`/benchmarking-runs/${runId}/failed-samples/rerun`, {
     method: 'POST'
   });
 }

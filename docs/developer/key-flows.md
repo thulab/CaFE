@@ -266,8 +266,8 @@ sequenceDiagram
 ```
 
 - **run 终态判定**（`run_executor.py:112-119`）：统计 unit 状态——全部 succeeded → `succeeded`；只要存在 succeeded 或 partial_succeeded 但未全部成功 → `partial_succeeded`；否则 `failed`。
-- **unit 终态**（`run_executor.py:156`）：所有 task_metric 非 None → `succeeded`，否则 `partial_succeeded`（`stub://fail` 路径直接 `failed`）。
-- **task 终态**（`run_executor.py:192`）：所有 shard_metric 非 None → `succeeded`，否则 `partial_succeeded`。
+- **unit 终态**：所有 task 都有可聚合指标且失败样本数为 0 → `succeeded`；只要存在失败样本或部分 task 无指标 → `partial_succeeded`；模型加载等整体失败路径直接 `failed`。
+- **task 终态**：所有 shard 都有可聚合指标且失败样本数为 0 → `succeeded`；只要存在失败样本或部分 shard 无指标 → `partial_succeeded`。
 - **收尾**：非取消终态才生成报告并回填 `report_id`；`mase / mse / mae` 三张榜单与 run 终态、report_id 在同一次提交中对外可见，避免轮询看到 run 已完成但榜单尚未写入的竞态窗口。`cancelled` run 不生成报告、不刷新榜单。
 
 **取消（cancel_requested）**：`POST /benchmarking-runs/{id}/cancel`（`benchmarking_runs.py` → `cancel_run`）会先从 `RunQueue` 移除非当前运行的 run。排队/未开始 run 直接进入终态 `cancelled`；当前运行中的 run 先置 `cancel_requested=True`、status 置 `cancel_requested` 并发 warning 事件，后台执行器在后续检查点收敛到 `cancelled`。取消 run 不生成 report、不进入榜单；前端继续轮询直到看到 `cancelled`。
@@ -275,6 +275,8 @@ sequenceDiagram
 **服务重启恢复（recover_interrupted_runs）**：`run_executor.py:78` 把所有处于 `queued / running / cancel_requested` 的 run 统一标记为 `failed` 并发 `interrupted_by_server_restart` 事件——因为执行态只存在于内存线程，重启即丢失，故保守地判失败。入口封装在 `workers/lifecycle.py:6` 的 `recover_runs_on_startup`。
 
 **进度查询**：`GET /benchmarking-runs/{id}/progress`（`build_run_progress`，`run_executor.py`）汇总 run/unit/task 计数、各 unit/task 状态、最近 20 条 `RunEvent`、`report_id`，并返回展示态 `activity_status`。顶层 `activity_status` 从最近 run event 和样本进度推导；`units[*].activity_status` 按 `unit_id` 推导每个模型的加载、预测、卸载阶段。运行详情页顶部使用持久 `status` 表达 run 粗状态，单元列表使用 unit 级 `activity_status` 表达模型细状态。
+
+**失败样本查看与重跑**：`GET /benchmarking-runs/{id}/failed-samples` 从 forecast artifact 中扫描 `status=="failed"` 的样本行，返回样本、模型、能力块、shard、错误码和错误信息。`POST /benchmarking-runs/{id}/failed-samples/rerun` 仅允许终态且非 cancelled 的 run：执行器只重跑当前失败行，用新结果覆盖原 forecast 行，然后重建相关 unit/task/sample/shard 指标，重新判定 run 终态，刷新报告与榜单。若重跑后仍有失败行，对应 unit/task 保持 `partial_succeeded`，且由于榜单只接收 `unit.status=="succeeded"` 的指标，该模型不会进入赛道榜。
 
 ### 2.e 模型推理接入
 
@@ -472,6 +474,8 @@ export TSBENCHMARK_MODEL_ADAPTER=rest    # 或 stub（完全进程内，连桩�
 | POST | `/benchmarking-runs` | 创建并调度评测运行 |
 | GET | `/benchmarking-runs` | 分页列 run；可用 `track_id` 过滤，`include_archived=true` 时包含归档资源；列表项含展示态 `activity_status` |
 | GET | `/benchmarking-runs/{benchmarking_run_id}/progress` | 查运行进度，含展示态 `activity_status` |
+| GET | `/benchmarking-runs/{benchmarking_run_id}/failed-samples` | 查 forecast artifact 中的失败样本与错误原因 |
+| POST | `/benchmarking-runs/{benchmarking_run_id}/failed-samples/rerun` | 重跑终态 run 的失败样本并覆盖失败记录 |
 | GET | `/benchmarking-runs/{benchmarking_run_id}/deletion-impact` | 预览删除 run 的影响范围 |
 | POST | `/benchmarking-runs/{benchmarking_run_id}/archive` | 归档终态 run |
 | POST | `/benchmarking-runs/{benchmarking_run_id}/restore` | 恢复 run |

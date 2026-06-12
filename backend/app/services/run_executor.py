@@ -40,6 +40,19 @@ class _ForecastOutcome:
     error_message: str | None = None
 
 
+@dataclass(frozen=True)
+class _ShardExecutionResult:
+    metrics: dict[str, float] | None
+    processed_count: int
+    failed_count: int
+
+
+@dataclass(frozen=True)
+class _TaskExecutionResult:
+    metrics: dict[str, float] | None
+    failed_count: int
+
+
 def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str]) -> BenchmarkingRun:
     if not model_ids:
         raise ApiError("run_requires_model", "benchmarking run requires at least one model")
@@ -390,16 +403,16 @@ def _execute_unit(session: Session, run: BenchmarkingRun, unit: Unit, runtime_di
             _raise_if_cancel_requested(session, run)
 
         tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
-        task_metrics: list[dict[str, float] | None] = []
+        task_results: list[_TaskExecutionResult] = []
         for task in tasks:
             _raise_if_cancel_requested(session, run)
-            task_metrics.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
+            task_results.append(_execute_task(session, run, unit, task, model, runtime_dir, adapter))
             _raise_if_cancel_requested(session, run)
         for metric_name in METRIC_NAMES:
-            aggregated = aggregate_metric(task_metrics, metric_name)
+            aggregated = aggregate_metric([result.metrics for result in task_results], metric_name)
             if aggregated:
                 session.add(_metric(metric_name, "unit", run, unit, None, model.model_id, aggregated["value"]))
-        unit.status = "succeeded" if all(metric is not None for metric in task_metrics) else "partial_succeeded"
+        unit.status = "succeeded" if all(result.metrics is not None and result.failed_count == 0 for result in task_results) else "partial_succeeded"
         unit.finished_at = utc_now()
         session.add(unit)
         session.commit()
@@ -489,7 +502,7 @@ def _fail_unit(session: Session, unit: Unit, code: str, message: str) -> None:
     session.commit()
 
 
-def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
+def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, runtime_dir: Path, adapter: ModelAdapter) -> _TaskExecutionResult:
     task.status = "running"
     task.started_at = utc_now()
     task.processed_sample_count = 0
@@ -499,25 +512,26 @@ def _execute_task(session: Session, run: BenchmarkingRun, unit: Unit, task: Task
     _raise_if_cancel_requested(session, run)
     block = session.get(CapabilityBlock, task.capability_block_id)
     shards = shards_for_capability_block(session, block.capability_block_id)
-    shard_metrics: list[dict[str, float] | None] = []
+    shard_results: list[_ShardExecutionResult] = []
     for shard in shards:
         _raise_if_cancel_requested(session, run)
-        shard_metrics.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir, adapter))
+        shard_results.append(_execute_shard(session, run, unit, task, model, shard, runtime_dir, adapter))
         _raise_if_cancel_requested(session, run)
     task_result: dict[str, float] = {}
     for metric_name in METRIC_NAMES:
-        aggregated = aggregate_metric(shard_metrics, metric_name)
+        aggregated = aggregate_metric([result.metrics for result in shard_results], metric_name)
         if aggregated:
             session.add(_metric(metric_name, "task", run, unit, task, model.model_id, aggregated["value"], capability_block_id=block.capability_block_id))
             task_result[metric_name] = aggregated["value"]
-    task.status = "succeeded" if all(metric is not None for metric in shard_metrics) else "partial_succeeded"
+    failed_count = sum(result.failed_count for result in shard_results)
+    task.status = "succeeded" if all(result.metrics is not None and result.failed_count == 0 for result in shard_results) else "partial_succeeded"
     task.finished_at = utc_now()
     session.add(task)
     session.commit()
-    return task_result or None
+    return _TaskExecutionResult(task_result or None, failed_count)
 
 
-def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, shard: Shard, runtime_dir: Path, adapter: ModelAdapter) -> dict[str, float] | None:
+def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Task, model: Model, shard: Shard, runtime_dir: Path, adapter: ModelAdapter) -> _ShardExecutionResult:
     _raise_if_cancel_requested(session, run)
     samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard.shard_id).order_by(SampleIndex.sample_index)).all()
     store = SampleStore()
@@ -642,7 +656,7 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
             session.add(_metric(metric_name, "shard", run, unit, task, model.model_id, aggregated["value"], shard.shard_id, capability_block_id=task.capability_block_id))
             shard_result[metric_name] = aggregated["value"]
     session.commit()
-    return shard_result or None
+    return _ShardExecutionResult(shard_result or None, processed_count, failed_count)
 
 
 def _forecast_prepared_sample(adapter: ModelAdapter, prepared: _PreparedSample, model_payload: dict, timeout_seconds: int) -> _ForecastOutcome:
@@ -671,6 +685,305 @@ def _record_task_sample_progress(session: Session, task: Task, processed_sample_
     task.updated_at = utc_now()
     session.add(task)
     session.commit()
+
+
+def list_failed_samples(session: Session, run_id: str) -> dict:
+    run = session.get(BenchmarkingRun, run_id)
+    if run is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": "benchmarking_run", "resource_id": run_id}, 404)
+    items: list[dict] = []
+    for artifact in session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)).all():
+        store = ForecastStore(Path(artifact.storage_uri).parent)
+        try:
+            rows = store.read_forecasts(artifact.storage_uri)
+        except FileNotFoundError:
+            continue
+        unit = session.get(Unit, artifact.unit_id)
+        task = session.get(Task, artifact.task_id)
+        model = session.get(Model, artifact.model_id)
+        block = session.get(CapabilityBlock, task.capability_block_id) if task else None
+        for row in rows:
+            if row.get("status") != "failed":
+                continue
+            sample = session.get(SampleIndex, row.get("sample_id"))
+            items.append(
+                {
+                    "forecast_artifact_id": artifact.forecast_artifact_id,
+                    "sample_id": row.get("sample_id"),
+                    "sample_index": sample.sample_index if sample else None,
+                    "model_id": artifact.model_id,
+                    "model_name": model.name if model else artifact.model_id,
+                    "unit_id": artifact.unit_id,
+                    "task_id": artifact.task_id,
+                    "capability_block_id": task.capability_block_id if task else None,
+                    "capability_block_name": block.name if block else None,
+                    "shard_id": artifact.shard_id,
+                    "error_code": row.get("error_code"),
+                    "error_message": row.get("error_message"),
+                    "unit_status": unit.status if unit else None,
+                    "task_status": task.status if task else None,
+                }
+            )
+    items.sort(key=lambda item: (item.get("model_name") or "", item.get("sample_index") is None, item.get("sample_index") or 0, item.get("sample_id") or ""))
+    return {"items": items, "total": len(items)}
+
+
+def rerun_failed_samples(session: Session, run_id: str, runtime_dir: Path) -> dict:
+    run = session.get(BenchmarkingRun, run_id)
+    if run is None:
+        raise ApiError("resource_not_found", "resource not found", {"resource_type": "benchmarking_run", "resource_id": run_id}, 404)
+    if run.status not in _TERMINAL_RUN_STATUSES or run.status == "cancelled":
+        raise ApiError("run_not_terminal", "run must be terminal before rerunning failed samples", {"run_id": run_id, "status": run.status}, 409)
+
+    artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run_id)).all()
+    artifacts_with_failures: list[tuple[ForecastArtifact, list[dict]]] = []
+    for artifact in artifacts:
+        store = ForecastStore(Path(artifact.storage_uri).parent)
+        try:
+            rows = store.read_forecasts(artifact.storage_uri)
+        except FileNotFoundError:
+            continue
+        if any(row.get("status") == "failed" for row in rows):
+            artifacts_with_failures.append((artifact, rows))
+    if not artifacts_with_failures:
+        return {"rerun_samples": 0, "remaining_failed_samples": 0}
+
+    settings = get_settings()
+    adapter = get_model_adapter(settings)
+    touched_unit_ids: set[str] = set()
+    rerun_count = 0
+    for artifact, rows in artifacts_with_failures:
+        unit = session.get(Unit, artifact.unit_id)
+        model = session.get(Model, artifact.model_id)
+        model_payload = {
+            "model_id": artifact.model_id,
+            "remote_model_id": remote_model_id(model) if model else artifact.model_id,
+            "stub_seed": model.stub_seed if model else 0,
+        }
+        load_error: Exception | None = None
+        ensure_model_loaded = getattr(adapter, "ensure_model_loaded", None)
+        if model is None:
+            load_error = RuntimeError(f"model not found: {artifact.model_id}")
+        elif ensure_model_loaded is not None:
+            try:
+                ensure_model_loaded(model_payload, timeout_seconds=settings.timer_service_model_load_timeout_seconds)
+            except Exception as error:  # noqa: BLE001 - rerun records failures per sample instead of aborting the whole request
+                load_error = error
+        updated_rows: list[dict] = []
+        for row in rows:
+            if row.get("status") != "failed":
+                updated_rows.append(row)
+                continue
+            rerun_count += 1
+            if load_error is not None:
+                updated_rows.append(_failed_record_from_existing(row, "model_load_error", str(load_error)))
+                continue
+            try:
+                prepared = _prepare_sample_by_id(session, str(row.get("sample_id")))
+                outcome = _forecast_prepared_sample(adapter, prepared, model_payload, settings.sample_forecast_timeout_seconds)
+                updated_rows.append(_record_from_rerun_outcome(run, unit, artifact, prepared, outcome))
+            except Exception as error:  # noqa: BLE001 - one corrupt sample should not block other failed samples
+                updated_rows.append(_failed_record_from_existing(row, "rerun_error", str(error)))
+        store = ForecastStore(Path(artifact.storage_uri).parent)
+        artifact.sample_count, artifact.checksum = store.overwrite_forecasts(artifact.storage_uri, updated_rows)
+        session.add(artifact)
+        touched_unit_ids.add(artifact.unit_id)
+        if unit is not None and _uses_sequential_model_lifecycle(settings):
+            _unload_model_after_unit(session, run, unit, model_payload, adapter, settings.timer_service_model_load_timeout_seconds)
+    if touched_unit_ids:
+        _rebuild_metrics_for_units(session, run, touched_unit_ids)
+        _finalize_run_after_rerun(session, run, runtime_dir)
+    remaining_failed = list_failed_samples(session, run_id)["total"]
+    return {"rerun_samples": rerun_count, "remaining_failed_samples": remaining_failed}
+
+
+def _prepare_sample_by_id(session: Session, sample_id: str) -> _PreparedSample:
+    sample_index = session.get(SampleIndex, sample_id)
+    if sample_index is None:
+        raise ApiError("sample_not_found", "sample not found", {"sample_id": sample_id}, 404)
+    sample = SampleStore().read_by_ref(session, sample_index.storage_ref)
+    return _PreparedSample(
+        sample_id=sample_index.sample_id,
+        sample_index=sample_index.sample_index,
+        sample=sample,
+        model_input=build_model_input(sample),
+    )
+
+
+def _record_from_rerun_outcome(
+    run: BenchmarkingRun,
+    unit: Unit | None,
+    artifact: ForecastArtifact,
+    prepared: _PreparedSample,
+    outcome: _ForecastOutcome,
+) -> dict:
+    if outcome.error_code:
+        return _failed_forecast_record(run, unit, artifact, prepared, outcome.error_code, outcome.error_message or "")
+    try:
+        metrics = compute_sample_metrics(prepared.sample["target_future"], outcome.forecast or [], prepared.sample["target_history"])
+    except Exception as error:  # noqa: BLE001
+        return _failed_forecast_record(run, unit, artifact, prepared, "metric_error", str(error))
+    return {
+        "schema_version": "forecast.v1",
+        "benchmarking_run_id": run.benchmarking_run_id,
+        "unit_id": unit.unit_id if unit else artifact.unit_id,
+        "task_id": artifact.task_id,
+        "model_id": artifact.model_id,
+        "shard_id": artifact.shard_id,
+        "sample_id": prepared.sample_id,
+        "status": "succeeded",
+        "forecast": outcome.forecast,
+        "future_timestamps": prepared.sample["future_timestamps"],
+        "metrics": metrics,
+        "error_code": None,
+        "error_message": None,
+    }
+
+
+def _failed_forecast_record(
+    run: BenchmarkingRun,
+    unit: Unit | None,
+    artifact: ForecastArtifact,
+    prepared: _PreparedSample,
+    error_code: str,
+    error_message: str,
+) -> dict:
+    return {
+        "schema_version": "forecast.v1",
+        "benchmarking_run_id": run.benchmarking_run_id,
+        "unit_id": unit.unit_id if unit else artifact.unit_id,
+        "task_id": artifact.task_id,
+        "model_id": artifact.model_id,
+        "shard_id": artifact.shard_id,
+        "sample_id": prepared.sample_id,
+        "status": "failed",
+        "forecast": None,
+        "future_timestamps": prepared.sample["future_timestamps"],
+        "metrics": {},
+        "error_code": error_code,
+        "error_message": error_message,
+    }
+
+
+def _failed_record_from_existing(row: dict, error_code: str, error_message: str) -> dict:
+    return {
+        **row,
+        "status": "failed",
+        "forecast": None,
+        "metrics": {},
+        "error_code": error_code,
+        "error_message": error_message,
+    }
+
+
+def _rebuild_metrics_for_units(session: Session, run: BenchmarkingRun, unit_ids: set[str]) -> None:
+    existing = session.exec(
+        select(MetricResult).where(
+            MetricResult.benchmarking_run_id == run.benchmarking_run_id,
+            MetricResult.unit_id.in_(unit_ids),
+        )
+    ).all()
+    for metric in existing:
+        session.delete(metric)
+    session.flush()
+    for unit_id in unit_ids:
+        unit = session.get(Unit, unit_id)
+        if unit is None:
+            continue
+        task_results: list[_TaskExecutionResult] = []
+        tasks = session.exec(select(Task).where(Task.unit_id == unit_id)).all()
+        for task in tasks:
+            task_results.append(_rebuild_task_metrics_from_artifacts(session, run, unit, task))
+        for metric_name in METRIC_NAMES:
+            aggregated = aggregate_metric([result.metrics for result in task_results], metric_name)
+            if aggregated:
+                session.add(_metric(metric_name, "unit", run, unit, None, unit.model_id, aggregated["value"]))
+        if all(result.metrics is not None and result.failed_count == 0 for result in task_results):
+            unit.status = "succeeded"
+        elif any(result.metrics is not None or result.failed_count > 0 for result in task_results):
+            unit.status = "partial_succeeded"
+        else:
+            unit.status = "failed"
+        unit.finished_at = utc_now()
+        unit.updated_at = utc_now()
+        session.add(unit)
+    session.commit()
+
+
+def _rebuild_task_metrics_from_artifacts(session: Session, run: BenchmarkingRun, unit: Unit, task: Task) -> _TaskExecutionResult:
+    artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.task_id == task.task_id)).all()
+    shard_results: list[_ShardExecutionResult] = []
+    processed_total = 0
+    failed_total = 0
+    for artifact in artifacts:
+        rows = ForecastStore(Path(artifact.storage_uri).parent).read_forecasts(artifact.storage_uri)
+        sample_metrics: list[dict[str, float] | None] = []
+        processed = 0
+        failed = 0
+        for row in rows:
+            if row.get("status") == "succeeded":
+                processed += 1
+                metrics = {key: float(value) for key, value in (row.get("metrics") or {}).items()}
+                sample_metrics.append(metrics)
+                for metric_name, value in metrics.items():
+                    session.add(_metric(metric_name, "sample", run, unit, task, artifact.model_id, value, artifact.shard_id, row.get("sample_id"), task.capability_block_id))
+            elif row.get("status") == "failed":
+                processed += 1
+                failed += 1
+                sample_metrics.append(None)
+        shard_result: dict[str, float] = {}
+        for metric_name in METRIC_NAMES:
+            aggregated = aggregate_metric(sample_metrics, metric_name)
+            if aggregated:
+                session.add(_metric(metric_name, "shard", run, unit, task, artifact.model_id, aggregated["value"], artifact.shard_id, capability_block_id=task.capability_block_id))
+                shard_result[metric_name] = aggregated["value"]
+        shard_results.append(_ShardExecutionResult(shard_result or None, processed, failed))
+        processed_total += processed
+        failed_total += failed
+    task_result: dict[str, float] = {}
+    for metric_name in METRIC_NAMES:
+        aggregated = aggregate_metric([result.metrics for result in shard_results], metric_name)
+        if aggregated:
+            session.add(_metric(metric_name, "task", run, unit, task, task.model_id, aggregated["value"], capability_block_id=task.capability_block_id))
+            task_result[metric_name] = aggregated["value"]
+    task.processed_sample_count = processed_total
+    task.failed_sample_count = failed_total
+    if all(result.metrics is not None and result.failed_count == 0 for result in shard_results):
+        task.status = "succeeded"
+        task.error_code = None
+        task.error_message = None
+    elif processed_total > 0:
+        task.status = "partial_succeeded"
+    else:
+        task.status = "failed"
+    task.finished_at = utc_now()
+    task.updated_at = utc_now()
+    session.add(task)
+    return _TaskExecutionResult(task_result or None, failed_total)
+
+
+def _finalize_run_after_rerun(session: Session, run: BenchmarkingRun, runtime_dir: Path) -> None:
+    units = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).all()
+    statuses = [unit.status for unit in units]
+    succeeded = len([status for status in statuses if status == "succeeded"])
+    partial = len([status for status in statuses if status == "partial_succeeded"])
+    if succeeded == len(statuses):
+        terminal_status = "succeeded"
+    elif succeeded or partial:
+        terminal_status = "partial_succeeded"
+    else:
+        terminal_status = "failed"
+    run.status = terminal_status
+    run.finished_at = utc_now()
+    run.updated_at = utc_now()
+    session.add(RunEvent(benchmarking_run_id=run.benchmarking_run_id, message=f"failed samples rerun; run {terminal_status}"))
+    session.add(run)
+    from app.services.ranking_service import refresh_ranking
+    from app.services.report_service import generate_run_report
+
+    for metric_id in METRIC_NAMES:
+        refresh_ranking(session, run.track_id, metric_id, commit=False)
+    generate_run_report(session, run.benchmarking_run_id, runtime_dir)
 
 
 def _metric(

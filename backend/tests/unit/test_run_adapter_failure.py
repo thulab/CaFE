@@ -12,7 +12,8 @@ from sqlmodel import Session, create_engine, select
 from app.db.init_db import init_db
 from app.models.benchmark import ForecastArtifact, Task, Unit
 from app.services.forecast_store import ForecastStore
-from app.services.run_executor import create_benchmarking_run, execute_run
+from app.services.ranking_service import query_ranking
+from app.services.run_executor import create_benchmarking_run, execute_run, list_failed_samples, rerun_failed_samples
 from app.services.stub_timer_adapter import StubTimerAdapter
 from app.workers.run_queue import RunQueue
 from tests.run_helpers import create_loaded_track_with_models
@@ -97,6 +98,13 @@ def test_sample_metric_error_marks_only_that_sample_failed_and_continues(tmp_pat
 
         execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
 
+        session.refresh(run)
+        unit = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).one()
+        task = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).one()
+        assert run.status == "partial_succeeded"
+        assert unit.status == "partial_succeeded"
+        assert task.status == "partial_succeeded"
+
         artifacts = session.exec(
             select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)
         ).all()
@@ -106,6 +114,53 @@ def test_sample_metric_error_marks_only_that_sample_failed_and_continues(tmp_pat
         failed = next(row for row in rows if row["status"] == "failed")
         assert failed["error_code"] == "metric_error"
         assert "same flattened length" in failed["error_message"]
+        assert query_ranking(session, track.track_id, "mse", "latest_valid_result") == []
+
+
+def test_failed_samples_can_be_inspected_and_rerun_into_valid_ranking(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track, _ranking, models = create_loaded_track_with_models(session, tmp_path / "runtime", model_count=1)
+        run = create_benchmarking_run(session, track.track_id, [models[0].model_id])
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: _FirstBadShapeAdapter(),
+        )
+
+        execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        failures = list_failed_samples(session, run.benchmarking_run_id)
+        assert failures["total"] == 1
+        assert failures["items"][0]["model_id"] == models[0].model_id
+        assert failures["items"][0]["error_code"] == "metric_error"
+        assert "same flattened length" in failures["items"][0]["error_message"]
+        assert query_ranking(session, track.track_id, "mse", "latest_valid_result") == []
+
+        monkeypatch.setattr(
+            "app.services.run_executor.get_model_adapter",
+            lambda settings: StubTimerAdapter(),
+        )
+
+        result = rerun_failed_samples(session, run.benchmarking_run_id, tmp_path / "runtime")
+
+        session.refresh(run)
+        unit = session.exec(select(Unit).where(Unit.benchmarking_run_id == run.benchmarking_run_id)).one()
+        task = session.exec(select(Task).where(Task.benchmarking_run_id == run.benchmarking_run_id)).one()
+        assert result == {"rerun_samples": 1, "remaining_failed_samples": 0}
+        assert list_failed_samples(session, run.benchmarking_run_id) == {"items": [], "total": 0}
+        assert run.status == "succeeded"
+        assert unit.status == "succeeded"
+        assert task.status == "succeeded"
+        assert task.failed_sample_count == 0
+        assert query_ranking(session, track.track_id, "mse", "latest_valid_result")
+
+        artifacts = session.exec(
+            select(ForecastArtifact).where(ForecastArtifact.benchmarking_run_id == run.benchmarking_run_id)
+        ).all()
+        rows = _all_forecast_rows(tmp_path / "runtime" / "forecasts", artifacts)
+        assert all(row["status"] == "succeeded" for row in rows)
 
 
 def test_model_load_failure_marks_unit_failed_without_forecast(tmp_path, monkeypatch):

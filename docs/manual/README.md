@@ -232,7 +232,7 @@ http://127.0.0.1:5173
 
    如果第 2 步选择复用已有集合，本步只显示提示并继续到已有测试用例集选择。
 4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列、能力维度或 ID，并追加已有集合。列表详情会显示真实/合成类型、样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列，合成集合还会显示能力、难度和 seed。点「Create track from selected sets」后，系统基于所选集合创建评测赛道与默认榜单；合成集合会按能力维度自动拆成多个 capability block。
-5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数；样本进度按 `processed_samples`（成功 + 失败）推进，`completed_samples` 仅表示成功样本。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。运行期间可点「Cancel」请求取消，页面会显示「正在取消」并继续轮询直到 run 变为 `cancelled`。
+5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数；样本进度按 `processed_samples`（成功 + 失败）推进，`completed_samples` 仅表示成功样本。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。若「失败样本」大于 0，可点击数字查看样本、模型、能力块和错误原因；终态后有权限的用户可点「重跑失败样本」，重跑结果会覆盖原失败行，并重新计算运行状态、报告和榜单。运行期间可点「Cancel」请求取消，页面会显示「正在取消」并继续轮询直到 run 变为 `cancelled`。
 6. **Open report**：run 到达非取消终态（`succeeded` / `partial_succeeded` / `failed`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。`cancelled` run 不生成报告、不进入榜单，可从「Run detail」查看取消事件和已处理进度。
 
 使用示例 CSV 和默认参数 `Context=6 / Horizon=3 / Stride=3` 时，应生成 **4 个 sample**（窗口长度 `6+3=9`，从第 0 行起按步长 3 滑动，起点为 0/3/6/9）。

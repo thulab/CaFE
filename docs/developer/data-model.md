@@ -468,13 +468,13 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 - `"running"`：开始执行（`run_executor.py:101`）。
 - `"cancel_requested"`：运行中 run 已收到取消请求，执行器会在模型生命周期、unit/task/shard/sample 调度边界协作式停止。
 - `"cancelled"`：排队/未开始 run 被直接取消，或运行中 run 已确认取消并停止调度；取消 run 不生成 report，也不刷新榜单。
-- `"succeeded"`：全部 unit 成功（`run_executor.py:117`）。
-- `"partial_succeeded"`：部分 unit 成功、部分失败（`run_executor.py:115`）。
+- `"succeeded"`：全部 unit 成功。
+- `"partial_succeeded"`：部分 unit 成功、部分失败，或存在带失败样本的 partial unit。
 - `"failed"`：全部失败，或服务重启时把未完成 run 标记失败（`run_executor.py:83,119`）。
 
 > 归档状态不写入 `BenchmarkingRun.status`，而是由 `ArchivedResource(resource_type="benchmarking_run")` 表达。归档/永久删除 run 前必须已进入终态：`succeeded`、`partial_succeeded`、`failed` 或 `cancelled`。
 
-正常执行的终态判定逻辑：统计 `unit.status`——全部 `succeeded` → `succeeded`；存在 `succeeded` 或 `partial_succeeded` 但未全部成功 → `partial_succeeded`；否则 → `failed`。取消路径绕过该判定，直接落 `cancelled`。
+正常执行的终态判定逻辑：统计 `unit.status`——全部 `succeeded` → `succeeded`；存在 `succeeded` 或 `partial_succeeded` 但未全部成功 → `partial_succeeded`；否则 → `failed`。单样本推理/指标失败不会中断后续样本，但会让对应 task/unit 进入 `partial_succeeded`，因此该模型评测单元不进入榜单。取消路径绕过该判定，直接落 `cancelled`。
 
 ### 4.2 Unit
 
@@ -496,8 +496,8 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 **status 取值**（来自 `run_executor.py`）：
 - `"created"`：默认值（`models/benchmark.py:67`），创建 unit 时未显式改写。
 - `"running"`：开始执行 unit（`run_executor.py:138`）。
-- `"succeeded"`：所有 task metric 非空（`run_executor.py:156`）。
-- `"partial_succeeded"`：部分 task 成功（`run_executor.py:156`）。
+- `"succeeded"`：所有 task 都有可聚合指标，且失败样本数为 0。
+- `"partial_succeeded"`：部分 task 成功，或存在失败样本。
 - `"failed"`：`_fail_unit` 整体失败（`run_executor.py:170`，如 `endpoint_uri=="stub://fail"`）。
 - `"cancelled"`：run 取消确认时，尚未到达终态的 unit 会被置为 cancelled。
 
@@ -530,8 +530,8 @@ per-shard 原始序列的**逐点行存储**，是样本值的 SQLite 单一真�
 **status 取值**（来自 `run_executor.py`）：
 - `"created"`：默认值（`models/benchmark.py:82`）。
 - `"running"`：开始执行 task（`run_executor.py:177`）。
-- `"succeeded"`：所有 shard metric 非空（`run_executor.py:192`）。
-- `"partial_succeeded"`：部分 shard 成功（`run_executor.py:192`）。
+- `"succeeded"`：所有 shard 都有可聚合指标，且失败样本数为 0。
+- `"partial_succeeded"`：部分 shard 成功，或存在失败样本。
 - `"failed"`：随 unit 失败被批量置位，并写入 `error_code`/`error_message`（`run_executor.py:165-167`）。
 - `"cancelled"`：run 取消确认时，尚未到达终态的 task 会被置为 cancelled。
 
@@ -828,6 +828,8 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 > spec §3.2 / §7 还提到 `SampleForecastDTO`、`RunProgressDTO` 等读模型，但当前它们没有独立的 schema 类——而是由 service 直接构造 `dict` 返回（`build_sample_forecast`、`build_run_progress`）。
 
 `RunProgressDTO` 顶层包含持久状态 `status` 与 run 级展示态 `activity_status`。`activity_status` 由最近 run event 和样本进度推导，可显示 `model_loading`、`forecasting`、`model_unloading`、`finalizing` 等，不改变 run 状态机；模型 `model_loaded` 后、第一条样本进度落盘前也显示 `forecasting`，避免界面退回普通 `running`。`RunProgressDTO.units[*]` 也包含按 `unit_id` 推导的 `activity_status`，供运行详情页“单元”列表显示每个模型的加载/预测/卸载阶段；unit 级推导会让 `model_unload_started` 等模型生命周期事件优先于 unit 已落盘的终态展示。`RunProgressDTO.progress` 当前包含 `total_models/completed_models`、`total_tasks/completed_tasks`、`total_samples/completed_samples/failed_samples/processed_samples`。其中 `processed_samples = completed_samples + failed_samples`，用于前端进度条；`completed_samples` 只统计成功产出 forecast 的样本。`RunProgressDTO.tasks[*]` 同理返回 `completed_sample_count`、`failed_sample_count`、`processed_sample_count`。
+
+`FailedSamplesDTO` 由 `list_failed_samples` 直接构造：扫描 run 的 `ForecastArtifact.storage_uri`，返回 `status=="failed"` 的 forecast 行，并补充 `sample_index`、`model_name`、`capability_block_name`、`unit_status`、`task_status` 等展示字段。`rerun_failed_samples` 只覆盖这些失败行；覆盖后会重建相关指标、更新 task/unit/run 状态、刷新报告与榜单。
 
 `GET /benchmarking-runs` 的列表项在 run 表字段之外也返回 `activity_status`，使用同一套展示态推导逻辑，供工作台运行列表和赛道详情运行列表显示“模型加载中/预测中/模型卸载中”等阶段。
 

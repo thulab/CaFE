@@ -165,6 +165,33 @@ export interface RunProgressDTO {
   archived_at?: string | null;
 }
 
+export interface FailedSampleDTO {
+  forecast_artifact_id: string;
+  sample_id: string;
+  sample_index?: number | null;
+  model_id: string;
+  model_name?: string | null;
+  unit_id: string;
+  task_id: string;
+  capability_block_id?: string | null;
+  capability_block_name?: string | null;
+  shard_id: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  unit_status?: string | null;
+  task_status?: string | null;
+}
+
+export interface FailedSamplesDTO {
+  items: FailedSampleDTO[];
+  total: number;
+}
+
+export interface RerunFailedSamplesDTO {
+  rerun_samples: number;
+  remaining_failed_samples: number;
+}
+
 export interface RankingDTO {
   track_id?: string;
   ranking_list_id?: string | null;

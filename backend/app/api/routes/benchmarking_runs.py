@@ -20,7 +20,15 @@ from app.services.resource_lifecycle import (
     row_with_archive,
     visible_rows,
 )
-from app.services.run_executor import build_run_activity_status, build_run_progress, cancel_run, create_benchmarking_run, execute_run
+from app.services.run_executor import (
+    build_run_activity_status,
+    build_run_progress,
+    cancel_run,
+    create_benchmarking_run,
+    execute_run,
+    list_failed_samples,
+    rerun_failed_samples,
+)
 from app.workers.run_queue import RunQueue
 
 router = make_router(prefix="/benchmarking-runs", tags=["benchmarking-runs"])
@@ -121,6 +129,16 @@ def get_run_progress(benchmarking_run_id: str, session: Session = Depends(get_db
     data = build_run_progress(session, benchmarking_run_id)
     data["archived_at"] = archived_at(session, RESOURCE_RUN, benchmarking_run_id)
     return data
+
+
+@router.get("/{benchmarking_run_id}/failed-samples", tier="authed")
+def get_failed_samples(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return list_failed_samples(session, benchmarking_run_id)
+
+
+@router.post("/{benchmarking_run_id}/failed-samples/rerun", tier="perm", perm="run.execute")
+def rerun_failed_run_samples(benchmarking_run_id: str, session: Session = Depends(get_db_session)) -> dict:
+    return rerun_failed_samples(session, benchmarking_run_id, get_settings().runtime_dir)
 
 
 @router.post("/{benchmarking_run_id}/cancel", tier="perm", perm="run.cancel")

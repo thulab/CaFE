@@ -37,12 +37,72 @@
             <span class="stat-value">{{ formatInt(p.processed_samples ?? p.completed_samples ?? 0) }}<span class="faint" style="font-size:1rem"> / {{ formatInt(p.total_samples ?? 0) }}</span></span>
             <div class="progress" style="margin-top:8px"><span :style="{ width: pct(p.processed_samples ?? p.completed_samples, p.total_samples) + '%' }" /></div>
           </div>
-          <div class="stat-tile">
+          <button class="stat-tile stat-action" type="button" :disabled="(p.failed_samples ?? 0) <= 0" @click="openFailedSamples">
             <span class="stat-label">{{ t('runs.detail.failedSamples') }}</span>
             <span class="stat-value" :style="(p.failed_samples ?? 0) > 0 ? 'color:var(--danger-text)' : ''">{{ formatInt(p.failed_samples ?? 0) }}</span>
-            <span class="stat-foot">{{ t('runs.detail.acrossAllModels') }}</span>
-          </div>
+            <span class="stat-foot">{{ (p.failed_samples ?? 0) > 0 ? t('runs.detail.viewFailureReasons') : t('runs.detail.acrossAllModels') }}</span>
+          </button>
         </div>
+
+        <article v-if="failedSamplesOpen" class="card">
+          <header class="card-head">
+            <h2 class="card-title">{{ t('runs.detail.failedSampleReasons') }}</h2>
+            <div class="head-actions">
+              <span class="badge danger">{{ formatInt(failedSamples.length) }}</span>
+              <button class="btn ghost sm" type="button" :disabled="failedSamplesLoading" @click="loadFailedSamples">
+                <Icon name="refresh" :size="14" /> {{ t('common.retry') }}
+              </button>
+              <button v-if="canRerunFailures" class="btn secondary sm" type="button" :disabled="rerunBusy" @click="onRerunFailedSamples">
+                <span v-if="rerunBusy" class="spinner" />
+                <Icon v-else name="refresh" :size="14" /> {{ t('runs.detail.rerunFailedSamples') }}
+              </button>
+            </div>
+          </header>
+          <div class="card-body">
+            <p v-if="rerunMessage" class="note-success"><Icon name="checkCircle" :size="16" />{{ rerunMessage }}</p>
+            <StateBlock
+              :loading="failedSamplesLoading"
+              :error="failedSamplesError || ''"
+              :empty="!failedSamplesLoading && !failedSamplesError && failedSamples.length === 0"
+              empty-icon="checkCircle"
+              :empty-title="t('runs.detail.noFailedSamples')"
+              :empty-desc="t('runs.detail.noFailedSamplesDesc')"
+              @retry="loadFailedSamples"
+            >
+              <div class="table-wrap">
+                <table class="data table-fixed">
+                  <thead>
+                    <tr>
+                      <th class="col-14">{{ t('runs.detail.sample') }}</th>
+                      <th class="col-20">{{ t('runs.detail.model') }}</th>
+                      <th class="col-20">{{ t('runs.detail.capability') }}</th>
+                      <th class="col-14">{{ t('runs.detail.errorCode') }}</th>
+                      <th class="col-24">{{ t('runs.detail.errorReason') }}</th>
+                      <th class="col-8">{{ t('common.actions') }}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="item in failedSamples" :key="`${item.forecast_artifact_id}-${item.sample_id}`">
+                      <td>
+                        <span class="cell-wrap" style="font-weight:600">{{ failedSampleLabel(item) }}</span>
+                        <div class="faint mono cell-id">{{ shortId(item.sample_id) }}</div>
+                      </td>
+                      <td><span class="cell-wrap" :title="item.model_name || item.model_id">{{ item.model_name || item.model_id }}</span></td>
+                      <td><span class="cell-wrap" :title="item.capability_block_name || item.capability_block_id || ''">{{ item.capability_block_name || item.capability_block_id || t('common.notAvailable') }}</span></td>
+                      <td><span class="cell-wrap mono">{{ item.error_code || t('common.notAvailable') }}</span></td>
+                      <td><span class="cell-wrap" :title="item.error_message || ''">{{ item.error_message || t('common.notAvailable') }}</span></td>
+                      <td>
+                        <a class="btn secondary sm" :href="sampleHref(item)">
+                          <Icon name="lineChart" :size="14" /> {{ t('common.open') }}
+                        </a>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </StateBlock>
+          </div>
+        </article>
 
         <article class="card">
           <header class="card-head"><h2 class="card-title">{{ t('runs.detail.units') }}</h2><span class="badge">{{ formatInt(progress.units.length) }}</span></header>
@@ -118,12 +178,13 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import { ApiError } from '../api/client';
-import { cancelRun, getRunProgress } from '../api/runs';
-import type { RunProgressDTO } from '../api/types';
+import { cancelRun, getFailedSamples, getRunProgress, rerunFailedSamples } from '../api/runs';
+import type { FailedSampleDTO, RunProgressDTO } from '../api/types';
 import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { percent, shortId } from '../lib/format';
+import { has } from '../stores/auth';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{ runId: string }>();
@@ -132,9 +193,15 @@ const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 const progress = ref<RunProgressDTO | null>(null);
 const loading = ref(true);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
+const { text: failedSamplesError, clear: clearFailedSamplesError, setError: setFailedSamplesError } = useDisplayMessage();
 let timer: ReturnType<typeof setInterval> | undefined;
 const { t } = useI18n();
 const { formatDateTime, formatInt, timeAgo } = useFormat();
+const failedSamplesOpen = ref(false);
+const failedSamplesLoading = ref(false);
+const failedSamples = ref<FailedSampleDTO[]>([]);
+const rerunBusy = ref(false);
+const rerunMessage = ref('');
 const dialog = reactive<{ open: boolean; action: LifecycleAction }>({
   open: false,
   action: 'archive',
@@ -146,6 +213,7 @@ const isPolling = computed(() => Boolean(progress.value) && !TERMINAL.includes(p
 // 可发起取消：仅 queued / running；cancel_requested 已经请求过了，不再可点。
 const canCancel = computed(() => progress.value?.status === 'queued' || progress.value?.status === 'running');
 const isCancelling = computed(() => progress.value?.status === 'cancel_requested');
+const canRerunFailures = computed(() => has('run.execute') && failedSamples.value.length > 0 && !isPolling.value);
 
 onMounted(load);
 onBeforeUnmount(stopPolling);
@@ -179,6 +247,41 @@ async function onCancel() {
   }
 }
 
+async function openFailedSamples() {
+  if ((p.value.failed_samples ?? 0) <= 0) return;
+  failedSamplesOpen.value = true;
+  await loadFailedSamples();
+}
+
+async function loadFailedSamples() {
+  failedSamplesLoading.value = true;
+  clearFailedSamplesError();
+  rerunMessage.value = '';
+  try {
+    failedSamples.value = (await getFailedSamples(props.runId)).items;
+  } catch (e) {
+    setFailedSamplesError(e, 'runs.detail.errors.failedToLoadFailedSamples');
+  } finally {
+    failedSamplesLoading.value = false;
+  }
+}
+
+async function onRerunFailedSamples() {
+  rerunBusy.value = true;
+  clearFailedSamplesError();
+  rerunMessage.value = '';
+  try {
+    const result = await rerunFailedSamples(props.runId);
+    await load();
+    await loadFailedSamples();
+    rerunMessage.value = t('runs.detail.rerunComplete', { count: formatInt(result.rerun_samples), remaining: formatInt(result.remaining_failed_samples) });
+  } catch (e) {
+    setFailedSamplesError(e, 'runs.detail.errors.failedToRerunFailedSamples');
+  } finally {
+    rerunBusy.value = false;
+  }
+}
+
 function stopPolling() {
   if (timer) clearInterval(timer);
   timer = undefined;
@@ -190,4 +293,13 @@ function openLifecycle(action: LifecycleAction) {
 }
 
 const pct = (a: unknown, b: unknown) => percent(Number(a ?? 0), Number(b ?? 0));
+
+function failedSampleLabel(item: FailedSampleDTO) {
+  if (typeof item.sample_index === 'number') return t('results.sampleWindowLabel', { index: item.sample_index + 1 });
+  return t('results.sampleFallbackLabel', { id: shortId(item.sample_id) });
+}
+
+function sampleHref(item: FailedSampleDTO) {
+  return `#/samples/${encodeURIComponent(item.sample_id)}?run_id=${encodeURIComponent(props.runId)}${progress.value?.report_id ? `&report_id=${encodeURIComponent(progress.value.report_id)}` : ''}`;
+}
 </script>

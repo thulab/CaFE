@@ -260,6 +260,68 @@ describe('workspace pages', () => {
     expect(screen.getByText('run active')).toBeTruthy();
   });
 
+  it('RunDetailPage opens failed sample reasons and reruns failures', async () => {
+    let failedCount = 1;
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const path = url.replace(/^\/api/, '').split('?')[0];
+      if (path === '/benchmarking-runs/run-failed/progress') {
+        return jsonResponse({
+          benchmarking_run_id: 'run-failed',
+          status: failedCount > 0 ? 'partial_succeeded' : 'succeeded',
+          progress: { total_models: 1, completed_models: 1, total_tasks: 1, completed_tasks: 1, total_samples: 4, completed_samples: 4 - failedCount, processed_samples: 4, failed_samples: failedCount },
+          units: [{ unit_id: 'unit-1', model_id: 'm1', model_name: 'Timer 3.5', status: failedCount > 0 ? 'partial_succeeded' : 'succeeded', task_count: 1, completed_task_count: 1, metrics: {} }],
+          tasks: [{ task_id: 'task-1', unit_id: 'unit-1', model_id: 'm1', capability_block_id: 'block-1', capability_block_name: 'Real data', status: failedCount > 0 ? 'partial_succeeded' : 'succeeded', shard_count: 1, sample_count: 4, completed_sample_count: 4 - failedCount, processed_sample_count: 4, metrics: {} }],
+          recent_events: [],
+          report_id: 'rep-1',
+          ranking_list_id: 'rank-1'
+        });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples' && init?.method !== 'POST') {
+        return jsonResponse({
+          total: failedCount,
+          items: failedCount > 0
+            ? [{
+                forecast_artifact_id: 'artifact-1',
+                sample_id: 'sample-1',
+                sample_index: 2,
+                model_id: 'm1',
+                model_name: 'Timer 3.5',
+                unit_id: 'unit-1',
+                task_id: 'task-1',
+                capability_block_id: 'block-1',
+                capability_block_name: 'Real data',
+                shard_id: 'shard-1',
+                error_code: 'metric_error',
+                error_message: 'forecast and target must have the same flattened length'
+              }]
+            : []
+        });
+      }
+      if (path === '/benchmarking-runs/run-failed/failed-samples/rerun' && init?.method === 'POST') {
+        failedCount = 0;
+        return jsonResponse({ rerun_samples: 1, remaining_failed_samples: 0 });
+      }
+      return jsonResponse({});
+    });
+
+    render(RunDetailPage, { props: { runId: 'run-failed' }, global: { plugins: [i18n] } });
+
+    await fireEvent.click(await screen.findByRole('button', { name: /Failed samples/ }));
+
+    expect(await screen.findByText('Failed sample reasons')).toBeTruthy();
+    expect(await screen.findByText('metric_error')).toBeTruthy();
+    expect(await screen.findByText('forecast and target must have the same flattened length')).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Rerun failed samples' }));
+
+    await waitFor(() => {
+      expect(fetchSpy.mock.calls.some((call) => String(call[0]) === '/api/benchmarking-runs/run-failed/failed-samples/rerun' && call[1]?.method === 'POST')).toBe(true);
+    });
+    expect(await screen.findByText('Reran 1 failed samples; 0 still failing.')).toBeTruthy();
+    expect(await screen.findByText('No failed samples')).toBeTruthy();
+  });
+
   it('renders workspace page chrome in Chinese when locale changes', async () => {
     setLocale('zh-CN');
     stubBackend({});

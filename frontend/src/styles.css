@@ -875,6 +875,25 @@ textarea:focus {
   gap: 4px;
 }
 
+.stat-tile.stat-action {
+  width: 100%;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.stat-tile.stat-action:hover:not(:disabled) {
+  border-color: var(--primary-border);
+  background: var(--surface-hover);
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-tile.stat-action:disabled {
+  cursor: default;
+}
+
 .stat-tile .stat-label {
   color: var(--text-subtle);
   font-size: 0.76rem;

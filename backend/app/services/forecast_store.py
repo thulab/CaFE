@@ -58,3 +58,13 @@ class ForecastStore:
     def read_forecasts(self, storage_uri: str | Path) -> list[dict[str, Any]]:
         with Path(storage_uri).open(encoding="utf-8") as file:
             return [json.loads(line) for line in file]
+
+    def overwrite_forecasts(self, storage_uri: str | Path, records: list[dict[str, Any]]) -> tuple[int, str]:
+        output = Path(storage_uri)
+        checksum = hashlib.sha256()
+        with output.open("w", encoding="utf-8") as file:
+            for record in records:
+                line = canonical_json(record)
+                checksum.update(line.encode("utf-8"))
+                file.write(line + "\n")
+        return len(records), checksum.hexdigest()
