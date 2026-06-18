@@ -1,5 +1,6 @@
 import json
 
+import pytest
 from sqlmodel import Session, create_engine
 from sqlmodel import select
 
@@ -7,6 +8,7 @@ from app.db.init_db import init_db
 from app.models.benchmark import BenchmarkingRun, CapabilityBlock, ForecastArtifact, Task, Track, Unit
 from app.models.metric import MetricResult
 from app.models.model_registry import Model
+from app.models.report import Report
 from app.models.sample import SampleIndex
 from app.services.report_service import generate_run_report, read_report
 from app.services.run_executor import create_benchmarking_run, execute_run
@@ -246,10 +248,161 @@ def test_read_report_paginates_sample_forecast_links(tmp_path):
         execute_run(session, run.benchmarking_run_id, tmp_path / "runtime")
 
         report = generate_run_report(session, run.benchmarking_run_id, tmp_path / "runtime")
-        payload = read_report(report, sample_link_limit=2, sample_link_offset=1)
+        payload = read_report(report, session=session, sample_link_limit=2, sample_link_offset=1)
 
         assert payload["sample_forecast_links_total"] == len(session.exec(select(SampleIndex)).all())
         assert payload["sample_forecast_links_limit"] == 2
         assert payload["sample_forecast_links_offset"] == 1
         assert len(payload["sample_forecast_links"]) == 2
         assert payload["sample_forecast_links"][0]["sample_index"] == 1
+
+
+def test_read_report_filters_sample_links_by_capability_and_sorts_metric_error(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    init_db(engine)
+    with Session(engine) as session:
+        track = Track(name="mixed track", primary_metric_id="mse", track_type="mixed_dataset")
+        session.add(track)
+        session.commit()
+        session.refresh(track)
+
+        block_a = CapabilityBlock(
+            track_id=track.track_id,
+            name="trend group",
+            block_type="synthetic",
+            capability_type="trend",
+            sample_count=2,
+        )
+        block_b = CapabilityBlock(
+            track_id=track.track_id,
+            name="real group",
+            block_type="real",
+            capability_type="real_data",
+            sample_count=1,
+        )
+        run = BenchmarkingRun(
+            track_id=track.track_id,
+            status="succeeded",
+            model_ids=["model-a", "model-b"],
+            model_count=2,
+        )
+        session.add(block_a)
+        session.add(block_b)
+        session.add(run)
+        session.commit()
+        session.refresh(block_a)
+        session.refresh(block_b)
+        session.refresh(run)
+
+        unit = Unit(benchmarking_run_id=run.benchmarking_run_id, model_id="model-a", status="succeeded")
+        task_a = Task(
+            benchmarking_run_id=run.benchmarking_run_id,
+            unit_id=unit.unit_id,
+            model_id="model-a",
+            capability_block_id=block_a.capability_block_id,
+            status="succeeded",
+        )
+        task_b = Task(
+            benchmarking_run_id=run.benchmarking_run_id,
+            unit_id=unit.unit_id,
+            model_id="model-a",
+            capability_block_id=block_b.capability_block_id,
+            status="succeeded",
+        )
+        session.add(unit)
+        session.add(task_a)
+        session.add(task_b)
+        session.add_all(
+            [
+                SampleIndex(sample_id="sample-low", shard_id="shard-a", sample_index=0, context_start=0, context_end=5, horizon_start=6, horizon_end=8),
+                SampleIndex(sample_id="sample-high", shard_id="shard-a", sample_index=1, context_start=3, context_end=8, horizon_start=9, horizon_end=11),
+                SampleIndex(sample_id="sample-other", shard_id="shard-b", sample_index=2, context_start=6, context_end=11, horizon_start=12, horizon_end=14),
+            ]
+        )
+        session.add_all(
+            [
+                MetricResult(
+                    metric_id="mse",
+                    result_level="sample",
+                    benchmarking_run_id=run.benchmarking_run_id,
+                    unit_id=unit.unit_id,
+                    task_id=task_a.task_id,
+                    sample_id="sample-low",
+                    shard_id="shard-a",
+                    model_id="model-a",
+                    capability_block_id=block_a.capability_block_id,
+                    value=0.2,
+                ),
+                MetricResult(
+                    metric_id="mse",
+                    result_level="sample",
+                    benchmarking_run_id=run.benchmarking_run_id,
+                    unit_id=unit.unit_id,
+                    task_id=task_a.task_id,
+                    sample_id="sample-low",
+                    shard_id="shard-a",
+                    model_id="model-b",
+                    capability_block_id=block_a.capability_block_id,
+                    value=0.4,
+                ),
+                MetricResult(
+                    metric_id="mse",
+                    result_level="sample",
+                    benchmarking_run_id=run.benchmarking_run_id,
+                    unit_id=unit.unit_id,
+                    task_id=task_a.task_id,
+                    sample_id="sample-high",
+                    shard_id="shard-a",
+                    model_id="model-a",
+                    capability_block_id=block_a.capability_block_id,
+                    value=0.9,
+                ),
+                MetricResult(
+                    metric_id="mse",
+                    result_level="sample",
+                    benchmarking_run_id=run.benchmarking_run_id,
+                    unit_id=unit.unit_id,
+                    task_id=task_b.task_id,
+                    sample_id="sample-other",
+                    shard_id="shard-b",
+                    model_id="model-a",
+                    capability_block_id=block_b.capability_block_id,
+                    value=0.1,
+                ),
+            ]
+        )
+        report_path = tmp_path / "runtime" / "reports" / "manual.json"
+        report_path.parent.mkdir(parents=True)
+        report_path.write_text(json.dumps({"model_metrics": [{"model_id": "model-a", "metrics": {"mse": 0.5}}], "sample_forecast_links": []}), encoding="utf-8")
+        report = Report(
+            benchmarking_run_id=run.benchmarking_run_id,
+            track_id=track.track_id,
+            status="ready",
+            storage_uri=str(report_path),
+        )
+        session.add(report)
+        session.commit()
+        session.refresh(report)
+
+        desc = read_report(
+            report,
+            session=session,
+            sample_link_limit=10,
+            sample_link_capability_block_id=block_a.capability_block_id,
+            sample_link_sort="metric_desc",
+        )
+        asc = read_report(
+            report,
+            session=session,
+            sample_link_limit=1,
+            sample_link_capability_block_id=block_a.capability_block_id,
+            sample_link_sort="metric_asc",
+        )
+
+        assert desc["sample_forecast_links_total"] == 2
+        assert [link["sample_id"] for link in desc["sample_forecast_links"]] == ["sample-high", "sample-low"]
+        assert desc["sample_forecast_links"][1]["metric_value"] == pytest.approx(0.3)
+        assert desc["sample_forecast_links"][1]["model_count"] == 2
+        assert all(link["capability_block_id"] == block_a.capability_block_id for link in desc["sample_forecast_links"])
+        assert asc["sample_forecast_links_total"] == 2
+        assert [link["sample_id"] for link in asc["sample_forecast_links"]] == ["sample-low"]

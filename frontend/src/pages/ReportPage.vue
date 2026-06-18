@@ -16,7 +16,14 @@
     </header>
 
     <StateBlock :loading="loading && !report" :error="error" @retry="run">
-      <ReportSummary v-if="report" :report="report" @sample-page-change="loadSamplePage" />
+      <ReportSummary
+        v-if="report"
+        :report="report"
+        :sample-capability-block-id="sampleLinkCapabilityBlockId"
+        :sample-sort="sampleLinkSort"
+        @sample-page-change="loadSamplePage"
+        @sample-query-change="updateSampleQuery"
+      />
     </StateBlock>
   </main>
 </template>
@@ -29,20 +36,34 @@ import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import StateBlock from '../components/ui/StateBlock.vue';
 import ReportSummary from '../components/results/ReportSummary.vue';
 import { getReport } from '../api/results';
-import type { ReportDTO } from '../api/types';
+import type { ReportDTO, SampleForecastSort } from '../api/types';
 import { useAsyncData } from '../composables/useAsync';
 import { shortId } from '../lib/format';
 
 const props = defineProps<{ reportId: string }>();
 const SAMPLE_LINK_PAGE_SIZE = 10;
 const sampleLinkOffset = ref(0);
+const sampleLinkCapabilityBlockId = ref('');
+const sampleLinkSort = ref<SampleForecastSort>('sample_index');
 const { data: report, loading, error, run } = useAsyncData<ReportDTO>(() =>
-  getReport(props.reportId, { sampleLinkLimit: SAMPLE_LINK_PAGE_SIZE, sampleLinkOffset: sampleLinkOffset.value })
+  getReport(props.reportId, {
+    sampleLinkLimit: SAMPLE_LINK_PAGE_SIZE,
+    sampleLinkOffset: sampleLinkOffset.value,
+    sampleLinkCapabilityBlockId: sampleLinkCapabilityBlockId.value,
+    sampleLinkSort: sampleLinkSort.value
+  })
 );
 const { t } = useI18n();
 
 function loadSamplePage(page: number) {
   sampleLinkOffset.value = Math.max(0, page - 1) * SAMPLE_LINK_PAGE_SIZE;
+  void run();
+}
+
+function updateSampleQuery(query: { capabilityBlockId: string; sort: SampleForecastSort }) {
+  sampleLinkCapabilityBlockId.value = query.capabilityBlockId;
+  sampleLinkSort.value = query.sort;
+  sampleLinkOffset.value = 0;
   void run();
 }
 

@@ -977,6 +977,29 @@ textarea:focus {
   flex-wrap: wrap;
 }
 
+.sample-forecast-head {
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.sample-forecast-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.compact-field {
+  min-width: 170px;
+  gap: 4px;
+}
+
+.compact-field select {
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
 /* ======================= Tables =========================================== */
 .table-wrap {
   overflow-x: auto;

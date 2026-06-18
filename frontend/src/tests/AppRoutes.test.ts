@@ -30,7 +30,10 @@ function mockFetch() {
         offset: 0
       }));
     }
-    if (url === '/api/reports/rep-1' || url === '/api/reports/rep-1?sample_link_limit=10&sample_link_offset=0') {
+    if (
+      url === '/api/reports/rep-1' ||
+      url === '/api/reports/rep-1?sample_link_limit=10&sample_link_offset=0&sample_link_sort=sample_index'
+    ) {
       return Promise.resolve(jsonResponse({ report_id: 'rep-1', track_id: 'track-1', model_metrics: [], task_summaries: [], sample_forecast_links: [], sample_forecast_links_total: 0, sample_forecast_links_limit: 10, sample_forecast_links_offset: 0 }));
     }
     if (url === '/api/dataset-manifests/manifest-1') {
@@ -204,7 +207,7 @@ describe('App routes and artifact links', () => {
     render(App, { global: { plugins: [i18n] } });
 
     expect(await screen.findByRole('heading', { name: 'Benchmark report' })).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledWith('/api/reports/rep-1?sample_link_limit=10&sample_link_offset=0', expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith('/api/reports/rep-1?sample_link_limit=10&sample_link_offset=0&sample_link_sort=sample_index', expect.any(Object));
   });
 
   it('routes artifact hashes to dedicated view pages', async () => {

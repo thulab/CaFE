@@ -95,6 +95,8 @@ export interface SyntheticCapabilityDTO {
   capability_id: string;
   label: string;
   description: string;
+  label_i18n?: Record<string, string>;
+  description_i18n?: Record<string, string>;
   task_type: string;
   target_dim_mode: 'fixed_1' | 'multi' | 'covariate' | string;
   covariate_columns: string[];
@@ -266,7 +268,15 @@ export interface SampleForecastLinkDTO extends SampleWindowMeta {
   forecast_artifact_id?: string | null;
   forecast_artifact_ids?: string[];
   model_count?: number | null;
+  capability_block_id?: string | null;
+  capability_block_name?: string | null;
+  capability_type?: string | null;
+  capability_label?: string | null;
+  metric_id?: string | null;
+  metric_value?: number | null;
 }
+
+export type SampleForecastSort = 'sample_index' | 'metric_desc' | 'metric_asc';
 
 export interface CapabilityBlockReportDTO {
   capability_block_id: string;
@@ -310,6 +320,9 @@ export interface ReportDTO {
   sample_forecast_links_total?: number;
   sample_forecast_links_limit?: number;
   sample_forecast_links_offset?: number;
+  sample_forecast_links_capability_block_id?: string | null;
+  sample_forecast_links_metric?: string | null;
+  sample_forecast_links_sort?: SampleForecastSort;
 }
 
 export interface ListResponse<T> {
