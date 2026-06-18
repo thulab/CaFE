@@ -866,6 +866,8 @@ const enUS = {
     sampleForecastLinks: 'Sample forecast links',
     sampleTestGroup: 'Test group',
     sampleSort: 'Sort',
+    sampleModel: 'Model',
+    allModels: 'All models',
     sampleSortWindow: 'Window order',
     sampleSortMetricDesc: '{metric} error high to low',
     sampleSortMetricAsc: '{metric} error low to high',

@@ -15,6 +15,12 @@
           v-if="sample"
           :shard-id="sample.shard_id"
           :sample-index="sample.sample_index"
+          :report-id="reportContext.reportId"
+          :sample-cursor-offset="reportContext.cursorOffset"
+          :sample-capability-block-id="reportContext.capabilityBlockId"
+          :sample-model-id="reportContext.modelId"
+          :sample-metric="reportContext.metric"
+          :sample-sort="reportContext.sort"
           :href-for-sample="sampleForecastHref"
         />
         <span class="badge mono">{{ sampleBadge }}</span>
@@ -57,17 +63,42 @@ import CovariateChart from '../components/results/CovariateChart.vue';
 import SampleNeighborNav from '../components/results/SampleNeighborNav.vue';
 import SampleMetricTable from '../components/results/SampleMetricTable.vue';
 import { getSampleForecast } from '../api/results';
-import type { SampleForecastDTO } from '../api/types';
+import type { SampleForecastDTO, SampleForecastSort } from '../api/types';
 import { useAsyncData } from '../composables/useAsync';
 import { shortId } from '../lib/format';
 
-const props = defineProps<{ sampleId: string; runId: string; reportId?: string }>();
+const props = defineProps<{
+  sampleId: string;
+  runId: string;
+  reportId?: string;
+  sampleLinkOffset?: number;
+  sampleCursorOffset?: number;
+  sampleCapabilityBlockId?: string;
+  sampleModelId?: string;
+  sampleMetric?: string;
+  sampleSort?: SampleForecastSort;
+}>();
 const { data: sample, loading, error, run } = useAsyncData<SampleForecastDTO>(() => getSampleForecast(props.sampleId, props.runId));
 const failedModels = computed(() => sample.value?.models.filter((m) => m.status !== 'succeeded') || []);
 const hasCovariates = computed(() => Boolean(sample.value?.covariate_column_names?.length));
+const reportContext = computed(() => ({
+  reportId: props.reportId || sample.value?.links?.report || '',
+  listOffset: Math.max(0, Number(props.sampleLinkOffset || 0)),
+  cursorOffset: typeof props.sampleCursorOffset === 'number' && Number.isFinite(props.sampleCursorOffset) ? Math.max(0, props.sampleCursorOffset) : null,
+  capabilityBlockId: props.sampleCapabilityBlockId || '',
+  modelId: props.sampleModelId || '',
+  metric: props.sampleMetric || '',
+  sort: props.sampleSort || 'sample_index',
+}));
 const reportLink = computed(() => {
-  const reportId = props.reportId || sample.value?.links?.report;
-  return reportId ? `#/reports/${reportId}` : '';
+  const reportId = reportContext.value.reportId;
+  if (!reportId) return '';
+  const params = new URLSearchParams();
+  if (reportContext.value.listOffset > 0) params.set('sample_link_offset', String(reportContext.value.listOffset));
+  if (reportContext.value.capabilityBlockId) params.set('sample_link_capability_block_id', reportContext.value.capabilityBlockId);
+  if (reportContext.value.modelId) params.set('sample_link_model_id', reportContext.value.modelId);
+  if (reportContext.value.sort !== 'sample_index') params.set('sample_link_sort', reportContext.value.sort);
+  return `#/reports/${reportId}${params.toString() ? `?${params.toString()}` : ''}`;
 });
 const sampleBadge = computed(() => {
   if (typeof sample.value?.sample_index === 'number') return `#${sample.value.sample_index + 1}`;
@@ -75,10 +106,21 @@ const sampleBadge = computed(() => {
 });
 const { t } = useI18n();
 
-function sampleForecastHref(sampleId: string) {
+function sampleForecastHref(sampleId: string, cursorOffset?: number | null) {
   const params = new URLSearchParams({ run_id: props.runId });
-  const reportId = props.reportId || sample.value?.links?.report;
+  const reportId = reportContext.value.reportId;
   if (reportId) params.set('report_id', reportId);
+  const safeCursor = typeof cursorOffset === 'number' && Number.isFinite(cursorOffset) ? Math.max(0, cursorOffset) : reportContext.value.cursorOffset;
+  if (safeCursor !== null) {
+    params.set('sample_cursor_offset', String(safeCursor));
+    params.set('sample_link_offset', String(Math.floor(safeCursor / 10) * 10));
+  } else if (reportContext.value.listOffset > 0) {
+    params.set('sample_link_offset', String(reportContext.value.listOffset));
+  }
+  if (reportContext.value.capabilityBlockId) params.set('sample_link_capability_block_id', reportContext.value.capabilityBlockId);
+  if (reportContext.value.modelId) params.set('sample_link_model_id', reportContext.value.modelId);
+  if (reportContext.value.metric) params.set('sample_link_metric', reportContext.value.metric);
+  if (reportContext.value.sort !== 'sample_index') params.set('sample_link_sort', reportContext.value.sort);
   return `#/samples/${encodeURIComponent(sampleId)}?${params.toString()}`;
 }
 

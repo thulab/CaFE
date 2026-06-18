@@ -37,6 +37,7 @@ def get_report(
     sample_link_offset: int = 0,
     sample_link_capability_block_id: str | None = None,
     sample_link_metric: str | None = None,
+    sample_link_model_id: str | None = None,
     sample_link_sort: SampleLinkSort = "sample_index",
     session: Session = Depends(get_db_session),
 ) -> dict:
@@ -50,6 +51,7 @@ def get_report(
         sample_link_offset=sample_link_offset,
         sample_link_capability_block_id=sample_link_capability_block_id,
         sample_link_metric=sample_link_metric,
+        sample_link_model_id=sample_link_model_id,
         sample_link_sort=sample_link_sort,
     )
     payload["report_id"] = report.report_id

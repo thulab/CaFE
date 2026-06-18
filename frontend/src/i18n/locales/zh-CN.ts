@@ -866,6 +866,8 @@ const zhCN = {
     sampleForecastLinks: '样本预测链接',
     sampleTestGroup: '测试组',
     sampleSort: '排序',
+    sampleModel: '模型',
+    allModels: '全部模型',
     sampleSortWindow: '窗口顺序',
     sampleSortMetricDesc: '{metric} 误差从大到小',
     sampleSortMetricAsc: '{metric} 误差从小到大',

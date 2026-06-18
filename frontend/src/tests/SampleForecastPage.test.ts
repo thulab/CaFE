@@ -6,6 +6,7 @@ import SampleForecastPage from '../pages/SampleForecastPage.vue';
 describe('SampleForecastPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.location.hash = '';
     setLocale('en-US');
   });
 
@@ -100,5 +101,72 @@ describe('SampleForecastPage', () => {
 
     expect((await screen.findByRole('link', { name: 'Previous sample' })).getAttribute('href')).toBe('#/samples/s1?run_id=r1&report_id=rep1');
     expect(screen.getByRole('link', { name: 'Next sample' }).getAttribute('href')).toBe('#/samples/s3?run_id=r1&report_id=rep1');
+  });
+
+  it('uses report sorting context for previous and next forecast samples', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === '/api/samples/s-current/forecast?run_id=r1') {
+        return new Response(JSON.stringify({
+          sample_id: 's-current',
+          shard_id: 'shard-1',
+          sample_index: 7,
+          target_history: [[1]],
+          target_future: [[2]],
+          models: [
+            { model_id: 'model-a', model_name: 'Timer A', status: 'succeeded', forecast: [[2.1]], metrics: { mse: 0.7 } }
+          ],
+          links: { report: 'rep1' }
+        }), { status: 200 });
+      }
+      if (url === '/api/reports/rep1?sample_link_limit=1&sample_link_offset=1&sample_link_capability_block_id=block-a&sample_link_metric=mse&sample_link_model_id=model-a&sample_link_sort=metric_desc') {
+        return new Response(JSON.stringify({
+          report_id: 'rep1',
+          model_metrics: [],
+          task_summaries: [],
+          sample_forecast_links: [{ sample_id: 's-prev', run_id: 'r1', sample_index: 4 }],
+          sample_forecast_links_total: 4,
+          sample_forecast_links_limit: 1,
+          sample_forecast_links_offset: 1,
+        }), { status: 200 });
+      }
+      if (url === '/api/reports/rep1?sample_link_limit=1&sample_link_offset=3&sample_link_capability_block_id=block-a&sample_link_metric=mse&sample_link_model_id=model-a&sample_link_sort=metric_desc') {
+        return new Response(JSON.stringify({
+          report_id: 'rep1',
+          model_metrics: [],
+          task_summaries: [],
+          sample_forecast_links: [{ sample_id: 's-next', run_id: 'r1', sample_index: 9 }],
+          sample_forecast_links_total: 4,
+          sample_forecast_links_limit: 1,
+          sample_forecast_links_offset: 3,
+        }), { status: 200 });
+      }
+      throw new Error(`unexpected URL ${url}`);
+    });
+
+    render(SampleForecastPage, {
+      props: {
+        sampleId: 's-current',
+        runId: 'r1',
+        reportId: 'rep1',
+        sampleLinkOffset: 0,
+        sampleCursorOffset: 2,
+        sampleCapabilityBlockId: 'block-a',
+        sampleModelId: 'model-a',
+        sampleMetric: 'mse',
+        sampleSort: 'metric_desc',
+      },
+      global: { plugins: [i18n] },
+    });
+
+    expect((await screen.findByRole('link', { name: 'Previous sample' })).getAttribute('href')).toBe(
+      '#/samples/s-prev?run_id=r1&report_id=rep1&sample_cursor_offset=1&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_metric=mse&sample_link_sort=metric_desc'
+    );
+    expect(screen.getByRole('link', { name: 'Next sample' }).getAttribute('href')).toBe(
+      '#/samples/s-next?run_id=r1&report_id=rep1&sample_cursor_offset=3&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_metric=mse&sample_link_sort=metric_desc'
+    );
+    expect(screen.getByRole('link', { name: /Back to report/ }).getAttribute('href')).toBe(
+      '#/reports/rep1?sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=metric_desc'
+    );
   });
 });

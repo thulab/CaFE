@@ -6,6 +6,7 @@ import ReportPage from '../pages/ReportPage.vue';
 describe('ReportPage', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.location.hash = '#/reports/rep1';
     setLocale('en-US');
   });
 
@@ -29,13 +30,42 @@ describe('ReportPage', () => {
 
     render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
 
-    await screen.findByText('m1');
+    expect((await screen.findAllByText('m1')).length).toBeGreaterThan(0);
     expect(screen.queryByText('Task outcomes')).toBeNull();
     expect(screen.queryByText('boom')).toBeNull();
     expect(screen.getByText('Window #1')).toBeTruthy();
     expect(screen.getByText('Forecast rows 6-8')).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Open/ }).getAttribute('href')).toBe('#/samples/s1?run_id=r1&report_id=rep1');
+    expect(screen.getByRole('link', { name: /Open/ }).getAttribute('href')).toBe('#/samples/s1?run_id=r1&report_id=rep1&sample_link_offset=0&sample_cursor_offset=0');
     expect(screen.getByRole('link', { name: 'Back to track' }).getAttribute('href')).toBe('#/tracks/track-1');
+  });
+
+  it('initializes sample forecast controls from the report URL query', async () => {
+    window.location.hash = '#/reports/rep1?sample_link_offset=20&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=metric_asc';
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      report_id: 'rep1',
+      model_metrics: [{ model_id: 'model-a', model_name: 'Timer A', metrics: { mse: 0.2 } }],
+      task_summaries: [],
+      capability_blocks: [{ capability_block_id: 'block-a', name: 'Trend set', block_type: 'synthetic', capability_type: 'trend', capability_label: 'Trend', sample_count: 1 }],
+      sample_forecast_links: [{ sample_id: 's21', run_id: 'r1', sample_index: 20, capability_block_id: 'block-a', metric_value: 0.2, model_count: 1 }],
+      sample_forecast_links_total: 30,
+      sample_forecast_links_limit: 10,
+      sample_forecast_links_offset: 20,
+      sample_forecast_links_capability_block_id: 'block-a',
+      sample_forecast_links_model_id: 'model-a',
+      sample_forecast_links_metric: 'mse',
+      sample_forecast_links_sort: 'metric_asc',
+    }));
+
+    render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Window #21')).toBeTruthy();
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe('/api/reports/rep1?sample_link_limit=10&sample_link_offset=20&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=metric_asc');
+    expect((screen.getByLabelText('Test group') as HTMLSelectElement).value).toBe('block-a');
+    expect((screen.getByLabelText('Model') as HTMLSelectElement).value).toBe('model-a');
+    expect((screen.getByLabelText('Sort') as HTMLSelectElement).value).toBe('metric_asc');
+    expect(screen.getByRole('link', { name: /Open/ }).getAttribute('href')).toBe(
+      '#/samples/s21?run_id=r1&report_id=rep1&sample_link_offset=20&sample_cursor_offset=20&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_metric=mse&sample_link_sort=metric_asc'
+    );
   });
 
   it('reloads sample forecasts by test group and metric-error sort', async () => {
@@ -73,12 +103,23 @@ describe('ReportPage', () => {
           sample_forecast_links_sort: 'sample_index',
         }));
       }
-      if (url === '/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_sort=metric_desc') {
+      if (url === '/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=sample_index') {
         return Promise.resolve(jsonResponse({
           ...base,
-          sample_forecast_links: [{ sample_id: 's3', run_id: 'r1', sample_index: 2, capability_block_id: 'block-a', metric_value: 0.9, model_count: 1 }],
+          sample_forecast_links: [{ sample_id: 's1', run_id: 'r1', sample_index: 0, capability_block_id: 'block-a', metric_model_id: 'model-a', metric_value: 0.3, model_count: 1 }],
           sample_forecast_links_total: 1,
           sample_forecast_links_capability_block_id: 'block-a',
+          sample_forecast_links_model_id: 'model-a',
+          sample_forecast_links_sort: 'sample_index',
+        }));
+      }
+      if (url === '/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=metric_desc') {
+        return Promise.resolve(jsonResponse({
+          ...base,
+          sample_forecast_links: [{ sample_id: 's3', run_id: 'r1', sample_index: 2, capability_block_id: 'block-a', metric_model_id: 'model-a', metric_value: 0.9, model_count: 1 }],
+          sample_forecast_links_total: 1,
+          sample_forecast_links_capability_block_id: 'block-a',
+          sample_forecast_links_model_id: 'model-a',
           sample_forecast_links_sort: 'metric_desc',
         }));
       }
@@ -92,10 +133,16 @@ describe('ReportPage', () => {
     await fireEvent.update(screen.getByLabelText('Test group'), 'block-a');
     expect((await screen.findAllByText('Showing 1-1 of 1 samples')).length).toBeGreaterThan(0);
     expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toBe('/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_sort=sample_index');
+    expect(window.location.hash).toBe('#/reports/rep1?sample_link_capability_block_id=block-a');
+
+    await fireEvent.update(screen.getByLabelText('Model'), 'model-a');
+    expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toBe('/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=sample_index');
+    expect(window.location.hash).toBe('#/reports/rep1?sample_link_capability_block_id=block-a&sample_link_model_id=model-a');
 
     await fireEvent.update(screen.getByLabelText('Sort'), 'metric_desc');
     expect(await screen.findByText('Window #3')).toBeTruthy();
-    expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toBe('/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_sort=metric_desc');
+    expect(String(fetchSpy.mock.calls.at(-1)?.[0])).toBe('/api/reports/rep1?sample_link_limit=10&sample_link_offset=0&sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=metric_desc');
+    expect(window.location.hash).toBe('#/reports/rep1?sample_link_capability_block_id=block-a&sample_link_model_id=model-a&sample_link_sort=metric_desc');
   });
 
   it('sorts model metrics by clicked metric headers', async () => {
@@ -112,7 +159,7 @@ describe('ReportPage', () => {
 
     render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
 
-    await screen.findByText('model-a');
+    expect((await screen.findAllByText('model-a')).length).toBeGreaterThan(0);
     const tbody = screen.getByRole('table').querySelector('tbody')!;
     const names = () => within(tbody).getAllByRole('row').map((row) => within(row).getAllByRole('cell')[0].textContent);
 

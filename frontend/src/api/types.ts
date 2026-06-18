@@ -274,6 +274,7 @@ export interface SampleForecastLinkDTO extends SampleWindowMeta {
   capability_label?: string | null;
   metric_id?: string | null;
   metric_value?: number | null;
+  metric_model_id?: string | null;
 }
 
 export type SampleForecastSort = 'sample_index' | 'metric_desc' | 'metric_asc';
@@ -322,6 +323,7 @@ export interface ReportDTO {
   sample_forecast_links_offset?: number;
   sample_forecast_links_capability_block_id?: string | null;
   sample_forecast_links_metric?: string | null;
+  sample_forecast_links_model_id?: string | null;
   sample_forecast_links_sort?: SampleForecastSort;
 }
 

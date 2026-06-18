@@ -72,6 +72,13 @@
               <option value="metric_asc">{{ t('results.sampleSortMetricAsc', { metric: sampleMetricLabel }) }}</option>
             </select>
           </label>
+          <label class="field compact-field" for="sample-forecast-model">
+            <span class="field-label">{{ t('results.sampleModel') }}</span>
+            <select id="sample-forecast-model" :value="selectedSampleModelId" :aria-label="t('results.sampleModel')" @change="onSampleModelChange">
+              <option value="">{{ t('results.allModels') }}</option>
+              <option v-for="option in sampleModelOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+            </select>
+          </label>
           <span class="badge">{{ formatInt(serverSampleTotal ?? sampleLinks.length) }}</span>
         </div>
       </header>
@@ -91,7 +98,7 @@
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="link in visibleSampleLinks" :key="`${link.run_id}:${link.sample_id}`">
+                <tr v-for="(link, index) in visibleSampleLinks" :key="`${link.run_id}:${link.sample_id}`">
                   <td>
                     <span style="font-weight:650">{{ sampleLabel(link) }}</span>
                     <div class="faint mono" style="font-size:0.74rem">{{ shortId(link.sample_id) }}</div>
@@ -104,7 +111,7 @@
                   <td class="num"><span class="mono">{{ sampleMetricValue(link) }}</span></td>
                   <td><span class="badge neutral">{{ modelCountText(link.model_count ?? report.model_metrics.length) }}</span></td>
                   <td>
-                    <a class="btn secondary sm" :href="sampleHref(link)">
+                    <a class="btn secondary sm" :href="sampleHref(link, index)">
                       <Icon name="lineChart" :size="14" /> {{ t('common.open') }}
                     </a>
                   </td>
@@ -138,10 +145,10 @@ import { parseDateTime, shortId } from '../../lib/format';
 import { syntheticCapabilityLabel } from '../../lib/syntheticCapabilities';
 import CapabilityProfile from './CapabilityProfile.vue';
 
-const props = defineProps<{ report: ReportDTO; sampleCapabilityBlockId?: string; sampleSort?: SampleForecastSort }>();
+const props = defineProps<{ report: ReportDTO; sampleCapabilityBlockId?: string; sampleModelId?: string; sampleSort?: SampleForecastSort }>();
 const emit = defineEmits<{
   (event: 'sample-page-change', page: number): void;
-  (event: 'sample-query-change', query: { capabilityBlockId: string; sort: SampleForecastSort }): void;
+  (event: 'sample-query-change', query: { capabilityBlockId: string; modelId: string; sort: SampleForecastSort }): void;
 }>();
 const { modelName } = useModels();
 const { t } = useI18n();
@@ -192,12 +199,22 @@ const bestByMetric = computed(() => {
 
 const sampleMetricLabel = computed(() => (props.report.sample_forecast_links_metric || metricKeys.value[0] || 'mse').toUpperCase());
 const selectedSampleCapabilityBlockId = computed(() => props.sampleCapabilityBlockId ?? props.report.sample_forecast_links_capability_block_id ?? '');
+const selectedSampleModelId = computed(() => props.sampleModelId ?? props.report.sample_forecast_links_model_id ?? '');
 const selectedSampleSort = computed<SampleForecastSort>(() => props.sampleSort ?? props.report.sample_forecast_links_sort ?? 'sample_index');
 const sampleCapabilityOptions = computed(() =>
   (props.report.capability_blocks || []).map((block) => ({
     id: block.capability_block_id,
     label: capabilityBlockLabel(block),
   }))
+);
+const sampleModelOptions = computed(() =>
+  props.report.model_metrics.map((item) => {
+    const id = String(item.model_id || '');
+    return {
+      id,
+      label: String(item.model_name || modelName(id) || id),
+    };
+  }).filter((item) => item.id)
 );
 
 const unsortedRows = computed(() =>
@@ -314,9 +331,10 @@ function sortBy(key: string) {
   sortDir.value = 'asc';
 }
 
-function emitSampleQuery(patch: Partial<{ capabilityBlockId: string; sort: SampleForecastSort }>) {
+function emitSampleQuery(patch: Partial<{ capabilityBlockId: string; modelId: string; sort: SampleForecastSort }>) {
   emit('sample-query-change', {
     capabilityBlockId: patch.capabilityBlockId ?? selectedSampleCapabilityBlockId.value,
+    modelId: patch.modelId ?? selectedSampleModelId.value,
     sort: patch.sort ?? selectedSampleSort.value,
   });
 }
@@ -327,6 +345,10 @@ function onSampleCapabilityChange(event: Event) {
 
 function onSampleSortChange(event: Event) {
   emitSampleQuery({ sort: (event.target as HTMLSelectElement).value as SampleForecastSort });
+}
+
+function onSampleModelChange(event: Event) {
+  emitSampleQuery({ modelId: (event.target as HTMLSelectElement).value });
 }
 
 function sampleLabel(link: SampleForecastLinkDTO) {
@@ -386,8 +408,15 @@ function modelCountText(count: number | null | undefined) {
   return t(safe === 1 ? 'results.modelCountInlineOne' : 'results.modelCountInlineOther', { count: safe });
 }
 
-function sampleHref(link: SampleForecastLinkDTO) {
+function sampleHref(link: SampleForecastLinkDTO, index: number) {
   const params = new URLSearchParams({ run_id: link.run_id, report_id: props.report.report_id });
+  const cursorOffset = (serverPagedSamples.value ? serverSampleOffset.value : (samplePage.value - 1) * SAMPLE_PAGE_SIZE) + index;
+  params.set('sample_link_offset', String(serverPagedSamples.value ? serverSampleOffset.value : (samplePage.value - 1) * SAMPLE_PAGE_SIZE));
+  params.set('sample_cursor_offset', String(cursorOffset));
+  if (selectedSampleCapabilityBlockId.value) params.set('sample_link_capability_block_id', selectedSampleCapabilityBlockId.value);
+  if (selectedSampleModelId.value) params.set('sample_link_model_id', selectedSampleModelId.value);
+  if (props.report.sample_forecast_links_metric) params.set('sample_link_metric', props.report.sample_forecast_links_metric);
+  if (selectedSampleSort.value !== 'sample_index') params.set('sample_link_sort', selectedSampleSort.value);
   return `#/samples/${encodeURIComponent(link.sample_id)}?${params.toString()}`;
 }
 </script>

@@ -65,6 +65,7 @@ def read_report(
     sample_link_offset: int = 0,
     sample_link_capability_block_id: str | None = None,
     sample_link_metric: str | None = None,
+    sample_link_model_id: str | None = None,
     sample_link_sort: SampleLinkSort = "sample_index",
 ) -> dict:
     payload = json.loads(Path(report.storage_uri).read_text(encoding="utf-8"))
@@ -82,6 +83,7 @@ def read_report(
             offset,
             limit,
             sample_link_capability_block_id,
+            sample_link_model_id,
             sample_link_sort,
         )
         payload["sample_forecast_links"] = links
@@ -92,6 +94,7 @@ def read_report(
             limit,
             sample_link_capability_block_id,
             metric_id,
+            sample_link_model_id,
             sample_link_sort,
         )
         total = links["total"]
@@ -102,6 +105,7 @@ def read_report(
     payload["sample_forecast_links_offset"] = offset
     payload["sample_forecast_links_capability_block_id"] = sample_link_capability_block_id
     payload["sample_forecast_links_metric"] = metric_id
+    payload["sample_forecast_links_model_id"] = sample_link_model_id
     payload["sample_forecast_links_sort"] = sample_link_sort
     return payload
 
@@ -343,6 +347,7 @@ def _sample_links_page_from_metrics(
     offset: int,
     limit: int | None,
     capability_block_id: str | None,
+    model_id: str | None,
     sort_mode: SampleLinkSort,
 ) -> tuple[list[dict], int]:
     metric_value = func.avg(MetricResult.value).label("metric_value")
@@ -366,6 +371,8 @@ def _sample_links_page_from_metrics(
     )
     if capability_block_id:
         base = base.where(MetricResult.capability_block_id == capability_block_id)
+    if model_id:
+        base = base.where(MetricResult.model_id == model_id)
 
     total = int(session.exec(select(func.count()).select_from(base.subquery())).one() or 0)
     if sort_mode == "metric_desc":
@@ -380,10 +387,10 @@ def _sample_links_page_from_metrics(
         ordered = ordered.offset(offset)
 
     rows = session.exec(ordered).all()
-    return _sample_links_from_metric_rows(session, report.benchmarking_run_id, metric_id, rows), total
+    return _sample_links_from_metric_rows(session, report.benchmarking_run_id, metric_id, model_id, rows), total
 
 
-def _sample_links_from_metric_rows(session: Session, run_id: str, metric_id: str, rows: list) -> list[dict]:
+def _sample_links_from_metric_rows(session: Session, run_id: str, metric_id: str, model_id: str | None, rows: list) -> list[dict]:
     sample_ids = [str(row[0]) for row in rows if row[0] is not None]
     if not sample_ids:
         return []
@@ -422,6 +429,8 @@ def _sample_links_from_metric_rows(session: Session, run_id: str, metric_id: str
         link["model_count"] = int(row[3] or 0)
         link["metric_id"] = metric_id
         link["metric_value"] = float(row[2]) if row[2] is not None else None
+        if model_id:
+            link["metric_model_id"] = model_id
 
         block_id = str(row[1]) if row[1] else None
         block = blocks_by_id.get(block_id) if block_id else None
@@ -441,6 +450,7 @@ def _sample_links_page_from_payload(
     limit: int | None,
     capability_block_id: str | None,
     metric_id: str | None,
+    model_id: str | None,
     sort_mode: SampleLinkSort,
 ) -> dict:
     links = list(payload.get("sample_forecast_links") or [])
@@ -470,6 +480,8 @@ def _sample_links_page_from_payload(
     if metric_id:
         for link in links:
             link.setdefault("metric_id", metric_id)
+            if model_id:
+                link.setdefault("metric_model_id", model_id)
     total = len(links)
     items = links[offset : offset + limit] if limit is not None else links[offset:]
     return {"items": items, "total": total}

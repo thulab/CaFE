@@ -363,12 +363,27 @@ function resolveRoute(): RouteView {
     const qIdx = routeHash.value.indexOf('?');
     const params = new URLSearchParams(qIdx >= 0 ? routeHash.value.slice(qIdx + 1) : '');
     const reportId = params.get('report_id') || '';
+    const reportQuery = reportSampleQuery(params);
+    const reportHref = reportId ? `#/reports/${reportId}${reportQuery ? `?${reportQuery}` : ''}` : '';
     return {
-      component: SampleForecastPage, props: { sampleId: id, runId: params.get('run_id') || '', reportId }, navKey: 'runs', tier: 'authed',
+      component: SampleForecastPage,
+      props: {
+        sampleId: id,
+        runId: params.get('run_id') || '',
+        reportId,
+        sampleLinkOffset: numericQuery(params.get('sample_link_offset')),
+        sampleCursorOffset: numericQuery(params.get('sample_cursor_offset')),
+        sampleCapabilityBlockId: params.get('sample_link_capability_block_id') || '',
+        sampleModelId: params.get('sample_link_model_id') || '',
+        sampleMetric: params.get('sample_link_metric') || '',
+        sampleSort: parseSampleForecastSort(params.get('sample_link_sort')),
+      },
+      navKey: 'runs',
+      tier: 'authed',
       crumbs: [
         HOME_CRUMB.value,
         { label: t('nav.runs'), href: '#/runs' },
-        reportId ? { label: t('nav.report'), href: `#/reports/${reportId}` } : { label: t('home.steps.review.title') },
+        reportId ? { label: t('nav.report'), href: reportHref } : { label: t('home.steps.review.title') },
         { label: shortId(id) },
       ]
     };
@@ -393,6 +408,25 @@ const route = computed<RouteView>(() => {
   }
   return candidate;
 });
+
+function numericQuery(value: string | null): number | undefined {
+  if (value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseSampleForecastSort(value: string | null): 'sample_index' | 'metric_desc' | 'metric_asc' {
+  return value === 'metric_desc' || value === 'metric_asc' || value === 'sample_index' ? value : 'sample_index';
+}
+
+function reportSampleQuery(params: URLSearchParams): string {
+  const out = new URLSearchParams();
+  for (const key of ['sample_link_offset', 'sample_link_capability_block_id', 'sample_link_model_id', 'sample_link_sort']) {
+    const value = params.get(key);
+    if (value) out.set(key, value);
+  }
+  return out.toString();
+}
 
 function queueRedirect(targetPath: string) {
   // Use microtask so we don't mutate during compute.

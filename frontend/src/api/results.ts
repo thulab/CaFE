@@ -39,6 +39,7 @@ export function getReport(
     sampleLinkOffset?: number;
     sampleLinkCapabilityBlockId?: string;
     sampleLinkMetric?: string;
+    sampleLinkModelId?: string;
     sampleLinkSort?: SampleForecastSort;
   } = {}
 ): Promise<ReportDTO> {
@@ -48,6 +49,7 @@ export function getReport(
       sample_link_offset: params.sampleLinkOffset,
       sample_link_capability_block_id: params.sampleLinkCapabilityBlockId,
       sample_link_metric: params.sampleLinkMetric,
+      sample_link_model_id: params.sampleLinkModelId,
       sample_link_sort: params.sampleLinkSort
     })}`
   );

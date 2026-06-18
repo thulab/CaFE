@@ -398,6 +398,14 @@ def test_read_report_filters_sample_links_by_capability_and_sorts_metric_error(t
             sample_link_capability_block_id=block_a.capability_block_id,
             sample_link_sort="metric_asc",
         )
+        model_filtered = read_report(
+            report,
+            session=session,
+            sample_link_limit=10,
+            sample_link_capability_block_id=block_a.capability_block_id,
+            sample_link_model_id="model-a",
+            sample_link_sort="metric_asc",
+        )
 
         assert desc["sample_forecast_links_total"] == 2
         assert [link["sample_id"] for link in desc["sample_forecast_links"]] == ["sample-high", "sample-low"]
@@ -406,3 +414,8 @@ def test_read_report_filters_sample_links_by_capability_and_sorts_metric_error(t
         assert all(link["capability_block_id"] == block_a.capability_block_id for link in desc["sample_forecast_links"])
         assert asc["sample_forecast_links_total"] == 2
         assert [link["sample_id"] for link in asc["sample_forecast_links"]] == ["sample-low"]
+        assert model_filtered["sample_forecast_links_model_id"] == "model-a"
+        assert [link["sample_id"] for link in model_filtered["sample_forecast_links"]] == ["sample-low", "sample-high"]
+        assert model_filtered["sample_forecast_links"][0]["metric_value"] == pytest.approx(0.2)
+        assert model_filtered["sample_forecast_links"][0]["metric_model_id"] == "model-a"
+        assert model_filtered["sample_forecast_links"][0]["model_count"] == 1
