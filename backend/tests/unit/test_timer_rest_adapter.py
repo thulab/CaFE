@@ -14,12 +14,13 @@ def _adapter_against_stub() -> TimerRestAdapter:
 
 
 def _sample(horizon=2):
+    history_timestamps = [f"2024-01-01T{hour:02d}:00:00" for hour in range(16)]
     return {
         "sample_id": "sample-1",
         "target_column_names": ["target"],
-        "history_timestamps": ["2024-01-01T00:00:00", "2024-01-01T01:00:00", "2024-01-01T02:00:00"],
-        "future_timestamps": ["2024-01-01T03:00:00"][:horizon] or ["t"] * horizon,
-        "target_history": [[1.0], [2.0], [3.0]],
+        "history_timestamps": history_timestamps,
+        "future_timestamps": [f"2024-01-01T{hour:02d}:00:00" for hour in range(16, 16 + horizon)],
+        "target_history": [[float(hour + 1)] for hour in range(16)],
         "target_future": [[0.0]] * horizon,
     }
 
@@ -53,7 +54,7 @@ def test_adapter_sends_history_and_future_covariates():
     sample = {
         **_sample(horizon=1),
         "covariate_column_names": ["promo", "temp"],
-        "history_cov": [[0.0, 21.0], [1.0, 22.0], [1.0, 23.0]],
+        "history_cov": [[float(hour % 2), 21.0 + hour] for hour in range(16)],
         "future_cov": [[0.0, 24.0]],
     }
 
@@ -62,17 +63,13 @@ def test_adapter_sends_history_and_future_covariates():
     assert captured["history_covs"] == [
         {
             "columns": ["time", "promo", "temp"],
-            "data": [
-                ["2024-01-01T00:00:00", 0.0, 21.0],
-                ["2024-01-01T01:00:00", 1.0, 22.0],
-                ["2024-01-01T02:00:00", 1.0, 23.0],
-            ],
+            "data": [[f"2024-01-01T{hour:02d}:00:00", sample["history_cov"][hour][0], sample["history_cov"][hour][1]] for hour in range(16)],
         }
     ]
     assert captured["future_covs"] == [
         {
             "columns": ["time", "promo", "temp"],
-            "data": [["2024-01-01T03:00:00", 0.0, 24.0]],
+            "data": [["2024-01-01T16:00:00", 0.0, 24.0]],
         }
     ]
 

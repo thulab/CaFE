@@ -66,6 +66,7 @@ def create_benchmarking_run(session: Session, track_id: str, model_ids: list[str
     covariate_dim = max((block.covariate_dim for block in blocks), default=0)
     _validate_models_support_target_dim(session, model_ids, target_dim)
     _validate_models_support_covariate_dim(session, model_ids, covariate_dim)
+    _validate_models_support_track_windows(session, model_ids, blocks)
 
     block_sample_count = sum(block.sample_count for block in blocks)
     run = BenchmarkingRun(
@@ -170,6 +171,81 @@ def _forecast_limits_support_covariate_dim(limits: dict, covariate_dim: int) -> 
         return int(limits.get("max_covariate_count")) >= covariate_dim
     except (TypeError, ValueError):
         return False
+
+
+def _validate_models_support_track_windows(session: Session, model_ids: list[str], blocks: list[CapabilityBlock]) -> None:
+    shards = [
+        shard
+        for block in blocks
+        for shard in shards_for_capability_block(session, block.capability_block_id)
+    ]
+    if not shards:
+        return
+    min_context_length = min(int(shard.context_length or 0) for shard in shards)
+    max_context_length = max(int(shard.context_length or 0) for shard in shards)
+    max_horizon = max(int(shard.horizon or 0) for shard in shards)
+    max_covariate_horizon = max((int(shard.horizon or 0) for shard in shards if int(shard.covariate_dim or 0) > 0), default=0)
+
+    unsupported: dict[str, list[str]] = {}
+    limits_by_model: dict[str, dict] = {}
+    for model_id in model_ids:
+        model = session.get(Model, model_id)
+        if model is None:
+            continue
+        limits = model.forecast_limits if isinstance(model.forecast_limits, dict) else {}
+        limits_by_model[model_id] = limits
+        reasons = _forecast_limits_window_reasons(limits, min_context_length, max_context_length, max_horizon, max_covariate_horizon)
+        if reasons:
+            unsupported[model_id] = reasons
+    if unsupported:
+        raise ApiError(
+            "model_window_unsupported",
+            "selected model does not support the track input or output window",
+            {
+                "model_ids": list(unsupported),
+                "reasons": unsupported,
+                "track_window": {
+                    "min_context_length": min_context_length,
+                    "max_context_length": max_context_length,
+                    "max_horizon": max_horizon,
+                    "max_covariate_horizon": max_covariate_horizon,
+                },
+                "forecast_limits": limits_by_model,
+            },
+            status_code=400,
+        )
+
+
+def _forecast_limits_window_reasons(
+    limits: dict,
+    min_context_length: int,
+    max_context_length: int,
+    max_horizon: int,
+    max_covariate_horizon: int,
+) -> list[str]:
+    reasons: list[str] = []
+    min_input_length = _numeric_limit(limits, "min_input_length")
+    if min_input_length is not None and min_context_length < min_input_length:
+        reasons.append("min_input_length")
+    max_input_length = _numeric_limit(limits, "max_input_length")
+    if max_input_length is not None and max_context_length > max_input_length:
+        reasons.append("max_input_length")
+    max_output_length = _numeric_limit(limits, "max_output_length")
+    if max_output_length is not None and max_horizon > max_output_length:
+        reasons.append("max_output_length")
+    max_future_covs_length = _numeric_limit(limits, "max_future_covs_length")
+    if max_future_covs_length is not None and max_covariate_horizon > max_future_covs_length:
+        reasons.append("max_future_covs_length")
+    return reasons
+
+
+def _numeric_limit(limits: dict, key: str) -> int | None:
+    if key not in limits or limits.get(key) is None:
+        return None
+    try:
+        return int(limits[key])
+    except (TypeError, ValueError):
+        return None
 
 
 _TERMINAL_RUN_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}

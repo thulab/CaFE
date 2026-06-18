@@ -62,7 +62,7 @@ import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import type { RunProgressDTO } from '../../api/types';
 import { percent } from '../../lib/format';
-import { modelMaxCovariateCount, modelMaxTargetCount, modelSupportsCovariateDim, modelSupportsTargetDim } from '../../lib/modelLimits';
+import { modelMaxCovariateCount, modelMaxTargetCount, modelSupportsCovariateDim, modelSupportsTargetDim, modelSupportsWindow } from '../../lib/modelLimits';
 
 const TERMINAL = ['succeeded', 'partial_succeeded', 'failed', 'cancelled'];
 
@@ -74,6 +74,10 @@ const progress = ref<RunProgressDTO | null>(null);
 const isCreatingRun = ref(false);
 const targetDim = ref(1);
 const covariateDim = ref(0);
+const minContextLength = ref(0);
+const maxContextLength = ref(0);
+const maxHorizon = ref(0);
+const maxCovariateHorizon = ref(0);
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const runId = computed(() => wizardState.runId);
@@ -121,7 +125,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => stopPolling());
 
-watch([models, targetDim, covariateDim], pruneIncompatibleSelections);
+watch([models, targetDim, covariateDim, minContextLength, maxContextLength, maxHorizon, maxCovariateHorizon], pruneIncompatibleSelections);
 
 function toggleAll() {
   selectedIds.value = allSelected.value ? [] : compatibleModels.value.map((m) => m.model_id);
@@ -172,7 +176,9 @@ function modelTargetLimitLabel(model: ModelDTO) {
 }
 
 function isModelCompatible(model: ModelDTO) {
-  return modelSupportsTargetDim(model, targetDim.value) && modelSupportsCovariateDim(model, covariateDim.value);
+  return modelSupportsTargetDim(model, targetDim.value)
+    && modelSupportsCovariateDim(model, covariateDim.value)
+    && modelSupportsWindow(model, minContextLength.value, maxContextLength.value, maxHorizon.value, maxCovariateHorizon.value);
 }
 
 function pruneIncompatibleSelections() {
@@ -186,11 +192,20 @@ async function loadTargetDim() {
   if (!shardIds.length) {
     targetDim.value = 1;
     covariateDim.value = 0;
+    minContextLength.value = 0;
+    maxContextLength.value = 0;
+    maxHorizon.value = 0;
+    maxCovariateHorizon.value = 0;
     return;
   }
   const shards = await Promise.all(shardIds.map((id) => getShard(id)));
   targetDim.value = Math.max(1, ...shards.map((shard) => Number(shard.target_dim || shard.target_columns?.length || 1)));
   covariateDim.value = Math.max(0, ...shards.map((shard) => Number(shard.covariate_dim || shard.covariate_columns?.length || 0)));
+  const contextLengths = shards.map((shard) => Number(shard.context_length || 0)).filter((value) => value > 0);
+  minContextLength.value = contextLengths.length ? Math.min(...contextLengths) : 0;
+  maxContextLength.value = Math.max(0, ...shards.map((shard) => Number(shard.context_length || 0)));
+  maxHorizon.value = Math.max(0, ...shards.map((shard) => Number(shard.horizon || 0)));
+  maxCovariateHorizon.value = Math.max(0, ...shards.filter((shard) => Number(shard.covariate_dim || shard.covariate_columns?.length || 0) > 0).map((shard) => Number(shard.horizon || 0)));
 }
 
 async function poll() {

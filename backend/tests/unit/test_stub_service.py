@@ -11,11 +11,7 @@ def _forecast_body(model_id="Timer-3.5", horizon=3):
         "targets": [
             {
                 "columns": ["time", "value"],
-                "data": [
-                    ["2024-01-01T00:00:00", 1.0],
-                    ["2024-01-01T01:00:00", 2.0],
-                    ["2024-01-01T02:00:00", 3.0],
-                ],
+                "data": [[f"2024-01-01T{hour:02d}:00:00", float(hour + 1)] for hour in range(16)],
             }
         ],
         "output_length": [horizon],

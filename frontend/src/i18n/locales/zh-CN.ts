@@ -105,6 +105,48 @@ const zhCN = {
     resource_archived: '该资源已归档。',
     run_not_terminal: '运行结束或取消后才能执行此操作。',
     purge_requires_cascade: '永久删除需要同时删除关联资源。',
+    model_window_unsupported: '所选模型不支持当前赛道的输入或输出窗口。',
+    synthetic_context_too_short: '上下文长度至少需要 16。',
+  },
+  synthetic: {
+    capabilities: {
+      trend: {
+        label: '趋势',
+        description: '带有可控趋势和季节残差的单目标序列。',
+      },
+      multi_seasonal: {
+        label: '多季节性',
+        description: '带有多重叠加季节周期的单目标序列。',
+      },
+      regime_switching: {
+        label: '状态切换',
+        description: '带有水平和波动率切换的单目标序列。',
+      },
+      long_memory_nonlinear: {
+        label: '长记忆非线性',
+        description: '带有非线性延续效应的单目标自回归动态。',
+      },
+      intermittent_heteroskedastic: {
+        label: '间歇异方差',
+        description: '带有稀疏突发和变化噪声尺度的单目标序列。',
+      },
+      common_factor: {
+        label: '公共因子',
+        description: '由共享潜在因子驱动的多目标序列。',
+      },
+      lead_lag_coupling: {
+        label: 'Lead-lag 耦合',
+        description: '带有滞后跨通道依赖的多目标序列。',
+      },
+      coherent_regime_shift: {
+        label: '协同状态切换',
+        description: '多个目标在同一状态变化中协同切换的序列。',
+      },
+      covariate_response: {
+        label: '协变量响应',
+        description: '未来走势依赖已知天气和事件协变量的目标序列。',
+      },
+    },
   },
   lifecycle: {
     showArchived: '显示已归档',
@@ -503,7 +545,7 @@ const zhCN = {
   report: {
     eyebrow: '报告',
     title: '评测报告',
-    subtitle: '查看本次运行的模型指标、任务结果和逐样本预测链接。',
+    subtitle: '查看本次运行的模型指标、能力画像和逐样本预测链接。',
     backToTrack: '返回赛道',
   },
   track: {
@@ -822,6 +864,12 @@ const zhCN = {
     sampleForecasts: '样本预测',
     noSampleForecasts: '暂无逐样本预测。',
     sampleForecastLinks: '样本预测链接',
+    sampleTestGroup: '测试组',
+    sampleSort: '排序',
+    sampleSortWindow: '窗口顺序',
+    sampleSortMetricDesc: '{metric} 误差从大到小',
+    sampleSortMetricAsc: '{metric} 误差从小到大',
+    sampleMetricError: '{metric} 误差',
     sample: '样本',
     window: '窗口',
     models: '模型',

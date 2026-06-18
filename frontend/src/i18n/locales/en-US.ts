@@ -105,6 +105,48 @@ const enUS = {
     resource_archived: 'This resource is archived.',
     run_not_terminal: 'The run must finish or be cancelled before this operation.',
     purge_requires_cascade: 'Permanent deletion requires cascading related resources.',
+    model_window_unsupported: 'Selected model does not support the track input or output window.',
+    synthetic_context_too_short: 'Context length must be at least 16.',
+  },
+  synthetic: {
+    capabilities: {
+      trend: {
+        label: 'Trend',
+        description: 'Single-target series with controllable trend and seasonal residue.',
+      },
+      multi_seasonal: {
+        label: 'Multi-seasonal',
+        description: 'Single-target series with multiple overlapping seasonal periods.',
+      },
+      regime_switching: {
+        label: 'Regime switching',
+        description: 'Single-target series with level and volatility changes.',
+      },
+      long_memory_nonlinear: {
+        label: 'Long-memory nonlinear',
+        description: 'Single-target autoregressive dynamics with nonlinear carry-over.',
+      },
+      intermittent_heteroskedastic: {
+        label: 'Intermittent heteroskedastic',
+        description: 'Single-target sparse bursts with changing noise scale.',
+      },
+      common_factor: {
+        label: 'Common factor',
+        description: 'Multiple targets driven by shared latent factors.',
+      },
+      lead_lag_coupling: {
+        label: 'Lead-lag coupling',
+        description: 'Multiple targets with lagged cross-channel dependencies.',
+      },
+      coherent_regime_shift: {
+        label: 'Coherent regime shift',
+        description: 'Multiple targets that shift together across regimes.',
+      },
+      covariate_response: {
+        label: 'Covariate response',
+        description: 'Targets whose future depends on known weather and event covariates.',
+      },
+    },
   },
   lifecycle: {
     showArchived: 'Show archived',
@@ -503,7 +545,7 @@ const enUS = {
   report: {
     eyebrow: 'Report',
     title: 'Benchmark report',
-    subtitle: 'Model metrics, task outcomes, and per-sample forecast links for this run.',
+    subtitle: 'Model metrics, capability profile, and per-sample forecast links for this run.',
     backToTrack: 'Back to track',
   },
   track: {
@@ -822,6 +864,12 @@ const enUS = {
     sampleForecasts: 'Sample forecasts',
     noSampleForecasts: 'No per-sample forecasts available.',
     sampleForecastLinks: 'Sample forecast links',
+    sampleTestGroup: 'Test group',
+    sampleSort: 'Sort',
+    sampleSortWindow: 'Window order',
+    sampleSortMetricDesc: '{metric} error high to low',
+    sampleSortMetricAsc: '{metric} error low to high',
+    sampleMetricError: '{metric} error',
     sample: 'Sample',
     window: 'Window',
     models: 'Models',

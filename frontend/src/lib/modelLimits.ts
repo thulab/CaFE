@@ -16,6 +16,19 @@ export function modelSupportsCovariateDim(model: ModelDTO, covariateDim: number)
   return maxCovariateCount >= covariateDim;
 }
 
+export function modelSupportsWindow(model: ModelDTO, minContextLength: number, maxContextLength: number, maxHorizon: number, maxCovariateHorizon = 0): boolean {
+  const limits = model.forecast_limits;
+  const minInputLength = readNumericLimit(limits, 'min_input_length');
+  if (minInputLength !== undefined && minContextLength < minInputLength) return false;
+  const maxInputLength = readNumericLimit(limits, 'max_input_length');
+  if (maxInputLength !== undefined && maxContextLength > maxInputLength) return false;
+  const maxOutputLength = readNumericLimit(limits, 'max_output_length');
+  if (maxOutputLength !== undefined && maxHorizon > maxOutputLength) return false;
+  const maxFutureCovsLength = readNumericLimit(limits, 'max_future_covs_length');
+  if (maxFutureCovsLength !== undefined && maxCovariateHorizon > maxFutureCovsLength) return false;
+  return true;
+}
+
 export function modelMaxTargetCount(model: ModelDTO): number | null | undefined {
   return readMaxTargetCount(model.forecast_limits);
 }
@@ -36,6 +49,8 @@ function readMaxTargetCount(limits?: ForecastLimits | null): number | null | und
 
 function readNumericLimit(limits: ForecastLimits | null | undefined, key: string): number | undefined {
   if (!limits || !Object.prototype.hasOwnProperty.call(limits, key)) return undefined;
-  const value = Number(limits[key]);
+  const raw = limits[key];
+  if (raw == null) return undefined;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : undefined;
 }

@@ -70,4 +70,41 @@ describe('SyntheticConfigStep', () => {
       horizon: 16,
     });
   });
+
+  it('renders capability labels and descriptions in Chinese', async () => {
+    setLocale('zh-CN');
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === '/api/synthetic/capabilities') {
+        return jsonResponse({
+          items: [
+            {
+              capability_id: 'regime_switching',
+              label: 'Regime switching',
+              description: 'Single-target series with level and volatility changes.',
+              task_type: 'univariate_forecast',
+              target_dim_mode: 'fixed_1',
+              covariate_columns: [],
+            },
+            {
+              capability_id: 'coherent_regime_shift',
+              label: 'Coherent regime shift',
+              description: 'Multiple targets that shift together across regimes.',
+              task_type: 'multivariate_forecast',
+              target_dim_mode: 'multi',
+              covariate_columns: [],
+            },
+          ]
+        });
+      }
+      return jsonResponse({ shard_ids: [], items: [] });
+    });
+
+    render(SyntheticConfigStep, { global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('状态切换')).toBeTruthy();
+    expect(screen.getByText('带有水平和波动率切换的单目标序列。')).toBeTruthy();
+    expect(screen.getByText('协同状态切换')).toBeTruthy();
+    expect(screen.getByLabelText('选择能力 协同状态切换')).toBeTruthy();
+  });
 });

@@ -46,42 +46,42 @@ BUILTIN_MODELS = [
         "model_type": "Timer-S1",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 272},
+        "forecast_limits": {"min_input_length": 16, "max_input_length": 11520, "max_future_covs_length": None, "max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 272},
     },
     {
         "model_id": "Timer-3.0",
         "model_type": "sundial",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 96},
+        "forecast_limits": {"min_input_length": 16, "max_input_length": 2880, "max_future_covs_length": None, "max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 96},
     },
     {
         "model_id": "Chronos-2",
         "model_type": "t5",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 50, "max_output_length": 720},
+        "forecast_limits": {"min_input_length": 16, "max_input_length": 8192, "max_future_covs_length": 720, "max_target_count": 1, "max_covariate_count": 50, "max_output_length": 720, "default_output_length": 96},
     },
     {
         "model_id": "toto2.0",
         "model_type": "toto2p0",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": None, "max_covariate_count": 0, "max_output_length": 720},
+        "forecast_limits": {"min_input_length": 16, "max_input_length": 8192, "max_future_covs_length": None, "max_target_count": None, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 96},
     },
     {
         "model_id": "AutoARIMA",
         "model_type": "auto_arima",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720},
+        "forecast_limits": {"min_input_length": 16, "max_input_length": 2880, "max_future_covs_length": None, "max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 96},
     },
     {
         "model_id": "Holt-Winters",
         "model_type": "holtwinters",
         "category": "builtin",
         "base_model_id": None,
-        "forecast_limits": {"max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720},
+        "forecast_limits": {"min_input_length": 16, "max_input_length": 2880, "max_future_covs_length": None, "max_target_count": 1, "max_covariate_count": 0, "max_output_length": 720, "default_output_length": 96},
     },
 ]
 
@@ -157,6 +157,24 @@ def _forecast_task(model_id: str, columns: list[str], data: list[list], horizon:
         values = [round(v + bias + rng.uniform(-0.05, 0.05), 6) for v in last_vals]
         out_data.append([future_ts[step], *values])
     return {"columns": out_columns, "data": out_data}
+
+
+def _forecast_validation_error(model: dict | None, columns: list[str], data: list[list], horizon: int, time_col: str, task_index: int) -> str | None:
+    limits = (model or {}).get("forecast_limits") or {}
+    value_count = len([col for col in columns if col != time_col])
+    min_input = limits.get("min_input_length")
+    max_input = limits.get("max_input_length")
+    max_output = limits.get("max_output_length")
+    max_targets = limits.get("max_target_count")
+    if min_input is not None and len(data) < int(min_input):
+        return f"Task-{task_index}'s input length {len(data)} is illegal, acceptable minimum is {min_input}."
+    if max_input is not None and len(data) > int(max_input):
+        return f"Task-{task_index}'s input length {len(data)} is illegal, acceptable maximum is {max_input}."
+    if max_output is not None and horizon > int(max_output):
+        return f"Task-{task_index}'s output length {horizon} is illegal, acceptable maximum is {max_output}."
+    if max_targets is not None and value_count > int(max_targets):
+        return f"Task-{task_index} has {value_count} targets, acceptable maximum is {max_targets}."
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -381,6 +399,9 @@ def create_app() -> FastAPI:
                 return _envelope(422, f"Task-{i}'s target is missing columns or data", {"results": []})
             time_col = time_cols[i] if i < len(time_cols) else (columns[0] if columns else "time")
             horizon = out_lens[i] if i < len(out_lens) else (out_lens[0] if out_lens else 96)
+            validation_error = _forecast_validation_error(models.get(model_id), columns, data, int(horizon), time_col, i)
+            if validation_error:
+                return _envelope(422, validation_error, {"results": []})
             results.append(_forecast_task(model_id, columns, data, int(horizon), time_col))
         return _envelope(200, "Forecast tasks completed successfully", {"results": results})
 

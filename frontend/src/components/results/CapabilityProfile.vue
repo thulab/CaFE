@@ -155,6 +155,7 @@ import { useI18n } from 'vue-i18n';
 import type { CapabilityBlockReportDTO, CapabilityMetricReportDTO, ReportDTO } from '../../api/types';
 import { useFormat } from '../../composables/useFormat';
 import { useModels } from '../../composables/useModels';
+import { syntheticCapabilityLabel } from '../../lib/syntheticCapabilities';
 import Icon from '../ui/Icon.vue';
 
 type Scope = 'synthetic' | 'all';
@@ -250,7 +251,7 @@ const syntheticAxisGroups = computed<AxisGroup[]>(() => {
     }
     grouped.set(id, {
       id,
-      label: block.capability_label || block.name || id,
+      label: capabilityBlockLabel(block),
       blocks: [block],
       sampleCount: Number(block.sample_count || 0),
     });
@@ -312,7 +313,7 @@ const blockRows = computed(() => visibleBlocks.value.map((block) => {
   const valid = allValues.filter((value): value is number => value !== null);
   return {
     block,
-    label: block.name || block.capability_label || block.capability_type || block.capability_block_id,
+    label: capabilityBlockLabel(block),
     cells: selectedModels.value.map((model) => {
       const raw = rawMetricForBlock(block, model.id);
       return {
@@ -428,6 +429,13 @@ function shortAxisLabel(label: string) {
 
 function blockTypeLabel(block: CapabilityBlockReportDTO) {
   return block.block_type === 'synthetic' ? t('results.syntheticData') : t('results.realData');
+}
+
+function capabilityBlockLabel(block: CapabilityBlockReportDTO) {
+  if (block.block_type === 'synthetic') {
+    return syntheticCapabilityLabel(block.capability_type, block.capability_label || block.name, t);
+  }
+  return block.name || block.capability_label || block.capability_type || block.capability_block_id;
 }
 
 function formatMaybe(value: number | null) {

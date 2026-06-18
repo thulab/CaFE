@@ -213,6 +213,7 @@ import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { shortId } from '../lib/format';
+import { syntheticCapabilityLabel } from '../lib/syntheticCapabilities';
 
 const props = defineProps<{ trackId: string }>();
 const metric = ref('mase');
@@ -329,7 +330,9 @@ function covariateLabel(shard: ShardDTO) {
 function datasetLabel(shard: ShardDTO) {
   if (shard.shard_type === 'synthetic') {
     const config = shard.generation_config || {};
-    const capability = typeof config.capability_label === 'string' ? config.capability_label : shard.capability_type;
+    const capabilityId = typeof config.capability_id === 'string' ? config.capability_id : shard.capability_type;
+    const fallback = typeof config.capability_label === 'string' ? config.capability_label : shard.capability_type;
+    const capability = syntheticCapabilityLabel(capabilityId, fallback, t);
     return capability ? t('track.syntheticCapability', { capability }) : t('track.syntheticData');
   }
   return shard.dataset_name || shard.source_uri || t('common.notAvailable');

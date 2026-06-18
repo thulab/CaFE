@@ -25,6 +25,8 @@ class SyntheticCapability:
     capability_id: str
     label: str
     description: str
+    label_zh: str
+    description_zh: str
     task_type: str
     target_dim_mode: str
     covariate_columns: tuple[str, ...] = ()
@@ -49,6 +51,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "trend",
         "Trend",
         "Single-target series with controllable trend and seasonal residue.",
+        "趋势",
+        "带有可控趋势和季节残差的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
@@ -56,6 +60,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "multi_seasonal",
         "Multi-seasonal",
         "Single-target series with multiple overlapping seasonal periods.",
+        "多季节性",
+        "带有多重叠加季节周期的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
@@ -63,6 +69,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "regime_switching",
         "Regime switching",
         "Single-target series with level and volatility changes.",
+        "状态切换",
+        "带有水平和波动率切换的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
@@ -70,6 +78,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "long_memory_nonlinear",
         "Long-memory nonlinear",
         "Single-target autoregressive dynamics with nonlinear carry-over.",
+        "长记忆非线性",
+        "带有非线性延续效应的单目标自回归动态。",
         "univariate_forecast",
         "fixed_1",
     ),
@@ -77,6 +87,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "intermittent_heteroskedastic",
         "Intermittent heteroskedastic",
         "Single-target sparse bursts with changing noise scale.",
+        "间歇异方差",
+        "带有稀疏突发和变化噪声尺度的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
@@ -84,6 +96,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "common_factor",
         "Common factor",
         "Multiple targets driven by shared latent factors.",
+        "公共因子",
+        "由共享潜在因子驱动的多目标序列。",
         "multivariate_forecast",
         "multi",
     ),
@@ -91,6 +105,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "lead_lag_coupling",
         "Lead-lag coupling",
         "Multiple targets with lagged cross-channel dependencies.",
+        "Lead-lag 耦合",
+        "带有滞后跨通道依赖的多目标序列。",
         "multivariate_forecast",
         "multi",
     ),
@@ -98,6 +114,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "coherent_regime_shift",
         "Coherent regime shift",
         "Multiple targets that shift together across regimes.",
+        "协同状态切换",
+        "多个目标在同一状态变化中协同切换的序列。",
         "multivariate_forecast",
         "multi",
     ),
@@ -105,6 +123,8 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "covariate_response",
         "Covariate response",
         "Targets whose future depends on known weather and event covariates.",
+        "协变量响应",
+        "未来走势依赖已知天气和事件协变量的目标序列。",
         "covariate_forecast",
         "covariate",
         ("weather", "event"),
@@ -127,6 +147,8 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
             "capability_id": capability.capability_id,
             "label": capability.label,
             "description": capability.description,
+            "label_i18n": {"en-US": capability.label, "zh-CN": capability.label_zh},
+            "description_i18n": {"en-US": capability.description, "zh-CN": capability.description_zh},
             "task_type": capability.task_type,
             "target_dim_mode": capability.target_dim_mode,
             "covariate_columns": list(capability.covariate_columns),
@@ -140,7 +162,7 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
                 "frequency": "h",
             },
             "limits": {
-                "context_length": {"min": 8, "max": 2048},
+                "context_length": {"min": 16, "max": 2048},
                 "horizon": {"min": 1, "max": 512},
                 "sample_count": {"min": 1, "max": 1000},
                 "difficulty": {"min": 1, "max": 5},
@@ -208,8 +230,8 @@ def _validate_config(config: SyntheticGenerationConfig) -> None:
     invalid = {name: value for name, value in positive_fields.items() if int(value) <= 0}
     if invalid:
         raise ApiError("synthetic_config_invalid", "synthetic generation parameters must be positive", invalid)
-    if config.context_length < 8:
-        raise ApiError("synthetic_context_too_short", "context_length must be at least 8")
+    if config.context_length < 16:
+        raise ApiError("synthetic_context_too_short", "context_length must be at least 16")
     if config.context_length > 2048 or config.horizon > 512 or config.sample_count > 1000 or config.target_dim > 16:
         raise ApiError(
             "synthetic_config_too_large",
@@ -260,6 +282,7 @@ def _generate_capability_shard(
         target, latent_params, covariates = _generate_sample_values(
             capability.capability_id,
             sample_length,
+            context,
             target_dim,
             config.season_length,
             config.difficulty,
@@ -411,6 +434,7 @@ def _frequency_delta(frequency: str) -> timedelta:
 def _generate_sample_values(
     capability_id: str,
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     difficulty: int,
@@ -421,7 +445,7 @@ def _generate_sample_values(
     if capability_id == "multi_seasonal":
         return _generate_multi_seasonal(length, target_dim, season_length, difficulty, rng)
     if capability_id == "regime_switching":
-        return _generate_regime_switching(length, target_dim, season_length, difficulty, rng)
+        return _generate_regime_switching(length, context_length, target_dim, season_length, difficulty, rng)
     if capability_id == "long_memory_nonlinear":
         return _generate_long_memory_nonlinear(length, target_dim, season_length, difficulty, rng)
     if capability_id == "intermittent_heteroskedastic":
@@ -431,7 +455,7 @@ def _generate_sample_values(
     if capability_id == "lead_lag_coupling":
         return _generate_lead_lag_coupling(length, target_dim, season_length, difficulty, rng)
     if capability_id == "coherent_regime_shift":
-        return _generate_coherent_regime_shift(length, target_dim, season_length, difficulty, rng)
+        return _generate_coherent_regime_shift(length, context_length, target_dim, season_length, difficulty, rng)
     if capability_id == "covariate_response":
         return _generate_covariate_response(length, target_dim, season_length, difficulty, rng)
     raise ApiError("synthetic_capability_unknown", "unknown synthetic capability", {"capability_id": capability_id}, 404)
@@ -485,6 +509,7 @@ def _generate_multi_seasonal(
 
 def _generate_regime_switching(
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     difficulty: int,
@@ -493,15 +518,21 @@ def _generate_regime_switching(
     lam = _difficulty_lambda(difficulty)
     seasonal, slow, _ = _base_features(length, season_length)
     switch_count = max(1, int(round(1 + lam * 4)))
-    cut_points = sorted(rng.choice(np.arange(4, max(5, length - 4)), size=min(switch_count, max(1, length - 8)), replace=False))
+    random_pool = np.arange(4, max(5, length - 4))
+    cut_points = set(
+        rng.choice(random_pool, size=min(switch_count, max(1, length - 8), len(random_pool)), replace=False).tolist()
+    )
+    if context_length < length:
+        cut_points.add(int(rng.integers(context_length, length)))
+    cut_points = sorted(point for point in cut_points if 0 < point < length)
     levels = rng.normal(0.0, 0.8 + 0.6 * lam, size=(len(cut_points) + 1, target_dim))
     values = np.zeros((length, target_dim))
     boundaries = [0, *cut_points, length]
-    for segment, (start, end) in enumerate(zip(boundaries, boundaries[1:], strict=True)):
+    for segment, (start, end) in enumerate(zip(boundaries, boundaries[1:])):
         scale = 0.08 + 0.06 * segment + 0.08 * lam
         values[start:end] = levels[segment] + 0.35 * seasonal[start:end, None] + 0.18 * slow[start:end, None]
         values[start:end] += rng.normal(0.0, scale, size=(end - start, target_dim))
-    return values, {"switch_count": len(cut_points), "cut_points": cut_points}, None
+    return values, {"switch_count": len(cut_points), "cut_points": cut_points, "forecast_switch": int(any(point >= context_length for point in cut_points))}, None
 
 
 def _generate_long_memory_nonlinear(
@@ -588,6 +619,7 @@ def _generate_lead_lag_coupling(
 
 def _generate_coherent_regime_shift(
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     difficulty: int,
@@ -595,7 +627,8 @@ def _generate_coherent_regime_shift(
 ) -> tuple[np.ndarray, dict[str, Any], None]:
     lam = _difficulty_lambda(difficulty)
     seasonal, slow, trend = _base_features(length, season_length)
-    shift_at = int(rng.integers(max(3, length // 3), max(4, 2 * length // 3)))
+    shift_low = min(max(1, int(context_length)), length - 1)
+    shift_at = int(rng.integers(shift_low, length)) if shift_low < length else length - 1
     direction = rng.normal(0.0, 0.8 + 1.2 * lam, size=target_dim)
     common = 0.5 * seasonal + 0.2 * slow + 0.15 * trend
     values = common[:, None] + rng.normal(0.0, 0.1 + 0.08 * lam, size=(length, target_dim))

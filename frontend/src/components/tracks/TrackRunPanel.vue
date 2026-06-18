@@ -44,7 +44,7 @@ import { getShard } from '../../api/datasets';
 import { getTrack } from '../../api/tracks';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
-import { modelMaxCovariateCount, modelMaxTargetCount, modelSupportsCovariateDim, modelSupportsTargetDim } from '../../lib/modelLimits';
+import { modelMaxCovariateCount, modelMaxTargetCount, modelSupportsCovariateDim, modelSupportsTargetDim, modelSupportsWindow } from '../../lib/modelLimits';
 import Icon from '../ui/Icon.vue';
 
 const props = defineProps<{ trackId: string }>();
@@ -57,6 +57,10 @@ const runId = ref('');
 const isCreatingRun = ref(false);
 const targetDim = ref(1);
 const covariateDim = ref(0);
+const minContextLength = ref(0);
+const maxContextLength = ref(0);
+const maxHorizon = ref(0);
+const maxCovariateHorizon = ref(0);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 
 const compatibleModels = computed(() => models.value.filter((model) => isModelCompatible(model)));
@@ -70,7 +74,7 @@ watch(() => props.trackId, () => {
   clearError();
   void loadTargetDim();
 });
-watch([models, targetDim, covariateDim], pruneIncompatibleSelections);
+watch([models, targetDim, covariateDim, minContextLength, maxContextLength, maxHorizon, maxCovariateHorizon], pruneIncompatibleSelections);
 
 async function loadModels() {
   try {
@@ -126,7 +130,9 @@ function modelTargetLimitLabel(model: ModelDTO) {
 }
 
 function isModelCompatible(model: ModelDTO) {
-  return modelSupportsTargetDim(model, targetDim.value) && modelSupportsCovariateDim(model, covariateDim.value);
+  return modelSupportsTargetDim(model, targetDim.value)
+    && modelSupportsCovariateDim(model, covariateDim.value)
+    && modelSupportsWindow(model, minContextLength.value, maxContextLength.value, maxHorizon.value, maxCovariateHorizon.value);
 }
 
 function pruneIncompatibleSelections() {
@@ -142,15 +148,28 @@ async function loadTargetDim() {
     if (!shardIds.length) {
       targetDim.value = 1;
       covariateDim.value = 0;
+      minContextLength.value = 0;
+      maxContextLength.value = 0;
+      maxHorizon.value = 0;
+      maxCovariateHorizon.value = 0;
       return;
     }
     const shards = await Promise.all(shardIds.map((id) => getShard(id)));
     targetDim.value = Math.max(1, ...shards.map((shard) => Number(shard.target_dim || shard.target_columns?.length || 1)));
     covariateDim.value = Math.max(0, ...shards.map((shard) => Number(shard.covariate_dim || shard.covariate_columns?.length || 0)));
+    const contextLengths = shards.map((shard) => Number(shard.context_length || 0)).filter((value) => value > 0);
+    minContextLength.value = contextLengths.length ? Math.min(...contextLengths) : 0;
+    maxContextLength.value = Math.max(0, ...shards.map((shard) => Number(shard.context_length || 0)));
+    maxHorizon.value = Math.max(0, ...shards.map((shard) => Number(shard.horizon || 0)));
+    maxCovariateHorizon.value = Math.max(0, ...shards.filter((shard) => Number(shard.covariate_dim || shard.covariate_columns?.length || 0) > 0).map((shard) => Number(shard.horizon || 0)));
   } catch (caught) {
     setError(caught, 'errors.failedToLoadTracks');
     targetDim.value = 1;
     covariateDim.value = 0;
+    minContextLength.value = 0;
+    maxContextLength.value = 0;
+    maxHorizon.value = 0;
+    maxCovariateHorizon.value = 0;
   }
 }
 </script>

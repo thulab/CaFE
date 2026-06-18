@@ -46,6 +46,7 @@ import { createTrackFromShards } from '../../api/tracks';
 import type { ShardDTO } from '../../api/types';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { formatInt } from '../../lib/format';
+import { syntheticCapabilityLabel } from '../../lib/syntheticCapabilities';
 import { goNext, resetWizard, wizardState } from '../../stores/wizard';
 import Icon from '../ui/Icon.vue';
 import SelectablePagedList from '../ui/SelectablePagedList.vue';
@@ -92,7 +93,8 @@ const items = computed<SelectablePagedListItem[]>(() => shards.value.map((shard)
   }
   if (shard.shard_type === 'synthetic') {
     const config = shard.generation_config || {};
-    const capability = stringConfig(config.capability_label) || stringConfig(config.capability_id) || shard.capability_type || '';
+    const capabilityId = stringConfig(config.capability_id) || shard.capability_type || '';
+    const capability = syntheticCapabilityLabel(capabilityId, stringConfig(config.capability_label), t);
     if (capability) meta.push(t('wizard.testCaseSetStep.capability', { capability }));
     if (config.difficulty) meta.push(t('wizard.testCaseSetStep.difficulty', { difficulty: config.difficulty }));
     if (config.seed !== undefined) meta.push(t('wizard.testCaseSetStep.seed', { seed: config.seed }));

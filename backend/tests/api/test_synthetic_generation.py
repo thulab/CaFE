@@ -10,13 +10,16 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     assert catalog.status_code == 200
     capability_ids = {item["capability_id"] for item in catalog.json()["items"]}
     assert {"trend", "common_factor", "covariate_response"}.issubset(capability_ids)
+    trend_capability = next(item for item in catalog.json()["items"] if item["capability_id"] == "trend")
+    assert trend_capability["label_i18n"]["zh-CN"] == "趋势"
+    assert trend_capability["limits"]["context_length"]["min"] == 16
 
     response = client.post(
         "/synthetic/shards",
         json={
             "name": "synthetic smoke",
             "capabilities": ["trend", "covariate_response"],
-            "context_length": 12,
+            "context_length": 16,
             "horizon": 4,
             "sample_count": 3,
             "difficulty": 3,
@@ -48,7 +51,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     sample_list = client.get(f"/shards/{body['shard_ids'][1]}/samples").json()
     sample_id = sample_list["items"][0]["sample_id"]
     preview = client.get(f"/samples/{sample_id}/preview").json()
-    assert len(preview["target_history"]) == 12
+    assert len(preview["target_history"]) == 16
     assert len(preview["target_future"]) == 4
     assert len(preview["target_history"][0]) == 2
     assert len(preview["history_cov"][0]) == 2
@@ -61,7 +64,7 @@ def test_track_from_shards_groups_synthetic_capabilities(app, client):
         json={
             "name": "synthetic grouped",
             "capabilities": ["trend", "common_factor"],
-            "context_length": 12,
+            "context_length": 16,
             "horizon": 4,
             "sample_count": 2,
             "difficulty": 2,
@@ -89,3 +92,36 @@ def test_track_from_shards_groups_synthetic_capabilities(app, client):
         assert {block.capability_type for block in blocks} == {"trend", "common_factor"}
         links = session.exec(select(CapabilityBlockShard)).all()
         assert {link.shard_id for link in links} == set(generated["shard_ids"])
+
+
+def test_regime_capabilities_generate_json_serializable_metadata(app, client):
+    response = client.post(
+        "/synthetic/shards",
+        json={
+            "name": "regime smoke",
+            "capabilities": ["regime_switching", "coherent_regime_shift"],
+            "context_length": 16,
+            "horizon": 4,
+            "sample_count": 2,
+            "difficulty": 4,
+            "season_length": 8,
+            "target_dim": 3,
+            "seed": 13,
+            "frequency": "h",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["shard_ids"]) == 2
+
+    with Session(app.state.engine) as session:
+        samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(body["shard_ids"]))).all()
+        assert samples
+        regime_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "regime_switching")
+        coherent_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "coherent_regime_shift")
+        cut_points = regime_sample.sample_metadata["latent_params"]["cut_points"]
+        assert cut_points
+        assert all(type(point) is int for point in cut_points)
+        assert regime_sample.sample_metadata["latent_params"]["forecast_switch"] == 1
+        assert coherent_sample.sample_metadata["latent_params"]["shift_at"] >= 16

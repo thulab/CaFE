@@ -30,7 +30,7 @@
               <div class="detail-item"><dt>{{ t('shard.shardId') }}</dt><dd class="mono">{{ shard.shard_id }}</dd></div>
               <div v-if="shard.name" class="detail-item"><dt>{{ t('shard.name') }}</dt><dd>{{ shard.name }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.type') }}</dt><dd>{{ shard.shard_type === 'synthetic' ? t('shard.synthetic') : t('shard.real') }}</dd></div>
-              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.capability') }}</dt><dd>{{ syntheticConfigLabel('capability_label') || syntheticConfigLabel('capability_id') || shard.capability_type }}</dd></div>
+              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.capability') }}</dt><dd>{{ syntheticCapability }}</dd></div>
               <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.difficulty') }}</dt><dd>{{ syntheticConfigValue('difficulty') }}</dd></div>
               <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.seed') }}</dt><dd>{{ syntheticConfigValue('seed') }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.manifest') }}</dt><dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shortId(shard.dataset_manifest_id) }}</a></dd></div>
@@ -101,6 +101,7 @@ import type { SampleIndexDTO, ShardDTO, ShardSamplesDTO } from '../api/types';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
 import { shortId } from '../lib/format';
+import { syntheticCapabilityLabel } from '../lib/syntheticCapabilities';
 
 const props = defineProps<{ shardId: string }>();
 const SAMPLE_PAGE_SIZE = 10;
@@ -126,6 +127,12 @@ const samplePageRange = computed(() => {
   const start = sampleOffset.value + 1;
   const end = Math.min(sampleOffset.value + (samples.value?.items.length ?? 0), sampleTotal.value);
   return t('shard.samplePageRange', { start, end, total: sampleTotal.value });
+});
+const syntheticCapability = computed(() => {
+  const config = shard.value?.generation_config || {};
+  const capabilityId = syntheticConfigLabel('capability_id') || shard.value?.capability_type || '';
+  const fallback = syntheticConfigLabel('capability_label') || capabilityId;
+  return syntheticCapabilityLabel(capabilityId, fallback, t);
 });
 
 async function run() {

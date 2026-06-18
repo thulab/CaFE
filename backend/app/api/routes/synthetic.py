@@ -17,7 +17,7 @@ router = make_router(prefix="/synthetic", tags=["synthetic"])
 class SyntheticShardGenerate(BaseModel):
     name: str = Field(default="Synthetic test cases")
     capabilities: list[str]
-    context_length: int = Field(default=60, ge=8, le=2048)
+    context_length: int = Field(default=60, ge=16, le=2048)
     horizon: int = Field(default=16, ge=1, le=512)
     sample_count: int = Field(default=32, ge=1, le=1000)
     difficulty: int = Field(default=3, ge=1, le=5)

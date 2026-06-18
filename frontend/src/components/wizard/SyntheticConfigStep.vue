@@ -34,13 +34,13 @@
             v-model="selectedCapabilities"
             type="checkbox"
             :value="capability.capability_id"
-            :aria-label="t('wizard.syntheticStep.selectCapability', { name: capability.label })"
+            :aria-label="t('wizard.syntheticStep.selectCapability', { name: capabilityLabel(capability) })"
           />
           <span class="capability-top">
-            <span class="capability-title">{{ capability.label }}</span>
+            <span class="capability-title">{{ capabilityLabel(capability) }}</span>
             <span class="badge">{{ taskTypeLabel(capability.task_type) }}</span>
           </span>
-          <span class="capability-desc">{{ capability.description }}</span>
+          <span class="capability-desc">{{ capabilityDescription(capability) }}</span>
           <span v-if="capability.covariate_columns.length" class="faint">
             {{ t('wizard.syntheticStep.covariateColumns', { columns: capability.covariate_columns.join(', ') }) }}
           </span>
@@ -56,7 +56,7 @@
       </div>
       <div class="field">
         <label class="label" for="synthetic-context">{{ t('wizard.syntheticStep.context') }}</label>
-        <input id="synthetic-context" v-model.number="contextLength" type="number" min="8" max="2048" />
+        <input id="synthetic-context" v-model.number="contextLength" type="number" min="16" max="2048" />
         <p class="hint">{{ t('wizard.syntheticStep.contextHint') }}</p>
       </div>
       <div class="field">
@@ -110,6 +110,7 @@ import { createSyntheticShards, listSyntheticCapabilities } from '../../api/synt
 import type { SyntheticCapabilityDTO } from '../../api/types';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
+import { syntheticCapabilityDescription, syntheticCapabilityLabel } from '../../lib/syntheticCapabilities';
 import { goNext, wizardState } from '../../stores/wizard';
 import Icon from '../ui/Icon.vue';
 
@@ -212,5 +213,13 @@ function taskTypeLabel(taskType: string) {
   if (taskType === 'multivariate_forecast') return t('wizard.syntheticStep.multivariate');
   if (taskType === 'covariate_forecast') return t('wizard.syntheticStep.covariate');
   return t('wizard.syntheticStep.univariate');
+}
+
+function capabilityLabel(capability: SyntheticCapabilityDTO) {
+  return syntheticCapabilityLabel(capability.capability_id, capability.label, t);
+}
+
+function capabilityDescription(capability: SyntheticCapabilityDTO) {
+  return syntheticCapabilityDescription(capability.capability_id, capability.description, t);
 }
 </script>
