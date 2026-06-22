@@ -1,20 +1,61 @@
+# OS and editors
+.DS_Store
+*.DS_Store
+.idea/
+.vscode/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python backend
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.coverage
+**/__pycache__/
+*.py[cod]
+*$py.class
+.Python
 .venv/
 venv/
-.DS_Store
-.idea/
+env/
+backend/.venv/
+.pytest_cache/
+backend/.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.tox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+*.egg-info/
 
-# Local design and discussion artifacts
-detail.pdf
-paper.png
-prompt.md
+# Vue / Vite frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+frontend/.cache/
+frontend/coverage/
+frontend/test-results/
+frontend/playwright-report/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
 # Runtime outputs
-runtime/generated/
-runtime/system/
+.tsbenchmark-system/
+runtime/
+backend/runtime/
+logs/
+*.log
+
+# Build outputs
+deliverables/**/*.tar
+deliverables/**/*.pdf

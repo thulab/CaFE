@@ -1,0 +1,24 @@
+{
+  "host": "timechor.feishu.cn",
+  "documents": [
+    {
+      "token": "CwaMdyCmhovwIGxRbGicKuExnVh",
+      "title": "REST API 参考文档",
+      "output": "rest-api.md",
+      "note": "核心调用操作：推理 / 模型管理 / 数据集评估治理 / 健康探针 / 监控"
+    },
+    {
+      "token": "Dd2WdEvXKoLDdox5Ma9cEMb1nBf",
+      "title": "Chronos 转储报告",
+      "output": "chronos-dump-report.md",
+      "note": "数据结构服务：Chronos 数据集 Arrow → TsFile 转储清单与字段映射"
+    },
+    {
+      "token": "SenJdxlbuoUS5Uxmq7jcOUzdnob",
+      "host": "apache-iotdb-project.feishu.cn",
+      "title": "TsFileDataFrame 用户手册",
+      "output": "tsfile-dataframe-manual.md",
+      "note": "TsFile 接入：像 DataFrame 一样读取 TsFile 时序数据的 Python API（表/树模型、Timeseries 懒加载、loc 对齐查询）"
+    }
+  ]
+}

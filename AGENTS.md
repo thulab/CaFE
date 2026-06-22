@@ -1,92 +1,37 @@
-# TSBenchmark Agents Guide
+# Repository Guidelines
 
-## 范围与权限
+## Project Structure & Module Organization
 
-- 本项目工作目录：`/root/tsbenchmark/TSBenchmark`
-- **禁止**对目录外的任何文件进行读写操作
-- **禁止**自行执行 git 操作（commit、push、pull、reset 等）
+This repository contains a TSBenchmark MVP with a FastAPI backend and Vue frontend. `backend/app/` holds backend code: `api/routes/`, `models/`, `schemas/`, `services/`, and `workers/`. `backend/tests/` contains pytest suites in `unit/`, `api/`, `e2e/`, and `fixtures/`. `frontend/src/` holds Vue code: `api/`, `components/wizard/`, `components/results/`, `components/ui/` (reusable Icon/StatusBadge/StateBlock), `composables/` (useTheme/useAsync/useModels), `lib/` (format helpers), `pages/`, `stores/` (`wizard`, `recents`), and `tests/`. The app shell (`App.vue`) uses self-rolled hash routing (no vue-router); theming is token-based in `styles.css` with light/dark via `[data-theme]`. `docs/` contains specs, plans, the user manual (`docs/manual/README.md`), the developer manual (`docs/developer/` — `README.md` index, `data-model.md`, `key-flows.md`), and `docs/reference/` (external reference docs synced from Feishu via `scripts/sync-feishu-docs.py`). `scripts/` contains local start/stop/status scripts and script tests.
 
-## 默认行为
+## Build, Test, and Development Commands
 
-**低风险局部改动**：直接实现，无需确认
-- 修复 bug、添加日志、重构内部实现
-- 不涉及 API 契约变更
+- `./scripts/start-system.sh`: start backend and frontend locally.
+- `./scripts/status-system.sh`: show service PID/log status.
+- `./scripts/stop-system.sh`: stop both services.
+- `./scripts/stub-service.sh {start|stop|status}`: run the local timer-rest-service stub (`backend/stub_service/`) on `127.0.0.1:10810` for offline inference; the backend reaches it via `TSBENCHMARK_TIMER_SERVICE_BASE_URL` (set `TSBENCHMARK_MODEL_ADAPTER=stub` for the in-process stub instead).
+- `./scripts/baseline-run.sh [csv]`: spin up an isolated live backend (in-process deterministic stub), walk the full API chain with a real CSV (default `test/flow_template.csv`), and write a dated baseline record under `docs/superpowers/baselines/`; tears the backend down on exit.
+- `cd backend && uv run pytest`: run all backend tests.
+- `cd frontend && npm test`: run frontend Vitest suite.
+- `cd frontend && npm run test:e2e`: run frontend smoke test.
+- `bash scripts/tests/test_system_scripts.sh`: verify system scripts.
 
-**中高风险改动**：先分析影响，再执行
-- 涉及 API 端点增减或参数变化
-- 涉及数据模型结构变更
-- 涉及前端路由或页面逻辑变更
+## Coding Style & Naming Conventions
 
-## 验证要求
+Use clear boundaries: routes validate and delegate, services own behavior, and models stay persistence-only. Python uses 4-space indentation, type hints, and snake_case names. Vue/TypeScript uses PascalCase components and camelCase functions/state. Keep generated artifacts out of commits; `.venv/`, `node_modules/`, `runtime/`, and `.tsbenchmark-system/` are ignored.
 
-### 必须执行的验证
-```bash
-# 单元测试（每次代码改动后）
-python -m pytest test/unit/ -q
+## Testing Guidelines
 
-# 如改动涉及 V1 / benchmark_v1 模块
-python -m pytest test/unit/backend/app/datasets/test_benchmark_v1.py -q
-```
+Backend uses pytest; name files `test_*.py` and keep fixtures under `backend/tests/fixtures/`. Frontend uses Vitest with Vue Testing Library; name files `*.test.ts`. Add or update tests for behavior changes, API contracts, CSV validation, run execution, or UI workflows. Run focused tests first, then the relevant full suite before handoff.
 
-### 可选验证（按需）
-```bash
-# 集成测试
-python -m pytest test/integration/ -q
+## Agent-Specific Instructions
 
-# 前端语法校验
-python -c "from frontend.app import app"
-python -c "from backend.app.api import create_api"
-```
+Multi-agent work is allowed when tasks are independent or split by ownership, such as backend services, frontend components, docs, and tests. Give each agent a clear scope and disjoint write set. Avoid concurrent edits to the same file unless one integration agent owns the final merge. Each agent should report changed paths and verification commands.
 
-### 危险行为警告
-- **禁止**跳过测试直接提交
-- **禁止**在未验证的情况下声称"测试通过"
-- **禁止**修改 `runtime/` 目录下的运行时生成物（它们是验证副产品）
-- **禁止**修改 `conf/system.toml` 中的生产配置默认值
+## Commit & Pull Request Guidelines
 
-## 变更策略
+Existing history uses short messages such as `add plans`, `update entity doc`, and Chinese summaries. Keep commits concise and task-scoped. Pull requests should include a summary, tests run, UI screenshots when relevant, and notes for schema/API changes.
 
-1. 优先保持模块边界清晰，不跨模块堆砌无关逻辑
-2. 涉及领域模型时，放入对应模块的 `domain.py`
-3. 涉及 V1 算法时，优先放入 `backend/app/datasets/benchmark_v1/`
-4. 文档/配置/脚本中的路径若因重构失效，必须一并更新
+## Security & Configuration Tips
 
-## 通信规范
-
-### 必须说明的内容
-- 做了什么修改
-- 为什么这样做
-- 运行了什么验证
-- 未覆盖的风险或已知缺口
-
-### 输出格式
-```
-## 变更摘要
-[一句话描述]
-
-## 变更详情
-[具体修改内容]
-
-## 验证结果
-[测试输出摘要]
-
-## 风险/缺口
-[如有]
-```
-
-## 项目约定
-
-| 约定 | 说明 |
-|------|------|
-| 后端入口 | `python -m backend.app.main` |
-| 前端入口 | `python -m frontend.app` |
-| 配置 | `conf/system.toml` |
-| 启停 | `bash scripts/start_system.sh` / `stop_system.sh` |
-| 测试发现 | `python -m pytest test/unit/ -q` |
-
-## 决策原则
-
-1. **先看现有实现，再动手改** - 不基于猜测重写
-2. **能局部修复，不做大规模改造** - 保持改动收敛
-3. **性能优先场景** - 避免数据处理、批量推理、序列转换中的明显低效实现
-4. **跨模块依赖** - 避免循环导入，保持依赖单向
+The MVP assumes a local trusted environment. Do not commit runtime databases, uploaded CSVs, logs, or secrets. Use `TSBENCHMARK_RUNTIME_DIR`, `TSBENCHMARK_DATABASE_URL`, `TSBENCHMARK_BACKEND_PORT`, and `TSBENCHMARK_FRONTEND_PORT` for isolated local runs.

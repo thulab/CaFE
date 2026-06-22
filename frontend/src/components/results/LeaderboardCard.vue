@@ -1,0 +1,89 @@
+<template>
+  <article class="card" style="padding:18px;display:flex;flex-direction:column;gap:12px">
+    <header style="display:flex;flex-direction:column;gap:4px">
+      <h3 class="cell-title" style="margin:0;font-size:1.05rem;font-weight:700" :title="item.track_name">{{ item.track_name }}</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <span class="badge neutral">{{ item.track_type }} · {{ item.primary_metric_id.toUpperCase() }}</span>
+        <span v-if="manageable" class="badge" :class="isPublic ? 'success' : 'warning'">{{ isPublic ? t('leaderboards.public') : t('leaderboards.hidden') }}</span>
+        <span class="faint" style="font-size:0.78rem">{{ t('results.updated', { time: timeAgo(item.updated_at) }) }}</span>
+      </div>
+    </header>
+
+    <div v-if="item.top.length === 0" class="faint" style="padding:14px 0;text-align:center;font-size:0.88rem">
+      {{ t('results.noRankedResults') }}
+    </div>
+    <ul v-else style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px">
+      <li v-for="row in sorted" :key="row.model_id" style="display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center">
+        <span class="rank-badge" :class="medal(row.rank)">{{ row.rank }}</span>
+        <span style="min-width:0;display:flex;flex-direction:column;gap:2px">
+          <span style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.model_name ?? modelName(row.model_id) }}</span>
+          <span class="bar-cell">
+            <span class="bar-track">
+              <span class="bar-fill" :class="{ 'is-winner': row.rank === 1 }" :style="{ width: barWidth(row.metric_value) + '%' }" />
+            </span>
+          </span>
+        </span>
+        <span class="mono" style="font-size:0.86rem">{{ formatNumber(row.metric_value) }}</span>
+      </li>
+    </ul>
+
+    <div class="faint" style="font-size:0.78rem">
+      {{ t('results.modelRunCount', { models: modelCountLabel, runs: runCountLabel }) }}
+    </div>
+
+    <footer style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+      <a class="btn secondary sm" :href="`#/tracks/${item.track_id}/ranking`">
+        {{ t('results.viewFullBoard') }} <Icon name="arrowRight" :size="14" />
+      </a>
+      <button
+        v-if="manageable"
+        class="btn ghost sm"
+        type="button"
+        :disabled="busy"
+        @click="$emit('visibility-change', !isPublic)"
+      >
+        <span v-if="busy" class="spinner" />
+        <Icon v-else :name="isPublic ? 'eyeOff' : 'eye'" :size="14" />
+        {{ isPublic ? t('leaderboards.hideFromPublic') : t('leaderboards.makePublic') }}
+      </button>
+    </footer>
+  </article>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+import Icon from '../ui/Icon.vue';
+import { useModels } from '../../composables/useModels';
+import { useFormat } from '../../composables/useFormat';
+import type { LeaderboardItem } from '../../api/results';
+
+const props = withDefaults(defineProps<{ item: LeaderboardItem; manageable?: boolean; busy?: boolean }>(), {
+  manageable: false,
+  busy: false,
+});
+
+defineEmits<{ (event: 'visibility-change', publicVisible: boolean): void }>();
+
+const { modelName } = useModels();
+const { t } = useI18n();
+const { formatNumber, timeAgo } = useFormat();
+
+const isPublic = computed(() => props.item.public_visible !== false);
+const sorted = computed(() => [...props.item.top].sort((a, b) => a.rank - b.rank));
+const maxValue = computed(() => Math.max(...props.item.top.map((t) => Math.abs(t.metric_value)), 1e-9));
+const modelCountLabel = computed(() =>
+  t(props.item.model_count === 1 ? 'results.modelCountInlineOne' : 'results.modelCountInlineOther', { count: props.item.model_count })
+);
+const runCountLabel = computed(() =>
+  t(props.item.run_count === 1 ? 'results.runCountInlineOne' : 'results.runCountInlineOther', { count: props.item.run_count })
+);
+
+function barWidth(v: number): number {
+  return Math.max(4, Math.min(100, (Math.abs(v) / maxValue.value) * 100));
+}
+
+function medal(rank: number): string {
+  return rank === 1 ? 'gold' : rank === 2 ? 'silver' : rank === 3 ? 'bronze' : '';
+}
+</script>

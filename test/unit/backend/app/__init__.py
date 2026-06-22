@@ -1,1 +1,0 @@
-"""Backend app unit tests."""

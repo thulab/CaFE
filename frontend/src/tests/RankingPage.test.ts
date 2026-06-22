@@ -1,0 +1,107 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { i18n, setLocale } from '../i18n';
+import RankingTable from '../components/results/RankingTable.vue';
+import RankingPage from '../pages/RankingPage.vue';
+import { authState } from '../stores/auth';
+
+function jsonResponse(body: unknown) {
+  return new Response(JSON.stringify(body), { status: 200 });
+}
+
+// URL-aware mock: model-name resolution fetches /api/models, so route by URL
+// instead of relying on call order.
+function mockFetch() {
+  return vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+    const url = String(input);
+    if (url === '/api/models') return Promise.resolve(jsonResponse({ items: [] }));
+    if (url.includes('metric=mae')) return Promise.resolve(jsonResponse({ items: [{ model_id: 'm2', rank: 1, metric_value: 0.1 }] }));
+    return Promise.resolve(jsonResponse({ items: [{ model_id: 'm1', rank: 1, metric_value: 0.2 }] }));
+  });
+}
+
+describe('RankingPage', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    setLocale('en-US');
+    authState.user = null;
+  });
+
+  afterEach(() => {
+    authState.user = null;
+  });
+
+  it('queries metric and policy controls and displays lower-is-better ranking', async () => {
+    const fetchMock = mockFetch();
+
+    render(RankingPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    expect((await screen.findAllByText('m1')).length).toBeGreaterThan(0);
+    await fireEvent.update(screen.getByLabelText('Metric'), 'mae');
+
+    await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith('/api/tracks/track-1/ranking?metric=mae&policy=latest_valid_result', expect.any(Object)));
+    expect(await screen.findByText('Lower is better')).toBeTruthy();
+  });
+
+  it('renders the ranking page title in Chinese', async () => {
+    setLocale('zh-CN');
+    mockFetch();
+
+    render(RankingPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByRole('heading', { name: '赛道排名' })).toBeTruthy();
+  });
+
+  it('uses a localized metric header when RankingTable metric label is omitted', async () => {
+    setLocale('zh-CN');
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ items: [] }));
+
+    render(RankingTable, {
+      props: { items: [{ model_id: 'm1', rank: 1, metric_value: 0.2 }] },
+      global: { plugins: [i18n] }
+    });
+
+    expect(await screen.findByRole('columnheader', { name: '指标' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Metric' })).toBeNull();
+  });
+
+  it('lets an admin hide the ranking from public access', async () => {
+    authState.user = {
+      user_id: 'admin-test',
+      username: 'admin',
+      email: null,
+      is_active: true,
+      is_superuser: true,
+      roles: ['admin'],
+      permissions: [],
+    };
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      const url = String(input);
+      if (url === '/api/models') return Promise.resolve(jsonResponse({ items: [] }));
+      if (url === '/api/ranking-lists/ranking-1/visibility' && init?.method === 'PATCH') {
+        return Promise.resolve(jsonResponse({
+          ranking_list_id: 'ranking-1',
+          track_id: 'track-1',
+          public_visible: false,
+          updated_at: '2026-06-11T00:00:00Z',
+        }));
+      }
+      return Promise.resolve(jsonResponse({
+        track_id: 'track-1',
+        ranking_list_id: 'ranking-1',
+        public_visible: true,
+        items: [{ model_id: 'm1', rank: 1, metric_value: 0.2 }],
+      }));
+    });
+
+    render(RankingPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    const hideButton = await screen.findByRole('button', { name: 'Hide from public' });
+    await fireEvent.click(hideButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/ranking-lists/ranking-1/visibility', expect.objectContaining({ method: 'PATCH' }));
+      expect(screen.getByText('Hidden')).toBeTruthy();
+    });
+  });
+});
