@@ -1890,6 +1890,48 @@ th.num {
   stroke-width: 2.2;
 }
 
+.capability-radar .radar-hit-target {
+  fill: transparent;
+  stroke: transparent;
+  cursor: default;
+  pointer-events: all;
+}
+
+.capability-radar .radar-hit-target:focus-visible {
+  stroke: var(--primary);
+  stroke-width: 1.5;
+  outline: none;
+}
+
+.capability-radar .radar-active-point {
+  fill: var(--surface);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.capability-radar .radar-tooltip {
+  pointer-events: none;
+}
+
+.capability-radar .radar-tooltip rect {
+  fill: var(--surface);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  filter: drop-shadow(0 8px 18px rgba(15, 23, 42, 0.16));
+}
+
+.capability-radar .radar-tooltip text {
+  fill: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.capability-radar .radar-tooltip .radar-tooltip-title {
+  fill: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+
 .capability-radar-side {
   display: grid;
   gap: 8px;

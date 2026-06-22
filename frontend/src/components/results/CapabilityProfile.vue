@@ -99,6 +99,41 @@
                 :cy="point.y"
                 :style="{ fill: point.color }"
               />
+              <circle
+                v-for="point in radarPoints"
+                :key="`${point.id}-hit`"
+                class="radar-hit-target"
+                r="13"
+                :cx="point.x"
+                :cy="point.y"
+                tabindex="0"
+                :aria-label="radarPointAria(point)"
+                @mouseenter="setHoveredRadarPoint(point.id)"
+                @mouseleave="clearHoveredRadarPoint"
+                @focus="setHoveredRadarPoint(point.id)"
+                @blur="clearHoveredRadarPoint"
+                @keydown.escape="clearHoveredRadarPoint"
+              />
+              <circle
+                v-if="radarTooltip"
+                class="radar-active-point"
+                r="7"
+                :cx="radarTooltip.x"
+                :cy="radarTooltip.y"
+                :style="{ stroke: radarTooltip.color }"
+              />
+              <g
+                v-if="radarTooltip"
+                class="radar-tooltip"
+                :transform="`translate(${radarTooltip.tooltipX}, ${radarTooltip.tooltipY})`"
+                data-testid="capability-radar-tooltip"
+              >
+                <rect :width="RADAR_TOOLTIP.width" :height="RADAR_TOOLTIP.height" rx="8" />
+                <text class="radar-tooltip-title" x="12" y="20">{{ radarTooltip.modelName }}</text>
+                <text x="12" y="40">{{ shortTooltipText(radarTooltip.axisLabel) }}</text>
+                <text x="12" y="58">{{ t('results.radarTooltipMetric', { metric: metricKey.toUpperCase(), value: formatMaybe(radarTooltip.raw) }) }}</text>
+                <text x="12" y="76">{{ t('results.radarTooltipScore', { score: Math.round(radarTooltip.score) }) }}</text>
+              </g>
             </g>
           </svg>
         </div>
@@ -175,6 +210,20 @@ type RadarSeries = ModelOption & {
   points: string;
   averageScore: number;
 };
+type RadarPoint = {
+  id: string;
+  modelId: string;
+  modelName: string;
+  axisId: string;
+  axisLabel: string;
+  x: number;
+  y: number;
+  tooltipX: number;
+  tooltipY: number;
+  color: string;
+  score: number;
+  raw: number | null;
+};
 
 const props = defineProps<{ report: ReportDTO }>();
 const { t } = useI18n();
@@ -183,6 +232,7 @@ const { modelName } = useModels();
 const metricKey = ref('');
 const scope = ref<Scope>('synthetic');
 const selectedModelIds = ref<string[]>([]);
+const hoveredRadarPointId = ref<string | null>(null);
 const SERIES_COLORS = [
   'var(--series-1)',
   'var(--series-2)',
@@ -194,7 +244,9 @@ const SERIES_COLORS = [
   'var(--series-8)',
 ];
 const KNOWN_ORDER = ['mase', 'mse', 'rmse', 'mae', 'smape', 'mape'];
-const RADAR = { centerX: 320, centerY: 188, radius: 124 };
+const RADAR = { centerX: 320, centerY: 188, radius: 124, width: 640, height: 380 };
+const RADAR_TOOLTIP = { width: 190, height: 86, offset: 14, margin: 8 };
+const MASE_SCORE_ALPHA = 2;
 const radarRings = [25, 50, 75, 100];
 
 const blocks = computed(() => props.report.capability_blocks || []);
@@ -288,18 +340,28 @@ const radarSeries = computed<RadarSeries[]>(() => {
   return out;
 });
 
-const radarPoints = computed(() => radarSeries.value.flatMap((series) =>
+const radarPoints = computed<RadarPoint[]>(() => radarSeries.value.flatMap((series) =>
   series.scores.map((score, index) => {
+    const axis = radarAxes.value[index];
     const point = axisPoint(index, score);
+    const tooltip = tooltipPosition(point.x, point.y);
     return {
+      id: `${series.id}-${axis.id}`,
       modelId: series.id,
-      axisId: radarAxes.value[index].id,
+      modelName: series.name,
+      axisId: axis.id,
+      axisLabel: axis.label,
       x: point.x,
       y: point.y,
+      tooltipX: tooltip.x,
+      tooltipY: tooltip.y,
       color: series.color,
+      score,
+      raw: weightedMetricForAxis(axis, series.id),
     };
   })
 ));
+const radarTooltip = computed(() => radarPoints.value.find((point) => point.id === hoveredRadarPointId.value) ?? null);
 
 const showRadar = computed(() => radarAxes.value.length >= 3 && radarAxes.value.length <= 8 && radarSeries.value.length > 0);
 const radarUnavailableText = computed(() => {
@@ -355,6 +417,14 @@ function onModelToggle(modelId: string, event: Event) {
   toggleModel(modelId, (event.target as HTMLInputElement).checked);
 }
 
+function setHoveredRadarPoint(pointId: string) {
+  hoveredRadarPointId.value = pointId;
+}
+
+function clearHoveredRadarPoint() {
+  hoveredRadarPointId.value = null;
+}
+
 function rawMetricForBlock(block: CapabilityBlockReportDTO, modelId: string): number | null {
   const entries = capabilityMetrics.value.filter((entry) => entry.capability_block_id === block.capability_block_id && entry.model_id === modelId);
   return weightedMean(entries, (entry) => Number(entry.sample_count || block.sample_count || 1));
@@ -396,7 +466,7 @@ function scoreValue(value: number | null, validValues: number[]): number | null 
   if (value === null || !validValues.length) return null;
   const safeValue = Math.max(0, value);
   if (metricKey.value === 'mase') {
-    return clamp(100 / (1 + safeValue), 0, 100);
+    return clamp(100 / (1 + Math.pow(safeValue, MASE_SCORE_ALPHA)), 0, 100);
   }
   const best = Math.min(...validValues.map((item) => Math.max(0, item)));
   if (safeValue === 0) return 100;
@@ -421,6 +491,17 @@ function ringPoints(score: number) {
   }).join(' ');
 }
 
+function tooltipPosition(pointX: number, pointY: number) {
+  const preferredX = pointX + RADAR_TOOLTIP.offset;
+  const belowY = pointY + RADAR_TOOLTIP.offset;
+  const aboveY = pointY - RADAR_TOOLTIP.height - RADAR_TOOLTIP.offset;
+  const x = clamp(preferredX, RADAR_TOOLTIP.margin, RADAR.width - RADAR_TOOLTIP.width - RADAR_TOOLTIP.margin);
+  const y = aboveY >= RADAR_TOOLTIP.margin
+    ? aboveY
+    : clamp(belowY, RADAR_TOOLTIP.margin, RADAR.height - RADAR_TOOLTIP.height - RADAR_TOOLTIP.margin);
+  return { x: Number(x.toFixed(2)), y: Number(y.toFixed(2)) };
+}
+
 function labelAnchor(x: number) {
   if (x < RADAR.centerX - 12) return 'end';
   if (x > RADAR.centerX + 12) return 'start';
@@ -429,6 +510,20 @@ function labelAnchor(x: number) {
 
 function shortAxisLabel(label: string) {
   return label.length > 18 ? `${label.slice(0, 17)}...` : label;
+}
+
+function shortTooltipText(label: string) {
+  return label.length > 28 ? `${label.slice(0, 27)}...` : label;
+}
+
+function radarPointAria(point: RadarPoint) {
+  return t('results.radarPointAria', {
+    model: point.modelName,
+    capability: point.axisLabel,
+    metric: metricKey.value.toUpperCase(),
+    value: formatMaybe(point.raw),
+    score: Math.round(point.score),
+  });
 }
 
 function blockTypeLabel(block: CapabilityBlockReportDTO) {

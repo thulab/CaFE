@@ -242,9 +242,17 @@ describe('ReportPage', () => {
     render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
 
     expect(await screen.findByText('Capability profile')).toBeTruthy();
-    expect(screen.getByText('57 / 100')).toBeTruthy();
-    expect(screen.getByText('42 / 100')).toBeTruthy();
+    expect(screen.getByText('63 / 100')).toBeTruthy();
+    expect(screen.getByText('35 / 100')).toBeTruthy();
     expect(screen.queryByText('0 / 100')).toBeNull();
+
+    await fireEvent.mouseEnter(screen.getByLabelText(/Timer Slow on Trend.*Score 35 \/ 100/));
+
+    const tooltip = screen.getByTestId('capability-radar-tooltip');
+    expect(within(tooltip).getByText('Timer Slow')).toBeTruthy();
+    expect(within(tooltip).getByText('Trend')).toBeTruthy();
+    expect(within(tooltip).getByText('MASE: 1.3543')).toBeTruthy();
+    expect(within(tooltip).getByText('Score: 35 / 100')).toBeTruthy();
   });
 
   it('deduplicates sample forecast links and paginates them by window order', async () => {
