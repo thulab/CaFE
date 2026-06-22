@@ -394,10 +394,14 @@ function metricValue(entry: CapabilityMetricReportDTO): number | null {
 
 function scoreValue(value: number | null, validValues: number[]): number | null {
   if (value === null || !validValues.length) return null;
-  const min = Math.min(...validValues);
-  const max = Math.max(...validValues);
-  if (min === max) return 50;
-  return clamp(100 - ((value - min) / (max - min)) * 100, 0, 100);
+  const safeValue = Math.max(0, value);
+  if (metricKey.value === 'mase') {
+    return clamp(100 / (1 + safeValue), 0, 100);
+  }
+  const best = Math.min(...validValues.map((item) => Math.max(0, item)));
+  if (safeValue === 0) return 100;
+  if (best === 0) return 0;
+  return clamp((best / safeValue) * 100, 0, 100);
 }
 
 function axisPoint(index: number, score: number) {

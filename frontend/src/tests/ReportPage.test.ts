@@ -215,6 +215,38 @@ describe('ReportPage', () => {
     expect(screen.getAllByText('Real data').length).toBeGreaterThan(0);
   });
 
+  it('scores MASE capability values without forcing the largest error to zero', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      report_id: 'rep1',
+      model_metrics: [
+        { model_id: 'model-best', model_name: 'Timer Best', metrics: { mase: 0.7612 } },
+        { model_id: 'model-slow', model_name: 'Timer Slow', metrics: { mase: 1.3543 } },
+      ],
+      capability_blocks: [
+        { capability_block_id: 'block-trend', name: 'Trend set', block_type: 'synthetic', capability_type: 'trend', capability_label: 'Trend', sample_count: 20 },
+        { capability_block_id: 'block-season', name: 'Season set', block_type: 'synthetic', capability_type: 'multi_seasonal', capability_label: 'Multi-seasonal', sample_count: 20 },
+        { capability_block_id: 'block-cov', name: 'Covariate set', block_type: 'synthetic', capability_type: 'covariate_response', capability_label: 'Covariate response', sample_count: 20 },
+      ],
+      capability_metrics: [
+        { task_id: 't1', unit_id: 'u1', model_id: 'model-best', model_name: 'Timer Best', capability_block_id: 'block-trend', status: 'succeeded', sample_count: 20, metrics: { mase: 0.7612 } },
+        { task_id: 't2', unit_id: 'u2', model_id: 'model-slow', model_name: 'Timer Slow', capability_block_id: 'block-trend', status: 'succeeded', sample_count: 20, metrics: { mase: 1.3543 } },
+        { task_id: 't3', unit_id: 'u1', model_id: 'model-best', model_name: 'Timer Best', capability_block_id: 'block-season', status: 'succeeded', sample_count: 20, metrics: { mase: 0.7612 } },
+        { task_id: 't4', unit_id: 'u2', model_id: 'model-slow', model_name: 'Timer Slow', capability_block_id: 'block-season', status: 'succeeded', sample_count: 20, metrics: { mase: 1.3543 } },
+        { task_id: 't5', unit_id: 'u1', model_id: 'model-best', model_name: 'Timer Best', capability_block_id: 'block-cov', status: 'succeeded', sample_count: 20, metrics: { mase: 0.7612 } },
+        { task_id: 't6', unit_id: 'u2', model_id: 'model-slow', model_name: 'Timer Slow', capability_block_id: 'block-cov', status: 'succeeded', sample_count: 20, metrics: { mase: 1.3543 } },
+      ],
+      task_summaries: [],
+      sample_forecast_links: [],
+    }));
+
+    render(ReportPage, { props: { reportId: 'rep1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Capability profile')).toBeTruthy();
+    expect(screen.getByText('57 / 100')).toBeTruthy();
+    expect(screen.getByText('42 / 100')).toBeTruthy();
+    expect(screen.queryByText('0 / 100')).toBeNull();
+  });
+
   it('deduplicates sample forecast links and paginates them by window order', async () => {
     const links = Array.from({ length: 12 }, (_, index) => ({
       sample_id: `s${index + 1}`,
