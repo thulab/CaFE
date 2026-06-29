@@ -44,6 +44,13 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert covariate.covariate_columns == ["weather", "event"]
         assert covariate.generation_config["anchor_mode"] == "fixed_mock"
 
+        trend_sample = session.exec(select(SampleIndex).where(SampleIndex.shard_id == trend.shard_id)).first()
+        assert trend_sample is not None
+        trend_metadata = trend_sample.sample_metadata
+        assert trend_metadata["latent_params"]["generator_version"] == "v2-pilot"
+        assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
+        assert "trend_strength" in trend_metadata["realized_features"]
+
         sample = session.exec(select(SampleIndex).where(SampleIndex.shard_id == covariate.shard_id)).first()
         assert sample is not None
         assert sample.sample_metadata["capability_id"] == "covariate_response"

@@ -93,9 +93,10 @@
 
 ### 目标特征
 
-- `seasonal_strength`：主要目标，但主 anchor 上该特征 p50 已很高，不能单独作为难度信号。
+- `seasonal_strength`：基础周期性约束。主 anchor 上该特征 p50 已很高，因此高难度不要求它继续升高，只要求保持在真实 p05 以上，避免退化成纯噪声。
 - `acf_abs_mean`：辅助目标，用于反映周期性自相关结构。
 - `seasonal amplitude ratio`：工程 latent 参数中的多周期振幅占比；第一版先记录在 `latent_params`，后续再加入 profiler。
+- `single-period seasonal naive degradation`：单周期 seasonal naive 的 MAE 应随难度上升，这是第一版 multi-seasonal 的主要行为验收。
 
 ### 控制特征
 
@@ -107,18 +108,18 @@
 
 由于 M4 Hourly 的 `seasonal_strength` 已高度集中，第一版难度不只看该值，而是用“周期数量 + 次级周期振幅 + 噪声控制”组合：
 
-| Difficulty | Periods | Secondary amplitude | `seasonal_strength` target | `acf_abs_mean` target |
+| Difficulty | Periods | Secondary amplitude | `seasonal_strength` guardrail | seasonal naive MAE |
 | ---: | --- | --- | --- | --- |
-| 1 | 1 个主周期 | 0 | p50 附近：0.91 | p50 附近：0.52 |
-| 2 | 1 个主周期 + 弱次周期 | 低 | p50-p75 | p50-p75 |
-| 3 | 2 个周期 | 中 | p75 附近：0.99 | p75 附近：0.54 |
-| 4 | 2-3 个周期 | 中高 | p75-p95 | p75-p95 |
-| 5 | 3 个周期 | 高，但总强度不超过 cap | p95 附近但不超过 1.0 | p95 附近但不超过 cap |
+| 1 | 1 个主周期 | 0 | 高于 p50：约 0.91 | 最低 |
+| 2 | 1 个主周期 + 弱次周期 | 低 | 高于 p25 | 低 |
+| 3 | 2 个周期 | 中 | 高于 p25 | 中 |
+| 4 | 2-3 个周期 | 中高 | 高于 p05 | 中高 |
+| 5 | 3 个周期 | 高，但 noise 不超过 cap | 高于 p05 | 最高 |
 
 ### 预期基线响应
 
 - naive 在所有季节性样本上应弱于 seasonal naive。
-- 单周期 seasonal naive 在难度 1-2 应表现较好，但在难度 4-5 的多周期叠加样本上误差应上升。
+- 单周期 seasonal naive 在难度 1-2 应表现较好，但在难度 4-5 的多周期叠加样本上 MAE 应上升。
 - 如果 seasonal naive 不随 difficulty 变差，说明次级周期振幅或相位扰动不够。
 
 ## 论文和方法依据

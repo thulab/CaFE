@@ -278,19 +278,17 @@ def _generate_capability_shard(
     windows: list[SampleWindow] = []
     sample_metadata: list[dict[str, Any]] = []
     for sample_index in range(config.sample_count):
-        rng = np.random.default_rng(_seed_for(config.seed, capability.capability_id, sample_index))
-        target, latent_params, covariates = _generate_sample_values(
+        sample_seed = _seed_for(config.seed, capability.capability_id, sample_index)
+        target, latent_params, covariates, realized_features = _generate_accepted_sample_values(
             capability.capability_id,
             sample_length,
             context,
             target_dim,
             config.season_length,
             config.difficulty,
-            rng,
+            sample_seed,
         )
-        target = _standardize_by_context(target, context)
         if covariates is not None and covariates.size:
-            covariates = _normalize_covariates(covariates, context)
             values = np.concatenate([target, covariates], axis=1)
         else:
             values = target
@@ -318,9 +316,9 @@ def _generate_capability_shard(
                 "capability_label": capability.label,
                 "difficulty": config.difficulty,
                 "seed": config.seed,
-                "sample_seed": _seed_for(config.seed, capability.capability_id, sample_index),
+                "sample_seed": sample_seed,
                 "latent_params": latent_params,
-                "realized_features": _realized_features(target, covariates),
+                "realized_features": realized_features,
                 **MOCK_ANCHOR,
             }
         )
@@ -409,6 +407,10 @@ def _seed_for(seed: int, capability_id: str, sample_index: int) -> int:
     return int(hashlib.blake2s(payload, digest_size=8).hexdigest(), 16) % (2**32 - 1)
 
 
+def _attempt_seed(sample_seed: int, attempt: int) -> int:
+    return (int(sample_seed) + int(attempt) * 104729) % (2**32 - 1)
+
+
 def _frequency_delta(frequency: str) -> timedelta:
     value = (frequency or "h").strip().lower()
     aliases = {
@@ -429,6 +431,81 @@ def _frequency_delta(frequency: str) -> timedelta:
             if number.isdigit() and int(number) > 0:
                 return timedelta(**{unit: int(number)})
     return timedelta(hours=1)
+
+
+PILOT_ACCEPTANCE_CAPS: dict[str, dict[str, float]] = {
+    "trend": {
+        "trend_strength": 1.0,
+        "slope_abs": 0.5314,
+        "curvature_abs": 1.0135,
+        "noise_ratio": 0.5807,
+        "spike_rate": 0.1886,
+    },
+    "multi_seasonal": {
+        "trend_strength": 0.7714,
+        "noise_ratio": 0.5807,
+        "spike_rate": 0.1886,
+    },
+}
+
+
+def _generate_accepted_sample_values(
+    capability_id: str,
+    length: int,
+    context_length: int,
+    target_dim: int,
+    season_length: int,
+    difficulty: int,
+    sample_seed: int,
+) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]]:
+    max_attempts = 12 if capability_id in PILOT_ACCEPTANCE_CAPS else 1
+    last_result: tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]] | None = None
+    for attempt in range(max_attempts):
+        rng = np.random.default_rng(_attempt_seed(sample_seed, attempt))
+        target, latent_params, covariates = _generate_sample_values(
+            capability_id,
+            length,
+            context_length,
+            target_dim,
+            season_length,
+            difficulty,
+            rng,
+        )
+        target = _standardize_by_context(target, context_length)
+        if covariates is not None and covariates.size:
+            covariates = _normalize_covariates(covariates, context_length)
+        realized_features = _realized_features(target, covariates, season_length)
+        accepted, failed_features = _accept_synthetic_features(capability_id, realized_features)
+        latent_params = {
+            **latent_params,
+            "acceptance": {
+                "accepted": bool(accepted),
+                "attempts": attempt + 1,
+                "failed_features": failed_features,
+                "profile": "m4_hourly_daily_168ctx" if capability_id in PILOT_ACCEPTANCE_CAPS else None,
+            },
+        }
+        last_result = (target, latent_params, covariates, realized_features)
+        if accepted:
+            return last_result
+    assert last_result is not None
+    return last_result
+
+
+def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -> tuple[bool, list[str]]:
+    caps = PILOT_ACCEPTANCE_CAPS.get(capability_id)
+    if not caps:
+        return True, []
+    failed = [
+        feature
+        for feature, cap in caps.items()
+        if feature in features and np.isfinite(features[feature]) and features[feature] > cap
+    ]
+    if capability_id == "multi_seasonal":
+        seasonal_strength = features.get("seasonal_strength")
+        if seasonal_strength is not None and np.isfinite(seasonal_strength) and seasonal_strength < 0.55:
+            failed.append("seasonal_strength")
+    return not failed, failed
 
 
 def _generate_sample_values(
@@ -478,12 +555,29 @@ def _generate_trend(
 ) -> tuple[np.ndarray, dict[str, Any], None]:
     lam = _difficulty_lambda(difficulty)
     seasonal, slow, trend = _base_features(length, season_length)
-    slope = rng.uniform(-1.2, 1.2, size=target_dim) * (0.6 + lam)
-    curvature = rng.uniform(-0.7, 0.7, size=target_dim) * lam
-    values = trend[:, None] * slope + (trend[:, None] ** 2) * curvature
-    values += (0.25 + 0.2 * lam) * seasonal[:, None] + 0.12 * slow[:, None]
-    values += rng.normal(0.0, 0.08 + 0.08 * lam, size=(length, target_dim))
-    return values, {"slope_mean": float(np.mean(slope)), "curvature_mean": float(np.mean(curvature))}, None
+    slope_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+    curvature_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+    slope = slope_direction * (0.02 + 0.18 * lam) * rng.uniform(0.8, 1.2, size=target_dim)
+    curvature = curvature_direction * (0.02 + 0.16 * lam) * rng.uniform(0.5, 1.1, size=target_dim)
+    seasonal_amp = max(0.12, 0.45 - 0.10 * lam)
+    noise_scale = max(0.04, 0.12 - 0.04 * lam)
+    values = trend[:, None] * slope + ((trend[:, None] ** 2) - 0.35) * curvature
+    values += seasonal_amp * seasonal[:, None] + 0.08 * slow[:, None]
+    values += rng.normal(0.0, noise_scale, size=(length, target_dim))
+    return (
+        values,
+        {
+            "generator_version": "v2-pilot",
+            "anchor_profile": "m4_hourly_daily_168ctx",
+            "slope_mean": float(np.mean(slope)),
+            "slope_abs_mean": float(np.mean(np.abs(slope))),
+            "curvature_mean": float(np.mean(curvature)),
+            "curvature_abs_mean": float(np.mean(np.abs(curvature))),
+            "seasonal_amplitude": float(seasonal_amp),
+            "noise_scale": float(noise_scale),
+        },
+        None,
+    )
 
 
 def _generate_multi_seasonal(
@@ -495,16 +589,43 @@ def _generate_multi_seasonal(
 ) -> tuple[np.ndarray, dict[str, Any], None]:
     lam = _difficulty_lambda(difficulty)
     t = np.arange(length, dtype=float)
-    periods = [max(4, season_length), max(5, season_length // 2), max(8, season_length * 2)]
+    primary_period = max(4, season_length)
+    secondary_period = max(primary_period + 1, primary_period * 2)
+    tertiary_period = max(4, primary_period // 2)
     values = np.zeros((length, target_dim))
-    amplitudes = []
-    for period in periods:
-        amp = rng.uniform(0.2, 0.8 + 0.4 * lam, size=target_dim)
+    period_amplitudes: list[dict[str, float]] = []
+
+    def add_period(period: int, amplitude: np.ndarray) -> None:
+        nonlocal values
         phase = rng.uniform(0, 2 * np.pi, size=target_dim)
-        values += amp[None, :] * np.sin(2 * np.pi * t[:, None] / period + phase[None, :])
-        amplitudes.append(float(np.mean(amp)))
-    values += rng.normal(0.0, 0.08 + 0.09 * lam, size=values.shape)
-    return values, {"periods": periods, "amplitude_mean": float(np.mean(amplitudes))}, None
+        values += amplitude[None, :] * np.sin(2 * np.pi * t[:, None] / period + phase[None, :])
+        period_amplitudes.append({"period": float(period), "amplitude_mean": float(np.mean(amplitude))})
+
+    amp = rng.uniform(0.9, 1.1, size=target_dim)
+    add_period(primary_period, amp)
+    if lam > 0:
+        amp = 0.7 * lam * rng.uniform(0.8, 1.2, size=target_dim)
+        add_period(secondary_period, amp)
+    if lam > 0.5:
+        amp = 0.3 * ((lam - 0.5) * 2.0) * rng.uniform(0.8, 1.2, size=target_dim)
+        add_period(tertiary_period, amp)
+    slow_period = max(primary_period * 7, primary_period + 1)
+    slow_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
+    values += 0.05 * np.cos(2 * np.pi * t[:, None] / slow_period + slow_phase[None, :])
+    noise_scale = max(0.04, 0.10 - 0.03 * lam)
+    values += rng.normal(0.0, noise_scale, size=values.shape)
+    return (
+        values,
+        {
+            "generator_version": "v2-pilot",
+            "anchor_profile": "m4_hourly_daily_168ctx",
+            "periods": [int(item["period"]) for item in period_amplitudes],
+            "period_amplitudes": period_amplitudes,
+            "secondary_amplitude_ratio": float(lam),
+            "noise_scale": float(noise_scale),
+        },
+        None,
+    )
 
 
 def _generate_regime_switching(
@@ -695,12 +816,13 @@ def _normalize_covariates(covariates: np.ndarray, context_length: int) -> np.nda
     return normalized
 
 
-def _realized_features(target: np.ndarray, covariates: np.ndarray | None) -> dict[str, float]:
+def _realized_features(target: np.ndarray, covariates: np.ndarray | None, season_length: int) -> dict[str, float]:
     features = {
         "target_mean_abs": float(np.mean(np.abs(target))),
         "target_std_mean": float(np.mean(target.std(axis=0))),
         "target_max_abs": float(np.max(np.abs(target))),
     }
+    features.update(_target_profile_features(target, season_length))
     if target.shape[1] > 1:
         corr = np.nan_to_num(np.corrcoef(target.T), nan=0.0)
         off_diag = corr[~np.eye(corr.shape[0], dtype=bool)]
@@ -714,6 +836,135 @@ def _realized_features(target: np.ndarray, covariates: np.ndarray | None) -> dic
                     scores.append(abs(float(corr_value)))
         features["avg_abs_covariate_target_corr"] = float(np.mean(scores)) if scores else 0.0
     return features
+
+
+def _target_profile_features(target: np.ndarray, season_length: int) -> dict[str, float]:
+    per_target = [_single_target_profile(target[:, index], season_length) for index in range(target.shape[1])]
+    names = {
+        name
+        for row in per_target
+        for name, value in row.items()
+        if np.isfinite(value)
+    }
+    return {
+        name: float(np.mean([row[name] for row in per_target if name in row and np.isfinite(row[name])]))
+        for name in sorted(names)
+    }
+
+
+def _single_target_profile(values: np.ndarray, season_length: int) -> dict[str, float]:
+    y = np.asarray(values, dtype=float)
+    y = y[np.isfinite(y)]
+    if y.size < 4:
+        return {}
+    scaled = _robust_scale(y)
+    trend = _polynomial_trend(scaled)
+    seasonal = _seasonal_by_phase(scaled - trend, season_length)
+    residual = scaled - trend - seasonal
+    total_var = _safe_var(scaled)
+    return {
+        "trend_strength": _strength(residual, trend + residual),
+        "seasonal_strength": _strength(residual, seasonal + residual),
+        "slope_abs": abs(_polyfit_coeff(scaled, degree=2, coeff_index=1)),
+        "curvature_abs": abs(_polyfit_coeff(scaled, degree=2, coeff_index=0)),
+        "noise_ratio": float(np.clip(_safe_var(residual) / total_var, 0.0, 1.0)) if total_var > 0 else 0.0,
+        "acf1": _autocorrelation(scaled, 1),
+        "acf_abs_mean": _mean_abs_autocorrelation(scaled, max_lag=min(10, max(1, y.size // 4))),
+        "outlier_rate": _outlier_rate(scaled),
+        "spike_rate": _spike_rate(scaled),
+    }
+
+
+def _robust_scale(values: np.ndarray) -> np.ndarray:
+    median = float(np.median(values))
+    q75, q25 = np.percentile(values, [75, 25])
+    iqr = float(q75 - q25)
+    if iqr > 1e-9:
+        return (values - median) / iqr
+    std = float(np.std(values))
+    if std > 1e-9:
+        return (values - median) / std
+    return values - median
+
+
+def _polynomial_trend(values: np.ndarray) -> np.ndarray:
+    if values.size < 4:
+        return np.full_like(values, float(np.mean(values)))
+    t = np.linspace(-1.0, 1.0, values.size)
+    coeffs = np.polyfit(t, values, min(2, values.size - 1))
+    return np.polyval(coeffs, t)
+
+
+def _seasonal_by_phase(values: np.ndarray, season_length: int) -> np.ndarray:
+    if season_length < 2 or values.size < season_length * 2:
+        return np.zeros_like(values)
+    seasonal = np.zeros_like(values)
+    phases = np.arange(values.size) % int(season_length)
+    for phase in range(int(season_length)):
+        mask = phases == phase
+        if mask.any():
+            seasonal[mask] = float(np.mean(values[mask]))
+    return seasonal - float(np.mean(seasonal))
+
+
+def _strength(residual: np.ndarray, residual_plus_component: np.ndarray) -> float:
+    denom = _safe_var(residual_plus_component)
+    if denom <= 0:
+        return 0.0
+    return float(np.clip(1.0 - _safe_var(residual) / denom, 0.0, 1.0))
+
+
+def _safe_var(values: np.ndarray) -> float:
+    if values.size == 0:
+        return 0.0
+    value = float(np.var(values))
+    return value if np.isfinite(value) else 0.0
+
+
+def _polyfit_coeff(values: np.ndarray, *, degree: int, coeff_index: int) -> float:
+    if values.size <= degree:
+        return 0.0
+    t = np.linspace(-1.0, 1.0, values.size)
+    return float(np.polyfit(t, values, degree)[coeff_index])
+
+
+def _autocorrelation(values: np.ndarray, lag: int) -> float:
+    if lag <= 0 or values.size <= lag:
+        return 0.0
+    a = values[:-lag] - float(np.mean(values[:-lag]))
+    b = values[lag:] - float(np.mean(values[lag:]))
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom <= 1e-12:
+        return 0.0
+    return float(np.dot(a, b) / denom)
+
+
+def _mean_abs_autocorrelation(values: np.ndarray, max_lag: int) -> float:
+    if max_lag <= 0:
+        return 0.0
+    values_by_lag = [abs(_autocorrelation(values, lag)) for lag in range(1, max_lag + 1)]
+    return float(np.mean(values_by_lag)) if values_by_lag else 0.0
+
+
+def _outlier_rate(values: np.ndarray) -> float:
+    median = float(np.median(values))
+    mad = float(np.median(np.abs(values - median)))
+    if mad <= 1e-9:
+        return 0.0
+    robust_z = 0.6745 * np.abs(values - median) / mad
+    return float(np.mean(robust_z > 4.0))
+
+
+def _spike_rate(values: np.ndarray) -> float:
+    if values.size < 3:
+        return 0.0
+    diff = np.diff(values)
+    median = float(np.median(diff))
+    mad = float(np.median(np.abs(diff - median)))
+    if mad <= 1e-9:
+        return 0.0
+    robust_z = 0.6745 * np.abs(diff - median) / mad
+    return float(np.mean(robust_z > 4.0))
 
 
 def _write_generation_manifest(path: Path, generation_config: dict[str, Any], sample_metadata: list[dict[str, Any]]) -> None:
