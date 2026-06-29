@@ -198,7 +198,9 @@ scripts/synthetic_feature_profile.py
 - 读取 CSV。
 - 读取 Monash `.tsf` 文件。
 - 读取包含 `.tsf` 的 Monash/Zenodo `.zip`。
+- 兼容 Monash TSF zip 中的非 UTF-8 元数据。
 - 按 `context_length + horizon` 生成 forecast windows。
+- TSF 输入的 `max_windows` 按全数据集统一限流。
 - 输出窗口级显式特征的 `p05/p25/p50/p75/p95/mean/std/min/max`。
 - 输出 `target_feature_caps`，默认按 `p95 * target_max_multiplier` 给出目标特征增强上限。
 - 对 bounded features 自动把 cap 限制到 `1.0`。
@@ -232,6 +234,12 @@ US Births smoke 观察：
 - Monash 数据入口：https://forecastingdata.org/
 - US Births Zenodo：https://zenodo.org/records/4656049
 - M4 Hourly Zenodo：https://zenodo.org/records/4656589
+
+2026-06-29 后续产物：
+
+- 可复现 profile 烟测：`scripts/run_synthetic_v2_profile_smoke.py`
+- 烟测记录：`docs/superpowers/baselines/2026-06-29-synthetic-v2-profile-smoke.md`
+- Trend / multi-seasonal 契约草案：`docs/superpowers/specs/2026-06-29-synthetic-v2-capability-contracts.md`
 
 ## Research Tasks
 
