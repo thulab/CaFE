@@ -181,8 +181,57 @@ acceptance:
 1. 生成候选 sample。
 2. 重新抽取特征。
 3. 判断目标特征是否命中难度区间。
-4. 判断非目标特征是否仍在真实分布范围内。
-5. 不通过则 resample / adjust / reject。
+4. 判断目标特征是否没有超过真实分布的上限倍数，例如默认不超过 `p95 * multiplier`；`trend_strength` / `seasonal_strength` 等天然落在 `[0, 1]` 的特征还必须夹到 `1.0`。
+5. 判断非目标特征是否仍在真实分布范围内。
+6. 不通过则 resample / adjust / reject。
+
+## Prototype Status
+
+2026-06-29 已落地第一版离线 profiler 原型：
+
+```text
+scripts/synthetic_feature_profile.py
+```
+
+当前能力：
+
+- 读取 CSV。
+- 读取 Monash `.tsf` 文件。
+- 读取包含 `.tsf` 的 Monash/Zenodo `.zip`。
+- 按 `context_length + horizon` 生成 forecast windows。
+- 输出窗口级显式特征的 `p05/p25/p50/p75/p95/mean/std/min/max`。
+- 输出 `target_feature_caps`，默认按 `p95 * target_max_multiplier` 给出目标特征增强上限。
+- 对 bounded features 自动把 cap 限制到 `1.0`。
+
+示例：
+
+```bash
+python3 scripts/synthetic_feature_profile.py \
+  runtime/research/us_births_dataset.zip \
+  --context-length 365 \
+  --horizon 30 \
+  --stride 30 \
+  --season-length 7 \
+  --max-windows 20 \
+  --domain demographics \
+  --dataset-name us_births_weekly \
+  --target-max-multiplier 1.5 \
+  --out runtime/research/us_births_weekly_profile.json
+```
+
+US Births smoke 观察：
+
+- 数据源：Monash / Zenodo `us_births_dataset.zip`，约 16 KB，daily，单变量，单序列。
+- `season_length=365` 且窗口长度只有 `365+30` 时，无法覆盖两个完整年周期，季节强度会被保守置为 0。
+- `season_length=7` 能捕获 weekly seasonal strength，适合作为最小外部数据 smoke。
+
+子代理外部数据调研结论：
+
+- 最小 smoke 首选 **US Births Dataset**：daily、单变量、1 条序列、zip 约 16 KB。
+- 第一轮多序列/hourly profile 建议 **M4 Hourly Dataset**：414 条 hourly 序列、zip 约 485 KB。
+- Monash 数据入口：https://forecastingdata.org/
+- US Births Zenodo：https://zenodo.org/records/4656049
+- M4 Hourly Zenodo：https://zenodo.org/records/4656589
 
 ## Research Tasks
 
