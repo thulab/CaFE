@@ -112,13 +112,22 @@ def read_tsf_series(path: Path) -> tuple[dict[str, str], list[tuple[str, np.ndar
 
 def read_text_or_first_tsf_from_zip(path: Path) -> str:
     if path.suffix.lower() != ".zip":
-        return path.read_text(encoding="utf-8")
+        return decode_tsf_bytes(path.read_bytes(), source=str(path))
     with zipfile.ZipFile(path) as archive:
         names = [name for name in archive.namelist() if name.lower().endswith(".tsf")]
         if not names:
             raise ValueError(f"zip does not contain a .tsf file: {path}")
-        with archive.open(names[0]) as handle:
-            return handle.read().decode("utf-8")
+        with archive.open(sorted(names)[0]) as handle:
+            return decode_tsf_bytes(handle.read(), source=f"{path}:{sorted(names)[0]}")
+
+
+def decode_tsf_bytes(data: bytes, *, source: str) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise ValueError(f"unable to decode TSF input: {source}")
 
 
 def parse_tsf_values(values_text: str) -> np.ndarray:
@@ -137,13 +146,18 @@ def iter_windows(values: np.ndarray, spec: WindowSpec) -> list[tuple[int, np.nda
         raise ValueError("context_length and horizon must be positive")
     if spec.stride <= 0:
         raise ValueError("stride must be positive")
-    if len(values) < spec.length:
+    starts = window_starts(len(values), spec)
+    return [(start, values[start : start + spec.length]) for start in starts]
+
+
+def window_starts(value_count: int, spec: WindowSpec) -> list[int]:
+    if value_count < spec.length:
         return []
-    starts = list(range(0, len(values) - spec.length + 1, spec.stride))
+    starts = list(range(0, value_count - spec.length + 1, spec.stride))
     if spec.max_windows is not None and len(starts) > spec.max_windows:
         indexes = np.linspace(0, len(starts) - 1, spec.max_windows).round().astype(int)
         starts = [starts[index] for index in sorted(set(indexes.tolist()))]
-    return [(start, values[start : start + spec.length]) for start in starts]
+    return starts
 
 
 def profile_csv(
@@ -214,19 +228,17 @@ def profile_tsf(
 ) -> dict[str, Any]:
     metadata, series = read_tsf_series(path)
     resolved_stride = stride or horizon
-    spec = WindowSpec(context_length, horizon, resolved_stride, max_windows=max_windows)
+    spec = WindowSpec(context_length, horizon, resolved_stride)
+    selected_windows = select_tsf_windows(series, spec, max_windows=max_windows)
     feature_rows: list[dict[str, float]] = []
-    used_series = 0
-    for _series_id, values in series:
-        windows = iter_windows(values[:, None], spec)
-        for start, window in windows:
-            if not np.isfinite(window).all():
-                continue
-            features = feature_vector(window, season_length=season_length)
-            features["window_start"] = float(start)
-            feature_rows.append(features)
-        if windows:
-            used_series += 1
+    used_series_ids = {series_id for series_id, _, _ in selected_windows}
+    for series_id, start, window in selected_windows:
+        if not np.isfinite(window).all():
+            continue
+        features = feature_vector(window, season_length=season_length)
+        features["series_index"] = float(series_id)
+        features["window_start"] = float(start)
+        feature_rows.append(features)
 
     feature_names = [name for name in DEFAULT_FEATURES if any(name in row for row in feature_rows)]
     quantiles = summarize_feature_rows(feature_rows, feature_names)
@@ -250,12 +262,34 @@ def profile_tsf(
             "season_length": season_length,
         },
         "window_count": len(feature_rows),
+        "candidate_window_count": len(selected_windows),
         "series_count": len(series),
-        "used_series_count": used_series,
+        "used_series_count": len(used_series_ids),
         "target_columns": ["target"],
         "features": quantiles,
         "target_feature_caps": caps,
     }
+
+
+def select_tsf_windows(
+    series: list[tuple[str, np.ndarray]],
+    spec: WindowSpec,
+    *,
+    max_windows: int | None,
+) -> list[tuple[int, int, np.ndarray]]:
+    candidates: list[tuple[int, int]] = []
+    for series_index, (_series_id, values) in enumerate(series):
+        starts = window_starts(len(values), spec)
+        candidates.extend((series_index, start) for start in starts)
+    if max_windows is not None and len(candidates) > max_windows:
+        indexes = np.linspace(0, len(candidates) - 1, max_windows).round().astype(int)
+        candidates = [candidates[index] for index in sorted(set(indexes.tolist()))]
+    selected: list[tuple[int, int, np.ndarray]] = []
+    for series_index, start in candidates:
+        values = series[series_index][1]
+        window = values[start : start + spec.length, None]
+        selected.append((series_index, start, window))
+    return selected
 
 
 def profile_input(

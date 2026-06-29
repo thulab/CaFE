@@ -102,3 +102,69 @@ def test_profile_tsf_zip_reads_monash_style_series(tmp_path):
     assert profile["used_series_count"] == 1
     assert profile["window_count"] > 0
     assert profile["features"]["trend_strength"]["p50"] > 0
+
+
+def test_profile_tsf_zip_reads_cp1252_metadata(tmp_path):
+    profiler = load_profiler_module()
+    values = ",".join(str(index) for index in range(48))
+    tsf_text = "\n".join(
+        [
+            "@attribute series_name string",
+            "@frequency hourly",
+            "@horizon 6",
+            "@missing false",
+            "@equallength true",
+            "# source uses windows punctuation: \u2013",
+            "@data",
+            f"series_1:{values}",
+        ]
+    )
+    zip_path = tmp_path / "sample-cp1252.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("sample.tsf", tsf_text.encode("cp1252"))
+
+    profile = profiler.profile_input(
+        zip_path,
+        context_length=24,
+        horizon=6,
+        season_length=12,
+        input_format="auto",
+    )
+
+    assert profile["series_count"] == 1
+    assert profile["window_count"] > 0
+
+
+def test_profile_tsf_max_windows_is_global(tmp_path):
+    profiler = load_profiler_module()
+    series_lines = []
+    for series_index in range(3):
+        values = ",".join(str(index + series_index) for index in range(80))
+        series_lines.append(f"series_{series_index}:{values}")
+    tsf_text = "\n".join(
+        [
+            "@attribute series_name string",
+            "@frequency hourly",
+            "@horizon 6",
+            "@missing false",
+            "@equallength true",
+            "@data",
+            *series_lines,
+        ]
+    )
+    zip_path = tmp_path / "multi-series.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("sample.tsf", tsf_text)
+
+    profile = profiler.profile_input(
+        zip_path,
+        context_length=24,
+        horizon=6,
+        stride=6,
+        max_windows=5,
+        season_length=12,
+        input_format="auto",
+    )
+
+    assert profile["candidate_window_count"] == 5
+    assert profile["window_count"] == 5
