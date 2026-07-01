@@ -33,10 +33,10 @@ DEFAULT_REPORT_PATH = REPO_ROOT / "docs/superpowers/baselines/2026-07-01-synthet
 
 DEFAULT_MODEL_ORDER = ("Timer-3.5", "Timer-3.0", "Chronos-2", "timesfm2.5", "AutoARIMA", "Holt-Winters")
 DEFAULT_CAPABILITIES = ("trend", "multi_seasonal")
+MULTI_TARGET_DIM = 3
 CONTEXT_LENGTH = 168
 HORIZON = 24
 SEASON_LENGTH = 24
-TARGET_COLUMN = "target_0"
 TIME_COLUMN = "time"
 
 
@@ -48,8 +48,12 @@ class ProbeSample:
     sample_index: int
     history_timestamps: list[str]
     future_timestamps: list[str]
+    target_column_names: list[str]
     target_history: list[list[float]]
     target_future: list[list[float]]
+    covariate_column_names: list[str]
+    history_cov: list[list[float]]
+    future_cov: list[list[float]]
     realized_features: dict[str, float]
 
 
@@ -116,6 +120,11 @@ class TimerServiceClient:
             "output_length": [HORIZON for _ in samples],
             "time_col": [TIME_COLUMN for _ in samples],
         }
+        if any(sample.covariate_column_names for sample in samples):
+            if not all(sample.covariate_column_names for sample in samples):
+                raise RuntimeError("cannot mix covariate and non-covariate samples in one forecast batch")
+            body["history_covs"] = [forecast_covariates(sample, history=True) for sample in samples]
+            body["future_covs"] = [forecast_covariates(sample, history=False) for sample in samples]
         if model_params:
             body["model_params"] = model_params
         payload = self._post("/forecast", body, timeout_seconds=timeout_seconds)
@@ -154,9 +163,10 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     client = TimerServiceClient(args.base_url, args.api_prefix, timeout_seconds=30)
     try:
-        service_models = client.list_models()
-        selected, skipped = select_models(service_models, args.models)
         capabilities = validate_capabilities(args.capabilities)
+        requirements = capability_requirements(capabilities)
+        service_models = client.list_models()
+        selected, skipped = select_models(service_models, args.models, requirements=requirements)
         samples = generate_probe_samples(args.sample_count, capabilities)
         baseline_rows = baseline_metric_rows(samples)
         model_rows, model_run_status = run_models(
@@ -183,6 +193,7 @@ def main() -> int:
         base_url=args.base_url,
         requested_models=args.models,
         requested_capabilities=capabilities,
+        requirements=requirements,
     )
     (args.output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     report = render_report(summary, output_dir=args.output_dir)
@@ -200,7 +211,26 @@ def validate_capabilities(capabilities: list[str]) -> list[str]:
     return capabilities
 
 
-def select_models(service_models: list[dict[str, Any]], requested: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def capability_requirements(capabilities: list[str]) -> dict[str, int]:
+    target_dim = max(target_dim_for_capability(capability_id) for capability_id in capabilities)
+    covariate_dim = max(len(CAPABILITIES_BY_ID[capability_id].covariate_columns) for capability_id in capabilities)
+    return {"target_dim": target_dim, "covariate_dim": covariate_dim}
+
+
+def target_dim_for_capability(capability_id: str) -> int:
+    capability = CAPABILITIES_BY_ID[capability_id]
+    if capability.target_dim_mode == "multi":
+        return MULTI_TARGET_DIM
+    return 1
+
+
+def select_models(
+    service_models: list[dict[str, Any]],
+    requested: list[str],
+    *,
+    requirements: dict[str, int] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    requirements = requirements or {"target_dim": 1, "covariate_dim": 0}
     by_id = {str(model.get("model_id")): model for model in service_models if model.get("model_id")}
     requested_ids = [model["model_id"] for model in service_models if str(model.get("state")).lower() != "inactive"] if requested == ["all-active"] else requested
     selected: list[dict[str, Any]] = []
@@ -217,6 +247,16 @@ def select_models(service_models: list[dict[str, Any]], requested: list[str]) ->
         if int(limits.get("min_input_length") or 0) > CONTEXT_LENGTH or int(limits.get("max_output_length") or HORIZON) < HORIZON:
             skipped.append({"model_id": model_id, "reason": "window_unsupported", "forecast_limits": limits})
             continue
+        target_dim = int(requirements.get("target_dim") or 1)
+        max_target_count = limits.get("max_target_count")
+        if target_dim > 1 and ("max_target_count" not in limits or (max_target_count is not None and int(max_target_count) < target_dim)):
+            skipped.append({"model_id": model_id, "reason": "target_dim_unsupported", "forecast_limits": limits, "required_target_dim": target_dim})
+            continue
+        covariate_dim = int(requirements.get("covariate_dim") or 0)
+        max_covariate_count = int(limits.get("max_covariate_count") or 0)
+        if covariate_dim > 0 and max_covariate_count < covariate_dim:
+            skipped.append({"model_id": model_id, "reason": "covariate_dim_unsupported", "forecast_limits": limits, "required_covariate_dim": covariate_dim})
+            continue
         selected.append(model)
     return selected, skipped
 
@@ -225,14 +265,16 @@ def generate_probe_samples(sample_count: int, capabilities: list[str]) -> list[P
     samples: list[ProbeSample] = []
     base_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for capability_id in capabilities:
+        target_dim = target_dim_for_capability(capability_id)
+        covariate_names = list(CAPABILITIES_BY_ID[capability_id].covariate_columns)
         for difficulty in range(1, 6):
             for sample_index in range(sample_count):
                 seed = _seed_for(20260701, capability_id, difficulty * 10_000 + sample_index)
-                values, _latent, _covariates, features = _generate_accepted_sample_values(
+                values, _latent, covariates, features = _generate_accepted_sample_values(
                     capability_id,
                     CONTEXT_LENGTH + HORIZON,
                     CONTEXT_LENGTH,
-                    1,
+                    target_dim,
                     SEASON_LENGTH,
                     difficulty,
                     seed,
@@ -247,8 +289,12 @@ def generate_probe_samples(sample_count: int, capabilities: list[str]) -> list[P
                         sample_index=sample_index,
                         history_timestamps=timestamps[:CONTEXT_LENGTH],
                         future_timestamps=timestamps[CONTEXT_LENGTH:],
+                        target_column_names=[f"target_{index}" for index in range(target_dim)],
                         target_history=values[:CONTEXT_LENGTH].astype(float).tolist(),
                         target_future=values[CONTEXT_LENGTH:].astype(float).tolist(),
+                        covariate_column_names=covariate_names,
+                        history_cov=(covariates[:CONTEXT_LENGTH].astype(float).tolist() if covariates is not None else []),
+                        future_cov=(covariates[CONTEXT_LENGTH:].astype(float).tolist() if covariates is not None else []),
                         realized_features=features,
                     )
                 )
@@ -257,10 +303,22 @@ def generate_probe_samples(sample_count: int, capabilities: list[str]) -> list[P
 
 def forecast_target(sample: ProbeSample) -> dict[str, Any]:
     return {
-        "columns": [TIME_COLUMN, TARGET_COLUMN],
+        "columns": [TIME_COLUMN, *sample.target_column_names],
         "data": [
-            [timestamp, row[0]]
+            [timestamp, *row]
             for timestamp, row in zip(sample.history_timestamps, sample.target_history, strict=True)
+        ],
+    }
+
+
+def forecast_covariates(sample: ProbeSample, *, history: bool) -> dict[str, Any]:
+    timestamps = sample.history_timestamps if history else sample.future_timestamps
+    rows = sample.history_cov if history else sample.future_cov
+    return {
+        "columns": [TIME_COLUMN, *sample.covariate_column_names],
+        "data": [
+            [timestamp, *row]
+            for timestamp, row in zip(timestamps, rows, strict=True)
         ],
     }
 
@@ -351,37 +409,45 @@ def forecast_model_samples(
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with raw_path.open("a", encoding="utf-8") as handle:
-        for batch in chunks(samples, batch_size):
-            started = time.monotonic()
-            try:
-                forecasts = client.forecast_batch(
-                    model_id,
-                    batch,
-                    timeout_seconds=forecast_timeout_seconds,
-                    model_params=model_params_for(model_id),
-                )
-                batch_seconds = time.monotonic() - started
-                for sample, forecast in zip(batch, forecasts, strict=True):
-                    row = metric_row(model_id, "timer_service", sample, forecast)
-                    row["batch_seconds"] = batch_seconds
-                    rows.append(row)
-                    handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-            except Exception as exc:  # noqa: BLE001 - one failed batch should not hide other capability/difficulty batches.
-                batch_seconds = time.monotonic() - started
-                for sample in batch:
-                    row = {
-                        "model_id": model_id,
-                        "model_group": "timer_service",
-                        "sample_id": sample.sample_id,
-                        "capability_id": sample.capability_id,
-                        "difficulty": sample.difficulty,
-                        "status": "failed",
-                        "error": str(exc),
-                        "batch_seconds": batch_seconds,
-                    }
-                    rows.append(row)
-                    handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+        for group in sample_request_groups(samples):
+            for batch in chunks(group, batch_size):
+                started = time.monotonic()
+                try:
+                    forecasts = client.forecast_batch(
+                        model_id,
+                        batch,
+                        timeout_seconds=forecast_timeout_seconds,
+                        model_params=model_params_for(model_id),
+                    )
+                    batch_seconds = time.monotonic() - started
+                    for sample, forecast in zip(batch, forecasts, strict=True):
+                        row = metric_row(model_id, "timer_service", sample, forecast)
+                        row["batch_seconds"] = batch_seconds
+                        rows.append(row)
+                        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+                except Exception as exc:  # noqa: BLE001 - one failed batch should not hide other capability/difficulty batches.
+                    batch_seconds = time.monotonic() - started
+                    for sample in batch:
+                        row = failed_metric_row(model_id, sample, str(exc), batch_seconds)
+                        rows.append(row)
+                        handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     return rows
+
+
+def sample_request_groups(samples: list[ProbeSample]) -> list[list[ProbeSample]]:
+    groups: list[list[ProbeSample]] = []
+    current: list[ProbeSample] = []
+    current_key: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+    for sample in samples:
+        key = (tuple(sample.target_column_names), tuple(sample.covariate_column_names))
+        if current_key is not None and key != current_key:
+            groups.append(current)
+            current = []
+        current_key = key
+        current.append(sample)
+    if current:
+        groups.append(current)
+    return groups
 
 
 def model_params_for(model_id: str) -> dict[str, Any] | None:
@@ -392,15 +458,44 @@ def model_params_for(model_id: str) -> dict[str, Any] | None:
 
 def metric_row(model_id: str, model_group: str, sample: ProbeSample, forecast: list[list[float]]) -> dict[str, Any]:
     metrics = compute_sample_metrics(sample.target_future, forecast, sample.target_history)
+    extra_metrics = extra_sample_metrics(sample, forecast)
+    metrics.update(extra_metrics)
     return {
         "model_id": model_id,
         "model_group": model_group,
         "sample_id": sample.sample_id,
         "capability_id": sample.capability_id,
         "difficulty": sample.difficulty,
+        "target_dim": len(sample.target_column_names),
+        "covariate_dim": len(sample.covariate_column_names),
         "status": "succeeded",
         "metrics": dict(metrics),
         "realized_features": sample.realized_features,
+    }
+
+
+def extra_sample_metrics(sample: ProbeSample, forecast: list[list[float]]) -> dict[str, float]:
+    if sample.capability_id != "hierarchical_coherence":
+        return {}
+    values = np.asarray(forecast, dtype=float)
+    if values.ndim != 2 or values.shape[1] < 3:
+        return {}
+    residual = values[:, 0] - np.sum(values[:, 1:], axis=1)
+    return {"coherence_mae": float(np.mean(np.abs(residual)))}
+
+
+def failed_metric_row(model_id: str, sample: ProbeSample, error: str, batch_seconds: float) -> dict[str, Any]:
+    return {
+        "model_id": model_id,
+        "model_group": "timer_service",
+        "sample_id": sample.sample_id,
+        "capability_id": sample.capability_id,
+        "difficulty": sample.difficulty,
+        "target_dim": len(sample.target_column_names),
+        "covariate_dim": len(sample.covariate_column_names),
+        "status": "failed",
+        "error": error,
+        "batch_seconds": batch_seconds,
     }
 
 
@@ -415,6 +510,7 @@ def summarize_results(
     base_url: str,
     requested_models: list[str],
     requested_capabilities: list[str],
+    requirements: dict[str, int],
 ) -> dict[str, Any]:
     grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = defaultdict(list)
     failed_grouped: dict[tuple[str, str, int], int] = defaultdict(int)
@@ -431,6 +527,8 @@ def summarize_results(
                 "capability_id": capability_id,
                 "difficulty": difficulty,
                 "sample_count": len(group_rows),
+                "target_dim": max(int(row.get("target_dim") or 1) for row in group_rows),
+                "covariate_dim": max(int(row.get("covariate_dim") or 0) for row in group_rows),
                 "metrics": summarize_metric_rows(group_rows),
                 "features": summarize_feature_rows(group_rows),
             }
@@ -444,6 +542,7 @@ def summarize_results(
         "season_length": SEASON_LENGTH,
         "sample_count_per_capability_difficulty": sample_count,
         "batch_size": batch_size,
+        "requirements": requirements,
         "requested_models": requested_models,
         "requested_capabilities": requested_capabilities,
         "selected_models": [model.get("model_id") for model in selected_models],
@@ -523,6 +622,7 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             f"- 每个能力每个难度样本数：`{summary['sample_count_per_capability_difficulty']}`",
             f"- batch size：`{summary['batch_size']}`",
             f"- 能力维度：{capability_text}",
+            f"- required target / covariate dim：`{summary.get('requirements', {}).get('target_dim', 1)} / {summary.get('requirements', {}).get('covariate_dim', 0)}`",
             f"- requested 模型：{', '.join(summary['requested_models'])}",
             f"- 参评 active 模型：{selected_models}",
             f"- 跳过模型：{skipped}",

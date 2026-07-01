@@ -34,6 +34,50 @@ def test_select_models_skips_inactive_and_unknown():
     assert skipped == [{"model_id": "timesfm2.5", "reason": "inactive"}, {"model_id": "missing", "reason": "not_registered"}]
 
 
+def test_select_models_checks_target_and_covariate_limits():
+    module = load_experiment_module()
+    service_models = [
+        {"model_id": "single", "state": "active", "forecast_limits": {"min_input_length": 16, "max_output_length": 720, "max_target_count": 1, "max_covariate_count": 50}},
+        {"model_id": "multi", "state": "active", "forecast_limits": {"min_input_length": 16, "max_output_length": 720, "max_target_count": None, "max_covariate_count": 0}},
+        {"model_id": "cov", "state": "active", "forecast_limits": {"min_input_length": 16, "max_output_length": 720, "max_target_count": 1, "max_covariate_count": 50}},
+    ]
+
+    selected, skipped = module.select_models(service_models, ["single", "multi", "cov"], requirements={"target_dim": 3, "covariate_dim": 0})
+
+    assert [model["model_id"] for model in selected] == ["multi"]
+    assert [item["reason"] for item in skipped] == ["target_dim_unsupported", "target_dim_unsupported"]
+
+    selected, skipped = module.select_models(service_models, ["single", "multi", "cov"], requirements={"target_dim": 1, "covariate_dim": 2})
+
+    assert [model["model_id"] for model in selected] == ["single", "cov"]
+    assert skipped[0]["reason"] == "covariate_dim_unsupported"
+
+
+def test_probe_samples_include_multi_target_and_covariate_request_shapes():
+    module = load_experiment_module()
+    multi_sample = module.generate_probe_samples(1, ["common_factor"])[0]
+    cov_sample = module.generate_probe_samples(1, ["covariate_response"])[0]
+
+    assert multi_sample.target_column_names == ["target_0", "target_1", "target_2"]
+    assert module.forecast_target(multi_sample)["columns"] == ["time", "target_0", "target_1", "target_2"]
+    assert len(module.forecast_target(multi_sample)["data"][0]) == 4
+
+    assert cov_sample.target_column_names == ["target_0"]
+    assert cov_sample.covariate_column_names == ["weather", "event"]
+    assert module.forecast_covariates(cov_sample, history=True)["columns"] == ["time", "weather", "event"]
+    assert module.forecast_covariates(cov_sample, history=False)["columns"] == ["time", "weather", "event"]
+
+
+def test_hierarchical_coherence_extra_metric():
+    module = load_experiment_module()
+    sample = module.generate_probe_samples(1, ["hierarchical_coherence"])[0]
+    forecast = [[3.0, 1.0, 2.0] for _ in range(module.HORIZON)]
+
+    metrics = module.extra_sample_metrics(sample, forecast)
+
+    assert metrics == {"coherence_mae": 0.0}
+
+
 def test_render_report_includes_model_status_and_tables():
     module = load_experiment_module()
     capabilities = ["regime_switching"]

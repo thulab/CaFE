@@ -9,7 +9,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     catalog = client.get("/synthetic/capabilities")
     assert catalog.status_code == 200
     capability_ids = {item["capability_id"] for item in catalog.json()["items"]}
-    assert {"trend", "common_factor", "covariate_response"}.issubset(capability_ids)
+    assert {"trend", "common_factor", "covariate_response", "time_varying_seasonality", "hierarchical_coherence"}.issubset(capability_ids)
     trend_capability = next(item for item in catalog.json()["items"] if item["capability_id"] == "trend")
     assert trend_capability["label_i18n"]["zh-CN"] == "趋势"
     assert trend_capability["limits"]["context_length"]["min"] == 16
@@ -132,3 +132,40 @@ def test_regime_capabilities_generate_json_serializable_metadata(app, client):
         assert all(type(point) is int for point in cut_points)
         assert regime_sample.sample_metadata["latent_params"]["forecast_switch"] == 1
         assert coherent_sample.sample_metadata["latent_params"]["shift_at"] >= 16
+
+
+def test_new_synthetic_capabilities_generate_expected_metadata(app, client):
+    response = client.post(
+        "/synthetic/shards",
+        json={
+            "name": "new capability smoke",
+            "capabilities": ["time_varying_seasonality", "hierarchical_coherence"],
+            "context_length": 24,
+            "horizon": 6,
+            "sample_count": 2,
+            "difficulty": 4,
+            "season_length": 8,
+            "target_dim": 3,
+            "seed": 23,
+            "frequency": "h",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["shard_ids"]) == 2
+
+    with Session(app.state.engine) as session:
+        shards = session.exec(select(Shard).where(Shard.shard_id.in_(body["shard_ids"]))).all()
+        assert {shard.capability_type for shard in shards} == {"time_varying_seasonality", "hierarchical_coherence"}
+        seasonal = next(shard for shard in shards if shard.capability_type == "time_varying_seasonality")
+        hierarchy = next(shard for shard in shards if shard.capability_type == "hierarchical_coherence")
+        assert seasonal.target_dim == 1
+        assert hierarchy.target_dim == 3
+
+        samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(body["shard_ids"]))).all()
+        seasonal_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "time_varying_seasonality")
+        hierarchy_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "hierarchical_coherence")
+        assert seasonal_sample.sample_metadata["latent_params"]["amplitude_delta_mean"] > 0
+        assert hierarchy_sample.sample_metadata["latent_params"]["hierarchy"] == "target_0=sum(target_1:)"
+        assert hierarchy_sample.sample_metadata["realized_features"]["hierarchy_residual_mean_abs"] < 1e-8

@@ -75,6 +75,15 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "fixed_1",
     ),
     SyntheticCapability(
+        "time_varying_seasonality",
+        "Time-varying seasonality",
+        "Single-target series with drifting seasonal amplitude and phase.",
+        "时变季节性",
+        "带有季节振幅和相位漂移的单目标序列。",
+        "univariate_forecast",
+        "fixed_1",
+    ),
+    SyntheticCapability(
         "long_memory_nonlinear",
         "Long-memory nonlinear",
         "Single-target autoregressive dynamics with nonlinear carry-over.",
@@ -116,6 +125,15 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "Multiple targets that shift together across regimes.",
         "协同状态切换",
         "多个目标在同一状态变化中协同切换的序列。",
+        "multivariate_forecast",
+        "multi",
+    ),
+    SyntheticCapability(
+        "hierarchical_coherence",
+        "Hierarchical coherence",
+        "Multiple targets with parent-child additive structure.",
+        "层级一致性",
+        "带有父子加总结构的多目标序列。",
         "multivariate_forecast",
         "multi",
     ),
@@ -471,7 +489,11 @@ def _generate_accepted_sample_values(
             difficulty,
             rng,
         )
-        target = _standardize_by_context(target, context_length)
+        target = (
+            _standardize_hierarchy_by_context(target, context_length)
+            if capability_id == "hierarchical_coherence"
+            else _standardize_by_context(target, context_length)
+        )
         if covariates is not None and covariates.size:
             covariates = _normalize_covariates(covariates, context_length)
         realized_features = _realized_features(target, covariates, season_length)
@@ -523,6 +545,8 @@ def _generate_sample_values(
         return _generate_multi_seasonal(length, target_dim, season_length, difficulty, rng)
     if capability_id == "regime_switching":
         return _generate_regime_switching(length, context_length, target_dim, season_length, difficulty, rng)
+    if capability_id == "time_varying_seasonality":
+        return _generate_time_varying_seasonality(length, target_dim, season_length, difficulty, rng)
     if capability_id == "long_memory_nonlinear":
         return _generate_long_memory_nonlinear(length, target_dim, season_length, difficulty, rng)
     if capability_id == "intermittent_heteroskedastic":
@@ -533,6 +557,8 @@ def _generate_sample_values(
         return _generate_lead_lag_coupling(length, target_dim, season_length, difficulty, rng)
     if capability_id == "coherent_regime_shift":
         return _generate_coherent_regime_shift(length, context_length, target_dim, season_length, difficulty, rng)
+    if capability_id == "hierarchical_coherence":
+        return _generate_hierarchical_coherence(length, target_dim, season_length, difficulty, rng)
     if capability_id == "covariate_response":
         return _generate_covariate_response(length, target_dim, season_length, difficulty, rng)
     raise ApiError("synthetic_capability_unknown", "unknown synthetic capability", {"capability_id": capability_id}, 404)
@@ -656,6 +682,40 @@ def _generate_regime_switching(
     return values, {"switch_count": len(cut_points), "cut_points": cut_points, "forecast_switch": int(any(point >= context_length for point in cut_points))}, None
 
 
+def _generate_time_varying_seasonality(
+    length: int,
+    target_dim: int,
+    season_length: int,
+    difficulty: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, dict[str, Any], None]:
+    lam = _difficulty_lambda(difficulty)
+    t = np.arange(length, dtype=float)
+    primary_period = max(4, season_length)
+    slow_period = max(primary_period * 5, primary_period + 1)
+    drift = t / max(1, length - 1)
+    phase_drift = (0.05 + 0.45 * lam) * (drift ** 1.35) * 2 * np.pi
+    amplitude_start = 0.55 + 0.1 * rng.random(target_dim)
+    amplitude_delta = (0.2 + 1.0 * lam) * rng.uniform(0.8, 1.2, size=target_dim)
+    amplitude = amplitude_start[None, :] + amplitude_delta[None, :] * drift[:, None]
+    phase = rng.uniform(0, 2 * np.pi, size=target_dim)
+    values = amplitude * np.sin(2 * np.pi * t[:, None] / primary_period + phase[None, :] + phase_drift[:, None])
+    values += 0.18 * np.cos(2 * np.pi * t[:, None] / slow_period + phase[None, :] / 2)
+    values += 0.08 * drift[:, None]
+    noise_scale = max(0.04, 0.11 - 0.03 * lam)
+    values += rng.normal(0.0, noise_scale, size=(length, target_dim))
+    return (
+        values,
+        {
+            "generator_version": "v2-pilot",
+            "amplitude_delta_mean": float(np.mean(amplitude_delta)),
+            "phase_drift_cycles": float(np.max(phase_drift) / (2 * np.pi)),
+            "noise_scale": float(noise_scale),
+        },
+        None,
+    )
+
+
 def _generate_long_memory_nonlinear(
     length: int,
     target_dim: int,
@@ -757,6 +817,51 @@ def _generate_coherent_regime_shift(
     return values, {"shift_at": shift_at, "shift_norm": float(np.linalg.norm(direction))}, None
 
 
+def _generate_hierarchical_coherence(
+    length: int,
+    target_dim: int,
+    season_length: int,
+    difficulty: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, dict[str, Any], None]:
+    lam = _difficulty_lambda(difficulty)
+    seasonal, slow, trend = _base_features(length, season_length)
+    t = np.arange(length, dtype=float)
+    child_count = max(2, target_dim - 1)
+    children = np.zeros((length, child_count))
+    for child in range(child_count):
+        phase = rng.uniform(0, 2 * np.pi)
+        amplitude = rng.uniform(0.45, 0.75) * (1.0 + 0.25 * lam)
+        local_period = max(4, season_length + int((child - child_count / 2) * max(1, season_length // 6)))
+        children[:, child] = (
+            amplitude * np.sin(2 * np.pi * t / local_period + phase)
+            + (0.18 + 0.12 * lam) * slow
+            + rng.normal(0.0, 0.06 + 0.03 * lam, size=length)
+        )
+    shock_count = int(round(lam * 3))
+    for _ in range(shock_count):
+        start = int(rng.integers(max(2, season_length // 2), max(3, length - 2)))
+        width = int(rng.integers(2, max(3, min(10, season_length))))
+        direction = rng.normal(0.0, 0.2 + 0.35 * lam, size=child_count)
+        children[start : min(length, start + width)] += direction[None, :]
+    children += (0.03 + 0.08 * lam) * trend[:, None] * rng.uniform(0.7, 1.3, size=child_count)
+    parent = np.sum(children, axis=1, keepdims=True)
+    values = np.concatenate([parent, children], axis=1)
+    if values.shape[1] > target_dim:
+        values = values[:, :target_dim]
+    return (
+        values,
+        {
+            "generator_version": "v2-pilot",
+            "hierarchy": "target_0=sum(target_1:)",
+            "child_count": int(child_count),
+            "shock_count": int(shock_count),
+            "coherence_residual_mean_abs": float(np.mean(np.abs(parent[:, 0] - np.sum(children, axis=1)))),
+        },
+        None,
+    )
+
+
 def _generate_covariate_response(
     length: int,
     target_dim: int,
@@ -804,6 +909,18 @@ def _standardize_by_context(values: np.ndarray, context_length: int) -> np.ndarr
     return (values - mean) / std
 
 
+def _standardize_hierarchy_by_context(values: np.ndarray, context_length: int) -> np.ndarray:
+    context = values[:context_length]
+    mean = context.mean(axis=0, keepdims=True)
+    centered = values - mean
+    scale = float(np.std(context[:, 0]))
+    if scale <= 1e-6:
+        scale = float(np.mean(np.std(context, axis=0)))
+    if scale <= 1e-6:
+        scale = 1.0
+    return centered / scale
+
+
 def _normalize_covariates(covariates: np.ndarray, context_length: int) -> np.ndarray:
     normalized = covariates.copy()
     for index in range(normalized.shape[1]):
@@ -827,6 +944,9 @@ def _realized_features(target: np.ndarray, covariates: np.ndarray | None, season
         corr = np.nan_to_num(np.corrcoef(target.T), nan=0.0)
         off_diag = corr[~np.eye(corr.shape[0], dtype=bool)]
         features["avg_abs_target_corr"] = float(np.mean(np.abs(off_diag))) if off_diag.size else 0.0
+    if target.shape[1] > 2:
+        hierarchy_residual = target[:, 0] - np.sum(target[:, 1:], axis=1)
+        features["hierarchy_residual_mean_abs"] = float(np.mean(np.abs(hierarchy_residual)))
     if covariates is not None and covariates.size:
         scores: list[float] = []
         for cov_idx in range(covariates.shape[1]):
