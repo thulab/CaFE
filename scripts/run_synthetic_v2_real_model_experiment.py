@@ -25,7 +25,7 @@ for path in (BACKEND_DIR, SCRIPT_DIR):
         sys.path.insert(0, str(path))
 
 from app.services.metric_service import compute_sample_metrics  # noqa: E402
-from app.services.synthetic_generation_service import _generate_accepted_sample_values, _seed_for  # noqa: E402
+from app.services.synthetic_generation_service import CAPABILITIES_BY_ID, _generate_accepted_sample_values, _seed_for  # noqa: E402
 
 
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/research/synthetic-v2-real-model-experiment"
@@ -138,6 +138,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://127.0.0.1:10810")
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--models", nargs="*", default=list(DEFAULT_MODEL_ORDER), help="Model ids to evaluate. Use 'all-active' for every active service model.")
+    parser.add_argument("--capabilities", nargs="+", default=list(DEFAULT_CAPABILITIES), help="Synthetic capability ids to evaluate.")
     parser.add_argument("--sample-count", type=int, default=12, help="Samples per capability and difficulty.")
     parser.add_argument("--batch-size", type=int, default=6)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=900)
@@ -155,7 +156,8 @@ def main() -> int:
     try:
         service_models = client.list_models()
         selected, skipped = select_models(service_models, args.models)
-        samples = generate_probe_samples(args.sample_count)
+        capabilities = validate_capabilities(args.capabilities)
+        samples = generate_probe_samples(args.sample_count, capabilities)
         baseline_rows = baseline_metric_rows(samples)
         model_rows, model_run_status = run_models(
             client,
@@ -180,6 +182,7 @@ def main() -> int:
         batch_size=args.batch_size,
         base_url=args.base_url,
         requested_models=args.models,
+        requested_capabilities=capabilities,
     )
     (args.output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     report = render_report(summary, output_dir=args.output_dir)
@@ -188,6 +191,13 @@ def main() -> int:
     print(f"wrote report: {args.report}")
     print(f"wrote summary: {args.output_dir / 'summary.json'}")
     return 0
+
+
+def validate_capabilities(capabilities: list[str]) -> list[str]:
+    missing = [capability_id for capability_id in capabilities if capability_id not in CAPABILITIES_BY_ID]
+    if missing:
+        raise SystemExit(f"unknown synthetic capabilities: {', '.join(missing)}")
+    return capabilities
 
 
 def select_models(service_models: list[dict[str, Any]], requested: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -211,10 +221,10 @@ def select_models(service_models: list[dict[str, Any]], requested: list[str]) ->
     return selected, skipped
 
 
-def generate_probe_samples(sample_count: int) -> list[ProbeSample]:
+def generate_probe_samples(sample_count: int, capabilities: list[str]) -> list[ProbeSample]:
     samples: list[ProbeSample] = []
     base_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    for capability_id in DEFAULT_CAPABILITIES:
+    for capability_id in capabilities:
         for difficulty in range(1, 6):
             for sample_index in range(sample_count):
                 seed = _seed_for(20260701, capability_id, difficulty * 10_000 + sample_index)
@@ -305,8 +315,17 @@ def run_models(
                 raw_path=raw_path,
             )
             all_rows.extend(model_rows)
-            status["failed_count"] = len([row for row in model_rows if row.get("status") != "succeeded"])
-            status["status"] = "succeeded" if status["failed_count"] == 0 else "partial_succeeded"
+            failed_rows = [row for row in model_rows if row.get("status") != "succeeded"]
+            status["failed_count"] = len(failed_rows)
+            status["succeeded_count"] = len(model_rows) - len(failed_rows)
+            if failed_rows:
+                status["first_error"] = failed_rows[0].get("error")
+            if status["succeeded_count"] == len(samples):
+                status["status"] = "succeeded"
+            elif status["succeeded_count"] == 0:
+                status["status"] = "failed"
+            else:
+                status["status"] = "partial_succeeded"
         except Exception as exc:  # noqa: BLE001 - record model-level failure and keep later models running.
             status["status"] = "failed"
             status["error"] = str(exc)
@@ -395,11 +414,15 @@ def summarize_results(
     batch_size: int,
     base_url: str,
     requested_models: list[str],
+    requested_capabilities: list[str],
 ) -> dict[str, Any]:
     grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = defaultdict(list)
+    failed_grouped: dict[tuple[str, str, int], int] = defaultdict(int)
     for row in rows:
         if row.get("status") == "succeeded":
             grouped[(row["model_id"], row["capability_id"], int(row["difficulty"]))].append(row)
+        else:
+            failed_grouped[(row["model_id"], row["capability_id"], int(row["difficulty"]))] += 1
     summaries = []
     for (model_id, capability_id, difficulty), group_rows in sorted(grouped.items()):
         summaries.append(
@@ -422,12 +445,17 @@ def summarize_results(
         "sample_count_per_capability_difficulty": sample_count,
         "batch_size": batch_size,
         "requested_models": requested_models,
+        "requested_capabilities": requested_capabilities,
         "selected_models": [model.get("model_id") for model in selected_models],
         "skipped_models": skipped_models,
         "model_run_status": model_run_status,
+        "failure_counts": [
+            {"model_id": model_id, "capability_id": capability_id, "difficulty": difficulty, "failed_count": failed_count}
+            for (model_id, capability_id, difficulty), failed_count in sorted(failed_grouped.items())
+        ],
         "summaries": summaries,
         "comparisons": build_comparisons(summaries),
-        "reproduction_command": reproduction_command(requested_models, sample_count, batch_size),
+        "reproduction_command": reproduction_command(requested_models, requested_capabilities, sample_count, batch_size),
     }
 
 
@@ -463,17 +491,21 @@ def build_comparisons(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
+    capabilities = summary.get("requested_capabilities") or DEFAULT_CAPABILITIES
+    capability_text = " / ".join(f"`{capability_id}`" for capability_id in capabilities)
     selected_models = ", ".join(summary["selected_models"]) or "none"
     skipped = ", ".join(f"{item['model_id']} ({item['reason']})" for item in summary["skipped_models"]) or "none"
     status_lines = [
         f"- `{item['model_id']}`: `{item['status']}`, failed={item.get('failed_count', '-')}, elapsed={item.get('elapsed_seconds', '-')}s"
-        + (f", error={item['error']}" if item.get("error") else "")
+        + (f", error={item.get('error') or item.get('first_error')}" if (item.get("error") or item.get("first_error")) else "")
         for item in summary["model_run_status"]
     ]
     tables = []
-    for capability_id in DEFAULT_CAPABILITIES:
+    for capability_id in capabilities:
         tables.extend(capability_table(summary, capability_id))
     best_lines = best_model_lines(summary)
+    failed_lines = failed_model_lines(summary)
+    skipped_observation = skipped_model_observation(summary["skipped_models"])
     return "\n".join(
         [
             "# Synthetic v2 真实模型响应实验",
@@ -482,7 +514,7 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             "",
             "## 目的",
             "",
-            "用本机 `timer-rest-service` 的真实模型验证 synthetic v2 `trend` / `multi_seasonal` probe 是否能呈现模型能力差异。实验直接调用 `http://127.0.0.1:10810/ai/api/v1/forecast`，并保留 naive / seasonal naive 作为基线。",
+            f"用本机 `timer-rest-service` 的真实模型验证 synthetic v2 {capability_text} probe 是否能呈现模型能力差异。实验直接调用 `http://127.0.0.1:10810/ai/api/v1/forecast`，并保留 naive / seasonal naive 作为基线。",
             "",
             "## 配置",
             "",
@@ -490,6 +522,7 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             f"- context / horizon / season：`{summary['context_length']} / {summary['horizon']} / {summary['season_length']}`",
             f"- 每个能力每个难度样本数：`{summary['sample_count_per_capability_difficulty']}`",
             f"- batch size：`{summary['batch_size']}`",
+            f"- 能力维度：{capability_text}",
             f"- requested 模型：{', '.join(summary['requested_models'])}",
             f"- 参评 active 模型：{selected_models}",
             f"- 跳过模型：{skipped}",
@@ -506,7 +539,8 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             "## 初步观察",
             "",
             *best_lines,
-            "- `timesfm2.5` 当前在服务模型列表中是 inactive，本轮未能比较 TimesFM；后续需要先在推理服务侧启用它。",
+            *failed_lines,
+            *skipped_observation,
             "- 这份结果用于观察真实模型响应，不替代后续更大样本、多随机种子和更多能力维度的论文主实验。",
             "",
             "## 复现",
@@ -519,13 +553,34 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
     )
 
 
-def reproduction_command(requested_models: list[str], sample_count: int, batch_size: int) -> str:
+def reproduction_command(requested_models: list[str], requested_capabilities: list[str], sample_count: int, batch_size: int) -> str:
     model_args = " ".join(shlex.quote(model_id) for model_id in requested_models)
+    capability_args = " ".join(shlex.quote(capability_id) for capability_id in requested_capabilities)
     return (
         "cd backend && PYTHONPATH=.:../scripts uv run python "
         f"../scripts/run_synthetic_v2_real_model_experiment.py --models {model_args} "
+        f"--capabilities {capability_args} "
         f"--sample-count {sample_count} --batch-size {batch_size}"
     )
+
+
+def skipped_model_observation(skipped_models: list[dict[str, Any]]) -> list[str]:
+    if not skipped_models:
+        return []
+    skipped = ", ".join(f"`{item['model_id']}`（{item['reason']}）" for item in skipped_models)
+    return [f"- 本轮跳过模型：{skipped}。"]
+
+
+def failed_model_lines(summary: dict[str, Any]) -> list[str]:
+    failed = [
+        item
+        for item in summary.get("model_run_status", [])
+        if item.get("status") == "failed" and int(item.get("failed_count", 0)) > 0
+    ]
+    if not failed:
+        return []
+    models = ", ".join(f"`{item['model_id']}`" for item in failed)
+    return [f"- {models} 本轮所有样本均返回失败，暂不纳入能力排序；需要先排查对应推理 worker。"]
 
 
 def capability_table(summary: dict[str, Any], capability_id: str) -> list[str]:
@@ -542,7 +597,8 @@ def capability_table(summary: dict[str, Any], capability_id: str) -> list[str]:
             for row in summary["summaries"]
             if row["model_id"] == model_id and row["capability_id"] == capability_id
         }
-        if not by_diff:
+        fail_count = capability_fail_count(summary, model_id, capability_id)
+        if not by_diff and fail_count == 0:
             continue
         ratio_d5 = comparison_ratio(summary, model_id, capability_id, 5, "mae_vs_seasonal_naive")
         lines.append(
@@ -550,7 +606,7 @@ def capability_table(summary: dict[str, Any], capability_id: str) -> list[str]:
             + " | ".join(
                 [
                     model_id,
-                    str(model_fail_count(summary, model_id)),
+                    str(fail_count),
                     fmt(metric(by_diff.get(1), "mae")),
                     fmt(metric(by_diff.get(3), "mae")),
                     fmt(metric(by_diff.get(5), "mae")),
@@ -565,9 +621,20 @@ def capability_table(summary: dict[str, Any], capability_id: str) -> list[str]:
     return [*lines, ""]
 
 
+def capability_fail_count(summary: dict[str, Any], model_id: str, capability_id: str) -> int:
+    failure_counts = summary.get("failure_counts")
+    if failure_counts:
+        return sum(
+            int(row.get("failed_count", 0))
+            for row in failure_counts
+            if row.get("model_id") == model_id and row.get("capability_id") == capability_id
+        )
+    return model_fail_count(summary, model_id)
+
+
 def best_model_lines(summary: dict[str, Any]) -> list[str]:
     lines: list[str] = []
-    for capability_id in DEFAULT_CAPABILITIES:
+    for capability_id in summary.get("requested_capabilities") or DEFAULT_CAPABILITIES:
         rows = [
             row
             for row in summary["summaries"]

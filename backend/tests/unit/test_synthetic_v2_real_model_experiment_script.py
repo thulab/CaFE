@@ -36,9 +36,10 @@ def test_select_models_skips_inactive_and_unknown():
 
 def test_render_report_includes_model_status_and_tables():
     module = load_experiment_module()
+    capabilities = ["regime_switching"]
     summaries = []
     for model_id in ("naive", "seasonal_naive", "Timer-3.5"):
-        for capability_id in module.DEFAULT_CAPABILITIES:
+        for capability_id in capabilities:
             for difficulty in range(1, 6):
                 summaries.append(
                     {
@@ -58,12 +59,13 @@ def test_render_report_includes_model_status_and_tables():
         "sample_count_per_capability_difficulty": 2,
         "batch_size": 6,
         "requested_models": ["Timer-3.5", "timesfm2.5"],
+        "requested_capabilities": capabilities,
         "selected_models": ["Timer-3.5"],
         "skipped_models": [{"model_id": "timesfm2.5", "reason": "inactive"}],
         "model_run_status": [{"model_id": "Timer-3.5", "status": "succeeded", "failed_count": 0, "elapsed_seconds": 1.2}],
         "summaries": summaries,
         "comparisons": module.build_comparisons(summaries),
-        "reproduction_command": module.reproduction_command(["Timer-3.5", "timesfm2.5"], 2, 6),
+        "reproduction_command": module.reproduction_command(["Timer-3.5", "timesfm2.5"], capabilities, 2, 6),
     }
 
     report = module.render_report(summary, output_dir=Path("runtime/out"))
@@ -71,5 +73,5 @@ def test_render_report_includes_model_status_and_tables():
     assert "Synthetic v2 真实模型响应实验" in report
     assert "Timer-3.5" in report
     assert "timesfm2.5 (inactive)" in report
-    assert "`trend`" in report
-    assert "`multi_seasonal`" in report
+    assert "`regime_switching`" in report
+    assert "--capabilities regime_switching" in report
