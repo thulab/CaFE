@@ -1,5 +1,7 @@
 # Frontend Bilingual i18n Implementation Plan
 
+> ✅ **代码核实已落地（2026-07-01）**。仓库当前已有 `vue-i18n` 依赖、`frontend/src/i18n/` 双语消息目录、运行时语言切换、locale-aware format/error helpers、主要页面和组件的 `useI18n` 接入，以及 i18n/format/error/app shell/workspace/result/admin 等测试覆盖。本文原 checklist 状态滞后于代码，已按当前实现状态同步为完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add English and Chinese display-language support to the Vue frontend while keeping the backend API contract unchanged.
@@ -62,7 +64,7 @@ Modify:
 - Create: `frontend/src/i18n/index.ts`
 - Test: `frontend/src/tests/i18n.test.ts`
 
-- [ ] **Step 1: Install `vue-i18n`**
+- [x] **Step 1: Install `vue-i18n`**
 
 Run:
 
@@ -76,7 +78,7 @@ Expected:
 - `frontend/package-lock.json` changes.
 - Command exits with status 0.
 
-- [ ] **Step 2: Add locale key helpers**
+- [x] **Step 2: Add locale key helpers**
 
 Create `frontend/src/i18n/keys.ts`:
 
@@ -128,7 +130,7 @@ export function resolveInitialLocale(): LocaleCode {
 }
 ```
 
-- [ ] **Step 3: Add English messages**
+- [x] **Step 3: Add English messages**
 
 Create `frontend/src/i18n/locales/en-US.ts`:
 
@@ -341,7 +343,7 @@ const enUS = {
 export default enUS;
 ```
 
-- [ ] **Step 4: Add Chinese messages with the same shape**
+- [x] **Step 4: Add Chinese messages with the same shape**
 
 Create `frontend/src/i18n/locales/zh-CN.ts`:
 
@@ -554,7 +556,7 @@ const zhCN = {
 export default zhCN;
 ```
 
-- [ ] **Step 5: Add i18n instance and runtime setter**
+- [x] **Step 5: Add i18n instance and runtime setter**
 
 Create `frontend/src/i18n/index.ts`:
 
@@ -599,7 +601,7 @@ export function setLocaleFromUnknown(value: unknown): LocaleCode {
 setDocumentLocale(i18n.global.locale.value as LocaleCode);
 ```
 
-- [ ] **Step 6: Register i18n in the app bootstrap**
+- [x] **Step 6: Register i18n in the app bootstrap**
 
 Modify `frontend/src/main.ts` so the final bootstrap block is:
 
@@ -632,7 +634,7 @@ bootstrap().finally(() => {
 });
 ```
 
-- [ ] **Step 7: Add i18n tests**
+- [x] **Step 7: Add i18n tests**
 
 Create `frontend/src/tests/i18n.test.ts`:
 
@@ -681,7 +683,7 @@ describe('locale resolution', () => {
 });
 ```
 
-- [ ] **Step 8: Run focused i18n tests**
+- [x] **Step 8: Run focused i18n tests**
 
 Run:
 
@@ -694,7 +696,7 @@ Expected:
 - Vitest exits with status 0.
 - All tests in `i18n.test.ts` pass.
 
-- [ ] **Step 9: Commit foundation**
+- [x] **Step 9: Commit foundation**
 
 Run:
 
@@ -722,7 +724,7 @@ Expected:
 - Test: `frontend/src/tests/errors.test.ts`
 - Modify or create focused component tests for `StateBlock.vue` and `StatusBadge.vue`
 
-- [ ] **Step 1: Add failing formatting tests**
+- [x] **Step 1: Add failing formatting tests**
 
 Create `frontend/src/tests/format.test.ts`:
 
@@ -752,7 +754,7 @@ describe('locale-aware format helpers', () => {
 });
 ```
 
-- [ ] **Step 2: Run formatting tests and confirm failure**
+- [x] **Step 2: Run formatting tests and confirm failure**
 
 Run:
 
@@ -764,7 +766,7 @@ Expected:
 
 - Fails because `formatInt`, `formatDateTime`, and `timeAgo` do not yet accept locale consistently and `timeAgo` still assembles English strings.
 
-- [ ] **Step 3: Update `format.ts`**
+- [x] **Step 3: Update `format.ts`**
 
 Modify `frontend/src/lib/format.ts` to keep existing function names and add locale parameters:
 
@@ -849,7 +851,7 @@ export function humanize(value?: string | null): string {
 }
 ```
 
-- [ ] **Step 4: Add locale-aware format composable**
+- [x] **Step 4: Add locale-aware format composable**
 
 Create `frontend/src/composables/useFormat.ts`:
 
@@ -872,7 +874,7 @@ export function useFormat() {
 }
 ```
 
-- [ ] **Step 5: Add error display helper and tests**
+- [x] **Step 5: Add error display helper and tests**
 
 Create `frontend/src/lib/errors.ts`:
 
@@ -934,7 +936,7 @@ describe('displayError', () => {
 });
 ```
 
-- [ ] **Step 6: Update `StateBlock.vue`**
+- [x] **Step 6: Update `StateBlock.vue`**
 
 Modify `frontend/src/components/ui/StateBlock.vue` so text defaults come from i18n:
 
@@ -982,7 +984,7 @@ Update its template references:
 <p class="state-title">{{ resolvedEmptyTitle }}</p>
 ```
 
-- [ ] **Step 7: Update `StatusBadge.vue`**
+- [x] **Step 7: Update `StatusBadge.vue`**
 
 Modify `frontend/src/components/ui/StatusBadge.vue` script:
 
@@ -1032,7 +1034,7 @@ const label = computed(() => {
 });
 ```
 
-- [ ] **Step 8: Run common-layer focused tests**
+- [x] **Step 8: Run common-layer focused tests**
 
 Run:
 
@@ -1045,7 +1047,7 @@ Expected:
 - Vitest exits with status 0.
 - Formatting and error tests pass.
 
-- [ ] **Step 9: Run full frontend tests after common-layer changes**
+- [x] **Step 9: Run full frontend tests after common-layer changes**
 
 Run:
 
@@ -1057,7 +1059,7 @@ Expected:
 
 - Existing tests still pass in default English locale.
 
-- [ ] **Step 10: Commit common layer**
+- [x] **Step 10: Commit common layer**
 
 Run:
 
@@ -1080,7 +1082,7 @@ Expected:
 - Modify: `frontend/src/styles.css`
 - Modify: `frontend/src/tests/AppRoutes.test.ts`
 
-- [ ] **Step 1: Add compact language-switch styles**
+- [x] **Step 1: Add compact language-switch styles**
 
 Append near the button styles in `frontend/src/styles.css`:
 
@@ -1121,7 +1123,7 @@ Append near the button styles in `frontend/src/styles.css`:
 }
 ```
 
-- [ ] **Step 2: Import i18n helpers in `App.vue`**
+- [x] **Step 2: Import i18n helpers in `App.vue`**
 
 In `frontend/src/App.vue`, add imports:
 
@@ -1146,7 +1148,7 @@ function changeLocale(next: LocaleCode) {
 }
 ```
 
-- [ ] **Step 3: Replace app-shell literals with `t()`**
+- [x] **Step 3: Replace app-shell literals with `t()`**
 
 In `App.vue`, replace nav groups and buttons:
 
@@ -1192,7 +1194,7 @@ Add language switch before the theme button:
 </div>
 ```
 
-- [ ] **Step 4: Convert route labels to computed translations**
+- [x] **Step 4: Convert route labels to computed translations**
 
 Replace `HOME_CRUMB`, `navItems`, `adminItems`, and route crumb literals with translated values. Use this pattern:
 
@@ -1225,7 +1227,7 @@ Use these translations for recurring crumb labels:
 - `t('artifacts.shard')`
 - `t('artifacts.track')`
 
-- [ ] **Step 5: Add app-shell language-switch test**
+- [x] **Step 5: Add app-shell language-switch test**
 
 In `frontend/src/tests/AppRoutes.test.ts`, add:
 
@@ -1251,7 +1253,7 @@ const zhButton = await screen.findByTitle('中文');
 await zhButton.click();
 ```
 
-- [ ] **Step 6: Run app-shell tests**
+- [x] **Step 6: Run app-shell tests**
 
 Run:
 
@@ -1264,7 +1266,7 @@ Expected:
 - Existing route tests pass.
 - New language-switch test passes.
 
-- [ ] **Step 7: Commit app shell**
+- [x] **Step 7: Commit app shell**
 
 Run:
 
@@ -1293,7 +1295,7 @@ Expected:
 - Modify: `frontend/src/tests/e2e-smoke.test.ts`
 - Modify: focused wizard tests in `frontend/src/tests/*Step.test.ts`
 
-- [ ] **Step 1: Convert wizard page headings and step definitions**
+- [x] **Step 1: Convert wizard page headings and step definitions**
 
 In `EvaluationWizardPage.vue`, import:
 
@@ -1365,7 +1367,7 @@ if (wizardState.runId) out.push({ name: t('artifacts.run'), href: `#/runs/${wiza
 if (wizardState.reportId) out.push({ name: t('artifacts.report'), href: `#/reports/${wizardState.reportId}`, icon: 'barChart' });
 ```
 
-- [ ] **Step 2: Convert `RunStep.vue`**
+- [x] **Step 2: Convert `RunStep.vue`**
 
 Import:
 
@@ -1417,7 +1419,7 @@ function modelStateLabel(model: ModelDTO) {
 }
 ```
 
-- [ ] **Step 3: Convert the remaining wizard components**
+- [x] **Step 3: Convert the remaining wizard components**
 
 For each of `UploadStep.vue`, `ColumnAndSplitStep.vue`, `LoadShardStep.vue`, `TrackStep.vue`, and `ResultStep.vue`:
 
@@ -1439,7 +1441,7 @@ wizard.resultStep
 
 For each component, keep API DTO fields and CSV column names unmodified.
 
-- [ ] **Step 4: Update wizard tests**
+- [x] **Step 4: Update wizard tests**
 
 Keep default-locale assertions in English where possible. Add one focused Chinese test in `frontend/src/tests/AppRoutes.test.ts` or a wizard-specific test:
 
@@ -1467,7 +1469,7 @@ Reset locale in `beforeEach`:
 setLocale('en-US');
 ```
 
-- [ ] **Step 5: Run wizard tests**
+- [x] **Step 5: Run wizard tests**
 
 Run:
 
@@ -1480,7 +1482,7 @@ Expected:
 - Existing English tests pass.
 - New Chinese wizard test passes.
 
-- [ ] **Step 6: Commit wizard migration**
+- [x] **Step 6: Commit wizard migration**
 
 Run:
 
@@ -1507,7 +1509,7 @@ Expected:
 - Modify: `frontend/src/i18n/locales/zh-CN.ts`
 - Modify: `frontend/src/tests/WorkspacePages.test.ts`
 
-- [ ] **Step 1: Convert `HomePage.vue`**
+- [x] **Step 1: Convert `HomePage.vue`**
 
 Import:
 
@@ -1557,7 +1559,7 @@ activityError.value = displayError(e, t, te, 'errors.failedToLoadActivity');
 
 Replace visible template literals with keys already present in Task 1 under `home.*`.
 
-- [ ] **Step 2: Convert `DatasetsPage.vue`**
+- [x] **Step 2: Convert `DatasetsPage.vue`**
 
 Import:
 
@@ -1597,7 +1599,7 @@ error.value = displayError(e, t, te, 'errors.failedToLoadDatasets');
 
 Replace visible template literals with `datasets.*`, `nav.newEvaluation`, and `artifacts.*` keys.
 
-- [ ] **Step 3: Convert `RunsPage.vue`**
+- [x] **Step 3: Convert `RunsPage.vue`**
 
 Import:
 
@@ -1628,7 +1630,7 @@ error.value = displayError(e, t, te, 'errors.failedToLoadRuns');
 
 Replace visible template literals with `runs.*`, `nav.newEvaluation`, and `common.open`.
 
-- [ ] **Step 4: Convert `RunDetailPage.vue`**
+- [x] **Step 4: Convert `RunDetailPage.vue`**
 
 Use the same imports as `RunsPage.vue`. Add missing locale keys under `runs.detail.*` for:
 
@@ -1644,7 +1646,7 @@ Use the same imports as `RunsPage.vue`. Add missing locale keys under `runs.deta
 
 Keep `recent_events[].message` as backend/event data and do not translate it.
 
-- [ ] **Step 5: Update workspace tests**
+- [x] **Step 5: Update workspace tests**
 
 In `frontend/src/tests/WorkspacePages.test.ts`:
 
@@ -1663,7 +1665,7 @@ Add in `beforeEach`:
 setLocale('en-US');
 ```
 
-- [ ] **Step 6: Run workspace tests**
+- [x] **Step 6: Run workspace tests**
 
 Run:
 
@@ -1675,7 +1677,7 @@ Expected:
 
 - Workspace page tests pass.
 
-- [ ] **Step 7: Commit workspace pages**
+- [x] **Step 7: Commit workspace pages**
 
 Run:
 
@@ -1712,7 +1714,7 @@ Expected:
 - Modify: `frontend/src/i18n/locales/zh-CN.ts`
 - Modify: relevant tests in `frontend/src/tests/*.test.ts`
 
-- [ ] **Step 1: Add locale keys for remaining pages**
+- [x] **Step 1: Add locale keys for remaining pages**
 
 Add these key groups to both `frontend/src/i18n/locales/en-US.ts` and `frontend/src/i18n/locales/zh-CN.ts`. The English values below are the current UI copy. Use the Chinese values shown in the right column.
 
@@ -1832,7 +1834,7 @@ Add these key groups to both `frontend/src/i18n/locales/en-US.ts` and `frontend/
 | `results.viewFullBoard` | View full board | 查看完整榜单 |
 | `results.noRankedResults` | No ranked results yet | 暂无排名结果 |
 
-- [ ] **Step 2: Migrate the listed pages**
+- [x] **Step 2: Migrate the listed pages**
 
 For each page file in this task:
 
@@ -1866,7 +1868,7 @@ Template:
 </td>
 ```
 
-- [ ] **Step 3: Migrate result components**
+- [x] **Step 3: Migrate result components**
 
 For `frontend/src/components/results/*.vue`:
 
@@ -1875,7 +1877,7 @@ For `frontend/src/components/results/*.vue`:
 3. Use `StatusBadge` for statuses where possible.
 4. Use `useFormat` for numbers and dates when displayed.
 
-- [ ] **Step 4: Update focused tests**
+- [x] **Step 4: Update focused tests**
 
 Run and update tests after each group:
 
@@ -1891,7 +1893,7 @@ Expected:
 - Tests pass in default English.
 - Any new Chinese assertions pass after `setLocale('zh-CN')`.
 
-- [ ] **Step 5: Commit remaining page migration**
+- [x] **Step 5: Commit remaining page migration**
 
 Run:
 
@@ -1912,7 +1914,7 @@ Expected:
 
 - Modify only files where the sweep finds user-visible hardcoded text still requiring translation.
 
-- [ ] **Step 1: Scan for likely remaining user-visible English**
+- [x] **Step 1: Scan for likely remaining user-visible English**
 
 Run:
 
@@ -1926,7 +1928,7 @@ Expected:
 - API paths, TypeScript type names, icon names, component names, comments, test fixtures, and DTO enum values may remain.
 - User-visible literals in templates and fallback errors are either translated or intentionally left because they are runtime data from the backend.
 
-- [ ] **Step 2: Scan accessibility text**
+- [x] **Step 2: Scan accessibility text**
 
 Run:
 
@@ -1938,7 +1940,7 @@ Expected:
 
 - `aria-label`, `title`, and `placeholder` values are translated unless they display runtime data or ids.
 
-- [ ] **Step 3: Verify locale key shape one final time**
+- [x] **Step 3: Verify locale key shape one final time**
 
 Run:
 
@@ -1951,7 +1953,7 @@ Expected:
 - Locale key sets match.
 - No empty translation strings are present.
 
-- [ ] **Step 4: Run full frontend unit suite**
+- [x] **Step 4: Run full frontend unit suite**
 
 Run:
 
@@ -1964,7 +1966,7 @@ Expected:
 - Vitest exits with status 0.
 - All frontend tests pass.
 
-- [ ] **Step 5: Run frontend smoke test**
+- [x] **Step 5: Run frontend smoke test**
 
 Run:
 
@@ -1976,7 +1978,7 @@ Expected:
 
 - Smoke test exits with status 0.
 
-- [ ] **Step 6: Commit final sweep**
+- [x] **Step 6: Commit final sweep**
 
 If Step 1 or Step 2 required code changes, run:
 

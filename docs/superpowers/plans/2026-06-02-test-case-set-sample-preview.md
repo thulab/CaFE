@@ -1,5 +1,7 @@
 # Test Case Set Sample Preview Implementation Plan
 
+> ✅ **代码核实已落地（2026-07-01）**。仓库当前已有分页样本列表、`/samples/{sample_id}/preview` API client、`SampleWindowChart`、`SampleWindowPreviewPage`、`#/shards/{shardId}/samples/{sampleId}` 路由、中英双语文案和对应 Vitest 覆盖。本文原 checklist 状态滞后于代码，已按当前实现状态同步为完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make generated and existing test case sets inspectable from the wizard, paginate test case samples, and add a real-sequence sample curve page.
@@ -34,7 +36,7 @@
 - Create: `frontend/src/api/samples.ts`
 - Test: `frontend/src/tests/api-client.test.ts`
 
-- [ ] **Step 1: Write the failing API client test**
+- [x] **Step 1: Write the failing API client test**
 
 Add assertions to `frontend/src/tests/api-client.test.ts`:
 
@@ -55,13 +57,13 @@ it('builds paginated shard sample and sample preview requests', async () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npm test -- --run src/tests/api-client.test.ts`
 
 Expected: fails because `getSamplePreview` does not exist and `getShardSamples` does not accept pagination parameters.
 
-- [ ] **Step 3: Implement API clients**
+- [x] **Step 3: Implement API clients**
 
 Add `SamplePreviewDTO` to `frontend/src/api/types.ts`:
 
@@ -96,13 +98,13 @@ export function getSamplePreview(sampleId: string): Promise<SamplePreviewDTO> {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npm test -- --run src/tests/api-client.test.ts`
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -122,7 +124,7 @@ git commit -m "add sample preview api client"
 - Modify: `frontend/src/i18n/locales/zh-CN.ts`
 - Test: `frontend/src/tests/TestCaseSetStep.test.ts`
 
-- [ ] **Step 1: Write failing wizard tests**
+- [x] **Step 1: Write failing wizard tests**
 
 Add test coverage to `frontend/src/tests/TestCaseSetStep.test.ts`:
 
@@ -165,13 +167,13 @@ it('links the generated and listed test case sets to their detail pages', async 
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npm test -- --run src/tests/TestCaseSetStep.test.ts`
 
 Expected: fails because list titles are not links and the generated-set success block does not exist.
 
-- [ ] **Step 3: Implement title links and success block**
+- [x] **Step 3: Implement title links and success block**
 
 Extend `SelectablePagedListItem` in `frontend/src/components/ui/SelectablePagedList.vue` and `frontend/src/components/wizard/TestCaseSetStep.vue` with `href?: string`. Render item titles as `<a class="text-link">` when `href` exists.
 
@@ -209,13 +211,13 @@ generatedReady: '已生成测试用例集：{name}',
 openGeneratedSet: '查看生成的测试用例集',
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npm test -- --run src/tests/TestCaseSetStep.test.ts`
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -234,7 +236,7 @@ git commit -m "link test case sets from wizard"
 - Modify: `frontend/src/i18n/locales/zh-CN.ts`
 - Test: `frontend/src/tests/AppRoutes.test.ts`
 
-- [ ] **Step 1: Write failing shard detail tests**
+- [x] **Step 1: Write failing shard detail tests**
 
 Update the shard route test in `frontend/src/tests/AppRoutes.test.ts` so `/api/shards/shard-1/samples?limit=10&offset=0` returns `total: 12`, and assert:
 
@@ -246,13 +248,13 @@ await waitFor(() => expect(requests.some((url) => url === '/api/shards/shard-1/s
 expect(await screen.findByText('Showing 11-12 of 12 samples')).toBeTruthy();
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd frontend && npm test -- --run src/tests/AppRoutes.test.ts`
 
 Expected: fails because `ShardPage` loads all samples once and does not render curve links.
 
-- [ ] **Step 3: Implement pagination**
+- [x] **Step 3: Implement pagination**
 
 In `ShardPage.vue`, split shard loading from sample-page loading. Add:
 
@@ -284,13 +286,13 @@ samplePageRange: '显示第 {start}-{end} 个，共 {total} 个样本',
 samplePagination: '测试用例样本分页',
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd frontend && npm test -- --run src/tests/AppRoutes.test.ts`
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -312,7 +314,7 @@ git commit -m "paginate test case samples"
 - Test: `frontend/src/tests/SampleWindowPreviewPage.test.ts`
 - Test: `frontend/src/tests/AppRoutes.test.ts`
 
-- [ ] **Step 1: Write failing preview page tests**
+- [x] **Step 1: Write failing preview page tests**
 
 Create `frontend/src/tests/SampleWindowPreviewPage.test.ts`:
 
@@ -359,13 +361,13 @@ render(App, { global: { plugins: [i18n] } });
 expect(await screen.findByRole('heading', { name: 'Sample window preview' })).toBeTruthy();
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd frontend && npm test -- --run src/tests/SampleWindowPreviewPage.test.ts src/tests/AppRoutes.test.ts`
 
 Expected: fails because the page, chart, and route do not exist.
 
-- [ ] **Step 3: Implement page, chart, and route**
+- [x] **Step 3: Implement page, chart, and route**
 
 Create `SampleWindowChart.vue` that accepts `{ sample: SamplePreviewDTO }`, flattens the first target dimension from `target_history` and `target_future`, and draws an SVG polyline for history plus another for future. Give the SVG `role="img"` and localized aria label.
 
@@ -406,13 +408,13 @@ windowLabel: 'Window #{index}',
 
 Add matching Chinese translations.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd frontend && npm test -- --run src/tests/SampleWindowPreviewPage.test.ts src/tests/AppRoutes.test.ts`
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Run:
 
@@ -428,7 +430,7 @@ git commit -m "add sample window preview page"
 **Files:**
 - All files changed above.
 
-- [ ] **Step 1: Run focused frontend tests**
+- [x] **Step 1: Run focused frontend tests**
 
 Run:
 
@@ -438,25 +440,25 @@ cd frontend && npm test -- --run src/tests/api-client.test.ts src/tests/TestCase
 
 Expected: pass.
 
-- [ ] **Step 2: Run full frontend test suite**
+- [x] **Step 2: Run full frontend test suite**
 
 Run: `cd frontend && npm test`
 
 Expected: pass.
 
-- [ ] **Step 3: Run Vue type checking**
+- [x] **Step 3: Run Vue type checking**
 
 Run: `cd frontend && npx vue-tsc --noEmit`
 
 Expected: exit code 0.
 
-- [ ] **Step 4: Run diff hygiene check**
+- [x] **Step 4: Run diff hygiene check**
 
 Run: `git diff --check`
 
 Expected: no output and exit code 0.
 
-- [ ] **Step 5: Inspect changed files and status**
+- [x] **Step 5: Inspect changed files and status**
 
 Run:
 
