@@ -15,6 +15,7 @@ from app.services.resource_lifecycle import (
     restore_resource,
     visible_rows,
 )
+from app.services.report_service import SampleLinkSort, read_track_results
 from app.services.track_service import create_track_with_blocks, track_summary
 
 router = make_router(prefix="/tracks", tags=["tracks"])
@@ -39,6 +40,29 @@ def get_track(track_id: str, session: Session = Depends(get_db_session)) -> dict
     if track is None:
         raise ApiError("track_not_found", "track not found", {"track_id": track_id}, 404)
     return _track_summary_with_archive(session, track)
+
+
+@router.get("/{track_id}/results", tier="authed")
+def get_track_results(
+    track_id: str,
+    sample_link_limit: int | None = None,
+    sample_link_offset: int = 0,
+    sample_link_capability_block_id: str | None = None,
+    sample_link_metric: str | None = None,
+    sample_link_model_id: str | None = None,
+    sample_link_sort: SampleLinkSort = "sample_index",
+    session: Session = Depends(get_db_session),
+) -> dict:
+    return read_track_results(
+        session,
+        track_id,
+        sample_link_limit=sample_link_limit,
+        sample_link_offset=sample_link_offset,
+        sample_link_capability_block_id=sample_link_capability_block_id,
+        sample_link_metric=sample_link_metric,
+        sample_link_model_id=sample_link_model_id,
+        sample_link_sort=sample_link_sort,
+    )
 
 
 @router.post("", tier="perm", perm="track.manage")

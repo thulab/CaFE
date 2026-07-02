@@ -17,6 +17,8 @@ from app.services.sample_store import SampleStore
 
 SampleLinkSort = Literal["sample_index", "metric_desc", "metric_asc"]
 KNOWN_SAMPLE_METRICS = ["mase", "mse", "rmse", "mae", "smape", "mape"]
+TRACK_TERMINAL_RUN_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}
+TRACK_TERMINAL_UNIT_STATUSES = {"succeeded", "partial_succeeded", "failed", "cancelled"}
 
 
 def generate_run_report(session: Session, run_id: str, runtime_dir: Path) -> Report:
@@ -108,6 +110,155 @@ def read_report(
     payload["sample_forecast_links_model_id"] = sample_link_model_id
     payload["sample_forecast_links_sort"] = sample_link_sort
     return payload
+
+
+def read_track_results(
+    session: Session,
+    track_id: str,
+    sample_link_limit: int | None = None,
+    sample_link_offset: int = 0,
+    sample_link_capability_block_id: str | None = None,
+    sample_link_metric: str | None = None,
+    sample_link_model_id: str | None = None,
+    sample_link_sort: SampleLinkSort = "sample_index",
+) -> dict:
+    track = session.get(Track, track_id)
+    if track is None:
+        raise ApiError("track_not_found", "track not found", {"track_id": track_id}, 404)
+
+    run_ids, run_by_id = _track_terminal_runs(session, track_id)
+    terminal_units = _track_terminal_units(session, run_ids) if run_ids else []
+    latest_units = _latest_units_by_model(terminal_units, run_by_id)
+    latest_success_units = _latest_success_units_by_model(terminal_units, run_by_id)
+    success_units = list(latest_success_units.values())
+    success_unit_ids = [unit.unit_id for unit in success_units]
+
+    metrics = session.exec(select(MetricResult).where(MetricResult.unit_id.in_(success_unit_ids))).all() if success_unit_ids else []
+    tasks = session.exec(select(Task).where(Task.unit_id.in_(success_unit_ids))).all() if success_unit_ids else []
+    artifacts = session.exec(select(ForecastArtifact).where(ForecastArtifact.unit_id.in_(success_unit_ids))).all() if success_unit_ids else []
+    task_sample_counts = _task_sample_counts_from_artifacts(artifacts)
+    offset = max(0, int(sample_link_offset or 0))
+    limit = int(sample_link_limit) if sample_link_limit is not None else None
+    if limit is not None:
+        limit = max(0, limit)
+
+    metric_id = _resolve_track_sample_link_metric(session, track, success_unit_ids, sample_link_metric)
+    if metric_id is None or not success_unit_ids:
+        sample_links: list[dict] = []
+        sample_total = 0
+    else:
+        sample_links, sample_total = _track_sample_links_page_from_metrics(
+            session,
+            success_unit_ids,
+            metric_id,
+            offset,
+            limit,
+            sample_link_capability_block_id,
+            sample_link_model_id,
+            sample_link_sort,
+        )
+
+    return {
+        "track_id": track_id,
+        "metric": metric_id or sample_link_metric or track.primary_metric_id,
+        "model_statuses": _track_model_statuses(session, latest_units, run_by_id),
+        "model_metrics": [_unit_metrics(session, unit, metrics) for unit in success_units],
+        "capability_blocks": _capability_blocks(session, tasks),
+        "capability_metrics": [_capability_metric(session, task, metrics, task_sample_counts) for task in tasks],
+        "sample_forecast_links": sample_links,
+        "sample_forecast_links_total": sample_total,
+        "sample_forecast_links_limit": limit if limit is not None else sample_total,
+        "sample_forecast_links_offset": offset,
+        "sample_forecast_links_capability_block_id": sample_link_capability_block_id,
+        "sample_forecast_links_metric": metric_id,
+        "sample_forecast_links_model_id": sample_link_model_id,
+        "sample_forecast_links_sort": sample_link_sort,
+    }
+
+
+def _track_terminal_runs(session: Session, track_id: str) -> tuple[list[str], dict[str, BenchmarkingRun]]:
+    runs = session.exec(
+        select(BenchmarkingRun)
+        .where(
+            BenchmarkingRun.track_id == track_id,
+            BenchmarkingRun.status.in_(TRACK_TERMINAL_RUN_STATUSES),
+        )
+        .order_by(BenchmarkingRun.created_at.desc())
+    ).all()
+    return [run.benchmarking_run_id for run in runs], {run.benchmarking_run_id: run for run in runs}
+
+
+def _track_terminal_units(session: Session, run_ids: list[str]) -> list[Unit]:
+    return session.exec(
+        select(Unit).where(
+            Unit.benchmarking_run_id.in_(run_ids),
+            Unit.status.in_(TRACK_TERMINAL_UNIT_STATUSES),
+        )
+    ).all()
+
+
+def _latest_units_by_model(units: list[Unit], run_by_id: dict[str, BenchmarkingRun]) -> dict[str, Unit]:
+    latest: dict[str, Unit] = {}
+    for unit in units:
+        current = latest.get(unit.model_id)
+        if current is None or _unit_sort_key(unit, run_by_id) > _unit_sort_key(current, run_by_id):
+            latest[unit.model_id] = unit
+    return latest
+
+
+def _latest_success_units_by_model(units: list[Unit], run_by_id: dict[str, BenchmarkingRun]) -> dict[str, Unit]:
+    successful = [unit for unit in units if unit.status == "succeeded"]
+    return _latest_units_by_model(successful, run_by_id)
+
+
+def _unit_sort_key(unit: Unit, run_by_id: dict[str, BenchmarkingRun]) -> tuple:
+    run = run_by_id.get(unit.benchmarking_run_id)
+    return (
+        run.created_at if run is not None else unit.created_at,
+        unit.created_at,
+        unit.unit_id,
+    )
+
+
+def _track_model_statuses(session: Session, latest_units: dict[str, Unit], run_by_id: dict[str, BenchmarkingRun]) -> list[dict]:
+    models = session.exec(select(Model).where(Model.status != "inactive").order_by(Model.name)).all()
+    statuses: list[dict] = []
+    for model in models:
+        unit = latest_units.get(model.model_id)
+        if unit is None:
+            statuses.append(
+                {
+                    "model_id": model.model_id,
+                    "model_name": model.name,
+                    "evaluation_status": "not_evaluated",
+                    "run_id": None,
+                    "report_id": None,
+                    "unit_id": None,
+                    "unit_status": None,
+                    "failed_sample_count": 0,
+                }
+            )
+            continue
+        run = run_by_id.get(unit.benchmarking_run_id)
+        failed_count = _unit_failed_sample_count(session, unit)
+        statuses.append(
+            {
+                "model_id": model.model_id,
+                "model_name": model.name,
+                "evaluation_status": "evaluated" if unit.status == "succeeded" else "run_failed",
+                "run_id": unit.benchmarking_run_id,
+                "report_id": run.report_id if run else None,
+                "unit_id": unit.unit_id,
+                "unit_status": unit.status,
+                "failed_sample_count": failed_count,
+            }
+        )
+    return statuses
+
+
+def _unit_failed_sample_count(session: Session, unit: Unit) -> int:
+    tasks = session.exec(select(Task).where(Task.unit_id == unit.unit_id)).all()
+    return sum(int(task.failed_sample_count or 0) for task in tasks)
 
 
 def _unit_metrics(session: Session, unit: Unit, metrics: list[MetricResult]) -> dict:
@@ -323,6 +474,28 @@ def _resolve_sample_link_metric(session: Session | None, report: Report, payload
     return next(iter(sorted(available_set)), None)
 
 
+def _resolve_track_sample_link_metric(session: Session, track: Track, unit_ids: list[str], requested: str | None) -> str | None:
+    if requested:
+        return requested
+    if not unit_ids:
+        return None
+    available = session.exec(
+        select(MetricResult.metric_id)
+        .where(
+            MetricResult.unit_id.in_(unit_ids),
+            MetricResult.result_level == "sample",
+        )
+        .distinct()
+    ).all()
+    available_set = {str(metric_id) for metric_id in available if metric_id}
+    if track.primary_metric_id in available_set:
+        return track.primary_metric_id
+    for metric_id in KNOWN_SAMPLE_METRICS:
+        if metric_id in available_set:
+            return metric_id
+    return next(iter(sorted(available_set)), None)
+
+
 def _payload_metric_keys(payload: dict) -> list[str]:
     keys: set[str] = set()
     for item in payload.get("model_metrics") or []:
@@ -338,6 +511,145 @@ def _payload_metric_keys(payload: dict) -> list[str]:
             key,
         ),
     )
+
+
+def _track_sample_links_page_from_metrics(
+    session: Session,
+    unit_ids: list[str],
+    metric_id: str,
+    offset: int,
+    limit: int | None,
+    capability_block_id: str | None,
+    model_id: str | None,
+    sort_mode: SampleLinkSort,
+) -> tuple[list[dict], int]:
+    metric_value = func.avg(MetricResult.value).label("metric_value")
+    model_count = func.count(func.distinct(MetricResult.model_id)).label("model_count")
+    base = (
+        select(
+            MetricResult.sample_id,
+            MetricResult.capability_block_id,
+            metric_value,
+            model_count,
+            SampleIndex.sample_index,
+        )
+        .join(SampleIndex, SampleIndex.sample_id == MetricResult.sample_id)
+        .where(
+            MetricResult.unit_id.in_(unit_ids),
+            MetricResult.result_level == "sample",
+            MetricResult.metric_id == metric_id,
+            MetricResult.sample_id.is_not(None),
+        )
+        .group_by(MetricResult.sample_id, MetricResult.capability_block_id, SampleIndex.sample_index)
+    )
+    if capability_block_id:
+        base = base.where(MetricResult.capability_block_id == capability_block_id)
+    if model_id:
+        base = base.where(MetricResult.model_id == model_id)
+
+    total = int(session.exec(select(func.count()).select_from(base.subquery())).one() or 0)
+    if sort_mode == "metric_desc":
+        ordered = base.order_by(metric_value.desc(), SampleIndex.sample_index.asc(), MetricResult.sample_id.asc())
+    elif sort_mode == "metric_asc":
+        ordered = base.order_by(metric_value.asc(), SampleIndex.sample_index.asc(), MetricResult.sample_id.asc())
+    else:
+        ordered = base.order_by(SampleIndex.sample_index.asc(), MetricResult.sample_id.asc())
+    if limit is not None:
+        ordered = ordered.offset(offset).limit(limit)
+    else:
+        ordered = ordered.offset(offset)
+
+    rows = session.exec(ordered).all()
+    return _track_sample_links_from_metric_rows(session, unit_ids, metric_id, model_id, rows), total
+
+
+def _track_sample_links_from_metric_rows(session: Session, unit_ids: list[str], metric_id: str, model_id: str | None, rows: list) -> list[dict]:
+    sample_ids = [str(row[0]) for row in rows if row[0] is not None]
+    if not sample_ids:
+        return []
+
+    samples = session.exec(select(SampleIndex).where(SampleIndex.sample_id.in_(sample_ids))).all()
+    samples_by_id = {sample.sample_id: sample for sample in samples}
+
+    block_ids = [str(row[1]) for row in rows if row[1]]
+    blocks_by_id: dict[str, CapabilityBlock] = {}
+    if block_ids:
+        blocks = session.exec(select(CapabilityBlock).where(CapabilityBlock.capability_block_id.in_(list(set(block_ids))))).all()
+        blocks_by_id = {block.capability_block_id: block for block in blocks}
+
+    page_metrics = session.exec(
+        select(MetricResult).where(
+            MetricResult.unit_id.in_(unit_ids),
+            MetricResult.result_level == "sample",
+            MetricResult.metric_id == metric_id,
+            MetricResult.sample_id.in_(sample_ids),
+        )
+    ).all()
+    if model_id:
+        page_metrics = [metric for metric in page_metrics if metric.model_id == model_id]
+
+    run_ids = list({metric.benchmarking_run_id for metric in page_metrics})
+    runs = session.exec(select(BenchmarkingRun).where(BenchmarkingRun.benchmarking_run_id.in_(run_ids))).all() if run_ids else []
+    run_by_id = {run.benchmarking_run_id: run for run in runs}
+
+    metrics_by_group: dict[tuple[str, str | None], list[MetricResult]] = {}
+    for metric in page_metrics:
+        key = (str(metric.sample_id), metric.capability_block_id)
+        metrics_by_group.setdefault(key, []).append(metric)
+
+    representative_by_group: dict[tuple[str, str | None], MetricResult] = {}
+    for key, metrics in metrics_by_group.items():
+        representative_by_group[key] = max(
+            metrics,
+            key=lambda metric: (
+                run_by_id.get(metric.benchmarking_run_id).created_at if run_by_id.get(metric.benchmarking_run_id) else metric.created_at,
+                metric.created_at,
+            ),
+        )
+
+    representative_run_ids = list({metric.benchmarking_run_id for metric in representative_by_group.values()})
+    shard_ids = list({sample.shard_id for sample in samples})
+    artifacts = session.exec(
+        select(ForecastArtifact).where(
+            ForecastArtifact.benchmarking_run_id.in_(representative_run_ids),
+            ForecastArtifact.shard_id.in_(shard_ids),
+        )
+    ).all() if representative_run_ids and shard_ids else []
+    artifacts_by_run_shard: dict[tuple[str, str], list[ForecastArtifact]] = {}
+    for artifact in artifacts:
+        artifacts_by_run_shard.setdefault((artifact.benchmarking_run_id, artifact.shard_id), []).append(artifact)
+
+    links: list[dict] = []
+    for row in rows:
+        sample_id = str(row[0])
+        block_id = str(row[1]) if row[1] else None
+        sample = samples_by_id.get(sample_id)
+        representative = representative_by_group.get((sample_id, block_id))
+        if sample is None or representative is None:
+            continue
+        group_metrics = metrics_by_group.get((sample_id, block_id), [])
+        artifacts_for_sample = artifacts_by_run_shard.get((representative.benchmarking_run_id, sample.shard_id), [])
+        if model_id:
+            artifacts_for_sample = [artifact for artifact in artifacts_for_sample if artifact.model_id == model_id]
+        artifact_ids = [artifact.forecast_artifact_id for artifact in artifacts_for_sample]
+        link = _sample_link(session, representative.benchmarking_run_id, sample_id, artifact_ids[0] if artifact_ids else None)
+        link["forecast_artifact_ids"] = artifact_ids
+        link["run_ids"] = sorted({metric.benchmarking_run_id for metric in group_metrics})
+        link["model_count"] = int(row[3] or 0)
+        link["metric_id"] = metric_id
+        link["metric_value"] = float(row[2]) if row[2] is not None else None
+        if model_id:
+            link["metric_model_id"] = model_id
+
+        block = blocks_by_id.get(block_id) if block_id else None
+        if block_id:
+            link["capability_block_id"] = block_id
+        if block is not None:
+            link["capability_block_name"] = block.name
+            link["capability_type"] = block.capability_type
+            link["capability_label"] = _capability_label(block)
+        links.append(link)
+    return links
 
 
 def _sample_links_page_from_metrics(
