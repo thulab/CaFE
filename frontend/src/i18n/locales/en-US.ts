@@ -575,6 +575,8 @@ const enUS = {
     runs: 'Runs on this track',
     noRuns: 'No runs on this track',
     noRunsDesc: 'Start a run from this track to see execution history here.',
+    showRunHistory: 'Show run history',
+    hideRunHistory: 'Hide run history',
     archivedNoRuns: 'This track is archived. Historical reports stay available, but new runs are disabled until the track is restored.',
     errors: {
       failedToLoadTestCaseSets: 'Failed to load test case sets',
@@ -595,6 +597,9 @@ const enUS = {
     startRun: 'Start run',
     startingRun: 'Starting run...',
     runCreated: 'Run created: {id}',
+    modelEvaluated: 'Evaluated',
+    modelNotEvaluated: 'Not evaluated',
+    modelRunFailed: 'Run failed',
     track: 'Track',
     noTracks: 'No tracks yet',
     noTracksDesc: 'Upload data, generate test case sets, then create a reusable track.',

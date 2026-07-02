@@ -231,6 +231,36 @@ export interface RankingDTO {
   items: Array<{ model_id: string; rank: number; metric_value: number }>;
 }
 
+export type TrackModelEvaluationStatus = 'evaluated' | 'not_evaluated' | 'run_failed';
+
+export interface TrackModelStatusDTO {
+  model_id: string;
+  model_name?: string | null;
+  evaluation_status: TrackModelEvaluationStatus;
+  run_id?: string | null;
+  report_id?: string | null;
+  unit_id?: string | null;
+  unit_status?: string | null;
+  failed_sample_count?: number | null;
+}
+
+export interface TrackResultsDTO {
+  track_id: string;
+  metric?: string | null;
+  model_statuses: TrackModelStatusDTO[];
+  model_metrics: Array<Record<string, unknown>>;
+  capability_blocks?: CapabilityBlockReportDTO[];
+  capability_metrics?: CapabilityMetricReportDTO[];
+  sample_forecast_links: SampleForecastLinkDTO[];
+  sample_forecast_links_total?: number;
+  sample_forecast_links_limit?: number;
+  sample_forecast_links_offset?: number;
+  sample_forecast_links_capability_block_id?: string | null;
+  sample_forecast_links_metric?: string | null;
+  sample_forecast_links_model_id?: string | null;
+  sample_forecast_links_sort?: SampleForecastSort;
+}
+
 export interface TrackDTO {
   track_id: string;
   name: string;

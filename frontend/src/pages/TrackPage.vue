@@ -82,14 +82,17 @@
       <article v-if="track && !track.archived_at" class="card">
         <header class="card-head">
           <h2 class="card-title">{{ t('runPanel.startFromTrack') }}</h2>
+          <button class="btn secondary sm" type="button" :aria-expanded="runsExpanded" @click="runsExpanded = !runsExpanded">
+            <Icon name="list" :size="14" /> {{ runsExpanded ? t('track.hideRunHistory') : t('track.showRunHistory') }}
+          </button>
         </header>
         <div class="card-body">
-          <TrackRunPanel :track-id="trackId" @run-created="loadRuns" />
+          <TrackRunPanel :track-id="trackId" :model-statuses="trackResults?.model_statuses || []" @run-created="afterRunCreated" />
         </div>
       </article>
       <p v-else class="alert" role="note"><Icon class="alert-ico" name="info" :size="16" />{{ t('track.archivedNoRuns') }}</p>
 
-      <article class="card">
+      <article v-if="runsExpanded" class="card">
         <header class="card-head">
           <h2 class="card-title">{{ t('track.runs') }}</h2>
           <span class="badge">{{ formatInt(runs.length) }}</span>
@@ -205,10 +208,10 @@ import RankingTable from '../components/results/RankingTable.vue';
 import RankingChart from '../components/results/RankingChart.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getShard } from '../api/datasets';
-import { getRanking } from '../api/results';
+import { getRanking, getTrackResults } from '../api/results';
 import { listRuns } from '../api/runs';
 import { getTrack } from '../api/tracks';
-import type { BenchmarkingRunSummaryDTO, ShardDTO, TrackDTO } from '../api/types';
+import type { BenchmarkingRunSummaryDTO, ShardDTO, TrackDTO, TrackResultsDTO } from '../api/types';
 import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
@@ -225,6 +228,8 @@ const trackShards = ref<ShardDTO[]>([]);
 const trackShardsLoading = ref(true);
 const runs = ref<BenchmarkingRunSummaryDTO[]>([]);
 const runsLoading = ref(true);
+const runsExpanded = ref(false);
+const trackResults = ref<TrackResultsDTO | null>(null);
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 const { text: trackShardsError, clear: clearTrackShardsError, setError: setTrackShardsError } = useDisplayMessage();
 const { text: runsError, clear: clearRunsError, setError: setRunsError } = useDisplayMessage();
@@ -238,18 +243,22 @@ const hasTrackCovariates = computed(() => trackShards.value.some((shard) => Bool
 
 onMounted(() => {
   void loadTrack();
-  void load();
   void loadRuns();
 });
 
 async function loadTrack() {
   try {
     track.value = await getTrack(props.trackId);
+    if (track.value.primary_metric_id) metric.value = track.value.primary_metric_id;
     void loadTrackShards();
+    void load();
+    void loadTrackResults();
   } catch {
     track.value = null;
     trackShards.value = [];
+    trackResults.value = null;
     trackShardsLoading.value = false;
+    void load();
   }
 }
 
@@ -275,12 +284,28 @@ async function load() {
   loading.value = true;
   clearError();
   try {
-    items.value = (await getRanking(props.trackId, metric.value, policy.value)).items;
+    items.value = (await getRanking(props.trackId, metric.value, policy.value)).items ?? [];
   } catch (e) {
     setError(e, 'ranking.errors.failedToLoad');
   } finally {
     loading.value = false;
   }
+}
+
+async function loadTrackResults() {
+  try {
+    trackResults.value = await getTrackResults(props.trackId, {
+      sampleLinkLimit: 10,
+      sampleLinkOffset: 0,
+      sampleLinkSort: 'sample_index'
+    });
+  } catch {
+    trackResults.value = null;
+  }
+}
+
+async function afterRunCreated() {
+  await Promise.all([loadRuns(), loadTrackResults(), load()]);
 }
 
 async function loadRuns() {

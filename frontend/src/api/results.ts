@@ -1,6 +1,6 @@
 import { apiRequest } from './client';
 import { type ListParams, buildListQuery } from './shared';
-import type { ListResponse, RankingDTO, ReportDTO, ReportSummaryDTO, SampleForecastDTO, SampleForecastSort } from './types';
+import type { ListResponse, RankingDTO, ReportDTO, ReportSummaryDTO, SampleForecastDTO, SampleForecastSort, TrackResultsDTO } from './types';
 
 export interface LeaderboardTopEntry {
   rank: number;
@@ -45,6 +45,29 @@ export function getReport(
 ): Promise<ReportDTO> {
   return apiRequest<ReportDTO>(
     `/reports/${reportId}${buildListQuery({
+      sample_link_limit: params.sampleLinkLimit,
+      sample_link_offset: params.sampleLinkOffset,
+      sample_link_capability_block_id: params.sampleLinkCapabilityBlockId,
+      sample_link_metric: params.sampleLinkMetric,
+      sample_link_model_id: params.sampleLinkModelId,
+      sample_link_sort: params.sampleLinkSort
+    })}`
+  );
+}
+
+export function getTrackResults(
+  trackId: string,
+  params: {
+    sampleLinkLimit?: number;
+    sampleLinkOffset?: number;
+    sampleLinkCapabilityBlockId?: string;
+    sampleLinkMetric?: string;
+    sampleLinkModelId?: string;
+    sampleLinkSort?: SampleForecastSort;
+  } = {}
+): Promise<TrackResultsDTO> {
+  return apiRequest<TrackResultsDTO>(
+    `/tracks/${trackId}/results${buildListQuery({
       sample_link_limit: params.sampleLinkLimit,
       sample_link_offset: params.sampleLinkOffset,
       sample_link_capability_block_id: params.sampleLinkCapabilityBlockId,

@@ -129,4 +129,47 @@ describe('TrackRunPanel', () => {
     await waitFor(() => expect(timer.disabled).toBe(true));
     expect(chronos.disabled).toBe(false);
   });
+
+  it('shows track evaluation status instead of model load state', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input) => {
+      const url = String(input);
+      if (url === '/api/models') {
+        return Promise.resolve(new Response(JSON.stringify({
+          items: [
+            { model_id: 'evaluated', name: 'Evaluated model', adapter_type: 'timer_service', loaded: false },
+            { model_id: 'failed', name: 'Failed model', adapter_type: 'timer_service', loaded: true },
+            { model_id: 'new', name: 'New model', adapter_type: 'timer_service', loaded: false }
+          ]
+        }), { status: 200 }));
+      }
+      if (url === '/api/tracks/track-1') {
+        return Promise.resolve(new Response(JSON.stringify({
+          track_id: 'track-1',
+          name: 'Track',
+          primary_metric_id: 'mse',
+          status: 'active',
+          shard_ids: []
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ items: [], total: 0, limit: 1, offset: 0 }), { status: 200 }));
+    });
+
+    render(TrackRunPanel, {
+      props: {
+        trackId: 'track-1',
+        modelStatuses: [
+          { model_id: 'evaluated', model_name: 'Evaluated model', evaluation_status: 'evaluated' },
+          { model_id: 'failed', model_name: 'Failed model', evaluation_status: 'run_failed', run_id: 'run-failed', failed_sample_count: 2 },
+        ]
+      },
+      global: { plugins: [i18n] }
+    });
+
+    expect(await screen.findByText('Evaluated')).toBeTruthy();
+    expect(screen.getByText('Run failed')).toBeTruthy();
+    expect(screen.getByText('Not evaluated')).toBeTruthy();
+    expect(screen.queryByText(/not loaded/i)).toBeNull();
+    expect(screen.queryByText(/loaded/i)).toBeNull();
+    expect(screen.getByRole('link', { name: 'Open run' }).getAttribute('href')).toBe('#/runs/run-failed');
+  });
 });

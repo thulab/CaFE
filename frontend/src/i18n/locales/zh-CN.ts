@@ -575,6 +575,8 @@ const zhCN = {
     runs: '该赛道的运行',
     noRuns: '该赛道暂无运行',
     noRunsDesc: '从该赛道启动运行后，执行历史会显示在这里。',
+    showRunHistory: '显示历史运行',
+    hideRunHistory: '隐藏历史运行',
     archivedNoRuns: '该赛道已归档。历史报告仍可访问，但恢复赛道前不能启动新的运行。',
     errors: {
       failedToLoadTestCaseSets: '加载测试用例集失败',
@@ -595,6 +597,9 @@ const zhCN = {
     startRun: '启动运行',
     startingRun: '正在启动运行...',
     runCreated: '运行已创建：{id}',
+    modelEvaluated: '已评测',
+    modelNotEvaluated: '未评测',
+    modelRunFailed: '运行未成功',
     track: '赛道',
     noTracks: '暂无赛道',
     noTracksDesc: '上传数据并生成测试用例集，然后创建可复用赛道。',

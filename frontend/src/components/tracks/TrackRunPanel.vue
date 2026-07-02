@@ -12,7 +12,13 @@
           <input v-model="selectedIds" type="checkbox" :value="model.model_id" :aria-label="model.name" :disabled="!isModelCompatible(model)" />
           <span style="display:grid;gap:1px;min-width:0">
             <span class="nowrap" style="overflow:hidden;text-overflow:ellipsis">{{ model.name }}</span>
-            <span class="faint" style="font-size:0.74rem">{{ model.adapter_type }}{{ modelStateLabel(model) }}{{ modelTargetLimitLabel(model) }}</span>
+            <span class="faint model-meta" style="font-size:0.74rem">
+              <span>{{ model.adapter_type }}</span>
+              <span aria-hidden="true">·</span>
+              <span>{{ modelEvaluationLabel(model) }}</span>
+              <span v-if="modelTargetLimitLabel(model)">{{ modelTargetLimitLabel(model) }}</span>
+              <a v-if="modelRunId(model)" class="text-link" :href="`#/runs/${modelRunId(model)}`" @click.stop>{{ t('runs.openRun') }}</a>
+            </span>
           </span>
         </label>
       </div>
@@ -42,12 +48,15 @@ import { listModels, type ModelDTO } from '../../api/models';
 import { createRun } from '../../api/runs';
 import { getShard } from '../../api/datasets';
 import { getTrack } from '../../api/tracks';
+import type { TrackModelEvaluationStatus, TrackModelStatusDTO } from '../../api/types';
 import { useDisplayMessage } from '../../composables/useDisplayMessage';
 import { refreshResourceCounts } from '../../composables/useResourceCounts';
 import { modelMaxCovariateCount, modelMaxTargetCount, modelSupportsCovariateDim, modelSupportsTargetDim, modelSupportsWindow } from '../../lib/modelLimits';
 import Icon from '../ui/Icon.vue';
 
-const props = defineProps<{ trackId: string }>();
+const props = withDefaults(defineProps<{ trackId: string; modelStatuses?: TrackModelStatusDTO[] }>(), {
+  modelStatuses: () => []
+});
 const emit = defineEmits<{ (event: 'run-created', runId: string): void }>();
 
 const { t } = useI18n();
@@ -65,6 +74,7 @@ const { text: error, clear: clearError, setError } = useDisplayMessage();
 
 const compatibleModels = computed(() => models.value.filter((model) => isModelCompatible(model)));
 const allSelected = computed(() => compatibleModels.value.length > 0 && selectedIds.value.length === compatibleModels.value.length);
+const modelStatusById = computed(() => new Map(props.modelStatuses.map((status) => [status.model_id, status])));
 
 onMounted(async () => {
   await Promise.all([loadModels(), loadTargetDim()]);
@@ -104,13 +114,6 @@ async function run() {
   }
 }
 
-function modelStateLabel(model: ModelDTO) {
-  if (model.loaded === true) return t('wizard.runStep.modelStateSuffix', { state: t('wizard.runStep.loaded') });
-  if (model.loading === true) return t('wizard.runStep.modelStateSuffix', { state: t('wizard.runStep.loading') });
-  if (model.loaded === false) return t('wizard.runStep.modelStateSuffix', { state: t('wizard.runStep.notLoaded') });
-  return '';
-}
-
 function modelTargetLimitLabel(model: ModelDTO) {
   const labels: string[] = [];
   if (targetDim.value > 1) {
@@ -127,6 +130,21 @@ function modelTargetLimitLabel(model: ModelDTO) {
     labels.push(t(count === 1 ? 'wizard.runStep.covariateLimitSuffixOne' : 'wizard.runStep.covariateLimitSuffixOther', { count }));
   }
   return labels.join('');
+}
+
+function modelEvaluationStatus(model: ModelDTO): TrackModelEvaluationStatus {
+  return modelStatusById.value.get(model.model_id)?.evaluation_status ?? 'not_evaluated';
+}
+
+function modelEvaluationLabel(model: ModelDTO) {
+  const status = modelEvaluationStatus(model);
+  if (status === 'evaluated') return t('runPanel.modelEvaluated');
+  if (status === 'run_failed') return t('runPanel.modelRunFailed');
+  return t('runPanel.modelNotEvaluated');
+}
+
+function modelRunId(model: ModelDTO) {
+  return modelStatusById.value.get(model.model_id)?.run_id || '';
 }
 
 function isModelCompatible(model: ModelDTO) {
@@ -173,3 +191,13 @@ async function loadTargetDim() {
   }
 }
 </script>
+
+<style scoped>
+.model-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+}
+</style>
