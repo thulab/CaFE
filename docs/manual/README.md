@@ -229,6 +229,13 @@ http://127.0.0.1:5173
    - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Difficulty`、`Season length`、`Target dimension`、`Seed`、`Frequency`。单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
    - `Covariate response` 会生成 known-future 协变量 `weather` 和 `event`，结果页会在目标预测图下方单独显示协变量曲线。
    - 点「Generate synthetic test cases」后，后端生成 synthetic shard，并自动预选到下一步。
+   - 研究实验样本可用脚本导入到平台库，便于在前端查看样本曲线。例如：
+     ```bash
+     cd backend
+     uv run python ../scripts/import_synthetic_v2_experiment_shards.py \
+       --summary ../runtime/research/synthetic-v2-univariate-capabilities-experiment/summary.json
+     ```
+     脚本默认写入 `backend/runtime/tsbenchmark.db` 和 `backend/runtime/synthetic/imports/`，按 `capability × difficulty` 生成测试用例集；同一 summary 和参数重复执行会跳过已导入 shard，可加 `--allow-duplicates` 强制新建。
 
    如果第 2 步选择复用已有集合，本步只显示提示并继续到已有测试用例集选择。
 4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列、能力维度或 ID，并追加已有集合。列表详情会显示真实/合成类型、样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列，合成集合还会显示能力、难度和 seed。点「Create track from selected sets」后，系统基于所选集合创建评测赛道与默认榜单；合成集合会按能力维度自动拆成多个 capability block。
