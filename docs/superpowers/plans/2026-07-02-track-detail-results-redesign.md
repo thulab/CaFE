@@ -80,7 +80,7 @@
 **Files:**
 - No production files expected.
 
-- [ ] Run `cd backend && uv run pytest`.
-- [ ] Run `cd frontend && npm test`.
-- [ ] Run `git status --short`.
-- [ ] Report final commit list and verification output.
+- [x] Run `cd backend && uv run pytest`.
+- [x] Run `cd frontend && npm test`.
+- [x] Run `git status --short`.
+- [x] Report final commit list and verification output.

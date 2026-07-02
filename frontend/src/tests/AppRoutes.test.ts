@@ -237,6 +237,7 @@ describe('App routes and artifact links', () => {
     window.location.hash = '#/tracks/track-1';
     window.dispatchEvent(new HashChangeEvent('hashchange'));
     expect(await screen.findByRole('heading', { name: 'Track detail' })).toBeTruthy();
+    await fireEvent.click(await screen.findByRole('button', { name: 'Show run history' }));
     expect((await screen.findAllByText('Run · 1 model')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Loading model')).toBeTruthy();
     expect(screen.getByRole('link', { name: /Open report/ }).getAttribute('href')).toBe('#/reports/rep-1');
