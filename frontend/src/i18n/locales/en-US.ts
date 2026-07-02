@@ -932,6 +932,16 @@ const enUS = {
     sampleMetricCaption: 'Per-model metrics for this sample · best highlighted',
     status: 'Status',
   },
+  modelComparison: {
+    title: 'Model comparison',
+    metricHint: 'Primary metric: {metric}',
+    modelA: 'Model A',
+    modelB: 'Model B',
+    caption: 'Per-test-group primary metric comparison',
+    winner: 'Winner',
+    noRows: 'No comparable metric rows are available for the selected models.',
+    overall: 'Overall',
+  },
   home: {
     eyebrow: 'TSBenchmark',
     title: 'Workbench overview',

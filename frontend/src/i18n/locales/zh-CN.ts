@@ -932,6 +932,16 @@ const zhCN = {
     sampleMetricCaption: '此样本的逐模型指标 · 最佳值已高亮',
     status: '状态',
   },
+  modelComparison: {
+    title: '模型比较',
+    metricHint: '主指标：{metric}',
+    modelA: '模型 A',
+    modelB: '模型 B',
+    caption: '按测试组对比主指标',
+    winner: '胜出模型',
+    noRows: '所选模型暂无可比较的指标行。',
+    overall: '整体',
+  },
   home: {
     eyebrow: 'TSBenchmark',
     title: '工作台概览',

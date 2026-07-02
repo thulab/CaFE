@@ -355,4 +355,56 @@ describe('resource lifecycle UI', () => {
     expect(link.getAttribute('href')).toContain('#/samples/sample-1?');
     expect(link.getAttribute('href')).toContain('run_id=run-a');
   });
+
+  it('compares two models on the track primary metric by test group', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === '/api/tracks/track-1') {
+        return jsonResponse({ track_id: 'track-1', name: 'Synthetic track', primary_metric_id: 'mse', status: 'ready', shard_ids: [], shard_count: 2, sample_count: 20 });
+      }
+      if (url === '/api/models') return jsonResponse({ items: [] });
+      if (url === '/api/benchmarking-runs?limit=200&track_id=track-1') return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
+      if (url === '/api/tracks/track-1/ranking?metric=mse&policy=latest_valid_result') {
+        return jsonResponse({ items: [{ model_id: 'model-a', rank: 1, metric_value: 0.12 }, { model_id: 'model-b', rank: 2, metric_value: 0.22 }] });
+      }
+      if (url === '/api/tracks/track-1/results?sample_link_limit=10&sample_link_offset=0&sample_link_sort=sample_index') {
+        return jsonResponse({
+          track_id: 'track-1',
+          metric: 'mse',
+          model_statuses: [],
+          model_metrics: [
+            { model_id: 'model-a', model_name: 'Model A', metrics: { mse: 0.12 } },
+            { model_id: 'model-b', model_name: 'Model B', metrics: { mse: 0.22 } }
+          ],
+          capability_blocks: [
+            { capability_block_id: 'block-trend', name: 'Trend cases', block_type: 'synthetic', capability_type: 'trend_shift', capability_label: 'Trend', sample_count: 10 },
+            { capability_block_id: 'block-noise', name: 'Noise cases', block_type: 'synthetic', capability_type: 'noise_robustness', capability_label: 'Noise', sample_count: 10 }
+          ],
+          capability_metrics: [
+            { task_id: 'task-1', unit_id: 'unit-a', model_id: 'model-a', model_name: 'Model A', capability_block_id: 'block-trend', status: 'succeeded', sample_count: 10, metrics: { mse: 0.1 } },
+            { task_id: 'task-2', unit_id: 'unit-a', model_id: 'model-a', model_name: 'Model A', capability_block_id: 'block-noise', status: 'succeeded', sample_count: 10, metrics: { mse: 0.3 } },
+            { task_id: 'task-3', unit_id: 'unit-b', model_id: 'model-b', model_name: 'Model B', capability_block_id: 'block-trend', status: 'succeeded', sample_count: 10, metrics: { mse: 0.2 } },
+            { task_id: 'task-4', unit_id: 'unit-b', model_id: 'model-b', model_name: 'Model B', capability_block_id: 'block-noise', status: 'succeeded', sample_count: 10, metrics: { mse: 0.18 } }
+          ],
+          sample_forecast_links: [],
+          sample_forecast_links_total: 0,
+          sample_forecast_links_limit: 10,
+          sample_forecast_links_offset: 0,
+          sample_forecast_links_metric: 'mse',
+          sample_forecast_links_sort: 'sample_index'
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(TrackPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    const comparison = (await screen.findByText('Model comparison')).closest('article') as HTMLElement;
+    expect(comparison).toBeTruthy();
+    expect(within(comparison).getByText('Trend')).toBeTruthy();
+    expect(within(comparison).getByText('Noise')).toBeTruthy();
+    expect(within(comparison).getByText('Primary metric: MSE')).toBeTruthy();
+    expect(within(comparison).getByText('0.1').closest('td')?.classList.contains('is-winner')).toBe(true);
+    expect(within(comparison).getByText('0.18').closest('td')?.classList.contains('is-winner')).toBe(true);
+  });
 });

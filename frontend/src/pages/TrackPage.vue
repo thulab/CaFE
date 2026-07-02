@@ -176,6 +176,8 @@
 
       <CapabilityProfile v-if="trackResults" :report="trackResults" />
 
+      <ModelComparisonCard v-if="trackResults" :source="trackResults" :metric="trackResults.metric || track?.primary_metric_id || metric" />
+
       <SampleForecastLinksCard
         v-if="trackResults"
         :source="trackResults"
@@ -207,6 +209,7 @@ import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import RankingTable from '../components/results/RankingTable.vue';
 import CapabilityProfile from '../components/results/CapabilityProfile.vue';
+import ModelComparisonCard from '../components/results/ModelComparisonCard.vue';
 import SampleForecastLinksCard from '../components/results/SampleForecastLinksCard.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getShard } from '../api/datasets';
