@@ -17,11 +17,11 @@
 - Modify: `backend/app/api/routes/tracks.py`
 - Test: `backend/tests/api/test_track_results_api.py`
 
-- [ ] Write API tests for `GET /tracks/{track_id}/results` covering model status, latest successful unit selection, and sample aggregation.
-- [ ] Implement `read_track_results(...)` in `report_service.py`.
-- [ ] Add the route to `tracks.py`.
-- [ ] Run `cd backend && uv run pytest tests/api/test_track_results_api.py -q`.
-- [ ] Commit as a backend API step.
+- [x] Write API tests for `GET /tracks/{track_id}/results` covering model status, latest successful unit selection, and sample aggregation.
+- [x] Implement `read_track_results(...)` in `report_service.py`.
+- [x] Add the route to `tracks.py`.
+- [x] Run `cd backend && uv run pytest tests/api/test_track_results_api.py -q`.
+- [x] Commit as a backend API step.
 
 ### Task 2: Run History Collapse And Model Status Hints
 
@@ -33,12 +33,12 @@
 - Test: `frontend/src/tests/TrackRunPanel.test.ts`
 - Test: `frontend/src/tests/ResourceLifecycle.test.ts`
 
-- [ ] Write failing frontend tests for default-hidden run history and model status labels.
-- [ ] Add `getTrackResults` client types.
-- [ ] Pass `model_statuses` into `TrackRunPanel`.
-- [ ] Remove loaded/loading/not-loaded labels from model choices.
-- [ ] Add the history toggle button to the start-run card.
-- [ ] Run focused frontend tests and commit.
+- [x] Write failing frontend tests for default-hidden run history and model status labels.
+- [x] Add `getTrackResults` client types.
+- [x] Pass `model_statuses` into `TrackRunPanel`.
+- [x] Remove loaded/loading/not-loaded labels from model choices.
+- [x] Add the history toggle button to the start-run card.
+- [x] Run focused frontend tests and commit.
 
 ### Task 3: Ranking Card Simplification
 
@@ -46,35 +46,34 @@
 - Modify: `frontend/src/pages/TrackPage.vue`
 - Test: `frontend/src/tests/ResourceLifecycle.test.ts`
 
-- [ ] Write a failing test that the policy selector is absent and ranking chart is not duplicated.
-- [ ] Keep metric selection, fix policy to `latest_valid_result`, and render only `RankingTable`.
-- [ ] Run focused frontend tests and commit.
+- [x] Write a failing test that the policy selector is absent and ranking chart is not duplicated.
+- [x] Keep metric selection, fix policy to `latest_valid_result`, and render only `RankingTable`.
+- [x] Run focused frontend tests and commit.
 
 ### Task 4: Track Capability Profile And Sample List
 
 **Files:**
-- Create: `frontend/src/components/results/SampleForecastLinksTable.vue`
-- Modify: `frontend/src/components/results/ReportSummary.vue`
+- Create: `frontend/src/components/results/SampleForecastLinksCard.vue`
 - Modify: `frontend/src/pages/TrackPage.vue`
 - Test: `frontend/src/tests/ReportPage.test.ts`
 - Test: `frontend/src/tests/ResourceLifecycle.test.ts`
 
-- [ ] Extract the report sample list into a reusable component.
-- [ ] Reuse `CapabilityProfile` on track detail using track results payload.
-- [ ] Add track-level sample list at the bottom of the track page.
-- [ ] Run focused frontend tests and commit.
+- [x] Create a reusable sample link card for track-level sample forecast links.
+- [x] Reuse `CapabilityProfile` on track detail using track results payload.
+- [x] Add track-level sample list at the bottom of the track page.
+- [x] Run focused frontend tests and commit.
 
 ### Task 5: Model Comparison Entry
 
 **Files:**
-- Create: `frontend/src/components/tracks/TrackModelComparison.vue`
+- Create: `frontend/src/components/results/ModelComparisonCard.vue`
 - Modify: `frontend/src/pages/TrackPage.vue`
 - Test: `frontend/src/tests/ResourceLifecycle.test.ts`
 
-- [ ] Write a failing test for selecting two models and highlighting per-dimension primary metric winners.
-- [ ] Implement the comparison component using `capability_metrics`.
-- [ ] Do not compute or display a total score.
-- [ ] Run focused frontend tests and commit.
+- [x] Write a failing test for selecting two models and highlighting per-dimension primary metric winners.
+- [x] Implement the comparison component using `capability_metrics`.
+- [x] Do not compute or display a total score.
+- [x] Run focused frontend tests and commit.
 
 ### Task 6: Final Verification
 

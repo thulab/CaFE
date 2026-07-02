@@ -330,7 +330,20 @@ flowchart TB
 
 `execute_run` 默认对 `METRIC_NAMES=["mase", "mse", "mae"]` 都刷新（`run_executor.py`）。`query_ranking`（`ranking_service.py`）按 `(metric_id, policy)` 取条目并按 `rank` 返回；**路由默认 `metric` 跟随 `Track.primary_metric_id`（即 `mase`）、`policy` 跟随 `default_ranking_policy`**（`routes/ranking_lists.py`，2026-05-25 起）。临时公开开关 `RankingList.public_visible` 由 `PATCH /ranking-lists/{ranking_list_id}/visibility`（当前复用 `track.manage` 权限）维护；为 `False` 时匿名 `/ranking-lists` 会过滤该榜，匿名直连 `/tracks/{track_id}/ranking` 返回 404，登录用户仍可见。后续完整权限模型重构时应统一收敛这段逻辑。
 
-### 2.g 样本预测视图
+### 2.g 赛道级结果摘要
+
+**入口**：`GET /tracks/{track_id}/results`（`routes/tracks.py` → `read_track_results`）。
+**服务**：`services/report_service.py`。
+
+赛道详情页需要一个“模型结果中心”视图，而不是让用户先理解每次 run。`read_track_results` 因此在赛道维度做只读聚合：
+
+- `model_statuses` 对所有非 inactive 模型给出三态：最近终态 unit 为 `succeeded` 时是 `evaluated`；最近终态 unit 存在失败样本、`partial_succeeded`、`failed` 或 `cancelled` 时是 `run_failed`；没有终态 unit 时是 `not_evaluated`。`run_failed` 同时返回最近 run/unit 和失败样本数，前端可链接到运行页重跑失败样本。
+- `model_metrics`、`capability_metrics`、`sample_forecast_links` 只读取每个模型最近一次 `unit.status=="succeeded"` 的结果。这样存在失败样本的模型不会进入赛道榜单统计，也不会污染赛道级能力画像和样本聚合。
+- `sample_forecast_links` 复用报告页的分页参数：`sample_link_limit`、`sample_link_offset`、`sample_link_capability_block_id`、`sample_link_model_id`、`sample_link_sort`。返回的 `run_id` 是该样本聚合行中最近成功 metric 所属运行，用于打开现有样本预测页。
+
+前端 `TrackPage.vue` 同时消费 ranking 和 track results：内嵌排名固定 `latest_valid_result`，运行历史默认折叠；`CapabilityProfile` 直接复用赛道结果的能力块和能力指标；`SampleForecastLinksCard` 复用样本预测入口展示；`ModelComparisonCard` 用赛道主指标逐测试组比较两个模型，不计算总分。
+
+### 2.h 样本预测视图
 
 **入口**：`GET /samples/{sample_id}/forecast?run_id=...`（`routes/samples.py:19`）；另有 `GET /samples/{sample_id}/preview` 仅回原始样本。
 **服务**：`build_sample_forecast`（`services/sample_forecast_service.py:11`）。
@@ -352,7 +365,7 @@ flowchart LR
     FS --> OUT
 ```
 
-### 2.h 资源生命周期：归档、恢复、影响预览、物理删除
+### 2.i 资源生命周期：归档、恢复、影响预览、物理删除
 
 **入口**：`GET /{resource}/{id}/deletion-impact`、`POST /{resource}/{id}/archive`、`POST /{resource}/{id}/restore`、`DELETE /{resource}/{id}?cascade=true`
 **服务**：`services/resource_lifecycle.py`

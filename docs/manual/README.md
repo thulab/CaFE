@@ -283,7 +283,7 @@ GET /tracks/{track_id}/ranking?metric=mse&policy=latest_valid_result
 
 管理员可在排行榜总览或赛道排名页临时切换某个榜单是否对匿名访客公开。隐藏后，未登录用户不会在排行榜总览中看到该榜，直接访问对应赛道排名也会返回不可见；已登录用户仍可查看。该开关是临时管理入口，后续会随整体权限管理重新整理。
 
-> 前端在「赛道详情」内嵌榜单与独立「排行（Ranking）」页都提供 `metric` / `policy` 下拉，并用**条形图 + 榜单表**（冠军高亮、奖牌序号、数值格式化）展示，模型 ID 会解析为模型名。
+> 前端「赛道详情」内嵌榜单只保留 `metric` 选择，固定使用 `latest_valid_result`，并以榜单表展示，避免和赛道级能力画像重复。独立「排行（Ranking）」页仍保留 `metric` / `policy` 下拉和完整榜单视图。
 
 返回结构：
 
@@ -298,7 +298,25 @@ GET /tracks/{track_id}/ranking?metric=mse&policy=latest_valid_result
 
 排序方向为 lower is better。
 
-### 7.2 报告（report）
+### 7.2 赛道结果摘要（track results）
+
+赛道详情页优先展示模型结果，而不是逐次运行记录。页面会调用：
+
+```text
+GET /tracks/{track_id}/results
+GET /tracks/{track_id}/results?sample_link_limit=10&sample_link_offset=0&sample_link_sort=sample_index
+```
+
+返回字段包括：
+
+- `model_statuses`：赛道内所有可用模型的三态提示。`evaluated` 表示已有成功评测，`not_evaluated` 表示未评测，`run_failed` 表示最近一次相关运行未成功或存在失败样本，可进入对应运行只重跑失败样本。
+- `model_metrics`：每个模型最近一次成功评测单元的主指标和其他模型级指标；失败样本存在的单元不会进入该聚合。
+- `capability_blocks` / `capability_metrics`：赛道级能力画像数据。前端在赛道详情页展示能力雷达图和测试组分解表，合成能力维度默认用于雷达轴。
+- `sample_forecast_links`：赛道级样本预测入口，按最近成功结果聚合，支持 `sample_link_limit` / `sample_link_offset` 分页，支持按能力块、模型和样本指标排序筛选。
+
+前端「启动运行」卡片中的模型提示只显示 `已评测 / 未评测 / 运行未成功`，不再显示 `已加载 / 未加载`，因为当前运行策略会在每次评测时重新加载模型。运行历史列表默认折叠，可从启动运行卡片展开。赛道详情页还提供“模型比较”卡片，可选择两个模型，按当前主指标逐测试组比较并高亮较低值；暂不计算总分。
+
+### 7.3 报告（report）
 
 报告按 run 生成，保存为 JSON 产物，默认位置：
 
@@ -324,7 +342,7 @@ GET /reports/{report_id}?sample_link_limit=10&sample_link_offset=0
 - `cancellation_reason`：兼容字段；正常执行报告中为 `null`。取消运行不生成报告。
 - `benchmarking_run_id`、`track_id`、`report_id`。报告页右上角提供返回赛道入口，便于回到该 track 的榜单视图。
 
-### 7.3 样本预测（sample forecast）
+### 7.4 样本预测（sample forecast）
 
 样本预测视图用于检查单个 sample 上多个模型的预测曲线和指标：
 
