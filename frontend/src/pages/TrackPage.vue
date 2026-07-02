@@ -173,6 +173,18 @@
           </StateBlock>
         </div>
       </article>
+
+      <CapabilityProfile v-if="trackResults" :report="trackResults" />
+
+      <SampleForecastLinksCard
+        v-if="trackResults"
+        :source="trackResults"
+        :sample-capability-block-id="sampleLinkCapabilityBlockId"
+        :sample-model-id="sampleLinkModelId"
+        :sample-sort="sampleLinkSort"
+        @sample-page-change="loadSamplePage"
+        @sample-query-change="updateSampleQuery"
+      />
     </section>
     <ResourceActionDialog
       :open="dialog.open"
@@ -194,12 +206,14 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import RankingTable from '../components/results/RankingTable.vue';
+import CapabilityProfile from '../components/results/CapabilityProfile.vue';
+import SampleForecastLinksCard from '../components/results/SampleForecastLinksCard.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getShard } from '../api/datasets';
 import { getRanking, getTrackResults } from '../api/results';
 import { listRuns } from '../api/runs';
 import { getTrack } from '../api/tracks';
-import type { BenchmarkingRunSummaryDTO, ShardDTO, TrackDTO, TrackResultsDTO } from '../api/types';
+import type { BenchmarkingRunSummaryDTO, SampleForecastSort, ShardDTO, TrackDTO, TrackResultsDTO } from '../api/types';
 import type { LifecycleAction } from '../api/lifecycle';
 import { useDisplayMessage } from '../composables/useDisplayMessage';
 import { useFormat } from '../composables/useFormat';
@@ -207,6 +221,7 @@ import { shortId } from '../lib/format';
 import { syntheticCapabilityLabel } from '../lib/syntheticCapabilities';
 
 const props = defineProps<{ trackId: string }>();
+const SAMPLE_LINK_PAGE_SIZE = 10;
 const metric = ref('mase');
 const items = ref<Array<{ model_id: string; rank: number; metric_value: number }>>([]);
 const loading = ref(true);
@@ -217,6 +232,10 @@ const runs = ref<BenchmarkingRunSummaryDTO[]>([]);
 const runsLoading = ref(true);
 const runsExpanded = ref(false);
 const trackResults = ref<TrackResultsDTO | null>(null);
+const sampleLinkOffset = ref(0);
+const sampleLinkCapabilityBlockId = ref('');
+const sampleLinkModelId = ref('');
+const sampleLinkSort = ref<SampleForecastSort>('sample_index');
 const { text: error, clear: clearError, setError } = useDisplayMessage();
 const { text: trackShardsError, clear: clearTrackShardsError, setError: setTrackShardsError } = useDisplayMessage();
 const { text: runsError, clear: clearRunsError, setError: setRunsError } = useDisplayMessage();
@@ -281,11 +300,14 @@ async function load() {
 
 async function loadTrackResults() {
   try {
-    trackResults.value = await getTrackResults(props.trackId, {
-      sampleLinkLimit: 10,
-      sampleLinkOffset: 0,
-      sampleLinkSort: 'sample_index'
+    const result = await getTrackResults(props.trackId, {
+      sampleLinkLimit: SAMPLE_LINK_PAGE_SIZE,
+      sampleLinkOffset: sampleLinkOffset.value,
+      sampleLinkCapabilityBlockId: sampleLinkCapabilityBlockId.value,
+      sampleLinkModelId: sampleLinkModelId.value,
+      sampleLinkSort: sampleLinkSort.value
     });
+    trackResults.value = isTrackResults(result) ? result : null;
   } catch {
     trackResults.value = null;
   }
@@ -293,6 +315,26 @@ async function loadTrackResults() {
 
 async function afterRunCreated() {
   await Promise.all([loadRuns(), loadTrackResults(), load()]);
+}
+
+function loadSamplePage(page: number) {
+  sampleLinkOffset.value = Math.max(0, page - 1) * SAMPLE_LINK_PAGE_SIZE;
+  void loadTrackResults();
+}
+
+function updateSampleQuery(query: { capabilityBlockId: string; modelId: string; sort: SampleForecastSort }) {
+  sampleLinkCapabilityBlockId.value = query.capabilityBlockId;
+  sampleLinkModelId.value = query.modelId;
+  sampleLinkSort.value = query.sort;
+  sampleLinkOffset.value = 0;
+  void loadTrackResults();
+}
+
+function isTrackResults(value: TrackResultsDTO): value is TrackResultsDTO {
+  return Boolean(value)
+    && Array.isArray(value.model_statuses)
+    && Array.isArray(value.model_metrics)
+    && Array.isArray(value.sample_forecast_links);
 }
 
 async function loadRuns() {

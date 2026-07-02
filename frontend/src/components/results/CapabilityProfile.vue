@@ -187,7 +187,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { CapabilityBlockReportDTO, CapabilityMetricReportDTO, ReportDTO } from '../../api/types';
+import type { CapabilityBlockReportDTO, CapabilityMetricReportDTO } from '../../api/types';
 import { useFormat } from '../../composables/useFormat';
 import { useModels } from '../../composables/useModels';
 import { syntheticCapabilityLabel } from '../../lib/syntheticCapabilities';
@@ -224,8 +224,13 @@ type RadarPoint = {
   score: number;
   raw: number | null;
 };
+type CapabilityProfileSource = {
+  model_metrics: Array<Record<string, unknown>>;
+  capability_blocks?: CapabilityBlockReportDTO[];
+  capability_metrics?: CapabilityMetricReportDTO[];
+};
 
-const props = defineProps<{ report: ReportDTO }>();
+const props = defineProps<{ report: CapabilityProfileSource }>();
 const { t } = useI18n();
 const { formatNumber, formatInt } = useFormat();
 const { modelName } = useModels();
