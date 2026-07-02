@@ -312,7 +312,7 @@ GET /tracks/{track_id}/results?sample_link_limit=10&sample_link_offset=0&sample_
 - `model_statuses`：赛道内所有可用模型的三态提示。`evaluated` 表示已有成功评测，`not_evaluated` 表示未评测，`run_failed` 表示最近一次相关运行未成功或存在失败样本，可进入对应运行只重跑失败样本。
 - `model_metrics`：每个模型最近一次成功评测单元的主指标和其他模型级指标；失败样本存在的单元不会进入该聚合。
 - `capability_blocks` / `capability_metrics`：赛道级能力画像数据。前端在赛道详情页展示能力雷达图和测试组分解表，合成能力维度默认用于雷达轴。
-- `sample_forecast_links`：赛道级样本预测入口，按最近成功结果聚合，支持 `sample_link_limit` / `sample_link_offset` 分页，支持按能力块、模型和样本指标排序筛选。
+- `sample_forecast_links`：赛道级样本预测入口，按每个模型最近成功结果聚合，支持 `sample_link_limit` / `sample_link_offset` 分页，支持按能力块、模型和样本指标排序筛选。赛道页打开样本预测时使用 `track_id` 上下文，因此样本页会跨多次运行展示所有已成功评测模型的曲线。
 
 前端「启动运行」卡片中的模型提示只显示 `已评测 / 未评测 / 运行未成功`，不再显示 `已加载 / 未加载`，因为当前运行策略会在每次评测时重新加载模型。运行历史列表默认折叠，可从启动运行卡片展开。赛道详情页还提供“模型比较”卡片，可选择两个模型，按当前主指标逐测试组比较并高亮较低值；暂不计算总分。
 
@@ -348,9 +348,15 @@ GET /reports/{report_id}?sample_link_limit=10&sample_link_offset=0
 
 ```text
 GET /samples/{sample_id}/forecast?run_id={benchmarking_run_id}
+GET /samples/{sample_id}/forecast?track_id={track_id}
 ```
 
-`run_id` 为必填查询参数。返回内容包括：
+调用方必须提供 `run_id` 或 `track_id` 之一：
+
+- `run_id`：报告页使用，返回该次运行内此 sample 的各模型预测。
+- `track_id`：赛道页使用，返回该赛道每个模型最近一次成功评测单元在此 sample 上的预测，适合跨多次运行聚合查看。样本页的返回按钮会回到赛道详情。
+
+返回内容包括：
 
 - `sample_id`。
 - `sample_index`、行号窗口和预测时间戳范围（如可从样本索引恢复）。

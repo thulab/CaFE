@@ -43,7 +43,7 @@ MetricResult：单表多层级（sample / shard / task / unit）
 
 前端在 `frontend/src/`（Vue 3 `<script setup>` + Vite 7），经 `/api` 代理访问后端，**刻意不引入 vue-router / pinia**，保持轻依赖：
 
-- **应用外壳** `App.vue`：左侧栏导航（概览 / 新建评测 / 数据集 / 运行）+ 顶栏（面包屑 + 亮暗主题切换）+ 自写 hash 路由（`#/`、`#/new`、`#/datasets[/:id]`、`#/load-jobs/:id`、`#/shards/:id`、`#/runs[/:id]`、`#/tracks/:id[/ranking]`、`#/reports/:id`、`#/samples/:id?run_id=`），未匹配回落到概览。工作流（向导）是子页面 `#/new`，首页 `#/` 是概览。
+- **应用外壳** `App.vue`：左侧栏导航（概览 / 新建评测 / 数据集 / 运行）+ 顶栏（面包屑 + 亮暗主题切换）+ 自写 hash 路由（`#/`、`#/new`、`#/datasets[/:id]`、`#/load-jobs/:id`、`#/shards/:id`、`#/runs[/:id]`、`#/tracks/:id[/ranking]`、`#/reports/:id`、`#/samples/:id?run_id=`、`#/samples/:id?track_id=`），未匹配回落到概览。工作流（向导）是子页面 `#/new`，首页 `#/` 是概览。
 - **页面** `pages/`：`HomePage`（概览）、`EvaluationWizardPage`（分步门禁向导）、`DatasetsPage` / `RunsPage`（列表）、各详情页（DatasetManifest / LoadJob / Shard / RunDetail / Track / Ranking / Report / SampleForecast）。
 - **组件**：`components/wizard/`（6 个向导步骤）、`components/results/`（`ForecastChart` 交互式预测折线图、`CovariateChart` 协变量折线图、`RankingChart` 条形、`RankingTable` / `ReportSummary` / `SampleMetricTable`）、`components/ui/`（`Icon` 内联 SVG、`StatusBadge`、`StateBlock` 统一 loading/empty/error+重试、`SelectablePagedList` / `ColumnSelectionList` 可搜索分页选择列表）。
 - **设计系统** `styles.css`：CSS tokens，亮 + 暗双主题经 `[data-theme]` 切换（`composables/useTheme.ts`，默认跟随系统）。

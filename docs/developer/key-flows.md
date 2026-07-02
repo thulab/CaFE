@@ -339,28 +339,34 @@ flowchart TB
 
 - `model_statuses` 对所有非 inactive 模型给出三态：最近终态 unit 为 `succeeded` 时是 `evaluated`；最近终态 unit 存在失败样本、`partial_succeeded`、`failed` 或 `cancelled` 时是 `run_failed`；没有终态 unit 时是 `not_evaluated`。`run_failed` 同时返回最近 run/unit 和失败样本数，前端可链接到运行页重跑失败样本。
 - `model_metrics`、`capability_metrics`、`sample_forecast_links` 只读取每个模型最近一次 `unit.status=="succeeded"` 的结果。这样存在失败样本的模型不会进入赛道榜单统计，也不会污染赛道级能力画像和样本聚合。
-- `sample_forecast_links` 复用报告页的分页参数：`sample_link_limit`、`sample_link_offset`、`sample_link_capability_block_id`、`sample_link_model_id`、`sample_link_sort`。返回的 `run_id` 是该样本聚合行中最近成功 metric 所属运行，用于打开现有样本预测页。
+- `sample_forecast_links` 复用报告页的分页参数：`sample_link_limit`、`sample_link_offset`、`sample_link_capability_block_id`、`sample_link_model_id`、`sample_link_sort`。返回行可包含代表性 `run_id/run_ids` 供排查来源，但赛道页打开样本预测时传 `track_id`，由样本预测接口再次按每个模型最近成功单元聚合同一样本的 forecast。
 
-前端 `TrackPage.vue` 同时消费 ranking 和 track results：内嵌排名固定 `latest_valid_result`，运行历史默认折叠；`CapabilityProfile` 直接复用赛道结果的能力块和能力指标；`SampleForecastLinksCard` 复用样本预测入口展示；`ModelComparisonCard` 用赛道主指标逐测试组比较两个模型，不计算总分。
+前端 `TrackPage.vue` 同时消费 ranking 和 track results：内嵌排名固定 `latest_valid_result`，运行历史默认折叠；`CapabilityProfile` 直接复用赛道结果的能力块和能力指标；`SampleForecastLinksCard` 在赛道来源下生成 `#/samples/{sample_id}?track_id=...`，避免把某个代表 run 误当成样本预测实体；`ModelComparisonCard` 用赛道主指标逐测试组比较两个模型，不计算总分。
 
 ### 2.h 样本预测视图
 
-**入口**：`GET /samples/{sample_id}/forecast?run_id=...`（`routes/samples.py:19`）；另有 `GET /samples/{sample_id}/preview` 仅回原始样本。
-**服务**：`build_sample_forecast`（`services/sample_forecast_service.py:11`）。
+**入口**：`GET /samples/{sample_id}/forecast?run_id=...` 或 `GET /samples/{sample_id}/forecast?track_id=...`（`routes/samples.py:19`）；另有 `GET /samples/{sample_id}/preview` 仅回原始样本。
+**服务**：`build_sample_forecast` / `build_track_sample_forecast`（`services/sample_forecast_service.py`）。
 
-把「样本原始数据」与「该 run 在该 sample 上各模型的预测」拼装返回：
+把「样本原始数据」与「指定上下文在该 sample 上各模型的预测」拼装返回：
 
 1. 用 `SampleStore.read_by_ref` 读出样本的 history/future（时间戳、目标值、列名）。
-2. 取该 sample 所属 shard 在该 run 下的所有 `ForecastArtifact`，逐个用 `ForecastStore.read_forecasts` 读出 JSONL，过滤出 `sample_id` 匹配的那一行。
-3. 每个命中的模型组一条 `models[]` 记录：`model_name`、`forecast`、`metrics`、`status / error_code / error_message`，并补 `unit_status / task_status`。
-4. 顶层返回 `sample_index`、行号窗口、history/forecast 时间戳范围、`history_timestamps / future_timestamps / target_history / target_future / target_column_names`，以及可选的 `covariate_column_names / history_cov / future_cov` + `models[]` + `links`。前端把真值与各模型预测画在同一张图上；如果有协变量，再在下方单独画协变量图，并从样本页跳回报告。
+2. `run_id` 上下文取该 sample 所属 shard 在该 run 下的所有 `ForecastArtifact`；`track_id` 上下文先选出赛道内每个模型最近一次成功 `Unit`，再取这些 unit 在该 shard 上的 `ForecastArtifact`。
+3. 逐个用 `ForecastStore.read_forecasts` 读出 JSONL，过滤出 `sample_id` 匹配的那一行。
+4. 每个命中的模型组一条 `models[]` 记录：`model_name`、`forecast`、`metrics`、`status / error_code / error_message`，并补 `unit_status / task_status`。
+5. 顶层返回 `sample_index`、行号窗口、history/forecast 时间戳范围、`history_timestamps / future_timestamps / target_history / target_future / target_column_names`，以及可选的 `covariate_column_names / history_cov / future_cov` + `models[]` + `links`。前端把真值与各模型预测画在同一张图上；如果有协变量，再在下方单独画协变量图；返回按钮按上下文回到报告或赛道。
 
 ```mermaid
 flowchart LR
     REQ["GET /samples/{id}/forecast?run_id"] --> BSF["build_sample_forecast"]
+    TREQ["GET /samples/{id}/forecast?track_id"] --> BTSF["build_track_sample_forecast"]
     BSF --> SAMP["SampleStore.read_by_ref<br/>(history/future)"]
     BSF --> ART["查 ForecastArtifact (run_id, shard_id)"]
+    BTSF --> SAMP
+    BTSF --> LATEST["按模型选择最近成功 Unit"]
+    LATEST --> ART2["查 ForecastArtifact (unit_ids, shard_id)"]
     ART --> FS["ForecastStore.read_forecasts<br/>按 sample_id 过滤"]
+    ART2 --> FS
     SAMP --> OUT["拼装: 真值 + models[].forecast/metrics + links"]
     FS --> OUT
 ```
