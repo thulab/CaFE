@@ -159,13 +159,6 @@
                 <option value="mae">MAE</option>
               </select>
             </div>
-            <div class="field">
-              <label class="label">{{ t('ranking.policy') }}</label>
-              <select v-model="policy" :aria-label="t('ranking.policy')" @change="load">
-                <option value="latest_valid_result">latest_valid_result</option>
-                <option value="best_result">best_result</option>
-              </select>
-            </div>
           </div>
 
           <StateBlock
@@ -176,11 +169,7 @@
             :empty-desc="t('ranking.noRankingDesc')"
             @retry="load"
           >
-            <div class="stack">
-              <RankingChart :items="items" />
-              <hr class="divider" />
-              <RankingTable :items="items" :metric-label="metric.toUpperCase()" />
-            </div>
+            <RankingTable :items="items" :metric-label="metric.toUpperCase()" />
           </StateBlock>
         </div>
       </article>
@@ -205,7 +194,6 @@ import StatusBadge from '../components/ui/StatusBadge.vue';
 import ResourceActionDialog from '../components/ui/ResourceActionDialog.vue';
 import ResumeWizardButton from '../components/wizard/ResumeWizardButton.vue';
 import RankingTable from '../components/results/RankingTable.vue';
-import RankingChart from '../components/results/RankingChart.vue';
 import TrackRunPanel from '../components/tracks/TrackRunPanel.vue';
 import { getShard } from '../api/datasets';
 import { getRanking, getTrackResults } from '../api/results';
@@ -220,7 +208,6 @@ import { syntheticCapabilityLabel } from '../lib/syntheticCapabilities';
 
 const props = defineProps<{ trackId: string }>();
 const metric = ref('mase');
-const policy = ref('latest_valid_result');
 const items = ref<Array<{ model_id: string; rank: number; metric_value: number }>>([]);
 const loading = ref(true);
 const track = ref<TrackDTO | null>(null);
@@ -284,7 +271,7 @@ async function load() {
   loading.value = true;
   clearError();
   try {
-    items.value = (await getRanking(props.trackId, metric.value, policy.value)).items ?? [];
+    items.value = (await getRanking(props.trackId, metric.value, 'latest_valid_result')).items ?? [];
   } catch (e) {
     setError(e, 'ranking.errors.failedToLoad');
   } finally {

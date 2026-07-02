@@ -259,4 +259,42 @@ describe('resource lifecycle UI', () => {
     expect(await screen.findByText('Run · 1 model')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Hide run history' })).toBeTruthy();
   });
+
+  it('shows one latest-result ranking table without policy controls on track detail', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === '/api/tracks/track-1') {
+        return jsonResponse({ track_id: 'track-1', name: 'Energy track', primary_metric_id: 'mse', status: 'ready', shard_ids: [], shard_count: 0, sample_count: 0 });
+      }
+      if (url === '/api/models') return jsonResponse({ items: [] });
+      if (url === '/api/benchmarking-runs?limit=200&track_id=track-1') return jsonResponse({ items: [], total: 0, limit: 200, offset: 0 });
+      if (url === '/api/tracks/track-1/ranking?metric=mse&policy=latest_valid_result') {
+        return jsonResponse({ items: [{ model_id: 'model-a', rank: 1, metric_value: 0.12 }, { model_id: 'model-b', rank: 2, metric_value: 0.22 }] });
+      }
+      if (url === '/api/tracks/track-1/results?sample_link_limit=10&sample_link_offset=0&sample_link_sort=sample_index') {
+        return jsonResponse({
+          track_id: 'track-1',
+          metric: 'mse',
+          model_statuses: [],
+          model_metrics: [],
+          capability_blocks: [],
+          capability_metrics: [],
+          sample_forecast_links: [],
+          sample_forecast_links_total: 0,
+          sample_forecast_links_limit: 10,
+          sample_forecast_links_offset: 0,
+          sample_forecast_links_sort: 'sample_index'
+        });
+      }
+      return jsonResponse({});
+    });
+
+    render(TrackPage, { props: { trackId: 'track-1' }, global: { plugins: [i18n] } });
+
+    expect(await screen.findByText('Energy track')).toBeTruthy();
+    expect(await screen.findByText('model-a')).toBeTruthy();
+    expect(screen.queryByLabelText('Policy')).toBeNull();
+    expect(screen.getAllByText('model-a')).toHaveLength(1);
+    expect(screen.getAllByText('model-b')).toHaveLength(1);
+  });
 });
