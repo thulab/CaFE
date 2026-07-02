@@ -7,15 +7,16 @@
         <p class="page-sub">{{ t('sampleForecast.subtitle') }}</p>
       </div>
       <div class="head-actions">
-        <a v-if="reportLink" class="btn secondary sm" :href="reportLink">
-          <Icon name="chevronLeft" :size="15" /> {{ t('sampleForecast.backToReport') }}
+        <a v-if="backLink" class="btn secondary sm" :href="backLink">
+          <Icon name="chevronLeft" :size="15" /> {{ backLabel }}
         </a>
-        <ResumeWizardButton resource-type="sample_forecast" :resource-id="runId" />
+        <ResumeWizardButton v-if="runId" resource-type="sample_forecast" :resource-id="runId" />
         <SampleNeighborNav
           v-if="sample"
           :shard-id="sample.shard_id"
           :sample-index="sample.sample_index"
           :report-id="reportContext.reportId"
+          :track-id="reportContext.trackId"
           :sample-cursor-offset="reportContext.cursorOffset"
           :sample-capability-block-id="reportContext.capabilityBlockId"
           :sample-model-id="reportContext.modelId"
@@ -69,7 +70,8 @@ import { shortId } from '../lib/format';
 
 const props = defineProps<{
   sampleId: string;
-  runId: string;
+  runId?: string;
+  trackId?: string;
   reportId?: string;
   sampleLinkOffset?: number;
   sampleCursorOffset?: number;
@@ -78,11 +80,12 @@ const props = defineProps<{
   sampleMetric?: string;
   sampleSort?: SampleForecastSort;
 }>();
-const { data: sample, loading, error, run } = useAsyncData<SampleForecastDTO>(() => getSampleForecast(props.sampleId, props.runId));
+const { data: sample, loading, error, run } = useAsyncData<SampleForecastDTO>(() => getSampleForecast(props.sampleId, { runId: props.runId, trackId: props.trackId }));
 const failedModels = computed(() => sample.value?.models.filter((m) => m.status !== 'succeeded') || []);
 const hasCovariates = computed(() => Boolean(sample.value?.covariate_column_names?.length));
 const reportContext = computed(() => ({
   reportId: props.reportId || sample.value?.links?.report || '',
+  trackId: props.trackId || sample.value?.links?.track || '',
   listOffset: Math.max(0, Number(props.sampleLinkOffset || 0)),
   cursorOffset: typeof props.sampleCursorOffset === 'number' && Number.isFinite(props.sampleCursorOffset) ? Math.max(0, props.sampleCursorOffset) : null,
   capabilityBlockId: props.sampleCapabilityBlockId || '',
@@ -100,6 +103,12 @@ const reportLink = computed(() => {
   if (reportContext.value.sort !== 'sample_index') params.set('sample_link_sort', reportContext.value.sort);
   return `#/reports/${reportId}${params.toString() ? `?${params.toString()}` : ''}`;
 });
+const trackLink = computed(() => {
+  const trackId = reportContext.value.trackId;
+  return trackId ? `#/tracks/${trackId}` : '';
+});
+const backLink = computed(() => trackLink.value || reportLink.value);
+const backLabel = computed(() => trackLink.value ? t('sampleForecast.backToTrack') : t('sampleForecast.backToReport'));
 const sampleBadge = computed(() => {
   if (typeof sample.value?.sample_index === 'number') return `#${sample.value.sample_index + 1}`;
   return shortId(props.sampleId);
@@ -107,9 +116,14 @@ const sampleBadge = computed(() => {
 const { t } = useI18n();
 
 function sampleForecastHref(sampleId: string, cursorOffset?: number | null) {
-  const params = new URLSearchParams({ run_id: props.runId });
+  const params = new URLSearchParams();
+  if (reportContext.value.trackId) {
+    params.set('track_id', reportContext.value.trackId);
+  } else if (props.runId) {
+    params.set('run_id', props.runId);
+  }
   const reportId = reportContext.value.reportId;
-  if (reportId) params.set('report_id', reportId);
+  if (reportId && !reportContext.value.trackId) params.set('report_id', reportId);
   const safeCursor = typeof cursorOffset === 'number' && Number.isFinite(cursorOffset) ? Math.max(0, cursorOffset) : reportContext.value.cursorOffset;
   if (safeCursor !== null) {
     params.set('sample_cursor_offset', String(safeCursor));

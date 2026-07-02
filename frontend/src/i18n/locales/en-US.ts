@@ -610,6 +610,7 @@ const enUS = {
     subtitle: 'Target history, ground truth, model forecasts, and per-sample metrics.',
     perSampleMetrics: 'Per-sample metrics',
     backToReport: 'Back to report',
+    backToTrack: 'Back to track',
   },
   sampleWindow: {
     eyebrow: 'Test case sample',

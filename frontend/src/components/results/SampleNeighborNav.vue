@@ -19,7 +19,7 @@
 import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getShardSamples } from '../../api/datasets';
-import { getReport } from '../../api/results';
+import { getReport, getTrackResults } from '../../api/results';
 import type { SampleForecastSort, SampleIndexDTO } from '../../api/types';
 import type { Ref } from 'vue';
 import Icon from '../ui/Icon.vue';
@@ -30,6 +30,7 @@ const props = defineProps<{
   shardId?: string | null;
   sampleIndex?: number | null;
   reportId?: string | null;
+  trackId?: string | null;
   sampleCursorOffset?: number | null;
   sampleCapabilityBlockId?: string | null;
   sampleModelId?: string | null;
@@ -47,6 +48,7 @@ watch(
     props.shardId,
     props.sampleIndex,
     props.reportId,
+    props.trackId,
     props.sampleCursorOffset,
     props.sampleCapabilityBlockId,
     props.sampleModelId,
@@ -62,6 +64,10 @@ async function loadNeighbors() {
   nextSample.value = null;
   if (props.reportId && typeof props.sampleCursorOffset === 'number' && Number.isFinite(props.sampleCursorOffset)) {
     await loadReportNeighbors(Math.max(0, props.sampleCursorOffset));
+    return;
+  }
+  if (props.trackId && typeof props.sampleCursorOffset === 'number' && Number.isFinite(props.sampleCursorOffset)) {
+    await loadTrackNeighbors(Math.max(0, props.sampleCursorOffset));
     return;
   }
   if (!props.shardId || typeof props.sampleIndex !== 'number') return;
@@ -82,9 +88,35 @@ async function loadReportNeighbors(cursorOffset: number) {
   await Promise.all(requests);
 }
 
+async function loadTrackNeighbors(cursorOffset: number) {
+  const requests: Array<Promise<void>> = [];
+  if (cursorOffset > 0) {
+    requests.push(loadTrackNeighbor(cursorOffset - 1, previousSample));
+  }
+  requests.push(loadTrackNeighbor(cursorOffset + 1, nextSample));
+  await Promise.all(requests);
+}
+
 async function loadReportNeighbor(offset: number, target: Ref<NeighborSample | null>) {
   try {
     const result = await getReport(String(props.reportId), {
+      sampleLinkLimit: 1,
+      sampleLinkOffset: offset,
+      sampleLinkCapabilityBlockId: props.sampleCapabilityBlockId || undefined,
+      sampleLinkMetric: props.sampleMetric || undefined,
+      sampleLinkModelId: props.sampleModelId || undefined,
+      sampleLinkSort: props.sampleSort || 'sample_index',
+    });
+    const link = result.sample_forecast_links[0];
+    target.value = link ? { ...link, cursor_offset: offset } : null;
+  } catch {
+    target.value = null;
+  }
+}
+
+async function loadTrackNeighbor(offset: number, target: Ref<NeighborSample | null>) {
+  try {
+    const result = await getTrackResults(String(props.trackId), {
       sampleLinkLimit: 1,
       sampleLinkOffset: offset,
       sampleLinkCapabilityBlockId: props.sampleCapabilityBlockId || undefined,

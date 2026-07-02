@@ -363,13 +363,24 @@ function resolveRoute(): RouteView {
     const qIdx = routeHash.value.indexOf('?');
     const params = new URLSearchParams(qIdx >= 0 ? routeHash.value.slice(qIdx + 1) : '');
     const reportId = params.get('report_id') || '';
+    const trackId = params.get('track_id') || '';
     const reportQuery = reportSampleQuery(params);
     const reportHref = reportId ? `#/reports/${reportId}${reportQuery ? `?${reportQuery}` : ''}` : '';
+    const sampleNavKey = trackId ? 'tracks' : 'runs';
+    const sampleCrumbs = trackId
+      ? [HOME_CRUMB.value, { label: t('nav.tracks'), href: '#/tracks' }, { label: shortId(trackId), href: `#/tracks/${trackId}` }, { label: shortId(id) }]
+      : [
+          HOME_CRUMB.value,
+          { label: t('nav.runs'), href: '#/runs' },
+          reportId ? { label: t('nav.report'), href: reportHref } : { label: t('home.steps.review.title') },
+          { label: shortId(id) },
+        ];
     return {
       component: SampleForecastPage,
       props: {
         sampleId: id,
         runId: params.get('run_id') || '',
+        trackId,
         reportId,
         sampleLinkOffset: numericQuery(params.get('sample_link_offset')),
         sampleCursorOffset: numericQuery(params.get('sample_cursor_offset')),
@@ -378,14 +389,9 @@ function resolveRoute(): RouteView {
         sampleMetric: params.get('sample_link_metric') || '',
         sampleSort: parseSampleForecastSort(params.get('sample_link_sort')),
       },
-      navKey: 'runs',
+      navKey: sampleNavKey,
       tier: 'authed',
-      crumbs: [
-        HOME_CRUMB.value,
-        { label: t('nav.runs'), href: '#/runs' },
-        reportId ? { label: t('nav.report'), href: reportHref } : { label: t('home.steps.review.title') },
-        { label: shortId(id) },
-      ]
+      crumbs: sampleCrumbs
     };
   }
   return { component: HomePage, props: {}, navKey: 'home', tier: 'authed', crumbs: [HOME_CRUMB.value] };

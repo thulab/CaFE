@@ -610,6 +610,7 @@ const zhCN = {
     subtitle: '查看目标历史、真实值、模型预测和逐样本指标。',
     perSampleMetrics: '逐样本指标',
     backToReport: '返回报告',
+    backToTrack: '返回赛道',
   },
   sampleWindow: {
     eyebrow: '测试用例样本',

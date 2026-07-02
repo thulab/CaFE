@@ -428,5 +428,6 @@ export interface SampleForecastDTO extends SampleWindowMeta {
     run?: string | null;
     report?: string | null;
     ranking?: string | null;
+    track?: string | null;
   };
 }

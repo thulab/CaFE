@@ -78,8 +78,18 @@ export function getTrackResults(
   );
 }
 
-export function getSampleForecast(sampleId: string, runId: string): Promise<SampleForecastDTO> {
-  return apiRequest<SampleForecastDTO>(`/samples/${sampleId}/forecast?run_id=${encodeURIComponent(runId)}`);
+export function getSampleForecast(sampleId: string, runId: string): Promise<SampleForecastDTO>;
+export function getSampleForecast(sampleId: string, context: { runId?: string; trackId?: string }): Promise<SampleForecastDTO>;
+export function getSampleForecast(sampleId: string, context: string | { runId?: string; trackId?: string }): Promise<SampleForecastDTO> {
+  const params = new URLSearchParams();
+  if (typeof context === 'string') {
+    params.set('run_id', context);
+  } else if (context.trackId) {
+    params.set('track_id', context.trackId);
+  } else if (context.runId) {
+    params.set('run_id', context.runId);
+  }
+  return apiRequest<SampleForecastDTO>(`/samples/${sampleId}/forecast?${params.toString()}`);
 }
 
 export function listRankingLists(): Promise<LeaderboardListDTO> {

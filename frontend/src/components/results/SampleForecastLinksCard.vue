@@ -93,6 +93,7 @@ import { syntheticCapabilityLabel } from '../../lib/syntheticCapabilities';
 import Icon from '../ui/Icon.vue';
 
 export interface SampleForecastLinkSource {
+  track_id?: string | null;
   report_id?: string | null;
   model_metrics: Array<Record<string, unknown>>;
   capability_blocks?: CapabilityBlockReportDTO[];
@@ -307,8 +308,13 @@ function modelCountText(count: number | null | undefined) {
 }
 
 function sampleHref(link: SampleForecastLinkDTO, index: number) {
-  const params = new URLSearchParams({ run_id: link.run_id });
-  if (props.source.report_id) params.set('report_id', props.source.report_id);
+  const params = new URLSearchParams();
+  if (props.source.track_id) {
+    params.set('track_id', props.source.track_id);
+  } else {
+    params.set('run_id', link.run_id);
+    if (props.source.report_id) params.set('report_id', props.source.report_id);
+  }
   const cursorOffset = (serverPagedSamples.value ? serverSampleOffset.value : (samplePage.value - 1) * SAMPLE_PAGE_SIZE) + index;
   params.set('sample_link_offset', String(serverPagedSamples.value ? serverSampleOffset.value : (samplePage.value - 1) * SAMPLE_PAGE_SIZE));
   params.set('sample_cursor_offset', String(cursorOffset));

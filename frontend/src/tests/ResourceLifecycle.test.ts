@@ -353,7 +353,8 @@ describe('resource lifecycle UI', () => {
     expect(screen.getByText('Window #1')).toBeTruthy();
     const link = screen.getByRole('link', { name: 'Open' });
     expect(link.getAttribute('href')).toContain('#/samples/sample-1?');
-    expect(link.getAttribute('href')).toContain('run_id=run-a');
+    expect(link.getAttribute('href')).toContain('track_id=track-1');
+    expect(link.getAttribute('href')).not.toContain('run_id=');
   });
 
   it('compares two models on the track primary metric by test group', async () => {
