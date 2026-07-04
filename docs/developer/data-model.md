@@ -57,7 +57,7 @@ def utc_now() -> datetime:
 | `ForecastArtifact` | `backend/app/models/benchmark.py:94` | 预测产物位置与 schema |
 | `FailedSampleRerunJob` | `backend/app/models/benchmark.py:118` | 失败样本后台重跑任务与进度 |
 | `RunEvent` | `backend/app/models/benchmark.py:135` | run/unit/task 过程事件与日志 |
-| `MetricDefinition` | `backend/app/models/metric.py:10` | 指标注册表（MVP: mse / mae） |
+| `MetricDefinition` | `backend/app/models/metric.py:10` | 指标注册表（MVP: mse / mae / mase） |
 | `MetricResult` | `backend/app/models/metric.py:24` | 统一多层级指标结果 |
 | `Report` | `backend/app/models/report.py:11` | 基础评测报告 |
 | `RankingList` | `backend/app/models/ranking.py:10` | 每条 Track 一个的榜单定义 |
@@ -637,7 +637,7 @@ run/unit/task 过程事件与日志。源文件 `backend/app/models/benchmark.py
 | `created_at` | `datetime` | `utc_now` | |
 | `updated_at` | `datetime` | `utc_now` | |
 
-> 注意 `MetricResult.metric_id` / `_metric()` 直接使用字符串 `"mse"` / `"mae"`（指标 name），并非引用 `MetricDefinition.metric_id`（UUID）。即指标在执行链路里以 name 作为业务键使用。
+> 注意 `MetricResult.metric_id` / `_metric()` 直接使用字符串 `"mse"` / `"mae"` / `"mase"`（指标 name），并非引用 `MetricDefinition.metric_id`（UUID）。即指标在执行链路里以 name 作为业务键使用。
 
 ### 5.2 MetricResult
 
@@ -960,7 +960,7 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 2. **多数实体的 `status` 枚举代码只实现了「快乐路径」子集**：`DatasetManifest`（仅 `ready_to_load/loaded`）、`Shard`（仅 `created/ready`）、`CapabilityBlock`/`Track`（仅 `ready`）、`Model`（仅 `available`）。spec 中列出的 `draft/disabled/registered/failed` 等当前无代码写入。
 3. **Unit / Task 的 `skipped` 状态未实现**：run_executor 不会写入 `skipped`；`cancelled` 仅在 run 取消确认时用于尚未终态的 unit/task。
 4. **`SampleIndex` 字段名是 `sample_metadata`，不是 spec §4.4 写的 `metadata`**（规避 SQLAlchemy 保留名）。
-5. **指标在执行链路里用 name（`"mse"`/`"mae"`）作业务键**，`MetricResult.metric_id`/`RankingEntry.metric_id` 存的是指标 name 而非 `MetricDefinition.metric_id`（UUID）。
+5. **指标在执行链路里用 name（`"mse"`/`"mae"`/`"mase"`）作业务键**，`MetricResult.metric_id`/`RankingEntry.metric_id` 存的是指标 name 而非 `MetricDefinition.metric_id`（UUID）。
 6. **聚合标签命名**：task 级写 `mean_over_tasks`、unit 级写 `mean_over_units`（即「本层级复数」），而非直觉上的「下层复数」；spec §4.13 仅举例 `mean_over_samples/mean_over_shards`，未覆盖这两个值。
 7. **`BenchmarkingRun.model_ids`、`Shard` 大量物理切分字段（context_length/horizon/stride 等）** 在 spec 字段表中未逐一列出，代码中确有这些列。
 8. **`SampleForecastDTO` / `RunProgressDTO` 没有独立 schema 类**：service 直接返回 dict（`build_sample_forecast` / `build_run_progress`）。

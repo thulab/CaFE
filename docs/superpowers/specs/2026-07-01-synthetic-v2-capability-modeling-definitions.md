@@ -169,7 +169,7 @@ Y_t = F_t * B^T + E_t
 y_{t,j} = base_{t,j} + w_j(lambda) * y_{t-lag_j, leader(j)}
 ```
 
-难度控制：提高 max lag 和 coupling strength。
+难度控制：主要提高 coupling strength；`max_lag` 由 `season_length` 上限约束，默认 `season_length=24` 时会被 `season_length // 3 = 8` 卡住，因此不随 difficulty 增长。更长周期配置下，`8 + floor(10 * lambda)` 才可能让可选滞后范围随 difficulty 扩大。
 
 测什么：模型是否能识别跨通道滞后依赖，利用先行 channel 提前预测滞后 channel。
 
