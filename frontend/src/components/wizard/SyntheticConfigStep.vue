@@ -72,11 +72,6 @@
         <p class="hint">{{ t('wizard.syntheticStep.intensityHint') }}</p>
       </div>
       <div class="field">
-        <label class="label" for="synthetic-season">{{ t('wizard.syntheticStep.seasonLength') }}</label>
-        <input id="synthetic-season" v-model.number="seasonLength" type="number" min="4" max="512" />
-        <p class="hint">{{ t('wizard.syntheticStep.seasonLengthHint') }}</p>
-      </div>
-      <div class="field">
         <label class="label" for="synthetic-target-dim">{{ t('wizard.syntheticStep.targetDim') }}</label>
         <input id="synthetic-target-dim" v-model.number="targetDim" type="number" min="1" max="16" :disabled="targetDimDisabled" />
         <p class="hint">{{ targetDimDisabled ? t('wizard.syntheticStep.targetDimFixedHint') : t('wizard.syntheticStep.targetDimHint') }}</p>
@@ -124,7 +119,6 @@ const sampleCount = ref(32);
 const contextLength = ref(60);
 const horizon = ref(16);
 const intensity = ref(3);
-const seasonLength = ref(24);
 const targetDim = ref(3);
 const seed = ref(0);
 const frequency = ref('h');
@@ -168,7 +162,7 @@ async function generate() {
     setErrorKey('wizard.syntheticStep.errors.selectCapability');
     return;
   }
-  if (sampleCount.value <= 0 || contextLength.value <= 0 || horizon.value <= 0 || seasonLength.value <= 0 || targetDim.value <= 0) {
+  if (sampleCount.value <= 0 || contextLength.value <= 0 || horizon.value <= 0 || targetDim.value <= 0) {
     setErrorKey('wizard.syntheticStep.errors.positiveValues');
     return;
   }
@@ -181,7 +175,6 @@ async function generate() {
       horizon: horizon.value,
       sample_count: sampleCount.value,
       intensity: intensity.value,
-      season_length: seasonLength.value,
       target_dim: targetDimDisabled.value ? 1 : targetDim.value,
       seed: seed.value,
       frequency: frequency.value,

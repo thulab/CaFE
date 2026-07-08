@@ -46,6 +46,15 @@ class SyntheticGenerationConfig:
     frequency: str = "h"
 
 
+@dataclass(frozen=True)
+class SeasonalityResolution:
+    season_length: int
+    source: str
+    profile_ids: tuple[str, ...]
+    candidate_periods: tuple[int, ...]
+    requested_frequency: str
+
+
 SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
     SyntheticCapability(
         "trend",
@@ -327,6 +336,81 @@ ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
     },
 }
 
+ANCHOR_PROFILE_BUCKETS: dict[str, dict[str, Any]] = {
+    "m4_hourly_daily_96ctx": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "m4_hourly_daily_168ctx": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "m4_hourly_weekly": {
+        "frequency": "h",
+        "season_length": 168,
+        "significant_periods": (168,),
+        "window_count": 1000,
+    },
+    "electricity_hourly_daily_168ctx": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "electricity_hourly_panel_168ctx": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "traffic_hourly_daily_168ctx": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "traffic_hourly_panel_168ctx": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "m5_daily_covariate_365ctx_28h": {
+        "frequency": "d",
+        "season_length": 7,
+        "significant_periods": (7,),
+        "window_count": 2000,
+    },
+    "m5_daily_hierarchy_365ctx_28h": {
+        "frequency": "d",
+        "season_length": 7,
+        "significant_periods": (7,),
+        "window_count": 1000,
+    },
+    "gefcom2014_load_hourly_covariate_168ctx_24h": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 2000,
+    },
+    "us_births_weekly": {
+        "frequency": "d",
+        "season_length": 7,
+        "significant_periods": (7,),
+        "window_count": 20,
+    },
+    "us_births_annual_diagnostic": {
+        "frequency": "d",
+        "season_length": 365,
+        "significant_periods": (365,),
+        "window_count": 20,
+    },
+}
+
 TARGET_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     "trend": ("trend_strength", "slope_abs", "curvature_abs"),
     "multi_seasonal": ("multi_period_score", "seasonal_strength"),
@@ -372,7 +456,6 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
                 "horizon": 16,
                 "sample_count": 32,
                 "intensity": 3,
-                "season_length": 24,
                 "target_dim": 3 if capability.target_dim_mode in {"multi", "covariate"} else 1,
                 "frequency": "h",
             },
@@ -381,7 +464,6 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
                 "horizon": {"min": 1, "max": 512},
                 "sample_count": {"min": 1, "max": 1000},
                 "intensity": {"min": 1, "max": 5},
-                "season_length": {"min": 4, "max": 512},
                 "target_dim": {"min": 1, "max": 16},
             },
         }
@@ -439,7 +521,6 @@ def _validate_config(config: SyntheticGenerationConfig) -> None:
         "context_length": config.context_length,
         "horizon": config.horizon,
         "sample_count": config.sample_count,
-        "season_length": config.season_length,
         "target_dim": config.target_dim,
     }
     invalid = {name: value for name, value in positive_fields.items() if int(value) <= 0}
@@ -487,6 +568,11 @@ def _generate_capability_shard(
     columns = [*target_columns, *covariate_columns]
     base_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     delta = _frequency_delta(config.frequency)
+    seasonality = _resolve_seasonality(
+        capability.capability_id,
+        requested_frequency=config.frequency,
+        seed=_seed_for(config.seed, capability.capability_id, -1),
+    )
 
     all_timestamps: list[datetime] = []
     all_values: list[list[float]] = []
@@ -499,7 +585,7 @@ def _generate_capability_shard(
             sample_length,
             context,
             target_dim,
-            config.season_length,
+            seasonality.season_length,
             config.intensity,
             sample_seed,
         )
@@ -533,6 +619,11 @@ def _generate_capability_shard(
                 "difficulty": config.intensity,
                 "seed": config.seed,
                 "sample_seed": sample_seed,
+                "season_length": seasonality.season_length,
+                "requested_season_length": config.season_length,
+                "season_length_source": seasonality.source,
+                "season_length_candidates": list(seasonality.candidate_periods),
+                "season_length_profiles": list(seasonality.profile_ids),
                 "latent_params": latent_params,
                 "realized_features": realized_features,
                 **MOCK_ANCHOR,
@@ -552,7 +643,11 @@ def _generate_capability_shard(
         "context_length": context,
         "horizon": horizon,
         "sample_count": config.sample_count,
-        "season_length": config.season_length,
+        "season_length": seasonality.season_length,
+        "requested_season_length": config.season_length,
+        "season_length_source": seasonality.source,
+        "season_length_candidates": list(seasonality.candidate_periods),
+        "season_length_profiles": list(seasonality.profile_ids),
         "target_dim": target_dim,
         "requested_target_dim": config.target_dim,
         "covariate_columns": covariate_columns,
@@ -685,6 +780,106 @@ ACCEPTANCE_PROFILE_BY_CAPABILITY: dict[str, str] = {
     "hierarchical_coherence": "m5_hierarchy_envelope_365ctx_28h",
     "covariate_response": "known_future_covariate_envelope_v1",
 }
+
+
+def _resolve_seasonality(capability_id: str, *, requested_frequency: str, seed: int) -> SeasonalityResolution:
+    profile_ids = _profile_ids_for_capability(capability_id)
+    frequency = _canonical_frequency(requested_frequency)
+    frequency_matched = tuple(
+        profile_id
+        for profile_id in profile_ids
+        if _canonical_frequency(str(ANCHOR_PROFILE_BUCKETS.get(profile_id, {}).get("frequency", ""))) == frequency
+    )
+    candidate_profile_ids = frequency_matched or profile_ids
+    period_weights = _period_weights(candidate_profile_ids)
+    if not period_weights:
+        fallback = _default_periods_for_frequency(requested_frequency)
+        return SeasonalityResolution(
+            season_length=fallback[0],
+            source="frequency_default",
+            profile_ids=(),
+            candidate_periods=fallback,
+            requested_frequency=requested_frequency,
+        )
+
+    periods = tuple(sorted(period_weights))
+    if len(periods) == 1:
+        source = "profile_bucket"
+        selected = periods[0]
+    else:
+        source = "significant_period_sample"
+        rng = np.random.default_rng(seed)
+        weights = np.asarray([period_weights[period] for period in periods], dtype=float)
+        weights = weights / np.sum(weights)
+        selected = int(rng.choice(np.asarray(periods, dtype=int), p=weights))
+    return SeasonalityResolution(
+        season_length=int(selected),
+        source=source,
+        profile_ids=candidate_profile_ids,
+        candidate_periods=periods,
+        requested_frequency=requested_frequency,
+    )
+
+
+def _profile_ids_for_capability(capability_id: str) -> tuple[str, ...]:
+    profile_id = ACCEPTANCE_PROFILE_BY_CAPABILITY.get(capability_id)
+    if profile_id is None:
+        return ()
+    return ACCEPTANCE_PROFILE_GROUPS.get(profile_id, (profile_id,))
+
+
+def _period_weights(profile_ids: tuple[str, ...]) -> dict[int, float]:
+    weights: dict[int, float] = {}
+    for profile_id in profile_ids:
+        bucket = ANCHOR_PROFILE_BUCKETS.get(profile_id, {})
+        periods = tuple(int(period) for period in bucket.get("significant_periods", ()) if int(period) >= 4)
+        if not periods:
+            season_length = bucket.get("season_length")
+            periods = (int(season_length),) if season_length is not None and int(season_length) >= 4 else ()
+        if not periods:
+            continue
+        profile_weight = float(bucket.get("window_count", 1) or 1) / len(periods)
+        for period in periods:
+            weights[period] = weights.get(period, 0.0) + profile_weight
+    return weights
+
+
+def _canonical_frequency(frequency: str) -> str:
+    value = (frequency or "h").strip().lower()
+    aliases = {
+        "h": "h",
+        "hour": "h",
+        "hourly": "h",
+        "d": "d",
+        "day": "d",
+        "daily": "d",
+        "min": "1min",
+        "minute": "1min",
+    }
+    if value in aliases:
+        return aliases[value]
+    for suffix in ("min", "m", "h", "d"):
+        if value.endswith(suffix):
+            number = value[: -len(suffix)]
+            if number.isdigit() and int(number) > 0:
+                normalized_suffix = "min" if suffix in {"min", "m"} else suffix
+                return f"{int(number)}{normalized_suffix}"
+    return value
+
+
+def _default_periods_for_frequency(frequency: str) -> tuple[int, ...]:
+    value = _canonical_frequency(frequency)
+    if value == "h":
+        return (24,)
+    if value == "d":
+        return (7,)
+    if value.endswith("min"):
+        minutes = int(value.removesuffix("min"))
+        if minutes > 0:
+            return (max(4, int(round(24 * 60 / minutes))),)
+    return (24,)
+
+
 BOUNDED_ACCEPTANCE_FEATURES = {
     "trend_strength",
     "seasonal_strength",

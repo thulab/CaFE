@@ -44,6 +44,9 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert covariate.covariate_columns == ["weather", "event"]
         assert covariate.generation_config["intensity"] == 3
         assert covariate.generation_config["difficulty"] == 3
+        assert covariate.generation_config["requested_season_length"] == 8
+        assert covariate.generation_config["season_length"] == 24
+        assert covariate.generation_config["season_length_source"] == "profile_bucket"
         assert covariate.generation_config["anchor_mode"] == "profile_calibrated"
         assert covariate.generation_config["anchor_profiles"] == [
             "m4_hourly_daily_96ctx",
@@ -184,10 +187,16 @@ def test_new_synthetic_capabilities_generate_expected_metadata(app, client):
         hierarchy = next(shard for shard in shards if shard.capability_type == "hierarchical_coherence")
         assert seasonal.target_dim == 1
         assert hierarchy.target_dim == 3
+        assert seasonal.generation_config["requested_season_length"] == 8
+        assert seasonal.generation_config["season_length"] == 24
+        assert hierarchy.generation_config["requested_season_length"] == 8
+        assert hierarchy.generation_config["season_length"] == 7
 
         samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(body["shard_ids"]))).all()
         seasonal_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "time_varying_seasonality")
         hierarchy_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "hierarchical_coherence")
         assert seasonal_sample.sample_metadata["latent_params"]["amplitude_delta_mean"] > 0
         assert hierarchy_sample.sample_metadata["latent_params"]["hierarchy"] == "target_0=sum(target_1:)"
+        assert hierarchy_sample.sample_metadata["season_length"] == 7
+        assert hierarchy_sample.sample_metadata["requested_season_length"] == 8
         assert hierarchy_sample.sample_metadata["realized_features"]["hierarchy_residual_mean_abs"] < 1e-8

@@ -366,8 +366,6 @@ const enUS = {
       horizonHint: 'Future window length per sample.',
       intensity: 'Intensity',
       intensityHint: '1 to 5; higher means a stronger target temporal structure, not necessarily harder forecasts.',
-      seasonLength: 'Season length',
-      seasonLengthHint: 'Base period for seasonality and event widths.',
       targetDim: 'Target dimension',
       targetDimHint: 'Used for multivariate and covariate capabilities; univariate capabilities stay fixed at 1.',
       targetDimFixedHint: 'Only univariate capabilities are selected, so target dimension is fixed at 1.',

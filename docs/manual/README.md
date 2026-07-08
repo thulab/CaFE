@@ -226,7 +226,7 @@ http://127.0.0.1:5173
    合成数据路径：
    - `Test case set name` 是生成集合的名称前缀；多选能力时，每个能力维度生成一个测试用例集。
    - `Capabilities` 可多选。当前内置能力包括趋势、多季节性、状态切换、长记忆非线性、间歇异方差、公共因子、lead-lag、协同状态切换和协变量响应。
-   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Season length`、`Target dimension`、`Seed`、`Frequency`。单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
+   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Target dimension`、`Seed`、`Frequency`。主季节周期由后端根据真实 profile bucket 解析；单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
    - `Covariate response` 会生成 known-future 协变量 `weather` 和 `event`，结果页会在目标预测图下方单独显示协变量曲线。
    - 点「Generate synthetic test cases」后，后端生成 synthetic shard，并自动预选到下一步。
    - 研究实验样本可用脚本导入到平台库，便于在前端查看样本曲线。例如：

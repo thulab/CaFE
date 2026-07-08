@@ -11,7 +11,7 @@
 - `docs/superpowers/baselines/2026-07-01-synthetic-v2-all-capabilities-experiment-table.md`
 - `runtime/research/synthetic-v2-*/summary.json`
 
-默认窗口：`context=168`，`horizon=24`，`season_length=24`。合成生成中单目标维度使用 `target_dim=1`；多目标维度使用 `target_dim=3`；协变量能力使用 `target_dim=1, covariate_dim=2`。真实 profile 校准中，M5 covariate profile 使用 4 个 calendar/price/SNAP covariates，GEFCom2014 Load profile 使用 25 个 temperature station covariates。
+默认窗口：`context=168`，`horizon=24`。主季节周期由真实 profile bucket 解析：hourly daily bucket 使用 24，M5 daily bucket 使用 7；混合 envelope 在频率筛选后仍不唯一时，从显著周期集合按真实窗口数加权采样。合成生成中单目标维度使用 `target_dim=1`；多目标维度使用 `target_dim=3`；协变量能力使用 `target_dim=1, covariate_dim=2`。真实 profile 校准中，M5 covariate profile 使用 4 个 calendar/price/SNAP covariates，GEFCom2014 Load profile 使用 25 个 temperature station covariates。
 
 ## 共同原则
 
@@ -169,7 +169,7 @@ Y_t = F_t * B^T + E_t
 y_{t,j} = base_{t,j} + w_j(lambda) * y_{t-lag_j, leader(j)}
 ```
 
-强度控制：主要提高 coupling strength；`max_lag` 由 `season_length` 上限约束，默认 `season_length=24` 时会被 `season_length // 3 = 8` 卡住，因此不随 intensity 增长。更长周期配置下，`8 + floor(10 * lambda)` 才可能让可选滞后范围随 intensity 扩大。
+强度控制：主要提高 coupling strength；`max_lag` 由解析后的 `season_length` 上限约束。当前 hourly panel bucket 解析为 `season_length=24` 时会被 `season_length // 3 = 8` 卡住，因此不随 intensity 增长。更长周期 bucket 下，`8 + floor(10 * lambda)` 才可能让可选滞后范围随 intensity 扩大。
 
 测什么：模型是否能识别跨通道滞后依赖，利用先行 channel 提前预测滞后 channel。
 

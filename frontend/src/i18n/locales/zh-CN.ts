@@ -366,8 +366,6 @@ const zhCN = {
       horizonHint: '每个样本的未来窗口长度。',
       intensity: '结构强度',
       intensityHint: '1 到 5，越高表示目标时序结构越显著，不预设模型预测一定更难。',
-      seasonLength: '季节长度',
-      seasonLengthHint: '季节性和事件宽度的基础周期。',
       targetDim: '目标维度',
       targetDimHint: '用于多变量和协变量能力；单变量能力仍固定为 1。',
       targetDimFixedHint: '当前仅选择单变量能力，目标维度固定为 1。',

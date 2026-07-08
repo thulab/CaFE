@@ -8,6 +8,7 @@ from app.services.synthetic_generation_service import (
     PILOT_ACCEPTANCE_CAPS,
     _accept_synthetic_features,
     _generate_accepted_sample_values,
+    _resolve_seasonality,
     _seed_for,
 )
 
@@ -79,6 +80,23 @@ def test_all_capabilities_have_hard_acceptance_rules():
     assert "event_lift_abs" in PILOT_ACCEPTANCE_CAPS["covariate_response"]
     assert ACCEPTANCE_PROFILE_BY_CAPABILITY["covariate_response"] == "known_future_covariate_envelope_v1"
     assert ACCEPTANCE_PROFILE_BY_CAPABILITY["hierarchical_coherence"] == "m5_hierarchy_envelope_365ctx_28h"
+
+
+def test_profile_resolved_seasonality_ignores_requested_season_length():
+    trend = _resolve_seasonality("trend", requested_frequency="h", seed=1)
+    hierarchy = _resolve_seasonality("hierarchical_coherence", requested_frequency="h", seed=1)
+    covariate_hourly = _resolve_seasonality("covariate_response", requested_frequency="h", seed=1)
+    covariate_daily = _resolve_seasonality("covariate_response", requested_frequency="d", seed=1)
+    covariate_unclear = _resolve_seasonality("covariate_response", requested_frequency="15min", seed=1)
+
+    assert trend.season_length == 24
+    assert trend.source == "profile_bucket"
+    assert hierarchy.season_length == 7
+    assert hierarchy.source == "profile_bucket"
+    assert covariate_hourly.season_length == 24
+    assert covariate_daily.season_length == 7
+    assert covariate_unclear.source == "significant_period_sample"
+    assert set(covariate_unclear.candidate_periods) == {7, 24}
 
 
 def test_hard_acceptance_rejects_new_capability_feature_over_cap():

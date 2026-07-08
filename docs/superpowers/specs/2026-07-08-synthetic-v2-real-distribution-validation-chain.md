@@ -48,6 +48,10 @@ P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 
 论文中引用“真实分布”时，应明确指 `P_real_raw^b`、`P_real_feat^b` 或二者的组合。当前生成验收主要使用 `P_real_feat^b` 的分位数和 `P_real_raw^b` 的近邻距离校准。
 
+主季节周期也是 bucket 条件变量，不再由生成请求直接决定。若 capability 对应的真实 profile bucket 只有一个明确周期，生成器直接使用该周期；例如 hourly daily bucket 使用 24，M5 daily bucket 使用 7，hourly weekly diagnostic bucket 使用 168。若一个 capability 的 profile envelope 混合了多个频率或多个显著周期，生成器先按请求频率筛选匹配 bucket；仍不唯一时，从该 envelope 的显著周期集合中按真实窗口数加权、用 seed 确定性采样一个周期。
+
+当前版本的显著周期集合定义为 profile 抽取阶段固定的 `significant_periods` 元数据，来自该 profile 的频率和季节设定：hourly daily 为 `{24}`，hourly weekly 为 `{168}`，daily weekly 为 `{7}`，daily annual diagnostic 为 `{365}`。后续可以把它升级为自动检测：在每个真实 bucket 内对 robust-scaled 真实窗口计算候选周期 `p` 的 phase-mean seasonal strength / periodogram energy / ACF peak，保留 median score 超过阈值且不是其他已选周期近似 harmonic duplicate 的 top-K 周期。
+
 ## Anchor Profiles
 
 当前代码使用多 profile anchor，而不是单一真实数据基底：
@@ -137,6 +141,18 @@ mean_b,k[f_target] should increase with intensity k
 ```text
 sample_metadata.latent_params.acceptance.validation.target_features
 ```
+
+生成时使用的主周期记录在：
+
+```text
+generation_config.season_length
+generation_config.season_length_source
+generation_config.season_length_candidates
+sample_metadata.season_length
+sample_metadata.requested_season_length
+```
+
+其中 `requested_season_length` 只是旧 API 兼容字段，不再驱动生成。
 
 ### 2. 控制特征真实性校验
 
