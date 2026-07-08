@@ -69,12 +69,12 @@ def run_experiment(m4_path: Path, *, sample_count: int) -> dict[str, Any]:
             ("legacy", generate_legacy_sample),
             ("v2", generate_v2_sample),
         ):
-            for difficulty in range(1, 6):
+            for intensity in range(1, 6):
                 samples = [
-                    generator(capability_id, difficulty, sample_index)
+                    generator(capability_id, intensity, sample_index)
                     for sample_index in range(sample_count)
                 ]
-                rows.append(summarize_samples(f"{generator_id}_{capability_id}", capability_id, difficulty, samples))
+                rows.append(summarize_samples(f"{generator_id}_{capability_id}", capability_id, intensity, samples))
     rows.append(summarize_samples("real_m4_hourly", "real_anchor", None, load_real_m4_samples(m4_path, sample_count)))
     checks = acceptance_checks(rows)
     return {
@@ -88,33 +88,33 @@ def run_experiment(m4_path: Path, *, sample_count: int) -> dict[str, Any]:
     }
 
 
-def generate_v2_sample(capability_id: str, difficulty: int, sample_index: int) -> np.ndarray:
-    sample_seed = _seed_for(20260629, capability_id, difficulty * 10_000 + sample_index)
+def generate_v2_sample(capability_id: str, intensity: int, sample_index: int) -> np.ndarray:
+    sample_seed = _seed_for(20260629, capability_id, intensity * 10_000 + sample_index)
     values, _latent_params, _covariates, _features = _generate_accepted_sample_values(
         capability_id,
         CONTEXT_LENGTH + HORIZON,
         CONTEXT_LENGTH,
         1,
         SEASON_LENGTH,
-        difficulty,
+        intensity,
         sample_seed,
     )
     return values
 
 
-def generate_legacy_sample(capability_id: str, difficulty: int, sample_index: int) -> np.ndarray:
-    rng = np.random.default_rng(_seed_for(20250629, capability_id, difficulty * 10_000 + sample_index))
+def generate_legacy_sample(capability_id: str, intensity: int, sample_index: int) -> np.ndarray:
+    rng = np.random.default_rng(_seed_for(20250629, capability_id, intensity * 10_000 + sample_index))
     if capability_id == "trend":
-        values = legacy_trend(CONTEXT_LENGTH + HORIZON, difficulty, rng)
+        values = legacy_trend(CONTEXT_LENGTH + HORIZON, intensity, rng)
     elif capability_id == "multi_seasonal":
-        values = legacy_multi_seasonal(CONTEXT_LENGTH + HORIZON, difficulty, rng)
+        values = legacy_multi_seasonal(CONTEXT_LENGTH + HORIZON, intensity, rng)
     else:
         raise ValueError(f"unsupported capability: {capability_id}")
     return _standardize_by_context(values, CONTEXT_LENGTH)
 
 
-def legacy_trend(length: int, difficulty: int, rng: np.random.Generator) -> np.ndarray:
-    lam = (difficulty - 1) / 4
+def legacy_trend(length: int, intensity: int, rng: np.random.Generator) -> np.ndarray:
+    lam = (intensity - 1) / 4
     seasonal, slow, trend = _base_features(length, SEASON_LENGTH)
     slope = rng.uniform(-1.2, 1.2, size=1) * (0.6 + lam)
     curvature = rng.uniform(-0.7, 0.7, size=1) * lam
@@ -124,8 +124,8 @@ def legacy_trend(length: int, difficulty: int, rng: np.random.Generator) -> np.n
     return values
 
 
-def legacy_multi_seasonal(length: int, difficulty: int, rng: np.random.Generator) -> np.ndarray:
-    lam = (difficulty - 1) / 4
+def legacy_multi_seasonal(length: int, intensity: int, rng: np.random.Generator) -> np.ndarray:
+    lam = (intensity - 1) / 4
     t = np.arange(length, dtype=float)
     periods = [max(4, SEASON_LENGTH), max(5, SEASON_LENGTH // 2), max(8, SEASON_LENGTH * 2)]
     values = np.zeros((length, 1))
@@ -156,7 +156,7 @@ def load_real_m4_samples(path: Path, sample_count: int) -> list[np.ndarray]:
 def summarize_samples(
     group_id: str,
     capability_id: str,
-    difficulty: int | None,
+    intensity: int | None,
     samples: list[np.ndarray],
 ) -> dict[str, Any]:
     features = [feature_vector(sample, season_length=SEASON_LENGTH) for sample in samples]
@@ -164,7 +164,8 @@ def summarize_samples(
     return {
         "group_id": group_id,
         "capability_id": capability_id,
-        "difficulty": difficulty,
+        "intensity": intensity,
+        "difficulty": intensity,
         "sample_count": len(samples),
         "features": summarize_dicts(features),
         "baselines": summarize_dicts(baselines),
@@ -234,7 +235,7 @@ def is_monotonic(values: list[float]) -> bool:
 
 def render_report(results: dict[str, Any], *, m4_path: Path, output_dir: Path) -> str:
     table_rows = [
-        "| Group | Difficulty | Trend | Seasonal | Slope | Curvature | Noise | Naive MASE | SNaive MASE | SNaive MAE |",
+        "| Group | Intensity | Trend | Seasonal | Slope | Curvature | Noise | Naive MASE | SNaive MASE | SNaive MAE |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for row in results["rows"]:
@@ -243,7 +244,7 @@ def render_report(results: dict[str, Any], *, m4_path: Path, output_dir: Path) -
             + " | ".join(
                 [
                     row["group_id"],
-                    "-" if row["difficulty"] is None else str(row["difficulty"]),
+                    "-" if row_intensity(row) is None else str(row_intensity(row)),
                     fmt(feature(row, "trend_strength")),
                     fmt(feature(row, "seasonal_strength")),
                     fmt(feature(row, "slope_abs")),
@@ -288,8 +289,8 @@ def render_report(results: dict[str, Any], *, m4_path: Path, output_dir: Path) -
             "",
             "## 结论",
             "",
-            "- 旧 trend 公式低难度已经有很强趋势，且 slope 均值超过真实 cap；v2 pilot 把 trend strength 调成随 difficulty 单调增强，并把 slope 均值压回 cap 内。",
-            "- 旧 multi-seasonal 公式没有稳定制造“单周期 seasonal naive 更难”的响应；v2 pilot 通过 48 点次级周期让 seasonal naive MAE 随 difficulty 明显上升。",
+            "- 旧 trend 公式低强度已经有很强趋势，且 slope 均值超过真实 cap；v2 pilot 把 trend strength 调成随 intensity 单调增强，并把 slope 均值压回 cap 内。",
+            "- 旧 multi-seasonal 公式没有稳定制造“单周期 seasonal naive 更难”的响应；v2 pilot 通过 48 点次级周期让 seasonal naive MAE 随 intensity 明显上升。",
             "- M4 真实窗口保留在同表里，作为当前特征和基线误差的真实参照；后续可以把更多真实数据集加入同一脚本。",
             "",
             "## 复现",
@@ -304,6 +305,11 @@ def render_report(results: dict[str, Any], *, m4_path: Path, output_dir: Path) -
 
 def fmt(value: float) -> str:
     return f"{float(value):.4f}".rstrip("0").rstrip(".")
+
+
+def row_intensity(row: dict[str, Any]) -> int | None:
+    value = row.get("intensity", row.get("difficulty"))
+    return None if value is None else int(value)
 
 
 def display_path(path: Path) -> str:

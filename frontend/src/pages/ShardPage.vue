@@ -31,7 +31,7 @@
               <div v-if="shard.name" class="detail-item"><dt>{{ t('shard.name') }}</dt><dd>{{ shard.name }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.type') }}</dt><dd>{{ shard.shard_type === 'synthetic' ? t('shard.synthetic') : t('shard.real') }}</dd></div>
               <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.capability') }}</dt><dd>{{ syntheticCapability }}</dd></div>
-              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.difficulty') }}</dt><dd>{{ syntheticConfigValue('difficulty') }}</dd></div>
+              <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.intensity') }}</dt><dd>{{ syntheticConfigValue('intensity') || syntheticConfigValue('difficulty') }}</dd></div>
               <div v-if="shard.shard_type === 'synthetic'" class="detail-item"><dt>{{ t('shard.seed') }}</dt><dd>{{ syntheticConfigValue('seed') }}</dd></div>
               <div class="detail-item"><dt>{{ t('shard.manifest') }}</dt><dd><a class="text-link" :href="`#/datasets/${shard.dataset_manifest_id}`">{{ shortId(shard.dataset_manifest_id) }}</a></dd></div>
               <div class="detail-item"><dt>{{ t('shard.loadJob') }}</dt><dd><a v-if="shard.load_job_id" class="text-link" :href="`#/load-jobs/${shard.load_job_id}`">{{ shortId(shard.load_job_id) }}</a><span v-else class="faint">{{ t('shard.notRecorded') }}</span></dd></div>

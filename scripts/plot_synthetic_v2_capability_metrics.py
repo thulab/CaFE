@@ -64,7 +64,7 @@ MODEL_COLORS = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Plot synthetic v2 capability metrics by difficulty.")
+    parser = argparse.ArgumentParser(description="Plot synthetic v2 capability metrics by intensity.")
     parser.add_argument("--summary", action="append", type=Path, dest="summaries", help="Summary JSON path. Can be repeated.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
@@ -123,7 +123,7 @@ def plot_capability_metric(summaries: list[dict[str, Any]], capability_id: str, 
         value = row.get("metrics", {}).get(metric)
         if value is None:
             continue
-        values_by_model.setdefault(row["model_id"], {})[int(row["difficulty"])] = float(value)
+        values_by_model.setdefault(row["model_id"], {})[row_intensity(row)] = float(value)
     if not values_by_model:
         raise RuntimeError(f"no metric [{metric}] values for capability [{capability_id}]")
 
@@ -144,8 +144,8 @@ def plot_capability_metric(summaries: list[dict[str, Any]], capability_id: str, 
             alpha=0.95 if not is_baseline else 0.8,
         )
 
-    ax.set_title(f"{capability_id} - {metric.upper()} by difficulty", fontsize=13, pad=12)
-    ax.set_xlabel("Difficulty")
+    ax.set_title(f"{capability_id} - {metric.upper()} by intensity", fontsize=13, pad=12)
+    ax.set_xlabel("Intensity")
     ax.set_ylabel(metric.upper())
     ax.set_xticks([1, 2, 3, 4, 5])
     ax.grid(True, axis="both", color="#d8dee8", linewidth=0.8, alpha=0.75)
@@ -179,7 +179,7 @@ def render_index(summaries: list[dict[str, Any]], generated: list[dict[str, str]
         "",
         "日期：2026-07-02",
         "",
-        f"结果指标：{', '.join(f'`{metric}`' for metric in metrics)}。每张图横坐标为 difficulty，纵坐标为指标值，曲线为模型；`naive` 和 `seasonal_naive` 使用虚线。",
+        f"结果指标：{', '.join(f'`{metric}`' for metric in metrics)}。每张图横坐标为 intensity，纵坐标为指标值，曲线为模型；`naive` 和 `seasonal_naive` 使用虚线。",
         "",
         "## 输入数据",
         "",
@@ -206,6 +206,10 @@ def model_sort_key(model_id: str) -> tuple[int, str]:
     if model_id in MODEL_ORDER:
         return MODEL_ORDER.index(model_id), model_id
     return len(MODEL_ORDER), model_id
+
+
+def row_intensity(row: dict[str, Any]) -> int:
+    return int(row.get("intensity", row.get("difficulty")))
 
 
 def display_path(path: Path) -> str:

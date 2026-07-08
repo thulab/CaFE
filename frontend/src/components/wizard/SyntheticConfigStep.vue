@@ -65,11 +65,11 @@
         <p class="hint">{{ t('wizard.syntheticStep.horizonHint') }}</p>
       </div>
       <div class="field">
-        <label class="label" for="synthetic-difficulty">{{ t('wizard.syntheticStep.difficulty') }}</label>
-        <select id="synthetic-difficulty" v-model.number="difficulty">
+        <label class="label" for="synthetic-intensity">{{ t('wizard.syntheticStep.intensity') }}</label>
+        <select id="synthetic-intensity" v-model.number="intensity">
           <option v-for="level in [1, 2, 3, 4, 5]" :key="level" :value="level">{{ level }}</option>
         </select>
-        <p class="hint">{{ t('wizard.syntheticStep.difficultyHint') }}</p>
+        <p class="hint">{{ t('wizard.syntheticStep.intensityHint') }}</p>
       </div>
       <div class="field">
         <label class="label" for="synthetic-season">{{ t('wizard.syntheticStep.seasonLength') }}</label>
@@ -123,7 +123,7 @@ const selectedCapabilities = ref<string[]>([...wizardState.syntheticCapabilityId
 const sampleCount = ref(32);
 const contextLength = ref(60);
 const horizon = ref(16);
-const difficulty = ref(3);
+const intensity = ref(3);
 const seasonLength = ref(24);
 const targetDim = ref(3);
 const seed = ref(0);
@@ -180,7 +180,7 @@ async function generate() {
       context_length: contextLength.value,
       horizon: horizon.value,
       sample_count: sampleCount.value,
-      difficulty: difficulty.value,
+      intensity: intensity.value,
       season_length: seasonLength.value,
       target_dim: targetDimDisabled.value ? 1 : targetDim.value,
       seed: seed.value,

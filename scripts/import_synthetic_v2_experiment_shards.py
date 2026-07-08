@@ -55,7 +55,7 @@ DEFAULT_CAPABILITIES = (
     "hierarchical_coherence",
     "covariate_response",
 )
-DEFAULT_DIFFICULTIES = (1, 2, 3, 4, 5)
+DEFAULT_INTENSITIES = (1, 2, 3, 4, 5)
 DEFAULT_CONTEXT_LENGTH = 168
 DEFAULT_HORIZON = 24
 DEFAULT_SEASON_LENGTH = 24
@@ -68,7 +68,7 @@ DEFAULT_SEED = 20260701
 class ImportConfig:
     name: str
     capabilities: tuple[str, ...]
-    difficulties: tuple[int, ...]
+    intensities: tuple[int, ...]
     sample_count: int
     context_length: int
     horizon: int
@@ -89,8 +89,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary", type=Path, help="Read capabilities and window parameters from a synthetic v2 summary.json.")
     parser.add_argument("--name", help="Dataset/test-case-set name prefix.")
     parser.add_argument("--capabilities", nargs="+", help="Synthetic capability ids to import.")
-    parser.add_argument("--difficulties", nargs="+", type=int, default=list(DEFAULT_DIFFICULTIES))
-    parser.add_argument("--sample-count", type=int, help="Samples per capability and difficulty.")
+    parser.add_argument("--intensities", nargs="+", type=int, help="Structure intensity levels to import.")
+    parser.add_argument("--difficulties", nargs="+", type=int, help="Deprecated alias for --intensities.")
+    parser.add_argument("--sample-count", type=int, help="Samples per capability and intensity.")
     parser.add_argument("--context-length", type=int, help="History length.")
     parser.add_argument("--horizon", type=int, help="Forecast length.")
     parser.add_argument("--season-length", type=int, help="Primary seasonal period.")
@@ -116,7 +117,12 @@ def parse_args() -> argparse.Namespace:
 def config_from_args(args: argparse.Namespace) -> ImportConfig:
     summary = read_summary(args.summary) if args.summary else {}
     capabilities = tuple(args.capabilities or summary.get("requested_capabilities") or DEFAULT_CAPABILITIES)
-    sample_count = int(args.sample_count or summary.get("sample_count_per_capability_difficulty") or DEFAULT_SAMPLE_COUNT)
+    sample_count = int(
+        args.sample_count
+        or summary.get("sample_count_per_capability_intensity")
+        or summary.get("sample_count_per_capability_difficulty")
+        or DEFAULT_SAMPLE_COUNT
+    )
     context_length = int(args.context_length or summary.get("context_length") or DEFAULT_CONTEXT_LENGTH)
     horizon = int(args.horizon or summary.get("horizon") or DEFAULT_HORIZON)
     season_length = int(args.season_length or summary.get("season_length") or DEFAULT_SEASON_LENGTH)
@@ -124,7 +130,7 @@ def config_from_args(args: argparse.Namespace) -> ImportConfig:
     return ImportConfig(
         name=name,
         capabilities=capabilities,
-        difficulties=tuple(args.difficulties),
+        intensities=tuple(args.intensities or args.difficulties or DEFAULT_INTENSITIES),
         sample_count=sample_count,
         context_length=context_length,
         horizon=horizon,
@@ -157,11 +163,11 @@ def validate_config(config: ImportConfig) -> None:
     missing = [capability_id for capability_id in config.capabilities if capability_id not in CAPABILITIES_BY_ID]
     if missing:
         raise SystemExit(f"unknown synthetic capabilities: {', '.join(missing)}")
-    if not config.difficulties:
-        raise SystemExit("at least one difficulty is required")
-    invalid_difficulties = [difficulty for difficulty in config.difficulties if difficulty < 1 or difficulty > 5]
-    if invalid_difficulties:
-        raise SystemExit(f"difficulties must be in [1, 5]: {invalid_difficulties}")
+    if not config.intensities:
+        raise SystemExit("at least one intensity is required")
+    invalid_intensities = [intensity for intensity in config.intensities if intensity < 1 or intensity > 5]
+    if invalid_intensities:
+        raise SystemExit(f"intensities must be in [1, 5]: {invalid_intensities}")
     positive = {
         "sample_count": config.sample_count,
         "context_length": config.context_length,
@@ -185,18 +191,18 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
     with Session(engine) as session:
         existing = existing_import_keys(session)
         planned = [
-            (capability_id, difficulty, import_key(config, capability_id, difficulty))
+            (capability_id, intensity, import_key(config, capability_id, intensity))
             for capability_id in config.capabilities
-            for difficulty in config.difficulties
+            for intensity in config.intensities
         ]
         to_create = [
-            (capability_id, difficulty, key)
-            for capability_id, difficulty, key in planned
+            (capability_id, intensity, key)
+            for capability_id, intensity, key in planned
             if config.allow_duplicates or key not in existing
         ]
         skipped = [
-            {"capability_id": capability_id, "difficulty": difficulty, "import_key": key}
-            for capability_id, difficulty, key in planned
+            {"capability_id": capability_id, "intensity": intensity, "difficulty": intensity, "import_key": key}
+            for capability_id, intensity, key in planned
             if not config.allow_duplicates and key in existing
         ]
         if not to_create:
@@ -226,7 +232,7 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
 
         created: list[dict[str, Any]] = []
         try:
-            for capability_id, difficulty, key in to_create:
+            for capability_id, intensity, key in to_create:
                 shard = create_imported_shard(
                     session,
                     config,
@@ -235,7 +241,7 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
                     storage_dir,
                     generation_id,
                     capability_id,
-                    difficulty,
+                    intensity,
                     key,
                 )
                 session.add(shard)
@@ -248,7 +254,8 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
                         "shard_id": shard.shard_id,
                         "name": shard.name,
                         "capability_id": capability_id,
-                        "difficulty": difficulty,
+                        "intensity": intensity,
+                        "difficulty": intensity,
                         "sample_count": shard.sample_count,
                         "first_sample_id": first_sample.sample_id if first_sample else None,
                     }
@@ -277,11 +284,12 @@ def existing_import_keys(session: Session) -> set[str]:
     return keys
 
 
-def import_key(config: ImportConfig, capability_id: str, difficulty: int) -> str:
+def import_key(config: ImportConfig, capability_id: str, intensity: int) -> str:
     payload = {
         "schema_version": "synthetic_v2_platform_import.v1",
         "capability_id": capability_id,
-        "difficulty": difficulty,
+        "intensity": intensity,
+        "difficulty": intensity,
         "sample_count": config.sample_count,
         "context_length": config.context_length,
         "horizon": config.horizon,
@@ -309,7 +317,7 @@ def create_imported_shard(
     storage_dir: Path,
     generation_id: str,
     capability_id: str,
-    difficulty: int,
+    intensity: int,
     key: str,
 ) -> Shard:
     capability = CAPABILITIES_BY_ID[capability_id]
@@ -328,7 +336,7 @@ def create_imported_shard(
     windows: list[SampleWindow] = []
     sample_metadata: list[dict[str, Any]] = []
     for sample_index in range(config.sample_count):
-        experiment_index = difficulty * 10_000 + sample_index
+        experiment_index = intensity * 10_000 + sample_index
         sample_seed = _seed_for(config.seed, capability_id, experiment_index)
         target, latent_params, covariates, realized_features = _generate_accepted_sample_values(
             capability_id,
@@ -336,7 +344,7 @@ def create_imported_shard(
             context,
             target_dim,
             config.season_length,
-            difficulty,
+            intensity,
             sample_seed,
         )
         values = np.concatenate([target, covariates], axis=1) if covariates is not None and covariates.size else target
@@ -359,11 +367,12 @@ def create_imported_shard(
         sample_metadata.append(
             {
                 "schema_version": "synthetic_v2_import_sample_metadata.v1",
-                "experiment_sample_id": f"{capability_id}-d{difficulty}-{sample_index:03d}",
+                "experiment_sample_id": f"{capability_id}-i{intensity}-{sample_index:03d}",
                 "experiment_sample_index": experiment_index,
                 "capability_id": capability_id,
                 "capability_label": capability.label,
-                "difficulty": difficulty,
+                "intensity": intensity,
+                "difficulty": intensity,
                 "seed": config.seed,
                 "sample_seed": sample_seed,
                 "latent_params": latent_params,
@@ -380,7 +389,9 @@ def create_imported_shard(
         "capability_id": capability_id,
         "capability_label": capability.label,
         "task_type": capability.task_type,
-        "difficulty": difficulty,
+        "intensity": intensity,
+        "difficulty": intensity,
+        "intensity_definition": "target temporal structure strength; not a required monotonic model-error difficulty",
         "seed": config.seed,
         "context_length": context,
         "horizon": horizon,
@@ -393,12 +404,12 @@ def create_imported_shard(
         **MOCK_ANCHOR,
     }
     shard = Shard(
-        name=f"{config.name} - {capability.label} d{difficulty}",
+        name=f"{config.name} - {capability.label} i{intensity}",
         shard_type="synthetic",
         capability_type=capability_id,
         dataset_manifest_id=manifest.dataset_manifest_id,
         source_uri=source_uri,
-        storage_uri=str(storage_dir / f"{generation_id}-{capability_id}-d{difficulty}.json"),
+        storage_uri=str(storage_dir / f"{generation_id}-{capability_id}-i{intensity}.json"),
         time_range_start=all_timestamps[0].isoformat(),
         time_range_end=all_timestamps[-1].isoformat(),
         row_count=len(all_values),

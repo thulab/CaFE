@@ -39,7 +39,7 @@ class SyntheticGenerationConfig:
     context_length: int
     horizon: int
     sample_count: int
-    difficulty: int
+    intensity: int
     season_length: int
     target_dim: int
     seed: int
@@ -154,8 +154,66 @@ CAPABILITIES_BY_ID: dict[str, SyntheticCapability] = {
 }
 
 MOCK_ANCHOR = {
-    "anchor_mode": "fixed_mock",
-    "anchor_source_uri": "synthetic-anchor://builtin/mock-v1",
+    "anchor_mode": "profile_calibrated",
+    "anchor_source_uri": "synthetic-anchor://public/multi-profile-v1",
+    "anchor_profiles": [
+        "m4_hourly_daily_96ctx",
+        "m4_hourly_daily_168ctx",
+        "m4_hourly_weekly",
+        "us_births_weekly",
+        "us_births_annual_diagnostic",
+    ],
+}
+
+PRIMARY_ANCHOR_PROFILE_ID = "m4_hourly_daily_168ctx"
+
+ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
+    "m4_hourly_daily_168ctx": {
+        "trend_strength": {"p05": 0.0, "p50": 0.1659, "p95": 0.7714},
+        "seasonal_strength": {"p05": 0.5768, "p50": 0.9129, "p95": 0.9961},
+        "acf_abs_mean": {"p05": 0.2515, "p50": 0.5201, "p95": 0.5574},
+        "slope_abs": {"p05": 0.0136, "p50": 0.1264, "p95": 0.3543},
+        "curvature_abs": {"p05": 0.0042, "p50": 0.0711, "p95": 0.6756},
+        "noise_ratio": {"p05": 0.0038, "p50": 0.0821, "p95": 0.3871},
+        "spike_rate": {"p05": 0.0, "p50": 0.0, "p95": 0.1257},
+        "level_shift_strength": {"p05": 0.3115, "p50": 0.5132, "p95": 0.9885},
+        "burst_rate": {"p05": 0.0, "p50": 0.0, "p95": 0.01042},
+    },
+    "us_births_weekly": {
+        "trend_strength": {"p50": 0.2459, "p75": 0.2660, "p95": 0.2938},
+        "seasonal_strength": {"p50": 0.7040, "p75": 0.7693, "p95": 0.8309},
+        "slope_abs": {"p50": 0.2102, "p75": 0.2992, "p95": 0.3606},
+        "curvature_abs": {"p50": 0.3674, "p75": 0.4536, "p95": 0.5142},
+        "noise_ratio": {"p50": 0.2693, "p75": 0.2984, "p95": 0.3567},
+    },
+}
+
+TARGET_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
+    "trend": ("trend_strength", "slope_abs", "curvature_abs"),
+    "multi_seasonal": ("multi_period_score", "seasonal_strength"),
+    "time_varying_seasonality": ("seasonal_drift_score", "seasonal_amplitude_cv"),
+    "regime_switching": ("change_point_shift_energy", "level_shift_strength"),
+    "long_memory_nonlinear": ("nonlinear_lag1_gain",),
+    "intermittent_heteroskedastic": ("burst_rate", "spike_rate", "outlier_rate", "noise_ratio"),
+    "common_factor": ("pca_top1_explained", "effective_factor_rank"),
+    "lead_lag_coupling": ("lead_lag_peak_abs",),
+    "coherent_regime_shift": ("level_shift_strength", "avg_abs_target_corr"),
+    "hierarchical_coherence": ("hierarchy_residual_mean_abs",),
+    "covariate_response": ("avg_abs_covariate_target_corr", "future_abs_covariate_target_corr", "event_lift_abs"),
+}
+
+CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
+    "trend": ("seasonal_strength", "noise_ratio", "spike_rate"),
+    "multi_seasonal": ("trend_strength", "noise_ratio", "spike_rate"),
+    "time_varying_seasonality": ("trend_strength", "noise_ratio", "spike_rate"),
+    "regime_switching": ("seasonal_strength", "spike_rate"),
+    "long_memory_nonlinear": ("seasonal_strength", "noise_ratio", "spike_rate"),
+    "intermittent_heteroskedastic": ("trend_strength", "seasonal_strength"),
+    "common_factor": ("noise_ratio", "spike_rate"),
+    "lead_lag_coupling": ("noise_ratio", "spike_rate"),
+    "coherent_regime_shift": ("noise_ratio", "spike_rate"),
+    "hierarchical_coherence": ("hierarchy_residual_mean_abs", "noise_ratio"),
+    "covariate_response": ("trend_strength", "seasonal_strength", "noise_ratio", "spike_rate"),
 }
 
 
@@ -174,7 +232,7 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
                 "context_length": 60,
                 "horizon": 16,
                 "sample_count": 32,
-                "difficulty": 3,
+                "intensity": 3,
                 "season_length": 24,
                 "target_dim": 3 if capability.target_dim_mode in {"multi", "covariate"} else 1,
                 "frequency": "h",
@@ -183,7 +241,7 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
                 "context_length": {"min": 16, "max": 2048},
                 "horizon": {"min": 1, "max": 512},
                 "sample_count": {"min": 1, "max": 1000},
-                "difficulty": {"min": 1, "max": 5},
+                "intensity": {"min": 1, "max": 5},
                 "season_length": {"min": 4, "max": 512},
                 "target_dim": {"min": 1, "max": 16},
             },
@@ -261,8 +319,8 @@ def _validate_config(config: SyntheticGenerationConfig) -> None:
                 "target_dim_max": 16,
             },
         )
-    if not 1 <= config.difficulty <= 5:
-        raise ApiError("synthetic_difficulty_invalid", "difficulty must be between 1 and 5")
+    if not 1 <= config.intensity <= 5:
+        raise ApiError("synthetic_intensity_invalid", "intensity must be between 1 and 5")
 
 
 def _capabilities(capability_ids: list[str]) -> list[SyntheticCapability]:
@@ -303,7 +361,7 @@ def _generate_capability_shard(
             context,
             target_dim,
             config.season_length,
-            config.difficulty,
+            config.intensity,
             sample_seed,
         )
         if covariates is not None and covariates.size:
@@ -332,7 +390,8 @@ def _generate_capability_shard(
                 "schema_version": "synthetic_sample_metadata.v1",
                 "capability_id": capability.capability_id,
                 "capability_label": capability.label,
-                "difficulty": config.difficulty,
+                "intensity": config.intensity,
+                "difficulty": config.intensity,
                 "seed": config.seed,
                 "sample_seed": sample_seed,
                 "latent_params": latent_params,
@@ -347,7 +406,9 @@ def _generate_capability_shard(
         "capability_id": capability.capability_id,
         "capability_label": capability.label,
         "task_type": capability.task_type,
-        "difficulty": config.difficulty,
+        "intensity": config.intensity,
+        "difficulty": config.intensity,
+        "intensity_definition": "target temporal structure strength; not a required monotonic model-error difficulty",
         "seed": config.seed,
         "context_length": context,
         "horizon": horizon,
@@ -473,7 +534,7 @@ def _generate_accepted_sample_values(
     context_length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     sample_seed: int,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]]:
     max_attempts = 12 if capability_id in PILOT_ACCEPTANCE_CAPS else 1
@@ -486,7 +547,7 @@ def _generate_accepted_sample_values(
             context_length,
             target_dim,
             season_length,
-            difficulty,
+            intensity,
             rng,
         )
         target = (
@@ -496,15 +557,19 @@ def _generate_accepted_sample_values(
         )
         if covariates is not None and covariates.size:
             covariates = _normalize_covariates(covariates, context_length)
-        realized_features = _realized_features(target, covariates, season_length)
+        realized_features = _realized_features(target, covariates, season_length, context_length)
         accepted, failed_features = _accept_synthetic_features(capability_id, realized_features)
+        validation = _validation_summary(capability_id, realized_features)
         latent_params = {
             **latent_params,
+            "intensity": int(intensity),
+            "intensity_definition": "target temporal structure strength; model-error monotonicity is evaluated separately",
             "acceptance": {
                 "accepted": bool(accepted),
                 "attempts": attempt + 1,
                 "failed_features": failed_features,
-                "profile": "m4_hourly_daily_168ctx" if capability_id in PILOT_ACCEPTANCE_CAPS else None,
+                "profile": PRIMARY_ANCHOR_PROFILE_ID if capability_id in PILOT_ACCEPTANCE_CAPS else None,
+                "validation": validation,
             },
         }
         last_result = (target, latent_params, covariates, realized_features)
@@ -530,37 +595,73 @@ def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -
     return not failed, failed
 
 
+def _validation_summary(capability_id: str, features: dict[str, float]) -> dict[str, Any]:
+    target_features = TARGET_FEATURES_BY_CAPABILITY.get(capability_id, ())
+    control_features = CONTROL_FEATURES_BY_CAPABILITY.get(capability_id, ())
+    control_bounds = _control_feature_bounds()
+    control_results: dict[str, dict[str, float | bool]] = {}
+    for feature in control_features:
+        value = features.get(feature)
+        bounds = control_bounds.get(feature)
+        if value is None or bounds is None or not np.isfinite(value):
+            continue
+        lower = float(bounds.get("p05", float("-inf")))
+        upper = float(bounds.get("p95", float("inf")))
+        control_results[feature] = {
+            "value": float(value),
+            "p05": lower,
+            "p95": upper,
+            "inside_anchor_range": bool(lower <= float(value) <= upper),
+        }
+    return {
+        "schema_version": "synthetic_post_generation_validation.v1",
+        "anchor_profile_id": PRIMARY_ANCHOR_PROFILE_ID,
+        "target_features": {
+            feature: float(features[feature])
+            for feature in target_features
+            if feature in features and np.isfinite(features[feature])
+        },
+        "control_features": control_results,
+        "novelty_check": "offline_dcr_nndr_required",
+        "distribution_check": "offline_control_feature_mmd_swd_required",
+    }
+
+
+def _control_feature_bounds() -> dict[str, dict[str, float]]:
+    return ANCHOR_FEATURE_QUANTILES[PRIMARY_ANCHOR_PROFILE_ID]
+
+
 def _generate_sample_values(
     capability_id: str,
     length: int,
     context_length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None]:
     if capability_id == "trend":
-        return _generate_trend(length, target_dim, season_length, difficulty, rng)
+        return _generate_trend(length, target_dim, season_length, intensity, rng)
     if capability_id == "multi_seasonal":
-        return _generate_multi_seasonal(length, target_dim, season_length, difficulty, rng)
+        return _generate_multi_seasonal(length, target_dim, season_length, intensity, rng)
     if capability_id == "regime_switching":
-        return _generate_regime_switching(length, context_length, target_dim, season_length, difficulty, rng)
+        return _generate_regime_switching(length, context_length, target_dim, season_length, intensity, rng)
     if capability_id == "time_varying_seasonality":
-        return _generate_time_varying_seasonality(length, target_dim, season_length, difficulty, rng)
+        return _generate_time_varying_seasonality(length, target_dim, season_length, intensity, rng)
     if capability_id == "long_memory_nonlinear":
-        return _generate_long_memory_nonlinear(length, target_dim, season_length, difficulty, rng)
+        return _generate_long_memory_nonlinear(length, target_dim, season_length, intensity, rng)
     if capability_id == "intermittent_heteroskedastic":
-        return _generate_intermittent_heteroskedastic(length, target_dim, season_length, difficulty, rng)
+        return _generate_intermittent_heteroskedastic(length, target_dim, season_length, intensity, rng)
     if capability_id == "common_factor":
-        return _generate_common_factor(length, target_dim, season_length, difficulty, rng)
+        return _generate_common_factor(length, target_dim, season_length, intensity, rng)
     if capability_id == "lead_lag_coupling":
-        return _generate_lead_lag_coupling(length, target_dim, season_length, difficulty, rng)
+        return _generate_lead_lag_coupling(length, target_dim, season_length, intensity, rng)
     if capability_id == "coherent_regime_shift":
-        return _generate_coherent_regime_shift(length, context_length, target_dim, season_length, difficulty, rng)
+        return _generate_coherent_regime_shift(length, context_length, target_dim, season_length, intensity, rng)
     if capability_id == "hierarchical_coherence":
-        return _generate_hierarchical_coherence(length, target_dim, season_length, difficulty, rng)
+        return _generate_hierarchical_coherence(length, target_dim, season_length, intensity, rng)
     if capability_id == "covariate_response":
-        return _generate_covariate_response(length, target_dim, season_length, difficulty, rng)
+        return _generate_covariate_response(length, target_dim, season_length, intensity, rng)
     raise ApiError("synthetic_capability_unknown", "unknown synthetic capability", {"capability_id": capability_id}, 404)
 
 
@@ -576,10 +677,10 @@ def _generate_trend(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, slow, trend = _base_features(length, season_length)
     slope_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
     curvature_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
@@ -610,10 +711,10 @@ def _generate_multi_seasonal(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     t = np.arange(length, dtype=float)
     primary_period = max(4, season_length)
     secondary_period = max(primary_period + 1, primary_period * 2)
@@ -659,10 +760,10 @@ def _generate_regime_switching(
     context_length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, slow, _ = _base_features(length, season_length)
     switch_count = max(1, int(round(1 + lam * 4)))
     random_pool = np.arange(4, max(5, length - 4))
@@ -686,10 +787,10 @@ def _generate_time_varying_seasonality(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     t = np.arange(length, dtype=float)
     primary_period = max(4, season_length)
     slow_period = max(primary_period * 5, primary_period + 1)
@@ -720,10 +821,10 @@ def _generate_long_memory_nonlinear(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, slow, _ = _base_features(length, season_length)
     values = np.zeros((length, target_dim))
     phi = 0.65 + 0.22 * lam
@@ -744,10 +845,10 @@ def _generate_intermittent_heteroskedastic(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, _, trend = _base_features(length, season_length)
     event_prob = 0.04 + 0.1 * lam
     bursts = rng.random((length, target_dim)) < event_prob
@@ -762,10 +863,10 @@ def _generate_common_factor(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, slow, trend = _base_features(length, season_length)
     ar = np.zeros(length)
     for idx in range(1, length):
@@ -781,12 +882,12 @@ def _generate_lead_lag_coupling(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     max_lag = max(1, min(max(2, season_length // 3), 8 + int(10 * lam)))
-    values, _, _ = _generate_common_factor(length + max_lag, target_dim, season_length, difficulty, rng)
+    values, _, _ = _generate_common_factor(length + max_lag, target_dim, season_length, intensity, rng)
     weights = rng.uniform(0.15, 0.45 + 0.25 * lam, size=target_dim)
     lags = rng.integers(1, max_lag + 1, size=target_dim)
     coupled = values.copy()
@@ -803,10 +904,10 @@ def _generate_coherent_regime_shift(
     context_length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, slow, trend = _base_features(length, season_length)
     shift_low = min(max(1, int(context_length)), length - 1)
     shift_at = int(rng.integers(shift_low, length)) if shift_low < length else length - 1
@@ -821,10 +922,10 @@ def _generate_hierarchical_coherence(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     seasonal, slow, trend = _base_features(length, season_length)
     t = np.arange(length, dtype=float)
     child_count = max(2, target_dim - 1)
@@ -866,10 +967,10 @@ def _generate_covariate_response(
     length: int,
     target_dim: int,
     season_length: int,
-    difficulty: int,
+    intensity: int,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray]:
-    lam = _difficulty_lambda(difficulty)
+    lam = _intensity_lambda(intensity)
     t = np.arange(length, dtype=float)
     weather = np.sin(2 * np.pi * t / max(8, season_length * 2)) + rng.normal(0.0, 0.08, size=length)
     event = np.zeros(length)
@@ -897,8 +998,12 @@ def _generate_covariate_response(
     )
 
 
+def _intensity_lambda(intensity: int) -> float:
+    return (int(intensity) - 1) / 4
+
+
 def _difficulty_lambda(difficulty: int) -> float:
-    return (int(difficulty) - 1) / 4
+    return _intensity_lambda(difficulty)
 
 
 def _standardize_by_context(values: np.ndarray, context_length: int) -> np.ndarray:
@@ -933,29 +1038,105 @@ def _normalize_covariates(covariates: np.ndarray, context_length: int) -> np.nda
     return normalized
 
 
-def _realized_features(target: np.ndarray, covariates: np.ndarray | None, season_length: int) -> dict[str, float]:
+def _realized_features(
+    target: np.ndarray,
+    covariates: np.ndarray | None,
+    season_length: int,
+    context_length: int,
+) -> dict[str, float]:
     features = {
         "target_mean_abs": float(np.mean(np.abs(target))),
         "target_std_mean": float(np.mean(target.std(axis=0))),
         "target_max_abs": float(np.max(np.abs(target))),
     }
     features.update(_target_profile_features(target, season_length))
+    features.update(_structural_univariate_features(np.mean(target, axis=1), season_length))
     if target.shape[1] > 1:
-        corr = np.nan_to_num(np.corrcoef(target.T), nan=0.0)
-        off_diag = corr[~np.eye(corr.shape[0], dtype=bool)]
-        features["avg_abs_target_corr"] = float(np.mean(np.abs(off_diag))) if off_diag.size else 0.0
+        features.update(_multivariate_profile_features(target))
     if target.shape[1] > 2:
         hierarchy_residual = target[:, 0] - np.sum(target[:, 1:], axis=1)
         features["hierarchy_residual_mean_abs"] = float(np.mean(np.abs(hierarchy_residual)))
     if covariates is not None and covariates.size:
-        scores: list[float] = []
-        for cov_idx in range(covariates.shape[1]):
-            for target_idx in range(target.shape[1]):
-                corr_value = np.corrcoef(covariates[:, cov_idx], target[:, target_idx])[0, 1]
-                if np.isfinite(corr_value):
-                    scores.append(abs(float(corr_value)))
-        features["avg_abs_covariate_target_corr"] = float(np.mean(scores)) if scores else 0.0
+        features.update(_covariate_profile_features(target, covariates, context_length))
     return features
+
+
+def _structural_univariate_features(values: np.ndarray, season_length: int) -> dict[str, float]:
+    y = _robust_scale(np.asarray(values, dtype=float))
+    n = y.size
+    if n < 12:
+        return {}
+    min_seg = max(6, min(24, n // 8))
+    level_scores: list[float] = []
+    volatility_scores: list[float] = []
+    std_all = float(np.std(y)) or 1.0
+    for cut in range(min_seg, n - min_seg):
+        left = y[:cut]
+        right = y[cut:]
+        level_scores.append(abs(float(np.mean(left) - np.mean(right))) / std_all)
+        volatility_scores.append(abs(float(np.std(left) - np.std(right))) / std_all)
+    seasonal_profile = _phase_profile(y, season_length)
+    half = max(1, n // 2)
+    seasonal_left = _phase_profile(y[:half], season_length)
+    seasonal_right = _phase_profile(y[half:], season_length)
+    diff = np.diff(y)
+    return {
+        "level_shift_strength": float(max(level_scores)) if level_scores else 0.0,
+        "volatility_shift_strength": float(max(volatility_scores)) if volatility_scores else 0.0,
+        "change_point_shift_energy": float(np.mean(sorted(level_scores, reverse=True)[:3])) if level_scores else 0.0,
+        "burst_rate": float(np.mean(np.abs(y) > 3.0)),
+        "diff_spike_rate": float(np.mean(np.abs(_robust_scale(diff)) > 3.0)) if diff.size else 0.0,
+        "multi_period_score": _multi_period_score(y, season_length),
+        "seasonal_drift_score": float(np.mean(np.abs(seasonal_left - seasonal_right))) if seasonal_left.size and seasonal_right.size else 0.0,
+        "seasonal_amplitude_cv": float(np.std(np.abs(seasonal_profile)) / (np.mean(np.abs(seasonal_profile)) + 1e-9)) if seasonal_profile.size else 0.0,
+        "nonlinear_lag1_gain": _nonlinear_lag1_gain(y),
+    }
+
+
+def _multivariate_profile_features(target: np.ndarray) -> dict[str, float]:
+    centered = target - np.mean(target, axis=0, keepdims=True)
+    corr = np.nan_to_num(np.corrcoef(centered.T), nan=0.0)
+    off_diag = corr[~np.eye(corr.shape[0], dtype=bool)]
+    singular = np.linalg.svd(centered, full_matrices=False, compute_uv=False)
+    variance = singular**2
+    total = float(np.sum(variance))
+    explained = variance / total if total > 1e-12 else np.zeros_like(variance)
+    entropy = -float(np.sum([value * np.log(value) for value in explained if value > 1e-12]))
+    return {
+        "avg_abs_target_corr": float(np.mean(np.abs(off_diag))) if off_diag.size else 0.0,
+        "pca_top1_explained": float(explained[0]) if explained.size else 0.0,
+        "pca_top2_explained": float(np.sum(explained[:2])) if explained.size else 0.0,
+        "effective_factor_rank": float(np.exp(entropy)) if explained.size else 0.0,
+        "lead_lag_peak_abs": _lead_lag_peak_abs(target),
+    }
+
+
+def _covariate_profile_features(target: np.ndarray, covariates: np.ndarray, context_length: int) -> dict[str, float]:
+    scores: list[float] = []
+    future_scores: list[float] = []
+    for cov_idx in range(covariates.shape[1]):
+        for target_idx in range(target.shape[1]):
+            corr_value = _safe_corr(covariates[:, cov_idx], target[:, target_idx])
+            if np.isfinite(corr_value):
+                scores.append(abs(float(corr_value)))
+            if context_length < len(target):
+                future_corr = _safe_corr(covariates[context_length:, cov_idx], target[context_length:, target_idx])
+                if np.isfinite(future_corr):
+                    future_scores.append(abs(float(future_corr)))
+    event_lifts: list[float] = []
+    for cov_idx in range(covariates.shape[1]):
+        column = covariates[:, cov_idx]
+        unique = np.unique(column)
+        if unique.size <= 3 and np.any(column > 0):
+            active = column > 0
+            inactive = ~active
+            if active.any() and inactive.any():
+                event_lifts.append(abs(float(np.mean(target[active]) - np.mean(target[inactive]))))
+    return {
+        "avg_abs_covariate_target_corr": float(np.mean(scores)) if scores else 0.0,
+        "future_abs_covariate_target_corr": float(np.mean(future_scores)) if future_scores else 0.0,
+        "event_lift_abs": float(np.mean(event_lifts)) if event_lifts else 0.0,
+    }
 
 
 def _target_profile_features(target: np.ndarray, season_length: int) -> dict[str, float]:
@@ -993,6 +1174,75 @@ def _single_target_profile(values: np.ndarray, season_length: int) -> dict[str, 
         "outlier_rate": _outlier_rate(scaled),
         "spike_rate": _spike_rate(scaled),
     }
+
+
+def _phase_profile(values: np.ndarray, season_length: int) -> np.ndarray:
+    if season_length < 2 or values.size < season_length:
+        return np.asarray([], dtype=float)
+    period = int(season_length)
+    phases = np.arange(values.size) % period
+    profile = np.asarray(
+        [
+            float(np.mean(values[phases == phase])) if np.any(phases == phase) else 0.0
+            for phase in range(period)
+        ],
+        dtype=float,
+    )
+    return profile - float(np.mean(profile))
+
+
+def _multi_period_score(values: np.ndarray, season_length: int) -> float:
+    if values.size < 8:
+        return 0.0
+    centered = values - float(np.mean(values))
+    spectrum = np.abs(np.fft.rfft(centered)) ** 2
+    if spectrum.size <= 2:
+        return 0.0
+    spectrum[0] = 0.0
+    total = float(np.sum(spectrum))
+    if total <= 1e-12:
+        return 0.0
+    primary_index = int(round(values.size / max(2, season_length)))
+    exclude = {idx for idx in range(max(1, primary_index - 1), min(spectrum.size, primary_index + 2))}
+    secondary = np.asarray([value for idx, value in enumerate(spectrum) if idx not in exclude and idx > 0], dtype=float)
+    return float(np.max(secondary) / total) if secondary.size else 0.0
+
+
+def _nonlinear_lag1_gain(values: np.ndarray) -> float:
+    if values.size < 8:
+        return 0.0
+    x = values[:-1]
+    y = values[1:]
+    linear = np.column_stack([np.ones_like(x), x])
+    nonlinear = np.column_stack([np.ones_like(x), x, x**2, np.sin(x)])
+    return max(0.0, _r2(y, nonlinear) - _r2(y, linear))
+
+
+def _r2(y: np.ndarray, design: np.ndarray) -> float:
+    try:
+        coeffs = np.linalg.lstsq(design, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return 0.0
+    fitted = design @ coeffs
+    denom = float(np.sum((y - float(np.mean(y))) ** 2))
+    if denom <= 1e-12:
+        return 0.0
+    return float(1.0 - np.sum((y - fitted) ** 2) / denom)
+
+
+def _lead_lag_peak_abs(values: np.ndarray, max_lag: int = 12) -> float:
+    if values.shape[1] < 2:
+        return 0.0
+    peaks: list[float] = []
+    lag_limit = min(max_lag, max(1, values.shape[0] // 4))
+    for left in range(values.shape[1]):
+        for right in range(values.shape[1]):
+            if left == right:
+                continue
+            for lag in range(1, lag_limit + 1):
+                peaks.append(abs(_safe_corr(values[:-lag, left], values[lag:, right])))
+    finite = [value for value in peaks if np.isfinite(value)]
+    return float(max(finite)) if finite else 0.0
 
 
 def _robust_scale(values: np.ndarray) -> np.ndarray:
@@ -1064,6 +1314,19 @@ def _mean_abs_autocorrelation(values: np.ndarray, max_lag: int) -> float:
         return 0.0
     values_by_lag = [abs(_autocorrelation(values, lag)) for lag in range(1, max_lag + 1)]
     return float(np.mean(values_by_lag)) if values_by_lag else 0.0
+
+
+def _safe_corr(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=float)
+    right = np.asarray(right, dtype=float)
+    if left.size != right.size or left.size < 3:
+        return 0.0
+    left = left - float(np.mean(left))
+    right = right - float(np.mean(right))
+    denom = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if denom <= 1e-12:
+        return 0.0
+    return float(np.dot(left, right) / denom)
 
 
 def _outlier_rate(values: np.ndarray) -> float:

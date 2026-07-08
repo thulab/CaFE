@@ -22,7 +22,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
             "context_length": 16,
             "horizon": 4,
             "sample_count": 3,
-            "difficulty": 3,
+            "intensity": 3,
             "season_length": 8,
             "target_dim": 2,
             "seed": 42,
@@ -42,18 +42,33 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert trend.target_dim == 1
         assert covariate.target_dim == 2
         assert covariate.covariate_columns == ["weather", "event"]
-        assert covariate.generation_config["anchor_mode"] == "fixed_mock"
+        assert covariate.generation_config["intensity"] == 3
+        assert covariate.generation_config["difficulty"] == 3
+        assert covariate.generation_config["anchor_mode"] == "profile_calibrated"
+        assert covariate.generation_config["anchor_profiles"] == [
+            "m4_hourly_daily_96ctx",
+            "m4_hourly_daily_168ctx",
+            "m4_hourly_weekly",
+            "us_births_weekly",
+            "us_births_annual_diagnostic",
+        ]
 
         trend_sample = session.exec(select(SampleIndex).where(SampleIndex.shard_id == trend.shard_id)).first()
         assert trend_sample is not None
         trend_metadata = trend_sample.sample_metadata
+        assert trend_metadata["intensity"] == 3
+        assert trend_metadata["difficulty"] == 3
         assert trend_metadata["latent_params"]["generator_version"] == "v2-pilot"
         assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v1"
+        assert "trend_strength" in trend_metadata["latent_params"]["acceptance"]["validation"]["target_features"]
         assert "trend_strength" in trend_metadata["realized_features"]
+        assert "nonlinear_lag1_gain" in trend_metadata["realized_features"]
 
         sample = session.exec(select(SampleIndex).where(SampleIndex.shard_id == covariate.shard_id)).first()
         assert sample is not None
         assert sample.sample_metadata["capability_id"] == "covariate_response"
+        assert "avg_abs_covariate_target_corr" in sample.sample_metadata["realized_features"]
 
     sample_list = client.get(f"/shards/{body['shard_ids'][1]}/samples").json()
     sample_id = sample_list["items"][0]["sample_id"]
@@ -110,7 +125,7 @@ def test_regime_capabilities_generate_json_serializable_metadata(app, client):
             "context_length": 16,
             "horizon": 4,
             "sample_count": 2,
-            "difficulty": 4,
+            "intensity": 4,
             "season_length": 8,
             "target_dim": 3,
             "seed": 13,
@@ -143,7 +158,7 @@ def test_new_synthetic_capabilities_generate_expected_metadata(app, client):
             "context_length": 24,
             "horizon": 6,
             "sample_count": 2,
-            "difficulty": 4,
+            "intensity": 4,
             "season_length": 8,
             "target_dim": 3,
             "seed": 23,

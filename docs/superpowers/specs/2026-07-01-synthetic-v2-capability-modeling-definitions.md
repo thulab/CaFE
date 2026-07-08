@@ -4,7 +4,7 @@
 
 ## 定位
 
-这份文档整理当前 synthetic v2 生成器中可用于论文实验的能力维度。目标不是把 difficulty 解释成“模型一定更难”，而是把每个维度定义成一个可控的数据结构扰动，再用真实模型实验观察模型响应。
+这份文档整理当前 synthetic v2 生成器中可用于论文实验的能力维度。目标不是把 `intensity` 解释成“模型一定更难”，而是把每个维度定义成一个可控的数据结构强度，再用真实模型实验观察模型响应。
 
 当前实验表见：
 
@@ -17,7 +17,7 @@
 
 1. 合成序列先用显式公式生成，再按 context 归一化，保证不同样本尺度可比。
 2. `trend` / `multi_seasonal` 已接入 M4 Hourly profile 的 acceptance caps；其余维度当前是 v2 pilot，已有真实模型响应实验，但还需要补真实分布 cap。
-3. difficulty 控制的是目标结构强度，例如切换次数、非线性强度、burst rate、因子结构、协变量效应；它不等同于观测到的模型误差强度。
+3. `intensity` 控制的是目标结构强度，例如切换次数、非线性强度、burst rate、因子结构、协变量效应；它不等同于观测到的模型误差强度，也不要求深度模型 MAE 随强度单调上升。
 4. 对 horizon 内无先兆的 shift，不应在论文里简单称为“可预测能力”，更准确是结构突变鲁棒性或快速适应能力。
 
 ## 维度定义
@@ -32,11 +32,11 @@
 y_t = a * x_t + b * (x_t^2 - c) + s * sin(2*pi*t/P) + slow_t + eps_t
 ```
 
-难度控制：提高 `slope_abs`、`curvature_abs` 和 `trend_strength`，同时降低噪声，避免把难度伪装成随机扰动。
+强度控制：提高 `slope_abs`、`curvature_abs` 和 `trend_strength`，同时降低噪声，避免把结构强度伪装成随机扰动。
 
 测什么：模型是否能外推趋势方向和曲率，而不是复制 last value 或单周期季节位点。
 
-实验观察：真实模型响应稳定，`Chronos-2` 平均 MAE 最低。高难度下 Timer 系列接近或略差于 seasonal naive，说明强趋势/曲率外推仍有区分度。
+实验观察：真实模型响应稳定，`Chronos-2` 平均 MAE 最低。高强度下 Timer 系列接近或略差于 seasonal naive，说明强趋势/曲率外推仍有区分度。
 
 论文表述风险：当前序列仍保留明显季节残差，应称为 “trend with seasonal residue”。
 
@@ -53,13 +53,13 @@ y_t = A1*sin(2*pi*t/P1 + phi1)
     + eps_t
 ```
 
-难度控制：提高次级/三级周期振幅，让单周期 seasonal naive 越来越不够用。
+强度控制：提高次级/三级周期振幅，让单周期 seasonal naive 越来越不够用。
 
 测什么：模型是否能识别多周期叠加和相位，而不是只复用一个季节周期。
 
-实验观察：seasonal naive MAE 随 difficulty 明显增大，而深度模型 MAE 反而保持很低；这说明高难度数据更规则、更可学习，并不矛盾。`toto2.0` 平均 MAE 最低。
+实验观察：seasonal naive MAE 随 intensity 明显增大，而深度模型 MAE 反而保持很低；这说明高强度数据更规则、更可学习，并不矛盾。`toto2.0` 平均 MAE 最低。
 
-论文表述风险：`seasonal_strength` 本身不适合作为难度唯一解释，应报告 “single-period seasonal naive degradation” 作为行为证据。
+论文表述风险：`seasonal_strength` 本身不适合作为结构强度唯一解释，应报告 “multi-period score” 和 “single-period seasonal naive degradation” 作为行为证据。
 
 ### `time_varying_seasonality`
 
@@ -73,7 +73,7 @@ phi_t = phi0 + drift(lambda) * t^1.35
 y_t = A_t * sin(2*pi*t/P + phi_t) + slow_t + eps_t
 ```
 
-难度控制：提高振幅变化幅度 `amplitude_delta_mean` 和相位漂移 `phase_drift_cycles`。
+强度控制：提高振幅变化幅度 `amplitude_delta_mean` 和相位漂移 `phase_drift_cycles`。
 
 测什么：模型是否能处理非平稳季节性。它不同于 `multi_seasonal`：这里周期数量不变，难点是同一周期的形态在变。
 
@@ -91,11 +91,11 @@ y_t = A_t * sin(2*pi*t/P + phi_t) + slow_t + eps_t
 y_t = level_k + seasonal_t + slow_t + eps_t(sigma_k),  t in segment k
 ```
 
-难度控制：提高切换数量、level 方差和 segment volatility。
+强度控制：提高切换数量、level 方差和 segment volatility。
 
 测什么：模型面对结构突变时是否过度平滑，能否在新水平/新波动率下快速适应。
 
-实验观察：Timer 修复后本轮全部模型成功；`Timer-3.0` 平均 MAE 最低。误差随 difficulty 不单调，因为切点位置、level 方向和 horizon 内是否可观察共同影响可预测性。
+实验观察：Timer 修复后本轮全部模型成功；`Timer-3.0` 平均 MAE 最低。误差随 intensity 不单调，因为切点位置、level 方向和 horizon 内是否可观察共同影响可预测性。
 
 论文表述风险：如果 shift 没有先兆，它更像 robustness stress test；后续若要测“识别将发生的 regime change”，应加入 leading covariate 或 pre-shift warning pattern。
 
@@ -111,11 +111,11 @@ y_t = phi(lambda) * y_{t-1}
     + seasonal_t + slow_t + eps_t
 ```
 
-难度控制：提高 `phi` 和 nonlinear strength。
+强度控制：提高 `phi` 和 nonlinear strength。
 
 测什么：模型是否能保留较长上下文状态，并处理非线性自反馈。
 
-实验观察：`Timer-3.5` 平均 MAE 最低。difficulty 与 MAE 不单调，尤其 d5 反而更容易，说明当前增强更像“非线性持久性强度”，不等同于严格预测难度。
+实验观察：`Timer-3.5` 平均 MAE 最低。intensity 与 MAE 不单调，尤其 i5 反而更容易，说明当前增强更像“非线性持久性强度”，不等同于严格预测难度。
 
 论文表述风险：当前不是 ARFIMA / fractional differencing 意义上的严格 long memory。论文里建议命名为 “nonlinear persistence”，除非后续补 Hurst 指数或 ACF hyperbolic decay 验收。
 
@@ -132,11 +132,11 @@ sigma_t = base + amp(lambda) * seasonal_volatility_t
 y_t = trend_t + seasonal_t + burst_t + eps_t(sigma_t)
 ```
 
-难度控制：提高 burst 频率/幅度和 volatility 变化。
+强度控制：提高 burst 频率/幅度和 volatility 变化。
 
 测什么：模型在 intermittent demand、稀疏突发、重尾误差和异方差下的稳健性。
 
-实验观察：`Chronos-2` 和 `toto2.0` 几乎并列最好。`noise_ratio`、`outlier_rate`、`spike_rate` 随 difficulty 增强明显，但 `target_max_abs` 偏高。
+实验观察：`Chronos-2` 和 `toto2.0` 几乎并列最好。`noise_ratio`、`outlier_rate`、`spike_rate` 随 intensity 增强明显，但 `target_max_abs` 偏高。
 
 论文表述风险：标准化后它不再是严格非负需求序列。后续最好用 M5 / 零售类 intermittent demand 的真实分布重新定 cap，并增加 burst recall 或 event-window error 指标。
 
@@ -151,7 +151,7 @@ F_t = [seasonal_t, slow_t, trend_t, ar_t]
 Y_t = F_t * B^T + E_t
 ```
 
-难度控制：提高 factor rank 和噪声水平。
+强度控制：提高 factor rank 和噪声水平。
 
 测什么：模型是否能利用跨通道共享结构，而不是把每个 channel 当成独立单变量序列。
 
@@ -169,11 +169,11 @@ Y_t = F_t * B^T + E_t
 y_{t,j} = base_{t,j} + w_j(lambda) * y_{t-lag_j, leader(j)}
 ```
 
-难度控制：主要提高 coupling strength；`max_lag` 由 `season_length` 上限约束，默认 `season_length=24` 时会被 `season_length // 3 = 8` 卡住，因此不随 difficulty 增长。更长周期配置下，`8 + floor(10 * lambda)` 才可能让可选滞后范围随 difficulty 扩大。
+强度控制：主要提高 coupling strength；`max_lag` 由 `season_length` 上限约束，默认 `season_length=24` 时会被 `season_length // 3 = 8` 卡住，因此不随 intensity 增长。更长周期配置下，`8 + floor(10 * lambda)` 才可能让可选滞后范围随 intensity 扩大。
 
 测什么：模型是否能识别跨通道滞后依赖，利用先行 channel 提前预测滞后 channel。
 
-实验观察：`toto2.0` 明显优于 naive baselines。MAE 随 difficulty 有增长，说明 lag/coupling 强化带来一定挑战。
+实验观察：`toto2.0` 明显优于 naive baselines。MAE 随 intensity 有增长，说明 lag/coupling 强化带来一定挑战。
 
 论文表述风险：common factor 可能混淆 lag signal。后续应增加 lagged cross-correlation peak 验收，并做 leader permutation ablation。
 
@@ -187,11 +187,11 @@ y_{t,j} = base_{t,j} + w_j(lambda) * y_{t-lag_j, leader(j)}
 Y_t = common_t + E_t + 1[t >= tau] * delta
 ```
 
-难度控制：提高 shift vector norm 和噪声。
+强度控制：提高 shift vector norm 和噪声。
 
 测什么：模型面对系统级多通道冲击时，是否能统一调整多个目标，而不是逐通道孤立处理。
 
-实验观察：`toto2.0` 优于 naive baselines，但整体误差高于 common factor / lead-lag。难度增强后 MAE 上升明显。
+实验观察：`toto2.0` 优于 naive baselines，但整体误差高于 common factor / lead-lag。强度增强后 MAE 上升明显。
 
 论文表述风险：这里的 “coherent” 指多目标共同 regime shift，不是层级加总一致性。后者由 `hierarchical_coherence` 单独覆盖。
 
@@ -207,11 +207,11 @@ parent_t = sum_j child_{j,t}
 Y_t = [parent_t, child_1_t, child_2_t, ...]
 ```
 
-难度控制：提高 child shock count 和 shock strength。
+强度控制：提高 child shock count 和 shock strength。
 
 测什么：模型是否既能准确预测各层级目标，又能输出满足 parent-child 加总关系的预测。
 
-实验观察：输入样本的 `hierarchy_residual_mean_abs` 接近 0；`toto2.0` 的预测 `coherence_mae` 随 difficulty 上升，从 d1 的 0.0892 到 d5 的 0.2141。该维度有明确创新价值，因为它把 forecast accuracy 和 structural validity 分开看。
+实验观察：输入样本的 `hierarchy_residual_mean_abs` 接近 0；`toto2.0` 的预测 `coherence_mae` 随 intensity 上升，从 i1 的 0.0892 到 i5 的 0.2141。该维度有明确创新价值，因为它把 forecast accuracy 和 structural validity 分开看。
 
 论文表述风险：当前平台主指标仍是 MAE/MASE，`coherence_mae` 只在实验脚本中生成；若要进入正式评测平台，应把 coherence metric 注册进 MetricDefinition。
 
@@ -228,11 +228,11 @@ y_t = seasonal_t + slow_t + trend_t
     + eps_t
 ```
 
-难度控制：提高 weather/event effect size 和 event count。
+强度控制：提高 weather/event effect size 和 event count。
 
 测什么：模型是否真正使用 known-future covariates，而不是只从 target history 外推。
 
-实验观察：当前只有 `Chronos-2` 支持该协议，且明显优于 naive / seasonal naive。生成后 `avg_abs_covariate_target_corr` 随 difficulty 从 0.4097 增至 0.5709。
+实验观察：当前只有 `Chronos-2` 支持该协议，且明显优于 naive / seasonal naive。生成后 `avg_abs_covariate_target_corr` 随 intensity 从 0.4097 增至 0.5709。
 
 论文表述风险：仅看完整窗口 correlation 会高估能力。后续应增加 no-covariate、future-covariate permutation、event-only ablation。
 

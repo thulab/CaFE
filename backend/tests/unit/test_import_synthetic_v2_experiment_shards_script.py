@@ -34,7 +34,7 @@ def test_import_creates_platform_shards_and_is_idempotent(tmp_path):
     config = module.ImportConfig(
         name="import smoke",
         capabilities=("trend",),
-        difficulties=(1,),
+        intensities=(1,),
         sample_count=2,
         context_length=16,
         horizon=4,
@@ -63,7 +63,11 @@ def test_import_creates_platform_shards_and_is_idempotent(tmp_path):
         assert len(shards) == 1
         assert len(samples) == 2
         assert shards[0].generation_config["schema_version"] == "synthetic_v2_platform_import.v1"
-        assert samples[0].sample_metadata["experiment_sample_id"] == "trend-d1-000"
+        assert shards[0].generation_config["intensity"] == 1
+        assert shards[0].generation_config["difficulty"] == 1
+        assert samples[0].sample_metadata["experiment_sample_id"] == "trend-i1-000"
+        assert samples[0].sample_metadata["intensity"] == 1
+        assert samples[0].sample_metadata["difficulty"] == 1
 
         preview = SampleStore().read_by_ref(session, samples[0].storage_ref)
         assert preview["target_column_names"] == ["target_0"]
@@ -78,7 +82,7 @@ def test_config_can_be_built_from_experiment_summary(tmp_path):
         """
 {
   "requested_capabilities": ["common_factor"],
-  "sample_count_per_capability_difficulty": 3,
+  "sample_count_per_capability_intensity": 3,
   "context_length": 24,
   "horizon": 6,
   "season_length": 12
@@ -90,6 +94,7 @@ def test_config_can_be_built_from_experiment_summary(tmp_path):
         summary=summary,
         name=None,
         capabilities=None,
+        intensities=[2],
         difficulties=[2],
         sample_count=None,
         context_length=None,
@@ -107,7 +112,7 @@ def test_config_can_be_built_from_experiment_summary(tmp_path):
 
     assert config.name == "Imported " + summary.parent.name
     assert config.capabilities == ("common_factor",)
-    assert config.difficulties == (2,)
+    assert config.intensities == (2,)
     assert config.sample_count == 3
     assert config.context_length == 24
     assert config.horizon == 6

@@ -84,14 +84,15 @@ def test_render_report_includes_model_status_and_tables():
     summaries = []
     for model_id in ("naive", "seasonal_naive", "Timer-3.5"):
         for capability_id in capabilities:
-            for difficulty in range(1, 6):
+            for intensity in range(1, 6):
                 summaries.append(
                     {
                         "model_id": model_id,
                         "capability_id": capability_id,
-                        "difficulty": difficulty,
+                        "intensity": intensity,
+                        "difficulty": intensity,
                         "sample_count": 2,
-                        "metrics": {"mae": float(difficulty), "mase": float(difficulty) / 2},
+                        "metrics": {"mae": float(intensity), "mase": float(intensity) / 2},
                         "features": {"trend_strength": 0.1},
                     }
                 )
@@ -100,7 +101,7 @@ def test_render_report_includes_model_status_and_tables():
         "context_length": 168,
         "horizon": 24,
         "season_length": 24,
-        "sample_count_per_capability_difficulty": 2,
+        "sample_count_per_capability_intensity": 2,
         "batch_size": 6,
         "requested_models": ["Timer-3.5", "timesfm2.5"],
         "requested_capabilities": capabilities,
@@ -118,4 +119,5 @@ def test_render_report_includes_model_status_and_tables():
     assert "Timer-3.5" in report
     assert "timesfm2.5 (inactive)" in report
     assert "`regime_switching`" in report
+    assert "MAE i1" in report
     assert "--capabilities regime_switching" in report

@@ -33,7 +33,7 @@
 - 缺失值和异常值处理。
 - 置信度或失败标记：例如无法稳定分解、序列过短、全常数。
 
-第一版应优先使用显式特征，因为它们能直接支撑“能力维度”的定义、难度分层和生成后验收。
+第一版应优先使用显式特征，因为它们能直接支撑“能力维度”的定义、结构强度分层和生成后验收。
 
 ### 2. 什么时候需要引入深度模型？
 
@@ -164,7 +164,7 @@ controlled_features:
   - seasonal_strength
   - noise_ratio
   - outlier_rate
-difficulty:
+intensity:
   1: target feature near bucket p50
   3: target feature near bucket p75
   5: target feature near bucket p90/p95
@@ -180,7 +180,7 @@ acceptance:
 
 1. 生成候选 sample。
 2. 重新抽取特征。
-3. 判断目标特征是否命中难度区间。
+3. 判断目标特征是否命中结构强度区间。
 4. 判断目标特征是否没有超过真实分布的上限倍数，例如默认不超过 `p95 * multiplier`；`trend_strength` / `seasonal_strength` 等天然落在 `[0, 1]` 的特征还必须夹到 `1.0`。
 5. 判断非目标特征是否仍在真实分布范围内。
 6. 不通过则 resample / adjust / reject。
@@ -301,7 +301,7 @@ US Births smoke 观察：
 
 检查：
 
-- difficulty 是否与 baseline error 单调相关。
+- intensity 是否与目标结构特征单调相关；naive / seasonal naive 的误差响应作为行为诊断，不要求深度模型误差单调。
 - 不同模型短板是否符合能力维度预期。
 - synthetic 排名是否和真实 anchor 子集完全脱节。
 

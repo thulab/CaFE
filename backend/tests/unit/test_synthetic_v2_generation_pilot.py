@@ -9,9 +9,9 @@ from app.services.synthetic_generation_service import (
 )
 
 
-def test_trend_pilot_features_are_monotonic_and_capped():
+def test_trend_pilot_features_are_monotonic_by_intensity_and_capped():
     summaries = []
-    for difficulty in range(1, 6):
+    for intensity in range(1, 6):
         rows = [
             _generate_accepted_sample_values(
                 "trend",
@@ -19,8 +19,8 @@ def test_trend_pilot_features_are_monotonic_and_capped():
                 168,
                 1,
                 24,
-                difficulty,
-                _seed_for(321, "trend", difficulty * 1000 + sample_index),
+                intensity,
+                _seed_for(321, "trend", intensity * 1000 + sample_index),
             )[3]
             for sample_index in range(96)
         ]
@@ -41,9 +41,9 @@ def test_trend_pilot_features_are_monotonic_and_capped():
     assert summaries[-1]["max_noise_ratio"] <= PILOT_ACCEPTANCE_CAPS["trend"]["noise_ratio"]
 
 
-def test_multi_seasonal_pilot_degrades_single_period_seasonal_naive():
+def test_multi_seasonal_intensity_degrades_single_period_seasonal_naive():
     seasonal_naive_mae = []
-    for difficulty in range(1, 6):
+    for intensity in range(1, 6):
         errors = []
         for sample_index in range(96):
             values, latent_params, _, features = _generate_accepted_sample_values(
@@ -52,13 +52,16 @@ def test_multi_seasonal_pilot_degrades_single_period_seasonal_naive():
                 168,
                 1,
                 24,
-                difficulty,
-                _seed_for(321, "multi_seasonal", difficulty * 1000 + sample_index),
+                intensity,
+                _seed_for(321, "multi_seasonal", intensity * 1000 + sample_index),
             )
             history = values[:168, 0]
             actual = values[168:, 0]
             errors.append(float(np.mean(np.abs(actual - history[-24:]))))
+            assert latent_params["intensity"] == intensity
             assert latent_params["acceptance"]["accepted"] is True
+            assert latent_params["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v1"
+            assert "multi_period_score" in latent_params["acceptance"]["validation"]["target_features"]
             assert features["noise_ratio"] <= PILOT_ACCEPTANCE_CAPS["multi_seasonal"]["noise_ratio"]
         seasonal_naive_mae.append(float(np.mean(errors)))
 

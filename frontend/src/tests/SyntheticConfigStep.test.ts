@@ -68,6 +68,7 @@ describe('SyntheticConfigStep', () => {
       sample_count: 5,
       context_length: 60,
       horizon: 16,
+      intensity: 3,
     });
   });
 

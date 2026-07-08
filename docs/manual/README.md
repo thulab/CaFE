@@ -226,7 +226,7 @@ http://127.0.0.1:5173
    合成数据路径：
    - `Test case set name` 是生成集合的名称前缀；多选能力时，每个能力维度生成一个测试用例集。
    - `Capabilities` 可多选。当前内置能力包括趋势、多季节性、状态切换、长记忆非线性、间歇异方差、公共因子、lead-lag、协同状态切换和协变量响应。
-   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Difficulty`、`Season length`、`Target dimension`、`Seed`、`Frequency`。单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
+   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Season length`、`Target dimension`、`Seed`、`Frequency`。单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
    - `Covariate response` 会生成 known-future 协变量 `weather` 和 `event`，结果页会在目标预测图下方单独显示协变量曲线。
    - 点「Generate synthetic test cases」后，后端生成 synthetic shard，并自动预选到下一步。
    - 研究实验样本可用脚本导入到平台库，便于在前端查看样本曲线。例如：
@@ -235,10 +235,10 @@ http://127.0.0.1:5173
      uv run python ../scripts/import_synthetic_v2_experiment_shards.py \
        --summary ../runtime/research/synthetic-v2-univariate-capabilities-experiment/summary.json
      ```
-     脚本默认写入 `backend/runtime/tsbenchmark.db` 和 `backend/runtime/synthetic/imports/`，按 `capability × difficulty` 生成测试用例集；同一 summary 和参数重复执行会跳过已导入 shard，可加 `--allow-duplicates` 强制新建。
+     脚本默认写入 `backend/runtime/tsbenchmark.db` 和 `backend/runtime/synthetic/imports/`，按 `capability × intensity` 生成测试用例集；同一 summary 和参数重复执行会跳过已导入 shard，可加 `--allow-duplicates` 强制新建。旧参数名 `--difficulties` 仍作为兼容别名保留。
 
    如果第 2 步选择复用已有集合，本步只显示提示并继续到已有测试用例集选择。
-4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列、能力维度或 ID，并追加已有集合。列表详情会显示真实/合成类型、样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列，合成集合还会显示能力、难度和 seed。点「Create track from selected sets」后，系统基于所选集合创建评测赛道与默认榜单；合成集合会按能力维度自动拆成多个 capability block。
+4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列、能力维度或 ID，并追加已有集合。列表详情会显示真实/合成类型、样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列，合成集合还会显示能力、结构强度和 seed。点「Create track from selected sets」后，系统基于所选集合创建评测赛道与默认榜单；合成集合会按能力维度自动拆成多个 capability block。
 5. **Run models**：在模型列表里勾选一个或多个适配器（可一键「Select all」），点「Run」。多目标测试用例集会自动禁用不支持该目标维度的模型：后端和前端都按模型目录中的 `forecast_limits.max_target_count` 判断，`null` 视为原生多目标无限制。带协变量的测试用例集会自动禁用 `forecast_limits.max_covariate_count` 小于所选协变量数量的模型。系统创建 benchmarking run 并**每 5 秒轮询**一次进度——卡片上实时显示状态徽章、进度条与 模型/任务/样本 计数；样本进度按 `processed_samples`（成功 + 失败）推进，`completed_samples` 仅表示成功样本。REST 模式下未加载模型会在执行前自动加载；加载或推理失败会反映到 run 详情和报告里。若「失败样本」大于 0，可点击数字查看错误原因统计；再点某类原因的「查看样本」才加载分页明细，明细包含样本、模型、能力块和错误信息。终态后有权限的用户可点「重跑失败样本」，后端会创建后台重跑任务，运行详情页显示已处理/总数、成功、仍失败、待处理和当前阶段；刷新页面后仍能恢复进行中的重跑进度。重跑完成后会覆盖原失败行，并重新计算运行状态、报告和榜单。运行期间可点「Cancel」请求取消，页面会显示「正在取消」并继续轮询直到 run 变为 `cancelled`。
 6. **Open report**：run 到达非取消终态（`succeeded` / `partial_succeeded` / `failed`）并生成 report 后，向导自动跳到本步，给出「Open report」「View ranking」「Run detail」入口。`cancelled` run 不生成报告、不进入榜单，可从「Run detail」查看取消事件和已处理进度。
 

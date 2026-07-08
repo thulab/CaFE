@@ -97,7 +97,7 @@ def render_markdown(summaries: list[dict[str, Any]]) -> str:
 
 def experiment_lines(summaries: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "| Source | Capabilities | Target dim | Covariate dim | Samples / difficulty | Selected models |",
+        "| Source | Capabilities | Target dim | Covariate dim | Samples / intensity | Selected models |",
         "| --- | --- | ---: | ---: | ---: | --- |",
     ]
     for summary in summaries:
@@ -110,7 +110,7 @@ def experiment_lines(summaries: list[dict[str, Any]]) -> list[str]:
                     ", ".join(f"`{capability}`" for capability in summary.get("requested_capabilities", [])),
                     str(requirements.get("target_dim", 1)),
                     str(requirements.get("covariate_dim", 0)),
-                    str(summary.get("sample_count_per_capability_difficulty", "-")),
+                    str(summary.get("sample_count_per_capability_intensity", summary.get("sample_count_per_capability_difficulty", "-"))),
                     ", ".join(f"`{model}`" for model in summary.get("selected_models", [])) or "none",
                 ]
             )
@@ -159,7 +159,7 @@ def observation_lines(summaries: list[dict[str, Any]]) -> list[str]:
             "- `covariate_response` 当前按单目标 known-future covariates 跑，只有 `Chronos-2` 纳入主实验；AutoARIMA/Holt-Winters 小样本 dry run 显示慢或失败，未进入主表。",
             "- `regime_switching` 与 `coherent_regime_shift` 的 horizon 内切换带有不可预测成分，适合测鲁棒性和快速适应；如果论文要强调可预测能力，需要补先兆信号或 covariate shock 版本。",
             "- `long_memory_nonlinear` 当前生成的是非线性持久性，不是严格 fractional long-memory；论文命名应避免过度声称。",
-            "- `intermittent_heteroskedastic` 的 spike/outlier/noise 随难度增强明显，但 `target_max_abs` 会偏高；后续需要用真实 intermittent demand 分布重新定 cap。",
+            "- `intermittent_heteroskedastic` 的 spike/outlier/noise 随结构强度增强明显，但 `target_max_abs` 会偏高；后续需要用真实 intermittent demand 分布重新定 cap。",
         ]
     )
     return lines
@@ -167,7 +167,7 @@ def observation_lines(summaries: list[dict[str, Any]]) -> list[str]:
 
 def metric_table_lines(summaries: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "| Capability | Difficulty | Model | Target dim | Cov dim | Samples | Fail | MAE | MASE | MSE | MAE / SNaive | Coherence MAE |",
+        "| Capability | Intensity | Model | Target dim | Cov dim | Samples | Fail | MAE | MASE | MSE | MAE / SNaive | Coherence MAE |",
         "| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     rows = combined_rows(summaries)
@@ -177,7 +177,7 @@ def metric_table_lines(summaries: list[dict[str, Any]]) -> list[str]:
             + " | ".join(
                 [
                     f"`{row['capability_id']}`",
-                    str(row["difficulty"]),
+                    str(row["intensity"]),
                     f"`{row['model_id']}`",
                     str(row.get("target_dim", 1)),
                     str(row.get("covariate_dim", 0)),
@@ -199,22 +199,24 @@ def combined_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for summary in summaries:
         comparisons = {
-            (row["model_id"], row["capability_id"], int(row["difficulty"])): row
+            (row["model_id"], row["capability_id"], row_intensity(row)): row
             for row in summary.get("comparisons", [])
         }
         failures = {
-            (row["model_id"], row["capability_id"], int(row["difficulty"])): int(row.get("failed_count", 0))
+            (row["model_id"], row["capability_id"], row_intensity(row)): int(row.get("failed_count", 0))
             for row in summary.get("failure_counts", [])
         }
         seen: set[tuple[str, str, int]] = set()
         for item in summary.get("summaries", []):
-            key = (item["model_id"], item["capability_id"], int(item["difficulty"]))
+            intensity = row_intensity(item)
+            key = (item["model_id"], item["capability_id"], intensity)
             seen.add(key)
             comparison = comparisons.get(key, {})
             rows.append(
                 {
                     "capability_id": item["capability_id"],
-                    "difficulty": int(item["difficulty"]),
+                    "intensity": intensity,
+                    "difficulty": intensity,
                     "model_id": item["model_id"],
                     "target_dim": item.get("target_dim", summary.get("requirements", {}).get("target_dim", 1)),
                     "covariate_dim": item.get("covariate_dim", summary.get("requirements", {}).get("covariate_dim", 0)),
@@ -230,11 +232,12 @@ def combined_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for key, failed_count in failures.items():
             if key in seen:
                 continue
-            model_id, capability_id, difficulty = key
+            model_id, capability_id, intensity = key
             rows.append(
                 {
                     "capability_id": capability_id,
-                    "difficulty": difficulty,
+                    "intensity": intensity,
+                    "difficulty": intensity,
                     "model_id": model_id,
                     "target_dim": summary.get("requirements", {}).get("target_dim", 1),
                     "covariate_dim": summary.get("requirements", {}).get("covariate_dim", 0),
@@ -270,7 +273,11 @@ def summary_for_capability(summaries: list[dict[str, Any]], capability_id: str) 
 def sort_key(row: dict[str, Any]) -> tuple[int, int, int]:
     capability_rank = CAPABILITY_ORDER.index(row["capability_id"]) if row["capability_id"] in CAPABILITY_ORDER else len(CAPABILITY_ORDER)
     model_rank = MODEL_ORDER.index(row["model_id"]) if row["model_id"] in MODEL_ORDER else len(MODEL_ORDER)
-    return capability_rank, int(row["difficulty"]), model_rank
+    return capability_rank, row_intensity(row), model_rank
+
+
+def row_intensity(row: dict[str, Any]) -> int:
+    return int(row.get("intensity", row.get("difficulty")))
 
 
 def fmt(value: Any) -> str:

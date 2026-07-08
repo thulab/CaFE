@@ -110,7 +110,8 @@ export interface SyntheticShardGenerateDTO {
   context_length: number;
   horizon: number;
   sample_count: number;
-  difficulty: number;
+  intensity: number;
+  difficulty?: number;
   season_length: number;
   target_dim: number;
   seed: number;

@@ -96,7 +96,8 @@ const items = computed<SelectablePagedListItem[]>(() => shards.value.map((shard)
     const capabilityId = stringConfig(config.capability_id) || shard.capability_type || '';
     const capability = syntheticCapabilityLabel(capabilityId, stringConfig(config.capability_label), t);
     if (capability) meta.push(t('wizard.testCaseSetStep.capability', { capability }));
-    if (config.difficulty) meta.push(t('wizard.testCaseSetStep.difficulty', { difficulty: config.difficulty }));
+    const intensity = config.intensity ?? config.difficulty;
+    if (intensity) meta.push(t('wizard.testCaseSetStep.intensity', { intensity }));
     if (config.seed !== undefined) meta.push(t('wizard.testCaseSetStep.seed', { seed: config.seed }));
   }
   return {

@@ -17,7 +17,7 @@
 
 每个 synthetic sample 生成后都应重新抽取特征，并按下列规则验收：
 
-1. 目标特征随 `difficulty=1..5` 单调增强，允许小幅随机波动，但聚合均值必须单调。
+1. 目标特征随 `intensity=1..5`（结构强度）单调增强，允许小幅随机波动，但聚合均值必须单调。这里的强度不是“模型误差必须单调变差”的同义词。
 2. 目标特征不得超过真实分布上限倍数；例如主 anchor 的 `trend_strength` cap 为 `1.0`，`slope_abs` cap 为 `0.5314`，`curvature_abs` cap 为 `1.0135`。
 3. 非目标特征不得无意义爆炸。第一版先以 `noise_ratio <= anchor p95` 和 outlier/spike 不显著高于真实 p95 作为硬约束。
 4. 生成样本必须让 naive / seasonal naive 的 MASE 或 MAE 有有限值；若基线误差为 0，应退回 MAE 或跳过该样本。
@@ -62,14 +62,14 @@
 ### 控制特征
 
 - `seasonal_strength`：允许存在弱季节残差，但不能成为主导目标。
-- `noise_ratio`：不超过 anchor p95 附近，避免把难度伪装成噪声。
+- `noise_ratio`：不超过 anchor p95 附近，避免把结构强度伪装成噪声。
 - `outlier_rate` / `spike_rate`：不超过真实 p95 的宽松上限。
 
-### 难度映射
+### 强度映射
 
 第一版用主 anchor 的分位数做目标区间：
 
-| Difficulty | `trend_strength` target | `slope_abs` target | `curvature_abs` target |
+| Intensity | `trend_strength` target | `slope_abs` target | `curvature_abs` target |
 | ---: | --- | --- | --- |
 | 1 | p25 附近：0.04 | p25 附近：0.06 | p25 附近：0.02 |
 | 2 | p50 附近：0.17 | p50 附近：0.13 | p50 附近：0.07 |
@@ -77,13 +77,13 @@
 | 4 | p85-p90 插值 | p85-p90 插值 | p85-p90 插值 |
 | 5 | p95 附近，但不超过 cap | p95 附近，但不超过 cap | p95 附近，但不超过 cap |
 
-工程上不要求每个单样本精确命中所有三个特征，但样本集合均值应随难度单调增强，且难度 5 的目标特征不超过 cap。
+工程上不要求每个单样本精确命中所有三个特征，但样本集合均值应随结构强度单调增强，且 intensity 5 的目标特征不超过 cap。
 
 ### 预期基线响应
 
 - naive 对强趋势和曲率外推应明显变差。
 - seasonal naive 在强趋势样本上也应变差，因为它只复用历史季节位置。
-- 如果 seasonal naive 与 naive 都没有随 difficulty 变差，说明趋势增强没有进入 forecast horizon 或被标准化抵消。
+- 如果 seasonal naive 与 naive 都没有随 intensity 变差，说明趋势增强可能没有进入 forecast horizon、被标准化抵消，或更强结构反而更易学习。该响应只作为实验诊断，不作为强制生成验收。
 
 ## Capability: `multi_seasonal`
 
@@ -93,10 +93,10 @@
 
 ### 目标特征
 
-- `seasonal_strength`：基础周期性约束。主 anchor 上该特征 p50 已很高，因此高难度不要求它继续升高，只要求保持在真实 p05 以上，避免退化成纯噪声。
+- `seasonal_strength`：基础周期性约束。主 anchor 上该特征 p50 已很高，因此高强度不要求它继续升高，只要求保持在真实 p05 以上，避免退化成纯噪声。
 - `acf_abs_mean`：辅助目标，用于反映周期性自相关结构。
 - `seasonal amplitude ratio`：工程 latent 参数中的多周期振幅占比；第一版先记录在 `latent_params`，后续再加入 profiler。
-- `single-period seasonal naive degradation`：单周期 seasonal naive 的 MAE 应随难度上升，这是第一版 multi-seasonal 的主要行为验收。
+- `single-period seasonal naive degradation`：单周期 seasonal naive 的 MAE 应随结构强度上升，这是第一版 multi-seasonal 的行为诊断；深度模型不要求单调。
 
 ### 控制特征
 
@@ -104,11 +104,11 @@
 - `noise_ratio`：不超过 anchor p95 附近。
 - `spike_rate`：不超过真实 p95 的宽松上限。
 
-### 难度映射
+### 强度映射
 
-由于 M4 Hourly 的 `seasonal_strength` 已高度集中，第一版难度不只看该值，而是用“周期数量 + 次级周期振幅 + 噪声控制”组合：
+由于 M4 Hourly 的 `seasonal_strength` 已高度集中，第一版结构强度不只看该值，而是用“周期数量 + 次级周期振幅 + 噪声控制”组合：
 
-| Difficulty | Periods | Secondary amplitude | `seasonal_strength` guardrail | seasonal naive MAE |
+| Intensity | Periods | Secondary amplitude | `seasonal_strength` guardrail | seasonal naive MAE |
 | ---: | --- | --- | --- | --- |
 | 1 | 1 个主周期 | 0 | 高于 p50：约 0.91 | 最低 |
 | 2 | 1 个主周期 + 弱次周期 | 低 | 高于 p25 | 低 |
@@ -119,8 +119,8 @@
 ### 预期基线响应
 
 - naive 在所有季节性样本上应弱于 seasonal naive。
-- 单周期 seasonal naive 在难度 1-2 应表现较好，但在难度 4-5 的多周期叠加样本上 MAE 应上升。
-- 如果 seasonal naive 不随 difficulty 变差，说明次级周期振幅或相位扰动不够。
+- 单周期 seasonal naive 在 intensity 1-2 应表现较好，但在 intensity 4-5 的多周期叠加样本上 MAE 应上升。
+- 如果 seasonal naive 不随 intensity 变差，说明次级周期振幅或相位扰动不够。
 
 ## 论文和方法依据
 
@@ -132,7 +132,7 @@
 
 实现 trend / multi-seasonal v2 pilot 后，至少输出：
 
-1. 每个 difficulty 的生成后 feature summary。
+1. 每个 intensity 的生成后 feature summary。
 2. 目标特征均值是否单调。
 3. 是否超过真实分布 cap。
 4. naive / seasonal naive 的误差曲线。

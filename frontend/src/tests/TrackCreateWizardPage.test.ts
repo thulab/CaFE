@@ -120,7 +120,7 @@ describe('TrackCreateWizardPage', () => {
               status: 'ready',
               shard_type: 'synthetic',
               capability_type: 'trend',
-              generation_config: { capability_label: 'Trend', difficulty: 3, seed: 0 },
+              generation_config: { capability_label: 'Trend', intensity: 3, seed: 0 },
             }
           ],
           total: 1,
@@ -153,6 +153,7 @@ describe('TrackCreateWizardPage', () => {
       context_length: 60,
       horizon: 16,
       sample_count: 32,
+      intensity: 3,
     });
     expect(wizardState.selectedShardIds).toContain('shard-trend');
   });

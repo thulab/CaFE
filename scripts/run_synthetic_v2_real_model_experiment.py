@@ -44,7 +44,7 @@ TIME_COLUMN = "time"
 class ProbeSample:
     sample_id: str
     capability_id: str
-    difficulty: int
+    intensity: int
     sample_index: int
     history_timestamps: list[str]
     future_timestamps: list[str]
@@ -148,7 +148,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--models", nargs="*", default=list(DEFAULT_MODEL_ORDER), help="Model ids to evaluate. Use 'all-active' for every active service model.")
     parser.add_argument("--capabilities", nargs="+", default=list(DEFAULT_CAPABILITIES), help="Synthetic capability ids to evaluate.")
-    parser.add_argument("--sample-count", type=int, default=12, help="Samples per capability and difficulty.")
+    parser.add_argument("--sample-count", type=int, default=12, help="Samples per capability and intensity.")
     parser.add_argument("--batch-size", type=int, default=6)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=900)
     parser.add_argument("--model-load-timeout-seconds", type=int, default=1200)
@@ -267,25 +267,25 @@ def generate_probe_samples(sample_count: int, capabilities: list[str]) -> list[P
     for capability_id in capabilities:
         target_dim = target_dim_for_capability(capability_id)
         covariate_names = list(CAPABILITIES_BY_ID[capability_id].covariate_columns)
-        for difficulty in range(1, 6):
+        for intensity in range(1, 6):
             for sample_index in range(sample_count):
-                seed = _seed_for(20260701, capability_id, difficulty * 10_000 + sample_index)
+                seed = _seed_for(20260701, capability_id, intensity * 10_000 + sample_index)
                 values, _latent, covariates, features = _generate_accepted_sample_values(
                     capability_id,
                     CONTEXT_LENGTH + HORIZON,
                     CONTEXT_LENGTH,
                     target_dim,
                     SEASON_LENGTH,
-                    difficulty,
+                    intensity,
                     seed,
                 )
                 offset = len(samples) * (CONTEXT_LENGTH + HORIZON)
                 timestamps = [(base_start + timedelta(hours=offset + i)).isoformat() for i in range(CONTEXT_LENGTH + HORIZON)]
                 samples.append(
                     ProbeSample(
-                        sample_id=f"{capability_id}-d{difficulty}-{sample_index:03d}",
+                        sample_id=f"{capability_id}-i{intensity}-{sample_index:03d}",
                         capability_id=capability_id,
-                        difficulty=difficulty,
+                        intensity=intensity,
                         sample_index=sample_index,
                         history_timestamps=timestamps[:CONTEXT_LENGTH],
                         future_timestamps=timestamps[CONTEXT_LENGTH:],
@@ -425,7 +425,7 @@ def forecast_model_samples(
                         row["batch_seconds"] = batch_seconds
                         rows.append(row)
                         handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-                except Exception as exc:  # noqa: BLE001 - one failed batch should not hide other capability/difficulty batches.
+                except Exception as exc:  # noqa: BLE001 - one failed batch should not hide other capability/intensity batches.
                     batch_seconds = time.monotonic() - started
                     for sample in batch:
                         row = failed_metric_row(model_id, sample, str(exc), batch_seconds)
@@ -465,7 +465,8 @@ def metric_row(model_id: str, model_group: str, sample: ProbeSample, forecast: l
         "model_group": model_group,
         "sample_id": sample.sample_id,
         "capability_id": sample.capability_id,
-        "difficulty": sample.difficulty,
+        "intensity": sample.intensity,
+        "difficulty": sample.intensity,
         "target_dim": len(sample.target_column_names),
         "covariate_dim": len(sample.covariate_column_names),
         "status": "succeeded",
@@ -490,7 +491,8 @@ def failed_metric_row(model_id: str, sample: ProbeSample, error: str, batch_seco
         "model_group": "timer_service",
         "sample_id": sample.sample_id,
         "capability_id": sample.capability_id,
-        "difficulty": sample.difficulty,
+        "intensity": sample.intensity,
+        "difficulty": sample.intensity,
         "target_dim": len(sample.target_column_names),
         "covariate_dim": len(sample.covariate_column_names),
         "status": "failed",
@@ -515,17 +517,19 @@ def summarize_results(
     grouped: dict[tuple[str, str, int], list[dict[str, Any]]] = defaultdict(list)
     failed_grouped: dict[tuple[str, str, int], int] = defaultdict(int)
     for row in rows:
+        intensity = int(row.get("intensity", row.get("difficulty")))
         if row.get("status") == "succeeded":
-            grouped[(row["model_id"], row["capability_id"], int(row["difficulty"]))].append(row)
+            grouped[(row["model_id"], row["capability_id"], intensity)].append(row)
         else:
-            failed_grouped[(row["model_id"], row["capability_id"], int(row["difficulty"]))] += 1
+            failed_grouped[(row["model_id"], row["capability_id"], intensity)] += 1
     summaries = []
-    for (model_id, capability_id, difficulty), group_rows in sorted(grouped.items()):
+    for (model_id, capability_id, intensity), group_rows in sorted(grouped.items()):
         summaries.append(
             {
                 "model_id": model_id,
                 "capability_id": capability_id,
-                "difficulty": difficulty,
+                "intensity": intensity,
+                "difficulty": intensity,
                 "sample_count": len(group_rows),
                 "target_dim": max(int(row.get("target_dim") or 1) for row in group_rows),
                 "covariate_dim": max(int(row.get("covariate_dim") or 0) for row in group_rows),
@@ -540,6 +544,7 @@ def summarize_results(
         "context_length": CONTEXT_LENGTH,
         "horizon": HORIZON,
         "season_length": SEASON_LENGTH,
+        "sample_count_per_capability_intensity": sample_count,
         "sample_count_per_capability_difficulty": sample_count,
         "batch_size": batch_size,
         "requirements": requirements,
@@ -549,8 +554,14 @@ def summarize_results(
         "skipped_models": skipped_models,
         "model_run_status": model_run_status,
         "failure_counts": [
-            {"model_id": model_id, "capability_id": capability_id, "difficulty": difficulty, "failed_count": failed_count}
-            for (model_id, capability_id, difficulty), failed_count in sorted(failed_grouped.items())
+            {
+                "model_id": model_id,
+                "capability_id": capability_id,
+                "intensity": intensity,
+                "difficulty": intensity,
+                "failed_count": failed_count,
+            }
+            for (model_id, capability_id, intensity), failed_count in sorted(failed_grouped.items())
         ],
         "summaries": summaries,
         "comparisons": build_comparisons(summaries),
@@ -569,18 +580,20 @@ def summarize_feature_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
 
 
 def build_comparisons(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_key = {(row["model_id"], row["capability_id"], row["difficulty"]): row for row in summaries}
+    by_key = {(row["model_id"], row["capability_id"], row.get("intensity", row.get("difficulty"))): row for row in summaries}
     out: list[dict[str, Any]] = []
     for row in summaries:
         if row["model_id"] in {"naive", "seasonal_naive"}:
             continue
-        seasonal = by_key.get(("seasonal_naive", row["capability_id"], row["difficulty"]))
-        naive = by_key.get(("naive", row["capability_id"], row["difficulty"]))
+        intensity = row.get("intensity", row.get("difficulty"))
+        seasonal = by_key.get(("seasonal_naive", row["capability_id"], intensity))
+        naive = by_key.get(("naive", row["capability_id"], intensity))
         out.append(
             {
                 "model_id": row["model_id"],
                 "capability_id": row["capability_id"],
-                "difficulty": row["difficulty"],
+                "intensity": intensity,
+                "difficulty": intensity,
                 "mae_vs_seasonal_naive": ratio(metric(row, "mae"), metric(seasonal, "mae") if seasonal else None),
                 "mae_vs_naive": ratio(metric(row, "mae"), metric(naive, "mae") if naive else None),
                 "mase_vs_seasonal_naive": ratio(metric(row, "mase"), metric(seasonal, "mase") if seasonal else None),
@@ -619,7 +632,7 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             "",
             f"- 服务：`{summary['base_url']}`",
             f"- context / horizon / season：`{summary['context_length']} / {summary['horizon']} / {summary['season_length']}`",
-            f"- 每个能力每个难度样本数：`{summary['sample_count_per_capability_difficulty']}`",
+            f"- 每个能力每个强度样本数：`{summary.get('sample_count_per_capability_intensity', summary.get('sample_count_per_capability_difficulty'))}`",
             f"- batch size：`{summary['batch_size']}`",
             f"- 能力维度：{capability_text}",
             f"- required target / covariate dim：`{summary.get('requirements', {}).get('target_dim', 1)} / {summary.get('requirements', {}).get('covariate_dim', 0)}`",
@@ -688,17 +701,17 @@ def capability_table(summary: dict[str, Any], capability_id: str) -> list[str]:
     lines = [
         f"### `{capability_id}`",
         "",
-        "| Model | Fail | MAE d1 | MAE d3 | MAE d5 | MASE d1 | MASE d3 | MASE d5 | MAE d5 / SNaive d5 |",
+        "| Model | Fail | MAE i1 | MAE i3 | MAE i5 | MASE i1 | MASE i3 | MASE i5 | MAE i5 / SNaive i5 |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for model_id in model_ids:
-        by_diff = {
-            row["difficulty"]: row
+        by_intensity = {
+            row.get("intensity", row.get("difficulty")): row
             for row in summary["summaries"]
             if row["model_id"] == model_id and row["capability_id"] == capability_id
         }
         fail_count = capability_fail_count(summary, model_id, capability_id)
-        if not by_diff and fail_count == 0:
+        if not by_intensity and fail_count == 0:
             continue
         ratio_d5 = comparison_ratio(summary, model_id, capability_id, 5, "mae_vs_seasonal_naive")
         lines.append(
@@ -707,12 +720,12 @@ def capability_table(summary: dict[str, Any], capability_id: str) -> list[str]:
                 [
                     model_id,
                     str(fail_count),
-                    fmt(metric(by_diff.get(1), "mae")),
-                    fmt(metric(by_diff.get(3), "mae")),
-                    fmt(metric(by_diff.get(5), "mae")),
-                    fmt(metric(by_diff.get(1), "mase")),
-                    fmt(metric(by_diff.get(3), "mase")),
-                    fmt(metric(by_diff.get(5), "mase")),
+                    fmt(metric(by_intensity.get(1), "mae")),
+                    fmt(metric(by_intensity.get(3), "mae")),
+                    fmt(metric(by_intensity.get(5), "mae")),
+                    fmt(metric(by_intensity.get(1), "mase")),
+                    fmt(metric(by_intensity.get(3), "mase")),
+                    fmt(metric(by_intensity.get(5), "mase")),
                     fmt(ratio_d5),
                 ]
             )
@@ -759,12 +772,14 @@ def model_fail_count(summary: dict[str, Any], model_id: str) -> int:
     return int(status.get("failed_count", 0)) if status else 0
 
 
-def comparison_ratio(summary: dict[str, Any], model_id: str, capability_id: str, difficulty: int, key: str) -> float | None:
+def comparison_ratio(summary: dict[str, Any], model_id: str, capability_id: str, intensity: int, key: str) -> float | None:
     item = next(
         (
             row
             for row in summary["comparisons"]
-            if row["model_id"] == model_id and row["capability_id"] == capability_id and row["difficulty"] == difficulty
+            if row["model_id"] == model_id
+            and row["capability_id"] == capability_id
+            and int(row.get("intensity", row.get("difficulty"))) == intensity
         ),
         None,
     )
