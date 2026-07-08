@@ -1581,14 +1581,28 @@ def _structural_univariate_features(values: np.ndarray, season_length: int) -> d
     if n < 12:
         return {}
     min_seg = max(6, min(24, n // 8))
-    level_scores: list[float] = []
-    volatility_scores: list[float] = []
     std_all = float(np.std(y)) or 1.0
-    for cut in range(min_seg, n - min_seg):
-        left = y[:cut]
-        right = y[cut:]
-        level_scores.append(abs(float(np.mean(left) - np.mean(right))) / std_all)
-        volatility_scores.append(abs(float(np.std(left) - np.std(right))) / std_all)
+    cuts = np.arange(min_seg, n - min_seg, dtype=int)
+    if cuts.size:
+        prefix = np.concatenate([[0.0], np.cumsum(y)])
+        prefix_sq = np.concatenate([[0.0], np.cumsum(y * y)])
+        total = prefix[-1]
+        total_sq = prefix_sq[-1]
+        left_count = cuts.astype(float)
+        right_count = (n - cuts).astype(float)
+        left_sum = prefix[cuts]
+        right_sum = total - left_sum
+        left_mean = left_sum / left_count
+        right_mean = right_sum / right_count
+        left_var = np.maximum(prefix_sq[cuts] / left_count - left_mean * left_mean, 0.0)
+        right_var = np.maximum((total_sq - prefix_sq[cuts]) / right_count - right_mean * right_mean, 0.0)
+        level_scores_arr = np.abs(left_mean - right_mean) / std_all
+        volatility_scores_arr = np.abs(np.sqrt(left_var) - np.sqrt(right_var)) / std_all
+        level_scores = level_scores_arr.tolist()
+        volatility_scores = volatility_scores_arr.tolist()
+    else:
+        level_scores = []
+        volatility_scores = []
     seasonal_profile = _phase_profile(y, season_length)
     half = max(1, n // 2)
     seasonal_left = _phase_profile(y[:half], season_length)
