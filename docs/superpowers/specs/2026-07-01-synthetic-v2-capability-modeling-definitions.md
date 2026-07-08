@@ -16,7 +16,7 @@
 ## 共同原则
 
 1. 合成序列先用显式公式生成，再按 context 归一化，保证不同样本尺度可比。
-2. `trend` / `multi_seasonal` 已接入 M4 Hourly profile 的 acceptance caps；Electricity/Traffic 已作为额外 hourly 单变量和 panel profile 接入，用于后续扩展多目标与控制特征硬验收；其余维度当前是 v2 pilot，已有真实模型响应实验，但还需要补正式硬 cap。
+2. 所有 synthetic capability 已接入 hard acceptance caps。单变量结构能力使用 M4/Electricity/Traffic hourly 单变量 profile envelope；多目标能力使用 Electricity/Traffic panel profile envelope；协变量和层级能力当前使用结构硬守卫，仍需后续真实 covariate/hierarchical profile 补强。
 3. `intensity` 控制的是目标结构强度，例如切换次数、非线性强度、burst rate、因子结构、协变量效应；它不等同于观测到的模型误差强度，也不要求深度模型 MAE 随强度单调上升。
 4. 对 horizon 内无先兆的 shift，不应在论文里简单称为“可预测能力”，更准确是结构突变鲁棒性或快速适应能力。
 

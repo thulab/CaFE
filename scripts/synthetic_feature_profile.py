@@ -23,11 +23,24 @@ DEFAULT_FEATURES = (
     "acf_abs_mean",
     "outlier_rate",
     "spike_rate",
+    "multi_period_score",
+    "seasonal_drift_score",
+    "seasonal_amplitude_cv",
+    "change_point_shift_energy",
+    "level_shift_strength",
+    "volatility_shift_strength",
+    "nonlinear_lag1_gain",
+    "burst_rate",
+    "diff_spike_rate",
     "avg_abs_target_corr",
     "pca_top1_explained",
     "pca_top2_explained",
     "effective_factor_rank",
     "lead_lag_peak_abs",
+    "avg_abs_covariate_target_corr",
+    "future_abs_covariate_target_corr",
+    "event_lift_abs",
+    "hierarchy_residual_mean_abs",
 )
 DEFAULT_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 BOUNDED_FEATURES = {
@@ -36,6 +49,9 @@ BOUNDED_FEATURES = {
     "noise_ratio",
     "outlier_rate",
     "spike_rate",
+    "multi_period_score",
+    "burst_rate",
+    "diff_spike_rate",
     "avg_abs_target_corr",
     "pca_top1_explained",
     "pca_top2_explained",
@@ -55,7 +71,12 @@ class WindowSpec:
         return self.context_length + self.horizon
 
 
-def read_csv_series(path: Path, time_column: str, target_columns: list[str] | None) -> tuple[pd.Series, pd.DataFrame]:
+def read_csv_series(
+    path: Path,
+    time_column: str,
+    target_columns: list[str] | None,
+    covariate_columns: list[str] | None = None,
+) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
     frame = pd.read_csv(path)
     if time_column not in frame.columns:
         raise ValueError(f"time column not found: {time_column}")
@@ -76,7 +97,14 @@ def read_csv_series(path: Path, time_column: str, target_columns: list[str] | No
     targets = frame[target_columns].apply(pd.to_numeric, errors="coerce")
     if targets.isna().any().any():
         raise ValueError("target columns contain missing or non-numeric values")
-    return time, targets.astype(float)
+    resolved_covariate_columns = covariate_columns or []
+    missing_covariates = [column for column in resolved_covariate_columns if column not in frame.columns]
+    if missing_covariates:
+        raise ValueError(f"covariate columns not found: {', '.join(missing_covariates)}")
+    covariates = frame[resolved_covariate_columns].apply(pd.to_numeric, errors="coerce")
+    if not covariates.empty and covariates.isna().any().any():
+        raise ValueError("covariate columns contain missing or non-numeric values")
+    return time, targets.astype(float), covariates.astype(float)
 
 
 def read_tsf_series(path: Path) -> tuple[dict[str, str], list[tuple[str, np.ndarray]]]:
@@ -173,6 +201,7 @@ def profile_csv(
     *,
     time_column: str = "time",
     target_columns: list[str] | None = None,
+    covariate_columns: list[str] | None = None,
     context_length: int,
     horizon: int,
     stride: int | None = None,
@@ -182,15 +211,28 @@ def profile_csv(
     dataset_name: str | None = None,
     target_features: list[str] | None = None,
     target_max_multiplier: float = 2.0,
+    hierarchy: str | None = None,
 ) -> dict[str, Any]:
-    time, targets = read_csv_series(path, time_column, target_columns)
+    time, targets, covariates = read_csv_series(path, time_column, target_columns, covariate_columns)
     resolved_stride = stride or horizon
     spec = WindowSpec(context_length, horizon, resolved_stride, max_windows=max_windows)
     values = targets.to_numpy(dtype=float)
+    covariate_values = covariates.to_numpy(dtype=float) if not covariates.empty else None
     windows = iter_windows(values, spec)
     feature_rows: list[dict[str, float]] = []
     for start, window in windows:
-        features = feature_vector(window, season_length=season_length)
+        covariate_window = (
+            covariate_values[start : start + spec.length]
+            if covariate_values is not None
+            else None
+        )
+        features = feature_vector(
+            window,
+            season_length=season_length,
+            covariates=covariate_window,
+            context_length=context_length,
+            hierarchy=hierarchy,
+        )
         features["window_start"] = float(start)
         feature_rows.append(features)
 
@@ -211,11 +253,13 @@ def profile_csv(
             "context_length": context_length,
             "horizon": horizon,
             "target_dim": int(values.shape[1]) if values.ndim == 2 else 1,
-            "covariate_dim": 0,
+            "covariate_dim": int(covariate_values.shape[1]) if covariate_values is not None else 0,
             "season_length": season_length,
+            "hierarchy": hierarchy,
         },
         "window_count": len(feature_rows),
         "target_columns": list(targets.columns),
+        "covariate_columns": list(covariates.columns),
         "features": quantiles,
         "target_feature_caps": caps,
     }
@@ -401,6 +445,7 @@ def profile_input(
     input_format: str = "auto",
     time_column: str = "time",
     target_columns: list[str] | None = None,
+    covariate_columns: list[str] | None = None,
     context_length: int,
     horizon: int,
     stride: int | None = None,
@@ -410,6 +455,7 @@ def profile_input(
     dataset_name: str | None = None,
     target_features: list[str] | None = None,
     target_max_multiplier: float = 2.0,
+    hierarchy: str | None = None,
 ) -> dict[str, Any]:
     resolved = resolve_input_format(path, input_format)
     if resolved == "tsf":
@@ -429,6 +475,7 @@ def profile_input(
         path,
         time_column=time_column,
         target_columns=target_columns,
+        covariate_columns=covariate_columns,
         context_length=context_length,
         horizon=horizon,
         stride=stride,
@@ -438,6 +485,7 @@ def profile_input(
         dataset_name=dataset_name,
         target_features=target_features,
         target_max_multiplier=target_max_multiplier,
+        hierarchy=hierarchy,
     )
 
 
@@ -452,7 +500,14 @@ def resolve_input_format(path: Path, input_format: str) -> str:
     return "csv"
 
 
-def feature_vector(window: np.ndarray, season_length: int | None = None) -> dict[str, float]:
+def feature_vector(
+    window: np.ndarray,
+    season_length: int | None = None,
+    *,
+    covariates: np.ndarray | None = None,
+    context_length: int | None = None,
+    hierarchy: str | None = None,
+) -> dict[str, float]:
     if window.ndim == 1:
         window = window[:, None]
     per_target = [single_series_features(window[:, index], season_length=season_length) for index in range(window.shape[1])]
@@ -461,8 +516,14 @@ def feature_vector(window: np.ndarray, season_length: int | None = None) -> dict
         values = [row[feature] for row in per_target if feature in row and math.isfinite(row[feature])]
         if values:
             out[feature] = float(np.mean(values))
+    out.update(structural_univariate_features(np.mean(window, axis=1), season_length=season_length))
     if window.shape[1] > 1:
         out.update(multitarget_features(window))
+    if hierarchy == "additive_first" and window.shape[1] > 2:
+        hierarchy_residual = window[:, 0] - np.sum(window[:, 1:], axis=1)
+        out["hierarchy_residual_mean_abs"] = float(np.mean(np.abs(hierarchy_residual)))
+    if covariates is not None and covariates.size:
+        out.update(covariate_features(window, covariates, context_length or max(1, window.shape[0] // 2)))
     return out
 
 
@@ -528,6 +589,69 @@ def single_series_features(values: np.ndarray, season_length: int | None = None)
     }
 
 
+def structural_univariate_features(values: np.ndarray, season_length: int | None = None) -> dict[str, float]:
+    y = robust_scale(np.asarray(values, dtype=float))
+    y = y[np.isfinite(y)]
+    n = y.size
+    if n < 12:
+        return {}
+    min_seg = max(6, min(24, n // 8))
+    level_scores: list[float] = []
+    volatility_scores: list[float] = []
+    std_all = float(np.std(y)) or 1.0
+    for cut in range(min_seg, n - min_seg):
+        left = y[:cut]
+        right = y[cut:]
+        level_scores.append(abs(float(np.mean(left) - np.mean(right))) / std_all)
+        volatility_scores.append(abs(float(np.std(left) - np.std(right))) / std_all)
+    seasonal_profile = phase_profile(y, season_length)
+    half = max(1, n // 2)
+    seasonal_left = phase_profile(y[:half], season_length)
+    seasonal_right = phase_profile(y[half:], season_length)
+    diff = np.diff(y)
+    return {
+        "level_shift_strength": float(max(level_scores)) if level_scores else 0.0,
+        "volatility_shift_strength": float(max(volatility_scores)) if volatility_scores else 0.0,
+        "change_point_shift_energy": float(np.mean(sorted(level_scores, reverse=True)[:3])) if level_scores else 0.0,
+        "burst_rate": float(np.mean(np.abs(y) > 3.0)),
+        "diff_spike_rate": float(np.mean(np.abs(robust_scale(diff)) > 3.0)) if diff.size else 0.0,
+        "multi_period_score": multi_period_score(y, season_length),
+        "seasonal_drift_score": float(np.mean(np.abs(seasonal_left - seasonal_right))) if seasonal_left.size and seasonal_right.size else 0.0,
+        "seasonal_amplitude_cv": float(np.std(np.abs(seasonal_profile)) / (np.mean(np.abs(seasonal_profile)) + 1e-9)) if seasonal_profile.size else 0.0,
+        "nonlinear_lag1_gain": nonlinear_lag1_gain(y),
+    }
+
+
+def covariate_features(target: np.ndarray, covariates: np.ndarray, context_length: int) -> dict[str, float]:
+    if covariates.ndim == 1:
+        covariates = covariates[:, None]
+    scores: list[float] = []
+    future_scores: list[float] = []
+    for cov_idx in range(covariates.shape[1]):
+        for target_idx in range(target.shape[1]):
+            corr_value = safe_corr(covariates[:, cov_idx], target[:, target_idx])
+            if math.isfinite(corr_value):
+                scores.append(abs(float(corr_value)))
+            if context_length < len(target):
+                future_corr = safe_corr(covariates[context_length:, cov_idx], target[context_length:, target_idx])
+                if math.isfinite(future_corr):
+                    future_scores.append(abs(float(future_corr)))
+    event_lifts: list[float] = []
+    for cov_idx in range(covariates.shape[1]):
+        column = covariates[:, cov_idx]
+        unique = np.unique(column)
+        if unique.size <= 3 and np.any(column > 0):
+            active = column > 0
+            inactive = ~active
+            if active.any() and inactive.any():
+                event_lifts.append(abs(float(np.mean(target[active]) - np.mean(target[inactive]))))
+    return {
+        "avg_abs_covariate_target_corr": float(np.mean(scores)) if scores else 0.0,
+        "future_abs_covariate_target_corr": float(np.mean(future_scores)) if future_scores else 0.0,
+        "event_lift_abs": float(np.mean(event_lifts)) if event_lifts else 0.0,
+    }
+
+
 def decompose_for_features(values: np.ndarray, season_length: int | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     y = np.asarray(values, dtype=float)
     trend = polynomial_trend(y)
@@ -556,6 +680,60 @@ def seasonal_by_phase(values: np.ndarray, season_length: int | None = None) -> n
         if mask.any():
             seasonal[mask] = float(np.mean(values[mask]))
     return seasonal - float(np.mean(seasonal))
+
+
+def phase_profile(values: np.ndarray, season_length: int | None = None) -> np.ndarray:
+    if not season_length or season_length < 2 or values.size < season_length:
+        return np.asarray([], dtype=float)
+    period = int(season_length)
+    phases = np.arange(values.size) % period
+    profile = np.asarray(
+        [
+            float(np.mean(values[phases == phase])) if np.any(phases == phase) else 0.0
+            for phase in range(period)
+        ],
+        dtype=float,
+    )
+    return profile - float(np.mean(profile))
+
+
+def multi_period_score(values: np.ndarray, season_length: int | None = None) -> float:
+    if values.size < 8:
+        return 0.0
+    centered = values - float(np.mean(values))
+    spectrum = np.abs(np.fft.rfft(centered)) ** 2
+    if spectrum.size <= 2:
+        return 0.0
+    spectrum[0] = 0.0
+    total = float(np.sum(spectrum))
+    if total <= 1e-12:
+        return 0.0
+    primary_index = int(round(values.size / max(2, season_length or 2)))
+    exclude = {idx for idx in range(max(1, primary_index - 1), min(spectrum.size, primary_index + 2))}
+    secondary = np.asarray([value for idx, value in enumerate(spectrum) if idx not in exclude and idx > 0], dtype=float)
+    return float(np.max(secondary) / total) if secondary.size else 0.0
+
+
+def nonlinear_lag1_gain(values: np.ndarray) -> float:
+    if values.size < 8:
+        return 0.0
+    x = values[:-1]
+    y = values[1:]
+    linear = np.column_stack([np.ones_like(x), x])
+    nonlinear = np.column_stack([np.ones_like(x), x, x**2, np.sin(x)])
+    return max(0.0, r2(y, nonlinear) - r2(y, linear))
+
+
+def r2(y: np.ndarray, design: np.ndarray) -> float:
+    try:
+        coeffs = np.linalg.lstsq(design, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return 0.0
+    fitted = design @ coeffs
+    denom = float(np.sum((y - float(np.mean(y))) ** 2))
+    if denom <= 1e-12:
+        return 0.0
+    return float(1.0 - np.sum((y - fitted) ** 2) / denom)
 
 
 def robust_scale(values: np.ndarray) -> np.ndarray:
@@ -746,6 +924,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--format", choices=["auto", "csv", "tsf"], default="auto", help="Input format. Defaults to extension-based auto detection.")
     parser.add_argument("--time-column", default="time")
     parser.add_argument("--target-column", action="append", dest="target_columns", help="Target column. Repeat for multiple targets.")
+    parser.add_argument("--covariate-column", action="append", dest="covariate_columns", help="Known covariate column. Repeat for multiple covariates.")
+    parser.add_argument("--hierarchy", choices=["additive_first"], help="Optional hierarchy convention. additive_first means target_0=sum(target_1:).")
     parser.add_argument("--context-length", type=int, required=True)
     parser.add_argument("--horizon", type=int, required=True)
     parser.add_argument("--stride", type=int)
@@ -766,6 +946,7 @@ def main() -> int:
         input_format=args.format,
         time_column=args.time_column,
         target_columns=args.target_columns,
+        covariate_columns=args.covariate_columns,
         context_length=args.context_length,
         horizon=args.horizon,
         stride=args.stride,
@@ -775,6 +956,7 @@ def main() -> int:
         dataset_name=args.dataset_name,
         target_features=args.target_features,
         target_max_multiplier=args.target_max_multiplier,
+        hierarchy=args.hierarchy,
     )
     text = json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True)
     if args.out:

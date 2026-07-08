@@ -169,40 +169,78 @@ MOCK_ANCHOR = {
     ],
 }
 
-PRIMARY_ANCHOR_PROFILE_ID = "m4_hourly_daily_168ctx"
-
 ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
     "m4_hourly_daily_168ctx": {
-        "trend_strength": {"p05": 0.0, "p50": 0.1659, "p95": 0.7714},
+        "trend_strength": {"p05": 0.0000, "p50": 0.1659, "p95": 0.7714},
         "seasonal_strength": {"p05": 0.5768, "p50": 0.9129, "p95": 0.9961},
         "acf_abs_mean": {"p05": 0.2515, "p50": 0.5201, "p95": 0.5574},
         "slope_abs": {"p05": 0.0136, "p50": 0.1264, "p95": 0.3543},
         "curvature_abs": {"p05": 0.0042, "p50": 0.0711, "p95": 0.6756},
         "noise_ratio": {"p05": 0.0038, "p50": 0.0821, "p95": 0.3871},
-        "spike_rate": {"p05": 0.0, "p50": 0.0, "p95": 0.1257},
+        "spike_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.1257},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0260},
+        "multi_period_score": {"p05": 0.0084, "p50": 0.0415, "p95": 0.1769},
+        "seasonal_drift_score": {"p05": 0.0058, "p50": 0.0761, "p95": 0.4297},
+        "seasonal_amplitude_cv": {"p05": 0.4202, "p50": 0.4860, "p95": 0.7334},
+        "change_point_shift_energy": {"p05": 0.3035, "p50": 0.5072, "p95": 0.9798},
         "level_shift_strength": {"p05": 0.3115, "p50": 0.5132, "p95": 0.9885},
-        "burst_rate": {"p05": 0.0, "p50": 0.0, "p95": 0.01042},
+        "volatility_shift_strength": {"p05": 0.0662, "p50": 0.1619, "p95": 0.6469},
+        "nonlinear_lag1_gain": {"p05": 0.0000, "p50": 0.0003, "p95": 0.0538},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0104},
     },
     "us_births_weekly": {
-        "trend_strength": {"p50": 0.2459, "p75": 0.2660, "p95": 0.2938},
-        "seasonal_strength": {"p50": 0.7040, "p75": 0.7693, "p95": 0.8309},
-        "slope_abs": {"p50": 0.2102, "p75": 0.2992, "p95": 0.3606},
-        "curvature_abs": {"p50": 0.3674, "p75": 0.4536, "p95": 0.5142},
-        "noise_ratio": {"p50": 0.2693, "p75": 0.2984, "p95": 0.3567},
+        "trend_strength": {"p05": 0.0109, "p50": 0.2459, "p95": 0.2938},
+        "seasonal_strength": {"p05": 0.6238, "p50": 0.7040, "p95": 0.8309},
+        "acf_abs_mean": {"p05": 0.2318, "p50": 0.2674, "p95": 0.3569},
+        "slope_abs": {"p05": 0.0500, "p50": 0.2102, "p95": 0.3606},
+        "curvature_abs": {"p05": 0.1165, "p50": 0.3674, "p95": 0.5142},
+        "noise_ratio": {"p05": 0.1609, "p50": 0.2693, "p95": 0.3567},
+        "spike_rate": {"p05": 0.0000, "p50": 0.0038, "p95": 0.0716},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0000},
+        "multi_period_score": {"p05": 0.1856, "p50": 0.2036, "p95": 0.2313},
+        "seasonal_drift_score": {"p05": 0.3837, "p50": 0.4704, "p95": 0.5572},
+        "seasonal_amplitude_cv": {"p05": 0.5126, "p50": 0.5295, "p95": 0.6719},
+        "change_point_shift_energy": {"p05": 0.4210, "p50": 0.6002, "p95": 0.8802},
+        "level_shift_strength": {"p05": 0.4304, "p50": 0.6061, "p95": 0.8829},
+        "volatility_shift_strength": {"p05": 0.1131, "p50": 0.2028, "p95": 0.3690},
+        "nonlinear_lag1_gain": {"p05": 0.0225, "p50": 0.0405, "p95": 0.0766},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0000},
     },
     "electricity_hourly_daily_168ctx": {
-        "trend_strength": {"p05": 0.0, "p50": 0.0427, "p95": 0.4120},
+        "trend_strength": {"p05": 0.0000, "p50": 0.0427, "p95": 0.4120},
         "seasonal_strength": {"p05": 0.3058, "p50": 0.9161, "p95": 0.9783},
         "acf_abs_mean": {"p05": 0.2386, "p50": 0.4420, "p95": 0.5151},
         "slope_abs": {"p05": 0.0109, "p50": 0.0946, "p95": 0.3537},
         "curvature_abs": {"p05": 0.0085, "p50": 0.1117, "p95": 0.7900},
         "noise_ratio": {"p05": 0.0212, "p50": 0.0811, "p95": 0.5517},
-        "spike_rate": {"p05": 0.0, "p50": 0.0419, "p95": 0.1728},
+        "spike_rate": {"p05": 0.0000, "p50": 0.0419, "p95": 0.1728},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0990},
+        "multi_period_score": {"p05": 0.0328, "p50": 0.1297, "p95": 0.3989},
+        "seasonal_drift_score": {"p05": 0.0309, "p50": 0.0946, "p95": 0.3236},
+        "seasonal_amplitude_cv": {"p05": 0.3123, "p50": 0.4962, "p95": 0.8362},
+        "change_point_shift_energy": {"p05": 0.2651, "p50": 0.4609, "p95": 1.0847},
+        "level_shift_strength": {"p05": 0.2711, "p50": 0.4720, "p95": 1.0920},
+        "volatility_shift_strength": {"p05": 0.1000, "p50": 0.2160, "p95": 0.6584},
+        "nonlinear_lag1_gain": {"p05": 0.0001, "p50": 0.0028, "p95": 0.0290},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0052},
     },
     "electricity_hourly_panel_168ctx": {
-        "trend_strength": {"p05": 0.0, "p50": 0.0761, "p95": 0.3433},
+        "trend_strength": {"p05": 0.0000, "p50": 0.0761, "p95": 0.3433},
         "seasonal_strength": {"p05": 0.4506, "p50": 0.9103, "p95": 0.9701},
+        "acf_abs_mean": {"p05": 0.2892, "p50": 0.4422, "p95": 0.4977},
+        "slope_abs": {"p05": 0.0298, "p50": 0.1041, "p95": 0.3491},
+        "curvature_abs": {"p05": 0.0299, "p50": 0.1261, "p95": 0.7159},
         "noise_ratio": {"p05": 0.0294, "p50": 0.0835, "p95": 0.4616},
+        "spike_rate": {"p05": 0.0017, "p50": 0.0489, "p95": 0.1501},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0903},
+        "multi_period_score": {"p05": 0.0343, "p50": 0.1316, "p95": 0.4245},
+        "seasonal_drift_score": {"p05": 0.0259, "p50": 0.0782, "p95": 0.2428},
+        "seasonal_amplitude_cv": {"p05": 0.3319, "p50": 0.4859, "p95": 0.8413},
+        "change_point_shift_energy": {"p05": 0.2713, "p50": 0.4507, "p95": 1.0756},
+        "level_shift_strength": {"p05": 0.2784, "p50": 0.4591, "p95": 1.0842},
+        "volatility_shift_strength": {"p05": 0.1008, "p50": 0.1960, "p95": 0.5319},
+        "nonlinear_lag1_gain": {"p05": 0.0001, "p50": 0.0017, "p95": 0.0195},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0000},
         "avg_abs_target_corr": {"p05": 0.2903, "p50": 0.8478, "p95": 0.9484},
         "pca_top1_explained": {"p05": 0.6727, "p50": 0.9627, "p95": 0.9988},
         "pca_top2_explained": {"p05": 0.9512, "p50": 0.9954, "p95": 1.0},
@@ -216,12 +254,34 @@ ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
         "slope_abs": {"p05": 0.0097, "p50": 0.1010, "p95": 0.4206},
         "curvature_abs": {"p05": 0.0231, "p50": 0.2742, "p95": 1.0373},
         "noise_ratio": {"p05": 0.0964, "p50": 0.2754, "p95": 0.5009},
-        "spike_rate": {"p05": 0.0, "p50": 0.0681, "p95": 0.1571},
+        "spike_rate": {"p05": 0.0000, "p50": 0.0681, "p95": 0.1571},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0052, "p95": 0.0938},
+        "multi_period_score": {"p05": 0.0322, "p50": 0.0979, "p95": 0.1940},
+        "seasonal_drift_score": {"p05": 0.0736, "p50": 0.2189, "p95": 0.7112},
+        "seasonal_amplitude_cv": {"p05": 0.4436, "p50": 0.6379, "p95": 1.0029},
+        "change_point_shift_energy": {"p05": 0.2848, "p50": 0.4681, "p95": 0.8373},
+        "level_shift_strength": {"p05": 0.2908, "p50": 0.4738, "p95": 0.8434},
+        "volatility_shift_strength": {"p05": 0.1376, "p50": 0.4322, "p95": 0.9407},
+        "nonlinear_lag1_gain": {"p05": 0.0011, "p50": 0.0210, "p95": 0.1148},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0052, "p95": 0.0938},
     },
     "traffic_hourly_panel_168ctx": {
         "trend_strength": {"p05": 0.0252, "p50": 0.0851, "p95": 0.2136},
         "seasonal_strength": {"p05": 0.5522, "p50": 0.7111, "p95": 0.8366},
+        "acf_abs_mean": {"p05": 0.2469, "p50": 0.3340, "p95": 0.4264},
+        "slope_abs": {"p05": 0.0306, "p50": 0.1208, "p95": 0.3277},
+        "curvature_abs": {"p05": 0.0802, "p50": 0.3175, "p95": 0.8355},
         "noise_ratio": {"p05": 0.1600, "p50": 0.2794, "p95": 0.4233},
+        "spike_rate": {"p05": 0.0227, "p50": 0.0716, "p95": 0.1239},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0191, "p95": 0.0625},
+        "multi_period_score": {"p05": 0.0452, "p50": 0.1043, "p95": 0.1891},
+        "seasonal_drift_score": {"p05": 0.0765, "p50": 0.1993, "p95": 0.4495},
+        "seasonal_amplitude_cv": {"p05": 0.4636, "p50": 0.5863, "p95": 0.8228},
+        "change_point_shift_energy": {"p05": 0.3040, "p50": 0.4888, "p95": 0.7730},
+        "level_shift_strength": {"p05": 0.3110, "p50": 0.4977, "p95": 0.7848},
+        "volatility_shift_strength": {"p05": 0.1631, "p50": 0.3554, "p95": 0.6623},
+        "nonlinear_lag1_gain": {"p05": 0.0027, "p50": 0.0157, "p95": 0.0534},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0312},
         "avg_abs_target_corr": {"p05": 0.3484, "p50": 0.6290, "p95": 0.8637},
         "pca_top1_explained": {"p05": 0.6206, "p50": 0.8179, "p95": 0.9450},
         "pca_top2_explained": {"p05": 0.9148, "p50": 0.9718, "p95": 0.9959},
@@ -554,19 +614,158 @@ def _frequency_delta(frequency: str) -> timedelta:
     return timedelta(hours=1)
 
 
+HOURLY_UNIVARIATE_PROFILE_IDS = (
+    "m4_hourly_daily_168ctx",
+    "electricity_hourly_daily_168ctx",
+    "traffic_hourly_daily_168ctx",
+)
+HOURLY_PANEL_PROFILE_IDS = (
+    "electricity_hourly_panel_168ctx",
+    "traffic_hourly_panel_168ctx",
+)
+ACCEPTANCE_PROFILE_GROUPS: dict[str, tuple[str, ...]] = {
+    "hourly_univariate_envelope_168ctx": HOURLY_UNIVARIATE_PROFILE_IDS,
+    "hourly_panel_envelope_168ctx": HOURLY_PANEL_PROFILE_IDS,
+    "synthetic_structural_guard_v1": (),
+}
+ACCEPTANCE_PROFILE_BY_CAPABILITY: dict[str, str] = {
+    "trend": "hourly_univariate_envelope_168ctx",
+    "multi_seasonal": "hourly_univariate_envelope_168ctx",
+    "time_varying_seasonality": "hourly_univariate_envelope_168ctx",
+    "regime_switching": "hourly_univariate_envelope_168ctx",
+    "long_memory_nonlinear": "hourly_univariate_envelope_168ctx",
+    "intermittent_heteroskedastic": "hourly_univariate_envelope_168ctx",
+    "common_factor": "hourly_panel_envelope_168ctx",
+    "lead_lag_coupling": "hourly_panel_envelope_168ctx",
+    "coherent_regime_shift": "hourly_panel_envelope_168ctx",
+    "hierarchical_coherence": "synthetic_structural_guard_v1",
+    "covariate_response": "synthetic_structural_guard_v1",
+}
+BOUNDED_ACCEPTANCE_FEATURES = {
+    "trend_strength",
+    "seasonal_strength",
+    "noise_ratio",
+    "outlier_rate",
+    "spike_rate",
+    "multi_period_score",
+    "burst_rate",
+    "diff_spike_rate",
+    "avg_abs_target_corr",
+    "pca_top1_explained",
+    "pca_top2_explained",
+    "lead_lag_peak_abs",
+    "avg_abs_covariate_target_corr",
+    "future_abs_covariate_target_corr",
+}
+
+
+def _cap_from_profiles(
+    feature: str,
+    profile_ids: tuple[str, ...],
+    *,
+    multiplier: float = 1.5,
+    default: float | None = None,
+) -> float:
+    p95_values = [
+        ANCHOR_FEATURE_QUANTILES[profile_id][feature]["p95"]
+        for profile_id in profile_ids
+        if feature in ANCHOR_FEATURE_QUANTILES.get(profile_id, {})
+    ]
+    if not p95_values:
+        if default is None:
+            raise KeyError(f"feature {feature!r} is not present in profiles {profile_ids!r}")
+        return float(default)
+    cap = max(p95_values) * multiplier
+    if feature in BOUNDED_ACCEPTANCE_FEATURES:
+        cap = min(cap, 1.0)
+    return float(cap)
+
+
+def _caps_from_profiles(
+    profile_ids: tuple[str, ...],
+    features: tuple[str, ...],
+    *,
+    multiplier: float = 1.5,
+) -> dict[str, float]:
+    return {feature: _cap_from_profiles(feature, profile_ids, multiplier=multiplier) for feature in features}
+
+
 PILOT_ACCEPTANCE_CAPS: dict[str, dict[str, float]] = {
     "trend": {
-        "trend_strength": 1.0,
-        "slope_abs": 0.5314,
-        "curvature_abs": 1.0135,
-        "noise_ratio": 0.5807,
-        "spike_rate": 0.1886,
+        **_caps_from_profiles(
+            HOURLY_UNIVARIATE_PROFILE_IDS,
+            ("trend_strength", "slope_abs", "curvature_abs", "noise_ratio", "spike_rate"),
+        ),
     },
     "multi_seasonal": {
-        "trend_strength": 0.7714,
-        "noise_ratio": 0.5807,
-        "spike_rate": 0.1886,
+        **_caps_from_profiles(
+            HOURLY_UNIVARIATE_PROFILE_IDS,
+            ("trend_strength", "multi_period_score", "seasonal_strength", "noise_ratio", "spike_rate"),
+        ),
     },
+    "time_varying_seasonality": {
+        **_caps_from_profiles(
+            HOURLY_UNIVARIATE_PROFILE_IDS,
+            ("seasonal_drift_score", "seasonal_amplitude_cv", "noise_ratio", "spike_rate"),
+        ),
+    },
+    "regime_switching": {
+        **_caps_from_profiles(
+            HOURLY_UNIVARIATE_PROFILE_IDS,
+            ("change_point_shift_energy", "level_shift_strength", "volatility_shift_strength", "spike_rate"),
+            multiplier=2.5,
+        ),
+    },
+    "long_memory_nonlinear": {
+        **_caps_from_profiles(
+            HOURLY_UNIVARIATE_PROFILE_IDS,
+            ("nonlinear_lag1_gain", "acf_abs_mean", "spike_rate"),
+        ),
+        "noise_ratio": 1.0,
+    },
+    "intermittent_heteroskedastic": {
+        **_caps_from_profiles(
+            HOURLY_UNIVARIATE_PROFILE_IDS,
+            ("burst_rate", "spike_rate", "outlier_rate", "trend_strength", "seasonal_strength"),
+        ),
+        "noise_ratio": 1.0,
+    },
+    "common_factor": {
+        **_caps_from_profiles(
+            HOURLY_PANEL_PROFILE_IDS,
+            ("pca_top1_explained", "effective_factor_rank", "avg_abs_target_corr", "spike_rate"),
+        ),
+        "noise_ratio": 0.9,
+    },
+    "lead_lag_coupling": {
+        **_caps_from_profiles(
+            HOURLY_PANEL_PROFILE_IDS,
+            ("lead_lag_peak_abs", "avg_abs_target_corr", "spike_rate"),
+        ),
+        "noise_ratio": 0.9,
+    },
+    "coherent_regime_shift": {
+        **_caps_from_profiles(
+            HOURLY_PANEL_PROFILE_IDS,
+            ("level_shift_strength", "avg_abs_target_corr", "spike_rate"),
+            multiplier=2.5,
+        ),
+        "noise_ratio": 0.9,
+    },
+    "hierarchical_coherence": {
+        "hierarchy_residual_mean_abs": 1e-6,
+        "noise_ratio": 0.9,
+    },
+    "covariate_response": {
+        "avg_abs_covariate_target_corr": 1.0,
+        "future_abs_covariate_target_corr": 1.0,
+        "event_lift_abs": 5.0,
+        "noise_ratio": 0.95,
+        **_caps_from_profiles(HOURLY_UNIVARIATE_PROFILE_IDS, ("spike_rate",)),
+    },
+}
+PILOT_ACCEPTANCE_MINS: dict[str, dict[str, float]] = {
+    "multi_seasonal": {"seasonal_strength": 0.55},
 }
 
 
@@ -610,7 +809,7 @@ def _generate_accepted_sample_values(
                 "accepted": bool(accepted),
                 "attempts": attempt + 1,
                 "failed_features": failed_features,
-                "profile": PRIMARY_ANCHOR_PROFILE_ID if capability_id in PILOT_ACCEPTANCE_CAPS else None,
+                "profile": _acceptance_profile_id(capability_id),
                 "validation": validation,
             },
         }
@@ -625,22 +824,22 @@ def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -
     caps = PILOT_ACCEPTANCE_CAPS.get(capability_id)
     if not caps:
         return True, []
-    failed = [
-        feature
-        for feature, cap in caps.items()
-        if feature in features and np.isfinite(features[feature]) and features[feature] > cap
-    ]
-    if capability_id == "multi_seasonal":
-        seasonal_strength = features.get("seasonal_strength")
-        if seasonal_strength is not None and np.isfinite(seasonal_strength) and seasonal_strength < 0.55:
-            failed.append("seasonal_strength")
+    failed: list[str] = []
+    for feature, cap in caps.items():
+        value = features.get(feature)
+        if value is not None and np.isfinite(value) and value > cap:
+            failed.append(feature)
+    for feature, floor in PILOT_ACCEPTANCE_MINS.get(capability_id, {}).items():
+        value = features.get(feature)
+        if value is not None and np.isfinite(value) and value < floor and feature not in failed:
+            failed.append(feature)
     return not failed, failed
 
 
 def _validation_summary(capability_id: str, features: dict[str, float]) -> dict[str, Any]:
     target_features = TARGET_FEATURES_BY_CAPABILITY.get(capability_id, ())
     control_features = CONTROL_FEATURES_BY_CAPABILITY.get(capability_id, ())
-    control_bounds = _control_feature_bounds()
+    control_bounds = _control_feature_bounds(capability_id)
     control_results: dict[str, dict[str, float | bool]] = {}
     for feature in control_features:
         value = features.get(feature)
@@ -657,7 +856,7 @@ def _validation_summary(capability_id: str, features: dict[str, float]) -> dict[
         }
     return {
         "schema_version": "synthetic_post_generation_validation.v1",
-        "anchor_profile_id": PRIMARY_ANCHOR_PROFILE_ID,
+        "anchor_profile_id": _acceptance_profile_id(capability_id),
         "target_features": {
             feature: float(features[feature])
             for feature in target_features
@@ -669,8 +868,41 @@ def _validation_summary(capability_id: str, features: dict[str, float]) -> dict[
     }
 
 
-def _control_feature_bounds() -> dict[str, dict[str, float]]:
-    return ANCHOR_FEATURE_QUANTILES[PRIMARY_ANCHOR_PROFILE_ID]
+def _acceptance_profile_id(capability_id: str) -> str | None:
+    return ACCEPTANCE_PROFILE_BY_CAPABILITY.get(capability_id)
+
+
+def _control_feature_bounds(capability_id: str) -> dict[str, dict[str, float]]:
+    profile_id = _acceptance_profile_id(capability_id)
+    if profile_id is None:
+        return {}
+    profile_ids = ACCEPTANCE_PROFILE_GROUPS.get(profile_id)
+    if profile_ids is None:
+        profile_ids = (profile_id,)
+    if not profile_ids:
+        return {}
+    return _profile_envelope(profile_ids)
+
+
+def _profile_envelope(profile_ids: tuple[str, ...]) -> dict[str, dict[str, float]]:
+    features = {
+        feature
+        for profile_id in profile_ids
+        for feature in ANCHOR_FEATURE_QUANTILES.get(profile_id, {})
+    }
+    envelope: dict[str, dict[str, float]] = {}
+    for feature in features:
+        rows = [
+            ANCHOR_FEATURE_QUANTILES[profile_id][feature]
+            for profile_id in profile_ids
+            if feature in ANCHOR_FEATURE_QUANTILES.get(profile_id, {})
+        ]
+        envelope[feature] = {
+            "p05": min(float(row.get("p05", float("-inf"))) for row in rows),
+            "p50": float(np.median([float(row.get("p50", row.get("p95", 0.0))) for row in rows])),
+            "p95": max(float(row.get("p95", float("inf"))) for row in rows),
+        }
+    return envelope
 
 
 def _generate_sample_values(

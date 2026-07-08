@@ -49,5 +49,8 @@ def test_render_report_summarizes_profiles():
     assert "us_births_weekly" in report
     assert "electricity_hourly_daily_168ctx" in report
     assert "traffic_hourly_panel_168ctx" in report
+    assert "Spec 主特征覆盖" in report
+    assert "change_point_shift_energy" in report
+    assert "future_abs_covariate_target_corr" in report
     assert "0.25/0.75/1" in report
     assert "python3 scripts/run_synthetic_v2_profile_smoke.py" in report

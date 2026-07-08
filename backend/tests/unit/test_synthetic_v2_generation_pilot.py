@@ -3,7 +3,9 @@ from __future__ import annotations
 import numpy as np
 
 from app.services.synthetic_generation_service import (
+    CAPABILITIES_BY_ID,
     PILOT_ACCEPTANCE_CAPS,
+    _accept_synthetic_features,
     _generate_accepted_sample_values,
     _seed_for,
 )
@@ -67,3 +69,40 @@ def test_multi_seasonal_intensity_degrades_single_period_seasonal_naive():
 
     assert seasonal_naive_mae == sorted(seasonal_naive_mae)
     assert seasonal_naive_mae[-1] > seasonal_naive_mae[0] * 4
+
+
+def test_all_capabilities_have_hard_acceptance_rules():
+    assert set(PILOT_ACCEPTANCE_CAPS) == set(CAPABILITIES_BY_ID)
+    assert "change_point_shift_energy" in PILOT_ACCEPTANCE_CAPS["regime_switching"]
+    assert "pca_top1_explained" in PILOT_ACCEPTANCE_CAPS["common_factor"]
+    assert "event_lift_abs" in PILOT_ACCEPTANCE_CAPS["covariate_response"]
+
+
+def test_hard_acceptance_rejects_new_capability_feature_over_cap():
+    cap = PILOT_ACCEPTANCE_CAPS["regime_switching"]["level_shift_strength"]
+
+    accepted, failed = _accept_synthetic_features("regime_switching", {"level_shift_strength": cap + 0.01})
+
+    assert accepted is False
+    assert failed == ["level_shift_strength"]
+
+
+def test_all_capabilities_return_accepted_samples_after_resampling():
+    for capability_id, capability in CAPABILITIES_BY_ID.items():
+        target_dim = 3 if capability.target_dim_mode in {"multi", "covariate"} else 1
+
+        _, latent_params, _, features = _generate_accepted_sample_values(
+            capability_id,
+            192,
+            168,
+            target_dim,
+            24,
+            3,
+            _seed_for(123, capability_id, 0),
+        )
+
+        acceptance = latent_params["acceptance"]
+        assert acceptance["accepted"] is True
+        assert acceptance["profile"] is not None
+        assert not acceptance["failed_features"]
+        assert set(PILOT_ACCEPTANCE_CAPS[capability_id]).intersection(features)

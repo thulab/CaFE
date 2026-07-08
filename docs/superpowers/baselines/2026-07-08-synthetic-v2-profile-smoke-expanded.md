@@ -30,6 +30,19 @@
 | traffic_hourly_daily_168ctx | 2000 | 862 | 1 | 0.0816/0.2665/0.3997 | 0.7156/0.9024/1 | 0.101/0.4206/0.6309 | 0.2742/1.0373/1.5559 | 0.5009 | -/-/- | -/-/- |
 | traffic_hourly_panel_168ctx | 2000 | 861 | 3 | 0.0851/0.2136/- | 0.7111/0.8366/- | 0.1208/0.3277/- | 0.3175/0.8355/- | 0.4233 | 0.8179/0.945/1 | 0.629/0.8637/1 |
 
+## Spec 主特征覆盖
+
+| Feature | Profiles with p95 | Max p95 |
+| --- | --- | ---: |
+| trend_strength | us_births_weekly, us_births_annual_diagnostic, m4_hourly_daily_96ctx, m4_hourly_daily_168ctx, m4_hourly_weekly, electricity_hourly_daily_168ctx, electricity_hourly_panel_168ctx, traffic_hourly_daily_168ctx, traffic_hourly_panel_168ctx | 0.9772 |
+| multi_period_score | us_births_weekly, us_births_annual_diagnostic, m4_hourly_daily_96ctx, m4_hourly_daily_168ctx, m4_hourly_weekly, electricity_hourly_daily_168ctx, electricity_hourly_panel_168ctx, traffic_hourly_daily_168ctx, traffic_hourly_panel_168ctx | 0.9672 |
+| change_point_shift_energy | us_births_weekly, us_births_annual_diagnostic, m4_hourly_daily_96ctx, m4_hourly_daily_168ctx, m4_hourly_weekly, electricity_hourly_daily_168ctx, electricity_hourly_panel_168ctx, traffic_hourly_daily_168ctx, traffic_hourly_panel_168ctx | 1.1385 |
+| nonlinear_lag1_gain | us_births_weekly, us_births_annual_diagnostic, m4_hourly_daily_96ctx, m4_hourly_daily_168ctx, m4_hourly_weekly, electricity_hourly_daily_168ctx, electricity_hourly_panel_168ctx, traffic_hourly_daily_168ctx, traffic_hourly_panel_168ctx | 0.1148 |
+| burst_rate | us_births_weekly, us_births_annual_diagnostic, m4_hourly_daily_96ctx, m4_hourly_daily_168ctx, m4_hourly_weekly, electricity_hourly_daily_168ctx, electricity_hourly_panel_168ctx, traffic_hourly_daily_168ctx, traffic_hourly_panel_168ctx | 0.0938 |
+| pca_top1_explained | electricity_hourly_panel_168ctx, traffic_hourly_panel_168ctx | 0.9988 |
+| future_abs_covariate_target_corr | - | - |
+| hierarchy_residual_mean_abs | - | - |
+
 ## 观察
 
 - profiler 现在可以读取带非 UTF-8 元数据的 Monash TSF zip，并且 TSF 输入的 `max_windows` 已按全数据集统一限流。

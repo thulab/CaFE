@@ -72,6 +72,73 @@ def test_feature_vector_reports_multitarget_correlation():
     assert features["trend_strength"] > 0.9
 
 
+def test_feature_vector_reports_spec_univariate_structure_features():
+    profiler = load_profiler_module()
+    t = np.arange(120, dtype=float)
+    values = (
+        np.sin(2 * math.pi * t / 24)
+        + 0.4 * np.sin(2 * math.pi * t / 12)
+        + np.where(t >= 72, 1.5, 0.0)
+    )
+    values[::17] += 6.0
+
+    features = profiler.feature_vector(values, season_length=24)
+
+    for feature in (
+        "multi_period_score",
+        "seasonal_drift_score",
+        "change_point_shift_energy",
+        "level_shift_strength",
+        "volatility_shift_strength",
+        "nonlinear_lag1_gain",
+        "burst_rate",
+    ):
+        assert feature in features
+    assert features["multi_period_score"] > 0
+    assert features["level_shift_strength"] > 0
+    assert features["burst_rate"] > 0
+
+
+def test_profile_csv_can_extract_covariate_and_hierarchy_features(tmp_path):
+    profiler = load_profiler_module()
+    csv_path = tmp_path / "covariate-hierarchy.csv"
+    start = datetime(2026, 1, 1)
+    rows = []
+    for index in range(96):
+        event = 1.0 if index % 24 >= 18 else 0.0
+        weather = math.sin(2 * math.pi * index / 24)
+        child_a = 0.5 * weather + 1.2 * event
+        child_b = 0.3 * math.cos(2 * math.pi * index / 24) + 0.8 * event
+        rows.append(
+            {
+                "time": start + timedelta(hours=index),
+                "parent": child_a + child_b,
+                "child_a": child_a,
+                "child_b": child_b,
+                "weather": weather,
+                "event": event,
+            }
+        )
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+
+    profile = profiler.profile_csv(
+        csv_path,
+        context_length=48,
+        horizon=12,
+        stride=12,
+        season_length=24,
+        target_columns=["parent", "child_a", "child_b"],
+        covariate_columns=["weather", "event"],
+        hierarchy="additive_first",
+    )
+
+    assert profile["bucket"]["target_dim"] == 3
+    assert profile["bucket"]["covariate_dim"] == 2
+    assert profile["features"]["future_abs_covariate_target_corr"]["p50"] > 0
+    assert profile["features"]["event_lift_abs"]["p50"] > 0
+    assert profile["features"]["hierarchy_residual_mean_abs"]["p95"] < 1e-9
+
+
 def test_profile_tsf_panel_summarizes_multitarget_features(tmp_path):
     profiler = load_profiler_module()
     t = np.arange(96, dtype=float)

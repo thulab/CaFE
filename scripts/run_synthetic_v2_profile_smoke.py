@@ -180,6 +180,17 @@ PROFILE_SPECS = (
     ),
 )
 
+SPEC_MAIN_FEATURES = (
+    "trend_strength",
+    "multi_period_score",
+    "change_point_shift_energy",
+    "nonlinear_lag1_gain",
+    "burst_rate",
+    "pca_top1_explained",
+    "future_abs_covariate_target_corr",
+    "hierarchy_residual_mean_abs",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run synthetic v2 real-data profile smoke experiments.")
@@ -312,6 +323,10 @@ def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data
             "",
             *rows,
             "",
+            "## Spec 主特征覆盖",
+            "",
+            *spec_feature_rows(profiles),
+            "",
             "## 观察",
             "",
             "- profiler 现在可以读取带非 UTF-8 元数据的 Monash TSF zip，并且 TSF 输入的 `max_windows` 已按全数据集统一限流。",
@@ -337,6 +352,31 @@ def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data
             "",
         ]
     )
+
+
+def spec_feature_rows(profiles: dict[str, dict[str, Any]]) -> list[str]:
+    rows = [
+        "| Feature | Profiles with p95 | Max p95 |",
+        "| --- | --- | ---: |",
+    ]
+    for feature in SPEC_MAIN_FEATURES:
+        values = []
+        for spec in PROFILE_SPECS:
+            p95 = profiles.get(spec.profile_id, {}).get("features", {}).get(feature, {}).get("p95")
+            if p95 is not None:
+                values.append((spec.profile_id, float(p95)))
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    feature,
+                    ", ".join(profile_id for profile_id, _ in values) if values else "-",
+                    format_number(max(value for _, value in values)) if values else "-",
+                ]
+            )
+            + " |"
+        )
+    return rows
 
 
 def feature_with_cap(profile: dict[str, Any], feature: str) -> str:

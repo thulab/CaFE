@@ -64,7 +64,7 @@ P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 | `us_births_weekly` | 日频单变量外部 sanity profile |
 | `us_births_annual_diagnostic` | 年周期诊断 profile，不作为短窗口硬边界 |
 
-在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前硬编码的 acceptance bounds 主要来自 `m4_hourly_daily_168ctx`，Electricity/Traffic profile 先作为 hourly 真实分布补充和后续多目标硬验收依据，US Births profile 作为跨频率 sanity reference。后续如果引入 M5、Weather/ETT 等数据集，应新增 bucket，而不是混入同一个分布池。
+在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前 hard acceptance 使用两类真实 profile envelope：单变量能力使用 M4/Electricity/Traffic hourly 单变量 profile 的 envelope，多目标能力使用 Electricity/Traffic panel profile 的 envelope。US Births profile 作为跨频率 sanity reference。协变量和层级能力当前已有结构硬守卫，但还缺真实 covariate/hierarchical profile；后续如果引入 M5、Weather/ETT 等数据集，应新增 bucket，而不是混入同一个分布池。
 
 ## Intensity 定义
 
@@ -143,7 +143,7 @@ sample_metadata.latent_params.acceptance.validation.target_features
 q05_real^b(j) <= phi_j(psi(x_syn)) <= q95_real^b(j)
 ```
 
-对 trend / multi-seasonal，当前服务已经启用硬 acceptance caps；对其他能力维度，当前先记录 validation summary，离线实验汇总后再决定是否升级为硬拒绝规则。
+当前服务已经对全部 synthetic capability 启用 hard acceptance caps。`trend` / `multi_seasonal` / 其他单变量结构能力使用 hourly 单变量真实 profile envelope，多目标能力使用 hourly panel profile envelope；`covariate_response` 与 `hierarchical_coherence` 先使用结构硬守卫，等真实 covariate/hierarchical bucket 接入后再替换为真实 profile cap。
 
 ### 3. 近邻距离污染风险校验
 
