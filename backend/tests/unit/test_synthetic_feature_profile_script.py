@@ -67,7 +67,51 @@ def test_feature_vector_reports_multitarget_correlation():
     features = profiler.feature_vector(values, season_length=12)
 
     assert features["avg_abs_target_corr"] > 0.99
+    assert features["pca_top1_explained"] > 0.99
+    assert features["effective_factor_rank"] < 1.1
     assert features["trend_strength"] > 0.9
+
+
+def test_profile_tsf_panel_summarizes_multitarget_features(tmp_path):
+    profiler = load_profiler_module()
+    t = np.arange(96, dtype=float)
+    series_lines = []
+    for series_index in range(4):
+        values = np.sin(2 * np.pi * t / 24 + series_index * 0.1) + series_index * 0.05
+        series_lines.append("series_{}:{}".format(series_index, ",".join(str(value) for value in values)))
+    tsf_text = "\n".join(
+        [
+            "@attribute series_name string",
+            "@frequency hourly",
+            "@horizon 12",
+            "@missing false",
+            "@equallength true",
+            "@data",
+            *series_lines,
+        ]
+    )
+    zip_path = tmp_path / "panel.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("panel.tsf", tsf_text)
+
+    profile = profiler.profile_tsf_panel(
+        zip_path,
+        context_length=48,
+        horizon=12,
+        stride=12,
+        max_windows=4,
+        season_length=24,
+        target_dim=3,
+        domain="traffic",
+        dataset_name="panel smoke",
+        target_features=["pca_top1_explained", "avg_abs_target_corr"],
+    )
+
+    assert profile["bucket"]["target_dim"] == 3
+    assert profile["window_count"] == 4
+    assert profile["features"]["pca_top1_explained"]["p50"] > 0.95
+    assert profile["features"]["avg_abs_target_corr"]["p50"] > 0.95
+    assert profile["target_feature_caps"]["pca_top1_explained"]["max_allowed"] <= 1.0
 
 
 def test_profile_tsf_zip_reads_monash_style_series(tmp_path):

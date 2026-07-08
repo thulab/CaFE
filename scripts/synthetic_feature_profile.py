@@ -23,6 +23,11 @@ DEFAULT_FEATURES = (
     "acf_abs_mean",
     "outlier_rate",
     "spike_rate",
+    "avg_abs_target_corr",
+    "pca_top1_explained",
+    "pca_top2_explained",
+    "effective_factor_rank",
+    "lead_lag_peak_abs",
 )
 DEFAULT_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 BOUNDED_FEATURES = {
@@ -32,6 +37,9 @@ BOUNDED_FEATURES = {
     "outlier_rate",
     "spike_rate",
     "avg_abs_target_corr",
+    "pca_top1_explained",
+    "pca_top2_explained",
+    "lead_lag_peak_abs",
 }
 
 
@@ -271,6 +279,66 @@ def profile_tsf(
     }
 
 
+def profile_tsf_panel(
+    path: Path,
+    *,
+    context_length: int,
+    horizon: int,
+    stride: int | None = None,
+    max_windows: int | None = None,
+    season_length: int | None = None,
+    target_dim: int = 3,
+    domain: str | None = None,
+    dataset_name: str | None = None,
+    target_features: list[str] | None = None,
+    target_max_multiplier: float = 2.0,
+) -> dict[str, Any]:
+    metadata, series = read_tsf_series(path)
+    resolved_stride = stride or horizon
+    spec = WindowSpec(context_length, horizon, resolved_stride)
+    selected_windows = select_tsf_panel_windows(series, spec, target_dim=target_dim, max_windows=max_windows)
+    feature_rows: list[dict[str, float]] = []
+    used_series_ids: set[int] = set()
+    for series_indexes, start, window in selected_windows:
+        if not np.isfinite(window).all():
+            continue
+        features = feature_vector(window, season_length=season_length)
+        features["channel_group_start"] = float(series_indexes[0])
+        features["window_start"] = float(start)
+        feature_rows.append(features)
+        used_series_ids.update(series_indexes)
+
+    feature_names = [name for name in DEFAULT_FEATURES if any(name in row for row in feature_rows)]
+    quantiles = summarize_feature_rows(feature_rows, feature_names)
+    caps = suggested_target_caps(
+        quantiles,
+        target_features=target_features or default_target_features(quantiles),
+        multiplier=target_max_multiplier,
+    )
+    frequency = normalize_tsf_frequency(metadata.get("frequency", "unknown"))
+    return {
+        "schema_version": "synthetic_feature_profile.v1",
+        "dataset": dataset_name or f"{path.stem}_panel",
+        "source_path": str(path),
+        "bucket": {
+            "domain": domain or "unknown",
+            "frequency": frequency,
+            "context_length": context_length,
+            "horizon": horizon,
+            "target_dim": int(target_dim),
+            "covariate_dim": 0,
+            "season_length": season_length,
+        },
+        "window_count": len(feature_rows),
+        "candidate_window_count": len(selected_windows),
+        "series_count": len(series),
+        "used_series_count": len(used_series_ids),
+        "target_columns": [f"target_{index}" for index in range(target_dim)],
+        "features": quantiles,
+        "target_feature_caps": caps,
+    }
+
+
 def select_tsf_windows(
     series: list[tuple[str, np.ndarray]],
     spec: WindowSpec,
@@ -289,6 +357,41 @@ def select_tsf_windows(
         values = series[series_index][1]
         window = values[start : start + spec.length, None]
         selected.append((series_index, start, window))
+    return selected
+
+
+def select_tsf_panel_windows(
+    series: list[tuple[str, np.ndarray]],
+    spec: WindowSpec,
+    *,
+    target_dim: int,
+    max_windows: int | None,
+) -> list[tuple[tuple[int, ...], int, np.ndarray]]:
+    if target_dim <= 1:
+        raise ValueError("target_dim must be greater than 1 for panel profiling")
+    usable = [index for index, (_series_id, values) in enumerate(series) if len(values) >= spec.length]
+    if len(usable) < target_dim:
+        return []
+    min_len = min(len(series[index][1]) for index in usable)
+    starts = window_starts(min_len, WindowSpec(spec.context_length, spec.horizon, spec.stride))
+    channel_groups = [
+        tuple(usable[start : start + target_dim])
+        for start in range(0, len(usable) - target_dim + 1, target_dim)
+    ]
+    candidates = [(group, start) for group in channel_groups for start in starts]
+    if max_windows is not None and len(candidates) > max_windows:
+        indexes = np.linspace(0, len(candidates) - 1, max_windows).round().astype(int)
+        candidates = [candidates[index] for index in sorted(set(indexes.tolist()))]
+
+    selected: list[tuple[tuple[int, ...], int, np.ndarray]] = []
+    for group, start in candidates:
+        window = np.column_stack(
+            [
+                series[series_index][1][start : start + spec.length]
+                for series_index in group
+            ]
+        )
+        selected.append((group, start, window))
     return selected
 
 
@@ -359,10 +462,45 @@ def feature_vector(window: np.ndarray, season_length: int | None = None) -> dict
         if values:
             out[feature] = float(np.mean(values))
     if window.shape[1] > 1:
-        corr = np.nan_to_num(np.corrcoef(window.T), nan=0.0)
-        off_diag = corr[~np.eye(corr.shape[0], dtype=bool)]
-        out["avg_abs_target_corr"] = float(np.mean(np.abs(off_diag))) if off_diag.size else 0.0
+        out.update(multitarget_features(window))
     return out
+
+
+def multitarget_features(window: np.ndarray) -> dict[str, float]:
+    centered = window - np.mean(window, axis=0, keepdims=True)
+    corr_values = [
+        abs(safe_corr(window[:, left], window[:, right]))
+        for left in range(window.shape[1])
+        for right in range(window.shape[1])
+        if left != right
+    ]
+    singular = np.linalg.svd(centered, full_matrices=False, compute_uv=False)
+    variance = singular**2
+    total = float(np.sum(variance))
+    explained = variance / total if total > 1e-12 else np.zeros_like(variance)
+    entropy = -float(np.sum([value * np.log(value) for value in explained if value > 1e-12]))
+    return {
+        "avg_abs_target_corr": float(np.mean(corr_values)) if corr_values else 0.0,
+        "pca_top1_explained": float(explained[0]) if explained.size else 0.0,
+        "pca_top2_explained": float(np.sum(explained[:2])) if explained.size else 0.0,
+        "effective_factor_rank": float(np.exp(entropy)) if explained.size else 0.0,
+        "lead_lag_peak_abs": lead_lag_peak_abs(window),
+    }
+
+
+def lead_lag_peak_abs(window: np.ndarray, max_lag: int = 12) -> float:
+    if window.shape[1] < 2:
+        return 0.0
+    peaks: list[float] = []
+    lag_limit = min(max_lag, max(1, window.shape[0] // 4))
+    for left in range(window.shape[1]):
+        for right in range(window.shape[1]):
+            if left == right:
+                continue
+            for lag in range(1, lag_limit + 1):
+                peaks.append(abs(safe_corr(window[:-lag, left], window[lag:, right])))
+    finite = [value for value in peaks if math.isfinite(value)]
+    return float(max(finite)) if finite else 0.0
 
 
 def single_series_features(values: np.ndarray, season_length: int | None = None) -> dict[str, float]:
@@ -472,6 +610,19 @@ def mean_abs_autocorrelation(values: np.ndarray, max_lag: int) -> float:
     return float(np.mean(vals)) if vals else 0.0
 
 
+def safe_corr(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=float)
+    right = np.asarray(right, dtype=float)
+    if left.size != right.size or left.size < 3:
+        return 0.0
+    left = left - float(np.mean(left))
+    right = right - float(np.mean(right))
+    denom = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if denom <= 1e-12:
+        return 0.0
+    return float(np.dot(left, right) / denom)
+
+
 def outlier_rate(values: np.ndarray) -> float:
     median = float(np.median(values))
     mad = float(np.median(np.abs(values - median)))
@@ -513,7 +664,14 @@ def summarize_feature_rows(rows: list[dict[str, float]], feature_names: list[str
 
 
 def default_target_features(quantiles: dict[str, dict[str, float]]) -> list[str]:
-    preferred = ["trend_strength", "seasonal_strength", "slope_abs", "curvature_abs"]
+    preferred = [
+        "trend_strength",
+        "seasonal_strength",
+        "slope_abs",
+        "curvature_abs",
+        "pca_top1_explained",
+        "avg_abs_target_corr",
+    ]
     return [feature for feature in preferred if feature in quantiles]
 
 

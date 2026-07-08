@@ -47,5 +47,7 @@ def test_render_report_summarizes_profiles():
 
     assert "Synthetic v2 真实数据 Profile 烟测" in report
     assert "us_births_weekly" in report
+    assert "electricity_hourly_daily_168ctx" in report
+    assert "traffic_hourly_panel_168ctx" in report
     assert "0.25/0.75/1" in report
     assert "python3 scripts/run_synthetic_v2_profile_smoke.py" in report

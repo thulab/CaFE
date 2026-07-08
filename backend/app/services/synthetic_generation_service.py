@@ -160,6 +160,10 @@ MOCK_ANCHOR = {
         "m4_hourly_daily_96ctx",
         "m4_hourly_daily_168ctx",
         "m4_hourly_weekly",
+        "electricity_hourly_daily_168ctx",
+        "electricity_hourly_panel_168ctx",
+        "traffic_hourly_daily_168ctx",
+        "traffic_hourly_panel_168ctx",
         "us_births_weekly",
         "us_births_annual_diagnostic",
     ],
@@ -185,6 +189,44 @@ ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
         "slope_abs": {"p50": 0.2102, "p75": 0.2992, "p95": 0.3606},
         "curvature_abs": {"p50": 0.3674, "p75": 0.4536, "p95": 0.5142},
         "noise_ratio": {"p50": 0.2693, "p75": 0.2984, "p95": 0.3567},
+    },
+    "electricity_hourly_daily_168ctx": {
+        "trend_strength": {"p05": 0.0, "p50": 0.0427, "p95": 0.4120},
+        "seasonal_strength": {"p05": 0.3058, "p50": 0.9161, "p95": 0.9783},
+        "acf_abs_mean": {"p05": 0.2386, "p50": 0.4420, "p95": 0.5151},
+        "slope_abs": {"p05": 0.0109, "p50": 0.0946, "p95": 0.3537},
+        "curvature_abs": {"p05": 0.0085, "p50": 0.1117, "p95": 0.7900},
+        "noise_ratio": {"p05": 0.0212, "p50": 0.0811, "p95": 0.5517},
+        "spike_rate": {"p05": 0.0, "p50": 0.0419, "p95": 0.1728},
+    },
+    "electricity_hourly_panel_168ctx": {
+        "trend_strength": {"p05": 0.0, "p50": 0.0761, "p95": 0.3433},
+        "seasonal_strength": {"p05": 0.4506, "p50": 0.9103, "p95": 0.9701},
+        "noise_ratio": {"p05": 0.0294, "p50": 0.0835, "p95": 0.4616},
+        "avg_abs_target_corr": {"p05": 0.2903, "p50": 0.8478, "p95": 0.9484},
+        "pca_top1_explained": {"p05": 0.6727, "p50": 0.9627, "p95": 0.9988},
+        "pca_top2_explained": {"p05": 0.9512, "p50": 0.9954, "p95": 1.0},
+        "effective_factor_rank": {"p05": 1.0097, "p50": 1.1915, "p95": 2.0619},
+        "lead_lag_peak_abs": {"p05": 0.5567, "p50": 0.8952, "p95": 0.9538},
+    },
+    "traffic_hourly_daily_168ctx": {
+        "trend_strength": {"p05": 0.0052, "p50": 0.0816, "p95": 0.2665},
+        "seasonal_strength": {"p05": 0.4688, "p50": 0.7156, "p95": 0.9024},
+        "acf_abs_mean": {"p05": 0.1957, "p50": 0.3335, "p95": 0.4807},
+        "slope_abs": {"p05": 0.0097, "p50": 0.1010, "p95": 0.4206},
+        "curvature_abs": {"p05": 0.0231, "p50": 0.2742, "p95": 1.0373},
+        "noise_ratio": {"p05": 0.0964, "p50": 0.2754, "p95": 0.5009},
+        "spike_rate": {"p05": 0.0, "p50": 0.0681, "p95": 0.1571},
+    },
+    "traffic_hourly_panel_168ctx": {
+        "trend_strength": {"p05": 0.0252, "p50": 0.0851, "p95": 0.2136},
+        "seasonal_strength": {"p05": 0.5522, "p50": 0.7111, "p95": 0.8366},
+        "noise_ratio": {"p05": 0.1600, "p50": 0.2794, "p95": 0.4233},
+        "avg_abs_target_corr": {"p05": 0.3484, "p50": 0.6290, "p95": 0.8637},
+        "pca_top1_explained": {"p05": 0.6206, "p50": 0.8179, "p95": 0.9450},
+        "pca_top2_explained": {"p05": 0.9148, "p50": 0.9718, "p95": 0.9959},
+        "effective_factor_rank": {"p05": 1.2655, "p50": 1.7376, "p95": 2.2662},
+        "lead_lag_peak_abs": {"p05": 0.6158, "p50": 0.7959, "p95": 0.9208},
     },
 }
 
@@ -1095,15 +1137,19 @@ def _structural_univariate_features(values: np.ndarray, season_length: int) -> d
 
 def _multivariate_profile_features(target: np.ndarray) -> dict[str, float]:
     centered = target - np.mean(target, axis=0, keepdims=True)
-    corr = np.nan_to_num(np.corrcoef(centered.T), nan=0.0)
-    off_diag = corr[~np.eye(corr.shape[0], dtype=bool)]
+    corr_values = [
+        abs(_safe_corr(target[:, left], target[:, right]))
+        for left in range(target.shape[1])
+        for right in range(target.shape[1])
+        if left != right
+    ]
     singular = np.linalg.svd(centered, full_matrices=False, compute_uv=False)
     variance = singular**2
     total = float(np.sum(variance))
     explained = variance / total if total > 1e-12 else np.zeros_like(variance)
     entropy = -float(np.sum([value * np.log(value) for value in explained if value > 1e-12]))
     return {
-        "avg_abs_target_corr": float(np.mean(np.abs(off_diag))) if off_diag.size else 0.0,
+        "avg_abs_target_corr": float(np.mean(corr_values)) if corr_values else 0.0,
         "pca_top1_explained": float(explained[0]) if explained.size else 0.0,
         "pca_top2_explained": float(np.sum(explained[:2])) if explained.size else 0.0,
         "effective_factor_rank": float(np.exp(entropy)) if explained.size else 0.0,

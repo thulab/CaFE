@@ -14,7 +14,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from synthetic_feature_profile import profile_input  # noqa: E402
+from synthetic_feature_profile import profile_input, profile_tsf_panel  # noqa: E402
 
 
 DEFAULT_DATA_DIR = Path("runtime/research")
@@ -42,6 +42,8 @@ class ProfileSpec:
     max_windows: int
     season_length: int
     target_max_multiplier: float = 1.5
+    target_dim: int = 1
+    target_features: tuple[str, ...] = ()
 
 
 ASSETS = {
@@ -56,6 +58,18 @@ ASSETS = {
         label="M4 Hourly Dataset",
         url="https://zenodo.org/records/4656589/files/m4_hourly_dataset.zip?download=1",
         filename="m4_hourly_dataset.zip",
+    ),
+    "electricity_hourly": DatasetAsset(
+        asset_id="electricity_hourly",
+        label="Electricity Hourly Dataset",
+        url="https://zenodo.org/records/4656140/files/electricity_hourly_dataset.zip?download=1",
+        filename="electricity_hourly_dataset.zip",
+    ),
+    "traffic_hourly": DatasetAsset(
+        asset_id="traffic_hourly",
+        label="Traffic Hourly Dataset",
+        url="https://zenodo.org/records/4656132/files/traffic_hourly_dataset.zip?download=1",
+        filename="traffic_hourly_dataset.zip",
     ),
 }
 
@@ -116,6 +130,54 @@ PROFILE_SPECS = (
         max_windows=1000,
         season_length=168,
     ),
+    ProfileSpec(
+        profile_id="electricity_hourly_daily_168ctx",
+        title="Electricity Hourly, daily seasonality, 168 context",
+        asset_id="electricity_hourly",
+        domain="energy",
+        context_length=168,
+        horizon=24,
+        stride=24,
+        max_windows=2000,
+        season_length=24,
+    ),
+    ProfileSpec(
+        profile_id="electricity_hourly_panel_168ctx",
+        title="Electricity Hourly panel, 3-target common factors",
+        asset_id="electricity_hourly",
+        domain="energy",
+        context_length=168,
+        horizon=24,
+        stride=24,
+        max_windows=2000,
+        season_length=24,
+        target_dim=3,
+        target_features=("pca_top1_explained", "avg_abs_target_corr"),
+    ),
+    ProfileSpec(
+        profile_id="traffic_hourly_daily_168ctx",
+        title="Traffic Hourly, daily seasonality, 168 context",
+        asset_id="traffic_hourly",
+        domain="traffic",
+        context_length=168,
+        horizon=24,
+        stride=24,
+        max_windows=2000,
+        season_length=24,
+    ),
+    ProfileSpec(
+        profile_id="traffic_hourly_panel_168ctx",
+        title="Traffic Hourly panel, 3-target common factors",
+        asset_id="traffic_hourly",
+        domain="traffic",
+        context_length=168,
+        horizon=24,
+        stride=24,
+        max_windows=2000,
+        season_length=24,
+        target_dim=3,
+        target_features=("pca_top1_explained", "avg_abs_target_corr"),
+    ),
 )
 
 
@@ -137,18 +199,33 @@ def main() -> int:
     asset_paths = ensure_assets(args.data_dir, force=args.force_download, skip_download=args.skip_download)
     profiles: dict[str, dict[str, Any]] = {}
     for spec in PROFILE_SPECS:
-        profile = profile_input(
-            asset_paths[spec.asset_id],
-            input_format="auto",
-            context_length=spec.context_length,
-            horizon=spec.horizon,
-            stride=spec.stride,
-            max_windows=spec.max_windows,
-            season_length=spec.season_length,
-            domain=spec.domain,
-            dataset_name=spec.title,
-            target_max_multiplier=spec.target_max_multiplier,
-        )
+        if spec.target_dim > 1:
+            profile = profile_tsf_panel(
+                asset_paths[spec.asset_id],
+                context_length=spec.context_length,
+                horizon=spec.horizon,
+                stride=spec.stride,
+                max_windows=spec.max_windows,
+                season_length=spec.season_length,
+                target_dim=spec.target_dim,
+                domain=spec.domain,
+                dataset_name=spec.title,
+                target_features=list(spec.target_features),
+                target_max_multiplier=spec.target_max_multiplier,
+            )
+        else:
+            profile = profile_input(
+                asset_paths[spec.asset_id],
+                input_format="auto",
+                context_length=spec.context_length,
+                horizon=spec.horizon,
+                stride=spec.stride,
+                max_windows=spec.max_windows,
+                season_length=spec.season_length,
+                domain=spec.domain,
+                dataset_name=spec.title,
+                target_max_multiplier=spec.target_max_multiplier,
+            )
         profile["profile_id"] = spec.profile_id
         profile["profile_title"] = spec.title
         profile["source_url"] = ASSETS[spec.asset_id].url
@@ -186,8 +263,8 @@ def download(url: str, path: Path) -> None:
 
 def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data_dir: Path) -> str:
     rows = [
-        "| Profile | 窗口数 | 序列数 | Trend p50/p95/cap | Seasonal p50/p95/cap | Slope p95/cap | Curvature p95/cap | Noise p95 |",
-        "| --- | ---: | ---: | --- | --- | --- | --- | ---: |",
+        "| Profile | 窗口数 | 序列数 | target_dim | Trend p50/p95/cap | Seasonal p50/p95/cap | Slope p95/cap | Curvature p95/cap | Noise p95 | PCA1 p50/p95/cap | Corr p50/p95/cap |",
+        "| --- | ---: | ---: | ---: | --- | --- | --- | --- | ---: | --- | --- |",
     ]
     for spec in PROFILE_SPECS:
         profile = profiles[spec.profile_id]
@@ -198,11 +275,14 @@ def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data
                     spec.profile_id,
                     str(profile.get("window_count", 0)),
                     str(profile.get("used_series_count", "-")),
+                    str(profile.get("bucket", {}).get("target_dim", 1)),
                     feature_with_cap(profile, "trend_strength"),
                     feature_with_cap(profile, "seasonal_strength"),
                     feature_with_cap(profile, "slope_abs"),
                     feature_with_cap(profile, "curvature_abs"),
                     metric(profile, "noise_ratio", "p95"),
+                    feature_with_cap(profile, "pca_top1_explained"),
+                    feature_with_cap(profile, "avg_abs_target_corr"),
                 ]
             )
             + " |"
@@ -212,7 +292,7 @@ def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data
         [
             "# Synthetic v2 真实数据 Profile 烟测",
             "",
-            "日期：2026-06-29",
+            "日期：2026-07-08",
             "",
             "## 目的",
             "",
@@ -222,6 +302,8 @@ def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data
             "",
             f"- US Births Dataset: {ASSETS['us_births'].url}",
             f"- M4 Hourly Dataset: {ASSETS['m4_hourly'].url}",
+            f"- Electricity Hourly Dataset: {ASSETS['electricity_hourly'].url}",
+            f"- Traffic Hourly Dataset: {ASSETS['traffic_hourly'].url}",
             f"- 本地数据缓存：`{data_dir}`",
             f"- JSON profile 输出：`{output_dir}`",
             "- 目标特征上限规则：`p95 * 1.5`；天然有界特征额外截断到 `1.0`。",
@@ -235,11 +317,15 @@ def render_report(profiles: dict[str, dict[str, Any]], *, output_dir: Path, data
             "- profiler 现在可以读取带非 UTF-8 元数据的 Monash TSF zip，并且 TSF 输入的 `max_windows` 已按全数据集统一限流。",
             "- US Births 适合作为小型日频 sanity check。周季节性有清晰信号；年季节性这里只作为诊断项，因为 `365+30` 窗口不足两个完整年周期，`seasonal_strength=0` 不代表真实数据没有年季节性。",
             "- M4 Hourly 更适合作为第一版小时级 trend 和 seasonality anchor：它有数百条序列，日季节性强，并且更长 context 能暴露更强的趋势变化。",
+            "- Electricity Hourly 补充能源负荷基底，可用于校准 hourly 多目标 common-factor、日/周季节性和低秩结构。",
+            "- Traffic Hourly 补充交通占用率基底，可用于校准更强的跨序列相关、lead-lag 和系统性 regime shift 结构。",
             "- cap multiplier 能避免目标特征增强无限偏离真实分布。对于 `trend_strength` / `seasonal_strength` 等天然 `[0, 1]` 特征，截断逻辑已经生效。",
             "",
             "## 决策",
             "",
             "- `m4_hourly_daily_168ctx` 作为 trend 和 multi-seasonal v2 pilot 的主小时级 anchor。",
+            "- `electricity_hourly_daily_168ctx` 和 `traffic_hourly_daily_168ctx` 作为额外 hourly 单变量控制 profile。",
+            "- `electricity_hourly_panel_168ctx` 和 `traffic_hourly_panel_168ctx` 作为多目标 common-factor / lead-lag profile。",
             "- `us_births_weekly` 保留为小型日频回归 / sanity anchor。",
             "- 第一版 pilot 使用 `target_max_multiplier=1.5`，暂不放宽，因为多个真实 profile 的 p95 已经接近有界特征上限。",
             "",

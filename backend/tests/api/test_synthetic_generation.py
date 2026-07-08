@@ -49,6 +49,10 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
             "m4_hourly_daily_96ctx",
             "m4_hourly_daily_168ctx",
             "m4_hourly_weekly",
+            "electricity_hourly_daily_168ctx",
+            "electricity_hourly_panel_168ctx",
+            "traffic_hourly_daily_168ctx",
+            "traffic_hourly_panel_168ctx",
             "us_births_weekly",
             "us_births_annual_diagnostic",
         ]

@@ -57,10 +57,14 @@ P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 | `m4_hourly_daily_96ctx` | 小 context 小时级单变量 sanity profile |
 | `m4_hourly_daily_168ctx` | 主 profile，当前在线生成器的主要控制边界 |
 | `m4_hourly_weekly` | 小时级长周期/周季节补充 |
+| `electricity_hourly_daily_168ctx` | 电力负荷 hourly 单变量控制 profile |
+| `electricity_hourly_panel_168ctx` | 电力负荷 3-target panel profile，用于 low-rank common factor / lead-lag 校准 |
+| `traffic_hourly_daily_168ctx` | 交通占用率 hourly 单变量控制 profile |
+| `traffic_hourly_panel_168ctx` | 交通占用率 3-target panel profile，用于跨序列相关和 lead-lag 校准 |
 | `us_births_weekly` | 日频单变量外部 sanity profile |
 | `us_births_annual_diagnostic` | 年周期诊断 profile，不作为短窗口硬边界 |
 
-在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前硬编码的 acceptance bounds 主要来自 `m4_hourly_daily_168ctx`，US Births profile 作为跨频率 sanity reference。后续如果引入 M5、Electricity、Traffic、Weather 等数据集，应新增 bucket，而不是混入同一个分布池。
+在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前硬编码的 acceptance bounds 主要来自 `m4_hourly_daily_168ctx`，Electricity/Traffic profile 先作为 hourly 真实分布补充和后续多目标硬验收依据，US Births profile 作为跨频率 sanity reference。后续如果引入 M5、Weather/ETT 等数据集，应新增 bucket，而不是混入同一个分布池。
 
 ## Intensity 定义
 
