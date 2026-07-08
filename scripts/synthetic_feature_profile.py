@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import math
 import zipfile
@@ -56,6 +57,8 @@ BOUNDED_FEATURES = {
     "pca_top1_explained",
     "pca_top2_explained",
     "lead_lag_peak_abs",
+    "avg_abs_covariate_target_corr",
+    "future_abs_covariate_target_corr",
 }
 
 
@@ -383,6 +386,234 @@ def profile_tsf_panel(
     }
 
 
+def profile_m5_covariate(
+    path: Path,
+    *,
+    context_length: int,
+    horizon: int,
+    stride: int | None = None,
+    max_windows: int | None = None,
+    max_series: int = 240,
+    season_length: int | None = 7,
+    domain: str | None = "retail",
+    dataset_name: str | None = None,
+    target_features: list[str] | None = None,
+    target_max_multiplier: float = 2.0,
+) -> dict[str, Any]:
+    calendar, sales, day_columns = read_m5_calendar_and_sales(path)
+    resolved_stride = stride or horizon
+    spec = WindowSpec(context_length, horizon, resolved_stride)
+    active_sales = sales.loc[sales[day_columns].sum(axis=1) > 0].reset_index(drop=True)
+    if active_sales.empty:
+        active_sales = sales.reset_index(drop=True)
+    selected_sales = sample_frame_evenly(active_sales, max_series)
+    prices = read_m5_prices(path, selected_sales[["store_id", "item_id"]].drop_duplicates())
+    price_lookup = {
+        (store_id, item_id): group.set_index("wm_yr_wk")["sell_price"].astype(float)
+        for (store_id, item_id), group in prices.groupby(["store_id", "item_id"])
+    }
+    candidates = [
+        (series_index, start)
+        for series_index in range(len(selected_sales))
+        for start in window_starts(len(day_columns), spec)
+    ]
+    candidates = limit_candidates(candidates, max_windows)
+    feature_rows: list[dict[str, float]] = []
+    used_series_ids: set[int] = set()
+    for series_index, start in candidates:
+        row = selected_sales.iloc[series_index]
+        target = row[day_columns].to_numpy(dtype=float)
+        covariates = m5_covariate_matrix(
+            calendar,
+            state_id=str(row["state_id"]),
+            price_series=price_lookup.get((row["store_id"], row["item_id"])),
+        )
+        window = target[start : start + spec.length, None]
+        covariate_window = covariates[start : start + spec.length]
+        if window.shape[0] != spec.length or not np.isfinite(window).all() or not np.isfinite(covariate_window).all():
+            continue
+        features = feature_vector(
+            window,
+            season_length=season_length,
+            covariates=covariate_window,
+            context_length=context_length,
+        )
+        features["series_index"] = float(series_index)
+        features["window_start"] = float(start)
+        feature_rows.append(features)
+        used_series_ids.add(series_index)
+
+    feature_names = [name for name in DEFAULT_FEATURES if any(name in row for row in feature_rows)]
+    quantiles = summarize_feature_rows(feature_rows, feature_names)
+    caps = suggested_target_caps(
+        quantiles,
+        target_features=target_features
+        or ["future_abs_covariate_target_corr", "avg_abs_covariate_target_corr", "event_lift_abs"],
+        multiplier=target_max_multiplier,
+    )
+    return {
+        "schema_version": "synthetic_feature_profile.v1",
+        "dataset": dataset_name or "M5 daily covariate profile",
+        "source_path": str(path),
+        "bucket": {
+            "domain": domain or "retail",
+            "frequency": "d",
+            "context_length": context_length,
+            "horizon": horizon,
+            "target_dim": 1,
+            "covariate_dim": 4,
+            "season_length": season_length,
+        },
+        "window_count": len(feature_rows),
+        "candidate_window_count": len(candidates),
+        "series_count": int(len(active_sales)),
+        "used_series_count": len(used_series_ids),
+        "target_columns": ["sales"],
+        "covariate_columns": ["event_count", "snap", "sell_price", "price_change"],
+        "features": quantiles,
+        "target_feature_caps": caps,
+    }
+
+
+def profile_m5_hierarchy(
+    path: Path,
+    *,
+    context_length: int,
+    horizon: int,
+    stride: int | None = None,
+    max_windows: int | None = None,
+    max_groups: int = 20,
+    season_length: int | None = 7,
+    domain: str | None = "retail",
+    dataset_name: str | None = None,
+    target_features: list[str] | None = None,
+    target_max_multiplier: float = 2.0,
+) -> dict[str, Any]:
+    _calendar, sales, day_columns = read_m5_calendar_and_sales(path)
+    resolved_stride = stride or horizon
+    spec = WindowSpec(context_length, horizon, resolved_stride)
+    group_sizes = sales.groupby(["store_id", "cat_id"])["dept_id"].nunique()
+    groups = [group for group, count in group_sizes.items() if count == 2]
+    groups = sample_sequence_evenly(groups, max_groups)
+    group_values = [m5_hierarchy_values(sales, day_columns, group) for group in groups]
+    candidates = [
+        (group_index, start)
+        for group_index, values in enumerate(group_values)
+        for start in window_starts(values.shape[0], spec)
+    ]
+    candidates = limit_candidates(candidates, max_windows)
+    feature_rows: list[dict[str, float]] = []
+    used_group_ids: set[int] = set()
+    for group_index, start in candidates:
+        values = group_values[group_index]
+        window = values[start : start + spec.length]
+        if window.shape[0] != spec.length or not np.isfinite(window).all():
+            continue
+        features = feature_vector(window, season_length=season_length, hierarchy="additive_first")
+        features["group_index"] = float(group_index)
+        features["window_start"] = float(start)
+        feature_rows.append(features)
+        used_group_ids.add(group_index)
+
+    feature_names = [name for name in DEFAULT_FEATURES if any(name in row for row in feature_rows)]
+    quantiles = summarize_feature_rows(feature_rows, feature_names)
+    caps = suggested_target_caps(
+        quantiles,
+        target_features=target_features or ["hierarchy_residual_mean_abs", "avg_abs_target_corr"],
+        multiplier=target_max_multiplier,
+    )
+    return {
+        "schema_version": "synthetic_feature_profile.v1",
+        "dataset": dataset_name or "M5 daily hierarchy profile",
+        "source_path": str(path),
+        "bucket": {
+            "domain": domain or "retail",
+            "frequency": "d",
+            "context_length": context_length,
+            "horizon": horizon,
+            "target_dim": 3,
+            "covariate_dim": 0,
+            "season_length": season_length,
+            "hierarchy": "additive_first",
+        },
+        "window_count": len(feature_rows),
+        "candidate_window_count": len(candidates),
+        "series_count": len(groups),
+        "used_series_count": len(used_group_ids),
+        "target_columns": ["parent", "child_0", "child_1"],
+        "features": quantiles,
+        "target_feature_caps": caps,
+    }
+
+
+def profile_gefcom2014_load(
+    path: Path,
+    *,
+    context_length: int,
+    horizon: int,
+    stride: int | None = None,
+    max_windows: int | None = None,
+    season_length: int | None = 24,
+    task: int = 1,
+    domain: str | None = "energy",
+    dataset_name: str | None = None,
+    target_features: list[str] | None = None,
+    target_max_multiplier: float = 2.0,
+) -> dict[str, Any]:
+    frame, source_name = read_gefcom2014_load_frame(path, task=task)
+    covariate_columns = [column for column in frame.columns if column.startswith("w")]
+    frame = frame[["LOAD", *covariate_columns]].apply(pd.to_numeric, errors="coerce").dropna().reset_index(drop=True)
+    resolved_stride = stride or horizon
+    spec = WindowSpec(context_length, horizon, resolved_stride, max_windows=max_windows)
+    target = frame["LOAD"].to_numpy(dtype=float)
+    covariates = frame[covariate_columns].to_numpy(dtype=float)
+    starts = window_starts(len(target), spec)
+    feature_rows: list[dict[str, float]] = []
+    for start in starts:
+        window = target[start : start + spec.length, None]
+        covariate_window = covariates[start : start + spec.length]
+        if not np.isfinite(window).all() or not np.isfinite(covariate_window).all():
+            continue
+        features = feature_vector(
+            window,
+            season_length=season_length,
+            covariates=covariate_window,
+            context_length=context_length,
+        )
+        features["window_start"] = float(start)
+        feature_rows.append(features)
+
+    feature_names = [name for name in DEFAULT_FEATURES if any(name in row for row in feature_rows)]
+    quantiles = summarize_feature_rows(feature_rows, feature_names)
+    caps = suggested_target_caps(
+        quantiles,
+        target_features=target_features or ["future_abs_covariate_target_corr", "avg_abs_covariate_target_corr"],
+        multiplier=target_max_multiplier,
+    )
+    return {
+        "schema_version": "synthetic_feature_profile.v1",
+        "dataset": dataset_name or f"GEFCom2014 Load task {task}",
+        "source_path": f"{path}:{source_name}",
+        "bucket": {
+            "domain": domain or "energy",
+            "frequency": "h",
+            "context_length": context_length,
+            "horizon": horizon,
+            "target_dim": 1,
+            "covariate_dim": len(covariate_columns),
+            "season_length": season_length,
+        },
+        "window_count": len(feature_rows),
+        "candidate_window_count": len(starts),
+        "series_count": 1,
+        "used_series_count": 1 if feature_rows else 0,
+        "target_columns": ["LOAD"],
+        "covariate_columns": covariate_columns,
+        "features": quantiles,
+        "target_feature_caps": caps,
+    }
+
+
 def select_tsf_windows(
     series: list[tuple[str, np.ndarray]],
     spec: WindowSpec,
@@ -437,6 +668,139 @@ def select_tsf_panel_windows(
         )
         selected.append((group, start, window))
     return selected
+
+
+def read_m5_calendar_and_sales(path: Path) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    with zipfile.ZipFile(path) as archive:
+        sales_name = first_existing_name(archive, ("sales_train_validation.csv", "sales_train_evaluation.csv"))
+        with archive.open("calendar.csv") as handle:
+            calendar = pd.read_csv(handle)
+        with archive.open(sales_name) as handle:
+            sales = pd.read_csv(handle)
+    day_columns = sorted(
+        [column for column in sales.columns if column.startswith("d_")],
+        key=lambda value: int(value.split("_", 1)[1]),
+    )
+    calendar = calendar.loc[calendar["d"].isin(day_columns)].copy()
+    day_order = {day: index for index, day in enumerate(day_columns)}
+    calendar["_day_order"] = calendar["d"].map(day_order)
+    calendar = calendar.sort_values("_day_order").drop(columns=["_day_order"]).reset_index(drop=True)
+    return calendar, sales, day_columns
+
+
+def read_m5_prices(path: Path, selected_keys: pd.DataFrame) -> pd.DataFrame:
+    with zipfile.ZipFile(path) as archive:
+        with archive.open("sell_prices.csv") as handle:
+            prices = pd.read_csv(handle, usecols=["store_id", "item_id", "wm_yr_wk", "sell_price"])
+    if selected_keys.empty:
+        return prices.iloc[0:0].copy()
+    return prices.merge(selected_keys, on=["store_id", "item_id"], how="inner")
+
+
+def first_existing_name(archive: zipfile.ZipFile, names: tuple[str, ...]) -> str:
+    available = set(archive.namelist())
+    for name in names:
+        if name in available:
+            return name
+    raise ValueError(f"none of the expected files are present: {', '.join(names)}")
+
+
+def m5_covariate_matrix(
+    calendar: pd.DataFrame,
+    *,
+    state_id: str,
+    price_series: pd.Series | None,
+) -> np.ndarray:
+    event_count = (
+        calendar[[column for column in ("event_name_1", "event_name_2") if column in calendar.columns]]
+        .notna()
+        .sum(axis=1)
+        .to_numpy(dtype=float)
+    )
+    snap_column = f"snap_{state_id}"
+    snap = calendar[snap_column].to_numpy(dtype=float) if snap_column in calendar.columns else np.zeros(len(calendar))
+    if price_series is None or price_series.empty:
+        price = pd.Series(np.zeros(len(calendar), dtype=float))
+    else:
+        mapped = [float(price_series.get(week, np.nan)) for week in calendar["wm_yr_wk"].tolist()]
+        price = pd.Series(mapped, dtype=float).ffill().bfill()
+        if price.isna().any():
+            fill_value = float(price.dropna().median()) if price.notna().any() else 0.0
+            price = price.fillna(fill_value)
+    price_change = price.diff().fillna(0.0)
+    return np.column_stack(
+        [
+            event_count,
+            snap,
+            price.to_numpy(dtype=float),
+            price_change.to_numpy(dtype=float),
+        ]
+    )
+
+
+def m5_hierarchy_values(sales: pd.DataFrame, day_columns: list[str], group: tuple[str, str]) -> np.ndarray:
+    store_id, cat_id = group
+    group_rows = sales.loc[(sales["store_id"] == store_id) & (sales["cat_id"] == cat_id)]
+    dept_values = [
+        group_rows.loc[group_rows["dept_id"] == dept_id, day_columns].sum(axis=0).to_numpy(dtype=float)
+        for dept_id in sorted(group_rows["dept_id"].unique())
+    ]
+    if len(dept_values) != 2:
+        raise ValueError(f"M5 hierarchy profile expects exactly two child departments for {group!r}")
+    parent = dept_values[0] + dept_values[1]
+    return np.column_stack([parent, *dept_values])
+
+
+def read_gefcom2014_load_frame(path: Path, *, task: int) -> tuple[pd.DataFrame, str]:
+    with zipfile.ZipFile(path) as outer:
+        names = outer.namelist()
+        if any(name.startswith("Load/") and name.endswith("-train.csv") for name in names):
+            return read_gefcom2014_load_frame_from_archive(outer, task=task)
+        nested_name = first_matching_name(names, suffix="GEFCom2014-L_V2.zip")
+        nested_data = outer.read(nested_name)
+    with zipfile.ZipFile(io.BytesIO(nested_data)) as nested:
+        frame, source_name = read_gefcom2014_load_frame_from_archive(nested, task=task)
+    return frame, f"{nested_name}:{source_name}"
+
+
+def read_gefcom2014_load_frame_from_archive(archive: zipfile.ZipFile, *, task: int) -> tuple[pd.DataFrame, str]:
+    preferred = f"Load/Task {task}/L{task}-train.csv"
+    names = archive.namelist()
+    source_name = preferred if preferred in names else first_matching_name(names, prefix="Load/Task ", suffix="-train.csv")
+    with archive.open(source_name) as handle:
+        return pd.read_csv(handle), source_name
+
+
+def first_matching_name(names: list[str], *, prefix: str | None = None, suffix: str | None = None) -> str:
+    for name in names:
+        if prefix is not None and not name.startswith(prefix):
+            continue
+        if suffix is not None and not name.endswith(suffix):
+            continue
+        return name
+    criteria = ", ".join(part for part in [f"prefix={prefix!r}" if prefix else "", f"suffix={suffix!r}" if suffix else ""] if part)
+    raise ValueError(f"no zip member matched {criteria}")
+
+
+def sample_frame_evenly(frame: pd.DataFrame, max_rows: int) -> pd.DataFrame:
+    if max_rows <= 0 or len(frame) <= max_rows:
+        return frame.reset_index(drop=True)
+    indexes = np.linspace(0, len(frame) - 1, max_rows).round().astype(int)
+    return frame.iloc[sorted(set(indexes.tolist()))].reset_index(drop=True)
+
+
+def sample_sequence_evenly(values: list[Any], max_items: int) -> list[Any]:
+    if max_items <= 0 or len(values) <= max_items:
+        return list(values)
+    indexes = np.linspace(0, len(values) - 1, max_items).round().astype(int)
+    return [values[index] for index in sorted(set(indexes.tolist()))]
+
+
+def limit_candidates(candidates: list[Any], max_items: int | None) -> list[Any]:
+    if max_items is None or len(candidates) <= max_items:
+        return candidates
+    indexes = np.linspace(0, len(candidates) - 1, max_items).round().astype(int)
+    return [candidates[index] for index in sorted(set(indexes.tolist()))]
 
 
 def profile_input(

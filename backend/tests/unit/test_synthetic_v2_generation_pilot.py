@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from app.services.synthetic_generation_service import (
+    ACCEPTANCE_PROFILE_BY_CAPABILITY,
     CAPABILITIES_BY_ID,
     PILOT_ACCEPTANCE_CAPS,
     _accept_synthetic_features,
@@ -76,6 +77,8 @@ def test_all_capabilities_have_hard_acceptance_rules():
     assert "change_point_shift_energy" in PILOT_ACCEPTANCE_CAPS["regime_switching"]
     assert "pca_top1_explained" in PILOT_ACCEPTANCE_CAPS["common_factor"]
     assert "event_lift_abs" in PILOT_ACCEPTANCE_CAPS["covariate_response"]
+    assert ACCEPTANCE_PROFILE_BY_CAPABILITY["covariate_response"] == "known_future_covariate_envelope_v1"
+    assert ACCEPTANCE_PROFILE_BY_CAPABILITY["hierarchical_coherence"] == "m5_hierarchy_envelope_365ctx_28h"
 
 
 def test_hard_acceptance_rejects_new_capability_feature_over_cap():

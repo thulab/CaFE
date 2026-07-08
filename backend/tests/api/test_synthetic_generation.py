@@ -53,6 +53,9 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
             "electricity_hourly_panel_168ctx",
             "traffic_hourly_daily_168ctx",
             "traffic_hourly_panel_168ctx",
+            "m5_daily_covariate_365ctx_28h",
+            "m5_daily_hierarchy_365ctx_28h",
+            "gefcom2014_load_hourly_covariate_168ctx_24h",
             "us_births_weekly",
             "us_births_annual_diagnostic",
         ]

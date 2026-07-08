@@ -164,6 +164,9 @@ MOCK_ANCHOR = {
         "electricity_hourly_panel_168ctx",
         "traffic_hourly_daily_168ctx",
         "traffic_hourly_panel_168ctx",
+        "m5_daily_covariate_365ctx_28h",
+        "m5_daily_hierarchy_365ctx_28h",
+        "gefcom2014_load_hourly_covariate_168ctx_24h",
         "us_births_weekly",
         "us_births_annual_diagnostic",
     ],
@@ -288,6 +291,40 @@ ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
         "effective_factor_rank": {"p05": 1.2655, "p50": 1.7376, "p95": 2.2662},
         "lead_lag_peak_abs": {"p05": 0.6158, "p50": 0.7959, "p95": 0.9208},
     },
+    "m5_daily_covariate_365ctx_28h": {
+        "trend_strength": {"p05": 0.0000, "p50": 0.0198, "p95": 0.2457},
+        "seasonal_strength": {"p05": 0.0000, "p50": 0.0172, "p95": 0.0739},
+        "noise_ratio": {"p05": 0.0000, "p50": 0.9245, "p95": 0.9841},
+        "spike_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0435},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0280},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0127, "p95": 0.0636},
+        "avg_abs_covariate_target_corr": {"p05": 0.0000, "p50": 0.0239, "p95": 0.1143},
+        "future_abs_covariate_target_corr": {"p05": 0.0000, "p50": 0.0568, "p95": 0.1652},
+        "event_lift_abs": {"p05": 0.0000, "p50": 0.0869, "p95": 1.1189},
+    },
+    "m5_daily_hierarchy_365ctx_28h": {
+        "trend_strength": {"p05": 0.0190, "p50": 0.1364, "p95": 0.3821},
+        "seasonal_strength": {"p05": 0.0914, "p50": 0.3339, "p95": 0.7295},
+        "noise_ratio": {"p05": 0.2407, "p50": 0.5802, "p95": 0.8422},
+        "spike_rate": {"p05": 0.0009, "p50": 0.0043, "p95": 0.0119},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0042, "p95": 0.0110},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0025, "p95": 0.0076},
+        "hierarchy_residual_mean_abs": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0000},
+        "avg_abs_target_corr": {"p05": 0.3933, "p50": 0.6495, "p95": 0.9062},
+        "pca_top1_explained": {"p05": 0.9399, "p50": 0.9849, "p95": 0.9945},
+        "effective_factor_rank": {"p05": 1.0347, "p50": 1.0813, "p95": 1.2551},
+    },
+    "gefcom2014_load_hourly_covariate_168ctx_24h": {
+        "trend_strength": {"p05": 0.0000, "p50": 0.3329, "p95": 0.7326},
+        "seasonal_strength": {"p05": 0.3133, "p50": 0.6767, "p95": 0.9476},
+        "noise_ratio": {"p05": 0.0482, "p50": 0.2460, "p95": 0.5727},
+        "spike_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0105},
+        "outlier_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0104},
+        "burst_rate": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0052},
+        "avg_abs_covariate_target_corr": {"p05": 0.2304, "p50": 0.7441, "p95": 0.8598},
+        "future_abs_covariate_target_corr": {"p05": 0.1734, "p50": 0.7103, "p95": 0.9030},
+        "event_lift_abs": {"p05": 0.0000, "p50": 0.0000, "p95": 0.0000},
+    },
 }
 
 TARGET_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
@@ -314,7 +351,7 @@ CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     "common_factor": ("noise_ratio", "spike_rate"),
     "lead_lag_coupling": ("noise_ratio", "spike_rate"),
     "coherent_regime_shift": ("noise_ratio", "spike_rate"),
-    "hierarchical_coherence": ("hierarchy_residual_mean_abs", "noise_ratio"),
+    "hierarchical_coherence": ("hierarchy_residual_mean_abs", "noise_ratio", "avg_abs_target_corr"),
     "covariate_response": ("trend_strength", "seasonal_strength", "noise_ratio", "spike_rate"),
 }
 
@@ -623,9 +660,16 @@ HOURLY_PANEL_PROFILE_IDS = (
     "electricity_hourly_panel_168ctx",
     "traffic_hourly_panel_168ctx",
 )
+COVARIATE_PROFILE_IDS = (
+    "m5_daily_covariate_365ctx_28h",
+    "gefcom2014_load_hourly_covariate_168ctx_24h",
+)
+HIERARCHY_PROFILE_IDS = ("m5_daily_hierarchy_365ctx_28h",)
 ACCEPTANCE_PROFILE_GROUPS: dict[str, tuple[str, ...]] = {
     "hourly_univariate_envelope_168ctx": HOURLY_UNIVARIATE_PROFILE_IDS,
     "hourly_panel_envelope_168ctx": HOURLY_PANEL_PROFILE_IDS,
+    "known_future_covariate_envelope_v1": COVARIATE_PROFILE_IDS,
+    "m5_hierarchy_envelope_365ctx_28h": HIERARCHY_PROFILE_IDS,
     "synthetic_structural_guard_v1": (),
 }
 ACCEPTANCE_PROFILE_BY_CAPABILITY: dict[str, str] = {
@@ -638,8 +682,8 @@ ACCEPTANCE_PROFILE_BY_CAPABILITY: dict[str, str] = {
     "common_factor": "hourly_panel_envelope_168ctx",
     "lead_lag_coupling": "hourly_panel_envelope_168ctx",
     "coherent_regime_shift": "hourly_panel_envelope_168ctx",
-    "hierarchical_coherence": "synthetic_structural_guard_v1",
-    "covariate_response": "synthetic_structural_guard_v1",
+    "hierarchical_coherence": "m5_hierarchy_envelope_365ctx_28h",
+    "covariate_response": "known_future_covariate_envelope_v1",
 }
 BOUNDED_ACCEPTANCE_FEATURES = {
     "trend_strength",
@@ -753,15 +797,16 @@ PILOT_ACCEPTANCE_CAPS: dict[str, dict[str, float]] = {
         "noise_ratio": 0.9,
     },
     "hierarchical_coherence": {
-        "hierarchy_residual_mean_abs": 1e-6,
-        "noise_ratio": 0.9,
+        "hierarchy_residual_mean_abs": max(_cap_from_profiles("hierarchy_residual_mean_abs", HIERARCHY_PROFILE_IDS), 1e-6),
+        "noise_ratio": _cap_from_profiles("noise_ratio", HIERARCHY_PROFILE_IDS),
+        "avg_abs_target_corr": _cap_from_profiles("avg_abs_target_corr", HIERARCHY_PROFILE_IDS),
     },
     "covariate_response": {
-        "avg_abs_covariate_target_corr": 1.0,
-        "future_abs_covariate_target_corr": 1.0,
-        "event_lift_abs": 5.0,
-        "noise_ratio": 0.95,
-        **_caps_from_profiles(HOURLY_UNIVARIATE_PROFILE_IDS, ("spike_rate",)),
+        **_caps_from_profiles(
+            COVARIATE_PROFILE_IDS,
+            ("avg_abs_covariate_target_corr", "future_abs_covariate_target_corr", "noise_ratio", "spike_rate"),
+        ),
+        "event_lift_abs": _cap_from_profiles("event_lift_abs", COVARIATE_PROFILE_IDS, multiplier=5.0),
     },
 }
 PILOT_ACCEPTANCE_MINS: dict[str, dict[str, float]] = {

@@ -11,12 +11,12 @@
 - `docs/superpowers/baselines/2026-07-01-synthetic-v2-all-capabilities-experiment-table.md`
 - `runtime/research/synthetic-v2-*/summary.json`
 
-默认窗口：`context=168`，`horizon=24`，`season_length=24`。单目标维度使用 `target_dim=1`；多目标维度使用 `target_dim=3`；协变量维度当前使用 `target_dim=1, covariate_dim=2`。
+默认窗口：`context=168`，`horizon=24`，`season_length=24`。合成生成中单目标维度使用 `target_dim=1`；多目标维度使用 `target_dim=3`；协变量能力使用 `target_dim=1, covariate_dim=2`。真实 profile 校准中，M5 covariate profile 使用 4 个 calendar/price/SNAP covariates，GEFCom2014 Load profile 使用 25 个 temperature station covariates。
 
 ## 共同原则
 
 1. 合成序列先用显式公式生成，再按 context 归一化，保证不同样本尺度可比。
-2. 所有 synthetic capability 已接入 hard acceptance caps。单变量结构能力使用 M4/Electricity/Traffic hourly 单变量 profile envelope；多目标能力使用 Electricity/Traffic panel profile envelope；协变量和层级能力当前使用结构硬守卫，仍需后续真实 covariate/hierarchical profile 补强。
+2. 所有 synthetic capability 已接入 hard acceptance caps。单变量结构能力使用 M4/Electricity/Traffic hourly 单变量 profile envelope；多目标能力使用 Electricity/Traffic panel profile envelope；协变量能力使用 M5+GEFCom2014 known-future covariate envelope；层级能力使用 M5 additive hierarchy envelope。
 3. `intensity` 控制的是目标结构强度，例如切换次数、非线性强度、burst rate、因子结构、协变量效应；它不等同于观测到的模型误差强度，也不要求深度模型 MAE 随强度单调上升。
 4. 对 horizon 内无先兆的 shift，不应在论文里简单称为“可预测能力”，更准确是结构突变鲁棒性或快速适应能力。
 
@@ -248,7 +248,7 @@ y_t = seasonal_t + slow_t + trend_t
 
 - Trend / seasonal strength：Hyndman 的 feature-based time series work、`tsfeatures` 和 Forecasting: Principles and Practice 对 trend/seasonal strength 的定义。参考：[Large-scale unusual time series detection](https://robjhyndman.com/papers/icdm2015.pdf)、[`tsfeatures` reference](https://pkg.robjhyndman.com/tsfeatures/reference/stl_features.html)、[FPP time series features](https://otexts.com/fpppy/04-features.html)。
 - 多季节性：STL / MSTL 分解思路，适合把多周期和时变季节性分开建模。参考：[MSTL paper](https://arxiv.org/abs/2107.13462)。
-- Anchor 数据：M4 Competition、Monash Time Series Forecasting Archive、M5 Competition 可作为真实分布来源。参考：[M4 IJF 2020](https://ideas.repec.org/a/eee/intfor/v36y2020i1p54-74.html)、[Monash Archive paper](https://arxiv.org/abs/2105.06643)、[Monash repository](https://forecastingdata.org/)、[M5 IJF 2022](https://ideas.repec.org/a/eee/intfor/v38y2022i4p1346-1364.html)。
+- Anchor 数据：M4 Competition、Monash Time Series Forecasting Archive、M5 Competition、GEFCom2014 Load 可作为真实分布来源。参考：[M4 IJF 2020](https://ideas.repec.org/a/eee/intfor/v36y2020i1p54-74.html)、[Monash Archive paper](https://arxiv.org/abs/2105.06643)、[Monash repository](https://forecastingdata.org/)、[M5 IJF 2022](https://ideas.repec.org/a/eee/intfor/v38y2022i4p1346-1364.html)、[GEFCom2014 IJF 2016](https://ideas.repec.org/a/eee/intfor/v32y2016i3p896-913.html)。
 - Regime shift：Hamilton Markov switching 和 structural break 文献。参考：[Hamilton 1989](https://www.jstor.org/stable/1912559)、[Hamilton PDF](https://www.ssc.wisc.edu/~bhansen/718/Hamilton1989.pdf)。
 - Intermittent / heteroskedastic：Croston intermittent demand、Engle ARCH。参考：[Croston 1972](https://link.springer.com/article/10.1057/jors.1972.50)、[Hyndman Croston note](https://robjhyndman.com/papers/croston.pdf)、[Engle 1982 ARCH](https://www.jstor.org/stable/1912773)。
 - Multivariate dependencies：dynamic factor model、VAR / Granger causality。参考：[Stock & Watson dynamic factors](https://stock.scholars.harvard.edu/publications/macroeconomic-forecasting-using-diffusion-indexes)、[Granger causality 1969](https://ideas.repec.org/a/ecm/emetrp/v37y1969i3p424-38.html)。

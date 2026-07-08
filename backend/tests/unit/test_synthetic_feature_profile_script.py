@@ -139,6 +139,143 @@ def test_profile_csv_can_extract_covariate_and_hierarchy_features(tmp_path):
     assert profile["features"]["hierarchy_residual_mean_abs"]["p95"] < 1e-9
 
 
+def test_profile_m5_zip_can_extract_covariate_features(tmp_path):
+    profiler = load_profiler_module()
+    zip_path = tmp_path / "m5.zip"
+    days = [f"d_{index}" for index in range(1, 101)]
+    calendar = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=100, freq="D").strftime("%Y-%m-%d"),
+            "wm_yr_wk": [1 + index // 7 for index in range(100)],
+            "d": days,
+            "event_name_1": ["Promo" if index % 14 == 0 else np.nan for index in range(100)],
+            "event_name_2": [np.nan] * 100,
+            "snap_CA": [1 if index % 10 < 3 else 0 for index in range(100)],
+            "snap_TX": [0] * 100,
+            "snap_WI": [0] * 100,
+        }
+    )
+    sales_rows = []
+    prices = []
+    for item_index in range(4):
+        row = {
+            "id": f"ITEM_{item_index}_CA_1_validation",
+            "item_id": f"ITEM_{item_index}",
+            "dept_id": "HOBBIES_1",
+            "cat_id": "HOBBIES",
+            "store_id": "CA_1",
+            "state_id": "CA",
+        }
+        for day_index, day in enumerate(days):
+            row[day] = 2 + item_index + (3 if day_index % 14 == 0 else 0) + (1 if day_index % 10 < 3 else 0)
+        sales_rows.append(row)
+        for week in sorted(calendar["wm_yr_wk"].unique()):
+            prices.append({"store_id": "CA_1", "item_id": f"ITEM_{item_index}", "wm_yr_wk": week, "sell_price": 1.0 + item_index + week * 0.01})
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("calendar.csv", calendar.to_csv(index=False))
+        archive.writestr("sales_train_validation.csv", pd.DataFrame(sales_rows).to_csv(index=False))
+        archive.writestr("sell_prices.csv", pd.DataFrame(prices).to_csv(index=False))
+
+    profile = profiler.profile_m5_covariate(
+        zip_path,
+        context_length=56,
+        horizon=14,
+        stride=14,
+        max_windows=8,
+        max_series=4,
+        season_length=7,
+    )
+
+    assert profile["bucket"]["frequency"] == "d"
+    assert profile["bucket"]["covariate_dim"] == 4
+    assert profile["features"]["future_abs_covariate_target_corr"]["p50"] > 0
+    assert profile["features"]["event_lift_abs"]["p50"] > 0
+
+
+def test_profile_m5_zip_can_extract_hierarchy_features(tmp_path):
+    profiler = load_profiler_module()
+    zip_path = tmp_path / "m5-hierarchy.zip"
+    days = [f"d_{index}" for index in range(1, 101)]
+    calendar = pd.DataFrame(
+        {
+            "date": pd.date_range("2026-01-01", periods=100, freq="D").strftime("%Y-%m-%d"),
+            "wm_yr_wk": [1 + index // 7 for index in range(100)],
+            "d": days,
+            "event_name_1": [np.nan] * 100,
+            "event_name_2": [np.nan] * 100,
+            "snap_CA": [0] * 100,
+            "snap_TX": [0] * 100,
+            "snap_WI": [0] * 100,
+        }
+    )
+    sales_rows = []
+    for dept_index, dept in enumerate(["HOBBIES_1", "HOBBIES_2"]):
+        for item_index in range(2):
+            row = {
+                "id": f"{dept}_{item_index}_CA_1_validation",
+                "item_id": f"{dept}_{item_index}",
+                "dept_id": dept,
+                "cat_id": "HOBBIES",
+                "store_id": "CA_1",
+                "state_id": "CA",
+            }
+            for day_index, day in enumerate(days):
+                row[day] = dept_index + item_index + day_index % 5
+            sales_rows.append(row)
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("calendar.csv", calendar.to_csv(index=False))
+        archive.writestr("sales_train_validation.csv", pd.DataFrame(sales_rows).to_csv(index=False))
+        archive.writestr("sell_prices.csv", pd.DataFrame(columns=["store_id", "item_id", "wm_yr_wk", "sell_price"]).to_csv(index=False))
+
+    profile = profiler.profile_m5_hierarchy(
+        zip_path,
+        context_length=56,
+        horizon=14,
+        stride=14,
+        max_windows=8,
+        max_groups=4,
+        season_length=7,
+    )
+
+    assert profile["bucket"]["target_dim"] == 3
+    assert profile["features"]["hierarchy_residual_mean_abs"]["p95"] < 1e-9
+    assert profile["features"]["avg_abs_target_corr"]["p50"] > 0
+
+
+def test_profile_gefcom2014_load_zip_can_extract_temperature_covariates(tmp_path):
+    profiler = load_profiler_module()
+    outer_path = tmp_path / "GEFCom2014.zip"
+    rows = []
+    for index in range(240):
+        rows.append(
+            {
+                "ZONEID": 1,
+                "TIMESTAMP": f"1012026 {index % 24}:00",
+                "LOAD": 100 + 10 * math.sin(2 * math.pi * index / 24),
+                "w1": 50 + 8 * math.sin(2 * math.pi * index / 24),
+                "w2": 45 + 6 * math.cos(2 * math.pi * index / 24),
+            }
+        )
+    nested = tmp_path / "GEFCom2014-L_V2.zip"
+    with zipfile.ZipFile(nested, "w") as archive:
+        archive.writestr("Load/Task 1/L1-train.csv", pd.DataFrame(rows).to_csv(index=False))
+    with zipfile.ZipFile(outer_path, "w") as archive:
+        archive.write(nested, "GEFCom2014 Data/GEFCom2014-L_V2.zip")
+
+    profile = profiler.profile_gefcom2014_load(
+        outer_path,
+        context_length=72,
+        horizon=24,
+        stride=24,
+        max_windows=8,
+        season_length=24,
+    )
+
+    assert profile["bucket"]["frequency"] == "h"
+    assert profile["bucket"]["covariate_dim"] == 2
+    assert profile["features"]["future_abs_covariate_target_corr"]["p50"] > 0.5
+
+
 def test_profile_tsf_panel_summarizes_multitarget_features(tmp_path):
     profiler = load_profiler_module()
     t = np.arange(96, dtype=float)

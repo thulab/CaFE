@@ -61,10 +61,13 @@ P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 | `electricity_hourly_panel_168ctx` | 电力负荷 3-target panel profile，用于 low-rank common factor / lead-lag 校准 |
 | `traffic_hourly_daily_168ctx` | 交通占用率 hourly 单变量控制 profile |
 | `traffic_hourly_panel_168ctx` | 交通占用率 3-target panel profile，用于跨序列相关和 lead-lag 校准 |
+| `m5_daily_covariate_365ctx_28h` | 零售日频 known-future covariate profile，覆盖 calendar/event/SNAP/price 信号 |
+| `m5_daily_hierarchy_365ctx_28h` | 零售 store-category additive hierarchy profile，覆盖 parent=sum(children) 结构 |
+| `gefcom2014_load_hourly_covariate_168ctx_24h` | 小时级负荷-温度 covariate profile，覆盖强 known-future weather signal |
 | `us_births_weekly` | 日频单变量外部 sanity profile |
 | `us_births_annual_diagnostic` | 年周期诊断 profile，不作为短窗口硬边界 |
 
-在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前 hard acceptance 使用两类真实 profile envelope：单变量能力使用 M4/Electricity/Traffic hourly 单变量 profile 的 envelope，多目标能力使用 Electricity/Traffic panel profile 的 envelope。US Births profile 作为跨频率 sanity reference。协变量和层级能力当前已有结构硬守卫，但还缺真实 covariate/hierarchical profile；后续如果引入 M5、Weather/ETT 等数据集，应新增 bucket，而不是混入同一个分布池。
+在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前 hard acceptance 使用四类真实 profile envelope：单变量能力使用 M4/Electricity/Traffic hourly 单变量 profile 的 envelope，多目标能力使用 Electricity/Traffic panel profile 的 envelope，协变量能力使用 M5/GEFCom2014 known-future covariate envelope，层级能力使用 M5 additive hierarchy envelope。US Births profile 作为跨频率 sanity reference。后续如果继续引入 Weather/ETT、Tourism、M5 validation/evaluation 变体等数据集，应新增 bucket，而不是混入同一个分布池。
 
 ## Intensity 定义
 
@@ -143,7 +146,7 @@ sample_metadata.latent_params.acceptance.validation.target_features
 q05_real^b(j) <= phi_j(psi(x_syn)) <= q95_real^b(j)
 ```
 
-当前服务已经对全部 synthetic capability 启用 hard acceptance caps。`trend` / `multi_seasonal` / 其他单变量结构能力使用 hourly 单变量真实 profile envelope，多目标能力使用 hourly panel profile envelope；`covariate_response` 与 `hierarchical_coherence` 先使用结构硬守卫，等真实 covariate/hierarchical bucket 接入后再替换为真实 profile cap。
+当前服务已经对全部 synthetic capability 启用 hard acceptance caps。`trend` / `multi_seasonal` / 其他单变量结构能力使用 hourly 单变量真实 profile envelope，多目标能力使用 hourly panel profile envelope，`covariate_response` 使用 M5+GEFCom2014 covariate profile envelope，`hierarchical_coherence` 使用 M5 hierarchy profile envelope。`hierarchy_residual_mean_abs` 的真实 p95 为 0，因此线上 hard cap 使用 `1e-6` 浮点容差；`event_lift_abs` 使用 M5 p95 的较宽倍数，因为 synthetic 维度刻意测试 event response，不能被稀疏真实事件的 1.5 倍上限过早卡死。
 
 ### 3. 近邻距离污染风险校验
 
