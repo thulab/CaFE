@@ -56,7 +56,7 @@
 
 ## Notes
 
-- This calibrates offline novelty thresholds only; it does not change online generation acceptance caps.
+- This calibrates novelty thresholds and writes the online near-distance reference artifact used by generation acceptance.
 - A good threshold should flag exact copies almost always, flag small jitter copies frequently, and keep normal synthetic combined risk near or below the paper tolerance target.
 - If a bucket has high threshold CV or high normal-synthetic risk, rerun with a larger real-window cap and inspect that bucket before freezing paper thresholds.
 

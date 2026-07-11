@@ -70,8 +70,15 @@ def test_probe_samples_include_multi_target_and_covariate_request_shapes():
 
 def test_hierarchical_coherence_extra_metric():
     module = load_experiment_module()
-    sample = module.generate_probe_samples(1, ["hierarchical_coherence"])[0]
-    forecast = [[3.0, 1.0, 2.0] for _ in range(module.HORIZON)]
+    original_window = (module.CONTEXT_LENGTH, module.HORIZON, module.SEASON_LENGTH)
+    module.CONTEXT_LENGTH = 365
+    module.HORIZON = 28
+    module.SEASON_LENGTH = 7
+    try:
+        sample = module.generate_probe_samples(1, ["hierarchical_coherence"])[0]
+        forecast = [[3.0, 1.0, 2.0] for _ in range(module.HORIZON)]
+    finally:
+        module.CONTEXT_LENGTH, module.HORIZON, module.SEASON_LENGTH = original_window
 
     metrics = module.extra_sample_metrics(sample, forecast)
 

@@ -66,9 +66,10 @@ describe('SyntheticConfigStep', () => {
       name: 'Synthetic benchmark synthetic cases',
       capabilities: ['trend', 'common_factor'],
       sample_count: 5,
-      context_length: 60,
-      horizon: 16,
+      context_length: 168,
+      horizon: 24,
       intensity: 3,
+      target_dim: 3,
     });
   });
 

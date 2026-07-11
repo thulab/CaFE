@@ -116,8 +116,8 @@ const busy = ref(false);
 const generatedCount = ref(0);
 const selectedCapabilities = ref<string[]>([...wizardState.syntheticCapabilityIds]);
 const sampleCount = ref(32);
-const contextLength = ref(60);
-const horizon = ref(16);
+const contextLength = ref(168);
+const horizon = ref(24);
 const intensity = ref(3);
 const targetDim = ref(3);
 const seed = ref(0);
@@ -125,14 +125,26 @@ const frequency = ref('h');
 const { text: error, clear: clearError, setKey: setErrorKey, setError } = useDisplayMessage();
 
 const selectedCapabilityDetails = computed(() => capabilities.value.filter((capability) => selectedCapabilities.value.includes(capability.capability_id)));
-const targetDimDisabled = computed(() => selectedCapabilityDetails.value.length > 0 && selectedCapabilityDetails.value.every((capability) => capability.target_dim_mode === 'fixed_1'));
+const hasMultiTargetCapability = computed(() => selectedCapabilityDetails.value.some((capability) => capability.target_dim_mode === 'multi'));
+const targetDimDisabled = computed(() => selectedCapabilityDetails.value.length > 0 && !hasMultiTargetCapability.value);
 
 watch(selectedCapabilities, (value) => {
   wizardState.syntheticCapabilityIds = [...value];
 });
 
-watch(targetDimDisabled, (disabled) => {
-  if (disabled) targetDim.value = 1;
+watch(selectedCapabilityDetails, (details) => {
+  if (!details.length) return;
+  const onlyHierarchy = details.every((capability) => capability.capability_id === 'hierarchical_coherence');
+  if (onlyHierarchy) {
+    contextLength.value = 365;
+    horizon.value = 28;
+    frequency.value = 'd';
+  } else if (!details.some((capability) => capability.capability_id === 'hierarchical_coherence')) {
+    contextLength.value = 168;
+    horizon.value = 24;
+    frequency.value = 'h';
+  }
+  targetDim.value = hasMultiTargetCapability.value ? Math.max(3, Number(targetDim.value) || 3) : 1;
 });
 
 onMounted(async () => {

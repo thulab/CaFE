@@ -46,10 +46,12 @@ from synthetic_feature_profile import (  # noqa: E402
 DEFAULT_DATA_DIR = REPO_ROOT / "runtime/research"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/research/synthetic-v2-near-distance-calibration"
 DEFAULT_REPORT_PATH = REPO_ROOT / "docs/superpowers/baselines/2026-07-08-synthetic-v2-near-distance-calibration.md"
+DEFAULT_ARTIFACT_PATH = REPO_ROOT / "backend/app/data/synthetic_v2_near_distance_artifact.json"
 DEFAULT_MAX_WINDOWS = 600
 DEFAULT_SPLITS = 5
 DEFAULT_SYNTHETIC_COUNT = 48
 DEFAULT_JITTER_SCALE = 0.02
+DEFAULT_ARTIFACT_REFERENCE_COUNT = 192
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--splits", type=int, default=DEFAULT_SPLITS)
     parser.add_argument("--synthetic-count", type=int, default=DEFAULT_SYNTHETIC_COUNT)
     parser.add_argument("--jitter-scale", type=float, default=DEFAULT_JITTER_SCALE)
+    parser.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT_PATH)
+    parser.add_argument("--artifact-reference-count", type=int, default=DEFAULT_ARTIFACT_REFERENCE_COUNT)
     parser.add_argument("--seed", type=int, default=20260708)
     parser.add_argument("--buckets", nargs="*", default=None, help="Optional profile_id subset.")
     return parser.parse_args()
@@ -206,14 +210,21 @@ def main() -> int:
         jitter_scale=args.jitter_scale,
         seed=args.seed,
         bucket_ids=tuple(args.buckets) if args.buckets else None,
+        artifact_reference_count=args.artifact_reference_count,
     )
     summary_path = args.output_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     report = render_report(summary, output_dir=args.output_dir)
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(report, encoding="utf-8")
+    if args.artifact:
+        artifact = build_online_artifact(summary)
+        args.artifact.parent.mkdir(parents=True, exist_ok=True)
+        args.artifact.write_text(json.dumps(artifact, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n", encoding="utf-8")
     print(f"wrote summary: {summary_path}")
     print(f"wrote report: {args.report}")
+    if args.artifact:
+        print(f"wrote online artifact: {args.artifact}")
     return 0
 
 
@@ -226,6 +237,7 @@ def run_calibration(
     jitter_scale: float,
     seed: int,
     bucket_ids: tuple[str, ...] | None = None,
+    artifact_reference_count: int = DEFAULT_ARTIFACT_REFERENCE_COUNT,
 ) -> dict[str, Any]:
     selected_specs = [spec for spec in BUCKET_SPECS if bucket_ids is None or spec.profile_id in bucket_ids]
     if not selected_specs:
@@ -241,6 +253,12 @@ def run_calibration(
             jitter_scale=jitter_scale,
             seed=_seed_for(seed, spec.profile_id, 0),
         )
+        bucket_summary["online_artifact"] = online_artifact_bucket(
+            spec,
+            real_rows,
+            thresholds={key: value["mean"] for key, value in bucket_summary["threshold_stability"].items()},
+            reference_count=artifact_reference_count,
+        )
         buckets.append(bucket_summary)
     return {
         "schema_version": "synthetic_v2_near_distance_calibration.v1",
@@ -251,6 +269,7 @@ def run_calibration(
             "splits": splits,
             "synthetic_count": synthetic_count,
             "jitter_scale": jitter_scale,
+            "artifact_reference_count": artifact_reference_count,
             "seed": seed,
             "strict_rule": "raw_mae_d1 <= real_holdout_p01 AND raw_l2_d1 <= real_holdout_p01",
             "combined_rule": "raw_mae_d1 <= p05 AND raw_l2_d1 <= p05 AND (feature_l2_d1 <= p01 OR raw_mae_nndr <= p01)",
@@ -258,6 +277,71 @@ def run_calibration(
         "buckets": buckets,
         "overall": summarize_overall(buckets),
     }
+
+
+def online_artifact_bucket(
+    spec: BucketSpec,
+    real_rows: list[dict[str, Any]],
+    *,
+    thresholds: dict[str, float],
+    reference_count: int,
+) -> dict[str, Any]:
+    reference_rows = sample_sequence_evenly(real_rows, max(2, min(reference_count, len(real_rows))))
+    feature_names = feature_names_for_train(reference_rows)
+    feature_values = feature_matrix(reference_rows, feature_names)
+    feature_center = np.nanmedian(feature_values, axis=0)
+    feature_scale = robust_feature_scale(feature_values)
+    reference_features_z = (feature_values - feature_center) / feature_scale
+    return {
+        "profile_id": spec.profile_id,
+        "context_length": spec.context_length,
+        "horizon": spec.horizon,
+        "season_length": spec.season_length,
+        "target_dim": spec.target_dim,
+        "covariate_dim": spec.covariate_dim,
+        "reference_count": len(reference_rows),
+        "feature_names": list(feature_names),
+        "feature_center": round_nested(feature_center),
+        "feature_scale": round_nested(feature_scale),
+        "reference_raw": round_nested(np.vstack([row["raw"] for row in reference_rows])),
+        "reference_features_z": round_nested(reference_features_z),
+        "thresholds": {
+            key: float(thresholds[key])
+            for key in (
+                "raw_mae_p01",
+                "raw_mae_p05",
+                "raw_l2_p01",
+                "raw_l2_p05",
+                "feature_l2_p01",
+                "feature_l2_p05",
+                "raw_mae_nndr_p01",
+                "raw_mae_nndr_p05",
+            )
+        },
+    }
+
+
+def build_online_artifact(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": "synthetic_v2_near_distance_online.v1",
+        "created_at": summary["created_at"],
+        "source_summary_schema_version": summary["schema_version"],
+        "config": {
+            "strict_rule": summary["config"]["strict_rule"],
+            "combined_rule": summary["config"]["combined_rule"],
+            "artifact_reference_count": summary["config"]["artifact_reference_count"],
+        },
+        "buckets": {
+            bucket["profile_id"]: bucket["online_artifact"]
+            for bucket in summary["buckets"]
+        },
+    }
+
+
+def round_nested(values: np.ndarray, digits: int = 6) -> list[Any]:
+    arr = np.asarray(values, dtype=float)
+    rounded = np.round(arr, digits)
+    return rounded.tolist()
 
 
 def load_real_bucket(spec: BucketSpec, path: Path, *, max_windows: int) -> list[dict[str, Any]]:
@@ -808,7 +892,7 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             "",
             "## Notes",
             "",
-            "- This calibrates offline novelty thresholds only; it does not change online generation acceptance caps.",
+            "- This calibrates novelty thresholds and writes the online near-distance reference artifact used by generation acceptance.",
             "- A good threshold should flag exact copies almost always, flag small jitter copies frequently, and keep normal synthetic combined risk near or below the paper tolerance target.",
             "- If a bucket has high threshold CV or high normal-synthetic risk, rerun with a larger real-window cap and inspect that bucket before freezing paper thresholds.",
             "",

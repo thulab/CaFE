@@ -19,8 +19,8 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         json={
             "name": "synthetic smoke",
             "capabilities": ["trend", "covariate_response"],
-            "context_length": 16,
-            "horizon": 4,
+            "context_length": 168,
+            "horizon": 24,
             "sample_count": 3,
             "intensity": 3,
             "season_length": 8,
@@ -40,7 +40,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         trend = next(shard for shard in shards if shard.capability_type == "trend")
         covariate = next(shard for shard in shards if shard.capability_type == "covariate_response")
         assert trend.target_dim == 1
-        assert covariate.target_dim == 2
+        assert covariate.target_dim == 1
         assert covariate.covariate_columns == ["weather", "event"]
         assert covariate.generation_config["intensity"] == 3
         assert covariate.generation_config["difficulty"] == 3
@@ -72,6 +72,9 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
         assert trend_metadata["latent_params"]["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v1"
         assert "trend_strength" in trend_metadata["latent_params"]["acceptance"]["validation"]["target_features"]
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["feature_gate"]["accepted"] is True
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["near_distance_gate"]["accepted"] is True
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["novelty_check"] == "online_dcr_nndr_gate"
         assert "trend_strength" in trend_metadata["realized_features"]
         assert "nonlinear_lag1_gain" in trend_metadata["realized_features"]
 
@@ -83,11 +86,31 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     sample_list = client.get(f"/shards/{body['shard_ids'][1]}/samples").json()
     sample_id = sample_list["items"][0]["sample_id"]
     preview = client.get(f"/samples/{sample_id}/preview").json()
-    assert len(preview["target_history"]) == 16
-    assert len(preview["target_future"]) == 4
-    assert len(preview["target_history"][0]) == 2
+    assert len(preview["target_history"]) == 168
+    assert len(preview["target_future"]) == 24
+    assert len(preview["target_history"][0]) == 1
     assert len(preview["history_cov"][0]) == 2
-    assert len(preview["future_cov"]) == 4
+    assert len(preview["future_cov"]) == 24
+
+
+def test_uncalibrated_synthetic_window_is_rejected(app, client):
+    response = client.post(
+        "/synthetic/shards",
+        json={
+            "name": "uncalibrated smoke",
+            "capabilities": ["trend"],
+            "context_length": 16,
+            "horizon": 4,
+            "sample_count": 1,
+            "intensity": 3,
+            "target_dim": 1,
+            "seed": 42,
+            "frequency": "h",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "synthetic_near_distance_not_calibrated"
 
 
 def test_track_from_shards_groups_synthetic_capabilities(app, client):
@@ -96,8 +119,8 @@ def test_track_from_shards_groups_synthetic_capabilities(app, client):
         json={
             "name": "synthetic grouped",
             "capabilities": ["trend", "common_factor"],
-            "context_length": 16,
-            "horizon": 4,
+            "context_length": 168,
+            "horizon": 24,
             "sample_count": 2,
             "difficulty": 2,
             "season_length": 8,
@@ -132,8 +155,8 @@ def test_regime_capabilities_generate_json_serializable_metadata(app, client):
         json={
             "name": "regime smoke",
             "capabilities": ["regime_switching", "coherent_regime_shift"],
-            "context_length": 16,
-            "horizon": 4,
+            "context_length": 168,
+            "horizon": 24,
             "sample_count": 2,
             "intensity": 4,
             "season_length": 8,
@@ -156,32 +179,48 @@ def test_regime_capabilities_generate_json_serializable_metadata(app, client):
         assert cut_points
         assert all(type(point) is int for point in cut_points)
         assert regime_sample.sample_metadata["latent_params"]["forecast_switch"] == 1
-        assert coherent_sample.sample_metadata["latent_params"]["shift_at"] >= 16
+        assert coherent_sample.sample_metadata["latent_params"]["shift_at"] >= 168
 
 
 def test_new_synthetic_capabilities_generate_expected_metadata(app, client):
-    response = client.post(
+    seasonal_response = client.post(
         "/synthetic/shards",
         json={
-            "name": "new capability smoke",
-            "capabilities": ["time_varying_seasonality", "hierarchical_coherence"],
-            "context_length": 24,
-            "horizon": 6,
+            "name": "time varying smoke",
+            "capabilities": ["time_varying_seasonality"],
+            "context_length": 168,
+            "horizon": 24,
             "sample_count": 2,
             "intensity": 4,
             "season_length": 8,
-            "target_dim": 3,
+            "target_dim": 1,
             "seed": 23,
             "frequency": "h",
         },
     )
+    hierarchy_response = client.post(
+        "/synthetic/shards",
+        json={
+            "name": "hierarchy smoke",
+            "capabilities": ["hierarchical_coherence"],
+            "context_length": 365,
+            "horizon": 28,
+            "sample_count": 2,
+            "intensity": 4,
+            "season_length": 8,
+            "target_dim": 3,
+            "seed": 24,
+            "frequency": "d",
+        },
+    )
 
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert len(body["shard_ids"]) == 2
+    assert seasonal_response.status_code == 200, seasonal_response.text
+    assert hierarchy_response.status_code == 200, hierarchy_response.text
+    shard_ids = [*seasonal_response.json()["shard_ids"], *hierarchy_response.json()["shard_ids"]]
+    assert len(shard_ids) == 2
 
     with Session(app.state.engine) as session:
-        shards = session.exec(select(Shard).where(Shard.shard_id.in_(body["shard_ids"]))).all()
+        shards = session.exec(select(Shard).where(Shard.shard_id.in_(shard_ids))).all()
         assert {shard.capability_type for shard in shards} == {"time_varying_seasonality", "hierarchical_coherence"}
         seasonal = next(shard for shard in shards if shard.capability_type == "time_varying_seasonality")
         hierarchy = next(shard for shard in shards if shard.capability_type == "hierarchical_coherence")
@@ -192,7 +231,7 @@ def test_new_synthetic_capabilities_generate_expected_metadata(app, client):
         assert hierarchy.generation_config["requested_season_length"] == 8
         assert hierarchy.generation_config["season_length"] == 7
 
-        samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(body["shard_ids"]))).all()
+        samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(shard_ids))).all()
         seasonal_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "time_varying_seasonality")
         hierarchy_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "hierarchical_coherence")
         assert seasonal_sample.sample_metadata["latent_params"]["amplitude_delta_mean"] > 0

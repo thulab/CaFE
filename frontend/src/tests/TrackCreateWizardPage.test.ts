@@ -150,8 +150,8 @@ describe('TrackCreateWizardPage', () => {
     expect(generateCall?.body).toMatchObject({
       name: 'Synthetic track synthetic cases',
       capabilities: ['trend'],
-      context_length: 60,
-      horizon: 16,
+      context_length: 168,
+      horizon: 24,
       sample_count: 32,
       intensity: 3,
     });

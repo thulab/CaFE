@@ -66,6 +66,9 @@ def test_multi_seasonal_intensity_degrades_single_period_seasonal_naive():
             assert latent_params["acceptance"]["accepted"] is True
             assert latent_params["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v1"
             assert "multi_period_score" in latent_params["acceptance"]["validation"]["target_features"]
+            assert latent_params["acceptance"]["validation"]["feature_gate"]["accepted"] is True
+            assert latent_params["acceptance"]["validation"]["near_distance_gate"]["accepted"] is True
+            assert latent_params["acceptance"]["validation"]["novelty_check"] == "online_dcr_nndr_gate"
             assert features["noise_ratio"] <= PILOT_ACCEPTANCE_CAPS["multi_seasonal"]["noise_ratio"]
         seasonal_naive_mae.append(float(np.mean(errors)))
 
@@ -110,14 +113,17 @@ def test_hard_acceptance_rejects_new_capability_feature_over_cap():
 
 def test_all_capabilities_return_accepted_samples_after_resampling():
     for capability_id, capability in CAPABILITIES_BY_ID.items():
-        target_dim = 3 if capability.target_dim_mode in {"multi", "covariate"} else 1
+        target_dim = 3 if capability.target_dim_mode == "multi" else 1
+        context_length = 365 if capability_id == "hierarchical_coherence" else 168
+        horizon = 28 if capability_id == "hierarchical_coherence" else 24
+        season_length = 7 if capability_id == "hierarchical_coherence" else 24
 
         _, latent_params, _, features = _generate_accepted_sample_values(
             capability_id,
-            192,
-            168,
+            context_length + horizon,
+            context_length,
             target_dim,
-            24,
+            season_length,
             3,
             _seed_for(123, capability_id, 0),
         )
@@ -125,5 +131,8 @@ def test_all_capabilities_return_accepted_samples_after_resampling():
         acceptance = latent_params["acceptance"]
         assert acceptance["accepted"] is True
         assert acceptance["profile"] is not None
+        assert acceptance["failed_gates"] == []
         assert not acceptance["failed_features"]
+        assert acceptance["validation"]["feature_gate"]["accepted"] is True
+        assert acceptance["validation"]["near_distance_gate"]["accepted"] is True
         assert set(PILOT_ACCEPTANCE_CAPS[capability_id]).intersection(features)

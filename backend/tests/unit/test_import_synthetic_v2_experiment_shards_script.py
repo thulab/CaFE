@@ -36,9 +36,9 @@ def test_import_creates_platform_shards_and_is_idempotent(tmp_path):
         capabilities=("trend",),
         intensities=(1,),
         sample_count=2,
-        context_length=16,
-        horizon=4,
-        season_length=4,
+        context_length=168,
+        horizon=24,
+        season_length=24,
         target_dim=3,
         seed=20260701,
         frequency="h",
@@ -71,8 +71,8 @@ def test_import_creates_platform_shards_and_is_idempotent(tmp_path):
 
         preview = SampleStore().read_by_ref(session, samples[0].storage_ref)
         assert preview["target_column_names"] == ["target_0"]
-        assert len(preview["target_history"]) == 16
-        assert len(preview["target_future"]) == 4
+        assert len(preview["target_history"]) == 168
+        assert len(preview["target_future"]) == 24
 
 
 def test_config_can_be_built_from_experiment_summary(tmp_path):

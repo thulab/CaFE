@@ -123,6 +123,6 @@
 - `event_lift_abs` is swept separately because the M5 event profile is sparse and would otherwise dominate covariate acceptance.
 - `hierarchy_residual_mean_abs` keeps a fixed floating-point tolerance floor of `1e-6` even though the real M5 p95 is 0.
 - This is a first-pass operational sweep at the recorded sample size. Before freezing paper thresholds, rerun with a larger cached attempt pool and keep the same report schema.
-- This sweep evaluates generation-side acceptance only. Near-distance DCR/NNDR thresholds still need the separate real-holdout calibration experiment.
+- This sweep evaluates feature-threshold acceptance. Near-distance DCR/NNDR acceptance is calibrated by the separate real-holdout experiment and enforced online through the generated reference artifact.
 
 Full JSON summary: `runtime/research/synthetic-v2-acceptance-sweep/summary.json`.

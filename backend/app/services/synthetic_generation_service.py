@@ -18,6 +18,7 @@ from app.services.dataset_load_service import SampleWindow
 from app.services.dataset_reader import DatasetReadResult
 from app.services.sample_store import SampleStore
 from app.services.series_store import SeriesStore
+from app.services.synthetic_near_distance_gate import evaluate_near_distance_gate, matching_calibrated_buckets
 
 
 @dataclass(frozen=True)
@@ -451,14 +452,7 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
             "task_type": capability.task_type,
             "target_dim_mode": capability.target_dim_mode,
             "covariate_columns": list(capability.covariate_columns),
-            "default_params": {
-                "context_length": 60,
-                "horizon": 16,
-                "sample_count": 32,
-                "intensity": 3,
-                "target_dim": 3 if capability.target_dim_mode in {"multi", "covariate"} else 1,
-                "frequency": "h",
-            },
+            "default_params": _default_params_for_capability(capability),
             "limits": {
                 "context_length": {"min": 16, "max": 2048},
                 "horizon": {"min": 1, "max": 512},
@@ -469,6 +463,20 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
         }
         for capability in SYNTHETIC_CAPABILITIES
     ]
+
+
+def _default_params_for_capability(capability: SyntheticCapability) -> dict[str, int | str]:
+    context_length = 365 if capability.capability_id == "hierarchical_coherence" else 168
+    horizon = 28 if capability.capability_id == "hierarchical_coherence" else 24
+    frequency = "d" if capability.capability_id == "hierarchical_coherence" else "h"
+    return {
+        "context_length": context_length,
+        "horizon": horizon,
+        "sample_count": 32,
+        "intensity": 3,
+        "target_dim": 3 if capability.target_dim_mode == "multi" else 1,
+        "frequency": frequency,
+    }
 
 
 def generate_synthetic_shards(
@@ -563,6 +571,7 @@ def _generate_capability_shard(
     horizon = int(config.horizon)
     sample_length = context + horizon
     target_dim = _target_dim_for_capability(capability, config.target_dim)
+    near_distance_buckets = _require_near_distance_calibration(capability, context, horizon, target_dim)
     target_columns = [f"target_{index}" for index in range(target_dim)]
     covariate_columns = list(capability.covariate_columns)
     columns = [*target_columns, *covariate_columns]
@@ -651,6 +660,7 @@ def _generate_capability_shard(
         "target_dim": target_dim,
         "requested_target_dim": config.target_dim,
         "covariate_columns": covariate_columns,
+        "near_distance_calibration_buckets": near_distance_buckets,
         "frequency": config.frequency,
         **MOCK_ANCHOR,
     }
@@ -712,7 +722,37 @@ def _target_dim_for_capability(capability: SyntheticCapability, requested: int) 
         return 1
     if capability.target_dim_mode == "multi":
         return max(2, int(requested))
+    if capability.target_dim_mode == "covariate":
+        return 1
     return max(1, int(requested))
+
+
+def _require_near_distance_calibration(
+    capability: SyntheticCapability,
+    context_length: int,
+    horizon: int,
+    target_dim: int,
+) -> list[str]:
+    profile_ids = _profile_ids_for_capability(capability.capability_id)
+    buckets = matching_calibrated_buckets(
+        profile_ids=profile_ids,
+        context_length=context_length,
+        horizon=horizon,
+        target_dim=target_dim,
+    )
+    if buckets:
+        return [str(bucket["profile_id"]) for bucket in buckets]
+    raise ApiError(
+        "synthetic_near_distance_not_calibrated",
+        "synthetic near-distance gate has no calibrated real bucket for this request",
+        {
+            "capability_id": capability.capability_id,
+            "profile_ids": list(profile_ids),
+            "context_length": int(context_length),
+            "horizon": int(horizon),
+            "target_dim": int(target_dim),
+        },
+    )
 
 
 def _seed_for(seed: int, capability_id: str, sample_index: int) -> int:
@@ -1018,6 +1058,9 @@ def _generate_accepted_sample_values(
     intensity: int,
     sample_seed: int,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]]:
+    capability = CAPABILITIES_BY_ID.get(capability_id)
+    if capability is not None:
+        _require_near_distance_calibration(capability, context_length, length - context_length, target_dim)
     max_attempts = 12 if capability_id in PILOT_ACCEPTANCE_CAPS else 1
     last_result: tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]] | None = None
     for attempt in range(max_attempts):
@@ -1039,8 +1082,21 @@ def _generate_accepted_sample_values(
         if covariates is not None and covariates.size:
             covariates = _normalize_covariates(covariates, context_length)
         realized_features = _realized_features(target, covariates, season_length, context_length)
-        accepted, failed_features = _accept_synthetic_features(capability_id, realized_features)
-        validation = _validation_summary(capability_id, realized_features)
+        feature_accepted, failed_features = _accept_synthetic_features(capability_id, realized_features)
+        near_distance = evaluate_near_distance_gate(
+            target=target,
+            features=realized_features,
+            profile_ids=_profile_ids_for_capability(capability_id),
+            context_length=context_length,
+            horizon=length - context_length,
+        )
+        accepted = bool(feature_accepted and near_distance["accepted"])
+        validation = _validation_summary(capability_id, realized_features, feature_accepted, near_distance)
+        failed_gates = []
+        if not feature_accepted:
+            failed_gates.append("feature_threshold")
+        if not near_distance["accepted"]:
+            failed_gates.append("near_distance")
         latent_params = {
             **latent_params,
             "intensity": int(intensity),
@@ -1048,6 +1104,7 @@ def _generate_accepted_sample_values(
             "acceptance": {
                 "accepted": bool(accepted),
                 "attempts": attempt + 1,
+                "failed_gates": failed_gates,
                 "failed_features": failed_features,
                 "profile": _acceptance_profile_id(capability_id),
                 "validation": validation,
@@ -1057,7 +1114,19 @@ def _generate_accepted_sample_values(
         if accepted:
             return last_result
     assert last_result is not None
-    return last_result
+    _target, latent_params, _covariates, _features = last_result
+    raise ApiError(
+        "synthetic_acceptance_failed",
+        "synthetic sample failed post-generation acceptance after maximum attempts",
+        {
+            "capability_id": capability_id,
+            "intensity": int(intensity),
+            "attempts": max_attempts,
+            "failed_gates": latent_params.get("acceptance", {}).get("failed_gates", []),
+            "failed_features": latent_params.get("acceptance", {}).get("failed_features", []),
+            "near_distance_status": latent_params.get("acceptance", {}).get("validation", {}).get("near_distance_gate", {}).get("status"),
+        },
+    )
 
 
 def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -> tuple[bool, list[str]]:
@@ -1076,7 +1145,12 @@ def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -
     return not failed, failed
 
 
-def _validation_summary(capability_id: str, features: dict[str, float]) -> dict[str, Any]:
+def _validation_summary(
+    capability_id: str,
+    features: dict[str, float],
+    feature_accepted: bool,
+    near_distance: dict[str, Any],
+) -> dict[str, Any]:
     target_features = TARGET_FEATURES_BY_CAPABILITY.get(capability_id, ())
     control_features = CONTROL_FEATURES_BY_CAPABILITY.get(capability_id, ())
     control_bounds = _control_feature_bounds(capability_id)
@@ -1103,7 +1177,13 @@ def _validation_summary(capability_id: str, features: dict[str, float]) -> dict[
             if feature in features and np.isfinite(features[feature])
         },
         "control_features": control_results,
-        "novelty_check": "offline_dcr_nndr_required",
+        "feature_gate": {
+            "accepted": bool(feature_accepted),
+            "caps": PILOT_ACCEPTANCE_CAPS.get(capability_id, {}),
+            "mins": PILOT_ACCEPTANCE_MINS.get(capability_id, {}),
+        },
+        "near_distance_gate": near_distance,
+        "novelty_check": "online_dcr_nndr_gate",
         "distribution_check": "offline_control_feature_mmd_swd_required",
     }
 
