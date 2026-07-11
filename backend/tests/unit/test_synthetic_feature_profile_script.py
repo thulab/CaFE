@@ -352,6 +352,34 @@ def test_profile_tsf_zip_reads_monash_style_series(tmp_path):
     assert profile["features"]["trend_strength"]["p50"] > 0
 
 
+def test_read_tsf_series_records_preserves_start_timestamp(tmp_path):
+    profiler = load_profiler_module()
+    values = ",".join(str(index) for index in range(48))
+    tsf_text = "\n".join(
+        [
+            "@attribute series_name string",
+            "@attribute start_timestamp date",
+            "@frequency hourly",
+            "@horizon 6",
+            "@missing false",
+            "@equallength true",
+            "@data",
+            f"series_1:2026-01-02 03-00-00:{values}",
+        ]
+    )
+    zip_path = tmp_path / "timestamped.zip"
+    with zipfile.ZipFile(zip_path, "w") as archive:
+        archive.writestr("timestamped.tsf", tsf_text)
+
+    metadata, records = profiler.read_tsf_series_records(zip_path)
+    _legacy_metadata, legacy_series = profiler.read_tsf_series(zip_path)
+
+    assert metadata["frequency"] == "hourly"
+    assert records[0].series_id == "series_1"
+    assert records[0].attributes["start_timestamp"] == "2026-01-02 03-00-00"
+    assert np.array_equal(records[0].values, legacy_series[0][1])
+
+
 def test_profile_tsf_zip_reads_cp1252_metadata(tmp_path):
     profiler = load_profiler_module()
     values = ",".join(str(index) for index in range(48))

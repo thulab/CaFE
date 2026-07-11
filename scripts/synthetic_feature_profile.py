@@ -74,6 +74,13 @@ class WindowSpec:
         return self.context_length + self.horizon
 
 
+@dataclass(frozen=True)
+class TSFSeriesRecord:
+    series_id: str
+    values: np.ndarray
+    attributes: dict[str, str]
+
+
 def read_csv_series(
     path: Path,
     time_column: str,
@@ -111,10 +118,15 @@ def read_csv_series(
 
 
 def read_tsf_series(path: Path) -> tuple[dict[str, str], list[tuple[str, np.ndarray]]]:
+    metadata, records = read_tsf_series_records(path)
+    return metadata, [(record.series_id, record.values) for record in records]
+
+
+def read_tsf_series_records(path: Path) -> tuple[dict[str, str], list[TSFSeriesRecord]]:
     text = read_text_or_first_tsf_from_zip(path)
     attributes: list[str] = []
     metadata: dict[str, str] = {}
-    series: list[tuple[str, np.ndarray]] = []
+    records: list[TSFSeriesRecord] = []
     in_data = False
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -135,18 +147,35 @@ def read_tsf_series(path: Path) -> tuple[dict[str, str], list[tuple[str, np.ndar
                 metadata[parts[0][1:].lower()] = parts[1].strip() if len(parts) > 1 else ""
             continue
 
-        pieces = line.split(":")
+        pieces = line.split(":", len(attributes))
         if len(pieces) < len(attributes) + 1:
             continue
         attr_values = pieces[: len(attributes)]
         values_text = ":".join(pieces[len(attributes) :])
         values = parse_tsf_values(values_text)
         if values.size:
-            series_id = attr_values[0] if attr_values else f"series_{len(series)}"
-            series.append((series_id, values))
-    if not series:
+            attr_map = {
+                attribute: attr_values[index]
+                for index, attribute in enumerate(attributes)
+                if index < len(attr_values)
+            }
+            series_id = tsf_series_id(attr_map, fallback=f"series_{len(records)}")
+            records.append(TSFSeriesRecord(series_id=series_id, values=values, attributes=attr_map))
+    if not records:
         raise ValueError(f"no series found in TSF input: {path}")
-    return metadata, series
+    return metadata, records
+
+
+def tsf_series_id(attributes: dict[str, str], *, fallback: str) -> str:
+    for key in ("series_name", "series_id", "series", "id"):
+        value = attributes.get(key)
+        if value:
+            return value
+    if attributes:
+        first_value = next(iter(attributes.values()))
+        if first_value:
+            return first_value
+    return fallback
 
 
 def read_text_or_first_tsf_from_zip(path: Path) -> str:
