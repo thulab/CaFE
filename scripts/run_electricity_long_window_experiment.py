@@ -287,14 +287,9 @@ def calibrate_long_window_distribution(args: argparse.Namespace) -> tuple[dict[s
         synthetic_count=args.calibration_synthetic_count,
         jitter_scale=calibration.DEFAULT_JITTER_SCALE,
         seed=_seed_for(args.seed, PROFILE_ID, 0),
-    )
-    thresholds = {name: values["mean"] for name, values in bucket["threshold_stability"].items()}
-    online_bucket = calibration.online_artifact_bucket(
-        spec,
-        real_rows,
-        thresholds=thresholds,
         reference_count=args.calibration_reference_count,
     )
+    online_bucket = bucket["online_artifact"]
     feature_quantiles: dict[str, dict[str, float]] = {}
     for feature_name in DEFAULT_FEATURES:
         values = np.asarray(
@@ -323,12 +318,14 @@ def calibrate_long_window_distribution(args: argparse.Namespace) -> tuple[dict[s
         "splits": bucket["splits"],
     }
     artifact = {
-        "schema_version": "synthetic_v2_near_distance_online.v1",
+        "schema_version": "synthetic_v2_near_distance_online.v2",
         "created_at": distribution["created_at"],
         "config": {
-            "strict_rule": "raw_mae_d1 <= p01 AND raw_l2_d1 <= p01",
-            "combined_rule": "raw_mae_d1 <= p05 AND raw_l2_d1 <= p05 AND (feature_l2_d1 <= p01 OR raw_mae_nndr <= p01)",
+            "strict_rule": "full-window OR context-only raw MAE/L2 DCR <= corresponding real-holdout p01",
+            "combined_rule": "full-window combined rule OR context raw MAE/L2 <= p05 AND context NNDR <= p01",
             "artifact_reference_count": args.calibration_reference_count,
+            "split_policy": "series/panel-group holdout; single-series temporal block with C+H embargo",
+            "deployment_split_index": 0,
         },
         "buckets": {PROFILE_ID: online_bucket},
     }

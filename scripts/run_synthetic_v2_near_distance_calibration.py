@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -53,6 +54,9 @@ DEFAULT_SPLITS = 5
 DEFAULT_SYNTHETIC_COUNT = 48
 DEFAULT_JITTER_SCALE = 0.02
 DEFAULT_ARTIFACT_REFERENCE_COUNT = 192
+DEFAULT_HOLDOUT_FRACTION = 0.2
+MIN_REFERENCE_ROWS = 20
+MIN_HOLDOUT_ROWS = 10
 
 
 @dataclass(frozen=True)
@@ -253,16 +257,11 @@ def run_calibration(
             synthetic_count=synthetic_count,
             jitter_scale=jitter_scale,
             seed=_seed_for(seed, spec.profile_id, 0),
-        )
-        bucket_summary["online_artifact"] = online_artifact_bucket(
-            spec,
-            real_rows,
-            thresholds={key: value["mean"] for key, value in bucket_summary["threshold_stability"].items()},
             reference_count=artifact_reference_count,
         )
         buckets.append(bucket_summary)
     return {
-        "schema_version": "synthetic_v2_near_distance_calibration.v1",
+        "schema_version": "synthetic_v2_near_distance_calibration.v2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
             "data_dir": str(data_dir),
@@ -271,9 +270,11 @@ def run_calibration(
             "synthetic_count": synthetic_count,
             "jitter_scale": jitter_scale,
             "artifact_reference_count": artifact_reference_count,
+            "split_policy": "series/panel-group holdout; single-series temporal block with C+H embargo",
+            "deployment_split_index": 0,
             "seed": seed,
-            "strict_rule": "raw_mae_d1 <= real_holdout_p01 AND raw_l2_d1 <= real_holdout_p01",
-            "combined_rule": "raw_mae_d1 <= p05 AND raw_l2_d1 <= p05 AND (feature_l2_d1 <= p01 OR raw_mae_nndr <= p01)",
+            "strict_rule": "full-window OR context-only raw MAE/L2 DCR <= corresponding real-holdout p01",
+            "combined_rule": "full-window combined rule OR context raw MAE/L2 <= p05 AND context NNDR <= p01",
         },
         "buckets": buckets,
         "overall": summarize_overall(buckets),
@@ -282,12 +283,13 @@ def run_calibration(
 
 def online_artifact_bucket(
     spec: BucketSpec,
-    real_rows: list[dict[str, Any]],
+    reference_rows: list[dict[str, Any]],
     *,
     thresholds: dict[str, float],
-    reference_count: int,
+    split_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    reference_rows = sample_sequence_evenly(real_rows, max(2, min(reference_count, len(real_rows))))
+    if len(reference_rows) < 2:
+        raise ValueError("online near-distance artifact needs at least two reference rows")
     feature_names = feature_names_for_train(reference_rows)
     feature_values = feature_matrix(reference_rows, feature_names)
     feature_center = np.nanmedian(feature_values, axis=0)
@@ -301,10 +303,12 @@ def online_artifact_bucket(
         "target_dim": spec.target_dim,
         "covariate_dim": spec.covariate_dim,
         "reference_count": len(reference_rows),
+        "split": split_summary or {},
         "feature_names": list(feature_names),
         "feature_center": round_nested(feature_center),
         "feature_scale": round_nested(feature_scale),
         "reference_raw": round_nested(np.vstack([row["raw"] for row in reference_rows])),
+        "reference_context_raw": round_nested(np.vstack([row["context_raw"] for row in reference_rows])),
         "reference_features_z": round_nested(reference_features_z),
         "thresholds": {
             key: float(thresholds[key])
@@ -317,6 +321,12 @@ def online_artifact_bucket(
                 "feature_l2_p05",
                 "raw_mae_nndr_p01",
                 "raw_mae_nndr_p05",
+                "context_raw_mae_p01",
+                "context_raw_mae_p05",
+                "context_raw_l2_p01",
+                "context_raw_l2_p05",
+                "context_raw_mae_nndr_p01",
+                "context_raw_mae_nndr_p05",
             )
         },
     }
@@ -324,13 +334,15 @@ def online_artifact_bucket(
 
 def build_online_artifact(summary: dict[str, Any]) -> dict[str, Any]:
     return {
-        "schema_version": "synthetic_v2_near_distance_online.v1",
+        "schema_version": "synthetic_v2_near_distance_online.v2",
         "created_at": summary["created_at"],
         "source_summary_schema_version": summary["schema_version"],
         "config": {
             "strict_rule": summary["config"]["strict_rule"],
             "combined_rule": summary["config"]["combined_rule"],
             "artifact_reference_count": summary["config"]["artifact_reference_count"],
+            "split_policy": summary["config"]["split_policy"],
+            "deployment_split_index": summary["config"]["deployment_split_index"],
         },
         "buckets": {
             bucket["profile_id"]: bucket["online_artifact"]
@@ -503,6 +515,7 @@ def make_row(target_std: np.ndarray, spec: BucketSpec, *, covariates: np.ndarray
         "target": target_std.astype(float),
         "covariates": covariates.astype(float) if covariates is not None else None,
         "raw": flatten_raw(target_std),
+        "context_raw": flatten_raw(target_std[: spec.context_length]),
         "features": features,
     }
 
@@ -515,33 +528,81 @@ def calibrate_bucket(
     synthetic_count: int,
     jitter_scale: float,
     seed: int,
+    reference_count: int = DEFAULT_ARTIFACT_REFERENCE_COUNT,
 ) -> dict[str, Any]:
     if len(real_rows) < 30:
         raise ValueError(f"bucket {spec.profile_id} needs at least 30 windows, got {len(real_rows)}")
+    if splits <= 0:
+        raise ValueError("splits must be positive")
+    if reference_count < 2:
+        raise ValueError("reference_count must be at least 2")
     split_rows = []
     synthetic_rows = generate_synthetic_rows(spec, count=synthetic_count, seed=seed)
+    deployment_artifact: dict[str, Any] | None = None
     for split_index in range(splits):
-        train, holdout = split_rows_deterministic(real_rows, seed=_seed_for(seed, spec.profile_id, split_index))
-        thresholds, diagnostics = thresholds_from_split(train, holdout)
+        reference_candidates, holdout, split_summary = split_rows_leakage_safe(
+            real_rows,
+            spec,
+            seed=_seed_for(seed, spec.profile_id, split_index),
+        )
+        reference = sample_sequence_evenly(
+            reference_candidates,
+            min(reference_count, len(reference_candidates)),
+        )
+        split_summary = {
+            **split_summary,
+            "reference_candidate_count": len(reference_candidates),
+            "reference_count": len(reference),
+            "reference_sampling": "all" if len(reference) == len(reference_candidates) else "even",
+        }
+        thresholds, diagnostics = thresholds_from_split(reference, holdout)
+        attack_source = reference[: min(synthetic_count, len(reference))]
         control_rows = {
             "real_holdout": holdout,
-            "exact_copy": train[: min(synthetic_count, len(train))],
-            "jitter_copy": jitter_rows(train[: min(synthetic_count, len(train))], spec, jitter_scale=jitter_scale, seed=_seed_for(seed, "jitter", split_index)),
+            "exact_copy": attack_source,
+            "affine_copy": affine_copy_rows(attack_source, spec),
+            "context_copy": context_copy_rows(
+                attack_source,
+                spec,
+                seed=_seed_for(seed, "context-copy", split_index),
+            ),
+            "jitter_copy": jitter_rows(
+                attack_source,
+                spec,
+                jitter_scale=jitter_scale,
+                seed=_seed_for(seed, "jitter", split_index),
+            ),
             "normal_synthetic": synthetic_rows,
         }
         controls = {
-            label: evaluate_risk(rows, train, diagnostics["feature_names"], diagnostics["feature_center"], diagnostics["feature_scale"], thresholds)
+            label: evaluate_risk(
+                rows,
+                reference,
+                diagnostics["feature_names"],
+                diagnostics["feature_center"],
+                diagnostics["feature_scale"],
+                thresholds,
+            )
             for label, rows in control_rows.items()
         }
         split_rows.append(
             {
                 "split_index": split_index,
-                "train_count": len(train),
+                "train_count": len(reference),
                 "holdout_count": len(holdout),
+                "split": split_summary,
                 "thresholds": thresholds,
                 "controls": controls,
             }
         )
+        if split_index == 0:
+            deployment_artifact = online_artifact_bucket(
+                spec,
+                reference,
+                thresholds=thresholds,
+                split_summary=split_summary,
+            )
+    assert deployment_artifact is not None
     return {
         "profile_id": spec.profile_id,
         "kind": spec.kind,
@@ -555,6 +616,8 @@ def calibrate_bucket(
         "threshold_stability": summarize_threshold_stability(split_rows),
         "control_summary": summarize_controls(split_rows),
         "splits": split_rows,
+        "deployment_split_index": 0,
+        "online_artifact": deployment_artifact,
     }
 
 
@@ -598,20 +661,105 @@ def generate_synthetic_rows(spec: BucketSpec, *, count: int, seed: int) -> list[
     return rows
 
 
-def split_rows_deterministic(rows: list[dict[str, Any]], *, seed: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def split_rows_leakage_safe(
+    rows: list[dict[str, Any]],
+    spec: BucketSpec,
+    *,
+    seed: int,
+    holdout_fraction: float = DEFAULT_HOLDOUT_FRACTION,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Split real windows without sharing a source series or overlapping time.
+
+    Multi-series/panel buckets assign complete groups to one side. A genuine
+    single-series bucket uses a contiguous temporal holdout and excludes every
+    reference window whose interval overlaps the holdout boundary.
+    """
+    if not 0.0 < holdout_fraction < 1.0:
+        raise ValueError("holdout_fraction must be between 0 and 1")
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        group_id = str(row.get("group_id") or "single-series")
+        groups.setdefault(group_id, []).append(row)
     rng = np.random.default_rng(seed)
-    indexes = np.arange(len(rows))
-    rng.shuffle(indexes)
-    holdout_count = max(10, int(round(len(rows) * 0.2)))
-    holdout_ids = set(indexes[:holdout_count].tolist())
-    train = [row for index, row in enumerate(rows) if index not in holdout_ids]
-    holdout = [row for index, row in enumerate(rows) if index in holdout_ids]
-    return train, holdout
+    target_holdout_count = max(MIN_HOLDOUT_ROWS, int(math.ceil(len(rows) * holdout_fraction)))
+
+    if len(groups) >= 2:
+        group_ids = np.asarray(sorted(groups), dtype=object)
+        rng.shuffle(group_ids)
+        holdout_groups: list[str] = []
+        holdout_count = 0
+        for raw_group_id in group_ids:
+            group_id = str(raw_group_id)
+            remaining = len(rows) - holdout_count - len(groups[group_id])
+            if remaining < MIN_REFERENCE_ROWS:
+                continue
+            holdout_groups.append(group_id)
+            holdout_count += len(groups[group_id])
+            if holdout_count >= target_holdout_count:
+                break
+        holdout_group_set = set(holdout_groups)
+        reference = [row for group_id, group_rows in groups.items() if group_id not in holdout_group_set for row in group_rows]
+        holdout = [row for group_id, group_rows in groups.items() if group_id in holdout_group_set for row in group_rows]
+        summary = {
+            "policy": "group",
+            "group_count": len(groups),
+            "reference_group_count": len(groups) - len(holdout_group_set),
+            "holdout_group_count": len(holdout_group_set),
+            "embargo_steps": 0,
+            "discarded_window_count": 0,
+        }
+    else:
+        if any(row.get("window_start") is None for row in rows):
+            raise ValueError(
+                f"bucket {spec.profile_id} needs window_start metadata for a leakage-safe single-series split"
+            )
+        ordered = sorted(rows, key=lambda row: int(row["window_start"]))
+        window_length = int(spec.context_length + spec.horizon)
+        holdout_count = min(target_holdout_count, len(ordered) - MIN_REFERENCE_ROWS)
+        valid_boundaries: list[tuple[int, list[dict[str, Any]]]] = []
+        for boundary in range(MIN_HOLDOUT_ROWS, len(ordered) - holdout_count + 1):
+            first_holdout_start = int(ordered[boundary]["window_start"])
+            candidate_reference = [
+                row
+                for row in ordered[:boundary]
+                if int(row["window_start"]) + window_length <= first_holdout_start
+            ]
+            if len(candidate_reference) >= MIN_REFERENCE_ROWS:
+                valid_boundaries.append((boundary, candidate_reference))
+        if not valid_boundaries:
+            raise ValueError(
+                f"bucket {spec.profile_id} cannot form a temporal split with a C+H embargo"
+            )
+        boundary, reference = valid_boundaries[int(rng.integers(0, len(valid_boundaries)))]
+        holdout = ordered[boundary : boundary + holdout_count]
+        summary = {
+            "policy": "temporal_embargo",
+            "group_count": 1,
+            "reference_group_count": 1,
+            "holdout_group_count": 1,
+            "embargo_steps": window_length,
+            "first_holdout_start": int(holdout[0]["window_start"]),
+            "last_reference_start": int(reference[-1]["window_start"]),
+            "discarded_window_count": len(rows) - len(reference) - len(holdout),
+        }
+
+    if len(reference) < MIN_REFERENCE_ROWS or len(holdout) < MIN_HOLDOUT_ROWS:
+        raise ValueError(
+            f"bucket {spec.profile_id} produced an undersized leakage-safe split: "
+            f"reference={len(reference)}, holdout={len(holdout)}"
+        )
+    return reference, holdout, {
+        **summary,
+        "reference_count": len(reference),
+        "holdout_count": len(holdout),
+    }
 
 
 def thresholds_from_split(train: list[dict[str, Any]], holdout: list[dict[str, Any]]) -> tuple[dict[str, float], dict[str, Any]]:
     train_raw = np.vstack([row["raw"] for row in train])
     holdout_raw = np.vstack([row["raw"] for row in holdout])
+    train_context_raw = np.vstack([row["context_raw"] for row in train])
+    holdout_context_raw = np.vstack([row["context_raw"] for row in holdout])
     feature_names = feature_names_for_train(train)
     train_features = feature_matrix(train, feature_names)
     holdout_features = feature_matrix(holdout, feature_names)
@@ -621,24 +769,46 @@ def thresholds_from_split(train: list[dict[str, Any]], holdout: list[dict[str, A
     holdout_features_z = (holdout_features - feature_center) / feature_scale
     raw_mae = nearest_distances(holdout_raw, train_raw, metric="mae")
     raw_l2 = nearest_distances(holdout_raw, train_raw, metric="l2")
+    context_raw_mae = nearest_distances(holdout_context_raw, train_context_raw, metric="mae")
+    context_raw_l2 = nearest_distances(holdout_context_raw, train_context_raw, metric="l2")
     feature_l2 = nearest_distances(holdout_features_z, train_features_z, metric="l2")
     thresholds = {
-        "raw_mae_p01": float(np.quantile(raw_mae["d1"], 0.01)),
-        "raw_mae_p05": float(np.quantile(raw_mae["d1"], 0.05)),
-        "raw_l2_p01": float(np.quantile(raw_l2["d1"], 0.01)),
-        "raw_l2_p05": float(np.quantile(raw_l2["d1"], 0.05)),
-        "feature_l2_p01": float(np.quantile(feature_l2["d1"], 0.01)),
-        "feature_l2_p05": float(np.quantile(feature_l2["d1"], 0.05)),
-        "raw_mae_nndr_p01": float(np.quantile(raw_mae["nndr"], 0.01)),
-        "raw_mae_nndr_p05": float(np.quantile(raw_mae["nndr"], 0.05)),
-        "feature_l2_nndr_p01": float(np.quantile(feature_l2["nndr"], 0.01)),
-        "feature_l2_nndr_p05": float(np.quantile(feature_l2["nndr"], 0.05)),
+        "raw_mae_p01": positive_lower_tail_quantile(raw_mae["d1"], 0.01),
+        "raw_mae_p05": positive_lower_tail_quantile(raw_mae["d1"], 0.05),
+        "raw_l2_p01": positive_lower_tail_quantile(raw_l2["d1"], 0.01),
+        "raw_l2_p05": positive_lower_tail_quantile(raw_l2["d1"], 0.05),
+        "feature_l2_p01": positive_lower_tail_quantile(feature_l2["d1"], 0.01),
+        "feature_l2_p05": positive_lower_tail_quantile(feature_l2["d1"], 0.05),
+        "raw_mae_nndr_p01": positive_lower_tail_quantile(raw_mae["nndr"], 0.01),
+        "raw_mae_nndr_p05": positive_lower_tail_quantile(raw_mae["nndr"], 0.05),
+        "context_raw_mae_p01": positive_lower_tail_quantile(context_raw_mae["d1"], 0.01),
+        "context_raw_mae_p05": positive_lower_tail_quantile(context_raw_mae["d1"], 0.05),
+        "context_raw_l2_p01": positive_lower_tail_quantile(context_raw_l2["d1"], 0.01),
+        "context_raw_l2_p05": positive_lower_tail_quantile(context_raw_l2["d1"], 0.05),
+        "context_raw_mae_nndr_p01": positive_lower_tail_quantile(context_raw_mae["nndr"], 0.01),
+        "context_raw_mae_nndr_p05": positive_lower_tail_quantile(context_raw_mae["nndr"], 0.05),
+        "feature_l2_nndr_p01": positive_lower_tail_quantile(feature_l2["nndr"], 0.01),
+        "feature_l2_nndr_p05": positive_lower_tail_quantile(feature_l2["nndr"], 0.05),
     }
     return thresholds, {
         "feature_names": feature_names,
         "feature_center": feature_center,
         "feature_scale": feature_scale,
     }
+
+
+def positive_lower_tail_quantile(values: np.ndarray, quantile: float) -> float:
+    """Estimate a natural-distance tail without letting exact duplicates collapse it.
+
+    Cross-group exact duplicates are themselves copy-risk examples. They remain
+    flagged in control rates, but are not allowed to set the usable DCR/NNDR
+    threshold to zero for affine or jittered copies.
+    """
+    arr = np.asarray(values, dtype=float)
+    positive = arr[np.isfinite(arr) & (arr > 1e-12)]
+    if positive.size == 0:
+        raise ValueError("cannot calibrate a novelty threshold from an all-zero distance distribution")
+    return float(np.quantile(positive, quantile))
 
 
 def evaluate_risk(
@@ -651,21 +821,40 @@ def evaluate_risk(
 ) -> dict[str, float]:
     train_raw = np.vstack([row["raw"] for row in train])
     query_raw = np.vstack([row["raw"] for row in query_rows])
+    train_context_raw = np.vstack([row["context_raw"] for row in train])
+    query_context_raw = np.vstack([row["context_raw"] for row in query_rows])
     train_features_z = (feature_matrix(train, feature_names) - feature_center) / feature_scale
     query_features_z = (feature_matrix(query_rows, feature_names) - feature_center) / feature_scale
     raw_mae = nearest_distances(query_raw, train_raw, metric="mae")
     raw_l2 = nearest_distances(query_raw, train_raw, metric="l2")
+    context_raw_mae = nearest_distances(query_context_raw, train_context_raw, metric="mae")
+    context_raw_l2 = nearest_distances(query_context_raw, train_context_raw, metric="l2")
     feature_l2 = nearest_distances(query_features_z, train_features_z, metric="l2")
-    strict = (raw_mae["d1"] <= thresholds["raw_mae_p01"]) & (raw_l2["d1"] <= thresholds["raw_l2_p01"])
-    combined = (
+    full_strict = (raw_mae["d1"] <= thresholds["raw_mae_p01"]) & (raw_l2["d1"] <= thresholds["raw_l2_p01"])
+    context_strict = (
+        (context_raw_mae["d1"] <= thresholds["context_raw_mae_p01"])
+        & (context_raw_l2["d1"] <= thresholds["context_raw_l2_p01"])
+    )
+    full_combined = (
         (raw_mae["d1"] <= thresholds["raw_mae_p05"])
         & (raw_l2["d1"] <= thresholds["raw_l2_p05"])
         & ((feature_l2["d1"] <= thresholds["feature_l2_p01"]) | (raw_mae["nndr"] <= thresholds["raw_mae_nndr_p01"]))
     )
+    context_combined = (
+        (context_raw_mae["d1"] <= thresholds["context_raw_mae_p05"])
+        & (context_raw_l2["d1"] <= thresholds["context_raw_l2_p05"])
+        & (context_raw_mae["nndr"] <= thresholds["context_raw_mae_nndr_p01"])
+    )
+    strict = full_strict | context_strict
+    combined = full_combined | context_combined
     return {
         "count": float(len(query_rows)),
         "strict_risk_rate": float(np.mean(strict)),
         "combined_risk_rate": float(np.mean(combined)),
+        "full_strict_risk_rate": float(np.mean(full_strict)),
+        "context_strict_risk_rate": float(np.mean(context_strict)),
+        "full_combined_risk_rate": float(np.mean(full_combined)),
+        "context_combined_risk_rate": float(np.mean(context_combined)),
         "raw_mae_p05_hit_rate": float(np.mean(raw_mae["d1"] <= thresholds["raw_mae_p05"])),
         "raw_l2_p05_hit_rate": float(np.mean(raw_l2["d1"] <= thresholds["raw_l2_p05"])),
         "feature_l2_p01_hit_rate": float(np.mean(feature_l2["d1"] <= thresholds["feature_l2_p01"])),
@@ -674,6 +863,9 @@ def evaluate_risk(
         "raw_l2_d1_p05": float(np.quantile(raw_l2["d1"], 0.05)),
         "feature_l2_d1_p05": float(np.quantile(feature_l2["d1"], 0.05)),
         "raw_mae_nndr_p05": float(np.quantile(raw_mae["nndr"], 0.05)),
+        "context_raw_mae_d1_p05": float(np.quantile(context_raw_mae["d1"], 0.05)),
+        "context_raw_l2_d1_p05": float(np.quantile(context_raw_l2["d1"], 0.05)),
+        "context_raw_mae_nndr_p05": float(np.quantile(context_raw_mae["nndr"], 0.05)),
     }
 
 
@@ -683,6 +875,41 @@ def jitter_rows(rows: list[dict[str, Any]], spec: BucketSpec, *, jitter_scale: f
     for row in rows:
         target = row["target"] + rng.normal(0.0, jitter_scale, size=row["target"].shape)
         out.append(make_row(target, spec, covariates=row.get("covariates"), label="jitter_copy"))
+    return out
+
+
+def affine_copy_rows(rows: list[dict[str, Any]], spec: BucketSpec) -> list[dict[str, Any]]:
+    """Copies hidden behind a scale/offset transformation.
+
+    Context standardization should make this attack identical to its source and
+    the novelty gate must therefore reject it.
+    """
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        transformed = np.asarray(row["target"], dtype=float) * 1.7 + 2.5
+        standardized = standardize_target(
+            transformed,
+            spec.context_length,
+            hierarchy=spec.hierarchy,
+        )
+        out.append(make_row(standardized, spec, covariates=row.get("covariates"), label="affine_copy"))
+    return out
+
+
+def context_copy_rows(
+    rows: list[dict[str, Any]],
+    spec: BucketSpec,
+    *,
+    seed: int,
+) -> list[dict[str, Any]]:
+    """Keep the model-visible context exact while replacing the answer span."""
+    rng = np.random.default_rng(seed)
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        target = np.asarray(row["target"], dtype=float).copy()
+        future = target[spec.context_length :]
+        target[spec.context_length :] = rng.normal(0.0, 1.0, size=future.shape)
+        out.append(make_row(target, spec, covariates=row.get("covariates"), label="context_copy"))
     return out
 
 
@@ -837,12 +1064,22 @@ def summarize_overall(buckets: list[dict[str, Any]]) -> dict[str, Any]:
         bucket["control_summary"]["jitter_copy"]["combined_risk_rate"]["mean"]
         for bucket in buckets
     ]
+    affine_strict = [
+        bucket["control_summary"]["affine_copy"]["strict_risk_rate"]["mean"]
+        for bucket in buckets
+    ]
+    context_strict = [
+        bucket["control_summary"]["context_copy"]["strict_risk_rate"]["mean"]
+        for bucket in buckets
+    ]
     return {
         "bucket_count": len(buckets),
         "normal_synthetic_combined_risk_max": float(np.max(normal_combined)) if normal_combined else 0.0,
         "normal_synthetic_combined_risk_mean": float(np.mean(normal_combined)) if normal_combined else 0.0,
         "exact_copy_strict_risk_min": float(np.min(exact_strict)) if exact_strict else 0.0,
         "jitter_copy_combined_risk_min": float(np.min(jitter_combined)) if jitter_combined else 0.0,
+        "affine_copy_strict_risk_min": float(np.min(affine_strict)) if affine_strict else 0.0,
+        "context_copy_strict_risk_min": float(np.min(context_strict)) if context_strict else 0.0,
     }
 
 
@@ -867,7 +1104,10 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
         f"- Real windows per bucket cap: {summary['config']['max_windows_per_bucket']}; splits: {summary['config']['splits']}; synthetic controls per bucket: {summary['config']['synthetic_count']}.",
         f"- Jitter copy scale: {summary['config']['jitter_scale']} on context-standardized target values.",
         "- Raw distance is computed on context-standardized target windows. Feature distance uses robust-z explicit features fitted on each split's real train set.",
+        "- Source series/panel groups never cross train/holdout. Single-series buckets use temporal blocks with a C+H non-overlap embargo.",
+        "- Full target-window and model-visible target-context DCR are both checked; the deployed threshold and reference rows come from the same fixed split.",
         "- Near-constant real target windows are excluded before split calibration because zero-information windows can make p01 DCR thresholds collapse to zero.",
+        "- Scope: raw DCR covers target trajectories in the committed R_train reference. Known-future covariates enter feature DCR but are not concatenated into the raw vector; R_holdout and unknown pretraining corpora are not coverage claims.",
         f"- Strict risk: {summary['config']['strict_rule']}.",
         f"- Combined risk: {summary['config']['combined_rule']}.",
         "",
@@ -897,8 +1137,8 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             "",
             "## Positive/Negative Controls",
             "",
-            "| Bucket | holdout combined | exact strict/combined | jitter strict/combined | normal strict/combined |",
-            "| --- | ---: | ---: | ---: | ---: |",
+            "| Bucket | holdout combined | exact strict/combined | affine strict | context-copy strict | jitter strict/combined | normal strict/combined |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ]
     )
     for bucket in summary["buckets"]:
@@ -910,6 +1150,8 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
                     f"`{bucket['profile_id']}`",
                     fmt(controls["real_holdout"]["combined_risk_rate"]["mean"]),
                     f"{fmt(controls['exact_copy']['strict_risk_rate']['mean'])}/{fmt(controls['exact_copy']['combined_risk_rate']['mean'])}",
+                    fmt(controls["affine_copy"]["strict_risk_rate"]["mean"]),
+                    fmt(controls["context_copy"]["strict_risk_rate"]["mean"]),
                     f"{fmt(controls['jitter_copy']['strict_risk_rate']['mean'])}/{fmt(controls['jitter_copy']['combined_risk_rate']['mean'])}",
                     f"{fmt(controls['normal_synthetic']['strict_risk_rate']['mean'])}/{fmt(controls['normal_synthetic']['combined_risk_rate']['mean'])}",
                 ]
@@ -924,6 +1166,8 @@ def render_report(summary: dict[str, Any], *, output_dir: Path) -> str:
             "",
             f"- Exact-copy strict-risk minimum across buckets: `{fmt(overall['exact_copy_strict_risk_min'])}`.",
             f"- Jitter-copy combined-risk minimum across buckets: `{fmt(overall['jitter_copy_combined_risk_min'])}`.",
+            f"- Affine-copy strict-risk minimum across buckets: `{fmt(overall['affine_copy_strict_risk_min'])}`.",
+            f"- Context-copy strict-risk minimum across buckets: `{fmt(overall['context_copy_strict_risk_min'])}`.",
             f"- Normal-synthetic combined-risk max across buckets: `{fmt(overall['normal_synthetic_combined_risk_max'])}`.",
             "",
             "## Bucket Flags",
@@ -964,6 +1208,10 @@ def bucket_flags(buckets: list[dict[str, Any]]) -> list[tuple[str, str]]:
             reasons.append(f"feature L2 p01 CV={fmt(stability['feature_l2_p01']['cv'])}")
         if bucket["control_summary"]["normal_synthetic"]["combined_risk_rate"]["mean"] > 0.01:
             reasons.append(f"normal synthetic combined risk={fmt(bucket['control_summary']['normal_synthetic']['combined_risk_rate']['mean'])}")
+        if bucket["control_summary"]["affine_copy"]["strict_risk_rate"]["mean"] < 0.95:
+            reasons.append(f"affine-copy strict risk={fmt(bucket['control_summary']['affine_copy']['strict_risk_rate']['mean'])}")
+        if bucket["control_summary"]["context_copy"]["strict_risk_rate"]["mean"] < 0.95:
+            reasons.append(f"context-copy strict risk={fmt(bucket['control_summary']['context_copy']['strict_risk_rate']['mean'])}")
         if reasons:
             flags.append((bucket["profile_id"], "; ".join(reasons)))
     return flags

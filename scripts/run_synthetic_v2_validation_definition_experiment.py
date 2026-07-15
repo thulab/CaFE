@@ -26,6 +26,7 @@ from app.services.synthetic_generation_service import (  # noqa: E402
     _realized_features,
     _seed_for,
 )
+from run_synthetic_v2_near_distance_calibration import BucketSpec, split_rows_leakage_safe  # noqa: E402
 from synthetic_feature_profile import WindowSpec, feature_vector, read_tsf_series, select_tsf_windows  # noqa: E402
 
 
@@ -120,8 +121,24 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    real_windows = load_m4_windows(args.m4_path, args.real_max_windows)
-    real_train, real_holdout = split_real_windows(real_windows)
+    real_records = load_m4_window_records(args.m4_path, args.real_max_windows)
+    split_spec = BucketSpec(
+        "m4_hourly_daily_168ctx",
+        "tsf_univariate",
+        args.m4_path.name,
+        CONTEXT_LENGTH,
+        HORIZON,
+        HORIZON,
+        SEASON_LENGTH,
+    )
+    train_records, holdout_records, novelty_split = split_rows_leakage_safe(
+        real_records,
+        split_spec,
+        seed=_seed_for(args.seed, "legacy-validation-novelty", 0),
+    )
+    real_windows = [record["window"] for record in real_records]
+    real_train = [record["window"] for record in train_records]
+    real_holdout = [record["window"] for record in holdout_records]
     synthetic_rows = generate_synthetic_rows(args.sample_count, args.seed)
 
     real_feature_rows = [feature_row_from_window(window, "real_anchor", None, None, idx) for idx, window in enumerate(real_windows)]
@@ -149,6 +166,7 @@ def main() -> int:
             "real_window_count": len(real_windows),
             "real_train_count": len(real_train),
             "real_holdout_count": len(real_holdout),
+            "novelty_split": novelty_split,
             "synthetic_sample_count_per_capability_intensity": args.sample_count,
             "seed": args.seed,
         },
@@ -173,6 +191,10 @@ def main() -> int:
 
 
 def load_m4_windows(path: Path, max_windows: int) -> list[np.ndarray]:
+    return [record["window"] for record in load_m4_window_records(path, max_windows)]
+
+
+def load_m4_window_records(path: Path, max_windows: int) -> list[dict[str, Any]]:
     if not path.exists():
         raise FileNotFoundError(f"M4 Hourly dataset not found: {path}")
     _metadata, series = read_tsf_series(path)
@@ -181,16 +203,18 @@ def load_m4_windows(path: Path, max_windows: int) -> list[np.ndarray]:
         WindowSpec(CONTEXT_LENGTH, HORIZON, HORIZON),
         max_windows=max_windows,
     )
-    windows = [window.astype(float) for _series_index, _start, window in selected if np.isfinite(window).all()]
-    if len(windows) < 100:
-        raise RuntimeError(f"too few finite real windows: {len(windows)}")
-    return windows
-
-
-def split_real_windows(windows: list[np.ndarray]) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    train = [window for idx, window in enumerate(windows) if idx % 5 != 4]
-    holdout = [window for idx, window in enumerate(windows) if idx % 5 == 4]
-    return train, holdout
+    records = [
+        {
+            "group_id": f"series:{series_index}",
+            "window_start": int(start),
+            "window": window.astype(float),
+        }
+        for series_index, start, window in selected
+        if np.isfinite(window).all()
+    ]
+    if len(records) < 100:
+        raise RuntimeError(f"too few finite real windows: {len(records)}")
+    return records
 
 
 def generate_synthetic_rows(sample_count: int, seed: int) -> list[dict[str, Any]]:

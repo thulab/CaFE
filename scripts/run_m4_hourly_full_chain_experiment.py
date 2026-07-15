@@ -695,7 +695,12 @@ def metric_and_points(
     *,
     elapsed_seconds: float,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    metrics = compute_sample_metrics(sample.target_future, forecast, sample.target_history)
+    metrics = compute_sample_metrics(
+        sample.target_future,
+        forecast,
+        sample.target_history,
+        seasonal_period=SEASON_LENGTH,
+    )
     row = {
         "model_id": model_id,
         "model_group": model_group,
@@ -709,6 +714,7 @@ def metric_and_points(
         "series_id": sample.series_id,
         "window_start": sample.window_start,
         "target_dim": len(sample.target_column_names),
+        "mase_period": SEASON_LENGTH,
         "status": "succeeded",
         "metrics": dict(metrics),
         "mase_unavailable_reason": mase_unavailable_reason(metrics),

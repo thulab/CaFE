@@ -975,6 +975,6 @@ aggregation="raw" if level == "sample" else f"mean_over_{level}s"
 1. **存储已 pivot 为 SQLite**：内部真值源是 `SeriesPoint`（逐点行），TsFile 由「存储格式」降为「输入格式」之一。输入支持 **CSV 或 TsFile**，经 `get_dataset_reader(file_format)` 各自 reader → 统一 `DatasetReadResult` → 写入 `SeriesPoint`。
 2. **单序列 / 单设备边界**（#10，本轮明确排除）：一个 CSV = 一条序列（时间轴严格递增不重复）；TsFile 输入要求**恰好一个设备**（多设备 → `tsfile_multiple_devices`），但可选择同设备下的多个目标物理量。多序列/面板需单列一轮设计。
 3. **等间隔校验挡掉日历型频率**（#11）：`_infer_frequency` 要求相邻间隔严格相等，月/季/年（天数不齐）会被 `csv_time_not_equidistant` 拒。连带 MASE 季节 `monthly→12` 现实不可达。本轮按「接受现状 + 文档登记」，未放宽为日历等间隔。
-4. **MASE 季节项 `m=1`**（#13）：`_mase_scale` 用 last-value naive（`m=1`），未按频率推季节 `m`。与 #11 一致（季节 m 大半不可达），m=1 为务实简化，登记为最终决策。
+4. **MASE 使用样本主周期 `P`**（#13，2026-07-15 修正）：`_mase_scale` 计算 `mean(|y_t-y_{t-P}|)`。合成样本从 `sample_metadata.season_length` 取精确主周期；真实等间隔 shard 按频率映射（sub-daily→日周期、daily→7、weekly→52）。若平台兼容样本的 context 短到 `len(history) <= P`，实际计算明确回退 `P=1` 并在 forecast 行记录 `mase_period`；论文协议的 context 必须长于 `P`，不得依赖该回退。
 5. **MASE 缺席可见化**（#14，已实现）：平稳历史（in-sample `scale==0`）下该样本 MASE 无定义。现不再静默缺席——`compute_sample_metrics` 经 `SampleMetrics` 暴露 `mase_unavailable_reason`（`flat_history` / `no_history_diffs`），report 在该 unit 显式标注 `metrics.mase=null` + `mase_unavailable_reason`；榜单仍正确跳过（无 `mase` MetricResult 行即不进 MASE 榜）。
 6. **max_samples 抽稀与 stride 的相互作用**（#9）：`subsample_windows` 沿窗序均匀抽稀（含首尾、可复现）。若先用小 stride 多产窗再抽稀，被选窗的有效间距可能 < horizon → 答案段重叠、指标对重叠区重复计权，且样本集随 max_samples 变化而不可比。要「每点考一次 + 封顶」更稳的做法是直接调 `stride` 让答案段铺满，而非小 stride 再抽稀。

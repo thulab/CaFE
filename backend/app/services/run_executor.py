@@ -13,7 +13,7 @@ from app.models.model_registry import Model
 from app.models.sample import SampleIndex
 from app.core.config import get_settings
 from app.services.forecast_store import ForecastStore
-from app.services.metric_service import aggregate_metric, compute_sample_metrics
+from app.services.metric_service import aggregate_metric, compute_sample_metrics, resolve_mase_period
 from app.services.model_adapter import ModelAdapter, get_model_adapter, remote_model_id
 from app.services.model_catalog import ensure_catalog_models_exist
 from app.services.model_input import build_model_input
@@ -31,6 +31,7 @@ class _PreparedSample:
     sample_index: int
     sample: dict
     model_input: dict
+    mase_period: int
 
 
 @dataclass(frozen=True)
@@ -652,6 +653,7 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
                 sample_index=sample_index.sample_index,
                 sample=sample,
                 model_input=build_model_input(sample),
+                mase_period=_mase_period_for_sample(shard, sample_index),
             )
         )
 
@@ -674,7 +676,12 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
             return
 
         try:
-            metrics = compute_sample_metrics(sample["target_future"], outcome.forecast or [], sample["target_history"])
+            metrics = compute_sample_metrics(
+                sample["target_future"],
+                outcome.forecast or [],
+                sample["target_history"],
+                seasonal_period=prepared.mase_period,
+            )
         except Exception as error:  # noqa: BLE001 — bad output for one sample must not stop later samples
             failed_count += 1
             rows_with_order.append((prepared.sample_index, _failed_forecast_row(unit, prepared, sample, "metric_error", str(error))))
@@ -693,6 +700,7 @@ def _execute_shard(session: Session, run: BenchmarkingRun, unit: Unit, task: Tas
                     "forecast": outcome.forecast,
                     "future_timestamps": sample["future_timestamps"],
                     "metrics": metrics,
+                    "mase_period": prepared.mase_period,
                 },
             )
         )
@@ -1118,11 +1126,15 @@ def _prepare_sample_by_id(session: Session, sample_id: str) -> _PreparedSample:
     if sample_index is None:
         raise ApiError("sample_not_found", "sample not found", {"sample_id": sample_id}, 404)
     sample = SampleStore().read_by_ref(session, sample_index.storage_ref)
+    shard = session.get(Shard, sample_index.shard_id)
+    if shard is None:
+        raise ApiError("shard_not_found", "sample shard not found", {"shard_id": sample_index.shard_id}, 404)
     return _PreparedSample(
         sample_id=sample_index.sample_id,
         sample_index=sample_index.sample_index,
         sample=sample,
         model_input=build_model_input(sample),
+        mase_period=_mase_period_for_sample(shard, sample_index),
     )
 
 
@@ -1136,7 +1148,12 @@ def _record_from_rerun_outcome(
     if outcome.error_code:
         return _failed_forecast_record(run, unit, artifact, prepared, outcome.error_code, outcome.error_message or "")
     try:
-        metrics = compute_sample_metrics(prepared.sample["target_future"], outcome.forecast or [], prepared.sample["target_history"])
+        metrics = compute_sample_metrics(
+            prepared.sample["target_future"],
+            outcome.forecast or [],
+            prepared.sample["target_history"],
+            seasonal_period=prepared.mase_period,
+        )
     except Exception as error:  # noqa: BLE001
         return _failed_forecast_record(run, unit, artifact, prepared, "metric_error", str(error))
     return {
@@ -1151,9 +1168,23 @@ def _record_from_rerun_outcome(
         "forecast": outcome.forecast,
         "future_timestamps": prepared.sample["future_timestamps"],
         "metrics": metrics,
+        "mase_period": prepared.mase_period,
         "error_code": None,
         "error_message": None,
     }
+
+
+def _mase_period_for_sample(shard: Shard, sample_index: SampleIndex) -> int:
+    metadata = sample_index.sample_metadata if isinstance(sample_index.sample_metadata, dict) else {}
+    generation_config = shard.generation_config if isinstance(shard.generation_config, dict) else {}
+    explicit = metadata.get("season_length")
+    if explicit is None:
+        explicit = generation_config.get("season_length")
+    return resolve_mase_period(
+        explicit_period=int(explicit) if explicit is not None else None,
+        frequency=shard.frequency,
+        history_length=int(sample_index.context_length),
+    )
 
 
 def _failed_forecast_record(

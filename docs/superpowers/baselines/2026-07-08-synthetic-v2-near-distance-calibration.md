@@ -1,6 +1,6 @@
 # Synthetic v2 Near-Distance Calibration
 
-日期：2026-07-08
+日期：2026-07-15
 
 ## Purpose
 
@@ -12,47 +12,52 @@
 - Real windows per bucket cap: 600; splits: 5; synthetic controls per bucket: 48.
 - Jitter copy scale: 0.02 on context-standardized target values.
 - Raw distance is computed on context-standardized target windows. Feature distance uses robust-z explicit features fitted on each split's real train set.
+- Source series/panel groups never cross train/holdout. Single-series buckets use temporal blocks with a C+H non-overlap embargo.
+- Full target-window and model-visible target-context DCR are both checked; the deployed threshold and reference rows come from the same fixed split.
 - Near-constant real target windows are excluded before split calibration because zero-information windows can make p01 DCR thresholds collapse to zero.
-- Strict risk: raw_mae_d1 <= real_holdout_p01 AND raw_l2_d1 <= real_holdout_p01.
-- Combined risk: raw_mae_d1 <= p05 AND raw_l2_d1 <= p05 AND (feature_l2_d1 <= p01 OR raw_mae_nndr <= p01).
+- Scope: raw DCR covers target trajectories in the committed R_train reference. Known-future covariates enter feature DCR but are not concatenated into the raw vector; R_holdout and unknown pretraining corpora are not coverage claims.
+- Strict risk: full-window OR context-only raw MAE/L2 DCR <= corresponding real-holdout p01.
+- Combined risk: full-window combined rule OR context raw MAE/L2 <= p05 AND context NNDR <= p01.
 
 ## Threshold Stability
 
 | Bucket | real windows | raw MAE p01 mean/cv | raw L2 p01 mean/cv | feature L2 p01 mean/cv | NNDR p01 mean/cv |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `m4_hourly_daily_168ctx` | 600 | 0.0282/0.0188 | 0.0356/0.0299 | 0.0264/0.0834 | 0.2833/0.1116 |
-| `electricity_hourly_daily_168ctx` | 597 | 0.1454/0.0683 | 0.1970/0.0858 | 0.1053/0.0850 | 0.7333/0.0665 |
-| `traffic_hourly_daily_168ctx` | 600 | 0.0557/0.6894 | 0.0814/0.6612 | 0.0442/0.8323 | 0.3341/0.7151 |
-| `electricity_hourly_panel_168ctx` | 600 | 0.1830/0.0383 | 0.2520/0.0120 | 0.1114/0.0450 | 0.7159/0.0328 |
-| `traffic_hourly_panel_168ctx` | 600 | 0.2504/0.0575 | 0.4166/0.0147 | 0.1931/0.0499 | 0.6697/0.0680 |
-| `m5_daily_covariate_365ctx_28h` | 494 | 0.2229/0.2307 | 1.035/0.0190 | 0.1927/0.0386 | 0.8389/0.0510 |
-| `m5_daily_hierarchy_365ctx_28h` | 600 | 0.2532/0.0207 | 0.3531/0.0316 | 0.1439/0.1803 | 0.7763/0.0310 |
-| `gefcom2014_load_hourly_covariate_168ctx_24h` | 600 | 0.1620/0.0228 | 0.2061/0.0380 | 0.0712/0.0859 | 0.7209/0.0407 |
+| `m4_hourly_daily_168ctx` | 600 | 0.0345/0.1076 | 0.0429/0.0994 | 0.0382/0.1997 | 0.4264/0.2698 |
+| `electricity_hourly_daily_168ctx` | 597 | 0.1602/0.0806 | 0.2193/0.0631 | 0.1358/0.0738 | 0.7569/0.0186 |
+| `traffic_hourly_daily_168ctx` | 600 | 0.1475/0.2874 | 0.2291/0.3063 | 0.1143/0.2536 | 0.5982/0.2072 |
+| `electricity_hourly_panel_168ctx` | 600 | 0.2309/0.0342 | 0.3053/0.0336 | 0.1545/0.1367 | 0.7969/0.0320 |
+| `traffic_hourly_panel_168ctx` | 600 | 0.2798/0.0499 | 0.4473/0.0252 | 0.2509/0.1076 | 0.6916/0.0771 |
+| `m5_daily_covariate_365ctx_28h` | 494 | 0.2676/0.0704 | 1.051/0.0105 | 0.2603/0.0556 | 0.8470/0.0218 |
+| `m5_daily_hierarchy_365ctx_28h` | 600 | 0.2823/0.0720 | 0.3951/0.0904 | 0.3064/0.0601 | 0.7476/0.0524 |
+| `gefcom2014_load_hourly_covariate_168ctx_24h` | 600 | 0.1716/0.0386 | 0.2237/0.0474 | 0.1110/0.0830 | 0.7080/0.0540 |
 
 ## Positive/Negative Controls
 
-| Bucket | holdout combined | exact strict/combined | jitter strict/combined | normal strict/combined |
-| --- | ---: | ---: | ---: | ---: |
-| `m4_hourly_daily_168ctx` | 0.0067 | 1.000/1.000 | 1.000/1.000 | 0/0 |
-| `electricity_hourly_daily_168ctx` | 0.0050 | 1.000/1.000 | 1.000/1.000 | 0/0 |
-| `traffic_hourly_daily_168ctx` | 0.0200 | 1.000/1.000 | 1.000/0.9833 | 0/0 |
-| `electricity_hourly_panel_168ctx` | 0.0050 | 1.000/1.000 | 1.000/1.000 | 0/0 |
-| `traffic_hourly_panel_168ctx` | 0.0150 | 1.000/1.000 | 1.000/1.000 | 0/0 |
-| `m5_daily_covariate_365ctx_28h` | 0 | 1.000/1.000 | 1.000/1.000 | 0/0 |
-| `m5_daily_hierarchy_365ctx_28h` | 0.0117 | 1.000/1.000 | 1.000/1.000 | 0/0 |
-| `gefcom2014_load_hourly_covariate_168ctx_24h` | 0.0050 | 1.000/1.000 | 1.000/1.000 | 0/0 |
+| Bucket | holdout combined | exact strict/combined | affine strict | context-copy strict | jitter strict/combined | normal strict/combined |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `m4_hourly_daily_168ctx` | 0.0100 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `electricity_hourly_daily_168ctx` | 0.0116 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `traffic_hourly_daily_168ctx` | 0.0267 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `electricity_hourly_panel_168ctx` | 0.0098 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `traffic_hourly_panel_168ctx` | 0.0133 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `m5_daily_covariate_365ctx_28h` | 0.0020 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `m5_daily_hierarchy_365ctx_28h` | 0.0117 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
+| `gefcom2014_load_hourly_covariate_168ctx_24h` | 0.0133 | 1.000/1.000 | 1.000 | 1.000 | 1.000/1.000 | 0/0 |
 
 ## Overall Checks
 
 - Exact-copy strict-risk minimum across buckets: `1.000`.
-- Jitter-copy combined-risk minimum across buckets: `0.9833`.
+- Jitter-copy combined-risk minimum across buckets: `1.000`.
+- Affine-copy strict-risk minimum across buckets: `1.000`.
+- Context-copy strict-risk minimum across buckets: `1.000`.
 - Normal-synthetic combined-risk max across buckets: `0`.
 
 ## Bucket Flags
 
 | Bucket | reason |
 | --- | --- |
-| `traffic_hourly_daily_168ctx` | raw MAE p01 CV=0.6894; feature L2 p01 CV=0.8323 |
+| - | No bucket exceeded the current warning heuristics. |
 
 ## Notes
 

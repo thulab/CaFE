@@ -457,7 +457,12 @@ def model_params_for(model_id: str) -> dict[str, Any] | None:
 
 
 def metric_row(model_id: str, model_group: str, sample: ProbeSample, forecast: list[list[float]]) -> dict[str, Any]:
-    metrics = compute_sample_metrics(sample.target_future, forecast, sample.target_history)
+    metrics = compute_sample_metrics(
+        sample.target_future,
+        forecast,
+        sample.target_history,
+        seasonal_period=SEASON_LENGTH,
+    )
     extra_metrics = extra_sample_metrics(sample, forecast)
     metrics.update(extra_metrics)
     return {
@@ -469,6 +474,7 @@ def metric_row(model_id: str, model_group: str, sample: ProbeSample, forecast: l
         "difficulty": sample.intensity,
         "target_dim": len(sample.target_column_names),
         "covariate_dim": len(sample.covariate_column_names),
+        "mase_period": SEASON_LENGTH,
         "status": "succeeded",
         "metrics": dict(metrics),
         "realized_features": sample.realized_features,

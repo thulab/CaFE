@@ -558,7 +558,7 @@ Real anchor 不固定：
 
 系统在生成前先按任务、频率、context、horizon 和 target dimension 选定精确 `anchor_profile_id`，再读取该 profile 的 generator-conditioning 参数生成。默认批次对兼容 profile 做确定性的均衡分层；研究脚本也可以按 capability 固定 profile。
 
-生成完成后，系统重新提取 realized features，并执行三类硬检查：construction-level predictability、预选 profile 内的联合 control-feature support，以及相对所有兼容真实 profile 的 DCR/NNDR 近距离风险。目标 capability feature 不作为逐样本拒绝条件，而在 `profile × capability × intensity` 批量上做 dose-response 验收。缺少精确校准组合时 fail closed。
+生成完成后，系统重新提取 realized features，并执行三类硬检查：construction-level predictability、预选 profile 内的联合 control-feature support，以及相对所有兼容真实 profile 的 DCR/NNDR 近距离风险。novelty 校准按完整 series/panel group 切分；单序列使用带 `C+H` 非重叠区的时间块，且 full target window 与模型可见的 target context 都必须通过近复制检查。目标 capability feature 不作为逐样本拒绝条件，而在 `profile × capability × intensity` 批量上做 dose-response 验收。缺少精确校准组合或 artifact 特征口径不兼容时 fail closed。当前 raw DCR 的证据边界是已提交 `R_train` reference 内的目标轨迹 novelty；known-future covariates 只通过特征距离间接参与，不应表述为对未知预训练语料的全覆盖保证。
 
 后续更完整的有效性验证还会引入 real probe track：让模型分别在真实 probe 数据和合成 anchor 数据上评测，观察模型排序是否保持大致一致。如果排序一致性较高，说明合成评测更可能反映真实预测能力。
 

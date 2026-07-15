@@ -211,12 +211,13 @@ sample_metadata.latent_params.acceptance.validation.feature_gate
 
 ### 3. 近邻距离在线门控
 
-把真实 bucket 拆成 `R_train` 和 `R_holdout`，合成数据只能和 `R_train` 比较；`R_holdout` 用来给自然近邻距离定基线。
+把真实 bucket 拆成 `R_train` 和 `R_holdout`，合成数据只能和 `R_train` 比较；`R_holdout` 用来给自然近邻距离定基线。同一 source series 或 panel group 不跨分区；只有一个 group 时使用连续时间块，并删除边界处所有与 holdout 重叠的窗口（间隔按 `C+H` 窗长检查）。正式在线 artifact 固定使用 split 0，阈值和落盘的 192 条 reference 来自完全相同的 `R_train` 子集，不再用全体真实行另抽 reference。
 
-原始窗口距离：
+原始完整目标窗口与模型可见的目标 context 分别计算距离：
 
 ```text
 D_raw(x, R_train) = min_r mean_abs(psi(x) - psi(r))
+D_ctx(x, R_train) = min_r mean_abs(psi(Y_context) - psi(Y_context^r))
 ```
 
 特征距离：
@@ -231,7 +232,7 @@ D_feat(x, R_train) = min_r || z(phi(psi(x))) - z(phi(psi(r))) ||_2
 NNDR(x) = D_1(x, R_train) / max(D_2(x, R_train), eps)
 ```
 
-其中 `D_1`、`D_2` 是第一和第二近邻距离。`z(.)` 使用 `R_train` 的 median 和 robust scale。
+其中 `D_1`、`D_2` 是第一和第二近邻距离。`z(.)` 使用 `R_train` 的 median 和 robust scale。p01/p05 从严格正的 real-holdout 距离尾部估计；跨 group 的 exact duplicate 本身仍计为风险样本，但不能把阈值塌缩为 0。这样既能检出 affine/jitter copy，也避免“context 完全复制、只替换 future”绕过 full-window DCR。
 
 当前实现把校准后的 reference artifact 提交在：
 
@@ -239,7 +240,7 @@ NNDR(x) = D_1(x, R_train) / max(D_2(x, R_train), eps)
 backend/app/data/synthetic_v2_near_distance_artifact.json
 ```
 
-生成器按 capability 对应的 profile group 逐 bucket 评估。单变量能力检查 M4/Electricity/Traffic 三个 hourly 单变量 bucket；多目标能力检查 Electricity/Traffic panel bucket；协变量能力检查窗口设定匹配的 M5 或 GEFCom bucket；层级能力检查 M5 hierarchy bucket。artifact 在 `context_length`、`horizon`、`target_dim` 与校准 bucket 完全一致时执行强制门控；缺少匹配校准 bucket 的请求直接返回 `synthetic_near_distance_not_calibrated`，不生成 shard。
+生成器按 capability 对应的 profile group 逐 bucket 评估。单变量能力检查 M4/Electricity/Traffic 三个 hourly 单变量 bucket；多目标能力检查 Electricity/Traffic panel bucket；协变量能力检查窗口设定匹配的 M5 或 GEFCom bucket；层级能力检查 M5 hierarchy bucket。artifact 在 `context_length`、`horizon`、`target_dim` 与校准 bucket 完全一致时执行强制门控；缺少匹配校准 bucket 的请求直接返回 `synthetic_near_distance_not_calibrated`，不生成 shard。artifact 缺少 context reference、阈值字段或所需 realized feature 时按 schema mismatch fail closed，不再把缺失特征静默填成中心值。
 
 当前已校准的在线组合为：
 
@@ -253,12 +254,14 @@ backend/app/data/synthetic_v2_near_distance_artifact.json
 
 风险规则：
 
-- Strict risk：raw z-L2 和 raw z-MAE DCR 都低于 real-holdout p01。
-- Combined risk：raw z-L2 和 raw z-MAE DCR 都低于 real-holdout p05，且 feature DCR 低于 p01 或 NNDR 低于 p01。
+- Strict risk：full-window 或 context-only 任一视图的 raw z-L2 与 raw z-MAE DCR 同时低于对应 real-holdout p01。
+- Combined risk：full-window 仍采用“raw z-L2/z-MAE 低于 p05，且 feature DCR 或 NNDR 低于 p01”；context-only 采用“raw z-L2/z-MAE 低于 p05，且 context NNDR 低于 p01”。两者任一触发即拒绝。
 - 样本接受规则：`strict_risk=false` 且 `combined_risk=false`。
 - 批量报告阈值：strict risk = 0%，combined risk <= 1%。
 
 这个检验服务于“合成数据不容易导致预训练污染”的理论论据：合成窗口相对真实训练窗口的最近邻距离，不应比真实 holdout 自然产生的最近邻距离更近。
+
+证据边界必须明示：当前 raw DCR 只对提交在 artifact 中的 192 条 `R_train` 目标轨迹直接检查。known-future covariates 通过相关性等显式特征进入 feature DCR，尚未作为原始模型输入向量参与 DCR。`R_holdout` 只用于校准自然距离，未进入在线 reference；未知预训练语料更不在覆盖范围内。因此论文应使用“相对已提交 reference 的低近复制风险”，而不是“证明无预训练污染”。如要升级为完整模型输入与全真实基底覆盖，需要增加 `target_context + history_cov + future_cov` 输入视图，并用互补的 cross-fit reference folds 覆盖 calibration 行。
 
 该门控结果写入：
 
@@ -322,4 +325,4 @@ intensity_definition: target temporal structure strength; not a required monoton
 
 ## 论文中建议采用的简短表述
 
-本文将真实数据基底按 `profile_id/frequency/context/horizon/target_dim/covariate_dim` 分桶，并把真实窗口按 group 或带 embargo 的时间块拆为 generator-parameter、gate-reference 与 gate-calibration 三个分区。每个样本在生成前选定真实 bucket，按该 bucket 拟合的 nuisance 参数和 intensity 映射生成；目标特征以配对批量 dose-response 验收。生成后，我们只在预选 bucket 内用 real-only split-conformal 的联合 control-feature 支持域限制曲线不过分远离真实数据，同时对所有兼容 bucket 用 DCR/NNDR 限制曲线不过分靠近任何真实窗口；MMD/SWD 作为批量分布报告。该链路分别提供 capability validity、real support 与低近复制风险证据。
+本文将真实数据基底按 `profile_id/frequency/context/horizon/target_dim/covariate_dim` 分桶，并把真实窗口按 group 或带 `C+H` 非重叠区的时间块拆为 generator-parameter、gate-reference 与 gate-calibration 分区。每个样本在生成前选定真实 bucket，按该 bucket 拟合的 nuisance 参数和 intensity 映射生成；目标特征以配对批量 dose-response 验收。生成后，我们只在预选 bucket 内用 real-only split-conformal 的联合 control-feature 支持域限制曲线不过分远离真实数据，同时对所有兼容 bucket 在 full-window 与 model-visible context 两个视图上用 DCR/NNDR 限制曲线不过分靠近真实 reference；MMD/SWD 作为批量分布报告。该链路分别提供 capability validity、real support 与低近复制风险证据。

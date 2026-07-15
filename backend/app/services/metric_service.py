@@ -1,8 +1,9 @@
+import re
 from collections.abc import Iterable
 
 # Reason codes for an undefined MASE on a sample.
 MASE_REASON_FLAT_HISTORY = "flat_history"  # in-sample naive MAE scale == 0
-MASE_REASON_NO_HISTORY_DIFFS = "no_history_diffs"  # < 2 history rows → no diffs
+MASE_REASON_NO_HISTORY_DIFFS = "no_history_diffs"  # history length <= seasonal period
 
 
 class SampleMetrics(dict):
@@ -24,28 +25,98 @@ def _flatten(values: list[list[float]]) -> list[float]:
     return [item for row in values for item in row]
 
 
-def _mase_scale(target_history: list[list[float]]) -> tuple[float | None, str | None]:
-    """Return the naive (last-value, m=1) in-sample MAE scale for MASE.
+def seasonal_period_for_frequency(frequency: str | None) -> int:
+    """Return the default seasonal-naive period for an equidistant frequency.
+
+    Sub-daily data use a daily period, daily data use a weekly period, and
+    weekly data use an annual period. Frequencies without an unambiguous
+    calendar season fall back to the non-seasonal lag-1 baseline.
+    """
+    text = (frequency or "").strip().lower()
+    aliases = {
+        "hour": "1h",
+        "hourly": "1h",
+        "day": "1d",
+        "daily": "1d",
+        "week": "1w",
+        "weekly": "1w",
+        "minute": "1m",
+        "minutely": "1m",
+    }
+    text = aliases.get(text, text)
+    match = re.fullmatch(r"(\d+)?\s*(s|m|min|h|d|w)", text)
+    if match is None:
+        return 1
+    magnitude = int(match.group(1) or 1)
+    if magnitude <= 0:
+        return 1
+    unit = match.group(2)
+    unit_seconds = {"s": 1, "m": 60, "min": 60, "h": 3600, "d": 86400, "w": 604800}
+    interval_seconds = magnitude * unit_seconds[unit]
+    day_seconds = 86400
+    week_seconds = 7 * day_seconds
+    if interval_seconds < day_seconds and day_seconds % interval_seconds == 0:
+        return day_seconds // interval_seconds
+    if interval_seconds == day_seconds:
+        return 7
+    if interval_seconds == week_seconds:
+        return 52
+    return 1
+
+
+def resolve_mase_period(
+    *,
+    explicit_period: int | None,
+    frequency: str | None,
+    history_length: int,
+) -> int:
+    """Resolve the period actually usable by a sample's MASE denominator.
+
+    Synthetic samples provide their calibrated ``season_length`` explicitly;
+    real shards normally derive it from frequency. A history must contain at
+    least one seasonal difference (``len(history) > P``). For legacy or tiny
+    platform samples that cannot support their calendar period, use lag 1
+    instead of silently dropping the primary metric. Paper experiments use
+    contexts longer than ``P`` and therefore never take this fallback.
+    """
+    if explicit_period is not None:
+        period = int(explicit_period)
+        if period <= 0:
+            raise ValueError("seasonal_period must be positive")
+    else:
+        period = seasonal_period_for_frequency(frequency)
+    if history_length <= period:
+        return 1
+    return period
+
+
+def _mase_scale(
+    target_history: list[list[float]],
+    seasonal_period: int = 1,
+) -> tuple[float | None, str | None]:
+    """Return the seasonal-naive in-sample MAE scale for MASE(P).
 
     Iterates each dimension column independently and collects all
-    consecutive absolute differences |h[t][d] - h[t-1][d]|, then
+    lag-P absolute differences |h[t][d] - h[t-P][d]|, then
     returns their mean alongside a reason when the scale is undefined.
 
     Returns ``(scale, None)`` for a usable positive scale. Returns
     ``(None, reason)`` when MASE is undefined: ``no_history_diffs`` when the
-    history has fewer than 2 rows (no diffs possible) and ``flat_history``
-    when the computed mean is 0 (flat / stationary history). The reason lets
+    history is not longer than ``seasonal_period`` and ``flat_history`` when
+    the computed mean is 0 (flat / stationary history). The reason lets
     the caller make the absence VISIBLE instead of dividing by zero and
     silently dropping the metric.
     """
-    if len(target_history) < 2:
+    if seasonal_period <= 0:
+        raise ValueError("seasonal_period must be positive")
+    if len(target_history) <= seasonal_period:
         return None, MASE_REASON_NO_HISTORY_DIFFS
 
     n_dims = len(target_history[0])
     abs_diffs: list[float] = []
     for d in range(n_dims):
-        for t in range(1, len(target_history)):
-            abs_diffs.append(abs(target_history[t][d] - target_history[t - 1][d]))
+        for t in range(seasonal_period, len(target_history)):
+            abs_diffs.append(abs(target_history[t][d] - target_history[t - seasonal_period][d]))
 
     if not abs_diffs:
         return None, MASE_REASON_NO_HISTORY_DIFFS
@@ -60,6 +131,8 @@ def compute_sample_metrics(
     target_future: list[list[float]],
     forecast: list[list[float]],
     target_history: list[list[float]] | None = None,
+    *,
+    seasonal_period: int = 1,
 ) -> dict[str, float]:
     expected = _flatten(target_future)
     predicted = _flatten(forecast)
@@ -75,7 +148,7 @@ def compute_sample_metrics(
     )
 
     if target_history is not None:
-        scale, reason = _mase_scale(target_history)
+        scale, reason = _mase_scale(target_history, seasonal_period)
         if scale is not None:
             result["mase"] = mae / scale
         else:
