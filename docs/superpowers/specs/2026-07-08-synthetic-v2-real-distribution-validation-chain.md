@@ -4,6 +4,8 @@
 
 paper-v1 profile-conditioned generator / feature gate 修订：2026-07-15
 
+capability-global canonical intensity 标尺修订：2026-07-16
+
 ## 目标
 
 本文档固定 synthetic v2 论文阶段采用的三个定义：
@@ -74,21 +76,32 @@ P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 
 ## Intensity 定义
 
-`intensity in {1,2,3,4,5}` 是跨 bucket 可比较的有序结构强度级别。基础坐标为：
+`intensity in {1,2,3,4,5}` 是同一 capability 内跨 bucket 可比较的绝对结构强度档位。不同 capability 使用不同主指标，不把“trend 3”和“common factor 3”解释为同一物理量。基础坐标为：
 
 ```text
 u(intensity) = (intensity - 1) / 4
 ```
 
-实际结构参数使用 bucket-conditional 映射 `lambda_{b,c}(intensity)`。生成器只在真实参数拟合 split 上估计 profile nuisance 和结构尺度，并把五档连续目标特征对齐到该 bucket 的经验 q10/q30/q50/q70/q90；对稀疏脉冲这类离散/饱和指标，保留五档 effect-size grid，再用 bootstrap dose response 验收。切点时钟、噪声尾部、季节残差、factor rank 等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的 intensity 扫描中固定。
+对每个 capability `c`，先在冻结的 development reference corpus 上得到唯一五档目标 `T_{c,k}`。默认做法是在每个参考 profile 的 parameter split 上计算主指标 q20/q35/q50/q70/q90，然后对 profile 等权取逐坐标中位数；`nonlinear_persistence` 使用预注册的 q35/q50/q60/q75/q90 可观测区间。长 context 等同数据集派生研究 bucket 不重复参与全局标尺。随后每个 bucket 只拟合自己的 nuisance、结构尺度和单调逆映射：
 
-因此，Electricity 与 Traffic 可以有不同噪声尾部、季节残差和局部通道成分，M5 与 GEFCom 可以有不同 covariate effect 尺度；这不是为了放松门控，而是定义不同的真实条件 DGP。完整校准写入 `synthetic_v2_generator_conditioning_artifact.json`。
+```text
+lambda_{b,c}(k) = argmin_lambda |median_seed f_c(G_c(theta_{b,c}, lambda)) - T_{c,k}|
+```
+
+也就是说，bucket 决定“怎样达到强度”，`T_{c,k}` 决定“强度是多少”。切点时钟、噪声尾部、季节残差、局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的 intensity 扫描中固定。当前正式 artifact 使用 64 个配对 seed 拟合单调响应曲线，经连续插值求逆，再用另一组 64 个 seed 验证。`lambda` 只要求数值上严格递增，不规定人为的最小物理间距；档位间隔由 realized target 定义。标定必须满足五档 realized median 单调且最大归一化偏差不超过预注册的全目标跨度 20% 容差，否则该 `bucket × capability` fail closed。
+
+因此，Electricity 与 Traffic 可以有不同噪声尾部、季节残差和局部通道成分，M5 与 GEFCom 可以用不同生成参数达到相同的 covariate target；这不是为了放松门控，而是定义不同的真实条件 DGP。每个 canonical target 在所选 bucket 局部真实分布中的经验分位单独记录，接近 0/1 表示该档对该 bucket 是温和样本/反事实压力测试。完整校准写入 `synthetic_v2_generator_conditioning_artifact.json`。
+
+当前 `canonical_scale_id=synthetic-v2-paper-v1-development-2026-07` 是开发期标尺。正式论文实验前应一次性扩充并冻结一个领域、频率和任务形态更均衡的独立开发语料；参考 profile 等权，不能让同一数据集因 bucket 更多而获得更大权重。如果 GIFT-Eval 用作最终外部关联验证，可以用其 train/history 拟合被评测 bucket 的 nuisance 和逆映射，但不应把所有最终验证 dataset 同时用于定义 `T_{c,k}`。至少保留 dataset-level held-out 子集，只用于检验“合成能力缺陷是否对应真实数据缺陷”；任何参考语料或目标曲线变化都必须更换 `scale_id`，且不得根据模型成绩反向选择。
+
+五档足以支撑主实验的低/中/高结构和非线性 dose-response，同时控制 `dataset × capability × model × seed × context × horizon` 的组合规模。内部标定继续使用更密的连续 `lambda` 与结构尺度网格，样本记录连续 realized strength；如 pilot 显示阈值型行为，可在附录对少数 capability 增加中间点，而不改变主协议的五档定义。
 
 重要约束：
 
 - `intensity` 应让目标结构特征在聚合均值上增强。
 - `intensity` 不要求所有模型误差单调增加。
 - 如果强度更高但深度模型误差更低，可以解释为结构更规则、更容易学习。
+- `intensity` 只在同一 capability 内有绝对可比性；跨 capability 仅共享 1--5 标签。
 - API 仍兼容旧字段 `difficulty`；新请求、文档和 UI 统一使用 `intensity`。
 
 ## 核心特征维度
@@ -125,7 +138,7 @@ u(intensity) = (intensity - 1) / 4
 生成器先选定 `b` 并读取 `theta_{b,c}`，再执行三个在线硬门控和两个批量报告检查：
 
 ```text
-theta ~ P_hat(theta | b,c),  x_syn = G_c(theta, lambda_{b,c}(intensity), seed)
+theta ~ P_hat(theta | b,c),  x_syn = G_c(theta, lambda_{b,c}(T_{c,intensity}), seed)
 
 Accept(x_syn | capability c, selected bucket b, compatible buckets B)
   = PredictabilityGate(x_syn, c)
@@ -320,9 +333,14 @@ Discriminative score 和 predictive score 属于实验性论据，用来说明�
 ```text
 intensity: <1..5>
 difficulty: <same value, compatibility only>
-intensity_definition: target temporal structure strength; not a required monotonic model-error difficulty
+intensity_definition: capability-global canonical realized strength; not model difficulty
+canonical_scale_id: <frozen scale label>
+canonical_scale_fingerprint: <content-derived identifier>
+canonical_target_strength: <T_c,intensity>
+calibrated_profile_median_strength: <independent calibration estimate>
+local_real_percentile: <target position in the selected bucket>
 ```
 
 ## 论文中建议采用的简短表述
 
-本文将真实数据基底按 `profile_id/frequency/context/horizon/target_dim/covariate_dim` 分桶，并把真实窗口按 group 或带 `C+H` 非重叠区的时间块拆为 generator-parameter、gate-reference 与 gate-calibration 分区。每个样本在生成前选定真实 bucket，按该 bucket 拟合的 nuisance 参数和 intensity 映射生成；目标特征以配对批量 dose-response 验收。生成后，我们只在预选 bucket 内用 real-only split-conformal 的联合 control-feature 支持域限制曲线不过分远离真实数据，同时对所有兼容 bucket 在 full-window 与 model-visible context 两个视图上用 DCR/NNDR 限制曲线不过分靠近真实 reference；MMD/SWD 作为批量分布报告。该链路分别提供 capability validity、real support 与低近复制风险证据。
+本文将真实数据基底按 `profile_id/frequency/context/horizon/target_dim/covariate_dim` 分桶，并把真实窗口按 group 或带 `C+H` 非重叠区的时间块拆为 generator-parameter、gate-reference 与 gate-calibration 分区。每个 capability 在冻结开发语料上定义一条跨 bucket 共享、带版本的五档 canonical target 曲线；每个样本在生成前选定真实 bucket，再按该 bucket 拟合的 nuisance 与逆映射生成到指定目标，目标特征以配对批量 dose-response 验收。生成后，我们只在预选 bucket 内用 real-only split-conformal 的联合 control-feature 支持域限制曲线不过分远离真实数据，同时对所有兼容 bucket 在 full-window 与 model-visible context 两个视图上用 DCR/NNDR 限制曲线不过分靠近真实 reference；MMD/SWD 作为批量分布报告。该链路分别提供 capability validity、real support 与低近复制风险证据。

@@ -15,13 +15,33 @@ def conditioning_artifact() -> dict:
     capability = {
         "parameters": {"structure_scale": 0.75},
         "intensity_lambdas": [0.0, 0.1, 0.3, 0.6, 1.0],
-        "target_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
-        "target_feature_targets": {"trend_strength": [0.0, 0.1, 0.2, 0.4, 0.7]},
+        "canonical_reference_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+        "canonical_target_feature": "trend_strength",
+        "canonical_target_values": [0.0, 0.1, 0.2, 0.4, 0.7],
+        "calibrated_realized_strengths": [0.01, 0.11, 0.21, 0.39, 0.69],
+        "local_real_percentiles_at_canonical_targets": [0.05, 0.2, 0.4, 0.75, 0.98],
+        "local_real_target_quantiles": {
+            "trend_strength": [0.02, 0.12, 0.25, 0.38, 0.55]
+        },
+        "canonical_calibration": {
+            "status": "supported",
+            "max_normalized_error": 0.02,
+        },
         "calibration_method": "unit-test",
     }
     return {
-        "schema_version": "unit-conditioning.v1",
+        "schema_version": "unit-conditioning.v2",
         "created_at": "2026-07-15T00:00:00+00:00",
+        "canonical_intensity": {
+            "scale_id": "unit-scale-v1",
+            "scale_fingerprint": "0123456789abcdef",
+            "capabilities": {
+                "trend": {
+                    "primary_feature": "trend_strength",
+                    "target_values": [0.0, 0.1, 0.2, 0.4, 0.7],
+                }
+            }
+        },
         "profiles": {
             "profile_a": {
                 "profile_id": "profile_a",
@@ -84,6 +104,11 @@ def test_conditioning_requires_an_exact_task_window_and_merges_parameters():
     }
     assert conditioning.lambda_for(3) == 0.3
     assert conditioning.metadata(3)["profile_id"] == "profile_a"
+    assert conditioning.metadata(3)["canonical_target_strength"] == 0.2
+    assert conditioning.metadata(3)["calibrated_profile_median_strength"] == 0.21
+    assert conditioning.metadata(3)["local_real_percentile"] == 0.4
+    assert conditioning.metadata(3)["canonical_scale_id"] == "unit-scale-v1"
+    assert conditioning.metadata(3)["canonical_scale_fingerprint"] == "0123456789abcdef"
 
 
 def test_balanced_profile_selection_is_deterministic_and_exactly_balanced():
@@ -169,3 +194,34 @@ def test_profile_conditioned_generators_preserve_horizon_prefixes():
         if short_covariates is not None:
             assert long_covariates is not None
             assert np.allclose(short_covariates, long_covariates[: len(short_covariates)])
+
+
+def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
+    artifact = load_generator_conditioning_artifact()
+    assert artifact is not None
+    assert artifact["schema_version"] == "synthetic_v2_generator_conditioning_artifact.v2"
+    assert artifact["canonical_intensity"]["scale_id"]
+    assert len(artifact["canonical_intensity"]["scale_fingerprint"]) == 16
+    assert artifact["config"]["canonical_scale_id"] == artifact["canonical_intensity"]["scale_id"]
+
+    canonical = artifact["canonical_intensity"]["capabilities"]
+    observed: dict[str, set[tuple[float, ...]]] = {}
+    for profile in artifact["profiles"].values():
+        for capability_id, capability in profile["capabilities"].items():
+            observed.setdefault(capability_id, set()).add(
+                tuple(capability["canonical_target_values"])
+            )
+            assert capability["canonical_calibration"]["status"] == "supported"
+            assert capability["canonical_calibration"]["fit_sample_count"] >= 64
+            assert capability["canonical_calibration"]["validation_sample_count"] >= 64
+            assert capability["canonical_calibration"]["validation_seed_is_independent"] is True
+            assert len(capability["local_real_percentiles_at_canonical_targets"]) == 5
+
+    assert all(len(curves) == 1 for curves in observed.values())
+    assert {
+        capability_id: next(iter(curves))
+        for capability_id, curves in observed.items()
+    } == {
+        capability_id: tuple(definition["target_values"])
+        for capability_id, definition in canonical.items()
+    }

@@ -155,7 +155,7 @@ sequenceDiagram
 
 合成数据是“测试用例集”的另一种来源，而不是独立执行路径。前端在数据来源步骤选择“生成合成数据”后，读取 `/synthetic/capabilities` 获取能力目录，再把一组共享参数提交给 `/synthetic/shards`：`capabilities / context_length / horizon / sample_count / intensity / season_length / target_dim / seed / frequency`。研究调用可额外提交 `anchor_profile_ids`，按 capability 固定真实基底；普通 UI 默认让后端对精确匹配 profile 做均衡分层。
 
-每个能力维度生成一个 synthetic shard；单变量能力固定 `target_dim=1`，多目标能力使用请求的目标维度（至少 3），`covariate_response` 生成 known-future 协变量列 `weather/event`。每个样本先确定 `anchor_profile_id`，再从 `synthetic_v2_generator_conditioning_artifact.json` 读取 profile × capability 参数生成。feature-support 只对预选 profile 验收，near-distance 则对所有兼容真实 profile 验收；三者的结果都写入样本 metadata。
+每个能力维度生成一个 synthetic shard；单变量能力固定 `target_dim=1`，多目标能力使用请求的目标维度（至少 3），`covariate_response` 生成 known-future 协变量列 `weather/event`。每个 capability 的五档 intensity 对应 artifact 中一条跨 bucket 共享、带 `scale_id`/fingerprint 的 canonical realized-strength 曲线；每个样本先确定 `anchor_profile_id`，再读取该 profile 的 nuisance 参数和逆标定映射生成到同一目标。bucket 的局部真实分位只作 metadata 诊断，不再定义 intensity。feature-support 只对预选 profile 验收，near-distance 则对所有兼容真实 profile 验收；三者的结果都写入样本 metadata。
 
 生成服务把每个 synthetic sample 当作一段长度为 `context_length + horizon` 的完整序列，并把同一个 shard 内的样本按行号连续拼接：
 
@@ -165,7 +165,7 @@ context = [row_start, row_start + context - 1]
 horizon = [row_start + context, row_start + context + horizon - 1]
 ```
 
-随后沿用真实数据的 `SeriesPoint` 与 `SampleIndex` 指针存储。读取样本、构造模型输入、forecast、指标、报告和样本曲线都不需要识别合成数据的特殊格式。能力 ID、intensity、seed、预选 profile、conditioning、latent 参数和 realized features 写入 `SampleIndex.sample_metadata`；shard 级候选 profile 与参数摘要写入 `Shard.generation_config` 与 `runtime/synthetic/*.json`。
+随后沿用真实数据的 `SeriesPoint` 与 `SampleIndex` 指针存储。读取样本、构造模型输入、forecast、指标、报告和样本曲线都不需要识别合成数据的特殊格式。能力 ID、intensity、seed、预选 profile、canonical scale identity/target、局部真实分位、conditioning、latent 参数和 realized features 写入 `SampleIndex.sample_metadata`；shard 级候选 profile 与参数摘要写入 `Shard.generation_config` 与 `runtime/synthetic/*.json`。
 
 ### 2.c 赛道与能力块
 

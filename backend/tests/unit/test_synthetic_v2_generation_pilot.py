@@ -24,7 +24,7 @@ def test_trend_pilot_features_are_monotonic_by_intensity_and_inside_joint_suppor
                 1,
                 24,
                 intensity,
-                _seed_for(321, "trend", intensity * 1000 + sample_index),
+                _seed_for(321, "trend", sample_index),
             )
             for sample_index in range(96)
         ]
@@ -47,10 +47,12 @@ def test_trend_pilot_features_are_monotonic_by_intensity_and_inside_joint_suppor
         assert values == sorted(values)
 
 
-def test_multi_seasonal_intensity_degrades_single_period_seasonal_naive():
+def test_multi_seasonal_canonical_intensity_has_paired_dose_response():
     seasonal_naive_mae = []
+    multi_period_scores = []
     for intensity in range(1, 6):
         errors = []
+        scores = []
         for sample_index in range(96):
             values, latent_params, _, features = _generate_accepted_sample_values(
                 "multi_seasonal",
@@ -59,11 +61,12 @@ def test_multi_seasonal_intensity_degrades_single_period_seasonal_naive():
                 1,
                 24,
                 intensity,
-                _seed_for(321, "multi_seasonal", intensity * 1000 + sample_index),
+                _seed_for(321, "multi_seasonal", sample_index),
             )
             history = values[:168, 0]
             actual = values[168:, 0]
             errors.append(float(np.mean(np.abs(actual - history[-24:]))))
+            scores.append(float(features["multi_period_score"]))
             assert latent_params["intensity"] == intensity
             assert latent_params["acceptance"]["accepted"] is True
             assert latent_params["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v3"
@@ -76,9 +79,11 @@ def test_multi_seasonal_intensity_degrades_single_period_seasonal_naive():
             assert feature_gate["score"] <= feature_gate["threshold"]
             assert set(feature_gate["control_features"]) == set(CONTROL_FEATURES_BY_CAPABILITY["multi_seasonal"])
         seasonal_naive_mae.append(float(np.mean(errors)))
+        multi_period_scores.append(float(np.mean(scores)))
 
-    assert seasonal_naive_mae == sorted(seasonal_naive_mae)
-    assert seasonal_naive_mae[-1] > seasonal_naive_mae[0] * 2
+    assert multi_period_scores == sorted(multi_period_scores)
+    assert multi_period_scores[-1] > multi_period_scores[0]
+    assert seasonal_naive_mae[-1] > seasonal_naive_mae[0]
 
 
 def test_all_capabilities_have_real_only_joint_support_calibrations():

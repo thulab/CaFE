@@ -9,7 +9,7 @@ from typing import Any
 
 
 ARTIFACT_PATH = Path(__file__).resolve().parents[1] / "data" / "synthetic_v2_generator_conditioning_artifact.json"
-SCHEMA_VERSION = "synthetic_generator_conditioning.v1"
+SCHEMA_VERSION = "synthetic_generator_conditioning.v2"
 
 
 @dataclass(frozen=True)
@@ -23,8 +23,15 @@ class GeneratorConditioning:
     frequency: str
     parameters: dict[str, float]
     intensity_lambdas: tuple[float, ...]
-    target_percentile_levels: tuple[float, ...]
-    target_feature_targets: dict[str, tuple[float, ...]]
+    canonical_reference_percentile_levels: tuple[float, ...]
+    canonical_target_feature: str
+    canonical_target_values: tuple[float, ...]
+    calibrated_realized_strengths: tuple[float, ...]
+    local_real_percentiles: tuple[float, ...]
+    local_real_target_quantiles: dict[str, tuple[float, ...]]
+    calibration_max_normalized_error: float
+    canonical_scale_id: str
+    canonical_scale_fingerprint: str
     artifact_schema_version: str
     artifact_created_at: str | None
     calibration_method: str
@@ -50,10 +57,22 @@ class GeneratorConditioning:
             "intensity": int(intensity),
             "base_lambda": (int(intensity) - 1) / 4,
             "profile_lambda": self.lambda_for(intensity),
-            "target_percentile_level": self.target_percentile_levels[int(intensity) - 1],
-            "target_feature_targets": {
-                name: list(values) for name, values in self.target_feature_targets.items()
+            "intensity_semantics": "capability-global canonical realized strength; not model difficulty",
+            "canonical_scale_id": self.canonical_scale_id,
+            "canonical_scale_fingerprint": self.canonical_scale_fingerprint,
+            "canonical_reference_percentile_level": self.canonical_reference_percentile_levels[
+                int(intensity) - 1
+            ],
+            "canonical_target_feature": self.canonical_target_feature,
+            "canonical_target_strength": self.canonical_target_values[int(intensity) - 1],
+            "calibrated_profile_median_strength": self.calibrated_realized_strengths[
+                int(intensity) - 1
+            ],
+            "local_real_percentile": self.local_real_percentiles[int(intensity) - 1],
+            "local_real_target_quantiles": {
+                name: list(values) for name, values in self.local_real_target_quantiles.items()
             },
+            "calibration_max_normalized_error": self.calibration_max_normalized_error,
             "parameters": dict(self.parameters),
             "calibration_method": self.calibration_method,
         }
@@ -85,6 +104,9 @@ def matching_generator_profiles(
     for profile_id in profile_ids:
         profile = profiles.get(profile_id)
         if profile is None or capability_id not in profile.get("capabilities", {}):
+            continue
+        capability = profile["capabilities"][capability_id]
+        if capability.get("canonical_calibration", {}).get("status") != "supported":
             continue
         if int(profile.get("context_length", -1)) != int(context_length):
             continue
@@ -130,16 +152,48 @@ def resolve_generator_conditioning(
         }.items()
     }
     intensity_lambdas = tuple(float(value) for value in capability.get("intensity_lambdas", ()))
-    percentile_levels = tuple(float(value) for value in capability.get("target_percentile_levels", ()))
+    reference_percentile_levels = tuple(
+        float(value) for value in capability.get("canonical_reference_percentile_levels", ())
+    )
+    canonical_target_values = tuple(
+        float(value) for value in capability.get("canonical_target_values", ())
+    )
+    calibrated_realized_strengths = tuple(
+        float(value) for value in capability.get("calibrated_realized_strengths", ())
+    )
+    local_real_percentiles = tuple(
+        float(value) for value in capability.get("local_real_percentiles_at_canonical_targets", ())
+    )
     if len(intensity_lambdas) != 5 or any(
         right < left for left, right in zip(intensity_lambdas, intensity_lambdas[1:])
     ):
         raise ValueError(f"invalid intensity_lambdas for {profile_id}/{capability_id}")
-    if len(percentile_levels) != 5:
-        raise ValueError(f"invalid target_percentile_levels for {profile_id}/{capability_id}")
-    feature_targets = {
+    five_level_fields = {
+        "canonical_reference_percentile_levels": reference_percentile_levels,
+        "canonical_target_values": canonical_target_values,
+        "calibrated_realized_strengths": calibrated_realized_strengths,
+        "local_real_percentiles_at_canonical_targets": local_real_percentiles,
+    }
+    for field_name, values in five_level_fields.items():
+        if len(values) != 5:
+            raise ValueError(f"invalid {field_name} for {profile_id}/{capability_id}")
+    canonical_definition = source.get("canonical_intensity", {}).get("capabilities", {}).get(
+        capability_id,
+        {},
+    )
+    artifact_targets = tuple(
+        float(value) for value in canonical_definition.get("target_values", ())
+    )
+    if artifact_targets != canonical_target_values:
+        raise ValueError(f"profile canonical targets do not match artifact for {profile_id}/{capability_id}")
+    canonical_intensity = source.get("canonical_intensity", {})
+    canonical_scale_id = str(canonical_intensity.get("scale_id", ""))
+    canonical_scale_fingerprint = str(canonical_intensity.get("scale_fingerprint", ""))
+    if not canonical_scale_id or not canonical_scale_fingerprint:
+        raise ValueError("generator conditioning artifact has no canonical scale identity")
+    local_real_target_quantiles = {
         str(name): tuple(float(value) for value in values)
-        for name, values in capability.get("target_feature_targets", {}).items()
+        for name, values in capability.get("local_real_target_quantiles", {}).items()
     }
     return GeneratorConditioning(
         profile_id=str(profile["profile_id"]),
@@ -151,8 +205,17 @@ def resolve_generator_conditioning(
         frequency=str(profile.get("frequency", "")),
         parameters=parameters,
         intensity_lambdas=intensity_lambdas,
-        target_percentile_levels=percentile_levels,
-        target_feature_targets=feature_targets,
+        canonical_reference_percentile_levels=reference_percentile_levels,
+        canonical_target_feature=str(capability["canonical_target_feature"]),
+        canonical_target_values=canonical_target_values,
+        calibrated_realized_strengths=calibrated_realized_strengths,
+        local_real_percentiles=local_real_percentiles,
+        local_real_target_quantiles=local_real_target_quantiles,
+        calibration_max_normalized_error=float(
+            capability.get("canonical_calibration", {}).get("max_normalized_error", float("inf"))
+        ),
+        canonical_scale_id=canonical_scale_id,
+        canonical_scale_fingerprint=canonical_scale_fingerprint,
         artifact_schema_version=str(source.get("schema_version", "unknown")),
         artifact_created_at=source.get("created_at"),
         calibration_method=str(capability.get("calibration_method", "unknown")),

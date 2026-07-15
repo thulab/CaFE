@@ -771,6 +771,15 @@ def _generate_capability_shard(
                 "anchor_profile_selection": (
                     "explicit" if requested_anchor_profile is not None else "balanced_uniform"
                 ),
+                "canonical_scale_id": conditioning.canonical_scale_id,
+                "canonical_scale_fingerprint": conditioning.canonical_scale_fingerprint,
+                "canonical_target_feature": conditioning.canonical_target_feature,
+                "canonical_target_strength": conditioning.canonical_target_values[
+                    config.intensity - 1
+                ],
+                "local_real_percentile": conditioning.local_real_percentiles[
+                    config.intensity - 1
+                ],
                 "season_length": conditioning.season_length,
                 "requested_season_length": config.season_length,
                 "season_length_source": "preselected_anchor_profile",
@@ -782,6 +791,7 @@ def _generate_capability_shard(
             }
         )
 
+    canonical_conditioning = next(iter(profile_conditionings.values()))
     generation_config = {
         "schema_version": "synthetic_generation.v1",
         "generation_id": generation_id,
@@ -790,7 +800,15 @@ def _generate_capability_shard(
         "task_type": capability.task_type,
         "intensity": config.intensity,
         "difficulty": config.intensity,
-        "intensity_definition": "target temporal structure strength; not a required monotonic model-error difficulty",
+        "intensity_definition": (
+            "capability-global canonical realized strength; not a required monotonic model-error difficulty"
+        ),
+        "canonical_scale_id": canonical_conditioning.canonical_scale_id,
+        "canonical_scale_fingerprint": canonical_conditioning.canonical_scale_fingerprint,
+        "canonical_target_feature": canonical_conditioning.canonical_target_feature,
+        "canonical_target_strength": canonical_conditioning.canonical_target_values[
+            config.intensity - 1
+        ],
         "seed": config.seed,
         "context_length": context,
         "horizon": horizon,
@@ -1422,7 +1440,9 @@ def _generate_accepted_sample_values(
         latent_params = {
             **latent_params,
             "intensity": int(intensity),
-            "intensity_definition": "target temporal structure strength; model-error monotonicity is evaluated separately",
+            "intensity_definition": (
+                "capability-global canonical realized strength; model-error monotonicity is evaluated separately"
+            ),
             "acceptance": {
                 "accepted": bool(accepted),
                 "attempts": attempt + 1,
@@ -1679,7 +1699,7 @@ def _generate_trend(
     seasonal, slow, time_axis = _base_features(length, context_length, season_length)
     trend_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
     shape_scale = rng.uniform(0.9, 1.1, size=target_dim)
-    trend_scale = structure_scale * (0.025 + 0.075 * lam)
+    trend_scale = structure_scale * (0.002 + 0.098 * lam)
     slope = trend_direction * trend_scale * shape_scale
     curvature = trend_direction * trend_scale * 0.06 * shape_scale
     seasonal_amp = 0.35 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
@@ -1916,10 +1936,12 @@ def _generate_nonlinear_persistence(
     background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
     seasonal_lag = max(4, int(season_length))
     nonlinear_lag = max(2, seasonal_lag // 2)
-    dependency_strength = float(np.clip(structure_scale * (0.10 + 0.90 * lam), 0.0, 1.0))
-    ar_phi = 0.45
-    seasonal_memory = 0.04 + 0.18 * dependency_strength
-    nonlinear_strength = 0.01 + 0.11 * dependency_strength
+    dependency_strength = float(
+        np.clip(structure_scale * (0.02 + 0.98 * lam), 0.0, 1.0)
+    )
+    ar_phi = 0.10
+    seasonal_memory = 0.25 * dependency_strength
+    nonlinear_strength = 0.30 * dependency_strength
     stability_bound = ar_phi + seasonal_memory + 2.0 * nonlinear_strength
     state = np.zeros((length, target_dim))
     warmup = min(length, seasonal_lag)
@@ -1933,7 +1955,12 @@ def _generate_nonlinear_persistence(
         )
     seasonal_amplitude = 0.20 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
     slow_amplitude = 0.08 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
-    values = state + seasonal_amplitude * seasonal[:, None] + slow_amplitude * slow[:, None]
+    recurrence_amplitude = 1.0 + 2.0 * dependency_strength
+    values = (
+        recurrence_amplitude * state
+        + seasonal_amplitude * seasonal[:, None]
+        + slow_amplitude * slow[:, None]
+    )
     values += background
     validated = context_length >= 2 * seasonal_lag and stability_bound < 1.0
     return (
@@ -1954,6 +1981,7 @@ def _generate_nonlinear_persistence(
             "seasonal_memory": float(seasonal_memory),
             "nonlinear_lag": int(nonlinear_lag),
             "nonlinear_strength": float(nonlinear_strength),
+            "recurrence_amplitude": float(recurrence_amplitude),
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
             "noise_scale": 0.06 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
         },

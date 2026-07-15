@@ -390,7 +390,9 @@ def create_imported_shard(
         "task_type": capability.task_type,
         "intensity": intensity,
         "difficulty": intensity,
-        "intensity_definition": "target temporal structure strength; not a required monotonic model-error difficulty",
+        "intensity_definition": (
+            "capability-global canonical realized strength; not a required monotonic model-error difficulty"
+        ),
         "seed": config.seed,
         "context_length": context,
         "horizon": horizon,
