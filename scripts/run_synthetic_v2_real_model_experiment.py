@@ -269,7 +269,7 @@ def generate_probe_samples(sample_count: int, capabilities: list[str]) -> list[P
         covariate_names = list(CAPABILITIES_BY_ID[capability_id].covariate_columns)
         for intensity in range(1, 6):
             for sample_index in range(sample_count):
-                seed = _seed_for(20260701, capability_id, intensity * 10_000 + sample_index)
+                seed = _seed_for(20260701, capability_id, sample_index)
                 values, _latent, covariates, features = _generate_accepted_sample_values(
                     capability_id,
                     CONTEXT_LENGTH + HORIZON,

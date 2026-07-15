@@ -153,9 +153,9 @@ sequenceDiagram
 **服务**：`SyntheticGenerationService` → `SeriesStore` + `SampleStore`
 **产物实体**：`DatasetManifest(source_type=synthetic)` → `Shard(synthetic)` + N×`SeriesPoint` + N×`SampleIndex`
 
-合成数据是“测试用例集”的另一种来源，而不是独立执行路径。前端在数据来源步骤选择“生成合成数据”后，读取 `/synthetic/capabilities` 获取能力目录，再把一组共享参数提交给 `/synthetic/shards`：`capabilities / context_length / horizon / sample_count / difficulty / season_length / target_dim / seed / frequency`。
+合成数据是“测试用例集”的另一种来源，而不是独立执行路径。前端在数据来源步骤选择“生成合成数据”后，读取 `/synthetic/capabilities` 获取能力目录，再把一组共享参数提交给 `/synthetic/shards`：`capabilities / context_length / horizon / sample_count / intensity / season_length / target_dim / seed / frequency`。研究调用可额外提交 `anchor_profile_ids`，按 capability 固定真实基底；普通 UI 默认让后端对精确匹配 profile 做均衡分层。
 
-当前第一版每个能力维度生成一个 synthetic shard；单变量能力固定 `target_dim=1`，多变量能力使用请求的目标维度（至少 2），`covariate_response` 生成 known-future 协变量列 `weather/event`。真实数据锚定暂不暴露到前端，后端在 `generation_config` 和 `sample_metadata` 中记录固定 mock anchor：`anchor_mode=fixed_mock`、`anchor_source_uri=synthetic-anchor://builtin/mock-v1`。
+每个能力维度生成一个 synthetic shard；单变量能力固定 `target_dim=1`，多目标能力使用请求的目标维度（至少 3），`covariate_response` 生成 known-future 协变量列 `weather/event`。每个样本先确定 `anchor_profile_id`，再从 `synthetic_v2_generator_conditioning_artifact.json` 读取 profile × capability 参数生成。feature-support 只对预选 profile 验收，near-distance 则对所有兼容真实 profile 验收；三者的结果都写入样本 metadata。
 
 生成服务把每个 synthetic sample 当作一段长度为 `context_length + horizon` 的完整序列，并把同一个 shard 内的样本按行号连续拼接：
 
@@ -165,7 +165,7 @@ context = [row_start, row_start + context - 1]
 horizon = [row_start + context, row_start + context + horizon - 1]
 ```
 
-随后沿用真实数据的 `SeriesPoint` 与 `SampleIndex` 指针存储。读取样本、构造模型输入、forecast、指标、报告和样本曲线都不需要识别合成数据的特殊格式。能力 ID、难度、seed、latent 参数和 realized features 写入 `SampleIndex.sample_metadata`；shard 级参数摘要写入 `Shard.generation_config` 与 `runtime/synthetic/*.json`。
+随后沿用真实数据的 `SeriesPoint` 与 `SampleIndex` 指针存储。读取样本、构造模型输入、forecast、指标、报告和样本曲线都不需要识别合成数据的特殊格式。能力 ID、intensity、seed、预选 profile、conditioning、latent 参数和 realized features 写入 `SampleIndex.sample_metadata`；shard 级候选 profile 与参数摘要写入 `Shard.generation_config` 与 `runtime/synthetic/*.json`。
 
 ### 2.c 赛道与能力块
 

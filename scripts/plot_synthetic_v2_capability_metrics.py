@@ -29,11 +29,9 @@ CAPABILITY_ORDER = (
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
     "common_factor",
-    "lead_lag_coupling",
-    "coherent_regime_shift",
     "hierarchical_coherence",
     "covariate_response",
 )

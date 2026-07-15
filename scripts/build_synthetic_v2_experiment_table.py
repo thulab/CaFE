@@ -23,11 +23,9 @@ CAPABILITY_ORDER = (
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
     "common_factor",
-    "lead_lag_coupling",
-    "coherent_regime_shift",
     "hierarchical_coherence",
     "covariate_response",
 )
@@ -157,9 +155,9 @@ def observation_lines(summaries: list[dict[str, Any]]) -> list[str]:
             "- 新增 `time_varying_seasonality` 和 `hierarchical_coherence` 都能跑通；后者额外记录 `coherence_mae`，用于检查预测是否满足 parent-child 加总关系。",
             "- 多目标维度当前只有 `toto2.0` 声明支持 `target_dim=3`，因此这些维度更像 toto 与 naive baselines 的 sanity check，还不能做横向模型排名。",
             "- `covariate_response` 当前按单目标 known-future covariates 跑，只有 `Chronos-2` 纳入主实验；AutoARIMA/Holt-Winters 小样本 dry run 显示慢或失败，未进入主表。",
-            "- `regime_switching` 与 `coherent_regime_shift` 的 horizon 内切换带有不可预测成分，适合测鲁棒性和快速适应；如果论文要强调可预测能力，需要补先兆信号或 covariate shock 版本。",
-            "- `long_memory_nonlinear` 当前生成的是非线性持久性，不是严格 fractional long-memory；论文命名应避免过度声称。",
-            "- `intermittent_heteroskedastic` 的 spike/outlier/noise 随结构强度增强明显，但 `target_max_abs` 会偏高；后续需要用真实 intermittent demand 分布重新定 cap。",
+            "- `regime_switching` 使用历史可观察的重复切换时钟，预测期切换不再是无先兆冲击。",
+            "- `nonlinear_persistence` 明确测试稳定的多滞后非线性依赖，不再声称 fractional long memory。",
+            "- `predictable_intermittency` 使用历史重复脉冲时钟，强度只控制脉冲显著性。",
         ]
     )
     return lines

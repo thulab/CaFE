@@ -306,25 +306,23 @@ future_cov: [horizon, future_cov_dim]
 
 Capability Block，中文称为能力测试块，是用户可操作的数据块，表示某个能力维度下的一组测试数据。例子包括：
 
-- common_factor ：共享因子能力；
-- lead_lag_coupling ：跨通道滞后依赖；
-- coherent_regime_shift ：多通道同步状态切换；
-- covariate_response ：已知未来协变量响应；
-- 单变量 trend、seasonal、 regime-switching 、long memory 等诊断能力维度。
+- common_factor：共享因子能力；
+- hierarchical_coherence：层级一致性能力；
+- covariate_response：已知未来协变量响应；
+- 6 个单变量维度：trend、multi-seasonal、time-varying seasonality、regime switching、nonlinear persistence 和 predictable intermittency。
 
 > 💡 直观理解：每个 Capability Block 都是一个“出题方向”，用于控制一种预测难点，让评测不只回答哪个模型平均误差低，还能回答模型到底擅长哪类时间序列结构。
 
 | 能力测试块 | 直观场景 | 主要考察模型什么能力 |
 | --- | --- | --- |
 | common_factor（共享因子能力） | 多条序列表面上是不同通道，但背后受同一个或少数几个隐藏因素共同驱动。例如一组传感器会因为同一飞行阶段、同一负载变化或同一环境条件而一起升高、降低或呈现相似周期。 | 模型是否能利用跨通道的共同变化，而不是把每个通道当成互不相关的单变量序列。表现好的模型应能识别“大家一起动”的低维结构。 |
-| lead_lag_coupling（跨通道滞后依赖） | 某些通道的变化会先发生，另一些通道会在若干时间步之后响应。例如控制量、上游状态或先导传感器的变化，过一段延迟后才体现在目标变量上。 | 模型是否能学习“先后关系”和滞后传播，而不只看同时刻相关性。它检验模型能否用一个通道的过去变化预测另一个通道的未来变化。 |
-| coherent_regime_shift（多通道同步状态切换） | 系统从一种工作状态切到另一种工作状态时，多条通道会同时或近似同时改变均值、波动水平或周期形态。例如从平稳阶段进入机动阶段，多个变量一起发生结构性变化。 | 模型是否能识别共同冲击、状态切换和分布突变。表现差的模型通常会继续按旧状态外推，导致切换点之后误差明显变大。 |
+| hierarchical_coherence（层级一致性） | 多条序列组成父子层级，父节点在每个时刻都严格等于子节点之和。子节点的动态差异随 intensity 增强。 | 模型能否同时保持预测精度和加总一致性，而不是逐通道预测后破坏结构约束。 |
 | covariate_response（已知未来协变量响应） | 预测目标不仅由自身历史决定，还会受到未来已知外部变量影响。例如未来计划量、事件标记、环境变量或控制输入已经提前知道，目标序列会随这些变量变化。 | 模型是否真正使用 `future_cov`。如果模型只根据历史 target 外推，而忽略未来协变量，它在这类任务上应明显落后于能利用协变量的模型。 |
 | trend（趋势能力） | 单条序列存在上升、下降、衰减或趋势变点，趋势可能在中途改变方向或强度。 | 模型是否能区分短期波动和长期趋势，并在预测区间内合理外推趋势，而不是简单复制最近值。 |
 | multi_seasonal（多周期季节性能力） | 单条序列同时包含多个周期，例如短周期波动叠加长周期变化，并且周期的幅度或相位可能缓慢漂移。文档里写的 seasonal 主要对应这一类。 | 模型是否能同时捕捉多个时间尺度的周期结构，并处理周期强度变化，而不是只记住一个固定周期模板。 |
-| regime_switching（状态切换能力） | 单条序列会在不同状态之间跳转，每个状态有不同均值、波动或自相关结构。例如一段时间平稳，随后进入高波动或高均值状态。 | 模型是否能在分布发生改变后快速适应新状态，避免把旧状态的规律错误延续到未来。 |
-| long_memory_nonlinear（长记忆与非线性能力） | 当前值不只受最近几个点影响，还受较远历史状态影响，并且这种影响不是简单线性关系。例如延迟反馈、饱和效应或阈值效应。 | 模型是否能利用长距离依赖和非线性动态。短上下文模型或线性模型在这类任务上通常更容易退化。 |
-| intermittent_heteroskedastic（间歇性与异方差能力） | 序列大部分时间接近零或低值，偶尔出现突发峰值，同时噪声强度会随时间变化。 | 模型是否能处理稀疏、突发和不稳定噪声。只优化平均误差的模型可能会低估突发峰值。 |
+| regime_switching（可预测状态切换） | 状态按固定驻留时长交替，历史中至少出现两次切换，预测区间内至少出现一次切换。 | 模型能否从历史识别切换时钟并预测下一状态，而不是应对无先兆随机冲击。 |
+| nonlinear_persistence（非线性多滞后持久性） | 当前值同时依赖短滞后、季节滞后和非线性中程滞后，递推系数满足稳定性约束。 | 模型是否能利用多时间尺度依赖和非线性反馈；该维度不再声称严格的 fractional long memory。 |
+| predictable_intermittency（可预测间歇性） | 稀疏脉冲按历史可识别的固定事件时钟重复出现，intensity 控制脉冲显著性。 | 模型能否识别稀疏事件规律并命中预测区间内的脉冲，而不是猜测随机 burst。 |
 
 能力测试块本身不直接保存所有样本，而是索引若干 shard。默认情况下，一个能力测试块会展开一组参数网格，例如多个 difficulty、horizon ratio、season length、target dimension 和 sample 数量。用户也可以创建自定义能力测试块，只覆盖某个 difficulty 或某个输出长度。这使得用户操作层级足够直观，同时保留底层数据片的可复现性。
 
@@ -373,10 +371,10 @@ Task 表示一次 benchmarking run 中，某个模型针对某个能力测试块
 benchmarking run + model + capability block
 ```
 
-例如， timer_rest:Chronos-2 在 lead_lag_coupling 能力测试块上的一次评测，就是一个 task。它聚合该能力测试块下所有 sample 的预测和指标。Task 这一层用于回答能力维度问题：
+例如，timer_rest:Chronos-2 在 common_factor 能力测试块上的一次评测，就是一个 task。它聚合该能力测试块下所有 sample 的预测和指标。Task 这一层用于回答能力维度问题：
 
-- 哪个模型最擅长 lead-lag coupling？
-- 某个模型是否容易在 coherent regime shift 上失败？
+- 哪个模型最擅长利用共享因子？
+- 某个模型是否容易在层级一致性上失败？
 - 某个模型是否只在短 horizon 上表现好？
 - difficulty 增加后模型退化速度如何？
 
@@ -558,14 +556,9 @@ Real anchor 不固定：
 
 ### 8.5 生成后如何检查有效性
 
-合成样本生成完成后，系统会重新从合成矩阵中提取 realized features。然后把 realized features 与真实 anchor profile 中的支撑区间进行比较。当前诊断指标包括：
+系统在生成前先按任务、频率、context、horizon 和 target dimension 选定精确 `anchor_profile_id`，再读取该 profile 的 generator-conditioning 参数生成。默认批次对兼容 profile 做确定性的均衡分层；研究脚本也可以按 capability 固定 profile。
 
-- real_support_distance ：合成样本整体偏离真实结构均值的程度。
-- real_prototype_distance ：合成样本偏离所采样 prototype 的程度。
-- real_support_violation_rate ：有多少特征落在真实 p05-p95 支撑区间之外。
-- real_support_max_violation ：最大越界程度。
-
-在 anchor_mode=sample 下，系统主要做软对齐和事后记录；在 anchor_mode=constrain 下，系统会对明显偏离真实支撑域的样本进行重试。
+生成完成后，系统重新提取 realized features，并执行三类硬检查：construction-level predictability、预选 profile 内的联合 control-feature support，以及相对所有兼容真实 profile 的 DCR/NNDR 近距离风险。目标 capability feature 不作为逐样本拒绝条件，而在 `profile × capability × intensity` 批量上做 dose-response 验收。缺少精确校准组合时 fail closed。
 
 后续更完整的有效性验证还会引入 real probe track：让模型分别在真实 probe 数据和合成 anchor 数据上评测，观察模型排序是否保持大致一致。如果排序一致性较高，说明合成评测更可能反映真实预测能力。
 
@@ -584,7 +577,7 @@ TSBenchmark 的数据生成不是一次性生成一个大混合数据集，而�
 -> 写入 sample / shard / capability block / track
 ```
 
-其中 difficulty 控制任务难度，通常会影响噪声、结构强度、非线性程度、状态切换频率、滞后依赖强度等因素。 horizon_ratio 控制预测长度相对于主导时间尺度的比例。season_length 或 dominant_scale 控制主要周期和时间尺度。
+其中 `intensity` 是目标结构的有序干预级别，不等同于预设难度，也不通过同时增加噪声来制造“更难”。噪声、季节残差等 nuisance 由预选真实 profile 决定，并在配对的 intensity 扫描中固定；主周期来自 profile bucket，旧请求中的 `season_length` 仅保留为兼容字段。
 
 ### 9.1 单变量数据如何生成
 
@@ -593,8 +586,8 @@ TSBenchmark 的数据生成不是一次性生成一个大混合数据集，而�
 - trend ：考察模型对趋势、趋势衰减和趋势变点的处理能力。
 - multi_seasonal ：考察模型对多周期、相位漂移和振幅变化的处理能力。
 - regime_switching ：考察模型对状态切换和分布突变的处理能力。
-- long_memory_nonlinear ：考察模型对长依赖和非线性反馈结构的处理能力。
-- intermittent_heteroskedastic ：考察模型对间歇性需求、突发值和异方差噪声的处理能力。
+- nonlinear_persistence：考察模型对稳定的多滞后和非线性反馈结构的处理能力。
+- predictable_intermittency：考察模型能否从历史事件时钟预测稀疏脉冲。
 
 单变量生成会参考单变量 anchor statistics。系统先从真实或 bootstrap 序列中提取单通道特征，形成 anchor prototype。生成某条样本时，会采样一个 prototype 作为结构参照，然后由具体能力维度生成一条完整序列。
 
@@ -623,13 +616,13 @@ target_history: [context_length, target_dim]
 target_future: [horizon, target_dim]
 ```
 
-当前多变量能力维度包括：
+当前结构化能力维度包括：
 
 - common_factor ：多个 target channel 由少数共享潜在因子共同驱动。它用于测试模型能否识别跨通道共同变化，而不是只把每个通道当成独立单变量处理。
-- lead_lag_coupling ：不同 target channel 之间存在延迟影响关系。它用于测试模型能否利用某些通道的过去变化来预测另一些通道的未来变化。
-- coherent_regime_shift ：多个通道会同步或部分同步发生状态切换。它用于测试模型能否处理多变量系统中的共同冲击、同步漂移和 regime change。
+- hierarchical_coherence：父节点严格等于子节点之和，用于同时测试预测精度与输出加总一致性。
+- covariate_response：单目标未来依赖已知未来外生变量，用于测试模型是否真正利用 future covariates。
 
-在启用 real anchor 时，多变量生成器会读取真实 profile 中的相关性、有效秩、lead-lag 强度、同步变化率等结构目标。生成器会根据这些目标调整潜在因子数量、通道 loading、滞后图结构、切换概率、受影响通道比例等参数。多变量生成结束后，系统会对 target channel 按 context 部分进行标准化，使模型输入更稳定，同时保留不同通道之间的相对结构。
+在启用 real anchor 时，结构化生成器会读取真实 profile 中的相关性、有效秩、层级残差和协变量响应等结构目标。生成器分别调整共享因子强度、子节点异质性或协变量效应强度。多目标生成结束后，系统会按 context 部分进行标准化；层级数据使用共同尺度，保证标准化后仍严格满足父子加总关系。
 
 ### 9.3 协变量数据如何生成
 

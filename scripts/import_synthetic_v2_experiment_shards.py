@@ -47,11 +47,9 @@ DEFAULT_CAPABILITIES = (
     "multi_seasonal",
     "regime_switching",
     "time_varying_seasonality",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
     "common_factor",
-    "lead_lag_coupling",
-    "coherent_regime_shift",
     "hierarchical_coherence",
     "covariate_response",
 )
@@ -337,7 +335,7 @@ def create_imported_shard(
     sample_metadata: list[dict[str, Any]] = []
     for sample_index in range(config.sample_count):
         experiment_index = intensity * 10_000 + sample_index
-        sample_seed = _seed_for(config.seed, capability_id, experiment_index)
+        sample_seed = _seed_for(config.seed, capability_id, sample_index)
         target, latent_params, covariates, realized_features = _generate_accepted_sample_values(
             capability_id,
             sample_length,
@@ -375,6 +373,7 @@ def create_imported_shard(
                 "difficulty": intensity,
                 "seed": config.seed,
                 "sample_seed": sample_seed,
+                "paired_seed_across_intensity": True,
                 "latent_params": latent_params,
                 "realized_features": realized_features,
                 **MOCK_ANCHOR,

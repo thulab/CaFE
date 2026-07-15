@@ -131,8 +131,8 @@ future_cov: [horizon, future_cov_dim]
 
 目标平台支持的能力维度包括：
 
-- 单变量：`trend`、`multi_seasonal`、`regime_switching`、`long_memory_nonlinear`、`intermittent_heteroskedastic`。
-- 多变量：`common_factor`、`lead_lag_coupling`、`coherent_regime_shift`。
+- 单变量：`trend`、`multi_seasonal`、`time_varying_seasonality`、`regime_switching`、`nonlinear_persistence`、`predictable_intermittency`。
+- 结构化：`common_factor`、`hierarchical_coherence`、`covariate_response`。
 - 协变量：`covariate_response`。
 - 真实数据：`Capability Block(真实)`，用于承载真实数据集加载得到的 `Shard(real)`。
 

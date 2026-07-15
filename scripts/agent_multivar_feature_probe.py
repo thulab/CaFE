@@ -22,8 +22,6 @@ from app.services.synthetic_generation_service import _generate_accepted_sample_
 
 CAPABILITIES = (
     "common_factor",
-    "lead_lag_coupling",
-    "coherent_regime_shift",
     "hierarchical_coherence",
     "covariate_response",
 )
@@ -98,10 +96,6 @@ def generate_feature_rows(sample_count: int) -> list[dict[str, Any]]:
                     **realized,
                     **multivariate_features(values),
                 }
-                if capability_id == "lead_lag_coupling":
-                    row.update(lag_features(values, max_lag=max(1, SEASON_LENGTH // 3)))
-                if capability_id == "coherent_regime_shift":
-                    row.update(regime_shift_features(values))
                 if capability_id == "hierarchical_coherence":
                     row.update(hierarchy_features(values))
                 if covariates is not None:
@@ -332,8 +326,6 @@ def render_report(output: dict[str, Any]) -> str:
 def render_feature_table(rows: list[dict[str, Any]]) -> str:
     selected = {
         "common_factor": ["first_pc_variance_share", "effective_factor_rank", "avg_abs_target_corr_probe"],
-        "lead_lag_coupling": ["lag_peak_abs_corr", "lag_peak_minus_zero_corr", "lag_peak_mean_lag"],
-        "coherent_regime_shift": ["system_shift_norm", "system_shift_direction_agreement", "avg_abs_target_corr_probe"],
         "hierarchical_coherence": ["hierarchy_residual_probe", "hierarchy_relative_residual_probe", "avg_abs_target_corr_probe"],
         "covariate_response": ["avg_abs_covariate_target_corr_probe", "future_abs_covariate_target_corr_probe", "event_target_mean_gap"],
     }

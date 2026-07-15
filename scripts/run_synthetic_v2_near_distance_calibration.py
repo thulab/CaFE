@@ -22,12 +22,13 @@ for path in (BACKEND_DIR, SCRIPT_DIR):
 
 from app.services.synthetic_generation_service import (  # noqa: E402
     _generate_sample_values,
+    _realized_features,
     _seed_for,
 )
+from app.services.synthetic_generator_conditioning import resolve_generator_conditioning  # noqa: E402
 from synthetic_feature_profile import (  # noqa: E402
     DEFAULT_FEATURES,
     WindowSpec,
-    feature_vector,
     limit_candidates,
     m5_covariate_matrix,
     m5_hierarchy_values,
@@ -86,8 +87,8 @@ BUCKET_SPECS: tuple[BucketSpec, ...] = (
             "multi_seasonal",
             "time_varying_seasonality",
             "regime_switching",
-            "long_memory_nonlinear",
-            "intermittent_heteroskedastic",
+            "nonlinear_persistence",
+            "predictable_intermittency",
         ),
     ),
     BucketSpec(
@@ -103,8 +104,8 @@ BUCKET_SPECS: tuple[BucketSpec, ...] = (
             "multi_seasonal",
             "time_varying_seasonality",
             "regime_switching",
-            "long_memory_nonlinear",
-            "intermittent_heteroskedastic",
+            "nonlinear_persistence",
+            "predictable_intermittency",
         ),
     ),
     BucketSpec(
@@ -120,8 +121,8 @@ BUCKET_SPECS: tuple[BucketSpec, ...] = (
             "multi_seasonal",
             "time_varying_seasonality",
             "regime_switching",
-            "long_memory_nonlinear",
-            "intermittent_heteroskedastic",
+            "nonlinear_persistence",
+            "predictable_intermittency",
         ),
     ),
     BucketSpec(
@@ -133,7 +134,7 @@ BUCKET_SPECS: tuple[BucketSpec, ...] = (
         24,
         24,
         target_dim=3,
-        synthetic_capabilities=("common_factor", "lead_lag_coupling", "coherent_regime_shift"),
+        synthetic_capabilities=("common_factor",),
     ),
     BucketSpec(
         "traffic_hourly_panel_168ctx",
@@ -144,7 +145,7 @@ BUCKET_SPECS: tuple[BucketSpec, ...] = (
         24,
         24,
         target_dim=3,
-        synthetic_capabilities=("common_factor", "lead_lag_coupling", "coherent_regime_shift"),
+        synthetic_capabilities=("common_factor",),
     ),
     BucketSpec(
         "m5_daily_covariate_365ctx_28h",
@@ -351,8 +352,8 @@ def load_real_bucket(spec: BucketSpec, path: Path, *, max_windows: int) -> list[
         _metadata, series = read_tsf_series(path)
         windows = select_tsf_windows(series, WindowSpec(spec.context_length, spec.horizon, spec.stride), max_windows=max_windows)
         return [
-            make_real_row(window, spec)
-            for _series_index, _start, window in windows
+            make_real_row(window, spec, group_id=f"series:{series_index}", window_start=start)
+            for series_index, start, window in windows
             if np.isfinite(window).all() and is_informative_target(window, spec.context_length)
         ]
     if spec.kind == "tsf_panel":
@@ -364,8 +365,13 @@ def load_real_bucket(spec: BucketSpec, path: Path, *, max_windows: int) -> list[
             max_windows=max_windows,
         )
         return [
-            make_real_row(window, spec)
-            for _group, _start, window in windows
+            make_real_row(
+                window,
+                spec,
+                group_id="panel:" + ",".join(str(index) for index in group),
+                window_start=start,
+            )
+            for group, start, window in windows
             if np.isfinite(window).all() and is_informative_target(window, spec.context_length)
         ]
     if spec.kind == "m5_covariate":
@@ -407,7 +413,15 @@ def load_m5_covariate_rows(spec: BucketSpec, path: Path, *, max_windows: int) ->
             and np.isfinite(covariates).all()
             and is_informative_target(target, spec.context_length)
         ):
-            rows.append(make_real_row(target, spec, covariates=covariates))
+            rows.append(
+                make_real_row(
+                    target,
+                    spec,
+                    covariates=covariates,
+                    group_id=f"m5-series:{series_index}",
+                    window_start=start,
+                )
+            )
     return rows
 
 
@@ -426,7 +440,14 @@ def load_m5_hierarchy_rows(spec: BucketSpec, path: Path, *, max_windows: int) ->
     for group_index, start in limit_candidates(candidates, max_windows):
         window = group_values[group_index][start : start + window_spec.length]
         if window.shape[0] == window_spec.length and np.isfinite(window).all() and is_informative_target(window, spec.context_length):
-            rows.append(make_real_row(window, spec))
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    group_id=f"m5-hierarchy:{group_index}",
+                    window_start=start,
+                )
+            )
     return rows
 
 
@@ -442,23 +463,40 @@ def load_gefcom_rows(spec: BucketSpec, path: Path, *, max_windows: int) -> list[
         window = target[start : start + window_spec.length, None]
         covariate_window = covariates[start : start + window_spec.length]
         if np.isfinite(window).all() and np.isfinite(covariate_window).all() and is_informative_target(window, spec.context_length):
-            rows.append(make_real_row(window, spec, covariates=covariate_window))
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    covariates=covariate_window,
+                    group_id=f"gefcom-task:{spec.task}",
+                    window_start=start,
+                )
+            )
     return rows
 
 
-def make_real_row(target: np.ndarray, spec: BucketSpec, *, covariates: np.ndarray | None = None) -> dict[str, Any]:
+def make_real_row(
+    target: np.ndarray,
+    spec: BucketSpec,
+    *,
+    covariates: np.ndarray | None = None,
+    group_id: str | None = None,
+    window_start: int | None = None,
+) -> dict[str, Any]:
     target_std = standardize_target(target, spec.context_length, hierarchy=spec.hierarchy)
     cov_std = normalize_covariates(covariates, spec.context_length) if covariates is not None and covariates.size else None
-    return make_row(target_std, spec, covariates=cov_std, label="real")
+    row = make_row(target_std, spec, covariates=cov_std, label="real")
+    row["group_id"] = group_id
+    row["window_start"] = int(window_start) if window_start is not None else None
+    return row
 
 
 def make_row(target_std: np.ndarray, spec: BucketSpec, *, covariates: np.ndarray | None = None, label: str) -> dict[str, Any]:
-    features = feature_vector(
+    features = _realized_features(
         target_std,
-        season_length=spec.season_length,
-        covariates=covariates,
-        context_length=spec.context_length,
-        hierarchy=spec.hierarchy,
+        covariates,
+        spec.season_length,
+        spec.context_length,
     )
     return {
         "label": label,
@@ -528,6 +566,18 @@ def generate_synthetic_rows(spec: BucketSpec, *, count: int, seed: int) -> list[
         intensity = 1 + (sample_index % 5)
         rng = np.random.default_rng(_seed_for(seed, capability_id, sample_index))
         target_dim = 1 if capability_id == "covariate_response" else spec.target_dim
+        conditioning = resolve_generator_conditioning(
+            capability_id=capability_id,
+            profile_id=spec.profile_id,
+            context_length=spec.context_length,
+            horizon=spec.horizon,
+            target_dim=target_dim,
+        )
+        if conditioning is None:
+            raise RuntimeError(
+                f"missing generator conditioning for {spec.profile_id}/{capability_id}; "
+                "build the generator conditioning artifact first"
+            )
         target, _latent, covariates = _generate_sample_values(
             capability_id,
             length,
@@ -536,6 +586,7 @@ def generate_synthetic_rows(spec: BucketSpec, *, count: int, seed: int) -> list[
             spec.season_length,
             intensity,
             rng,
+            generator_conditioning=conditioning,
         )
         target_std = standardize_target(
             target,

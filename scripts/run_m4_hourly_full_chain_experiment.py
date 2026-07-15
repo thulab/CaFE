@@ -61,8 +61,8 @@ DEFAULT_CAPABILITIES = (
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
 )
 DEFAULT_MODEL_ORDER = (
     "Timer-3.5",
@@ -80,10 +80,10 @@ RANK_METRIC = "mase"
 CAPABILITY_FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
     "trend": ("trend_strength", "slope_abs", "curvature_abs"),
     "multi_seasonal": ("seasonal_strength", "multi_period_score"),
-    "time_varying_seasonality": ("seasonal_drift_score", "seasonal_amplitude_cv"),
+    "time_varying_seasonality": ("seasonal_amplitude_modulation", "seasonal_phase_variation"),
     "regime_switching": ("level_shift_strength", "volatility_shift_strength", "change_point_shift_energy"),
-    "long_memory_nonlinear": ("nonlinear_lag1_gain", "acf_abs_mean"),
-    "intermittent_heteroskedastic": ("burst_rate", "spike_rate", "outlier_rate", "noise_ratio"),
+    "nonlinear_persistence": ("nonlinear_multi_lag_gain",),
+    "predictable_intermittency": ("burst_rate", "spike_rate", "outlier_rate", "noise_ratio"),
 }
 
 
@@ -517,7 +517,7 @@ def generate_synthetic_samples(
     for capability_id in capabilities:
         for intensity in range(1, 6):
             for sample_index in range(sample_count):
-                sample_seed = _seed_for(seed, capability_id, intensity * 10_000 + sample_index)
+                sample_seed = _seed_for(seed, capability_id, sample_index)
                 try:
                     target, latent_params, _covariates, realized_features = _generate_accepted_sample_values(
                         capability_id,
@@ -527,6 +527,7 @@ def generate_synthetic_samples(
                         SEASON_LENGTH,
                         intensity,
                         sample_seed,
+                        anchor_profile_id=M4_PROFILE_ID,
                     )
                     m4_near = evaluate_near_distance_gate(
                         target=target,

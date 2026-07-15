@@ -27,10 +27,13 @@ DEFAULT_FEATURES = (
     "multi_period_score",
     "seasonal_drift_score",
     "seasonal_amplitude_cv",
+    "seasonal_amplitude_modulation",
+    "seasonal_phase_variation",
     "change_point_shift_energy",
     "level_shift_strength",
     "volatility_shift_strength",
     "nonlinear_lag1_gain",
+    "nonlinear_multi_lag_gain",
     "burst_rate",
     "diff_spike_rate",
     "avg_abs_target_corr",
@@ -41,7 +44,13 @@ DEFAULT_FEATURES = (
     "avg_abs_covariate_target_corr",
     "future_abs_covariate_target_corr",
     "event_lift_abs",
+    "covariate_incremental_r2",
+    "covariate_residual_acf_abs_mean",
+    "covariate_residual_outlier_rate",
+    "covariate_residual_spike_rate",
     "hierarchy_residual_mean_abs",
+    "hierarchy_child_heterogeneity",
+    "hierarchy_aggregation_ratio",
 )
 DEFAULT_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 BOUNDED_FEATURES = {

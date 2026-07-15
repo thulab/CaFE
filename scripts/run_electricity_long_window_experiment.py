@@ -24,15 +24,17 @@ import run_m4_hourly_full_chain_experiment as shared  # noqa: E402
 import run_synthetic_v2_near_distance_calibration as calibration  # noqa: E402
 from app.services.synthetic_generation_service import (  # noqa: E402
     CAPABILITIES_BY_ID,
-    PILOT_ACCEPTANCE_CAPS,
-    PILOT_ACCEPTANCE_MINS,
-    _accept_synthetic_features,
     _attempt_seed,
     _generate_sample_values,
     _realized_features,
     _seed_for,
     _standardize_by_context,
 )
+from app.services.synthetic_feature_gate import (  # noqa: E402
+    evaluate_feature_support_gate,
+    matching_calibrated_buckets as matching_feature_gate_buckets,
+)
+from app.services.synthetic_generator_conditioning import resolve_generator_conditioning  # noqa: E402
 from app.services.synthetic_near_distance_gate import evaluate_near_distance_gate  # noqa: E402
 from synthetic_feature_profile import (  # noqa: E402
     DEFAULT_FEATURES,
@@ -351,12 +353,35 @@ def generate_synthetic_samples(
     samples: list[shared.ExperimentSample] = []
     failures: list[dict[str, Any]] = []
     length = args.context_length + args.horizon
+    if not matching_feature_gate_buckets(
+        capability_id=args.capabilities[0],
+        profile_ids=(PROFILE_ID,),
+        context_length=args.context_length,
+        horizon=args.horizon,
+        target_dim=1,
+    ):
+        raise RuntimeError(
+            "the long-window feature-support bucket is not calibrated; "
+            "run scripts/build_synthetic_v2_feature_gate_artifact.py first"
+        )
     base_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for capability_id in args.capabilities:
+        conditioning = resolve_generator_conditioning(
+            capability_id=capability_id,
+            profile_id=PROFILE_ID,
+            context_length=args.context_length,
+            horizon=args.horizon,
+            target_dim=1,
+        )
+        if conditioning is None:
+            raise RuntimeError(
+                "the long-window generator conditioning is not calibrated; "
+                "run scripts/build_synthetic_v2_generator_conditioning_artifact.py first"
+            )
         for intensity in range(1, 6):
             for sample_index in range(args.synthetic_sample_count):
-                sample_seed = _seed_for(args.seed, capability_id, intensity * 10_000 + sample_index)
-                accepted_result: tuple[np.ndarray, dict[str, Any], dict[str, float], dict[str, Any], int] | None = None
+                sample_seed = _seed_for(args.seed, capability_id, sample_index)
+                accepted_result: tuple[np.ndarray, dict[str, Any], dict[str, float], dict[str, Any], dict[str, Any], int] | None = None
                 last_failure: dict[str, Any] = {}
                 for attempt in range(24):
                     rng = np.random.default_rng(_attempt_seed(sample_seed, attempt))
@@ -368,10 +393,21 @@ def generate_synthetic_samples(
                         args.season_length,
                         intensity,
                         rng,
+                        generator_conditioning=conditioning,
                     )
                     target = _standardize_by_context(target, args.context_length)
+                    predictability = latent_params.get("predictability", {})
+                    predictability_accepted = bool(predictability.get("construction_validated"))
                     realized_features = _realized_features(target, covariates, args.season_length, args.context_length)
-                    feature_accepted, failed_features = _accept_synthetic_features(capability_id, realized_features)
+                    feature_gate = evaluate_feature_support_gate(
+                        capability_id=capability_id,
+                        features=realized_features,
+                        profile_ids=(PROFILE_ID,),
+                        context_length=args.context_length,
+                        horizon=args.horizon,
+                        target_dim=1,
+                    )
+                    feature_accepted = bool(feature_gate["accepted"])
                     near_distance = evaluate_near_distance_gate(
                         target=target,
                         features=realized_features,
@@ -381,13 +417,23 @@ def generate_synthetic_samples(
                         artifact=artifact,
                     )
                     last_failure = {
-                        "failed_features": failed_features,
+                        "feature_gate_status": feature_gate.get("status"),
+                        "feature_gate_score": feature_gate.get("score"),
+                        "feature_gate_threshold": feature_gate.get("threshold"),
                         "near_distance_status": near_distance.get("status"),
                         "strict_risk": near_distance.get("strict_risk"),
                         "combined_risk": near_distance.get("combined_risk"),
+                        "predictability_accepted": predictability_accepted,
                     }
-                    if feature_accepted and near_distance.get("accepted"):
-                        accepted_result = (target, latent_params, realized_features, near_distance, attempt + 1)
+                    if predictability_accepted and feature_accepted and near_distance.get("accepted"):
+                        accepted_result = (
+                            target,
+                            latent_params,
+                            realized_features,
+                            feature_gate,
+                            near_distance,
+                            attempt + 1,
+                        )
                         break
                 if accepted_result is None:
                     failures.append(
@@ -401,17 +447,18 @@ def generate_synthetic_samples(
                         }
                     )
                     continue
-                target, latent_params, realized_features, near_distance, attempts = accepted_result
+                target, latent_params, realized_features, feature_gate, near_distance, attempts = accepted_result
                 offset = len(samples) * length
                 timestamps = [(base_start + timedelta(hours=offset + step)).isoformat() for step in range(length)]
                 validation = {
-                    "schema_version": "synthetic_post_generation_validation.v1",
-                    "feature_gate": {
-                        "accepted": True,
-                        "caps": PILOT_ACCEPTANCE_CAPS.get(capability_id, {}),
-                        "mins": PILOT_ACCEPTANCE_MINS.get(capability_id, {}),
-                    },
+                    "schema_version": "synthetic_post_generation_validation.v3",
+                    "feature_gate": feature_gate,
                     "near_distance": near_distance,
+                    "predictability_gate": {
+                        "accepted": True,
+                        "contract": latent_params["predictability"]["contract"],
+                        "evidence": latent_params["predictability"]["evidence"],
+                    },
                     "attempts": attempts,
                     "latent_params": latent_params,
                     "profile_id": PROFILE_ID,

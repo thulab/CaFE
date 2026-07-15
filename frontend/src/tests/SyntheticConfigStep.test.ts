@@ -89,9 +89,9 @@ describe('SyntheticConfigStep', () => {
               covariate_columns: [],
             },
             {
-              capability_id: 'coherent_regime_shift',
-              label: 'Coherent regime shift',
-              description: 'Multiple targets that shift together across regimes.',
+              capability_id: 'hierarchical_coherence',
+              label: 'Hierarchical coherence',
+              description: 'Multiple targets with an exact parent-child additive structure.',
               task_type: 'multivariate_forecast',
               target_dim_mode: 'multi',
               covariate_columns: [],
@@ -104,9 +104,9 @@ describe('SyntheticConfigStep', () => {
 
     render(SyntheticConfigStep, { global: { plugins: [i18n] } });
 
-    expect(await screen.findByText('状态切换')).toBeTruthy();
-    expect(screen.getByText('带有水平和波动率切换的单目标序列。')).toBeTruthy();
-    expect(screen.getByText('协同状态切换')).toBeTruthy();
-    expect(screen.getByLabelText('选择能力 协同状态切换')).toBeTruthy();
+    expect(await screen.findByText('可预测状态切换')).toBeTruthy();
+    expect(screen.getByText('带有可从历史识别的重复状态切换规律的单目标序列。')).toBeTruthy();
+    expect(screen.getByText('层级一致性')).toBeTruthy();
+    expect(screen.getByLabelText('选择能力 层级一致性')).toBeTruthy();
   });
 });

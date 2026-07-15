@@ -100,6 +100,11 @@ export interface SyntheticCapabilityDTO {
   task_type: string;
   target_dim_mode: 'fixed_1' | 'multi' | 'covariate' | string;
   covariate_columns: string[];
+  paper_included?: boolean;
+  paper_track?: 'univariate' | 'structured' | string;
+  generator_version?: string;
+  predictability_contract?: string;
+  intensity_features?: Record<string, 'increase' | 'decrease' | string>;
   default_params?: Record<string, number | string>;
   limits?: Record<string, { min?: number; max?: number }>;
 }
@@ -116,6 +121,7 @@ export interface SyntheticShardGenerateDTO {
   target_dim: number;
   seed: number;
   frequency: string;
+  anchor_profile_ids?: Record<string, string>;
 }
 
 export interface SyntheticShardGenerateResponseDTO {

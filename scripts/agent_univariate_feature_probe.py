@@ -45,8 +45,8 @@ CAPABILITIES = (
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
 )
 CONTEXT_LENGTH = 168
 HORIZON = 24
@@ -63,6 +63,10 @@ CURRENT_FEATURES = (
     "acf_abs_mean",
     "outlier_rate",
     "spike_rate",
+    "burst_rate",
+    "seasonal_amplitude_modulation",
+    "seasonal_phase_variation",
+    "nonlinear_multi_lag_gain",
 )
 DIAGNOSTIC_FEATURES = (
     "multi_period_score",
@@ -77,10 +81,10 @@ DIAGNOSTIC_FEATURES = (
 PRIMARY_CHECKS = {
     "trend": ("trend_strength", "slope_abs", "curvature_abs"),
     "multi_seasonal": ("multi_period_score", "seasonal_strength"),
-    "time_varying_seasonality": ("seasonal_drift_score", "seasonal_amplitude_cv"),
+    "time_varying_seasonality": ("seasonal_amplitude_modulation", "seasonal_phase_variation"),
     "regime_switching": ("regime_shift_score",),
-    "long_memory_nonlinear": ("acf_abs_mean", "acf_long_mean", "nonlinear_lag1_gain"),
-    "intermittent_heteroskedastic": ("spike_rate", "outlier_rate", "volatility_cv", "noise_ratio"),
+    "nonlinear_persistence": ("nonlinear_multi_lag_gain",),
+    "predictable_intermittency": ("spike_rate", "outlier_rate", "burst_rate", "noise_ratio"),
 }
 
 
@@ -638,8 +642,8 @@ def adequacy_notes(monotonicity: list[dict[str, Any]]) -> list[str]:
         "Current extraction is only partially adequate for multi_seasonal because seasonal_strength is high but does not measure secondary periods; multi_period_score is needed.",
         "Current extraction is not adequate for time_varying_seasonality because no current feature measures seasonal profile drift.",
         "Current extraction is not adequate for regime_switching because no current feature measures structural break magnitude.",
-        "Current extraction is not adequate for long_memory_nonlinear as named; acf summaries were not monotone, while nonlinear_lag1_gain was.",
-        "Current extraction is partially adequate for intermittent_heteroskedastic through spike_rate/outlier_rate/noise_ratio; the tested volatility_cv should not be used as-is.",
+        "nonlinear_persistence is measured with incremental multi-lag nonlinear fit rather than an unsupported long-memory claim.",
+        "predictable_intermittency uses a recurring pulse clock; spike/outlier features measure pulse prominence.",
     ]
     weak = [
         f"{capability_id}:{feature}"
@@ -708,11 +712,11 @@ def render_report(summary: dict[str, Any]) -> str:
     )
     control_map = {
         "trend": ("slope_abs_mean", "curvature_abs_mean"),
-        "multi_seasonal": ("secondary_amplitude_ratio",),
-        "time_varying_seasonality": ("amplitude_delta_mean", "phase_drift_cycles"),
-        "regime_switching": ("switch_count", "forecast_switch"),
-        "long_memory_nonlinear": ("ar_phi", "nonlinear_strength"),
-        "intermittent_heteroskedastic": ("event_probability", "burst_count"),
+        "multi_seasonal": ("additional_period_strength",),
+        "time_varying_seasonality": ("modulation_strength", "phase_modulation_depth_cycles"),
+        "regime_switching": ("regime_strength", "forecast_switch"),
+        "nonlinear_persistence": ("dependency_strength", "nonlinear_strength"),
+        "predictable_intermittency": ("pulse_strength", "burst_count"),
     }
     for capability_id, controls in control_map.items():
         capability_cells = sorted(

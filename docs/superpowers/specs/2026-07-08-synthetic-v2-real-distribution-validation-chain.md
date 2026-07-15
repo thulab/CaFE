@@ -2,6 +2,8 @@
 
 日期：2026-07-08
 
+paper-v1 profile-conditioned generator / feature gate 修订：2026-07-15
+
 ## 目标
 
 本文档固定 synthetic v2 论文阶段采用的三个定义：
@@ -46,9 +48,9 @@ P_real_raw^b  = (1/N) * sum_i delta_{psi(x_i)}
 P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 ```
 
-论文中引用“真实分布”时，应明确指 `P_real_raw^b`、`P_real_feat^b` 或二者的组合。当前生成验收主要使用 `P_real_feat^b` 的分位数和 `P_real_raw^b` 的近邻距离校准。
+论文中引用“真实分布”时，应明确指 `P_real_raw^b`、`P_real_feat^b` 或二者的组合。当前生成验收使用 `P_real_feat^b` 校准 control features 的联合支持域，并使用 `P_real_raw^b` 校准近邻距离。
 
-主季节周期也是 bucket 条件变量，不再由生成请求直接决定。若 capability 对应的真实 profile bucket 只有一个明确周期，生成器直接使用该周期；例如 hourly daily bucket 使用 24，M5 daily bucket 使用 7，hourly weekly diagnostic bucket 使用 168。若一个 capability 的 profile envelope 混合了多个频率或多个显著周期，生成器先按请求频率筛选匹配 bucket；仍不唯一时，从该 envelope 的显著周期集合中按真实窗口数加权、用 seed 确定性采样一个周期。
+主季节周期也是 bucket 条件变量，不再由生成请求直接决定。生成前先选定一个任务、窗口和频率完全匹配的 `anchor_profile_id=b`，再直接使用该 bucket 的周期；例如 hourly daily bucket 使用 24，M5 daily bucket 使用 7。
 
 当前版本的显著周期集合定义为 profile 抽取阶段固定的 `significant_periods` 元数据，来自该 profile 的频率和季节设定：hourly daily 为 `{24}`，hourly weekly 为 `{168}`，daily weekly 为 `{7}`，daily annual diagnostic 为 `{365}`。后续可以把它升级为自动检测：在每个真实 bucket 内对 robust-scaled 真实窗口计算候选周期 `p` 的 phase-mean seasonal strength / periodogram energy / ACF peak，保留 median score 超过阈值且与已选周期不存在近似 harmonic duplicate 关系的 top-K 周期。
 
@@ -58,30 +60,29 @@ P_real_feat^b = (1/N) * sum_i delta_{phi(psi(x_i))}
 
 | profile_id | 用途 |
 | --- | --- |
-| `m4_hourly_daily_96ctx` | 小 context 小时级单变量 sanity profile |
-| `m4_hourly_daily_168ctx` | 主 profile，当前在线生成器的主要控制边界 |
-| `m4_hourly_weekly` | 小时级长周期/周季节补充 |
+| `m4_hourly_daily_168ctx` | M4 小时级单变量 profile |
 | `electricity_hourly_daily_168ctx` | 电力负荷 hourly 单变量控制 profile |
+| `electricity_hourly_daily_2048ctx_24h` | Electricity 长 context 研究 profile；当前由专用实验脚本执行近距离门控 |
 | `electricity_hourly_panel_168ctx` | 电力负荷 3-target panel profile，用于 low-rank common factor / lead-lag 校准 |
 | `traffic_hourly_daily_168ctx` | 交通占用率 hourly 单变量控制 profile |
 | `traffic_hourly_panel_168ctx` | 交通占用率 3-target panel profile，用于跨序列相关和 lead-lag 校准 |
 | `m5_daily_covariate_365ctx_28h` | 零售日频 known-future covariate profile，覆盖 calendar/event/SNAP/price 信号 |
 | `m5_daily_hierarchy_365ctx_28h` | 零售 store-category additive hierarchy profile，覆盖 parent=sum(children) 结构 |
 | `gefcom2014_load_hourly_covariate_168ctx_24h` | 小时级负荷-温度 covariate profile，覆盖强 known-future weather signal |
-| `us_births_weekly` | 日频单变量外部 sanity profile |
-| `us_births_annual_diagnostic` | 年周期诊断 profile，不作为短窗口硬边界 |
 
-在线生成器在 `generation_config.anchor_profiles` 中记录上述 profile。当前 hard acceptance 使用四类真实 profile envelope：单变量能力使用 M4/Electricity/Traffic hourly 单变量 profile 的 envelope，多目标能力使用 Electricity/Traffic panel profile 的 envelope，协变量能力使用 M5/GEFCom2014 known-future covariate envelope，层级能力使用 M5 additive hierarchy envelope。US Births profile 作为跨频率 sanity reference。后续如果继续引入 Weather/ETT、Tourism、M5 validation/evaluation 变体等数据集，应新增 bucket 并独立统计。
+默认批次对所有精确匹配 bucket 做 seed-deterministic 的均衡分层；也可通过 API 的 `anchor_profile_ids[capability_id]` 固定一个 bucket。选定发生在生成前，而不是生成后挑一个最容易通过的 bucket。`generation_config.anchor_profiles` 只记录本 shard 实际候选，样本级 `anchor_profile_id` 记录本样本的预选 bucket。后续引入 Weather/ETT、Tourism 等数据集时，应新增独立 bucket 与独立生成器校准，而不是放大既有 bucket 的阈值。
 
 ## Intensity 定义
 
-`intensity in {1,2,3,4,5}` 是生成器的结构强度控制量。映射函数为：
+`intensity in {1,2,3,4,5}` 是跨 bucket 可比较的有序结构强度级别。基础坐标为：
 
 ```text
-lambda(intensity) = (intensity - 1) / 4
+u(intensity) = (intensity - 1) / 4
 ```
 
-每个能力维度把 `lambda` 映射到不同结构参数，例如趋势斜率、次级周期振幅、切点数量、非线性强度、burst rate、factor rank、covariate effect size。
+实际结构参数使用 bucket-conditional 映射 `lambda_{b,c}(intensity)`。生成器只在真实参数拟合 split 上估计 profile nuisance 和结构尺度，并把五档连续目标特征对齐到该 bucket 的经验 q10/q30/q50/q70/q90；对稀疏脉冲这类离散/饱和指标，保留五档 effect-size grid，再用 bootstrap dose response 验收。切点时钟、噪声尾部、季节残差、factor rank 等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的 intensity 扫描中固定。
+
+因此，Electricity 与 Traffic 可以有不同噪声尾部、季节残差和局部通道成分，M5 与 GEFCom 可以有不同 covariate effect 尺度；这不是为了放松门控，而是定义不同的真实条件 DGP。完整校准写入 `synthetic_v2_generator_conditioning_artifact.json`。
 
 重要约束：
 
@@ -94,15 +95,16 @@ lambda(intensity) = (intensity - 1) / 4
 
 ### 单变量核心特征
 
-论文正文建议保留 5 个单变量结构组：
+论文正文保留 6 个单变量结构组：
 
 | 结构组 | 主指标 | 辅助/护栏 | 用途 |
 | --- | --- | --- | --- |
 | Trend shape | `trend_strength` | `slope_abs`, `curvature_abs` | 趋势方向、斜率和曲率外推 |
-| Seasonal structure | `multi_period_score` | `seasonal_strength`, `seasonal_drift_score` | 多周期叠加和时变季节性 |
-| Structural breaks | `change_point_shift_energy` | `level_shift_strength`, `volatility_shift_strength` | level/volatility regime change |
-| Nonlinear persistence | `nonlinear_lag1_gain` | `acf_abs_mean` | 非线性自反馈和持久性 |
-| Intermittency/volatility | `burst_rate` | `spike_rate`, `outlier_rate`, `noise_ratio` | 突发、重尾和异方差 |
+| Multi-seasonal composition | `multi_period_score` | `seasonal_strength` | 多周期叠加 |
+| Evolving seasonality | `seasonal_amplitude_modulation` | `seasonal_phase_variation` | 历史可观察的振幅/相位调制 |
+| Predictable regime switching | `change_point_shift_energy` | `level_shift_strength` | 从重复切换时钟预测下一状态 |
+| Nonlinear persistence | `nonlinear_multi_lag_gain` | stability bound | 稳定的季节滞后与非线性中程滞后 |
+| Predictable intermittency | `spike_rate` | `burst_rate`, `outlier_rate` | 从重复事件时钟预测稀疏脉冲 |
 
 这里的辅助指标不一定进入主表，但应进入 appendix 或生成日志，用来解释主指标异常和控制非目标特征。
 
@@ -113,21 +115,27 @@ lambda(intensity) = (intensity - 1) / 4
 | 结构组 | 主指标 | 辅助/护栏 | 用途 |
 | --- | --- | --- | --- |
 | Low-rank common factors | `pca_top1_explained` | `effective_factor_rank`, `avg_abs_target_corr` | 多目标共享因子结构 |
-| Known-future covariate response | `future_abs_covariate_target_corr` | `avg_abs_covariate_target_corr`, `event_lift_abs` | 是否真正存在 future covariate signal |
-| Hierarchical coherence | `hierarchy_residual_mean_abs` | forecast-side `coherence_mae` | 父子加总一致性 |
+| Known-future covariate response | `covariate_incremental_r2` | `future_abs_covariate_target_corr`, `event_lift_abs` | 是否真正存在 future covariate signal |
+| Hierarchical coherence | `hierarchy_child_heterogeneity` | input `hierarchy_residual_mean_abs`, forecast-side `coherence_mae` | 异质子节点下的父子加总一致性 |
 
-`lead_lag_peak_abs` 保留为 secondary diagnostic 或 ablation 特征。它有价值，但和 common factor 容易混淆，正文中不应把它放在和三大多/协变量组同等的主定义位置。
+`lead_lag_coupling` 已从 paper-v1 注册表移除；若未来重新加入，必须先移除 common-factor confound 并完成 leader-permutation ablation。
 
 ## 生成后校验方式
 
-生成候选样本后执行两个在线硬门控和两个批量报告检查。在线硬门控决定样本是否进入最终 shard：
+生成器先选定 `b` 并读取 `theta_{b,c}`，再执行三个在线硬门控和两个批量报告检查：
 
 ```text
-Accept(x_syn | capability c, bucket group B)
-  = FeatureGate(x_syn, c, B) AND NearDistanceGate(x_syn, B)
+theta ~ P_hat(theta | b,c),  x_syn = G_c(theta, lambda_{b,c}(intensity), seed)
+
+Accept(x_syn | capability c, selected bucket b, compatible buckets B)
+  = PredictabilityGate(x_syn, c)
+    AND FeatureGate(x_syn, c, b)
+    AND NearDistanceGate(x_syn, B)
 ```
 
-`FeatureGate` 控制合成曲线保持在真实 profile 的结构支持域内，避免过度远离真实数据分布。`NearDistanceGate` 控制合成曲线与真实 reference 窗口保持足够距离，避免近复制和预训练污染风险。
+`PredictabilityGate` 检查决定预测期条件均值的结构已在历史中重复出现，或已通过 known-future covariates 提供。`FeatureGate` 只对预选 `b` 检查控制特征支持，禁止生成后择优换桶。`NearDistanceGate` 仍对所有兼容 `B` 检查，避免样本虽远离 `b` 却近似复制另一个真实 bucket。
+
+Predictability gate 的 contract、构造证据和结果写入 `sample_metadata.latent_params.predictability` 与 `acceptance.validation.predictability_gate`。这是一项 construction-level 必要条件，不替代 oracle/naive 的模型层可预测性验证。
 
 ### 1. 结构强度校验
 
@@ -161,15 +169,39 @@ sample_metadata.requested_season_length
 
 其中 `requested_season_length` 只是旧 API 兼容字段，不再驱动生成。
 
-### 2. 特征阈值在线门控
+### 2. Control-feature 联合支持域在线门控
 
-对非目标特征使用主 anchor 的分位数范围作为护栏：
+旧实现把多个 profile 的 p95 取最大值后再乘启发式倍率，并且大部分只有上界。这既不是文档声称的 p05--p95 双边约束，也会接受“每个边际都正常、联合组合却不真实”的样本。paper-v1 改为按精确 bucket 独立校准的联合门控。
+
+对 capability `c` 只使用预注册的非目标 control vector `g_c(x)`。在真实 reference split 上用 median/IQR 标准化，并估计收缩协方差：
 
 ```text
-q05_real^b(j) <= phi_j(psi(x_syn)) <= q95_real^b(j)
+z_c(x) = (g_c(x) - median(R_ref)) / IQR(R_ref)
+d_c^b(x) = sqrt((z_c(x)-mu_b)^T Precision_b (z_c(x)-mu_b) / dim(g_c))
 ```
 
-当前服务已经对全部 synthetic capability 启用 hard acceptance caps。`trend` / `multi_seasonal` / 其他单变量结构能力使用 hourly 单变量真实 profile envelope，多目标能力使用 hourly panel profile envelope，`covariate_response` 使用 M5+GEFCom2014 covariate profile envelope，`hierarchical_coherence` 使用 M5 hierarchy profile envelope。`hierarchy_residual_mean_abs` 的真实 p95 为 0，线上 hard cap 使用 `1e-6` 浮点容差；`event_lift_abs` 使用 M5 p95 的较宽倍数，原因是 synthetic 维度刻意测试 event response，稀疏真实事件的 1.5 倍上限会过早截断目标结构。
+真实窗口做三路拆分：`R_param` 只用于拟合生成器 conditioning，`R_ref` 用于估计 feature support，`R_cal` 只用于 conformal 阈值。同一序列或 panel group 不跨 split；GEFCom 这类单序列 bucket 使用时间阻塞切分，并在相邻分区设置至少 `C+H` 的 embargo。阈值只由 real calibration score 决定：
+
+```text
+tau_b = split_conformal_quantile_0.95({d_c^b(x): x in R_cal})
+FeatureGate(x,c,b) = [d_c^b(x) <= tau_b]
+```
+
+只有 `(frequency, context, horizon, target_dim, capability)` 完全匹配的预选 bucket 可参与；`FeatureGate` 不再接受 profile group，也不会在多个通过者中选择最低 `d/tau`。不存在所选 bucket 校准时 fail closed。阈值计算不读取 synthetic acceptance rate，也没有 1.5/2.5 multiplier。
+
+目标特征不进入该在线支持域硬门控。原因是它们正是 intervention 对象，把目标特征强制压入逐样本真实分位带会改变 DGP，并与第 1 节的批量 dose-response 契约冲突。系统仍记录每个 target feature 在绑定真实 bucket 中的大致经验分位位置，用于 E1 批量验收和论文报告。
+
+`noise_ratio`、`seasonal_strength` 等相对强度统计会随目标 effect/factor/regime strength 机械变化，因此不能冒充 nuisance control。`regime_switching`、`common_factor` 和 `hierarchical_coherence` 使用非目标异常率或层级 invariant；`covariate_response` 先回归掉季节基线和 covariates，再用 residual ACF/outlier/spike 特征检查剩余过程。正式 E1 仍需用完整 capability × feature effect matrix 检查 selectivity。
+
+校准结果提交在：
+
+```text
+backend/app/data/synthetic_v2_feature_gate_artifact.json
+```
+
+当前 artifact 覆盖主协议的 8 个 bucket，并额外覆盖 Electricity `context=2048, horizon=24` 的单变量研究 bucket，供长 context 扫描脚本使用。新增任何 context/horizon/task 组合前必须先生成独立真实 bucket 校准，不能复用 168-window 的阈值。
+
+32 次拒绝采样仅是工程故障保护，不是校准手段。正式验收要求每个 `profile × capability × intensity` 的未拒绝 first-pass rate 至少 95%，并同时报告拒绝前、拒绝后的控制特征分布；若不达标，应重拟合生成器 conditioning，不能放宽门限或依赖反复抽样。
 
 该门控结果写入：
 
@@ -213,8 +245,8 @@ backend/app/data/synthetic_v2_near_distance_artifact.json
 
 | profile group | capabilities | context | horizon | target_dim | frequency |
 | --- | --- | ---: | ---: | ---: | --- |
-| hourly univariate envelope | `trend`, `multi_seasonal`, `time_varying_seasonality`, `regime_switching`, `long_memory_nonlinear`, `intermittent_heteroskedastic` | 168 | 24 | 1 | hourly |
-| hourly panel envelope | `common_factor`, `lead_lag_coupling`, `coherent_regime_shift` | 168 | 24 | 3 | hourly |
+| hourly univariate envelope | `trend`, `multi_seasonal`, `time_varying_seasonality`, `regime_switching`, `nonlinear_persistence`, `predictable_intermittency` | 168 | 24 | 1 | hourly |
+| hourly panel envelope | `common_factor` | 168 | 24 | 3 | hourly |
 | known-future covariate envelope | `covariate_response` | 168 | 24 | 1 | hourly / GEFCom2014 |
 | known-future covariate envelope | `covariate_response` | 365 | 28 | 1 | daily / M5 |
 | M5 hierarchy envelope | `hierarchical_coherence` | 365 | 28 | 3 | daily |
@@ -265,10 +297,15 @@ Discriminative score 和 predictive score 属于实验性论据，用来说明�
 | --- | --- |
 | `intensity` API 字段 | `backend/app/api/routes/synthetic.py` |
 | synthetic shard 生成 | `backend/app/services/synthetic_generation_service.py` |
-| anchor profiles 记录 | `MOCK_ANCHOR` |
+| profile 选择与 conditioning 读取 | `backend/app/services/synthetic_generator_conditioning.py` |
+| generator conditioning 校准脚本 | `scripts/build_synthetic_v2_generator_conditioning_artifact.py` |
+| generator conditioning artifact | `backend/app/data/synthetic_v2_generator_conditioning_artifact.json` |
+| anchor protocol 记录 | `MOCK_ANCHOR` 与样本级 `anchor_profile_id` |
 | 在线 realized features | `_realized_features()` |
 | 生成后 validation summary | `_validation_summary()` |
-| 在线特征阈值门控 | `_accept_synthetic_features()` |
+| 在线联合 feature-support 门控 | `backend/app/services/synthetic_feature_gate.py` |
+| feature-support 校准脚本 | `scripts/build_synthetic_v2_feature_gate_artifact.py` |
+| feature-support artifact | `backend/app/data/synthetic_v2_feature_gate_artifact.json` |
 | 在线近距离门控 | `backend/app/services/synthetic_near_distance_gate.py` |
 | 近距离 reference artifact | `backend/app/data/synthetic_v2_near_distance_artifact.json` |
 | 平台导入脚本 | `scripts/import_synthetic_v2_experiment_shards.py` |
@@ -285,4 +322,4 @@ intensity_definition: target temporal structure strength; not a required monoton
 
 ## 论文中建议采用的简短表述
 
-本文将真实数据基底按 `profile_id/frequency/context/horizon/target_dim/covariate_dim` 分桶，并在每个 bucket 中定义原始窗口经验分布 `P_real_raw` 与显式特征经验分布 `P_real_feat`。合成序列通过 `intensity` 控制目标结构强度。生成后，我们重新抽取特征，用特征阈值门控控制曲线不过分远离真实 profile，用 DCR/NNDR 近距离门控控制曲线不过分靠近真实窗口；MMD/SWD 作为控制特征分布批量报告。该链路与 discriminative/predictive score 互补，分别提供可解释的非污染论据和生成质量论据。
+本文将真实数据基底按 `profile_id/frequency/context/horizon/target_dim/covariate_dim` 分桶，并把真实窗口按 group 或带 embargo 的时间块拆为 generator-parameter、gate-reference 与 gate-calibration 三个分区。每个样本在生成前选定真实 bucket，按该 bucket 拟合的 nuisance 参数和 intensity 映射生成；目标特征以配对批量 dose-response 验收。生成后，我们只在预选 bucket 内用 real-only split-conformal 的联合 control-feature 支持域限制曲线不过分远离真实数据，同时对所有兼容 bucket 用 DCR/NNDR 限制曲线不过分靠近任何真实窗口；MMD/SWD 作为批量分布报告。该链路分别提供 capability validity、real support 与低近复制风险证据。

@@ -26,6 +26,7 @@ class SyntheticShardGenerate(BaseModel):
     target_dim: int = Field(default=3, ge=1, le=16)
     seed: int = 0
     frequency: str = "h"
+    anchor_profile_ids: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def default_intensity(self) -> "SyntheticShardGenerate":

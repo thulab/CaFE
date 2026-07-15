@@ -9,9 +9,24 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     catalog = client.get("/synthetic/capabilities")
     assert catalog.status_code == 200
     capability_ids = {item["capability_id"] for item in catalog.json()["items"]}
-    assert {"trend", "common_factor", "covariate_response", "time_varying_seasonality", "hierarchical_coherence"}.issubset(capability_ids)
+    assert capability_ids == {
+        "trend",
+        "multi_seasonal",
+        "time_varying_seasonality",
+        "regime_switching",
+        "nonlinear_persistence",
+        "predictable_intermittency",
+        "common_factor",
+        "hierarchical_coherence",
+        "covariate_response",
+    }
     trend_capability = next(item for item in catalog.json()["items"] if item["capability_id"] == "trend")
     assert trend_capability["label_i18n"]["zh-CN"] == "趋势"
+    assert trend_capability["paper_included"] is True
+    assert trend_capability["paper_track"] == "univariate"
+    assert trend_capability["generator_version"] == "capts-paper-v1"
+    assert trend_capability["predictability_contract"]
+    assert trend_capability["intensity_features"]["trend_strength"] == "increase"
     assert trend_capability["limits"]["context_length"]["min"] == 16
 
     response = client.post(
@@ -46,34 +61,41 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert covariate.generation_config["difficulty"] == 3
         assert covariate.generation_config["requested_season_length"] == 8
         assert covariate.generation_config["season_length"] == 24
-        assert covariate.generation_config["season_length_source"] == "profile_bucket"
-        assert covariate.generation_config["anchor_mode"] == "profile_calibrated"
+        assert covariate.generation_config["season_length_source"] == "preselected_anchor_profile"
+        assert covariate.generation_config["anchor_mode"] == "preselected_profile_conditioned"
         assert covariate.generation_config["anchor_profiles"] == [
-            "m4_hourly_daily_96ctx",
-            "m4_hourly_daily_168ctx",
-            "m4_hourly_weekly",
-            "electricity_hourly_daily_168ctx",
-            "electricity_hourly_panel_168ctx",
-            "traffic_hourly_daily_168ctx",
-            "traffic_hourly_panel_168ctx",
-            "m5_daily_covariate_365ctx_28h",
-            "m5_daily_hierarchy_365ctx_28h",
             "gefcom2014_load_hourly_covariate_168ctx_24h",
-            "us_births_weekly",
-            "us_births_annual_diagnostic",
         ]
+        assert covariate.generation_config["anchor_profile_selection"] == "balanced_uniform"
 
         trend_sample = session.exec(select(SampleIndex).where(SampleIndex.shard_id == trend.shard_id)).first()
         assert trend_sample is not None
         trend_metadata = trend_sample.sample_metadata
         assert trend_metadata["intensity"] == 3
         assert trend_metadata["difficulty"] == 3
-        assert trend_metadata["latent_params"]["generator_version"] == "v2-pilot"
+        assert trend_metadata["latent_params"]["generator_version"] == "capts-paper-v1"
+        assert trend_metadata["latent_params"]["predictability"]["construction_validated"] is True
         assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
-        assert trend_metadata["latent_params"]["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v1"
+        assert trend_metadata["latent_params"]["acceptance"]["attempts"] == 1
+        assert trend_metadata["latent_params"]["acceptance"]["profile_selection_stage"] == "pre_generation"
+        assert trend_metadata["latent_params"]["generator_conditioning"]["profile_id"] == trend_metadata["anchor_profile_id"]
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v3"
         assert "trend_strength" in trend_metadata["latent_params"]["acceptance"]["validation"]["target_features"]
-        assert trend_metadata["latent_params"]["acceptance"]["validation"]["feature_gate"]["accepted"] is True
+        feature_gate = trend_metadata["latent_params"]["acceptance"]["validation"]["feature_gate"]
+        assert feature_gate["accepted"] is True
+        assert feature_gate["enforced"] is True
+        assert feature_gate["support_method"] == "shrunk_robust_mahalanobis"
+        assert feature_gate["calibration_coverage"] == 0.95
+        assert feature_gate["artifact_schema_version"] == "synthetic_v2_feature_gate_online.v1"
+        assert feature_gate["matched_profile_id"] in {
+            "m4_hourly_daily_168ctx",
+            "electricity_hourly_daily_168ctx",
+            "traffic_hourly_daily_168ctx",
+        }
+        assert feature_gate["matched_profile_id"] == trend_metadata["anchor_profile_id"]
+        assert feature_gate["target_percentile_diagnostics"]["trend_strength"]
         assert trend_metadata["latent_params"]["acceptance"]["validation"]["near_distance_gate"]["accepted"] is True
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["predictability_gate"]["accepted"] is True
         assert trend_metadata["latent_params"]["acceptance"]["validation"]["novelty_check"] == "online_dcr_nndr_gate"
         assert "trend_strength" in trend_metadata["realized_features"]
         assert "nonlinear_lag1_gain" in trend_metadata["realized_features"]
@@ -113,6 +135,63 @@ def test_uncalibrated_synthetic_window_is_rejected(app, client):
     assert response.json()["error_code"] == "synthetic_near_distance_not_calibrated"
 
 
+def test_generation_can_pin_a_preselected_anchor_profile(app, client):
+    response = client.post(
+        "/synthetic/shards",
+        json={
+            "name": "traffic-conditioned trend",
+            "capabilities": ["trend"],
+            "context_length": 168,
+            "horizon": 24,
+            "sample_count": 2,
+            "intensity": 3,
+            "target_dim": 1,
+            "seed": 9,
+            "frequency": "h",
+            "anchor_profile_ids": {"trend": "traffic_hourly_daily_168ctx"},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    shard_id = response.json()["shard_ids"][0]
+    with Session(app.state.engine) as session:
+        shard = session.get(Shard, shard_id)
+        assert shard is not None
+        assert shard.generation_config["anchor_profile_selection"] == "explicit"
+        assert shard.generation_config["anchor_profiles"] == ["traffic_hourly_daily_168ctx"]
+        samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard_id)).all()
+        assert {sample.sample_metadata["anchor_profile_id"] for sample in samples} == {
+            "traffic_hourly_daily_168ctx"
+        }
+        assert all(
+            sample.sample_metadata["latent_params"]["acceptance"]["validation"]["feature_gate"][
+                "matched_profile_id"
+            ]
+            == "traffic_hourly_daily_168ctx"
+            for sample in samples
+        )
+
+
+def test_generation_rejects_an_incompatible_anchor_profile(client):
+    response = client.post(
+        "/synthetic/shards",
+        json={
+            "capabilities": ["trend"],
+            "context_length": 168,
+            "horizon": 24,
+            "sample_count": 1,
+            "intensity": 3,
+            "target_dim": 1,
+            "seed": 9,
+            "frequency": "h",
+            "anchor_profile_ids": {"trend": "m5_daily_covariate_365ctx_28h"},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "synthetic_anchor_profile_invalid"
+
+
 def test_track_from_shards_groups_synthetic_capabilities(app, client):
     generated = client.post(
         "/synthetic/shards",
@@ -149,12 +228,12 @@ def test_track_from_shards_groups_synthetic_capabilities(app, client):
         assert {link.shard_id for link in links} == set(generated["shard_ids"])
 
 
-def test_regime_capabilities_generate_json_serializable_metadata(app, client):
+def test_predictable_event_capabilities_generate_json_serializable_metadata(app, client):
     response = client.post(
         "/synthetic/shards",
         json={
             "name": "regime smoke",
-            "capabilities": ["regime_switching", "coherent_regime_shift"],
+            "capabilities": ["regime_switching", "predictable_intermittency"],
             "context_length": 168,
             "horizon": 24,
             "sample_count": 2,
@@ -174,12 +253,16 @@ def test_regime_capabilities_generate_json_serializable_metadata(app, client):
         samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id.in_(body["shard_ids"]))).all()
         assert samples
         regime_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "regime_switching")
-        coherent_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "coherent_regime_shift")
+        intermittent_sample = next(sample for sample in samples if sample.sample_metadata["capability_id"] == "predictable_intermittency")
         cut_points = regime_sample.sample_metadata["latent_params"]["cut_points"]
         assert cut_points
         assert all(type(point) is int for point in cut_points)
         assert regime_sample.sample_metadata["latent_params"]["forecast_switch"] == 1
-        assert coherent_sample.sample_metadata["latent_params"]["shift_at"] >= 168
+        assert sum(point < 168 for point in cut_points) >= 2
+        assert regime_sample.sample_metadata["latent_params"]["future_switch_at"] >= 168
+        pulse_centers = intermittent_sample.sample_metadata["latent_params"]["pulse_centers"]
+        assert sum(center < 168 for center in pulse_centers) >= 2
+        assert any(center >= 168 for center in pulse_centers)
 
 
 def test_new_synthetic_capabilities_generate_expected_metadata(app, client):

@@ -1,255 +1,217 @@
-# Synthetic v2 能力维度建模定义
+# CapTS-Bench 论文能力维度定义（paper-v1）
 
-日期：2026-07-01
+日期：2026-07-15
 
-## 定位
+## 1. 定位与版本
 
-这份文档整理当前 synthetic v2 生成器中可用于论文实验的能力维度。目标不是把 `intensity` 解释成“模型一定更难”，而是把每个维度定义成一个可控的数据结构强度，再用真实模型实验观察模型响应。
+本文档定义 `capts-paper-v1` 生成器进入论文主实验的能力集合。论文暂定标题为：
 
-当前实验表见：
+> CapTS-Bench: A Real-Anchored, Capability-Focused Live Benchmark for Time Series Foundation Models
 
-- `docs/superpowers/baselines/2026-07-01-synthetic-v2-all-capabilities-experiment-table.md`
-- `runtime/research/synthetic-v2-*/summary.json`
+主实验固定为 6 个单变量能力和 3 个结构化能力。这里的“结构化”包括多目标结构和已知未来协变量协议，不把二者误写成同一种 multivariate forecasting task。
 
-默认窗口：`context=168`，`horizon=24`。主季节周期由真实 profile bucket 解析：hourly daily bucket 使用 24，M5 daily bucket 使用 7；混合 envelope 在频率筛选后仍不唯一时，从显著周期集合按真实窗口数加权采样。合成生成中单目标维度使用 `target_dim=1`；多目标维度使用 `target_dim=3`；协变量能力使用 `target_dim=1, covariate_dim=2`。真实 profile 校准中，M5 covariate profile 使用 4 个 calendar/price/SNAP covariates，GEFCom2014 Load profile 使用 25 个 temperature station covariates。
+默认 hourly 实验使用 `context=168, horizon=24, period=24`；层级实验使用 `context=365, horizon=28, period=7`。所有样本先按显式数据生成过程生成，再用 context 统计量标准化。层级样本使用共同尺度标准化，因而不会破坏父子加总关系。
 
-## 共同原则
+## 2. 最终能力集合
 
-1. 合成序列先用显式公式生成，再按 context 归一化，保证不同样本尺度可比。
-2. 所有 synthetic capability 已接入 hard acceptance caps。单变量结构能力使用 M4/Electricity/Traffic hourly 单变量 profile envelope；多目标能力使用 Electricity/Traffic panel profile envelope；协变量能力使用 M5+GEFCom2014 known-future covariate envelope；层级能力使用 M5 additive hierarchy envelope。
-3. `intensity` 控制的是目标结构强度，例如切换次数、非线性强度、burst rate、因子结构、协变量效应；它不等同于观测到的模型误差强度，也不要求深度模型 MAE 随强度单调上升。
-4. 对 horizon 内无先兆的 shift，不应在论文里简单称为“可预测能力”，更准确是结构突变鲁棒性或快速适应能力。
+| 论文分组 | capability id | 论文名称 | intensity 的唯一主含义 |
+| --- | --- | --- | --- |
+| 单变量 | `trend` | Trend extrapolation | 趋势形状的整体尺度 |
+| 单变量 | `multi_seasonal` | Multi-seasonal composition | 附加周期的能量 |
+| 单变量 | `time_varying_seasonality` | Evolving seasonality | 振幅/相位调制强度 |
+| 单变量 | `regime_switching` | Predictable regime switching | 状态水平差异 |
+| 单变量 | `nonlinear_persistence` | Nonlinear multi-lag persistence | 季节滞后与非线性滞后的联合依赖强度 |
+| 单变量 | `predictable_intermittency` | Predictable intermittency | 周期性稀疏脉冲的显著性 |
+| 结构化 | `common_factor` | Shared latent factor | 共享因子相对通道局部成分的强度 |
+| 结构化 | `hierarchical_coherence` | Hierarchical coherence | 子节点异质性；加总关系始终严格成立 |
+| 结构化 | `covariate_response` | Known-future covariate response | 已知未来协变量的效应强度 |
 
-## 维度定义
+`lead_lag_coupling` 和 `coherent_regime_shift` 已从注册表移除，不作为兼容能力保留。前者的旧实现与 common factor 混杂；后者在 forecast horizon 内注入无先兆冲击，不能解释为可预测能力。
 
-### `trend`
+## 3. 共同建模约束
 
-建模定义：单目标序列由二次趋势、弱季节残差和小噪声组成。
+### 3.1 可预测性不是低噪声，而是信息在预测时可用
 
-公式概念：
+每个生成器都必须满足 construction-level predictability contract：
+
+1. 决定预测期条件均值的结构，必须已在 target history 中重复出现，或通过 future covariates 明确提供。
+2. 禁止只在 forecast horizon 中采样新的 latent cut point、随机 burst 或层级 shock。
+3. 允许小幅不可约观测噪声，但 intensity 不得通过增加噪声来伪装成结构强度。
+4. 生成后元数据必须记录 contract、证据和 `construction_validated=true`；不满足时直接拒绝生成。
+
+construction gate 只能证明生成过程提供了可用信息，不能代替模型层面的可预测性实验。正式实验仍需与 naive、seasonal naive 和 capability-specific oracle 比较。
+
+### 3.2 intensity 是结构干预，不是预设难度
+
+`intensity ∈ {1,2,3,4,5}` 是跨真实基底共享的有序级别，基础坐标为 `u=(intensity-1)/4`。每个样本先选定真实 bucket `b`，再使用只由真实参数拟合分区估计的单调映射 `λ_{b,c}(intensity)` 控制 capability `c` 的主结构因子。连续目标特征默认对齐 bucket 内 q10/q30/q50/q70/q90；稀疏、离散或饱和特征使用预注册 effect-size grid，并以 bootstrap dose response 验收。
+
+噪声尺度、尾部形态、季节残差和局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。论文不预设模型误差随 intensity 单调，只要求预注册的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为 `α_{b,c}(λ_{b,c}(intensity))`。
+
+### 3.3 时间参数不依赖总窗口长度
+
+趋势坐标以距 forecast origin 的季节周期数表示；所有周期、调制周期、驻留时长和滞后均以 `period` 为单位。生成公式不能用 `linspace(..., total_length)` 定义结构，否则仅改变 horizon 就会改变历史段本身。
+
+## 4. 单变量能力
+
+### 4.1 `trend`
+
+生成式：
 
 ```text
-y_t = a * x_t + b * (x_t^2 - c) + s * sin(2*pi*t/P) + slow_t + eps_t
+x_t = (t - forecast_origin) / P
+g_t = s * x_t + c * x_t^2
+y_t = alpha(λ) * g_t + seasonal_residue_t + slow_t + eps_t
 ```
 
-强度控制：提高 `slope_abs`、`curvature_abs` 和 `trend_strength`，同时降低噪声，避免把结构强度伪装成随机扰动。
+- intensity 只提高 `alpha(λ)`；季节残差和噪声固定。
+- slope 与 curvature 的符号按样本采样，但 context 和 horizon 共用同一组系数。
+- contract：context 至少覆盖两个主周期，且同一多项式规律跨 forecast boundary 连续。
+- realized target features：`trend_strength`、`slope_abs`、`curvature_abs`，预期均随 intensity 增大。
 
-测什么：模型是否能外推趋势方向和曲率，而不是复制 last value 或单周期季节位点。
+### 4.2 `multi_seasonal`
 
-实验观察：真实模型响应稳定，`Chronos-2` 平均 MAE 最低。高强度下 Timer 系列接近或略差于 seasonal naive，说明强趋势/曲率外推仍有区分度。
-
-论文表述风险：当前序列仍保留明显季节残差，应称为 “trend with seasonal residue”。
-
-### `multi_seasonal`
-
-建模定义：单目标序列由一个主周期和 1-2 个次级周期叠加。
-
-公式概念：
+生成式：
 
 ```text
-y_t = A1*sin(2*pi*t/P1 + phi1)
-    + A2(lambda)*sin(2*pi*t/P2 + phi2)
-    + A3(lambda)*sin(2*pi*t/P3 + phi3)
+y_t = A1 sin(2πt/P + φ1)
+    + alpha(λ) sin(2πt/(2P) + φ2)
+    + 0.35 alpha(λ) sin(2πt/(P/2) + φ3)
     + eps_t
 ```
 
-强度控制：提高次级/三级周期振幅，让单周期 seasonal naive 越来越不够用。
+- 三个周期在所有强度都存在，避免用“是否出现第三个周期”的离散跳变定义强度。
+- intensity 只控制附加周期能量，主周期和噪声固定。
+- contract：最长周期 `2P` 在 context 中至少完成两次。
+- realized target feature：`multi_period_score`，预期增大。
 
-测什么：模型是否能识别多周期叠加和相位，而不是只复用一个季节周期。
+### 4.3 `time_varying_seasonality`
 
-实验观察：seasonal naive MAE 随 intensity 明显增大，而深度模型 MAE 反而保持很低；这说明高强度数据更规则、更可学习，并不矛盾。`toto2.0` 平均 MAE 最低。
-
-论文表述风险：`seasonal_strength` 本身不适合作为结构强度唯一解释，应报告 “multi-period score” 和 “single-period seasonal naive degradation” 作为行为证据。
-
-### `time_varying_seasonality`
-
-建模定义：单目标序列的季节振幅和相位随时间漂移。
-
-公式概念：
+生成式采用历史中可重复观察的平滑调制，而不是仅根据总窗口归一化的一次性漂移：
 
 ```text
-A_t = A0 + delta(lambda) * t
-phi_t = phi0 + drift(lambda) * t^1.35
-y_t = A_t * sin(2*pi*t/P + phi_t) + slow_t + eps_t
+m_t = sin(2πt/(4P) + φm)
+A_t = 1 + depth_A(λ) m_t
+ψ_t = 2π depth_ψ(λ) m_t
+y_t = A_t sin(2πt/P + φ + ψ_t) + residue_t + eps_t
 ```
 
-强度控制：提高振幅变化幅度 `amplitude_delta_mean` 和相位漂移 `phase_drift_cycles`。
+- intensity 同时放大同一个 modulation factor 对振幅和相位的作用。
+- contract：context 至少覆盖一个完整调制周期，调制规律跨边界连续。
+- realized target features：逐周期谐波拟合得到的 `seasonal_amplitude_modulation` 和 `seasonal_phase_variation`，预期均增大。
 
-测什么：模型是否能处理非平稳季节性。它不同于 `multi_seasonal`：这里周期数量不变，难点是同一周期的形态在变。
+### 4.4 `regime_switching`
 
-实验观察：6 个单目标模型全部成功，`toto2.0` 平均 MAE 最低，`Chronos-2` 次之。该维度适合保留为论文里的“非平稳季节性”测试。
-
-论文表述风险：当前只做平滑漂移，没有突发 phase jump；若要测节假日错位或制度性日历漂移，需要单独加 event/covariate 版本。
-
-### `regime_switching`
-
-建模定义：单目标序列由多个 level/volatility regime 分段组成，并确保至少可能有一个 cut point 落在 forecast horizon。
-
-公式概念：
+生成式：
 
 ```text
-y_t = level_k + seasonal_t + slow_t + eps_t(sigma_k),  t in segment k
+z_t ∈ {-1,+1}, z_t every D steps alternates deterministically
+y_t = alpha(λ) z_t + seasonal_t + slow_t + eps_t
 ```
 
-强度控制：提高切换数量、level 方差和 segment volatility。
+- `D` 在一个样本内固定；预测区间的下一切换点通过同一时钟确定。
+- intensity 只提高两个状态的水平差异，不改变切换次数、驻留时长或噪声。
+- contract：context 中至少有两次历史切换，horizon 中至少有一次切换，全部相邻切点间隔相同，状态顺序交替。
+- realized target features：`change_point_shift_energy`、`level_shift_strength`，预期增大。
 
-测什么：模型面对结构突变时是否过度平滑，能否在新水平/新波动率下快速适应。
+这个维度测“从重复状态时钟预测下一次切换”，不再测无先兆 structural break robustness。后者如果需要，应作为单独 stress track，而不是 capability forecast track。
 
-实验观察：Timer 修复后本轮全部模型成功；`Timer-3.0` 平均 MAE 最低。误差随 intensity 不单调，因为切点位置、level 方向和 horizon 内是否可观察共同影响可预测性。
+### 4.5 `nonlinear_persistence`
 
-论文表述风险：如果 shift 没有先兆，它更像 robustness stress test；后续若要测“识别将发生的 regime change”，应加入 leading covariate 或 pre-shift warning pattern。
-
-### `long_memory_nonlinear`
-
-建模定义：单目标序列由高持久性的自回归项、非线性 carry-over、季节项和噪声组成。
-
-公式概念：
+生成式：
 
 ```text
-y_t = phi(lambda) * y_{t-1}
-    + gamma(lambda) * sin(y_{t-1})
-    + seasonal_t + slow_t + eps_t
+r_t = φ r_{t-1}
+    + a(λ) r_{t-P}
+    + b(λ) sin(2 r_{t-P/2})
+    + eps_t
+y_t = r_t + seasonal_residue_t + slow_t
 ```
 
-强度控制：提高 `phi` 和 nonlinear strength。
+- `φ` 固定，intensity 共同提高季节滞后和非线性中程滞后的依赖强度。
+- 生成器检查保守稳定性界 `|φ| + |a| + 2|b| < 1`。
+- contract：context 至少覆盖两个最大滞后，所有递推系数跨边界不变。
+- realized target feature：相对 AR(1)，加入季节滞后和非线性项后的增量拟合度 `nonlinear_multi_lag_gain`，预期增大。
 
-测什么：模型是否能保留较长上下文状态，并处理非线性自反馈。
+该维度明确不声称 ARFIMA 或 fractional differencing 意义上的 long memory。
 
-实验观察：`Timer-3.5` 平均 MAE 最低。intensity 与 MAE 不单调，尤其 i5 反而更容易，说明当前增强更像“非线性持久性强度”，不等同于严格预测难度。
+### 4.6 `predictable_intermittency`
 
-论文表述风险：当前不是 ARFIMA / fractional differencing 意义上的严格 long memory。论文里建议命名为 “nonlinear persistence”，除非后续补 Hurst 指数或 ACF hyperbolic decay 验收。
-
-### `intermittent_heteroskedastic`
-
-建模定义：单目标序列由稀疏 Bernoulli burst、Gamma burst size 和时间变动 volatility 组成。
-
-公式概念：
+生成式：
 
 ```text
-event_t ~ Bernoulli(p(lambda))
-burst_t ~ Gamma(shape(lambda), scale(lambda)) * event_t
-sigma_t = base + amp(lambda) * seasonal_volatility_t
-y_t = trend_t + seasonal_t + burst_t + eps_t(sigma_t)
+pulse_t = Σ_k exp(-(t-c_k)^2 / (2w^2)),  c_{k+1}-c_k=P
+y_t = alpha(λ) pulse_t + weak_seasonal_t + eps_t
 ```
 
-强度控制：提高 burst 频率/幅度和 volatility 变化。
+- pulse centers 由一个固定事件时钟产生；horizon 中的 pulse 与历史 pulse 同源。
+- intensity 只提高 pulse prominence，事件频率、宽度和噪声固定。
+- contract：context 中至少两个 pulse，horizon 中至少一个 pulse，pulse 间隔恒定。
+- realized target features：`burst_rate`、`spike_rate`、`outlier_rate`，预期增大。
 
-测什么：模型在 intermittent demand、稀疏突发、重尾误差和异方差下的稳健性。
+该维度不再把不可预测 Bernoulli burst 与异方差噪声混成一个“能力”。异方差更适合未来的 probabilistic forecasting track。
 
-实验观察：`Chronos-2` 和 `toto2.0` 几乎并列最好。`noise_ratio`、`outlier_rate`、`spike_rate` 随 intensity 增强明显，但 `target_max_abs` 偏高。
+## 5. 结构化能力
 
-论文表述风险：标准化后它不再是严格非负需求序列。后续最好用 M5 / 零售类 intermittent demand 的真实分布重新定 cap，并增加 burst recall 或 event-window error 指标。
+### 5.1 `common_factor`
 
-### `common_factor`
-
-建模定义：多目标序列由低秩 latent factors 和 channel loadings 生成。
-
-公式概念：
+生成式：
 
 ```text
-F_t = [seasonal_t, slow_t, trend_t, ar_t]
-Y_t = F_t * B^T + E_t
+f_t = 0.75 seasonal_t + 0.25 slow_t
+y_{t,j} = alpha(λ) b_j f_t + local_{t,j} + eps_{t,j}
 ```
 
-强度控制：提高 factor rank 和噪声水平。
+- factor rank、loading 和噪声固定；intensity 只提高 shared factor strength。
+- 各通道保留固定幅度、不同周期/相位的局部成分，避免所有通道成为简单缩放复制。
+- contract：至少三个 target channels；共享因子公式和 loading 跨 forecast boundary 不变。
+- realized target features：`pca_top1_explained` 与 `avg_abs_target_corr` 增大，`effective_factor_rank` 减小。
+- 正式实验需增加 channel-independent 对照或 channel permutation，证明收益来自跨通道结构。
 
-测什么：模型是否能利用跨通道共享结构，而不是把每个 channel 当成独立单变量序列。
+### 5.2 `hierarchical_coherence`
 
-实验观察：当前服务里只有 `toto2.0` 支持 `target_dim=3`，它明显优于 naive baselines。该维度当前是 multi-target sanity check，尚不能做横向模型排名。
-
-论文表述风险：随机 loading 会让 channel correlation 有波动，应补 PCA explained variance / factor strength 验收。
-
-### `lead_lag_coupling`
-
-建模定义：在 common factor 基底上，给后续 channel 加入来自 leader channel 的滞后影响。
-
-公式概念：
+生成式：
 
 ```text
-y_{t,j} = base_{t,j} + w_j(lambda) * y_{t-lag_j, leader(j)}
+child_{t,j} = shared_t / J + alpha(λ) local_{t,j} + eps_{t,j}
+Σ_j local_{t,j} = 0,  Σ_j eps_{t,j}=0
+parent_t = Σ_j child_{t,j}
 ```
 
-强度控制：主要提高 coupling strength；`max_lag` 由解析后的 `season_length` 上限约束。当前 hourly panel bucket 解析为 `season_length=24` 时会被 `season_length // 3 = 8` 卡住，因此不随 intensity 增长。更长周期 bucket 下，`8 + floor(10 * lambda)` 才可能让可选滞后范围随 intensity 扩大。
+- intensity 控制 bottom-level heterogeneity，不控制“是否一致”；输入数据在所有强度都严格 coherent。
+- 局部成分在通道方向上中心化，使 parent 的尺度不随 heterogeneity 一起膨胀，减少 intensity 混杂。
+- contract：至少一个 parent 和两个 children；没有 horizon-only shock；子节点规律跨边界连续。
+- invariant：`hierarchy_residual_mean_abs ≈ 0`。
+- realized target feature：`hierarchy_child_heterogeneity`，预期增大。
+- 模型评价必须同时报告 forecast error 与 prediction coherence error。
 
-测什么：模型是否能识别跨通道滞后依赖，利用先行 channel 提前预测滞后 channel。
+### 5.3 `covariate_response`
 
-实验观察：`toto2.0` 明显优于 naive baselines。MAE 随 intensity 有增长，说明 lag/coupling 强化带来一定挑战。
-
-论文表述风险：common factor 可能混淆 lag signal。后续应增加 lagged cross-correlation peak 验收，并做 leader permutation ablation。
-
-### `coherent_regime_shift`
-
-建模定义：多目标序列共享一个系统级 shift time，各 channel 同时发生 level shift。
-
-公式概念：
+生成式：
 
 ```text
-Y_t = common_t + E_t + 1[t >= tau] * delta
-```
-
-强度控制：提高 shift vector norm 和噪声。
-
-测什么：模型面对系统级多通道冲击时，是否能统一调整多个目标，而不是逐通道孤立处理。
-
-实验观察：`toto2.0` 优于 naive baselines，但整体误差高于 common factor / lead-lag。强度增强后 MAE 上升明显。
-
-论文表述风险：这里的 “coherent” 指多目标共同 regime shift，不是层级加总一致性。后者由 `hierarchical_coherence` 单独覆盖。
-
-### `hierarchical_coherence`
-
-建模定义：多目标序列包含父子加总结构，`target_0 = sum(target_1:)`。生成后使用层级保真标准化，避免逐列 z-score 破坏加总关系。
-
-公式概念：
-
-```text
-child_{j,t} = seasonal_{j,t} + slow_t + trend_t + shock_{j,t} + eps_{j,t}
-parent_t = sum_j child_{j,t}
-Y_t = [parent_t, child_1_t, child_2_t, ...]
-```
-
-强度控制：提高 child shock count 和 shock strength。
-
-测什么：模型是否既能准确预测各层级目标，又能输出满足 parent-child 加总关系的预测。
-
-实验观察：输入样本的 `hierarchy_residual_mean_abs` 接近 0；`toto2.0` 的预测 `coherence_mae` 随 intensity 上升，从 i1 的 0.0892 到 i5 的 0.2141。该维度有明确创新价值，因为它把 forecast accuracy 和 structural validity 分开看。
-
-论文表述风险：当前平台主指标仍是 MAE/MASE，`coherence_mae` 只在实验脚本中生成；若要进入正式评测平台，应把 coherence metric 注册进 MetricDefinition。
-
-### `covariate_response`
-
-建模定义：单目标序列由目标历史、连续 weather covariate 和二值 event covariate 共同驱动，并把 covariates 的未来段作为 known-future 输入给模型。
-
-公式概念：
-
-```text
-y_t = seasonal_t + slow_t + trend_t
-    + beta_weather(lambda) * weather_t
-    + beta_event(lambda) * event_t
+y_t = base_t
+    + beta_weather(λ) weather_t
+    + beta_event(λ) event_t
     + eps_t
 ```
 
-强度控制：提高 weather/event effect size 和 event count。
+- weather 包含带创新的外生过程；未来实现值不能只由 target history 精确外推，但会作为 known-future covariate 提供。
+- 历史段固定安排至少三个 event effect 样例，预测段保证至少一个 event。
+- intensity 只提高统一的 covariate effect scale，事件数、位置规则和噪声固定。
+- contract：历史中至少两个效应样例；horizon 中存在已提供的 future event；系数跨边界不变。
+- realized target features：相对季节基线的 `covariate_incremental_r2`、`future_abs_covariate_target_corr` 和 `event_lift_abs`，预期增大。
+- 正式实验必须做 intact、drop-future-covariate、shuffle-future-covariate 和 event-flip 配对消融。
 
-测什么：模型是否真正使用 known-future covariates，而不是只从 target history 外推。
+## 6. 进入主实验前的验收
 
-实验观察：当前只有 `Chronos-2` 支持该协议，且明显优于 naive / seasonal naive。生成后 `avg_abs_covariate_target_corr` 随 intensity 从 0.4097 增至 0.5709。
+每个 capability × intensity × generator family 至少生成 500 个无需模型推理的样本，依次检查：
 
-论文表述风险：仅看完整窗口 correlation 会高估能力。后续应增加 no-covariate、future-covariate permutation、event-only ablation。
+1. **Construction gate**：全部样本满足本文件的 predictability contract。
+2. **Dose response**：预注册 realized target feature 的 bootstrap 置信区间和强度方向符合定义。
+3. **Selectivity**：构建 capability × feature effect matrix；目标 feature 的效应应明显大于非目标 feature 的漂移。
+4. **Real support**：非目标 control features 落在对应真实 bucket 的联合支持域内。
+5. **Novelty**：通过独立校准的近距离门限和 copy/jitter/shift/warp 攻击测试。
+6. **Predictive headroom**：capability-specific oracle 明显优于 naive；否则该生成过程没有形成有效的可预测任务。
+7. **Family robustness**：论文主结果不能只依赖一种公式；每个能力后续至少补充一个 held-out generator family。
 
-## 暂不纳入的维度
-
-| 维度 | 暂缓原因 | 后续条件 |
-| --- | --- | --- |
-| Irregular / missing sampling | 当前 timer service 和数据校验要求规则时间轴和有限 float。 | 模型输入协议支持 missing mask 或 irregular timestamp 后再加。 |
-| Probabilistic calibration | 当前评测链路是点预测，缺少 quantile / interval forecast。 | 模型服务返回分位数或区间后，引入 pinball loss / coverage。 |
-| Full covariate intervention | 当前 `covariate_response` 已覆盖相关性响应，但还没有反事实对照。 | 在实验脚本中加入 future covariate permutation / counterfactual event flip。 |
-
-## 参考依据
-
-- Trend / seasonal strength：Hyndman 的 feature-based time series work、`tsfeatures` 和 Forecasting: Principles and Practice 对 trend/seasonal strength 的定义。参考：[Large-scale unusual time series detection](https://robjhyndman.com/papers/icdm2015.pdf)、[`tsfeatures` reference](https://pkg.robjhyndman.com/tsfeatures/reference/stl_features.html)、[FPP time series features](https://otexts.com/fpppy/04-features.html)。
-- 多季节性：STL / MSTL 分解思路，适合把多周期和时变季节性分开建模。参考：[MSTL paper](https://arxiv.org/abs/2107.13462)。
-- Anchor 数据：M4 Competition、Monash Time Series Forecasting Archive、M5 Competition、GEFCom2014 Load 可作为真实分布来源。参考：[M4 IJF 2020](https://ideas.repec.org/a/eee/intfor/v36y2020i1p54-74.html)、[Monash Archive paper](https://arxiv.org/abs/2105.06643)、[Monash repository](https://forecastingdata.org/)、[M5 IJF 2022](https://ideas.repec.org/a/eee/intfor/v38y2022i4p1346-1364.html)、[GEFCom2014 IJF 2016](https://ideas.repec.org/a/eee/intfor/v32y2016i3p896-913.html)。
-- Regime shift：Hamilton Markov switching 和 structural break 文献。参考：[Hamilton 1989](https://www.jstor.org/stable/1912559)、[Hamilton PDF](https://www.ssc.wisc.edu/~bhansen/718/Hamilton1989.pdf)。
-- Intermittent / heteroskedastic：Croston intermittent demand、Engle ARCH。参考：[Croston 1972](https://link.springer.com/article/10.1057/jors.1972.50)、[Hyndman Croston note](https://robjhyndman.com/papers/croston.pdf)、[Engle 1982 ARCH](https://www.jstor.org/stable/1912773)。
-- Multivariate dependencies：dynamic factor model、VAR / Granger causality。参考：[Stock & Watson dynamic factors](https://stock.scholars.harvard.edu/publications/macroeconomic-forecasting-using-diffusion-indexes)、[Granger causality 1969](https://ideas.repec.org/a/ecm/emetrp/v37y1969i3p424-38.html)。
-- Known-future covariates：Temporal Fusion Transformer 等模型把 observed inputs 与 known future inputs 明确分开。参考：[TFT paper](https://arxiv.org/abs/1912.09363)。
+现有 API 测试和生成器单元测试只覆盖第 1 项与小样本 dose-response sanity check。其余项目应在大规模模型实验前重新校准，旧 `synthetic-v2` runtime 结果不作为 `capts-paper-v1` 的有效实验结果。

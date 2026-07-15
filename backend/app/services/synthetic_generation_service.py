@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,16 @@ from app.services.dataset_load_service import SampleWindow
 from app.services.dataset_reader import DatasetReadResult
 from app.services.sample_store import SampleStore
 from app.services.series_store import SeriesStore
+from app.services.synthetic_feature_gate import (
+    evaluate_feature_support_gate,
+    matching_calibrated_buckets as matching_feature_gate_buckets,
+)
+from app.services.synthetic_generator_conditioning import (
+    GeneratorConditioning,
+    matching_generator_profiles,
+    resolve_generator_conditioning,
+    select_balanced_profile_id,
+)
 from app.services.synthetic_near_distance_gate import evaluate_near_distance_gate, matching_calibrated_buckets
 
 
@@ -45,6 +55,7 @@ class SyntheticGenerationConfig:
     target_dim: int
     seed: int
     frequency: str = "h"
+    anchor_profile_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -77,37 +88,37 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
     ),
     SyntheticCapability(
         "regime_switching",
-        "Regime switching",
-        "Single-target series with level and volatility changes.",
-        "状态切换",
-        "带有水平和波动率切换的单目标序列。",
+        "Predictable regime switching",
+        "Single-target series with a recurring, history-observable regime schedule.",
+        "可预测状态切换",
+        "带有可从历史识别的重复状态切换规律的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
     SyntheticCapability(
         "time_varying_seasonality",
         "Time-varying seasonality",
-        "Single-target series with drifting seasonal amplitude and phase.",
+        "Single-target series with smoothly modulated seasonal amplitude and phase.",
         "时变季节性",
-        "带有季节振幅和相位漂移的单目标序列。",
+        "季节振幅和相位按平滑规律变化的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
     SyntheticCapability(
-        "long_memory_nonlinear",
-        "Long-memory nonlinear",
-        "Single-target autoregressive dynamics with nonlinear carry-over.",
-        "长记忆非线性",
-        "带有非线性延续效应的单目标自回归动态。",
+        "nonlinear_persistence",
+        "Nonlinear multi-lag persistence",
+        "Single-target stable dynamics with short, seasonal, and nonlinear lag dependence.",
+        "非线性多滞后持久性",
+        "同时依赖短滞后、季节滞后和非线性滞后项的稳定单目标动态。",
         "univariate_forecast",
         "fixed_1",
     ),
     SyntheticCapability(
-        "intermittent_heteroskedastic",
-        "Intermittent heteroskedastic",
-        "Single-target sparse bursts with changing noise scale.",
-        "间歇异方差",
-        "带有稀疏突发和变化噪声尺度的单目标序列。",
+        "predictable_intermittency",
+        "Predictable intermittency",
+        "Single-target recurring sparse pulses with a history-observable event clock.",
+        "可预测间歇性",
+        "带有可从历史识别的重复事件时钟和稀疏脉冲的单目标序列。",
         "univariate_forecast",
         "fixed_1",
     ),
@@ -121,27 +132,9 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
         "multi",
     ),
     SyntheticCapability(
-        "lead_lag_coupling",
-        "Lead-lag coupling",
-        "Multiple targets with lagged cross-channel dependencies.",
-        "Lead-lag 耦合",
-        "带有滞后跨通道依赖的多目标序列。",
-        "multivariate_forecast",
-        "multi",
-    ),
-    SyntheticCapability(
-        "coherent_regime_shift",
-        "Coherent regime shift",
-        "Multiple targets that shift together across regimes.",
-        "协同状态切换",
-        "多个目标在同一状态变化中协同切换的序列。",
-        "multivariate_forecast",
-        "multi",
-    ),
-    SyntheticCapability(
         "hierarchical_coherence",
         "Hierarchical coherence",
-        "Multiple targets with parent-child additive structure.",
+        "Multiple targets with an exact parent-child additive structure.",
         "层级一致性",
         "带有父子加总结构的多目标序列。",
         "multivariate_forecast",
@@ -149,7 +142,7 @@ SYNTHETIC_CAPABILITIES: tuple[SyntheticCapability, ...] = (
     ),
     SyntheticCapability(
         "covariate_response",
-        "Covariate response",
+        "Known-future covariate response",
         "Targets whose future depends on known weather and event covariates.",
         "协变量响应",
         "未来走势依赖已知天气和事件协变量的目标序列。",
@@ -163,23 +156,71 @@ CAPABILITIES_BY_ID: dict[str, SyntheticCapability] = {
     capability.capability_id: capability for capability in SYNTHETIC_CAPABILITIES
 }
 
+PAPER_GENERATOR_VERSION = "capts-paper-v1"
+PAPER_UNIVARIATE_CAPABILITY_IDS: tuple[str, ...] = (
+    "trend",
+    "multi_seasonal",
+    "time_varying_seasonality",
+    "regime_switching",
+    "nonlinear_persistence",
+    "predictable_intermittency",
+)
+PAPER_STRUCTURED_CAPABILITY_IDS: tuple[str, ...] = (
+    "common_factor",
+    "hierarchical_coherence",
+    "covariate_response",
+)
+PAPER_CAPABILITY_IDS = PAPER_UNIVARIATE_CAPABILITY_IDS + PAPER_STRUCTURED_CAPABILITY_IDS
+
+PREDICTABILITY_CONTRACTS: dict[str, str] = {
+    "trend": "one trend law is observed in context and continued through the forecast horizon",
+    "multi_seasonal": "every forecast-period component completes at least two cycles in context",
+    "time_varying_seasonality": "amplitude and phase follow a smooth modulation observed in context",
+    "regime_switching": "a regular alternating regime schedule has at least two historical and one future switch",
+    "nonlinear_persistence": "all recurrence lags are observed and the recurrence is coefficient-stable",
+    "predictable_intermittency": "a regular pulse clock has at least two historical and one future pulse",
+    "common_factor": "shared factor laws and channel loadings are unchanged at the forecast boundary",
+    "hierarchical_coherence": "bottom-level component laws continue and the parent is their exact sum",
+    "covariate_response": "future exogenous values are supplied and include an event after historical effect examples",
+}
+
+INTENSITY_FEATURE_DIRECTIONS: dict[str, dict[str, str]] = {
+    "trend": {
+        "trend_strength": "increase",
+        "slope_abs": "increase",
+        "curvature_abs": "increase",
+    },
+    "multi_seasonal": {"multi_period_score": "increase"},
+    "time_varying_seasonality": {
+        "seasonal_amplitude_modulation": "increase",
+        "seasonal_phase_variation": "increase",
+    },
+    "regime_switching": {
+        "change_point_shift_energy": "increase",
+        "level_shift_strength": "increase",
+    },
+    "nonlinear_persistence": {"nonlinear_multi_lag_gain": "increase"},
+    "predictable_intermittency": {
+        "burst_rate": "increase",
+        "spike_rate": "increase",
+        "outlier_rate": "increase",
+    },
+    "common_factor": {
+        "pca_top1_explained": "increase",
+        "effective_factor_rank": "decrease",
+        "avg_abs_target_corr": "increase",
+    },
+    "hierarchical_coherence": {"hierarchy_child_heterogeneity": "increase"},
+    "covariate_response": {
+        "covariate_incremental_r2": "increase",
+        "future_abs_covariate_target_corr": "increase",
+        "event_lift_abs": "increase",
+    },
+}
+
 MOCK_ANCHOR = {
-    "anchor_mode": "profile_calibrated",
-    "anchor_source_uri": "synthetic-anchor://public/multi-profile-v1",
-    "anchor_profiles": [
-        "m4_hourly_daily_96ctx",
-        "m4_hourly_daily_168ctx",
-        "m4_hourly_weekly",
-        "electricity_hourly_daily_168ctx",
-        "electricity_hourly_panel_168ctx",
-        "traffic_hourly_daily_168ctx",
-        "traffic_hourly_panel_168ctx",
-        "m5_daily_covariate_365ctx_28h",
-        "m5_daily_hierarchy_365ctx_28h",
-        "gefcom2014_load_hourly_covariate_168ctx_24h",
-        "us_births_weekly",
-        "us_births_annual_diagnostic",
-    ],
+    "anchor_mode": "preselected_profile_conditioned",
+    "anchor_source_uri": "synthetic-anchor://public/profile-conditioned-v2",
 }
 
 ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
@@ -362,6 +403,12 @@ ANCHOR_PROFILE_BUCKETS: dict[str, dict[str, Any]] = {
         "significant_periods": (24,),
         "window_count": 2000,
     },
+    "electricity_hourly_daily_2048ctx_24h": {
+        "frequency": "h",
+        "season_length": 24,
+        "significant_periods": (24,),
+        "window_count": 600,
+    },
     "electricity_hourly_panel_168ctx": {
         "frequency": "h",
         "season_length": 24,
@@ -414,30 +461,39 @@ ANCHOR_PROFILE_BUCKETS: dict[str, dict[str, Any]] = {
 
 TARGET_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     "trend": ("trend_strength", "slope_abs", "curvature_abs"),
-    "multi_seasonal": ("multi_period_score", "seasonal_strength"),
-    "time_varying_seasonality": ("seasonal_drift_score", "seasonal_amplitude_cv"),
+    "multi_seasonal": ("multi_period_score",),
+    "time_varying_seasonality": (
+        "seasonal_amplitude_modulation",
+        "seasonal_phase_variation",
+    ),
     "regime_switching": ("change_point_shift_energy", "level_shift_strength"),
-    "long_memory_nonlinear": ("nonlinear_lag1_gain",),
-    "intermittent_heteroskedastic": ("burst_rate", "spike_rate", "outlier_rate", "noise_ratio"),
-    "common_factor": ("pca_top1_explained", "effective_factor_rank"),
-    "lead_lag_coupling": ("lead_lag_peak_abs",),
-    "coherent_regime_shift": ("level_shift_strength", "avg_abs_target_corr"),
-    "hierarchical_coherence": ("hierarchy_residual_mean_abs",),
-    "covariate_response": ("avg_abs_covariate_target_corr", "future_abs_covariate_target_corr", "event_lift_abs"),
+    "nonlinear_persistence": ("nonlinear_multi_lag_gain",),
+    "predictable_intermittency": ("burst_rate", "spike_rate", "outlier_rate"),
+    "common_factor": ("pca_top1_explained", "effective_factor_rank", "avg_abs_target_corr"),
+    "hierarchical_coherence": ("hierarchy_child_heterogeneity",),
+    "covariate_response": (
+        "covariate_incremental_r2",
+        "future_abs_covariate_target_corr",
+        "event_lift_abs",
+    ),
 }
 
 CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     "trend": ("seasonal_strength", "noise_ratio", "spike_rate"),
     "multi_seasonal": ("trend_strength", "noise_ratio", "spike_rate"),
     "time_varying_seasonality": ("trend_strength", "noise_ratio", "spike_rate"),
-    "regime_switching": ("seasonal_strength", "spike_rate"),
-    "long_memory_nonlinear": ("seasonal_strength", "noise_ratio", "spike_rate"),
-    "intermittent_heteroskedastic": ("trend_strength", "seasonal_strength"),
-    "common_factor": ("noise_ratio", "spike_rate"),
-    "lead_lag_coupling": ("noise_ratio", "spike_rate"),
-    "coherent_regime_shift": ("noise_ratio", "spike_rate"),
-    "hierarchical_coherence": ("hierarchy_residual_mean_abs", "noise_ratio", "avg_abs_target_corr"),
-    "covariate_response": ("trend_strength", "seasonal_strength", "noise_ratio", "spike_rate"),
+    "regime_switching": ("outlier_rate", "spike_rate", "diff_spike_rate"),
+    "nonlinear_persistence": ("seasonal_strength", "noise_ratio", "spike_rate"),
+    "predictable_intermittency": ("trend_strength", "seasonal_strength", "noise_ratio"),
+    # Signal-to-noise ratios are mechanically changed by factor/effect strength,
+    # so they are target-coupled rather than valid nuisance controls here.
+    "common_factor": ("trend_strength", "outlier_rate", "spike_rate"),
+    "hierarchical_coherence": ("hierarchy_residual_mean_abs", "outlier_rate", "spike_rate"),
+    "covariate_response": (
+        "covariate_residual_acf_abs_mean",
+        "covariate_residual_outlier_rate",
+        "covariate_residual_spike_rate",
+    ),
 }
 
 
@@ -452,6 +508,15 @@ def synthetic_capability_catalog() -> list[dict[str, Any]]:
             "task_type": capability.task_type,
             "target_dim_mode": capability.target_dim_mode,
             "covariate_columns": list(capability.covariate_columns),
+            "paper_included": True,
+            "paper_track": (
+                "univariate"
+                if capability.capability_id in PAPER_UNIVARIATE_CAPABILITY_IDS
+                else "structured"
+            ),
+            "generator_version": PAPER_GENERATOR_VERSION,
+            "predictability_contract": PREDICTABILITY_CONTRACTS[capability.capability_id],
+            "intensity_features": INTENSITY_FEATURE_DIRECTIONS[capability.capability_id],
             "default_params": _default_params_for_capability(capability),
             "limits": {
                 "context_length": {"min": 16, "max": 2048},
@@ -549,6 +614,24 @@ def _validate_config(config: SyntheticGenerationConfig) -> None:
         )
     if not 1 <= config.intensity <= 5:
         raise ApiError("synthetic_intensity_invalid", "intensity must be between 1 and 5")
+    unknown_anchor_capabilities = sorted(set(config.anchor_profile_ids) - set(config.capabilities))
+    if unknown_anchor_capabilities:
+        raise ApiError(
+            "synthetic_anchor_capability_invalid",
+            "anchor_profile_ids may only contain selected capabilities",
+            {"capability_ids": unknown_anchor_capabilities},
+        )
+    empty_anchor_profiles = sorted(
+        capability_id
+        for capability_id, profile_id in config.anchor_profile_ids.items()
+        if not str(profile_id).strip()
+    )
+    if empty_anchor_profiles:
+        raise ApiError(
+            "synthetic_anchor_profile_invalid",
+            "anchor profile ids must be non-empty",
+            {"capability_ids": empty_anchor_profiles},
+        )
 
 
 def _capabilities(capability_ids: list[str]) -> list[SyntheticCapability]:
@@ -572,15 +655,61 @@ def _generate_capability_shard(
     sample_length = context + horizon
     target_dim = _target_dim_for_capability(capability, config.target_dim)
     near_distance_buckets = _require_near_distance_calibration(capability, context, horizon, target_dim)
+    feature_gate_buckets = _require_feature_gate_calibration(capability, context, horizon, target_dim)
+    generator_profiles = _require_generator_conditioning_calibration(
+        capability,
+        context,
+        horizon,
+        target_dim,
+        config.frequency,
+    )
+    anchor_profile_candidates = tuple(
+        profile_id
+        for profile_id in generator_profiles
+        if profile_id in set(near_distance_buckets) and profile_id in set(feature_gate_buckets)
+    )
+    if not anchor_profile_candidates:
+        raise ApiError(
+            "synthetic_anchor_profile_not_calibrated",
+            "no real profile has generator, feature-support, and near-distance calibration for this request",
+            {
+                "capability_id": capability.capability_id,
+                "generator_profiles": generator_profiles,
+                "feature_gate_profiles": feature_gate_buckets,
+                "near_distance_profiles": near_distance_buckets,
+            },
+        )
+    requested_anchor_profile = config.anchor_profile_ids.get(capability.capability_id)
+    if requested_anchor_profile is not None and requested_anchor_profile not in anchor_profile_candidates:
+        raise ApiError(
+            "synthetic_anchor_profile_invalid",
+            "requested anchor profile is not calibrated for this capability and window",
+            {
+                "capability_id": capability.capability_id,
+                "profile_id": requested_anchor_profile,
+                "available_profile_ids": list(anchor_profile_candidates),
+            },
+        )
+    selected_profile_pool = (
+        (requested_anchor_profile,) if requested_anchor_profile is not None else anchor_profile_candidates
+    )
     target_columns = [f"target_{index}" for index in range(target_dim)]
     covariate_columns = list(capability.covariate_columns)
     columns = [*target_columns, *covariate_columns]
     base_start = datetime(2026, 1, 1, tzinfo=timezone.utc)
     delta = _frequency_delta(config.frequency)
-    seasonality = _resolve_seasonality(
-        capability.capability_id,
-        requested_frequency=config.frequency,
-        seed=_seed_for(config.seed, capability.capability_id, -1),
+    profile_conditionings = {
+        profile_id: _resolve_required_generator_conditioning(
+            capability.capability_id,
+            profile_id,
+            context,
+            horizon,
+            target_dim,
+        )
+        for profile_id in selected_profile_pool
+    }
+    season_lengths = tuple(
+        sorted({conditioning.season_length for conditioning in profile_conditionings.values()})
     )
 
     all_timestamps: list[datetime] = []
@@ -589,14 +718,23 @@ def _generate_capability_shard(
     sample_metadata: list[dict[str, Any]] = []
     for sample_index in range(config.sample_count):
         sample_seed = _seed_for(config.seed, capability.capability_id, sample_index)
+        anchor_profile_id = select_balanced_profile_id(
+            selected_profile_pool,
+            capability_id=capability.capability_id,
+            seed=config.seed,
+            sample_index=sample_index,
+        )
+        conditioning = profile_conditionings[anchor_profile_id]
         target, latent_params, covariates, realized_features = _generate_accepted_sample_values(
             capability.capability_id,
             sample_length,
             context,
             target_dim,
-            seasonality.season_length,
+            conditioning.season_length,
             config.intensity,
             sample_seed,
+            anchor_profile_id=anchor_profile_id,
+            generator_conditioning=conditioning,
         )
         if covariates is not None and covariates.size:
             values = np.concatenate([target, covariates], axis=1)
@@ -628,11 +766,16 @@ def _generate_capability_shard(
                 "difficulty": config.intensity,
                 "seed": config.seed,
                 "sample_seed": sample_seed,
-                "season_length": seasonality.season_length,
+                "anchor_profile_id": anchor_profile_id,
+                "anchor_profiles": list(selected_profile_pool),
+                "anchor_profile_selection": (
+                    "explicit" if requested_anchor_profile is not None else "balanced_uniform"
+                ),
+                "season_length": conditioning.season_length,
                 "requested_season_length": config.season_length,
-                "season_length_source": seasonality.source,
-                "season_length_candidates": list(seasonality.candidate_periods),
-                "season_length_profiles": list(seasonality.profile_ids),
+                "season_length_source": "preselected_anchor_profile",
+                "season_length_candidates": list(season_lengths),
+                "season_length_profiles": list(selected_profile_pool),
                 "latent_params": latent_params,
                 "realized_features": realized_features,
                 **MOCK_ANCHOR,
@@ -652,15 +795,21 @@ def _generate_capability_shard(
         "context_length": context,
         "horizon": horizon,
         "sample_count": config.sample_count,
-        "season_length": seasonality.season_length,
+        "season_length": season_lengths[0] if len(season_lengths) == 1 else None,
         "requested_season_length": config.season_length,
-        "season_length_source": seasonality.source,
-        "season_length_candidates": list(seasonality.candidate_periods),
-        "season_length_profiles": list(seasonality.profile_ids),
+        "season_length_source": "preselected_anchor_profile",
+        "season_length_candidates": list(season_lengths),
+        "season_length_profiles": list(selected_profile_pool),
         "target_dim": target_dim,
         "requested_target_dim": config.target_dim,
         "covariate_columns": covariate_columns,
         "near_distance_calibration_buckets": near_distance_buckets,
+        "feature_gate_calibration_buckets": feature_gate_buckets,
+        "generator_conditioning_profiles": list(selected_profile_pool),
+        "anchor_profiles": list(selected_profile_pool),
+        "anchor_profile_selection": (
+            "explicit" if requested_anchor_profile is not None else "balanced_uniform"
+        ),
         "frequency": config.frequency,
         **MOCK_ANCHOR,
     }
@@ -721,7 +870,7 @@ def _target_dim_for_capability(capability: SyntheticCapability, requested: int) 
     if capability.target_dim_mode == "fixed_1":
         return 1
     if capability.target_dim_mode == "multi":
-        return max(2, int(requested))
+        return max(3, int(requested))
     if capability.target_dim_mode == "covariate":
         return 1
     return max(1, int(requested))
@@ -753,6 +902,96 @@ def _require_near_distance_calibration(
             "target_dim": int(target_dim),
         },
     )
+
+
+def _require_feature_gate_calibration(
+    capability: SyntheticCapability,
+    context_length: int,
+    horizon: int,
+    target_dim: int,
+) -> list[str]:
+    profile_ids = _profile_ids_for_capability(capability.capability_id)
+    buckets = matching_feature_gate_buckets(
+        capability_id=capability.capability_id,
+        profile_ids=profile_ids,
+        context_length=context_length,
+        horizon=horizon,
+        target_dim=target_dim,
+    )
+    if buckets:
+        return [str(bucket["profile_id"]) for bucket in buckets]
+    raise ApiError(
+        "synthetic_feature_gate_not_calibrated",
+        "synthetic feature-support gate has no calibrated real bucket for this request",
+        {
+            "capability_id": capability.capability_id,
+            "profile_ids": list(profile_ids),
+            "context_length": int(context_length),
+            "horizon": int(horizon),
+            "target_dim": int(target_dim),
+        },
+    )
+
+
+def _require_generator_conditioning_calibration(
+    capability: SyntheticCapability,
+    context_length: int,
+    horizon: int,
+    target_dim: int,
+    frequency: str,
+) -> list[str]:
+    profile_ids = _profile_ids_for_capability(capability.capability_id)
+    profiles = matching_generator_profiles(
+        capability_id=capability.capability_id,
+        profile_ids=profile_ids,
+        context_length=context_length,
+        horizon=horizon,
+        target_dim=target_dim,
+        frequency=frequency,
+    )
+    if profiles:
+        return [str(profile["profile_id"]) for profile in profiles]
+    raise ApiError(
+        "synthetic_generator_not_calibrated",
+        "synthetic generator has no profile-conditioned calibration for this request",
+        {
+            "capability_id": capability.capability_id,
+            "profile_ids": list(profile_ids),
+            "context_length": int(context_length),
+            "horizon": int(horizon),
+            "target_dim": int(target_dim),
+            "frequency": frequency,
+        },
+    )
+
+
+def _resolve_required_generator_conditioning(
+    capability_id: str,
+    profile_id: str,
+    context_length: int,
+    horizon: int,
+    target_dim: int,
+) -> GeneratorConditioning:
+    conditioning = resolve_generator_conditioning(
+        capability_id=capability_id,
+        profile_id=profile_id,
+        context_length=context_length,
+        horizon=horizon,
+        target_dim=target_dim,
+    )
+    if conditioning is None:
+        raise ApiError(
+            "synthetic_generator_not_calibrated",
+            "synthetic generator conditioning is missing for the selected real profile",
+            {
+                "capability_id": capability_id,
+                "profile_id": profile_id,
+                "context_length": int(context_length),
+                "horizon": int(horizon),
+                "target_dim": int(target_dim),
+            },
+        )
+    return conditioning
 
 
 def _seed_for(seed: int, capability_id: str, sample_index: int) -> int:
@@ -790,6 +1029,7 @@ HOURLY_UNIVARIATE_PROFILE_IDS = (
     "m4_hourly_daily_168ctx",
     "electricity_hourly_daily_168ctx",
     "traffic_hourly_daily_168ctx",
+    "electricity_hourly_daily_2048ctx_24h",
 )
 HOURLY_PANEL_PROFILE_IDS = (
     "electricity_hourly_panel_168ctx",
@@ -812,11 +1052,9 @@ ACCEPTANCE_PROFILE_BY_CAPABILITY: dict[str, str] = {
     "multi_seasonal": "hourly_univariate_envelope_168ctx",
     "time_varying_seasonality": "hourly_univariate_envelope_168ctx",
     "regime_switching": "hourly_univariate_envelope_168ctx",
-    "long_memory_nonlinear": "hourly_univariate_envelope_168ctx",
-    "intermittent_heteroskedastic": "hourly_univariate_envelope_168ctx",
+    "nonlinear_persistence": "hourly_univariate_envelope_168ctx",
+    "predictable_intermittency": "hourly_univariate_envelope_168ctx",
     "common_factor": "hourly_panel_envelope_168ctx",
-    "lead_lag_coupling": "hourly_panel_envelope_168ctx",
-    "coherent_regime_shift": "hourly_panel_envelope_168ctx",
     "hierarchical_coherence": "m5_hierarchy_envelope_365ctx_28h",
     "covariate_response": "known_future_covariate_envelope_v1",
 }
@@ -937,6 +1175,10 @@ BOUNDED_ACCEPTANCE_FEATURES = {
     "future_abs_covariate_target_corr",
 }
 
+# Legacy pilot-cap tables are retained only so archived pre-paper experiment
+# scripts remain readable. The online paper-v1 generation path does not call
+# these tables or `_accept_synthetic_features`; it uses synthetic_feature_gate.
+
 
 def _cap_from_profiles(
     feature: str,
@@ -995,14 +1237,14 @@ PILOT_ACCEPTANCE_CAPS: dict[str, dict[str, float]] = {
             multiplier=2.5,
         ),
     },
-    "long_memory_nonlinear": {
+    "nonlinear_persistence": {
         **_caps_from_profiles(
             HOURLY_UNIVARIATE_PROFILE_IDS,
             ("nonlinear_lag1_gain", "acf_abs_mean", "spike_rate"),
         ),
         "noise_ratio": 1.0,
     },
-    "intermittent_heteroskedastic": {
+    "predictable_intermittency": {
         **_caps_from_profiles(
             HOURLY_UNIVARIATE_PROFILE_IDS,
             ("burst_rate", "spike_rate", "outlier_rate", "trend_strength", "seasonal_strength"),
@@ -1013,21 +1255,6 @@ PILOT_ACCEPTANCE_CAPS: dict[str, dict[str, float]] = {
         **_caps_from_profiles(
             HOURLY_PANEL_PROFILE_IDS,
             ("pca_top1_explained", "effective_factor_rank", "avg_abs_target_corr", "spike_rate"),
-        ),
-        "noise_ratio": 0.9,
-    },
-    "lead_lag_coupling": {
-        **_caps_from_profiles(
-            HOURLY_PANEL_PROFILE_IDS,
-            ("lead_lag_peak_abs", "avg_abs_target_corr", "spike_rate"),
-        ),
-        "noise_ratio": 0.9,
-    },
-    "coherent_regime_shift": {
-        **_caps_from_profiles(
-            HOURLY_PANEL_PROFILE_IDS,
-            ("level_shift_strength", "avg_abs_target_corr", "spike_rate"),
-            multiplier=2.5,
         ),
         "noise_ratio": 0.9,
     },
@@ -1057,11 +1284,75 @@ def _generate_accepted_sample_values(
     season_length: int,
     intensity: int,
     sample_seed: int,
+    *,
+    anchor_profile_id: str | None = None,
+    generator_conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]]:
     capability = CAPABILITIES_BY_ID.get(capability_id)
+    horizon = length - context_length
+    near_distance_profile_ids: tuple[str, ...] = ()
     if capability is not None:
-        _require_near_distance_calibration(capability, context_length, length - context_length, target_dim)
-    max_attempts = 12 if capability_id in PILOT_ACCEPTANCE_CAPS else 1
+        near_distance_profile_ids = tuple(
+            _require_near_distance_calibration(capability, context_length, horizon, target_dim)
+        )
+        feature_profile_ids = tuple(
+            _require_feature_gate_calibration(capability, context_length, horizon, target_dim)
+        )
+        generator_profiles = matching_generator_profiles(
+            capability_id=capability_id,
+            profile_ids=_profile_ids_for_capability(capability_id),
+            context_length=context_length,
+            horizon=horizon,
+            target_dim=target_dim,
+        )
+        generator_profile_ids = tuple(str(profile["profile_id"]) for profile in generator_profiles)
+        calibrated_profile_ids = tuple(
+            profile_id
+            for profile_id in generator_profile_ids
+            if profile_id in set(feature_profile_ids) and profile_id in set(near_distance_profile_ids)
+        )
+        if not calibrated_profile_ids:
+            raise ApiError(
+                "synthetic_anchor_profile_not_calibrated",
+                "no profile has all generator and post-generation calibrations for this request",
+                {
+                    "capability_id": capability_id,
+                    "context_length": int(context_length),
+                    "horizon": int(horizon),
+                    "target_dim": int(target_dim),
+                },
+            )
+        if anchor_profile_id is None:
+            anchor_profile_id = select_balanced_profile_id(
+                calibrated_profile_ids,
+                capability_id=capability_id,
+                seed=sample_seed,
+                sample_index=0,
+            )
+        elif anchor_profile_id not in calibrated_profile_ids:
+            raise ApiError(
+                "synthetic_anchor_profile_invalid",
+                "selected anchor profile is not fully calibrated for this request",
+                {
+                    "capability_id": capability_id,
+                    "profile_id": anchor_profile_id,
+                    "available_profile_ids": list(calibrated_profile_ids),
+                },
+            )
+        if generator_conditioning is None:
+            generator_conditioning = _resolve_required_generator_conditioning(
+                capability_id,
+                anchor_profile_id,
+                context_length,
+                horizon,
+                target_dim,
+            )
+    if generator_conditioning is not None:
+        if anchor_profile_id is not None and generator_conditioning.profile_id != anchor_profile_id:
+            raise ValueError("generator conditioning profile does not match anchor_profile_id")
+        anchor_profile_id = generator_conditioning.profile_id
+        season_length = generator_conditioning.season_length
+    max_attempts = 32
     last_result: tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]] | None = None
     for attempt in range(max_attempts):
         rng = np.random.default_rng(_attempt_seed(sample_seed, attempt))
@@ -1073,7 +1364,22 @@ def _generate_accepted_sample_values(
             season_length,
             intensity,
             rng,
+            generator_conditioning=generator_conditioning,
         )
+        predictability = latent_params.get("predictability", {})
+        predictability_accepted = bool(predictability.get("construction_validated"))
+        if not predictability_accepted:
+            raise ApiError(
+                "synthetic_predictability_contract_failed",
+                "synthetic configuration does not provide enough observable structure for the capability",
+                {
+                    "capability_id": capability_id,
+                    "context_length": int(context_length),
+                    "horizon": int(length - context_length),
+                    "season_length": int(season_length),
+                    "predictability": predictability,
+                },
+            )
         target = (
             _standardize_hierarchy_by_context(target, context_length)
             if capability_id == "hierarchical_coherence"
@@ -1082,19 +1388,35 @@ def _generate_accepted_sample_values(
         if covariates is not None and covariates.size:
             covariates = _normalize_covariates(covariates, context_length)
         realized_features = _realized_features(target, covariates, season_length, context_length)
-        feature_accepted, failed_features = _accept_synthetic_features(capability_id, realized_features)
+        feature_gate = evaluate_feature_support_gate(
+            capability_id=capability_id,
+            features=realized_features,
+            profile_ids=(anchor_profile_id,) if anchor_profile_id is not None else (),
+            context_length=context_length,
+            horizon=horizon,
+            target_dim=int(target.shape[1]),
+        )
+        feature_accepted = bool(feature_gate["accepted"])
+        failed_features = list(feature_gate.get("failed_features", []))
         near_distance = evaluate_near_distance_gate(
             target=target,
             features=realized_features,
-            profile_ids=_profile_ids_for_capability(capability_id),
+            profile_ids=near_distance_profile_ids or _profile_ids_for_capability(capability_id),
             context_length=context_length,
-            horizon=length - context_length,
+            horizon=horizon,
         )
         accepted = bool(feature_accepted and near_distance["accepted"])
-        validation = _validation_summary(capability_id, realized_features, feature_accepted, near_distance)
+        validation = _validation_summary(
+            capability_id,
+            realized_features,
+            feature_gate,
+            near_distance,
+            predictability,
+            anchor_profile_id,
+        )
         failed_gates = []
         if not feature_accepted:
-            failed_gates.append("feature_threshold")
+            failed_gates.append("feature_support")
         if not near_distance["accepted"]:
             failed_gates.append("near_distance")
         latent_params = {
@@ -1106,7 +1428,9 @@ def _generate_accepted_sample_values(
                 "attempts": attempt + 1,
                 "failed_gates": failed_gates,
                 "failed_features": failed_features,
-                "profile": _acceptance_profile_id(capability_id),
+                "profile": anchor_profile_id,
+                "profile_group": _acceptance_profile_id(capability_id),
+                "profile_selection_stage": "pre_generation",
                 "validation": validation,
             },
         }
@@ -1124,12 +1448,18 @@ def _generate_accepted_sample_values(
             "attempts": max_attempts,
             "failed_gates": latent_params.get("acceptance", {}).get("failed_gates", []),
             "failed_features": latent_params.get("acceptance", {}).get("failed_features", []),
+            "feature_gate_status": latent_params.get("acceptance", {}).get("validation", {}).get("feature_gate", {}).get("status"),
+            "feature_gate_profile_id": latent_params.get("acceptance", {}).get("validation", {}).get("feature_gate", {}).get("matched_profile_id"),
+            "anchor_profile_id": anchor_profile_id,
+            "feature_gate_score": latent_params.get("acceptance", {}).get("validation", {}).get("feature_gate", {}).get("score"),
+            "feature_gate_threshold": latent_params.get("acceptance", {}).get("validation", {}).get("feature_gate", {}).get("threshold"),
             "near_distance_status": latent_params.get("acceptance", {}).get("validation", {}).get("near_distance_gate", {}).get("status"),
         },
     )
 
 
 def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -> tuple[bool, list[str]]:
+    """Evaluate the obsolete one-sided pilot caps for archived experiments only."""
     caps = PILOT_ACCEPTANCE_CAPS.get(capability_id)
     if not caps:
         return True, []
@@ -1148,41 +1478,30 @@ def _accept_synthetic_features(capability_id: str, features: dict[str, float]) -
 def _validation_summary(
     capability_id: str,
     features: dict[str, float],
-    feature_accepted: bool,
+    feature_gate: dict[str, Any],
     near_distance: dict[str, Any],
+    predictability: dict[str, Any],
+    anchor_profile_id: str | None,
 ) -> dict[str, Any]:
     target_features = TARGET_FEATURES_BY_CAPABILITY.get(capability_id, ())
-    control_features = CONTROL_FEATURES_BY_CAPABILITY.get(capability_id, ())
-    control_bounds = _control_feature_bounds(capability_id)
-    control_results: dict[str, dict[str, float | bool]] = {}
-    for feature in control_features:
-        value = features.get(feature)
-        bounds = control_bounds.get(feature)
-        if value is None or bounds is None or not np.isfinite(value):
-            continue
-        lower = float(bounds.get("p05", float("-inf")))
-        upper = float(bounds.get("p95", float("inf")))
-        control_results[feature] = {
-            "value": float(value),
-            "p05": lower,
-            "p95": upper,
-            "inside_anchor_range": bool(lower <= float(value) <= upper),
-        }
     return {
-        "schema_version": "synthetic_post_generation_validation.v1",
-        "anchor_profile_id": _acceptance_profile_id(capability_id),
+        "schema_version": "synthetic_post_generation_validation.v3",
+        "anchor_profile_group": _acceptance_profile_id(capability_id),
+        "anchor_profile_id": anchor_profile_id,
+        "anchor_profile_selection_stage": "pre_generation",
         "target_features": {
             feature: float(features[feature])
             for feature in target_features
             if feature in features and np.isfinite(features[feature])
         },
-        "control_features": control_results,
-        "feature_gate": {
-            "accepted": bool(feature_accepted),
-            "caps": PILOT_ACCEPTANCE_CAPS.get(capability_id, {}),
-            "mins": PILOT_ACCEPTANCE_MINS.get(capability_id, {}),
-        },
+        "control_features": feature_gate.get("control_features", {}),
+        "feature_gate": feature_gate,
         "near_distance_gate": near_distance,
+        "predictability_gate": {
+            "accepted": bool(predictability.get("construction_validated")),
+            "contract": predictability.get("contract"),
+            "evidence": predictability.get("evidence", {}),
+        },
         "novelty_check": "online_dcr_nndr_gate",
         "distribution_check": "offline_control_feature_mmd_swd_required",
     }
@@ -1233,68 +1552,161 @@ def _generate_sample_values(
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    *,
+    generator_conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None]:
     if capability_id == "trend":
-        return _generate_trend(length, target_dim, season_length, intensity, rng)
-    if capability_id == "multi_seasonal":
-        return _generate_multi_seasonal(length, target_dim, season_length, intensity, rng)
-    if capability_id == "regime_switching":
-        return _generate_regime_switching(length, context_length, target_dim, season_length, intensity, rng)
-    if capability_id == "time_varying_seasonality":
-        return _generate_time_varying_seasonality(length, target_dim, season_length, intensity, rng)
-    if capability_id == "long_memory_nonlinear":
-        return _generate_long_memory_nonlinear(length, target_dim, season_length, intensity, rng)
-    if capability_id == "intermittent_heteroskedastic":
-        return _generate_intermittent_heteroskedastic(length, target_dim, season_length, intensity, rng)
-    if capability_id == "common_factor":
-        return _generate_common_factor(length, target_dim, season_length, intensity, rng)
-    if capability_id == "lead_lag_coupling":
-        return _generate_lead_lag_coupling(length, target_dim, season_length, intensity, rng)
-    if capability_id == "coherent_regime_shift":
-        return _generate_coherent_regime_shift(length, context_length, target_dim, season_length, intensity, rng)
-    if capability_id == "hierarchical_coherence":
-        return _generate_hierarchical_coherence(length, target_dim, season_length, intensity, rng)
-    if capability_id == "covariate_response":
-        return _generate_covariate_response(length, target_dim, season_length, intensity, rng)
-    raise ApiError("synthetic_capability_unknown", "unknown synthetic capability", {"capability_id": capability_id}, 404)
+        result = _generate_trend(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "multi_seasonal":
+        result = _generate_multi_seasonal(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "regime_switching":
+        result = _generate_regime_switching(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "time_varying_seasonality":
+        result = _generate_time_varying_seasonality(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "nonlinear_persistence":
+        result = _generate_nonlinear_persistence(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "predictable_intermittency":
+        result = _generate_predictable_intermittency(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "common_factor":
+        result = _generate_common_factor(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "hierarchical_coherence":
+        result = _generate_hierarchical_coherence(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    elif capability_id == "covariate_response":
+        result = _generate_covariate_response(length, context_length, target_dim, season_length, intensity, rng, generator_conditioning)
+    else:
+        raise ApiError("synthetic_capability_unknown", "unknown synthetic capability", {"capability_id": capability_id}, 404)
+    values, metadata, covariates = result
+    if generator_conditioning is not None:
+        metadata = {
+            **metadata,
+            "anchor_profile": generator_conditioning.profile_id,
+            "generator_conditioning": generator_conditioning.metadata(intensity),
+        }
+    return values, metadata, covariates
 
 
-def _base_features(length: int, season_length: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _base_features(
+    length: int,
+    context_length: int,
+    season_length: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     t = np.arange(length, dtype=float)
-    seasonal = np.sin(2 * np.pi * t / max(4, season_length))
-    slow = np.cos(2 * np.pi * t / max(8, season_length * 4))
-    trend = np.linspace(-1.0, 1.0, length)
-    return seasonal, slow, trend
+    period = max(4, int(season_length))
+    seasonal = np.sin(2 * np.pi * t / period)
+    slow = np.cos(2 * np.pi * t / max(8, period * 4))
+    periods_from_forecast_origin = (t - max(0, context_length - 1)) / period
+    return seasonal, slow, periods_from_forecast_origin
+
+
+def _paper_generator_metadata(
+    capability_id: str,
+    *,
+    validated: bool,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "generator_version": PAPER_GENERATOR_VERSION,
+        "predictability": {
+            "contract": PREDICTABILITY_CONTRACTS[capability_id],
+            "construction_validated": bool(validated),
+            "evidence": evidence,
+        },
+    }
+
+
+def _conditioned_lambda(intensity: int, conditioning: GeneratorConditioning | None) -> float:
+    if conditioning is None:
+        return _intensity_lambda(intensity)
+    return conditioning.lambda_for(intensity)
+
+
+def _conditioned_parameter(
+    conditioning: GeneratorConditioning | None,
+    name: str,
+    default: float,
+) -> float:
+    if conditioning is None:
+        return float(default)
+    return float(conditioning.parameters.get(name, default))
+
+
+def _conditioned_noise(
+    rng: np.random.Generator,
+    shape: tuple[int, ...],
+    base_scale: float,
+    conditioning: GeneratorConditioning | None,
+) -> np.ndarray:
+    scale = base_scale * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0)
+    degrees_of_freedom = _conditioned_parameter(
+        conditioning,
+        "noise_degrees_of_freedom",
+        0.0,
+    )
+    if degrees_of_freedom > 2.05:
+        standardized = rng.standard_t(degrees_of_freedom, size=shape)
+        standardized /= np.sqrt(degrees_of_freedom / (degrees_of_freedom - 2.0))
+    else:
+        standardized = rng.normal(0.0, 1.0, size=shape)
+    return scale * standardized
+
+
+def _background_trend(
+    time_axis: np.ndarray,
+    target_dim: int,
+    rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    scale = _conditioned_parameter(conditioning, "background_trend_scale", 0.0)
+    if scale <= 0.0:
+        slopes = np.zeros(target_dim, dtype=float)
+    else:
+        signs = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+        slopes = signs * scale * rng.uniform(0.75, 1.25, size=target_dim)
+    return time_axis[:, None] * slopes[None, :], slopes
 
 
 def _generate_trend(
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, slow, trend = _base_features(length, season_length)
-    slope_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
-    curvature_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
-    slope = slope_direction * (0.02 + 0.18 * lam) * rng.uniform(0.8, 1.2, size=target_dim)
-    curvature = curvature_direction * (0.02 + 0.16 * lam) * rng.uniform(0.5, 1.1, size=target_dim)
-    seasonal_amp = max(0.12, 0.45 - 0.10 * lam)
-    noise_scale = max(0.04, 0.12 - 0.04 * lam)
-    values = trend[:, None] * slope + ((trend[:, None] ** 2) - 0.35) * curvature
-    values += seasonal_amp * seasonal[:, None] + 0.08 * slow[:, None]
-    values += rng.normal(0.0, noise_scale, size=(length, target_dim))
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    trend_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+    shape_scale = rng.uniform(0.9, 1.1, size=target_dim)
+    trend_scale = structure_scale * (0.025 + 0.075 * lam)
+    slope = trend_direction * trend_scale * shape_scale
+    curvature = trend_direction * trend_scale * 0.06 * shape_scale
+    seasonal_amp = 0.35 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    slow_amp = 0.08 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    noise_scale = 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0)
+    values = time_axis[:, None] * slope + (time_axis[:, None] ** 2) * curvature
+    values += seasonal_amp * seasonal[:, None] + slow_amp * slow[:, None]
+    values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
     return (
         values,
         {
-            "generator_version": "v2-pilot",
+            **_paper_generator_metadata(
+                "trend",
+                validated=context_length >= 2 * max(4, season_length),
+                evidence={
+                    "context_season_count": float(context_length / max(4, season_length)),
+                    "forecast_law": "same_polynomial_coefficients",
+                },
+            ),
             "anchor_profile": "m4_hourly_daily_168ctx",
+            "trend_scale": float(trend_scale),
             "slope_mean": float(np.mean(slope)),
             "slope_abs_mean": float(np.mean(np.abs(slope))),
             "curvature_mean": float(np.mean(curvature)),
             "curvature_abs_mean": float(np.mean(np.abs(curvature))),
             "seasonal_amplitude": float(seasonal_amp),
+            "slow_amplitude": float(slow_amp),
             "noise_scale": float(noise_scale),
         },
         None,
@@ -1303,15 +1715,18 @@ def _generate_trend(
 
 def _generate_multi_seasonal(
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     t = np.arange(length, dtype=float)
     primary_period = max(4, season_length)
-    secondary_period = max(primary_period + 1, primary_period * 2)
+    secondary_period = primary_period * 2
     tertiary_period = max(4, primary_period // 2)
     values = np.zeros((length, target_dim))
     period_amplitudes: list[dict[str, float]] = []
@@ -1322,27 +1737,39 @@ def _generate_multi_seasonal(
         values += amplitude[None, :] * np.sin(2 * np.pi * t[:, None] / period + phase[None, :])
         period_amplitudes.append({"period": float(period), "amplitude_mean": float(np.mean(amplitude))})
 
-    amp = rng.uniform(0.9, 1.1, size=target_dim)
+    seasonal_multiplier = _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    amp = seasonal_multiplier * rng.uniform(0.9, 1.1, size=target_dim)
     add_period(primary_period, amp)
-    if lam > 0:
-        amp = 0.7 * lam * rng.uniform(0.8, 1.2, size=target_dim)
-        add_period(secondary_period, amp)
-    if lam > 0.5:
-        amp = 0.3 * ((lam - 0.5) * 2.0) * rng.uniform(0.8, 1.2, size=target_dim)
-        add_period(tertiary_period, amp)
+    additional_period_strength = structure_scale * (0.10 + 0.70 * lam)
+    amp = additional_period_strength * rng.uniform(0.8, 1.2, size=target_dim)
+    add_period(secondary_period, amp)
+    amp = 0.35 * additional_period_strength * rng.uniform(0.8, 1.2, size=target_dim)
+    add_period(tertiary_period, amp)
     slow_period = max(primary_period * 7, primary_period + 1)
     slow_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
-    values += 0.05 * np.cos(2 * np.pi * t[:, None] / slow_period + slow_phase[None, :])
-    noise_scale = max(0.04, 0.10 - 0.03 * lam)
-    values += rng.normal(0.0, noise_scale, size=values.shape)
+    slow_amplitude = 0.05 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    values += slow_amplitude * np.cos(2 * np.pi * t[:, None] / slow_period + slow_phase[None, :])
+    _, _, time_axis = _base_features(length, context_length, season_length)
+    background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
+    values += background
+    noise_scale = 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0)
+    values += _conditioned_noise(rng, values.shape, 0.08, conditioning)
     return (
         values,
         {
-            "generator_version": "v2-pilot",
+            **_paper_generator_metadata(
+                "multi_seasonal",
+                validated=context_length >= 2 * secondary_period,
+                evidence={
+                    "longest_period": int(secondary_period),
+                    "longest_period_cycles_in_context": float(context_length / secondary_period),
+                },
+            ),
             "anchor_profile": "m4_hourly_daily_168ctx",
             "periods": [int(item["period"]) for item in period_amplitudes],
             "period_amplitudes": period_amplitudes,
-            "secondary_amplitude_ratio": float(lam),
+            "additional_period_strength": float(additional_period_strength),
+            "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
             "noise_scale": float(noise_scale),
         },
         None,
@@ -1356,201 +1783,362 @@ def _generate_regime_switching(
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, slow, _ = _base_features(length, season_length)
-    switch_count = max(1, int(round(1 + lam * 4)))
-    random_pool = np.arange(4, max(5, length - 4))
-    cut_points = set(
-        rng.choice(random_pool, size=min(switch_count, max(1, length - 8), len(random_pool)), replace=False).tolist()
-    )
-    if context_length < length:
-        cut_points.add(int(rng.integers(context_length, length)))
-    cut_points = sorted(point for point in cut_points if 0 < point < length)
-    levels = rng.normal(0.0, 0.8 + 0.6 * lam, size=(len(cut_points) + 1, target_dim))
-    values = np.zeros((length, target_dim))
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
+    dwell_length = max(4, min(2 * max(4, season_length), max(4, context_length // 3)))
+    future_switch_at = context_length + max(1, int(season_length) // 2)
+    first_switch = future_switch_at
+    while first_switch - dwell_length > 0:
+        first_switch -= dwell_length
+    cut_points = list(range(first_switch, length, dwell_length))
+    cut_points = [int(point) for point in cut_points if 0 < point < length]
+
+    state = np.zeros(length, dtype=float)
     boundaries = [0, *cut_points, length]
+    initial_sign = float(rng.choice(np.asarray([-1.0, 1.0])))
     for segment, (start, end) in enumerate(zip(boundaries, boundaries[1:])):
-        scale = 0.08 + 0.06 * segment + 0.08 * lam
-        values[start:end] = levels[segment] + 0.35 * seasonal[start:end, None] + 0.18 * slow[start:end, None]
-        values[start:end] += rng.normal(0.0, scale, size=(end - start, target_dim))
-    return values, {"switch_count": len(cut_points), "cut_points": cut_points, "forecast_switch": int(any(point >= context_length for point in cut_points))}, None
+        state[start:end] = initial_sign * (-1.0 if segment % 2 else 1.0)
 
-
-def _generate_time_varying_seasonality(
-    length: int,
-    target_dim: int,
-    season_length: int,
-    intensity: int,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    t = np.arange(length, dtype=float)
-    primary_period = max(4, season_length)
-    slow_period = max(primary_period * 5, primary_period + 1)
-    drift = t / max(1, length - 1)
-    phase_drift = (0.05 + 0.45 * lam) * (drift ** 1.35) * 2 * np.pi
-    amplitude_start = 0.55 + 0.1 * rng.random(target_dim)
-    amplitude_delta = (0.2 + 1.0 * lam) * rng.uniform(0.8, 1.2, size=target_dim)
-    amplitude = amplitude_start[None, :] + amplitude_delta[None, :] * drift[:, None]
-    phase = rng.uniform(0, 2 * np.pi, size=target_dim)
-    values = amplitude * np.sin(2 * np.pi * t[:, None] / primary_period + phase[None, :] + phase_drift[:, None])
-    values += 0.18 * np.cos(2 * np.pi * t[:, None] / slow_period + phase[None, :] / 2)
-    values += 0.08 * drift[:, None]
-    noise_scale = max(0.04, 0.11 - 0.03 * lam)
-    values += rng.normal(0.0, noise_scale, size=(length, target_dim))
+    regime_strength = structure_scale * (0.25 + 0.85 * lam)
+    channel_scale = rng.uniform(0.9, 1.1, size=target_dim)
+    values = regime_strength * state[:, None] * channel_scale[None, :]
+    seasonal_amplitude = 0.30 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    slow_amplitude = 0.12 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    values += seasonal_amplitude * seasonal[:, None] + slow_amplitude * slow[:, None]
+    values += background
+    values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
+    historical_switches = [point for point in cut_points if point < context_length]
+    future_switches = [point for point in cut_points if point >= context_length]
+    validated = len(historical_switches) >= 2 and len(future_switches) >= 1
     return (
         values,
         {
-            "generator_version": "v2-pilot",
-            "amplitude_delta_mean": float(np.mean(amplitude_delta)),
-            "phase_drift_cycles": float(np.max(phase_drift) / (2 * np.pi)),
-            "noise_scale": float(noise_scale),
+            **_paper_generator_metadata(
+                "regime_switching",
+                validated=validated,
+                evidence={
+                    "historical_switch_count": len(historical_switches),
+                    "future_switch_count": len(future_switches),
+                    "constant_dwell_length": int(dwell_length),
+                    "alternating_state_order": True,
+                },
+            ),
+            "switch_count": len(cut_points),
+            "cut_points": cut_points,
+            "forecast_switch": int(bool(future_switches)),
+            "future_switch_at": int(future_switches[0]) if future_switches else None,
+            "dwell_length": int(dwell_length),
+            "regime_strength": float(regime_strength),
+            "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
+            "noise_scale": 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
         },
         None,
     )
 
 
-def _generate_long_memory_nonlinear(
-    length: int,
-    target_dim: int,
-    season_length: int,
-    intensity: int,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, slow, _ = _base_features(length, season_length)
-    values = np.zeros((length, target_dim))
-    phi = 0.65 + 0.22 * lam
-    nonlinear = 0.15 + 0.35 * lam
-    values[0] = rng.normal(0.0, 0.3, size=target_dim)
-    for idx in range(1, length):
-        values[idx] = (
-            phi * values[idx - 1]
-            + nonlinear * np.sin(values[idx - 1])
-            + 0.18 * seasonal[idx]
-            + 0.08 * slow[idx]
-            + rng.normal(0.0, 0.08 + 0.08 * lam, size=target_dim)
-        )
-    return values, {"ar_phi": float(phi), "nonlinear_strength": float(nonlinear)}, None
-
-
-def _generate_intermittent_heteroskedastic(
-    length: int,
-    target_dim: int,
-    season_length: int,
-    intensity: int,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, _, trend = _base_features(length, season_length)
-    event_prob = 0.04 + 0.1 * lam
-    bursts = rng.random((length, target_dim)) < event_prob
-    burst_size = rng.gamma(shape=1.5 + lam, scale=0.8 + lam, size=(length, target_dim)) * bursts
-    volatility = 0.08 + 0.22 * lam * (np.sin(np.arange(length) / max(3, season_length / 3)) + 1.3)
-    values = 0.15 * trend[:, None] + 0.25 * seasonal[:, None] + burst_size
-    values += rng.normal(0.0, volatility[:, None], size=(length, target_dim))
-    return values, {"event_probability": float(event_prob), "burst_count": int(bursts.sum())}, None
-
-
-def _generate_common_factor(
-    length: int,
-    target_dim: int,
-    season_length: int,
-    intensity: int,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, slow, trend = _base_features(length, season_length)
-    ar = np.zeros(length)
-    for idx in range(1, length):
-        ar[idx] = 0.82 * ar[idx - 1] + rng.normal(0.0, 0.2 + 0.1 * lam)
-    rank = min(target_dim, 2 + int(lam >= 0.5))
-    factors = np.vstack([seasonal, slow, trend, ar][:rank]).T
-    loadings = rng.normal(0.0, 1.0, size=(target_dim, rank))
-    values = factors @ loadings.T + rng.normal(0.0, 0.12 + 0.12 * lam, size=(length, target_dim))
-    return values, {"factor_rank": rank, "noise_scale": float(0.12 + 0.12 * lam)}, None
-
-
-def _generate_lead_lag_coupling(
-    length: int,
-    target_dim: int,
-    season_length: int,
-    intensity: int,
-    rng: np.random.Generator,
-) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    max_lag = max(1, min(max(2, season_length // 3), 8 + int(10 * lam)))
-    values, _, _ = _generate_common_factor(length + max_lag, target_dim, season_length, intensity, rng)
-    weights = rng.uniform(0.15, 0.45 + 0.25 * lam, size=target_dim)
-    lags = rng.integers(1, max_lag + 1, size=target_dim)
-    coupled = values.copy()
-    for channel in range(1, target_dim):
-        leader = (channel - 1) % target_dim
-        lag = int(lags[channel])
-        coupled[lag:, channel] += weights[channel] * values[:-lag, leader]
-    coupled = coupled[max_lag:]
-    return coupled, {"max_lag": int(max_lag), "coupling_strength_mean": float(np.mean(weights))}, None
-
-
-def _generate_coherent_regime_shift(
+def _generate_time_varying_seasonality(
     length: int,
     context_length: int,
     target_dim: int,
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, slow, trend = _base_features(length, season_length)
-    shift_low = min(max(1, int(context_length)), length - 1)
-    shift_at = int(rng.integers(shift_low, length)) if shift_low < length else length - 1
-    direction = rng.normal(0.0, 0.8 + 1.2 * lam, size=target_dim)
-    common = 0.5 * seasonal + 0.2 * slow + 0.15 * trend
-    values = common[:, None] + rng.normal(0.0, 0.1 + 0.08 * lam, size=(length, target_dim))
-    values[shift_at:] += direction
-    return values, {"shift_at": shift_at, "shift_norm": float(np.linalg.norm(direction))}, None
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    t = np.arange(length, dtype=float)
+    primary_period = max(4, season_length)
+    modulation_period = primary_period * 4
+    modulation_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
+    carrier_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
+    modulation_strength = structure_scale * (0.10 + 0.90 * lam)
+    amplitude_depth = 0.06 + 0.34 * modulation_strength
+    phase_depth_cycles = 0.01 + 0.07 * modulation_strength
+    modulation = np.sin(2 * np.pi * t[:, None] / modulation_period + modulation_phase[None, :])
+    amplitude = 1.0 + amplitude_depth * modulation
+    phase_modulation = 2 * np.pi * phase_depth_cycles * modulation
+    seasonal_multiplier = _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    values = seasonal_multiplier * amplitude * np.sin(
+        2 * np.pi * t[:, None] / primary_period
+        + carrier_phase[None, :]
+        + phase_modulation
+    )
+    residue_amplitude = 0.15 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    values += residue_amplitude * np.cos(
+        2 * np.pi * t[:, None] / (primary_period * 2)
+        + carrier_phase[None, :] / 2
+    )
+    _, _, time_axis = _base_features(length, context_length, season_length)
+    background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
+    values += background
+    noise_scale = 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0)
+    values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
+    return (
+        values,
+        {
+            **_paper_generator_metadata(
+                "time_varying_seasonality",
+                validated=context_length >= modulation_period,
+                evidence={
+                    "modulation_period": int(modulation_period),
+                    "modulation_cycles_in_context": float(context_length / modulation_period),
+                    "forecast_modulation_law": "periodic_continuation",
+                },
+            ),
+            "modulation_strength": float(modulation_strength),
+            "amplitude_depth": float(amplitude_depth),
+            "amplitude_delta_mean": float(2 * amplitude_depth),
+            "phase_modulation_depth_cycles": float(phase_depth_cycles),
+            "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
+            "noise_scale": float(noise_scale),
+        },
+        None,
+    )
 
 
-def _generate_hierarchical_coherence(
+def _generate_nonlinear_persistence(
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], None]:
-    lam = _intensity_lambda(intensity)
-    seasonal, slow, trend = _base_features(length, season_length)
-    t = np.arange(length, dtype=float)
-    child_count = max(2, target_dim - 1)
-    children = np.zeros((length, child_count))
-    for child in range(child_count):
-        phase = rng.uniform(0, 2 * np.pi)
-        amplitude = rng.uniform(0.45, 0.75) * (1.0 + 0.25 * lam)
-        local_period = max(4, season_length + int((child - child_count / 2) * max(1, season_length // 6)))
-        children[:, child] = (
-            amplitude * np.sin(2 * np.pi * t / local_period + phase)
-            + (0.18 + 0.12 * lam) * slow
-            + rng.normal(0.0, 0.06 + 0.03 * lam, size=length)
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
+    seasonal_lag = max(4, int(season_length))
+    nonlinear_lag = max(2, seasonal_lag // 2)
+    dependency_strength = float(np.clip(structure_scale * (0.10 + 0.90 * lam), 0.0, 1.0))
+    ar_phi = 0.45
+    seasonal_memory = 0.04 + 0.18 * dependency_strength
+    nonlinear_strength = 0.01 + 0.11 * dependency_strength
+    stability_bound = ar_phi + seasonal_memory + 2.0 * nonlinear_strength
+    state = np.zeros((length, target_dim))
+    warmup = min(length, seasonal_lag)
+    state[:warmup] = rng.normal(0.0, 0.30, size=(warmup, target_dim))
+    for idx in range(warmup, length):
+        state[idx] = (
+            ar_phi * state[idx - 1]
+            + seasonal_memory * state[idx - seasonal_lag]
+            + nonlinear_strength * np.sin(2.0 * state[idx - nonlinear_lag])
+            + _conditioned_noise(rng, (target_dim,), 0.06, conditioning)
         )
-    shock_count = int(round(lam * 3))
-    for _ in range(shock_count):
-        start = int(rng.integers(max(2, season_length // 2), max(3, length - 2)))
-        width = int(rng.integers(2, max(3, min(10, season_length))))
-        direction = rng.normal(0.0, 0.2 + 0.35 * lam, size=child_count)
-        children[start : min(length, start + width)] += direction[None, :]
-    children += (0.03 + 0.08 * lam) * trend[:, None] * rng.uniform(0.7, 1.3, size=child_count)
-    parent = np.sum(children, axis=1, keepdims=True)
-    values = np.concatenate([parent, children], axis=1)
-    if values.shape[1] > target_dim:
-        values = values[:, :target_dim]
+    seasonal_amplitude = 0.20 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    slow_amplitude = 0.08 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    values = state + seasonal_amplitude * seasonal[:, None] + slow_amplitude * slow[:, None]
+    values += background
+    validated = context_length >= 2 * seasonal_lag and stability_bound < 1.0
     return (
         values,
         {
-            "generator_version": "v2-pilot",
+            **_paper_generator_metadata(
+                "nonlinear_persistence",
+                validated=validated,
+                evidence={
+                    "maximum_lag": int(seasonal_lag),
+                    "maximum_lag_observations_in_context": float(context_length / seasonal_lag),
+                    "coefficient_stability_bound": float(stability_bound),
+                },
+            ),
+            "dependency_strength": float(dependency_strength),
+            "ar_phi": float(ar_phi),
+            "seasonal_lag": int(seasonal_lag),
+            "seasonal_memory": float(seasonal_memory),
+            "nonlinear_lag": int(nonlinear_lag),
+            "nonlinear_strength": float(nonlinear_strength),
+            "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
+            "noise_scale": 0.06 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
+        },
+        None,
+    )
+
+
+def _generate_predictable_intermittency(
+    length: int,
+    context_length: int,
+    target_dim: int,
+    season_length: int,
+    intensity: int,
+    rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
+) -> tuple[np.ndarray, dict[str, Any], None]:
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    pulse_period = max(4, int(season_length))
+    forecast_center = context_length + max(1, int(season_length) // 2)
+    first_center = forecast_center
+    while first_center - pulse_period >= 0:
+        first_center -= pulse_period
+    pulse_centers = list(range(first_center, length, pulse_period))
+    pulse_centers = [int(center) for center in pulse_centers if 0 <= center < length]
+    pulse_width = max(0.65, pulse_period / 40.0)
+    t = np.arange(length, dtype=float)
+    pulse_shape = np.zeros(length, dtype=float)
+    for center in pulse_centers:
+        pulse_shape += np.exp(-0.5 * ((t - center) / pulse_width) ** 2)
+    pulse_strength = structure_scale * (0.35 + 1.25 * lam)
+    channel_scale = rng.uniform(0.9, 1.1, size=target_dim)
+    values = pulse_strength * pulse_shape[:, None] * channel_scale[None, :]
+    seasonal_amplitude = 0.12 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    slow_amplitude = 0.04 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    values += seasonal_amplitude * seasonal[:, None] + slow_amplitude * slow[:, None]
+    background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
+    values += background
+    values += _conditioned_noise(rng, (length, target_dim), 0.05, conditioning)
+    historical_centers = [center for center in pulse_centers if center < context_length]
+    future_centers = [center for center in pulse_centers if center >= context_length]
+    validated = len(historical_centers) >= 2 and len(future_centers) >= 1
+    return (
+        values,
+        {
+            **_paper_generator_metadata(
+                "predictable_intermittency",
+                validated=validated,
+                evidence={
+                    "historical_pulse_count": len(historical_centers),
+                    "future_pulse_count": len(future_centers),
+                    "constant_pulse_period": int(pulse_period),
+                },
+            ),
+            "pulse_period": int(pulse_period),
+            "pulse_centers": pulse_centers,
+            "pulse_width": float(pulse_width),
+            "pulse_strength": float(pulse_strength),
+            "burst_count": len(pulse_centers),
+            "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
+            "noise_scale": 0.05 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
+        },
+        None,
+    )
+
+
+def _generate_common_factor(
+    length: int,
+    context_length: int,
+    target_dim: int,
+    season_length: int,
+    intensity: int,
+    rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
+) -> tuple[np.ndarray, dict[str, Any], None]:
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    t = np.arange(length, dtype=float)
+    seasonal_multiplier = _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    slow_multiplier = _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    shared_factor = 0.75 * seasonal_multiplier * seasonal + 0.25 * slow_multiplier * slow
+    shared_strength = structure_scale * (0.15 + 1.05 * lam)
+    signs = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+    loadings = signs * rng.uniform(0.8, 1.2, size=target_dim)
+    values = shared_strength * shared_factor[:, None] * loadings[None, :]
+    local_amplitude = 0.45 * _conditioned_parameter(conditioning, "local_amplitude_multiplier", 1.0)
+    for channel in range(target_dim):
+        local_period = max(4, int(season_length) + 3 * (channel + 1))
+        local_phase = rng.uniform(0, 2 * np.pi)
+        values[:, channel] += local_amplitude * np.sin(2 * np.pi * t / local_period + local_phase)
+    background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
+    values += background
+    values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
+    validated = target_dim >= 3 and context_length >= 2 * max(4, season_length)
+    return (
+        values,
+        {
+            **_paper_generator_metadata(
+                "common_factor",
+                validated=validated,
+                evidence={
+                    "target_dim": int(target_dim),
+                    "shared_factor_law": "fixed_two_period_harmonic",
+                    "loadings_constant_across_boundary": True,
+                },
+            ),
+            "factor_rank": 1,
+            "shared_factor_strength": float(shared_strength),
+            "local_amplitude": float(local_amplitude),
+            "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
+            "noise_scale": 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
+            "loadings": [float(value) for value in loadings],
+        },
+        None,
+    )
+
+
+def _generate_hierarchical_coherence(
+    length: int,
+    context_length: int,
+    target_dim: int,
+    season_length: int,
+    intensity: int,
+    rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
+) -> tuple[np.ndarray, dict[str, Any], None]:
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    t = np.arange(length, dtype=float)
+    child_count = max(2, target_dim - 1)
+    heterogeneity_strength = structure_scale * (0.10 + 0.70 * lam)
+    shared_component = (
+        0.30 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0) * seasonal
+        + 0.10 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0) * slow
+    )
+    local_components = np.zeros((length, child_count))
+    for child in range(child_count):
+        phase = rng.uniform(0, 2 * np.pi)
+        direction = -1.0 if child % 2 else 1.0
+        local_period = max(4, int(season_length) + 2 * (child + 1))
+        local_components[:, child] = (
+            0.55
+            * _conditioned_parameter(conditioning, "local_amplitude_multiplier", 1.0)
+            * np.sin(2 * np.pi * t / local_period + phase)
+            + direction * 0.025 * time_axis
+        )
+    local_components -= np.mean(local_components, axis=1, keepdims=True)
+    common_noise_seed, idiosyncratic_noise_seed = rng.integers(0, 2**32 - 1, size=2)
+    common_noise_rng = np.random.default_rng(int(common_noise_seed))
+    idiosyncratic_noise_rng = np.random.default_rng(int(idiosyncratic_noise_seed))
+    idiosyncratic_noise = _conditioned_noise(
+        idiosyncratic_noise_rng,
+        (length, child_count),
+        0.04,
+        conditioning,
+    )
+    idiosyncratic_noise -= np.mean(idiosyncratic_noise, axis=1, keepdims=True)
+    common_noise = _conditioned_noise(common_noise_rng, (length,), 0.03, conditioning)
+    children = (
+        (shared_component + common_noise)[:, None] / child_count
+        + heterogeneity_strength * local_components
+        + idiosyncratic_noise
+    )
+    parent = np.sum(children, axis=1, keepdims=True)
+    values = np.concatenate([parent, children], axis=1)
+    validated = target_dim >= 3 and context_length >= 2 * max(4, season_length)
+    return (
+        values,
+        {
+            **_paper_generator_metadata(
+                "hierarchical_coherence",
+                validated=validated,
+                evidence={
+                    "target_dim": int(target_dim),
+                    "future_only_shock_count": 0,
+                    "component_laws_constant_across_boundary": True,
+                },
+            ),
             "hierarchy": "target_0=sum(target_1:)",
             "child_count": int(child_count),
-            "shock_count": int(shock_count),
+            "heterogeneity_strength": float(heterogeneity_strength),
+            "noise_scale": 0.04 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
             "coherence_residual_mean_abs": float(np.mean(np.abs(parent[:, 0] - np.sum(children, axis=1)))),
         },
         None,
@@ -1559,34 +2147,84 @@ def _generate_hierarchical_coherence(
 
 def _generate_covariate_response(
     length: int,
+    context_length: int,
     target_dim: int,
     season_length: int,
     intensity: int,
     rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray]:
-    lam = _intensity_lambda(intensity)
+    lam = _conditioned_lambda(intensity, conditioning)
+    structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     t = np.arange(length, dtype=float)
-    weather = np.sin(2 * np.pi * t / max(8, season_length * 2)) + rng.normal(0.0, 0.08, size=length)
+    weather_noise_seed, target_noise_seed = rng.integers(0, 2**32 - 1, size=2)
+    weather_noise_rng = np.random.default_rng(int(weather_noise_seed))
+    target_noise_rng = np.random.default_rng(int(target_noise_seed))
+    effect_strength = structure_scale * (0.25 + 0.95 * lam)
+    weather_sign = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+    beta_weather = weather_sign * effect_strength * rng.uniform(0.6, 1.0, size=target_dim)
+    beta_event = effect_strength * rng.uniform(0.9, 1.3, size=target_dim)
+    weather_period = max(8, season_length * 2)
+    weather = np.sin(2 * np.pi * t / weather_period)
+    weather_innovation = np.zeros(length, dtype=float)
+    for index in range(1, length):
+        weather_innovation[index] = (
+            0.65 * weather_innovation[index - 1]
+            + weather_noise_rng.normal(0.0, 0.18)
+        )
+    weather += weather_innovation
     event = np.zeros(length)
-    start_pool = np.arange(max(2, season_length // 2), max(3, length - 2))
-    if len(start_pool):
-        event_count = max(1, min(len(start_pool), int(round(1 + lam * 3))))
-        for start in rng.choice(start_pool, size=event_count, replace=False):
-            width = int(rng.integers(2, max(3, min(10, season_length))))
-            event[int(start) : min(length, int(start) + width)] = 1.0
+    event_width = max(2, min(4, max(2, season_length // 8)))
+    history_starts = [
+        max(1, context_length // 4),
+        max(1, context_length // 2),
+        max(1, (3 * context_length) // 4),
+    ]
+    history_starts = sorted({min(context_length - event_width, start) for start in history_starts})
+    future_start = context_length + max(1, int(season_length) // 2) - event_width // 2
+    event_starts = [*history_starts, int(future_start)]
+    for start in event_starts:
+        event[int(start) : min(length, int(start) + event_width)] = 1.0
     covariates = np.stack([weather, event], axis=1)
-    seasonal, slow, trend = _base_features(length, season_length)
-    beta_weather = rng.uniform(-0.5, 0.8, size=target_dim) * (0.7 + lam)
-    beta_event = rng.uniform(0.4, 1.6, size=target_dim) * (0.8 + lam)
-    values = 0.35 * seasonal[:, None] + 0.18 * slow[:, None] + 0.1 * trend[:, None]
+    seasonal, slow, time_axis = _base_features(length, context_length, season_length)
+    seasonal_amplitude = 0.35 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
+    slow_amplitude = 0.12 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
+    base_trend_scale = _conditioned_parameter(conditioning, "background_trend_scale", 0.01)
+    values = seasonal_amplitude * seasonal[:, None] + slow_amplitude * slow[:, None] + base_trend_scale * time_axis[:, None]
     values = values + weather[:, None] * beta_weather + event[:, None] * beta_event
-    values += rng.normal(0.0, 0.1 + 0.08 * lam, size=(length, target_dim))
+    innovations = _conditioned_noise(
+        target_noise_rng,
+        (length, target_dim),
+        0.08,
+        conditioning,
+    )
+    residual_ar_phi = _conditioned_parameter(conditioning, "residual_ar_phi", 0.0)
+    residual = np.array(innovations, copy=True)
+    for index in range(1, length):
+        residual[index] += residual_ar_phi * residual[index - 1]
+    values += residual
+    validated = len(history_starts) >= 2 and context_length <= future_start < length
     return (
         values,
         {
+            **_paper_generator_metadata(
+                "covariate_response",
+                validated=validated,
+                evidence={
+                    "historical_event_count": len(history_starts),
+                    "future_event_count": 1,
+                    "future_covariates_supplied": True,
+                },
+            ),
             "future_covariate_dim": 2,
+            "effect_strength": float(effect_strength),
             "weather_effect_mean": float(np.mean(np.abs(beta_weather))),
             "event_effect_mean": float(np.mean(np.abs(beta_event))),
+            "event_starts": [int(start) for start in event_starts],
+            "event_width": int(event_width),
+            "future_event_start": int(future_start),
+            "residual_ar_phi": float(residual_ar_phi),
+            "noise_scale": 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
         },
         covariates,
     )
@@ -1650,8 +2288,25 @@ def _realized_features(
     if target.shape[1] > 2:
         hierarchy_residual = target[:, 0] - np.sum(target[:, 1:], axis=1)
         features["hierarchy_residual_mean_abs"] = float(np.mean(np.abs(hierarchy_residual)))
+        children = target[:, 1:]
+        features["hierarchy_child_heterogeneity"] = float(
+            np.mean(np.std(children, axis=1))
+        )
+        child_magnitude = float(np.mean(np.sum(np.abs(children), axis=1)))
+        features["hierarchy_aggregation_ratio"] = (
+            float(np.mean(np.abs(target[:, 0]))) / child_magnitude
+            if child_magnitude > 1e-12
+            else 0.0
+        )
     if covariates is not None and covariates.size:
-        features.update(_covariate_profile_features(target, covariates, context_length))
+        features.update(
+            _covariate_profile_features(
+                target,
+                covariates,
+                context_length,
+                season_length,
+            )
+        )
     return features
 
 
@@ -1687,6 +2342,7 @@ def _structural_univariate_features(values: np.ndarray, season_length: int) -> d
     half = max(1, n // 2)
     seasonal_left = _phase_profile(y[:half], season_length)
     seasonal_right = _phase_profile(y[half:], season_length)
+    modulation_features = _seasonal_modulation_features(y, season_length)
     diff = np.diff(y)
     return {
         "level_shift_strength": float(max(level_scores)) if level_scores else 0.0,
@@ -1698,6 +2354,38 @@ def _structural_univariate_features(values: np.ndarray, season_length: int) -> d
         "seasonal_drift_score": float(np.mean(np.abs(seasonal_left - seasonal_right))) if seasonal_left.size and seasonal_right.size else 0.0,
         "seasonal_amplitude_cv": float(np.std(np.abs(seasonal_profile)) / (np.mean(np.abs(seasonal_profile)) + 1e-9)) if seasonal_profile.size else 0.0,
         "nonlinear_lag1_gain": _nonlinear_lag1_gain(y),
+        "nonlinear_multi_lag_gain": _nonlinear_multi_lag_gain(y, season_length),
+        **modulation_features,
+    }
+
+
+def _seasonal_modulation_features(values: np.ndarray, season_length: int) -> dict[str, float]:
+    period = max(4, int(season_length))
+    cycle_count = values.size // period
+    if cycle_count < 3:
+        return {
+            "seasonal_amplitude_modulation": 0.0,
+            "seasonal_phase_variation": 0.0,
+        }
+    phase_index = np.arange(period, dtype=float)
+    sine = np.sin(2 * np.pi * phase_index / period)
+    cosine = np.cos(2 * np.pi * phase_index / period)
+    amplitudes: list[float] = []
+    phases: list[float] = []
+    for cycle in range(cycle_count):
+        segment = values[cycle * period : (cycle + 1) * period]
+        centered = segment - float(np.mean(segment))
+        sine_coefficient = 2.0 * float(np.mean(centered * sine))
+        cosine_coefficient = 2.0 * float(np.mean(centered * cosine))
+        amplitudes.append(float(np.hypot(sine_coefficient, cosine_coefficient)))
+        phases.append(float(np.arctan2(cosine_coefficient, sine_coefficient)))
+    amplitude_array = np.asarray(amplitudes, dtype=float)
+    phase_array = np.unwrap(np.asarray(phases, dtype=float))
+    return {
+        "seasonal_amplitude_modulation": float(
+            np.std(amplitude_array) / (np.mean(amplitude_array) + 1e-9)
+        ),
+        "seasonal_phase_variation": float(np.std(phase_array) / np.pi),
     }
 
 
@@ -1723,7 +2411,12 @@ def _multivariate_profile_features(target: np.ndarray) -> dict[str, float]:
     }
 
 
-def _covariate_profile_features(target: np.ndarray, covariates: np.ndarray, context_length: int) -> dict[str, float]:
+def _covariate_profile_features(
+    target: np.ndarray,
+    covariates: np.ndarray,
+    context_length: int,
+    season_length: int,
+) -> dict[str, float]:
     scores: list[float] = []
     future_scores: list[float] = []
     for cov_idx in range(covariates.shape[1]):
@@ -1744,10 +2437,45 @@ def _covariate_profile_features(target: np.ndarray, covariates: np.ndarray, cont
             inactive = ~active
             if active.any() and inactive.any():
                 event_lifts.append(abs(float(np.mean(target[active]) - np.mean(target[inactive]))))
+    t = np.arange(target.shape[0], dtype=float)
+    period = max(4, int(season_length))
+    baseline_design = np.column_stack(
+        [
+            np.ones(target.shape[0], dtype=float),
+            np.sin(2 * np.pi * t / period),
+            np.cos(2 * np.pi * t / period),
+        ]
+    )
+    covariate_design = np.column_stack([baseline_design, covariates])
+    incremental_scores = [
+        max(
+            0.0,
+            _r2(target[:, target_idx], covariate_design)
+            - _r2(target[:, target_idx], baseline_design),
+        )
+        for target_idx in range(target.shape[1])
+    ]
+    residual_acf_scores: list[float] = []
+    residual_outlier_scores: list[float] = []
+    residual_spike_scores: list[float] = []
+    for target_idx in range(target.shape[1]):
+        residual = _linear_residual(target[:, target_idx], covariate_design)
+        residual_acf_scores.append(
+            _mean_abs_autocorrelation(
+                _robust_scale(residual),
+                max_lag=min(10, max(1, residual.size // 4)),
+            )
+        )
+        residual_outlier_scores.append(_outlier_rate(residual))
+        residual_spike_scores.append(_spike_rate(residual))
     return {
         "avg_abs_covariate_target_corr": float(np.mean(scores)) if scores else 0.0,
         "future_abs_covariate_target_corr": float(np.mean(future_scores)) if future_scores else 0.0,
         "event_lift_abs": float(np.mean(event_lifts)) if event_lifts else 0.0,
+        "covariate_incremental_r2": float(np.mean(incremental_scores)) if incremental_scores else 0.0,
+        "covariate_residual_acf_abs_mean": float(np.mean(residual_acf_scores)) if residual_acf_scores else 0.0,
+        "covariate_residual_outlier_rate": float(np.mean(residual_outlier_scores)) if residual_outlier_scores else 0.0,
+        "covariate_residual_spike_rate": float(np.mean(residual_spike_scores)) if residual_spike_scores else 0.0,
     }
 
 
@@ -1830,6 +2558,30 @@ def _nonlinear_lag1_gain(values: np.ndarray) -> float:
     return max(0.0, _r2(y, nonlinear) - _r2(y, linear))
 
 
+def _nonlinear_multi_lag_gain(values: np.ndarray, season_length: int) -> float:
+    seasonal_lag = max(4, int(season_length))
+    nonlinear_lag = max(2, seasonal_lag // 2)
+    start = max(seasonal_lag, nonlinear_lag, 1)
+    if values.size - start < 8:
+        return 0.0
+    target = values[start:]
+    lag1 = values[start - 1 : -1]
+    lag_seasonal = values[: values.size - seasonal_lag]
+    if lag_seasonal.size > target.size:
+        lag_seasonal = lag_seasonal[-target.size :]
+    lag_nonlinear = values[start - nonlinear_lag : values.size - nonlinear_lag]
+    linear = np.column_stack([np.ones_like(target), lag1])
+    nonlinear = np.column_stack(
+        [
+            np.ones_like(target),
+            lag1,
+            lag_seasonal,
+            np.sin(2.0 * lag_nonlinear),
+        ]
+    )
+    return max(0.0, _r2(target, nonlinear) - _r2(target, linear))
+
+
 def _r2(y: np.ndarray, design: np.ndarray) -> float:
     try:
         coeffs = np.linalg.lstsq(design, y, rcond=None)[0]
@@ -1840,6 +2592,14 @@ def _r2(y: np.ndarray, design: np.ndarray) -> float:
     if denom <= 1e-12:
         return 0.0
     return float(1.0 - np.sum((y - fitted) ** 2) / denom)
+
+
+def _linear_residual(y: np.ndarray, design: np.ndarray) -> np.ndarray:
+    try:
+        coeffs = np.linalg.lstsq(design, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        return np.asarray(y, dtype=float) - float(np.mean(y))
+    return np.asarray(y, dtype=float) - design @ coeffs
 
 
 def _lead_lag_peak_abs(values: np.ndarray, max_lag: int = 12) -> float:

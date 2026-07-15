@@ -119,28 +119,28 @@ const zhCN = {
         description: '带有多重叠加季节周期的单目标序列。',
       },
       regime_switching: {
-        label: '状态切换',
-        description: '带有水平和波动率切换的单目标序列。',
+        label: '可预测状态切换',
+        description: '带有可从历史识别的重复状态切换规律的单目标序列。',
       },
-      long_memory_nonlinear: {
-        label: '长记忆非线性',
-        description: '带有非线性延续效应的单目标自回归动态。',
+      time_varying_seasonality: {
+        label: '时变季节性',
+        description: '季节振幅和相位按平滑规律变化的单目标序列。',
       },
-      intermittent_heteroskedastic: {
-        label: '间歇异方差',
-        description: '带有稀疏突发和变化噪声尺度的单目标序列。',
+      nonlinear_persistence: {
+        label: '非线性多滞后持久性',
+        description: '同时依赖短滞后、季节滞后和非线性滞后项的稳定动态。',
+      },
+      predictable_intermittency: {
+        label: '可预测间歇性',
+        description: '带有可从历史识别的重复事件时钟和稀疏脉冲的单目标序列。',
       },
       common_factor: {
         label: '公共因子',
         description: '由共享潜在因子驱动的多目标序列。',
       },
-      lead_lag_coupling: {
-        label: 'Lead-lag 耦合',
-        description: '带有滞后跨通道依赖的多目标序列。',
-      },
-      coherent_regime_shift: {
-        label: '协同状态切换',
-        description: '多个目标在同一状态变化中协同切换的序列。',
+      hierarchical_coherence: {
+        label: '层级一致性',
+        description: '带有严格父子加总结构的多目标序列。',
       },
       covariate_response: {
         label: '协变量响应',

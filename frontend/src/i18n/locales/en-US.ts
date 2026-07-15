@@ -119,28 +119,28 @@ const enUS = {
         description: 'Single-target series with multiple overlapping seasonal periods.',
       },
       regime_switching: {
-        label: 'Regime switching',
-        description: 'Single-target series with level and volatility changes.',
+        label: 'Predictable regime switching',
+        description: 'Single-target series with a recurring, history-observable regime schedule.',
       },
-      long_memory_nonlinear: {
-        label: 'Long-memory nonlinear',
-        description: 'Single-target autoregressive dynamics with nonlinear carry-over.',
+      time_varying_seasonality: {
+        label: 'Time-varying seasonality',
+        description: 'Single-target series with smoothly modulated seasonal amplitude and phase.',
       },
-      intermittent_heteroskedastic: {
-        label: 'Intermittent heteroskedastic',
-        description: 'Single-target sparse bursts with changing noise scale.',
+      nonlinear_persistence: {
+        label: 'Nonlinear multi-lag persistence',
+        description: 'Stable dynamics with short, seasonal, and nonlinear lag dependence.',
+      },
+      predictable_intermittency: {
+        label: 'Predictable intermittency',
+        description: 'Recurring sparse pulses with a history-observable event clock.',
       },
       common_factor: {
         label: 'Common factor',
         description: 'Multiple targets driven by shared latent factors.',
       },
-      lead_lag_coupling: {
-        label: 'Lead-lag coupling',
-        description: 'Multiple targets with lagged cross-channel dependencies.',
-      },
-      coherent_regime_shift: {
-        label: 'Coherent regime shift',
-        description: 'Multiple targets that shift together across regimes.',
+      hierarchical_coherence: {
+        label: 'Hierarchical coherence',
+        description: 'Multiple targets with an exact parent-child additive structure.',
       },
       covariate_response: {
         label: 'Covariate response',

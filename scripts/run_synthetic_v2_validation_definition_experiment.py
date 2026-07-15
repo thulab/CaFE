@@ -38,11 +38,9 @@ DEFAULT_CAPABILITIES = (
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
     "common_factor",
-    "lead_lag_coupling",
-    "coherent_regime_shift",
     "hierarchical_coherence",
     "covariate_response",
 )
@@ -51,14 +49,12 @@ UNIVARIATE_CAPABILITIES = {
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
-    "long_memory_nonlinear",
-    "intermittent_heteroskedastic",
+    "nonlinear_persistence",
+    "predictable_intermittency",
     "covariate_response",
 }
 MULTIVARIATE_CAPABILITIES = {
     "common_factor",
-    "lead_lag_coupling",
-    "coherent_regime_shift",
     "hierarchical_coherence",
 }
 BASE_FEATURES = (
@@ -73,11 +69,14 @@ EXTENDED_FEATURES = (
     "curvature_abs",
     "multi_period_score",
     "seasonal_drift_score",
+    "seasonal_amplitude_modulation",
+    "seasonal_phase_variation",
     "change_point_shift_energy",
     "level_shift_strength",
     "volatility_shift_strength",
     "burst_rate",
     "nonlinear_lag1_gain",
+    "nonlinear_multi_lag_gain",
     "heteroskedastic_strength",
     "avg_abs_target_corr",
     "pca_top1_explained",
@@ -85,22 +84,25 @@ EXTENDED_FEATURES = (
     "effective_factor_rank",
     "lead_lag_peak_abs",
     "hierarchy_residual_mean_abs",
+    "hierarchy_child_heterogeneity",
     "avg_abs_covariate_target_corr",
     "future_abs_covariate_target_corr",
     "event_lift_abs",
+    "covariate_incremental_r2",
 )
 SELECTED_UNIVARIATE_FEATURES = (
     "trend_strength",
     "multi_period_score",
+    "seasonal_amplitude_modulation",
     "change_point_shift_energy",
-    "nonlinear_lag1_gain",
-    "burst_rate",
+    "nonlinear_multi_lag_gain",
+    "spike_rate",
 )
 SELECTED_MULTI_COV_FEATURES = (
     "pca_top1_explained",
     "effective_factor_rank",
-    "future_abs_covariate_target_corr",
-    "hierarchy_residual_mean_abs",
+    "covariate_incremental_r2",
+    "hierarchy_child_heterogeneity",
 )
 
 
@@ -197,7 +199,7 @@ def generate_synthetic_rows(sample_count: int, seed: int) -> list[dict[str, Any]
         target_dim = TARGET_DIM_MULTI if capability_id in MULTIVARIATE_CAPABILITIES else 1
         for intensity in range(1, 6):
             for sample_index in range(sample_count):
-                sample_seed = _seed_for(seed, capability_id, intensity * 100_000 + sample_index)
+                sample_seed = _seed_for(seed, capability_id, sample_index)
                 target, latent, covariates, realized = _generate_accepted_sample_values(
                     capability_id,
                     CONTEXT_LENGTH + HORIZON,
@@ -517,14 +519,13 @@ def render_report(summary: dict[str, Any]) -> str:
     for capability, feature in (
         ("trend", "trend_strength"),
         ("multi_seasonal", "multi_period_score"),
-        ("time_varying_seasonality", "seasonal_drift_score"),
+        ("time_varying_seasonality", "seasonal_amplitude_modulation"),
         ("regime_switching", "change_point_shift_energy"),
-        ("long_memory_nonlinear", "nonlinear_lag1_gain"),
-        ("intermittent_heteroskedastic", "burst_rate"),
+        ("nonlinear_persistence", "nonlinear_multi_lag_gain"),
+        ("predictable_intermittency", "spike_rate"),
         ("common_factor", "pca_top1_explained"),
-        ("lead_lag_coupling", "lead_lag_peak_abs"),
-        ("hierarchical_coherence", "hierarchy_residual_mean_abs"),
-        ("covariate_response", "future_abs_covariate_target_corr"),
+        ("hierarchical_coherence", "hierarchy_child_heterogeneity"),
+        ("covariate_response", "covariate_incremental_r2"),
     ):
         check = summary["monotonicity"].get(capability, {}).get(feature)
         if not check:

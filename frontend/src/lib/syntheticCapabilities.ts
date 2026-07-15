@@ -4,11 +4,11 @@ const KNOWN_CAPABILITY_IDS = new Set([
   'trend',
   'multi_seasonal',
   'regime_switching',
-  'long_memory_nonlinear',
-  'intermittent_heteroskedastic',
+  'time_varying_seasonality',
+  'nonlinear_persistence',
+  'predictable_intermittency',
   'common_factor',
-  'lead_lag_coupling',
-  'coherent_regime_shift',
+  'hierarchical_coherence',
   'covariate_response',
 ]);
 
