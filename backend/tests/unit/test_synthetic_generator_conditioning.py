@@ -105,7 +105,7 @@ def test_conditioning_requires_an_exact_task_window_and_merges_parameters():
     assert conditioning.lambda_for(3) == 0.3
     assert conditioning.metadata(3)["profile_id"] == "profile_a"
     assert conditioning.metadata(3)["canonical_target_strength"] == 0.2
-    assert conditioning.metadata(3)["calibrated_profile_median_strength"] == 0.21
+    assert conditioning.metadata(3)["calibrated_profile_expected_strength"] == 0.21
     assert conditioning.metadata(3)["local_real_percentile"] == 0.4
     assert conditioning.metadata(3)["canonical_scale_id"] == "unit-scale-v1"
     assert conditioning.metadata(3)["canonical_scale_fingerprint"] == "0123456789abcdef"
@@ -200,7 +200,9 @@ def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
     artifact = load_generator_conditioning_artifact()
     assert artifact is not None
     assert artifact["schema_version"] == "synthetic_v2_generator_conditioning_artifact.v2"
-    assert artifact["canonical_intensity"]["scale_id"]
+    assert artifact["canonical_intensity"]["scale_id"] == (
+        "synthetic-v2-paper-v1-frozen-2026-07-16"
+    )
     assert len(artifact["canonical_intensity"]["scale_fingerprint"]) == 16
     assert artifact["config"]["canonical_scale_id"] == artifact["canonical_intensity"]["scale_id"]
 
@@ -213,7 +215,8 @@ def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
             )
             assert capability["canonical_calibration"]["status"] == "supported"
             assert capability["canonical_calibration"]["fit_sample_count"] >= 64
-            assert capability["canonical_calibration"]["validation_sample_count"] >= 64
+            assert capability["canonical_calibration"]["fit_seed_bank_count"] == 2
+            assert capability["canonical_calibration"]["validation_sample_count"] >= 256
             assert capability["canonical_calibration"]["validation_seed_is_independent"] is True
             assert len(capability["local_real_percentiles_at_canonical_targets"]) == 5
 
@@ -225,3 +228,31 @@ def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
         capability_id: tuple(definition["target_values"])
         for capability_id, definition in canonical.items()
     }
+    assert all(
+        all(right > left for left, right in zip(row["target_values"], row["target_values"][1:]))
+        for row in canonical.values()
+    )
+    assert artifact["config"]["canonical_reference_profile_ids_by_capability"][
+        "regime_switching"
+    ] == [
+        "uci_hydraulic_eps1_420ctx_60h",
+        "skchange_hvac_unit0_504ctx_144h",
+    ]
+    assert len(artifact["config"]["online_conditioning_profile_ids"]) == 8
+    assert artifact["config"]["research_only_conditioning_profile_ids"] == [
+        "electricity_hourly_daily_2048ctx_24h"
+    ]
+    assert all(
+        artifact["profiles"][profile_id]["conditioning_role"] == "paper_v1_online"
+        for profile_id in artifact["config"]["online_conditioning_profile_ids"]
+    )
+    assert artifact["profiles"]["electricity_hourly_daily_2048ctx_24h"][
+        "conditioning_role"
+    ] == "research_only_pending_near_distance_gate"
+    qualification = artifact["canonical_intensity"]["reference_qualification"]
+    assert qualification["uci_hydraulic_eps1_420ctx_60h"]["regime_switching"][
+        "qualified_window_count"
+    ] >= 30
+    assert qualification["skchange_hvac_unit0_504ctx_144h"]["regime_switching"][
+        "qualified_window_count"
+    ] >= 30

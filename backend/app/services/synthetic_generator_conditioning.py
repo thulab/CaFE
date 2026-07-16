@@ -65,7 +65,7 @@ class GeneratorConditioning:
             ],
             "canonical_target_feature": self.canonical_target_feature,
             "canonical_target_strength": self.canonical_target_values[int(intensity) - 1],
-            "calibrated_profile_median_strength": self.calibrated_realized_strengths[
+            "calibrated_profile_expected_strength": self.calibrated_realized_strengths[
                 int(intensity) - 1
             ],
             "local_real_percentile": self.local_real_percentiles[int(intensity) - 1],

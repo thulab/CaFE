@@ -12,6 +12,8 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.ipc as pa_ipc
 
 
 DEFAULT_FEATURES = (
@@ -173,6 +175,189 @@ def read_tsf_series_records(path: Path) -> tuple[dict[str, str], list[TSFSeriesR
     if not records:
         raise ValueError(f"no series found in TSF input: {path}")
     return metadata, records
+
+
+def read_gift_arrow_targets(path: Path) -> tuple[str, list[tuple[str, np.ndarray]]]:
+    """Read one GIFT-Eval load-from-disk directory without applying eval splits.
+
+    Targets are returned in their native layout: ``[time]`` for univariate rows
+    and ``[channel, time]`` for multivariate rows.  The caller owns the
+    train/history window policy, including exclusion of official evaluation
+    tails via :func:`gift_eval_short_term_test_holdout_steps`.
+    """
+
+    if not path.is_dir():
+        raise FileNotFoundError(f"GIFT-Eval config directory not found: {path}")
+    arrow_files = sorted(path.glob("data-*.arrow"))
+    if len(arrow_files) != 1:
+        raise ValueError(
+            f"expected exactly one canonical data-*.arrow in {path}, got {len(arrow_files)}"
+        )
+    with pa.memory_map(str(arrow_files[0]), "r") as source:
+        table = pa_ipc.open_stream(source).read_all()
+    required = {"item_id", "target", "freq"}
+    missing = sorted(required - set(table.column_names))
+    if missing:
+        raise ValueError(f"GIFT-Eval config {path} is missing columns: {', '.join(missing)}")
+    frequencies = {str(value) for value in table.column("freq").to_pylist()}
+    if len(frequencies) != 1:
+        raise ValueError(f"GIFT-Eval config {path} has non-unique frequencies: {frequencies}")
+    records: list[tuple[str, np.ndarray]] = []
+    for item_id, target in zip(
+        table.column("item_id").to_pylist(),
+        table.column("target").to_pylist(),
+        strict=True,
+    ):
+        values = np.asarray(target, dtype=float)
+        if values.ndim not in (1, 2) or values.size == 0:
+            raise ValueError(
+                f"GIFT-Eval item {item_id!r} in {path} has unsupported target shape {values.shape}"
+            )
+        records.append((str(item_id), values))
+    return next(iter(frequencies)), records
+
+
+def gift_eval_short_term_test_holdout_steps(
+    frequency: str,
+    records: list[tuple[str, np.ndarray]],
+) -> int:
+    """Reproduce GIFT-Eval's short-term test-tail length.
+
+    This mirrors ``gift_eval.data.Dataset`` at the frozen protocol commit:
+    ``windows = clip(ceil(0.1 * min_length / prediction_length), 1, 20)``.
+    M4 is intentionally unsupported here because it has a separate prediction
+    length table and is not loaded through the canonical-only Arrow profiles.
+    """
+
+    if not records:
+        raise ValueError("GIFT-Eval holdout calculation needs at least one record")
+    raw_frequency = str(frequency).strip()
+    normalized = None
+    for legacy_suffix in ("M", "W", "D", "H", "T", "S"):
+        prefix = raw_frequency[: -len(legacy_suffix)]
+        if raw_frequency.endswith(legacy_suffix) and (not prefix or prefix.isdigit()):
+            normalized = legacy_suffix
+            break
+    offset_name = raw_frequency
+    if normalized is None:
+        offset_name = pd.tseries.frequencies.to_offset(raw_frequency).name
+        normalized = {
+            "ME": "M",
+            "M": "M",
+            "W": "W",
+            "D": "D",
+            "h": "H",
+            "H": "H",
+            "min": "T",
+            "T": "T",
+            "s": "S",
+            "S": "S",
+        }.get(offset_name)
+    if normalized is None:
+        # Anchored weekly aliases such as W-SUN retain the same base period.
+        normalized = "W" if offset_name.startswith("W-") else None
+    prediction_lengths = {"M": 12, "W": 8, "D": 30, "H": 48, "T": 48, "S": 60}
+    if normalized not in prediction_lengths:
+        raise ValueError(
+            f"unsupported GIFT-Eval short-term frequency {frequency!r} ({offset_name!r})"
+        )
+    min_length = min(int(np.asarray(values).shape[-1]) for _item_id, values in records)
+    prediction_length = prediction_lengths[normalized]
+    windows = min(max(1, math.ceil(0.1 * min_length / prediction_length)), 20)
+    return int(prediction_length * windows)
+
+
+def truncate_gift_eval_official_test_tail(
+    frequency: str,
+    records: list[tuple[str, np.ndarray]],
+) -> tuple[int, list[tuple[str, np.ndarray]]]:
+    holdout_steps = gift_eval_short_term_test_holdout_steps(frequency, records)
+    truncated: list[tuple[str, np.ndarray]] = []
+    for item_id, values in records:
+        array = np.asarray(values, dtype=float)
+        if array.shape[-1] <= holdout_steps:
+            raise ValueError(
+                f"GIFT-Eval item {item_id!r} is shorter than its official test tail: "
+                f"length={array.shape[-1]}, holdout={holdout_steps}"
+            )
+        truncated.append((item_id, array[..., :-holdout_steps]))
+    return holdout_steps, truncated
+
+
+def read_uci_hydraulic_sensor_cycles(
+    path: Path,
+    *,
+    sensor: str = "EPS1",
+) -> np.ndarray:
+    """Read and downsample one UCI hydraulic sensor to one value per second.
+
+    The archive stores one row per official 60-second load cycle.  Sensors may
+    have different native sampling rates, so each row is block-averaged to 60
+    points and cycles are then concatenated in their original order.
+    """
+
+    member_name = f"{sensor}.txt"
+    if not path.is_file():
+        raise FileNotFoundError(f"UCI hydraulic archive not found: {path}")
+    with zipfile.ZipFile(path) as archive:
+        names = {name.rsplit("/", 1)[-1]: name for name in archive.namelist()}
+        if member_name not in names:
+            raise ValueError(f"UCI hydraulic archive is missing {member_name}: {path}")
+        with archive.open(names[member_name]) as handle:
+            cycles = np.loadtxt(handle, dtype=np.float32)
+    if cycles.ndim != 2 or cycles.shape[0] < 2 or cycles.shape[1] % 60:
+        raise ValueError(
+            f"invalid UCI hydraulic {sensor} matrix shape {cycles.shape}; "
+            "expected [cycle, samples_per_60_seconds]"
+        )
+    points_per_second = cycles.shape[1] // 60
+    per_second = cycles.reshape(cycles.shape[0], 60, points_per_second).mean(axis=2)
+    values = np.asarray(per_second.reshape(-1), dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError(f"UCI hydraulic {sensor} contains non-finite values")
+    return values
+
+
+def read_skchange_hvac_series(path: Path, *, unit_id: int = 0) -> np.ndarray:
+    """Read one bundled skchange HVAC unit in chronological 10-minute order."""
+
+    csv_path = (
+        path
+        if path.is_file()
+        else path / "skchange/datasets/data/hvac_system/data.csv"
+    )
+    if not csv_path.is_file():
+        raise FileNotFoundError(f"skchange HVAC CSV not found: {csv_path}")
+    frame = pd.read_csv(csv_path)
+    required = {"time", "unit_id", "vibration"}
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"skchange HVAC CSV is missing columns: {', '.join(missing)}")
+    selected = frame.loc[frame["unit_id"] == unit_id, ["time", "vibration"]].copy()
+    if selected.empty:
+        raise ValueError(f"skchange HVAC unit_id={unit_id} is absent from {csv_path}")
+    selected["time"] = pd.to_datetime(selected["time"], utc=True, errors="coerce")
+    selected["vibration"] = pd.to_numeric(selected["vibration"], errors="coerce")
+    if selected.isna().any().any():
+        raise ValueError(f"skchange HVAC unit_id={unit_id} contains invalid values")
+    selected = selected.sort_values("time")
+    selected = selected.set_index("time")
+    regular_index = pd.date_range(
+        selected.index.min(),
+        selected.index.max(),
+        freq="10min",
+    )
+    missing_count = len(regular_index) - len(selected)
+    if missing_count < 0 or missing_count / len(regular_index) > 0.01:
+        raise ValueError(
+            f"skchange HVAC unit_id={unit_id} has too many missing 10-minute samples: "
+            f"{missing_count}/{len(regular_index)}"
+        )
+    regular = selected.reindex(regular_index)
+    values = regular["vibration"].interpolate(method="time", limit=18).to_numpy(dtype=float)
+    if not np.isfinite(values).all():
+        raise ValueError(f"skchange HVAC unit_id={unit_id} contains non-finite values")
+    return values
 
 
 def tsf_series_id(attributes: dict[str, str], *, fallback: str) -> str:
@@ -789,6 +974,50 @@ def m5_hierarchy_values(sales: pd.DataFrame, day_columns: list[str], group: tupl
     return np.column_stack([parent, *dept_values])
 
 
+def read_nixtla_binary_hierarchies(
+    path: Path,
+    *,
+    group: str,
+) -> list[tuple[str, np.ndarray]]:
+    """Return disjoint two-child projections from an official Nixtla hierarchy.
+
+    Paper-v1 uses only official aggregation rows whose support contains exactly
+    two bottom series.  The supports must be pairwise disjoint, so a group split
+    cannot leak the same bottom trajectory across calibration partitions.
+    """
+
+    with zipfile.ZipFile(path) as archive:
+        matrix_name = f"{group}/agg_mat.csv"
+        data_name = f"{group}/data.csv"
+        available = set(archive.namelist())
+        if matrix_name not in available or data_name not in available:
+            raise ValueError(f"Nixtla hierarchy group {group!r} not found in {path}")
+        with archive.open(matrix_name) as handle:
+            summing = pd.read_csv(handle, index_col=0)
+        with archive.open(data_name) as handle:
+            values = pd.read_csv(handle, index_col=0)
+
+    if list(summing.index) != list(values.columns):
+        raise ValueError(f"Nixtla {group} data columns do not match summing-matrix rows")
+    binary_rows = summing.loc[summing.astype(bool).sum(axis=1) == 2]
+    if binary_rows.empty:
+        raise ValueError(f"Nixtla {group} has no two-bottom aggregation rows")
+    memberships = binary_rows.astype(bool).sum(axis=0)
+    if bool((memberships > 1).any()):
+        raise ValueError(f"Nixtla {group} two-bottom aggregation rows overlap")
+
+    result: list[tuple[str, np.ndarray]] = []
+    for parent_id, weights in binary_rows.iterrows():
+        child_ids = [str(column) for column, weight in weights.items() if float(weight) != 0.0]
+        child_values = [values[child_id].to_numpy(dtype=float) for child_id in child_ids]
+        parent = child_values[0] + child_values[1]
+        observed_parent = values[str(parent_id)].to_numpy(dtype=float)
+        if not np.allclose(parent, observed_parent, rtol=1e-7, atol=1e-7, equal_nan=True):
+            raise ValueError(f"Nixtla {group} aggregation invariant failed for {parent_id!r}")
+        result.append((str(parent_id), np.column_stack([parent, *child_values])))
+    return result
+
+
 def read_gefcom2014_load_frame(path: Path, *, task: int) -> tuple[pd.DataFrame, str]:
     with zipfile.ZipFile(path) as outer:
         names = outer.namelist()
@@ -799,6 +1028,55 @@ def read_gefcom2014_load_frame(path: Path, *, task: int) -> tuple[pd.DataFrame, 
     with zipfile.ZipFile(io.BytesIO(nested_data)) as nested:
         frame, source_name = read_gefcom2014_load_frame_from_archive(nested, task=task)
     return frame, f"{nested_name}:{source_name}"
+
+
+def read_gefcom2014_solar_frames(
+    path: Path,
+    *,
+    task: int,
+) -> tuple[list[tuple[str, pd.DataFrame]], str]:
+    """Read target/NWP intersections from one GEFCom2014 Solar task."""
+
+    with zipfile.ZipFile(path) as outer:
+        names = outer.namelist()
+        if any(name.startswith("Solar/") and name.endswith(f"train{task}.csv") for name in names):
+            return read_gefcom2014_solar_frames_from_archive(outer, task=task)
+        nested_name = first_matching_name(names, suffix="GEFCom2014-S_V2.zip")
+        nested_data = outer.read(nested_name)
+    with zipfile.ZipFile(io.BytesIO(nested_data)) as nested:
+        frames, source_name = read_gefcom2014_solar_frames_from_archive(nested, task=task)
+    return frames, f"{nested_name}:{source_name}"
+
+
+def read_gefcom2014_solar_frames_from_archive(
+    archive: zipfile.ZipFile,
+    *,
+    task: int,
+) -> tuple[list[tuple[str, pd.DataFrame]], str]:
+    train_name = f"Solar/Task {task}/train{task}.csv"
+    predictor_name = f"Solar/Task {task}/predictors{task}.csv"
+    available = set(archive.namelist())
+    if train_name not in available or predictor_name not in available:
+        raise ValueError(f"GEFCom2014 Solar task {task} is incomplete")
+    with archive.open(train_name) as handle:
+        target = pd.read_csv(handle)
+    with archive.open(predictor_name) as handle:
+        predictors = pd.read_csv(handle)
+    keys = ["ZONEID", "TIMESTAMP"]
+    frame = target.merge(predictors, on=keys, how="inner", validate="one_to_one")
+    frame["_timestamp"] = pd.to_datetime(frame["TIMESTAMP"], format="%Y%m%d %H:%M", errors="raise")
+    covariate_columns = [column for column in frame.columns if column.startswith("VAR")]
+    if len(covariate_columns) != 12:
+        raise ValueError(
+            f"GEFCom2014 Solar task {task} expected 12 NWP variables, got {len(covariate_columns)}"
+        )
+    frames: list[tuple[str, pd.DataFrame]] = []
+    for zone_id, zone in frame.groupby("ZONEID", sort=True):
+        zone = zone.sort_values("_timestamp").reset_index(drop=True)
+        numeric = zone[["POWER", *covariate_columns]].apply(pd.to_numeric, errors="coerce")
+        numeric.insert(0, "TIMESTAMP", zone["_timestamp"])
+        frames.append((str(zone_id), numeric))
+    return frames, f"{train_name}+{predictor_name}"
 
 
 def read_gefcom2014_load_frame_from_archive(archive: zipfile.ZipFile, *, task: int) -> tuple[pd.DataFrame, str]:

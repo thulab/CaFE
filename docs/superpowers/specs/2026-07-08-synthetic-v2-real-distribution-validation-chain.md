@@ -337,7 +337,7 @@ intensity_definition: capability-global canonical realized strength; not model d
 canonical_scale_id: <frozen scale label>
 canonical_scale_fingerprint: <content-derived identifier>
 canonical_target_strength: <T_c,intensity>
-calibrated_profile_median_strength: <independent calibration estimate>
+calibrated_profile_expected_strength: <independent calibration estimate>
 local_real_percentile: <target position in the selected bucket>
 ```
 

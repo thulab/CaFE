@@ -480,8 +480,13 @@ TARGET_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
 
 CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     "trend": ("seasonal_strength", "noise_ratio", "spike_rate"),
-    "multi_seasonal": ("trend_strength", "noise_ratio", "spike_rate"),
-    "time_varying_seasonality": ("trend_strength", "noise_ratio", "spike_rate"),
+    # A second periodic component is residualized as noise by the single-period
+    # profile extractor, making noise_ratio target-coupled for this capability.
+    "multi_seasonal": ("trend_strength", "outlier_rate", "spike_rate"),
+    # Smooth amplitude/phase modulation is mechanically scored as residual
+    # ``noise_ratio`` by the profile extractor, so noise_ratio is target-coupled
+    # here and cannot serve as a nuisance control.
+    "time_varying_seasonality": ("trend_strength", "outlier_rate", "spike_rate"),
     "regime_switching": ("outlier_rate", "spike_rate", "diff_spike_rate"),
     "nonlinear_persistence": ("seasonal_strength", "noise_ratio", "spike_rate"),
     "predictable_intermittency": ("trend_strength", "seasonal_strength", "noise_ratio"),

@@ -99,6 +99,59 @@ def test_feature_vector_reports_spec_univariate_structure_features():
     assert features["burst_rate"] > 0
 
 
+def test_read_uci_hydraulic_sensor_cycles_preserves_cycle_order_and_downsamples(tmp_path):
+    profiler = load_profiler_module()
+    archive_path = tmp_path / "hydraulic.zip"
+    matrix = np.arange(240, dtype=float).reshape(2, 120)
+    payload = "\n".join(" ".join(str(value) for value in row) for row in matrix)
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("dataset/EPS1.txt", payload)
+
+    values = profiler.read_uci_hydraulic_sensor_cycles(archive_path, sensor="EPS1")
+
+    assert values.shape == (120,)
+    assert np.allclose(values[:3], [0.5, 2.5, 4.5])
+    assert np.allclose(values[60:63], [120.5, 122.5, 124.5])
+
+
+def test_read_skchange_hvac_series_regularizes_sparse_missing_timestamps(tmp_path):
+    profiler = load_profiler_module()
+    csv_path = tmp_path / "data.csv"
+    times = pd.date_range("2026-01-01", periods=200, freq="10min", tz="UTC")
+    frame = pd.DataFrame(
+        {
+            "time": times.delete(10),
+            "vibration": np.delete(np.arange(200, dtype=float), 10),
+            "unit_id": 0,
+        }
+    )
+    frame.to_csv(csv_path, index=False)
+
+    values = profiler.read_skchange_hvac_series(csv_path, unit_id=0)
+
+    assert values.shape == (200,)
+    assert values[10] == 10.0
+
+
+def test_gift_eval_short_term_tail_matches_frozen_protocol_and_is_removed():
+    profiler = load_profiler_module()
+    records = [
+        ("short", np.arange(800, dtype=float)),
+        ("long", np.arange(1_000, dtype=float)),
+    ]
+
+    holdout, truncated = profiler.truncate_gift_eval_official_test_tail("h", records)
+
+    # ceil(10% * 800 / 48) == 2 rolling windows.
+    assert holdout == 96
+    assert truncated[0][1].shape == (704,)
+    assert truncated[1][1].shape == (904,)
+    assert profiler.gift_eval_short_term_test_holdout_steps(
+        "M",
+        [("monthly", np.arange(120, dtype=float))],
+    ) == 12
+
+
 def test_profile_csv_can_extract_covariate_and_hierarchy_features(tmp_path):
     profiler = load_profiler_module()
     csv_path = tmp_path / "covariate-hierarchy.csv"

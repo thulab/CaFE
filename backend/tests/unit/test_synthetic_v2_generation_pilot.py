@@ -13,6 +13,13 @@ from app.services.synthetic_generation_service import (
 from app.services.synthetic_feature_gate import load_feature_gate_artifact
 
 
+def test_single_period_noise_ratio_is_not_a_control_for_modulated_seasonality():
+    for capability_id in ("multi_seasonal", "time_varying_seasonality"):
+        controls = CONTROL_FEATURES_BY_CAPABILITY[capability_id]
+        assert "noise_ratio" not in controls
+        assert "outlier_rate" in controls
+
+
 def test_trend_pilot_features_are_monotonic_by_intensity_and_inside_joint_support():
     summaries = []
     for intensity in range(1, 6):

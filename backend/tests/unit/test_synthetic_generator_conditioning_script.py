@@ -85,9 +85,58 @@ def test_inverse_calibration_projects_noisy_grid_to_monotone_support():
     assert np.allclose(values, [0.875])
 
 
+def test_canonical_resolution_preserves_endpoints_and_separates_near_duplicate_levels():
+    module = load_calibration_module()
+
+    resolved = module.enforce_target_resolution(
+        np.asarray([0.0, 0.30, 0.32, 0.35, 1.0])
+    )
+
+    assert np.allclose(resolved, [0.0, 0.30, 0.40, 0.50, 1.0])
+    assert np.all(np.diff(resolved) >= 0.10 - 1e-12)
+
+
+def test_capability_calibration_interpolates_structure_scale_and_records_cross_fit():
+    module = load_calibration_module()
+    module.structure_scale_grid = lambda _capability_id: (0.1, 0.2, 0.4)
+    module.mean_feature_over_seed_banks = lambda **kwargs: (
+        kwargs["parameters"]["structure_scale"] * kwargs["intensity_lambda"]
+    )
+    module.simulate_feature_means = lambda **kwargs: {
+        kwargs["feature_names"][0]: (
+            kwargs["parameters"]["structure_scale"] * kwargs["intensity_lambda"]
+        )
+    }
+
+    parameters, lambdas, summary = module.calibrate_capability_conditioning(
+        spec=SimpleNamespace(
+            profile_id="test",
+            context_length=168,
+            horizon=24,
+            target_dim=1,
+            season_length=24,
+        ),
+        capability_id="trend",
+        profile_nuisance={},
+        real_feature_summary={},
+        canonical_target_values=[0.06, 0.12, 0.18, 0.24, 0.30],
+        sample_count=8,
+        seed=7,
+    )
+
+    assert np.isclose(parameters["structure_scale"], 0.3)
+    assert np.allclose(lambdas, [0.2, 0.4, 0.6, 0.8, 1.0])
+    assert summary["status"] == "supported"
+    assert summary["fit_seed_bank_count"] == 2
+    assert summary["fit_sample_count"] == 16
+    assert summary["validation_sample_count"] == 256
+
+
 def test_canonical_targets_use_one_curve_per_profile_not_bucket_row_counts():
     module = load_calibration_module()
-    module.CANONICAL_REFERENCE_PROFILE_IDS = ("profile_low", "profile_high")
+    module.CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY = {
+        "trend": ("profile_low", "profile_middle", "profile_high"),
+    }
 
     def profile_input(profile_id: str, curve: list[float], repeated_values: list[float]):
         return module.ProfileCalibrationInput(
@@ -101,6 +150,8 @@ def test_canonical_targets_use_one_curve_per_profile_not_bucket_row_counts():
             profile_nuisance={},
             local_target_quantiles={"trend": {"trend_strength": curve}},
             primary_values={"trend": np.asarray(repeated_values, dtype=float)},
+            capability_parameter_counts={"trend": len(repeated_values)},
+            capability_qualification_summaries={},
         )
 
     definitions = module.derive_canonical_target_definitions(
@@ -114,6 +165,11 @@ def test_canonical_targets_use_one_curve_per_profile_not_bucket_row_counts():
                 "profile_high",
                 [0.6, 0.7, 0.8, 0.9, 1.0],
                 [1.0] * 10,
+            ),
+            "profile_middle": profile_input(
+                "profile_middle",
+                [0.3, 0.4, 0.5, 0.6, 0.7],
+                [0.5],
             ),
         }
     )
@@ -155,3 +211,27 @@ def test_research_window_profiles_do_not_reweight_the_canonical_scale():
     assert "electricity_hourly_daily_168ctx" in module.CANONICAL_REFERENCE_PROFILE_IDS
     assert "electricity_hourly_daily_2048ctx_24h" not in module.CANONICAL_REFERENCE_PROFILE_IDS
     assert "electricity_hourly_daily_2048ctx_24h" in module.CONDITIONING_PROFILE_IDS
+    assert module.RESEARCH_ONLY_CONDITIONING_PROFILE_IDS == (
+        "electricity_hourly_daily_2048ctx_24h",
+    )
+    assert "electricity_hourly_daily_2048ctx_24h" not in module.ONLINE_CONDITIONING_PROFILE_IDS
+    assert set(module.ONLINE_CONDITIONING_PROFILE_IDS).isdisjoint(
+        module.RESEARCH_ONLY_CONDITIONING_PROFILE_IDS
+    )
+
+
+def test_regime_scale_uses_only_qualified_specialist_reference_profiles():
+    module = load_calibration_module()
+
+    assert module.CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY["regime_switching"] == (
+        "uci_hydraulic_eps1_420ctx_60h",
+        "skchange_hvac_unit0_504ctx_144h",
+    )
+    assert (
+        "m4_hourly_daily_168ctx"
+        not in module.CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY["regime_switching"]
+    )
+    assert (
+        "m4_hourly_daily_168ctx"
+        in module.CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY["trend"]
+    )

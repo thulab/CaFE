@@ -30,13 +30,19 @@ from app.services.synthetic_generator_conditioning import resolve_generator_cond
 from synthetic_feature_profile import (  # noqa: E402
     DEFAULT_FEATURES,
     WindowSpec,
+    truncate_gift_eval_official_test_tail,
     limit_candidates,
     m5_covariate_matrix,
     m5_hierarchy_values,
+    read_gift_arrow_targets,
     read_gefcom2014_load_frame,
+    read_gefcom2014_solar_frames,
     read_m5_calendar_and_sales,
     read_m5_prices,
+    read_nixtla_binary_hierarchies,
+    read_skchange_hvac_series,
     read_tsf_series,
+    read_uci_hydraulic_sensor_cycles,
     sample_frame_evenly,
     sample_sequence_evenly,
     select_tsf_panel_windows,
@@ -392,7 +398,232 @@ def load_real_bucket(spec: BucketSpec, path: Path, *, max_windows: int) -> list[
         return load_m5_hierarchy_rows(spec, path, max_windows=max_windows)
     if spec.kind == "gefcom2014_load":
         return load_gefcom_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "gift_univariate":
+        return load_gift_univariate_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "gift_panel":
+        return load_gift_panel_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "nixtla_binary_hierarchy":
+        return load_nixtla_hierarchy_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "gefcom2014_solar":
+        return load_gefcom_solar_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "uci_hydraulic_cycle":
+        return load_uci_hydraulic_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "skchange_hvac":
+        return load_skchange_hvac_rows(spec, path, max_windows=max_windows)
     raise ValueError(f"unsupported bucket kind: {spec.kind}")
+
+
+def load_uci_hydraulic_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    values = read_uci_hydraulic_sensor_cycles(path, sensor="EPS1")
+    window_spec = WindowSpec(
+        spec.context_length,
+        spec.horizon,
+        spec.stride,
+        max_windows=max_windows,
+    )
+    rows: list[dict[str, Any]] = []
+    for start in window_starts(len(values), window_spec):
+        window = values[start : start + window_spec.length, None]
+        if np.isfinite(window).all() and is_informative_target(window, spec.context_length):
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    group_id="uci-hydraulic:EPS1",
+                    window_start=start,
+                )
+            )
+    return rows
+
+
+def load_skchange_hvac_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    values = read_skchange_hvac_series(path, unit_id=spec.task)
+    window_spec = WindowSpec(
+        spec.context_length,
+        spec.horizon,
+        spec.stride,
+        max_windows=max_windows,
+    )
+    rows: list[dict[str, Any]] = []
+    for start in window_starts(len(values), window_spec):
+        window = values[start : start + window_spec.length, None]
+        if np.isfinite(window).all() and is_informative_target(window, spec.context_length):
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    group_id=f"skchange-hvac:unit:{spec.task}",
+                    window_start=start,
+                )
+            )
+    return rows
+
+
+def load_gift_univariate_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    frequency, records = read_gift_arrow_targets(path)
+    _holdout_steps, records = truncate_gift_eval_official_test_tail(frequency, records)
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    series: list[tuple[str, str, np.ndarray]] = []
+    for item_id, values in records:
+        if values.ndim == 1:
+            series.append((item_id, item_id, values))
+        else:
+            series.extend(
+                (f"{item_id}:dim:{channel}", item_id, values[channel])
+                for channel in range(values.shape[0])
+            )
+    candidates = [
+        (series_id, base_item_id, values, start)
+        for series_id, base_item_id, values in series
+        for start in window_starts(len(values), window_spec)
+    ]
+    rows: list[dict[str, Any]] = []
+    for _series_id, base_item_id, values, start in limit_candidates(candidates, max_windows):
+        window = values[start : start + window_spec.length, None]
+        if (
+            window.shape[0] == window_spec.length
+            and np.isfinite(window).all()
+            and is_informative_target(window, spec.context_length)
+        ):
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    group_id=f"gift-item:{base_item_id}",
+                    window_start=start,
+                )
+            )
+    for row in rows:
+        row["source_tail_excluded_steps"] = _holdout_steps
+    return rows
+
+
+def load_gift_panel_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    frequency, records = read_gift_arrow_targets(path)
+    _holdout_steps, records = truncate_gift_eval_official_test_tail(frequency, records)
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    candidates: list[tuple[str, np.ndarray, int]] = []
+    for item_id, values in records:
+        if values.ndim != 2 or values.shape[0] < spec.target_dim:
+            continue
+        panel = values[: spec.target_dim].T
+        candidates.extend(
+            (item_id, panel, start)
+            for start in window_starts(panel.shape[0], window_spec)
+        )
+    rows: list[dict[str, Any]] = []
+    for item_id, panel, start in limit_candidates(candidates, max_windows):
+        window = panel[start : start + window_spec.length]
+        if (
+            window.shape == (window_spec.length, spec.target_dim)
+            and np.isfinite(window).all()
+            and is_informative_target(window, spec.context_length)
+        ):
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    group_id=f"gift-panel:{item_id}",
+                    window_start=start,
+                )
+            )
+    for row in rows:
+        row["source_tail_excluded_steps"] = _holdout_steps
+    return rows
+
+
+def load_nixtla_hierarchy_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    hierarchies = sample_sequence_evenly(
+        read_nixtla_binary_hierarchies(path, group=spec.asset_name),
+        spec.max_groups,
+    )
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    candidates = [
+        (parent_id, values, start)
+        for parent_id, values in hierarchies
+        for start in window_starts(values.shape[0], window_spec)
+    ]
+    rows: list[dict[str, Any]] = []
+    for parent_id, values, start in limit_candidates(candidates, max_windows):
+        window = values[start : start + window_spec.length]
+        if (
+            window.shape == (window_spec.length, 3)
+            and np.isfinite(window).all()
+            and is_informative_target(window, spec.context_length)
+        ):
+            rows.append(
+                make_real_row(
+                    window,
+                    spec,
+                    group_id=f"nixtla:{spec.asset_name}:{parent_id}",
+                    window_start=start,
+                )
+            )
+    return rows
+
+
+def load_gefcom_solar_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    frames, _source_name = read_gefcom2014_solar_frames(path, task=spec.task)
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    candidates = [
+        (zone_id, frame, start)
+        for zone_id, frame in frames
+        for start in window_starts(len(frame), window_spec)
+    ]
+    rows: list[dict[str, Any]] = []
+    for _zone_id, frame, start in limit_candidates(candidates, max_windows):
+        numeric = frame.drop(columns=["TIMESTAMP"])
+        target = numeric["POWER"].to_numpy(dtype=float)[start : start + window_spec.length, None]
+        covariates = numeric.drop(columns=["POWER"]).to_numpy(dtype=float)[
+            start : start + window_spec.length
+        ]
+        if (
+            target.shape[0] == window_spec.length
+            and covariates.shape == (window_spec.length, spec.covariate_dim)
+            and np.isfinite(target).all()
+            and np.isfinite(covariates).all()
+            and is_informative_target(target, spec.context_length)
+        ):
+            rows.append(
+                make_real_row(
+                    target,
+                    spec,
+                    covariates=covariates,
+                    group_id=f"gefcom-solar-task:{spec.task}",
+                    window_start=start,
+                )
+            )
+    return rows
 
 
 def load_m5_covariate_rows(spec: BucketSpec, path: Path, *, max_windows: int) -> list[dict[str, Any]]:

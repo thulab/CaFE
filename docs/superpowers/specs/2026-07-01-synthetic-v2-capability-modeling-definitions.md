@@ -47,7 +47,7 @@ construction gate 只能证明生成过程提供了可用信息，不能代替�
 
 每个样本先选定真实 bucket `b`，再使用只由该 bucket 真实参数拟合分区估计的单调逆映射 `λ_{b,c}(intensity)`，使合成样本主目标特征的批量中位数逼近同一个 `T_{c,intensity}`。因此 bucket 决定 nuisance 和“怎样生成到该强度”，不再决定“该强度是多少”。目标落在 bucket 局部真实分布的经验分位仍写入 metadata；它可以接近 0 或 1，表示相对于该真实基底的温和样本或反事实压力测试，而不是重新定义 intensity。
 
-噪声尺度、尾部形态、季节残差和局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。五档是正式报告与主实验的离散剂量；生成器标定使用更密的连续 `λ`/结构尺度网格，并记录 `canonical_target_strength` 与 `calibrated_profile_median_strength`，因此不需要为了提高标定精度扩大主实验组合数。论文不预设模型误差随 intensity 单调，只要求预注册的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为 `α_{b,c}(λ_{b,c}(intensity))`。
+噪声尺度、尾部形态、季节残差和局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。五档是正式报告与主实验的离散剂量；生成器标定使用更密的连续 `λ`/结构尺度网格，并记录 `canonical_target_strength` 与 `calibrated_profile_expected_strength`，因此不需要为了提高标定精度扩大主实验组合数。论文不预设模型误差随 intensity 单调，只要求预注册的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为 `α_{b,c}(λ_{b,c}(intensity))`。
 
 绝对标尺必须有版本。artifact 同时记录 `canonical_scale_id`、由参考 profile 与目标曲线计算的 fingerprint、参考语料清单和用途。新增/删除校准数据或改变目标曲线必须发布新 `scale_id`，不能在看到模型结果后静默重拟合。
 
