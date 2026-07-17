@@ -36,6 +36,7 @@ DEFAULT_FEATURES = (
     "volatility_shift_strength",
     "nonlinear_lag1_gain",
     "nonlinear_multi_lag_gain",
+    "nonlinear_conditional_gain",
     "burst_rate",
     "diff_spike_rate",
     "avg_abs_target_corr",
@@ -68,6 +69,8 @@ BOUNDED_FEATURES = {
     "pca_top1_explained",
     "pca_top2_explained",
     "lead_lag_peak_abs",
+    "nonlinear_multi_lag_gain",
+    "nonlinear_conditional_gain",
     "avg_abs_covariate_target_corr",
     "future_abs_covariate_target_corr",
 }
@@ -1299,6 +1302,8 @@ def structural_univariate_features(values: np.ndarray, season_length: int | None
         "seasonal_drift_score": float(np.mean(np.abs(seasonal_left - seasonal_right))) if seasonal_left.size and seasonal_right.size else 0.0,
         "seasonal_amplitude_cv": float(np.std(np.abs(seasonal_profile)) / (np.mean(np.abs(seasonal_profile)) + 1e-9)) if seasonal_profile.size else 0.0,
         "nonlinear_lag1_gain": nonlinear_lag1_gain(y),
+        "nonlinear_multi_lag_gain": nonlinear_multi_lag_gain(y, season_length),
+        "nonlinear_conditional_gain": nonlinear_conditional_gain(y, season_length),
     }
 
 
@@ -1402,6 +1407,61 @@ def nonlinear_lag1_gain(values: np.ndarray) -> float:
     linear = np.column_stack([np.ones_like(x), x])
     nonlinear = np.column_stack([np.ones_like(x), x, x**2, np.sin(x)])
     return max(0.0, r2(y, nonlinear) - r2(y, linear))
+
+
+def nonlinear_multi_lag_gain(
+    values: np.ndarray,
+    season_length: int | None,
+) -> float:
+    seasonal_lag = max(4, int(season_length or 4))
+    nonlinear_lag = max(2, seasonal_lag // 2)
+    start = max(seasonal_lag, nonlinear_lag, 1)
+    if values.size - start < 8:
+        return 0.0
+    target = values[start:]
+    lag1 = values[start - 1 : -1]
+    lag_seasonal = values[: values.size - seasonal_lag]
+    if lag_seasonal.size > target.size:
+        lag_seasonal = lag_seasonal[-target.size :]
+    lag_nonlinear = values[
+        start - nonlinear_lag : values.size - nonlinear_lag
+    ]
+    linear = np.column_stack([np.ones_like(target), lag1])
+    nonlinear = np.column_stack(
+        [
+            np.ones_like(target),
+            lag1,
+            lag_seasonal,
+            np.sin(2.0 * lag_nonlinear),
+        ]
+    )
+    return max(0.0, r2(target, nonlinear) - r2(target, linear))
+
+
+def nonlinear_conditional_gain(
+    values: np.ndarray,
+    season_length: int | None,
+) -> float:
+    seasonal_lag = max(4, int(season_length or 4))
+    nonlinear_lag = max(2, seasonal_lag // 2)
+    start = max(seasonal_lag, nonlinear_lag, 1)
+    if values.size - start < 8:
+        return 0.0
+    target = values[start:]
+    lag1 = values[start - 1 : -1]
+    lag_seasonal = values[: values.size - seasonal_lag]
+    if lag_seasonal.size > target.size:
+        lag_seasonal = lag_seasonal[-target.size :]
+    lag_nonlinear = values[
+        start - nonlinear_lag : values.size - nonlinear_lag
+    ]
+    linear = np.column_stack(
+        [np.ones_like(target), lag1, lag_seasonal, lag_nonlinear]
+    )
+    nonlinear = np.column_stack(
+        [linear, np.sin(1.1 * lag_nonlinear) ** 2]
+    )
+    return max(0.0, r2(target, nonlinear) - r2(target, linear))
 
 
 def r2(y: np.ndarray, design: np.ndarray) -> float:

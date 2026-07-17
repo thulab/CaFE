@@ -1131,19 +1131,23 @@ def calibrate_capability_conditioning(
     canonical_target_values: list[float],
     sample_count: int,
     seed: int,
+    primary_feature: str | None = None,
 ) -> tuple[dict[str, float], list[float], dict[str, Any]]:
     capability_nuisance = derive_capability_nuisance(
         capability_id,
         profile_nuisance,
         real_feature_summary,
     )
-    primary_feature = PRIMARY_TARGET_FEATURE[capability_id]
+    primary_feature = primary_feature or PRIMARY_TARGET_FEATURE[capability_id]
     desired = [float(value) for value in canonical_target_values]
     if len(desired) != 5 or any(
         right < left for left, right in zip(desired, desired[1:])
     ):
         raise ValueError(f"invalid canonical targets for {capability_id}: {desired}")
-    target_scale = max(desired[-1] - desired[0], 0.05)
+    target_scale_floor = (
+        0.005 if primary_feature == "nonlinear_conditional_gain" else 0.05
+    )
+    target_scale = max(desired[-1] - desired[0], target_scale_floor)
     fit_seeds = tuple(
         _seed_for(seed, capability_id, 10_000 + bank_index)
         for bank_index in range(FIT_SEED_BANK_COUNT)
@@ -1289,17 +1293,22 @@ def derive_capability_nuisance(
             upper=2.50,
         )
     elif capability_id == "nonlinear_persistence":
-        overrides["seasonal_amplitude_multiplier"] = ratio_multiplier(
-            seasonal_target,
-            baseline=0.614,
-            lower=0.50,
-            upper=3.00,
+        overrides.update(
+            {
+                "seasonal_amplitude_multiplier": 1.0,
+                "noise_scale_multiplier": 1.0,
+                "noise_degrees_of_freedom": 0.0,
+                "nonlinear_transform_version": 2.0,
+            }
         )
-        overrides["noise_scale_multiplier"] = ratio_multiplier(
-            noise_target,
-            baseline=0.378,
-            lower=0.25,
-            upper=2.00,
+    elif capability_id == "predictable_intermittency":
+        trend_target = median_feature(real_features, "trend_strength", 0.05)
+        trend_odds = max(trend_target, 1e-4) / max(
+            1.0 - trend_target,
+            1e-4,
+        )
+        overrides["background_trend_scale"] = float(
+            np.clip(0.0215 * np.sqrt(trend_odds), 0.001, 0.15)
         )
     elif capability_id == "hierarchical_coherence":
         overrides.update(
@@ -1339,6 +1348,14 @@ def simulate_feature_means(
     sample_count: int,
     seed: int,
 ) -> dict[str, float]:
+    feature_measurement_horizon = int(
+        getattr(spec, "feature_measurement_horizon", spec.horizon)
+    )
+    if not 1 <= feature_measurement_horizon <= int(spec.horizon):
+        raise ValueError(
+            f"{spec.profile_id} has invalid feature_measurement_horizon="
+            f"{feature_measurement_horizon} for horizon={spec.horizon}"
+        )
     conditioning = GeneratorConditioning(
         profile_id=spec.profile_id,
         capability_id=capability_id,
@@ -1346,7 +1363,9 @@ def simulate_feature_means(
         horizon=int(spec.horizon),
         target_dim=int(spec.target_dim),
         season_length=int(spec.season_length),
-        frequency=profile_frequency(spec.profile_id),
+        frequency=str(
+            getattr(spec, "frequency", profile_frequency(spec.profile_id))
+        ),
         parameters=parameters,
         intensity_lambdas=(intensity_lambda,) * 5,
         canonical_reference_percentile_levels=reference_percentile_levels(capability_id),
@@ -1383,10 +1402,15 @@ def simulate_feature_means(
         )
         if covariates is not None and covariates.size:
             covariates = _normalize_covariates(covariates, int(spec.context_length))
+        measurement_end = int(spec.context_length) + feature_measurement_horizon
+        measurement_target = target[:measurement_end]
+        measurement_covariates = (
+            covariates[:measurement_end] if covariates is not None else None
+        )
         rows.append(
             _realized_features(
-                target,
-                covariates,
+                measurement_target,
+                measurement_covariates,
                 int(spec.season_length),
                 int(spec.context_length),
             )

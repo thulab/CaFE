@@ -139,7 +139,11 @@ def evaluate_bucket(
         if name not in features or not np.isfinite(features[name])
     ]
     threshold = float(support["threshold"])
-    if missing:
+    if not names:
+        score = 0.0
+        accepted = True
+        values = []
+    elif missing:
         score = float("inf")
         accepted = False
         values: list[float] = []

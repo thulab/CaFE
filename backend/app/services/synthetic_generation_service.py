@@ -199,7 +199,10 @@ INTENSITY_FEATURE_DIRECTIONS: dict[str, dict[str, str]] = {
         "change_point_shift_energy": "increase",
         "level_shift_strength": "increase",
     },
-    "nonlinear_persistence": {"nonlinear_multi_lag_gain": "increase"},
+    "nonlinear_persistence": {
+        "nonlinear_multi_lag_gain": "increase",
+        "nonlinear_conditional_gain": "increase",
+    },
     "predictable_intermittency": {
         "burst_rate": "increase",
         "spike_rate": "increase",
@@ -467,7 +470,10 @@ TARGET_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
         "seasonal_phase_variation",
     ),
     "regime_switching": ("change_point_shift_energy", "level_shift_strength"),
-    "nonlinear_persistence": ("nonlinear_multi_lag_gain",),
+    "nonlinear_persistence": (
+        "nonlinear_multi_lag_gain",
+        "nonlinear_conditional_gain",
+    ),
     "predictable_intermittency": ("burst_rate", "spike_rate", "outlier_rate"),
     "common_factor": ("pca_top1_explained", "effective_factor_rank", "avg_abs_target_corr"),
     "hierarchical_coherence": ("hierarchy_child_heterogeneity",),
@@ -487,9 +493,22 @@ CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     # ``noise_ratio`` by the profile extractor, so noise_ratio is target-coupled
     # here and cannot serve as a nuisance control.
     "time_varying_seasonality": ("trend_strength", "outlier_rate", "spike_rate"),
-    "regime_switching": ("outlier_rate", "spike_rate", "diff_spike_rate"),
-    "nonlinear_persistence": ("seasonal_strength", "noise_ratio", "spike_rate"),
-    "predictable_intermittency": ("trend_strength", "seasonal_strength", "noise_ratio"),
+    # Recurring level switches mechanically create or suppress all residual
+    # spike/outlier summaries after context standardization.  There is no
+    # independent observable nuisance among the current feature family, so the
+    # feature-support artifact records an explicit no-control contract.  Real
+    # parameter support, construction predictability, canonical dose, and the
+    # near-distance gate remain mandatory.
+    "regime_switching": (),
+    # Recurrence strength mechanically changes the variance attributed to the
+    # seasonal and residual components, so neither is a valid nuisance control.
+    "nonlinear_persistence": ("trend_strength", "outlier_rate", "spike_rate"),
+    # A recurring pulse clock is itself recovered as seasonal signal, reduces
+    # residual variance, and changes drift/volatility summaries through its
+    # repeated event positions.  Long-run trend is the independent observable
+    # nuisance; construction, absolute spike dose, and near-distance remain
+    # separate mandatory gates.
+    "predictable_intermittency": ("trend_strength",),
     # Signal-to-noise ratios are mechanically changed by factor/effect strength,
     # so they are target-coupled rather than valid nuisance controls here.
     "common_factor": ("trend_strength", "outlier_rate", "spike_rate"),
@@ -1310,23 +1329,70 @@ def _generate_accepted_sample_values(
     *,
     anchor_profile_id: str | None = None,
     generator_conditioning: GeneratorConditioning | None = None,
+    generator_conditioning_artifact: dict[str, Any] | None = None,
+    feature_gate_artifact: dict[str, Any] | None = None,
+    near_distance_artifact: dict[str, Any] | None = None,
+    acceptance_profile_ids: tuple[str, ...] | None = None,
 ) -> tuple[np.ndarray, dict[str, Any], np.ndarray | None, dict[str, float]]:
     capability = CAPABILITIES_BY_ID.get(capability_id)
     horizon = length - context_length
     near_distance_profile_ids: tuple[str, ...] = ()
     if capability is not None:
-        near_distance_profile_ids = tuple(
-            _require_near_distance_calibration(capability, context_length, horizon, target_dim)
+        requested_profile_ids = (
+            tuple(acceptance_profile_ids)
+            if acceptance_profile_ids is not None
+            else _profile_ids_for_capability(capability_id)
         )
-        feature_profile_ids = tuple(
-            _require_feature_gate_calibration(capability, context_length, horizon, target_dim)
-        )
-        generator_profiles = matching_generator_profiles(
-            capability_id=capability_id,
-            profile_ids=_profile_ids_for_capability(capability_id),
+        near_distance_buckets = matching_calibrated_buckets(
+            profile_ids=requested_profile_ids,
             context_length=context_length,
             horizon=horizon,
             target_dim=target_dim,
+            artifact=near_distance_artifact,
+        )
+        if not near_distance_buckets:
+            raise ApiError(
+                "synthetic_near_distance_not_calibrated",
+                "synthetic near-distance gate has no calibrated real bucket for this request",
+                {
+                    "capability_id": capability_id,
+                    "profile_ids": list(requested_profile_ids),
+                    "context_length": int(context_length),
+                    "horizon": int(horizon),
+                    "target_dim": int(target_dim),
+                },
+            )
+        near_distance_profile_ids = tuple(
+            str(bucket["profile_id"]) for bucket in near_distance_buckets
+        )
+        feature_buckets = matching_feature_gate_buckets(
+            capability_id=capability_id,
+            profile_ids=requested_profile_ids,
+            context_length=context_length,
+            horizon=horizon,
+            target_dim=target_dim,
+            artifact=feature_gate_artifact,
+        )
+        if not feature_buckets:
+            raise ApiError(
+                "synthetic_feature_gate_not_calibrated",
+                "synthetic feature-support gate has no calibrated real bucket for this request",
+                {
+                    "capability_id": capability_id,
+                    "profile_ids": list(requested_profile_ids),
+                    "context_length": int(context_length),
+                    "horizon": int(horizon),
+                    "target_dim": int(target_dim),
+                },
+            )
+        feature_profile_ids = tuple(str(bucket["profile_id"]) for bucket in feature_buckets)
+        generator_profiles = matching_generator_profiles(
+            capability_id=capability_id,
+            profile_ids=requested_profile_ids,
+            context_length=context_length,
+            horizon=horizon,
+            target_dim=target_dim,
+            artifact=generator_conditioning_artifact,
         )
         generator_profile_ids = tuple(str(profile["profile_id"]) for profile in generator_profiles)
         calibrated_profile_ids = tuple(
@@ -1418,6 +1484,7 @@ def _generate_accepted_sample_values(
             context_length=context_length,
             horizon=horizon,
             target_dim=int(target.shape[1]),
+            artifact=feature_gate_artifact,
         )
         feature_accepted = bool(feature_gate["accepted"])
         failed_features = list(feature_gate.get("failed_features", []))
@@ -1427,6 +1494,7 @@ def _generate_accepted_sample_values(
             profile_ids=near_distance_profile_ids or _profile_ids_for_capability(capability_id),
             context_length=context_length,
             horizon=horizon,
+            artifact=near_distance_artifact,
         )
         accepted = bool(feature_accepted and near_distance["accepted"])
         validation = _validation_summary(
@@ -1945,18 +2013,62 @@ def _generate_nonlinear_persistence(
         np.clip(structure_scale * (0.02 + 0.98 * lam), 0.0, 1.0)
     )
     ar_phi = 0.10
-    seasonal_memory = 0.25 * dependency_strength
-    nonlinear_strength = 0.30 * dependency_strength
-    stability_bound = ar_phi + seasonal_memory + 2.0 * nonlinear_strength
+    transform_version = int(
+        round(
+            _conditioned_parameter(
+                conditioning,
+                "nonlinear_transform_version",
+                1.0,
+            )
+        )
+    )
+    if transform_version >= 2:
+        seasonal_memory = 0.05 * dependency_strength
+        nonlinear_strength = 0.75 * dependency_strength
+        nonlinear_frequency = 1.10
+        stability_bound = (
+            ar_phi
+            + seasonal_memory
+            + nonlinear_frequency * nonlinear_strength
+        )
+        warmup_scale = 1.00
+        innovation_scale = 0.20
+    else:
+        seasonal_memory = 0.25 * dependency_strength
+        nonlinear_strength = 0.30 * dependency_strength
+        nonlinear_frequency = 2.0
+        stability_bound = ar_phi + seasonal_memory + 2.0 * nonlinear_strength
+        warmup_scale = 0.30
+        innovation_scale = 0.06
     state = np.zeros((length, target_dim))
     warmup = min(length, seasonal_lag)
-    state[:warmup] = rng.normal(0.0, 0.30, size=(warmup, target_dim))
+    state[:warmup] = rng.normal(
+        0.0,
+        warmup_scale,
+        size=(warmup, target_dim),
+    )
     for idx in range(warmup, length):
+        nonlinear_response = (
+            np.sin(
+                nonlinear_frequency * state[idx - nonlinear_lag]
+            )
+            if transform_version < 2
+            else np.sin(
+                nonlinear_frequency * state[idx - nonlinear_lag]
+            )
+            ** 2
+            - 0.25
+        )
         state[idx] = (
             ar_phi * state[idx - 1]
             + seasonal_memory * state[idx - seasonal_lag]
-            + nonlinear_strength * np.sin(2.0 * state[idx - nonlinear_lag])
-            + _conditioned_noise(rng, (target_dim,), 0.06, conditioning)
+            + nonlinear_strength * nonlinear_response
+            + _conditioned_noise(
+                rng,
+                (target_dim,),
+                innovation_scale,
+                conditioning,
+            )
         )
     seasonal_amplitude = 0.20 * _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
     slow_amplitude = 0.08 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
@@ -1978,6 +2090,7 @@ def _generate_nonlinear_persistence(
                     "maximum_lag": int(seasonal_lag),
                     "maximum_lag_observations_in_context": float(context_length / seasonal_lag),
                     "coefficient_stability_bound": float(stability_bound),
+                    "transform_version": int(transform_version),
                 },
             ),
             "dependency_strength": float(dependency_strength),
@@ -1986,9 +2099,20 @@ def _generate_nonlinear_persistence(
             "seasonal_memory": float(seasonal_memory),
             "nonlinear_lag": int(nonlinear_lag),
             "nonlinear_strength": float(nonlinear_strength),
+            "nonlinear_frequency": float(nonlinear_frequency),
+            "nonlinear_transform": (
+                "sin_squared_centered"
+                if transform_version >= 2
+                else "sin"
+            ),
             "recurrence_amplitude": float(recurrence_amplitude),
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
-            "noise_scale": 0.06 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
+            "noise_scale": innovation_scale
+            * _conditioned_parameter(
+                conditioning,
+                "noise_scale_multiplier",
+                1.0,
+            ),
         },
         None,
     )
@@ -2388,6 +2512,10 @@ def _structural_univariate_features(values: np.ndarray, season_length: int) -> d
         "seasonal_amplitude_cv": float(np.std(np.abs(seasonal_profile)) / (np.mean(np.abs(seasonal_profile)) + 1e-9)) if seasonal_profile.size else 0.0,
         "nonlinear_lag1_gain": _nonlinear_lag1_gain(y),
         "nonlinear_multi_lag_gain": _nonlinear_multi_lag_gain(y, season_length),
+        "nonlinear_conditional_gain": _nonlinear_conditional_gain(
+            y,
+            season_length,
+        ),
         **modulation_features,
     }
 
@@ -2610,6 +2738,39 @@ def _nonlinear_multi_lag_gain(values: np.ndarray, season_length: int) -> float:
             lag1,
             lag_seasonal,
             np.sin(2.0 * lag_nonlinear),
+        ]
+    )
+    return max(0.0, _r2(target, nonlinear) - _r2(target, linear))
+
+
+def _nonlinear_conditional_gain(values: np.ndarray, season_length: int) -> float:
+    """Incremental nonlinear-lag gain after linear seasonal conditioning."""
+
+    seasonal_lag = max(4, int(season_length))
+    nonlinear_lag = max(2, seasonal_lag // 2)
+    start = max(seasonal_lag, nonlinear_lag, 1)
+    if values.size - start < 8:
+        return 0.0
+    target = values[start:]
+    lag1 = values[start - 1 : -1]
+    lag_seasonal = values[: values.size - seasonal_lag]
+    if lag_seasonal.size > target.size:
+        lag_seasonal = lag_seasonal[-target.size :]
+    lag_nonlinear = values[
+        start - nonlinear_lag : values.size - nonlinear_lag
+    ]
+    linear = np.column_stack(
+        [
+            np.ones_like(target),
+            lag1,
+            lag_seasonal,
+            lag_nonlinear,
+        ]
+    )
+    nonlinear = np.column_stack(
+        [
+            linear,
+            np.sin(1.1 * lag_nonlinear) ** 2,
         ]
     )
     return max(0.0, _r2(target, nonlinear) - _r2(target, linear))

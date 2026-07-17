@@ -309,21 +309,69 @@ def calibrate_capability(
     coverage: float,
 ) -> dict[str, Any]:
     control_names = CONTROL_FEATURES_BY_CAPABILITY[capability_id]
-    reference_controls = feature_matrix(reference, control_names)
-    calibration_controls = feature_matrix(calibration, control_names)
-    center = np.median(reference_controls, axis=0)
-    scale = robust_scale(reference_controls)
-    reference_z = (reference_controls - center) / scale
-    calibration_z = (calibration_controls - center) / scale
-    robust_location = np.median(reference_z, axis=0)
-    clipped_reference = np.clip(reference_z, -8.0, 8.0)
-    covariance = np.atleast_2d(np.cov(clipped_reference, rowvar=False))
-    diagonal = np.diag(np.diag(covariance))
-    covariance = 0.75 * covariance + 0.25 * diagonal + 1e-4 * np.eye(len(control_names))
-    precision = np.linalg.pinv(covariance)
-    calibration_scores = mahalanobis_scores(calibration_z, robust_location, precision)
-    threshold = conformal_quantile(calibration_scores, coverage)
-    threshold = max(float(threshold), 1e-6)
+    if control_names:
+        reference_controls = feature_matrix(reference, control_names)
+        calibration_controls = feature_matrix(calibration, control_names)
+        center = np.median(reference_controls, axis=0)
+        scale = robust_scale(reference_controls)
+        reference_z = (reference_controls - center) / scale
+        calibration_z = (calibration_controls - center) / scale
+        robust_location = np.median(reference_z, axis=0)
+        clipped_reference = np.clip(reference_z, -8.0, 8.0)
+        covariance = np.atleast_2d(np.cov(clipped_reference, rowvar=False))
+        diagonal = np.diag(np.diag(covariance))
+        covariance = (
+            0.75 * covariance
+            + 0.25 * diagonal
+            + 1e-4 * np.eye(len(control_names))
+        )
+        precision = np.linalg.pinv(covariance)
+        calibration_scores = mahalanobis_scores(
+            calibration_z,
+            robust_location,
+            precision,
+        )
+        threshold = max(
+            float(conformal_quantile(calibration_scores, coverage)),
+            1e-6,
+        )
+        control_support = {
+            "method": "shrunk_robust_mahalanobis",
+            "feature_names": list(control_names),
+            "feature_center": round_nested(center),
+            "feature_scale": round_nested(scale),
+            "robust_location_z": round_nested(robust_location),
+            "precision": round_nested(precision),
+            "threshold": round_float(threshold),
+            "coverage": float(coverage),
+            "reference_count": len(reference),
+            "calibration_count": len(calibration),
+            "calibration_acceptance_rate": round_float(
+                float(np.mean(calibration_scores <= threshold))
+            ),
+            "marginal_quantiles": {
+                name: quantile_map(
+                    reference_controls[:, index],
+                    levels=(0.01, 0.50, 0.99),
+                )
+                for index, name in enumerate(control_names)
+            },
+        }
+    else:
+        control_support = {
+            "method": "not_applicable_no_independent_observable_controls",
+            "feature_names": [],
+            "feature_center": [],
+            "feature_scale": [],
+            "robust_location_z": [],
+            "precision": [],
+            "threshold": 0.0,
+            "coverage": 1.0,
+            "reference_count": len(reference),
+            "calibration_count": len(calibration),
+            "calibration_acceptance_rate": 1.0,
+            "marginal_quantiles": {},
+        }
 
     target_reference: dict[str, Any] = {}
     for name in TARGET_FEATURES_BY_CAPABILITY[capability_id]:
@@ -336,23 +384,7 @@ def calibrate_capability(
         }
 
     return {
-        "control_support": {
-            "method": "shrunk_robust_mahalanobis",
-            "feature_names": list(control_names),
-            "feature_center": round_nested(center),
-            "feature_scale": round_nested(scale),
-            "robust_location_z": round_nested(robust_location),
-            "precision": round_nested(precision),
-            "threshold": round_float(threshold),
-            "coverage": float(coverage),
-            "reference_count": len(reference),
-            "calibration_count": len(calibration),
-            "calibration_acceptance_rate": round_float(float(np.mean(calibration_scores <= threshold))),
-            "marginal_quantiles": {
-                name: quantile_map(reference_controls[:, index], levels=(0.01, 0.50, 0.99))
-                for index, name in enumerate(control_names)
-            },
-        },
+        "control_support": control_support,
         "target_reference": target_reference,
     }
 

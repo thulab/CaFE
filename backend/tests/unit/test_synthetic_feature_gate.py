@@ -128,3 +128,39 @@ def test_target_percentile_is_diagnostic_not_an_acceptance_condition():
         result["target_percentile_diagnostics"]["trend_strength"]["approx_real_percentile"],
         1.0,
     )
+
+
+def test_explicit_no_independent_controls_is_enforced_and_accepts() -> None:
+    artifact = artifact_with_joint_support()
+    capability = artifact["buckets"]["unit_bucket"]["capabilities"]["trend"]
+    capability["control_support"] = {
+        "method": "not_applicable_no_independent_observable_controls",
+        "feature_names": [],
+        "feature_center": [],
+        "feature_scale": [],
+        "robust_location_z": [],
+        "precision": [],
+        "threshold": 0.0,
+        "coverage": 1.0,
+        "reference_count": 80,
+        "calibration_count": 20,
+        "marginal_quantiles": {},
+    }
+
+    result = evaluate_feature_support_gate(
+        capability_id="trend",
+        features={"trend_strength": 0.6},
+        profile_ids=("unit_bucket",),
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    )
+
+    assert result["enforced"] is True
+    assert result["accepted"] is True
+    assert result["support_method"] == (
+        "not_applicable_no_independent_observable_controls"
+    )
+    assert result["score"] == 0.0
+    assert result["control_features"] == {}

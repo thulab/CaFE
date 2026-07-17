@@ -115,3 +115,32 @@ def test_capability_threshold_uses_real_calibration_only():
     assert support["calibration_count"] == 20
     assert support["calibration_acceptance_rate"] >= 0.95
     assert set(config["target_reference"]) == {"trend_strength", "slope_abs", "curvature_abs"}
+
+
+def test_capability_without_independent_controls_records_explicit_contract(
+    monkeypatch,
+) -> None:
+    module = load_calibration_module()
+    rows = [
+        row(index, group_id=f"series:{index // 10}", start=index)
+        for index in range(100)
+    ]
+    monkeypatch.setitem(
+        module.CONTROL_FEATURES_BY_CAPABILITY,
+        "regime_switching",
+        (),
+    )
+
+    config = module.calibrate_capability(
+        "regime_switching",
+        rows[:80],
+        rows[80:],
+        coverage=0.95,
+    )
+    support = config["control_support"]
+
+    assert support["method"] == (
+        "not_applicable_no_independent_observable_controls"
+    )
+    assert support["feature_names"] == []
+    assert support["calibration_acceptance_rate"] == 1.0

@@ -6,6 +6,8 @@ from app.services.synthetic_generation_service import (
     PAPER_STRUCTURED_CAPABILITY_IDS,
     PAPER_UNIVARIATE_CAPABILITY_IDS,
     _generate_sample_values,
+    _nonlinear_conditional_gain,
+    _nonlinear_multi_lag_gain,
     _realized_features,
     _standardize_by_context,
     _standardize_hierarchy_by_context,
@@ -203,3 +205,31 @@ def test_realized_primary_features_follow_intensity_direction():
             intensity_means,
         )
         assert correlation > 0.8, (capability_id, feature_name, intensity_means)
+
+
+def test_conditional_nonlinear_gain_does_not_label_plain_seasonality_as_nonlinear():
+    rng = np.random.default_rng(20260717)
+    time = np.arange(528, dtype=float)
+    seasonal = np.sin(2 * np.pi * time / 24) + 0.08 * rng.normal(size=time.size)
+
+    old_gain = _nonlinear_multi_lag_gain(seasonal, 24)
+    conditional_gain = _nonlinear_conditional_gain(seasonal, 24)
+
+    assert old_gain > 0.04
+    assert conditional_gain < 0.01
+
+
+def test_conditional_nonlinear_gain_detects_the_generated_recurrence():
+    rng = np.random.default_rng(20260717)
+    values = np.zeros(528, dtype=float)
+    values[:24] = rng.normal(0.0, 1.00, size=24)
+    for index in range(24, values.size):
+        values[index] = (
+            0.10 * values[index - 1]
+            + 0.05 * values[index - 24]
+            + 0.75
+            * (np.sin(1.10 * values[index - 12]) ** 2 - 0.25)
+            + 0.20 * rng.normal()
+        )
+
+    assert _nonlinear_conditional_gain(values, 24) > 0.005
