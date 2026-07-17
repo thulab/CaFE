@@ -37,6 +37,7 @@ PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/2026-07-17-paper-e3-model-capability-profiling-protocol.md"
 )
+RUNNER_PATH = Path(__file__).resolve()
 EXPECTED_E2_MANIFEST_SHA256 = (
     "5e91a4a4dadba842939754c8ad3e2efa22c8af3e247bf169c94ef0afbf27cfe0"
 )
@@ -1126,7 +1127,8 @@ def plot_skill_heatmap(directory: Path, profiles: pd.DataFrame) -> Path:
                 mase[capability_position, model_position] = float(
                     match.iloc[0]["five_level_mase_mean"]
                 )
-    figure, axis = plt.subplots(figsize=(11.2, 6.8))
+    figure_height = max(4.8, 0.55 * len(CAPABILITY_ORDER) + 2.0)
+    figure, axis = plt.subplots(figsize=(11.2, figure_height))
     cmap = plt.get_cmap("RdYlGn").copy()
     cmap.set_bad("#E5E7EB")
     finite = matrix[np.isfinite(matrix)]
@@ -1142,7 +1144,12 @@ def plot_skill_heatmap(directory: Path, profiles: pd.DataFrame) -> Path:
         range(len(CAPABILITY_ORDER)),
         [CAPABILITY_LABELS[capability] for capability in CAPABILITY_ORDER],
     )
-    axis.axhline(len(UNIVARIATE_CAPABILITIES) - 0.5, color="#111827", linewidth=1.5)
+    if STRUCTURED_CAPABILITIES:
+        axis.axhline(
+            len(UNIVARIATE_CAPABILITIES) - 0.5,
+            color="#111827",
+            linewidth=1.5,
+        )
     for row in range(matrix.shape[0]):
         best_column = int(np.nanargmin(mase[row]))
         for column in range(matrix.shape[1]):
@@ -1167,12 +1174,10 @@ def plot_skill_heatmap(directory: Path, profiles: pd.DataFrame) -> Path:
         y=0.995,
         fontsize=14,
     )
-    axis.set_title(
-        "Bold = lowest five-level mean MASE within capability; structured tasks below divider",
-        color="#4B5563",
-        fontsize=8,
-        pad=12,
-    )
+    subtitle = "Bold = lowest five-level mean MASE within capability"
+    if STRUCTURED_CAPABILITIES:
+        subtitle += "; structured tasks below divider"
+    axis.set_title(subtitle, color="#4B5563", fontsize=8, pad=12)
     figure.tight_layout(rect=(0, 0, 1, 0.965))
     stem = directory / "figure_1_capability_skill_heatmap"
     save_figure(figure, stem)
@@ -1180,8 +1185,16 @@ def plot_skill_heatmap(directory: Path, profiles: pd.DataFrame) -> Path:
 
 
 def plot_intensity_response(directory: Path, curves: pd.DataFrame) -> Path:
-    figure, axes = plt.subplots(3, 3, figsize=(14.8, 11.0), sharex=True)
-    for axis, capability in zip(axes.flat, CAPABILITY_ORDER, strict=True):
+    column_count = 3
+    row_count = int(math.ceil(len(CAPABILITY_ORDER) / column_count))
+    figure, axes = plt.subplots(
+        row_count,
+        column_count,
+        figsize=(14.8, 3.55 * row_count + 0.5),
+        sharex=True,
+        squeeze=False,
+    )
+    for axis, capability in zip(axes.flat, CAPABILITY_ORDER):
         cap = curves[curves["capability_id"] == capability]
         for model in MODEL_ORDER:
             group = cap[cap["model_id"] == model].sort_values("intensity")
@@ -1217,6 +1230,8 @@ def plot_intensity_response(directory: Path, curves: pd.DataFrame) -> Path:
         axis.set_xlabel("Intensity")
         axis.set_ylabel("MASE (lower is better)")
         axis.margins(x=0.04, y=0.12)
+    for axis in list(axes.flat)[len(CAPABILITY_ORDER) :]:
+        axis.set_visible(False)
     handles = [
         plt.Line2D([0], [0], color=MODEL_COLORS[model], marker="o", linewidth=1.7, label=model)
         for model in MODEL_ORDER
@@ -1707,8 +1722,8 @@ def write_manifest(output_dir: Path, *, source_dir: Path) -> None:
                 "sha256": sha256_file(PROTOCOL_PATH),
             },
             "runner": {
-                "path": str(Path(__file__).resolve().relative_to(REPO_ROOT)),
-                "sha256": sha256_file(Path(__file__).resolve()),
+                "path": str(RUNNER_PATH.relative_to(REPO_ROOT)),
+                "sha256": sha256_file(RUNNER_PATH),
             },
         },
         "files": files,
