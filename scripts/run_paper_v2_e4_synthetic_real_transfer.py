@@ -194,6 +194,7 @@ def prepare_experiment(
     )
     task_path = output_dir / "tasks.jsonl"
     write_jsonl(task_path, tasks)
+    ensure_shared_sample_alias(output_dir)
     preflight = validate_real_tasks(tasks, profile_summaries=profile_summaries)
     write_json(output_dir / "preflight.json", preflight)
 
@@ -1093,6 +1094,7 @@ def selection_receipt_payload(output_dir: Path) -> dict[str, Any]:
 def run_inference_stage(output_dir: Path, *, args: argparse.Namespace) -> None:
     config = read_json(output_dir / "config.json")
     validate_committed_selection_receipt(output_dir)
+    ensure_shared_sample_alias(output_dir)
     if int(config["expected_task_count"]) != count_jsonl(output_dir / "tasks.jsonl"):
         raise ValueError("E4 task count changed after selection freeze")
 
@@ -1115,6 +1117,23 @@ def run_inference_stage(output_dir: Path, *, args: argparse.Namespace) -> None:
             "task_file_sha256": sha256_file(output_dir / "tasks.jsonl"),
         },
     )
+
+
+def ensure_shared_sample_alias(output_dir: Path) -> None:
+    """Expose frozen E4 tasks under the audited E2 engine's input filename."""
+
+    task_path = output_dir / "tasks.jsonl"
+    alias_path = output_dir / "samples.jsonl"
+    require_file(task_path)
+    if alias_path.is_symlink():
+        if alias_path.resolve() != task_path.resolve():
+            raise ValueError(f"E4 sample alias points outside frozen tasks: {alias_path}")
+        return
+    if alias_path.exists():
+        if sha256_file(alias_path) != sha256_file(task_path):
+            raise ValueError("E4 samples.jsonl differs from frozen tasks.jsonl")
+        return
+    alias_path.symlink_to(task_path.name)
 
 
 def e4_sample_timestamps(sample: dict[str, Any]) -> list[str]:

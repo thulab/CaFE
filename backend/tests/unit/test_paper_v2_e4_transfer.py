@@ -98,3 +98,15 @@ def test_real_history_timestamps_accept_legacy_hour_frequency() -> None:
         "2020-01-01T03:00:00",
         "2020-01-01T04:00:00",
     ]
+
+
+def test_shared_sample_alias_points_to_frozen_tasks(tmp_path: Path) -> None:
+    task_path = tmp_path / "tasks.jsonl"
+    task_path.write_text('{"sample_id":"one"}\n', encoding="utf-8")
+
+    e4.ensure_shared_sample_alias(tmp_path)
+
+    alias = tmp_path / "samples.jsonl"
+    assert alias.is_symlink()
+    assert alias.resolve() == task_path.resolve()
+    assert e4.sha256_file(alias) == e4.sha256_file(task_path)

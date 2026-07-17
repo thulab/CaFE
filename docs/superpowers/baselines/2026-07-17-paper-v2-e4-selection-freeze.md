@@ -21,7 +21,7 @@
 ## 精确身份
 
 - Selection manifest SHA-256：
-  `7231bcdd58667f54d8e7ddada6b01a93e491850d520b70d8e1cfc77996f3d2b4`
+  `ffb4e8d63daa2538e4e06ab9f400d5ad449f479bd8baac0b62d45a9e57b1cd8a`
 - Task manifest SHA-256：
   `26a633f8efac79b457286a0830861a7888400b87381761bdd796065fb8f1cd04`
 - `tasks.jsonl` SHA-256：
