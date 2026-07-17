@@ -2,6 +2,7 @@ import numpy as np
 
 from app.services.synthetic_generation_service import (
     CAPABILITIES_BY_ID,
+    CONTROL_FEATURES_BY_CAPABILITY,
     PAPER_CAPABILITY_IDS,
     PAPER_STRUCTURED_CAPABILITY_IDS,
     PAPER_UNIVARIATE_CAPABILITY_IDS,
@@ -32,6 +33,8 @@ def test_paper_capability_set_is_six_univariate_plus_three_structured():
     assert len(PAPER_STRUCTURED_CAPABILITY_IDS) == 3
     assert len(PAPER_CAPABILITY_IDS) == 9
     assert set(CAPABILITIES_BY_ID) == set(PAPER_CAPABILITY_IDS)
+    assert CONTROL_FEATURES_BY_CAPABILITY["regime_switching"] == ()
+    assert CONTROL_FEATURES_BY_CAPABILITY["predictable_intermittency"] == ()
 
 
 def test_paper_generators_satisfy_predictability_construction_contracts():

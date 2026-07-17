@@ -503,12 +503,13 @@ CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     # Recurrence strength mechanically changes the variance attributed to the
     # seasonal and residual components, so neither is a valid nuisance control.
     "nonlinear_persistence": ("trend_strength", "outlier_rate", "spike_rate"),
-    # A recurring pulse clock is itself recovered as seasonal signal, reduces
-    # residual variance, and changes drift/volatility summaries through its
-    # repeated event positions.  Long-run trend is the independent observable
-    # nuisance; construction, absolute spike dose, and near-distance remain
-    # separate mandatory gates.
-    "predictable_intermittency": ("trend_strength",),
+    # A recurring pulse clock is itself recovered as seasonal signal and its
+    # phase/period also projects onto the trend smoother.  It therefore changes
+    # every available decomposition, spike, and outlier summary.  The feature
+    # artifact records the same explicit no-control contract as regime
+    # switching; train-conditioned nuisance parameters, construction, absolute
+    # spike dose, and near-distance remain mandatory.
+    "predictable_intermittency": (),
     # Signal-to-noise ratios are mechanically changed by factor/effect strength,
     # so they are target-coupled rather than valid nuisance controls here.
     "common_factor": ("trend_strength", "outlier_rate", "spike_rate"),

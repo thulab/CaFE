@@ -112,15 +112,14 @@ Feature-support 和 near-distance gates 必须按 profile、context、horizon、
 
 Feature-support 只能使用不与目标机制机械耦合的 controls。nonlinear recurrence 会改变
 seasonal/residual 方差占比，因此控制 trend、outlier 与 spike，而不控制
-seasonal-strength/noise-ratio。可预测稀疏脉冲本身会被季节分解器恢复为季节信号，并改变
-noise、drift 与 volatility 摘要，因此只控制独立的 long-run trend；该趋势 nuisance
-由真实 training median 做 capability-specific inverse mapping。Intermittency 仍必须同时
-通过固定脉冲时钟的 construction contract、绝对 spike-dose 校准和 near-distance gate，
-一维 feature control 不代表取消其他约束。
+seasonal-strength/noise-ratio。可预测稀疏脉冲本身会被季节分解器恢复为季节信号，其
+相位与周期也会被 trend smoother 投影为趋势，因此当前 realized feature family 中同样
+没有独立 observable control。背景趋势 latent nuisance 仍由真实 training median 做
+capability-specific inverse mapping；Intermittency 仍必须同时通过固定脉冲时钟的
+construction contract、绝对 spike-dose 校准和 near-distance gate。
 
-`regime_switching` 的 level switch 会机械改变 spike、diff-spike、outlier 以及分解后的
-trend/noise 摘要；当前特征族中没有可与目标机制分离的 observable nuisance。因此其
-feature-support artifact 显式记录
+`regime_switching` 的 level switch 也会机械改变 spike、diff-spike、outlier 以及分解后的
+trend/noise 摘要；这两个能力的 feature-support artifact 都显式记录
 `not_applicable_no_independent_observable_controls`，不拟合伪独立的联合门限。该能力仍
 必须通过 train-only 真实参数支持、历史重复且预测期继续的 construction contract、冻结
 canonical dose、目标特征 dose-response 和 near-distance gate；这不是取消真实性约束。
