@@ -150,3 +150,71 @@ def test_validate_frozen_design_rejects_short_context() -> None:
         assert "expected (504, 48, 24, 1)" in str(error)
     else:
         raise AssertionError("short paper-v2 context was accepted")
+
+
+def test_generation_resumes_an_append_safe_partial_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    module = load_module()
+    profile = {
+        "context_length": 4,
+        "horizon": 2,
+        "target_dim": 1,
+        "season_length": 2,
+        "frequency": "h",
+        "capabilities": {"trend": {}},
+    }
+    artifacts = {
+        "generator": {"profiles": {"profile": profile}},
+        "feature_gate": {},
+        "near_distance": {},
+        "manifest": {},
+    }
+    config = {
+        "online_conditioning_profile_ids": ["profile"],
+        "round_seeds": [101, 202],
+        "samples_per_round_per_cell": 1,
+        "expected_generated_sample_count": 10,
+    }
+    monkeypatch.setattr(
+        module.base,
+        "resolve_generator_conditioning",
+        lambda **_kwargs: object(),
+    )
+    generated_intensities = []
+
+    def generate(
+        _capability_id,
+        length,
+        _context_length,
+        target_dim,
+        _season_length,
+        intensity,
+        _sample_seed,
+        **_kwargs,
+    ):
+        generated_intensities.append(intensity)
+        target = np.full((length, target_dim), float(intensity))
+        latent = {
+            "acceptance": {"attempts": 1},
+            "generator_conditioning": {
+                "canonical_target_feature": "trend_strength",
+                "canonical_target_strength": float(intensity),
+            },
+        }
+        return target, latent, None, {"trend_strength": float(intensity)}
+
+    monkeypatch.setattr(module.base, "_generate_accepted_sample_values", generate)
+    output = tmp_path / "E2"
+    output.mkdir()
+    partial = output / "samples.jsonl.in_progress"
+    partial.write_text(
+        '{"sample_id":"profile__trend__i1__r1__s000"}\n',
+        encoding="utf-8",
+    )
+
+    module.generate_samples_if_needed(output, config=config, artifacts=artifacts)
+
+    assert module.base.count_jsonl(output / "samples.jsonl") == 10
+    assert len(generated_intensities) == 9

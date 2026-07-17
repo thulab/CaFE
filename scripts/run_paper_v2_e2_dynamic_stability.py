@@ -40,6 +40,7 @@ EXPECTED_TARGET_DIM = 1
 
 
 import run_paper_e2_dynamic_stability as base  # noqa: E402
+from app.core.errors import ApiError  # noqa: E402
 
 
 def configure_base_module() -> None:
@@ -240,15 +241,26 @@ def generate_samples_if_needed(
         return
 
     temporary = output_dir / "samples.jsonl.in_progress"
+    completed_ids: set[str] = set()
+    output_mode = "w"
     if temporary.exists():
-        raise FileExistsError(
-            f"partial sample file exists and is retained for diagnosis: {temporary}"
+        partial_rows = list(base.iter_jsonl(temporary))
+        completed_ids = {str(row["sample_id"]) for row in partial_rows}
+        if len(completed_ids) != len(partial_rows):
+            raise ValueError(
+                f"partial sample file contains duplicate sample IDs: {temporary}"
+            )
+        output_mode = "a"
+        print(
+            f"resuming partial generation: {len(completed_ids)}/"
+            f"{config['expected_generated_sample_count']}",
+            flush=True,
         )
     generator_artifact = artifacts["generator"]
     feature_gate_artifact = artifacts["feature_gate"]
     near_distance_artifact = artifacts["near_distance"]
     created = 0
-    with temporary.open("w", encoding="utf-8") as handle:
+    with temporary.open(output_mode, encoding="utf-8") as handle:
         for profile_id in config["online_conditioning_profile_ids"]:
             profile = generator_artifact["profiles"][profile_id]
             for capability_id in sorted(profile["capabilities"]):
@@ -277,24 +289,65 @@ def generate_samples_if_needed(
                             sample_index,
                         )
                         for intensity in base.INTENSITIES:
-                            target, latent, covariates, features = (
-                                base._generate_accepted_sample_values(
-                                    capability_id,
-                                    int(profile["context_length"])
-                                    + int(profile["horizon"]),
-                                    int(profile["context_length"]),
-                                    int(profile["target_dim"]),
-                                    int(profile["season_length"]),
-                                    intensity,
-                                    sample_seed,
-                                    anchor_profile_id=profile_id,
-                                    generator_conditioning=conditioning,
-                                    generator_conditioning_artifact=generator_artifact,
-                                    feature_gate_artifact=feature_gate_artifact,
-                                    near_distance_artifact=near_distance_artifact,
-                                    acceptance_profile_ids=(profile_id,),
-                                )
+                            sample_id = (
+                                f"{profile_id}__{capability_id}__i{intensity}__"
+                                f"r{round_index}__s{sample_index:03d}"
                             )
+                            if sample_id in completed_ids:
+                                continue
+                            try:
+                                target, latent, covariates, features = (
+                                    base._generate_accepted_sample_values(
+                                        capability_id,
+                                        int(profile["context_length"])
+                                        + int(profile["horizon"]),
+                                        int(profile["context_length"]),
+                                        int(profile["target_dim"]),
+                                        int(profile["season_length"]),
+                                        intensity,
+                                        sample_seed,
+                                        anchor_profile_id=profile_id,
+                                        generator_conditioning=conditioning,
+                                        generator_conditioning_artifact=generator_artifact,
+                                        feature_gate_artifact=feature_gate_artifact,
+                                        near_distance_artifact=near_distance_artifact,
+                                        acceptance_profile_ids=(profile_id,),
+                                    )
+                                )
+                            except ApiError as error:
+                                failure = {
+                                    "schema_version": "paper_e2_generation_failure.v1",
+                                    "sample_id": sample_id,
+                                    "profile_id": profile_id,
+                                    "capability_id": capability_id,
+                                    "intensity": int(intensity),
+                                    "round_index": int(round_index),
+                                    "round_seed": int(round_seed),
+                                    "sample_index": int(sample_index),
+                                    "sample_seed": int(sample_seed),
+                                    "error_code": error.error_code,
+                                    "message": error.message,
+                                    "details": error.details,
+                                }
+                                failure_path = output_dir / "generation_failures.jsonl"
+                                with failure_path.open(
+                                    "a",
+                                    encoding="utf-8",
+                                ) as failure_handle:
+                                    failure_handle.write(
+                                        json.dumps(
+                                            failure,
+                                            ensure_ascii=False,
+                                            sort_keys=True,
+                                        )
+                                        + "\n"
+                                    )
+                                handle.flush()
+                                raise RuntimeError(
+                                    "synthetic generation failed for "
+                                    f"{sample_id} seed={sample_seed}: "
+                                    f"{error.error_code} {error.details}"
+                                ) from error
                             row = base.sample_row(
                                 profile=profile,
                                 profile_id=profile_id,
@@ -325,8 +378,9 @@ def generate_samples_if_needed(
                                     flush=True,
                                 )
     os.replace(temporary, sample_path)
-    if created != int(config["expected_generated_sample_count"]):
-        raise AssertionError(f"unexpected generated sample count: {created}")
-    print(f"generated samples complete: {created}", flush=True)
+    total = len(completed_ids) + created
+    if total != int(config["expected_generated_sample_count"]):
+        raise AssertionError(f"unexpected generated sample count: {total}")
+    print(f"generated samples complete: {total}", flush=True)
 if __name__ == "__main__":
     raise SystemExit(main())
