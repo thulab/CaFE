@@ -55,6 +55,7 @@ PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/2026-07-16-paper-e2-dynamic-stability-protocol.md"
 )
+RUNNER_PATH = Path(__file__).resolve()
 EXECUTION_CALIBRATION = {
     "report": "timer-rest-service/data/concurrency-benchmark/20260716T182346Z-replicas/REPLICA_OPTIMIZATION_ZH.md",
     "report_sha256": "cd16830aa17985e1c45701aa6a56454b7a42bec85e1a724ca51563e319cfec46",
@@ -1834,7 +1835,7 @@ def write_manifest(output_dir: Path, *, config: dict[str, Any]) -> None:
         "generator_conditioning_artifact": GENERATOR_ARTIFACT_PATH,
         "feature_gate_artifact": FEATURE_GATE_ARTIFACT_PATH,
         "near_distance_artifact": NEAR_DISTANCE_ARTIFACT_PATH,
-        "runner": Path(__file__).resolve(),
+        "runner": RUNNER_PATH,
         "protocol": PROTOCOL_PATH,
     }
     files = {
