@@ -6,7 +6,7 @@
 
 - Prediction length：`H=48`
 - Lookback：`L ∈ {96, 168, 336, 504}`
-- Intensity：dataset-local `q10/q30/q50/q70/q90`
+- Intensity：dataset-local 真实容忍区间与生成器响应区间交集内的五档相对剂量
 
 四档 lookback 不是四次独立生成。每个任务先构造一条 `L=504,H=48` 母样本，再取
 history 后缀形成四个 view。四个 view 指向同一段 future，并按自己的 context 重新
@@ -73,7 +73,8 @@ dataset 不支持某些能力，并如实记录：
 - `missing_required_task_view`
 - `variable_structure_not_supported`
 - `insufficient_windows`
-- `insufficient_local_target_range`
+- `insufficient_local_real_tolerance_range`
+- `no_real_generator_tolerance_overlap`
 - `insufficient_local_intensity_spacing`
 - `inverse_calibration_failed`
 - `feature_gate_calibration_failed`
@@ -84,19 +85,40 @@ cell 不生成样本、不进入模型汇总，也不阻断同一 dataset 的其
 
 ## 5. Dataset-local intensity
 
-对固定 dataset/task/capability/lookback，仅在 parameter split 上计算主特征：
+对固定 dataset/task/capability，只在 parameter split 上计算主特征。真实数据不再
+直接指定五个分位点，而是指定可接受边界：
 
 \[
-T_k=Q(f_c(R_{param}),p_k),\quad
-p=(0.10,0.30,0.50,0.70,0.90).
+I^{real}_{d,c}=
+\left[
+Q_{0.05}\!\left(f_c(R^{param}_{d})\right),
+1.2\,Q_{0.95}\!\left(f_c(R^{param}_{d})\right)
+\right].
 \]
 
-这五档是 dataset 内部的相对强度，不具有跨 dataset 绝对可比性。五档必须有限、严格
-递增且相邻间距足够；不满足时标记 unsupported，不修改真实分位点。
+`1.2` 是冻结的真实上限放大系数。它允许合成压力测试比真实数据的典型高位更突出
+主特征，但仍由同一 dataset 给出有限边界。随后固定该 dataset profile 的 nuisance，
+估计生成器在 `intensity_lambda ∈ [0,1]` 上的主特征响应区间
+\(I^{gen}_{d,c}\)，并取：
 
-在固定该 dataset profile 的 nuisance 后，反求 `structure_scale` 和
-`intensity_lambda[1..5]`。独立 seed bank 验证 realized mean 单调，最大相对本地
-target range 的归一化误差不得超过 0.20。
+\[
+I^{feasible}_{d,c}=I^{real}_{d,c}\cap I^{gen}_{d,c}.
+\]
+
+五档 target 是 \(I^{feasible}_{d,c}\) 上相对位置
+`0/0.25/0.50/0.75/1.00` 的等距点。它们只表示该
+dataset/profile/capability 内从弱到强，不是经验分位数，也不具有跨 dataset 的绝对
+可比性。若交集为空或宽度不足，记录 `no_real_generator_tolerance_overlap`；不外推
+生成器，也不借用其他 dataset 的范围。
+
+在交集内反求 `structure_scale` 和 `intensity_lambda[1..5]`。独立 seed bank 验证
+realized mean 单调，最大相对本地 target range 的归一化误差不得超过 0.20。
+
+`regime_switching` 的重复两状态时钟是合成压力机制，不要求真实数据已经由同一潜变量
+机制生成。真实窗口通过 history-only clock scan 得到
+`regime_clock_history_incremental_r2`，其分布只用于上述 dataset-local 容忍区间；
+“历史选钟、未来验证”的 recurring-regime qualification 继续落盘作诊断，但不再是
+支持该能力的硬前置条件。
 
 ## 6. 数据切分与防泄漏
 

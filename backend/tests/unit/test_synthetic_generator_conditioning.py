@@ -8,6 +8,7 @@ from app.services.synthetic_generation_service import _generate_sample_values
 from app.services.synthetic_generator_conditioning import (
     ARTIFACT_SCHEMA_VERSION,
     INTENSITY_POLICY_ID,
+    REAL_BOUNDED_INTENSITY_POLICY_ID,
     GeneratorConditioning,
     matching_generator_profiles,
     resolve_generator_conditioning,
@@ -103,10 +104,64 @@ def test_conditioning_requires_an_exact_task_window_and_merges_parameters():
     assert conditioning.metadata(3)["profile_id"] == "profile_a"
     assert conditioning.metadata(3)["dataset_id"] == "dataset_a"
     assert conditioning.metadata(3)["target_percentile_level"] == 0.5
+    assert conditioning.metadata(3)["target_relative_level"] == 0.5
+    assert conditioning.metadata(3)["target_level_semantics"] == "empirical_quantile"
     assert conditioning.metadata(3)["target_strength"] == 0.25
     assert conditioning.metadata(3)["calibrated_expected_strength"] == 0.21
     assert conditioning.metadata(3)["intensity_policy_id"] == INTENSITY_POLICY_ID
     assert "canonical_scale_id" not in conditioning.metadata(3)
+
+
+def test_real_bounded_policy_exposes_relative_level_semantics():
+    artifact = conditioning_artifact()
+    artifact["intensity_policy"] = {
+        "policy_id": REAL_BOUNDED_INTENSITY_POLICY_ID,
+        "percentile_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
+        "relative_dose_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
+        "definition": "dataset-local real-bounded generator-feasible levels",
+        "real_tolerance": {
+            "lower_quantile": 0.05,
+            "upper_quantile": 0.95,
+            "upper_multiplier": 1.2,
+        },
+    }
+    for profile in artifact["profiles"].values():
+        profile["capabilities"]["trend"]["target_percentile_levels"] = [
+            0.0,
+            0.25,
+            0.5,
+            0.75,
+            1.0,
+        ]
+
+    conditioning = resolve_generator_conditioning(
+        capability_id="trend",
+        profile_id="profile_a",
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    )
+
+    assert conditioning is not None
+    metadata = conditioning.metadata(4)
+    assert metadata["target_relative_level"] == 0.75
+    assert metadata["target_percentile_level"] == 0.75
+    assert metadata["target_level_semantics"] == "relative_position"
+    assert "real-bounded generator-feasible" in metadata["intensity_semantics"]
+
+    artifact["intensity_policy"]["real_tolerance"].pop("upper_multiplier")
+    assert (
+        resolve_generator_conditioning(
+            capability_id="trend",
+            profile_id="profile_a",
+            context_length=168,
+            horizon=24,
+            target_dim=1,
+            artifact=artifact,
+        )
+        is None
+    )
 
 
 def test_balanced_profile_selection_is_deterministic_and_exactly_balanced():

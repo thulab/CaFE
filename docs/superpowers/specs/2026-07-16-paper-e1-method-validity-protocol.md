@@ -23,13 +23,15 @@ dataset_id × profile_id × capability_id
 ## 冻结输入
 
 - dataset profile suite：每个 dataset 独立形成 profile，不含跨数据集聚合 profile；
-- generator conditioning：只接受 dataset-local relative-intensity schema；
+- generator conditioning：只接受 dataset-local real-bounded、generator-feasible
+  relative-intensity schema；
 - dataset capability support matrix：状态为 `supported` 的 cell 才进入 E1；
 - feature-support 与 near-distance artifact：必须来自
   `runtime/paper_exp/v4/01_nine_capability_suite/`，并与相同
   `dataset_id/profile_id` 精确匹配；
-- intensity：1--5 分别对应 parameter split 主特征的
-  `q10/q30/q50/q70/q90`；
+- intensity：1--5 分别对应 parameter split 的
+  `[q05, 1.2×q95]` 真实容忍区间与生成器响应区间交集内的
+  `0/0.25/0.50/0.75/1.00` 相对位置；
 - 每个 supported cell 运行两轮独立根 seed；
 - 每轮每个 `dataset × profile × capability × intensity` 生成 64 个最终样本；
 - 同一 `dataset × profile × capability × round × sample_index` 的五档复用同一 sample
@@ -53,7 +55,7 @@ N_{\rm sample}=N_{\rm supported}\times5\times64\times2.
 
 对每个 supported `dataset/profile/capability/intensity` 统计 primary realized feature 的
 均值、标准差和 p05/p95，并与该 profile conditioning 中对应的
-`q10/q30/q50/q70/q90` target 比较。
+五个可行 target 比较。
 
 目标误差使用该 cell 自己的 target span 归一化：
 

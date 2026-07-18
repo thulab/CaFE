@@ -61,7 +61,7 @@ def test_dose_response_uses_each_dataset_profile_local_target_range():
                     "trend": {
                         "status": "supported",
                         "target_feature": "trend_strength",
-                        "target_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+                        "target_percentile_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
                         "target_values": targets,
                         "calibration": {"status": "supported"},
                     }
@@ -78,6 +78,8 @@ def test_dose_response_uses_each_dataset_profile_local_target_range():
 
     assert len(cells) == 10
     assert summary["all_passed"] is True
+    assert cells[0]["target_relative_level"] == 0.0
+    assert "target_percentile_level" not in cells[0]
     assert summary["profile_checks"][0]["spearman"] == pytest.approx(1.0)
     assert summary["profile_checks"][0]["max_normalized_absolute_error"] == pytest.approx(
         0.1
@@ -121,7 +123,7 @@ def test_dose_response_threshold_is_stable_at_exact_spearman_boundary():
                             "status": "supported",
                             "calibration": {"status": "supported"},
                             "target_feature": "trend_strength",
-                            "target_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+                            "target_percentile_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
                             "target_values": targets,
                         }
                 },

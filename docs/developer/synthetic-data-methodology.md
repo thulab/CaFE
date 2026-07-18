@@ -29,7 +29,7 @@ loader 拒绝，不能静默回退。
 dataset d 的 development windows
   ├─ parameter split
   │    ├─ nuisance / background dynamics
-  │    └─ capability c 的 q10/q30/q50/q70/q90 target
+  │    └─ capability c 的 q05..1.2×q95 真实容忍区间
   ├─ gate-reference split
   │    ├─ control-feature support
   │    └─ near-distance reference bank
@@ -71,7 +71,7 @@ Paper v4 固定：
 - 每个 lookback 按自己的 context 重新标准化和验收。
 
 不存在跨 dataset 汇总后的生成 profile。后续生成必须显式命中自己的
-`dataset_id/profile_id`；某 dataset 的 q90、nuisance 或 gate 阈值不能借给另一个
+`dataset_id/profile_id`；某 dataset 的真实容忍边界、nuisance 或 gate 阈值不能借给另一个
 dataset。
 
 ## 3. 九个能力与结构要求
@@ -81,7 +81,7 @@ dataset。
 | `trend` | 单变量 | `trend_strength` |
 | `multi_seasonal` | 单变量 | `multi_period_score` |
 | `time_varying_seasonality` | 单变量 | `seasonal_amplitude_modulation` |
-| `regime_switching` | 单变量，历史中有重复状态时钟 | `regime_clock_history_incremental_r2` |
+| `regime_switching` | 单变量 | `regime_clock_history_incremental_r2` |
 | `nonlinear_persistence` | 单变量 | `nonlinear_conditional_gain` |
 | `predictable_intermittency` | 单变量 | `spike_rate` |
 | `common_factor` | 多目标 panel | `pca_top1_explained` |
@@ -103,18 +103,31 @@ dataset 都必须支持九个能力：
 ## 4. Dataset-local 五档相对强度
 
 对固定的 \(d,v,c,L,H\)，只在该 profile 的 parameter split 上计算主特征
-\(f_c(x)\)：
+\(f_c(x)\)。真实数据规定容忍区间，而不是要求合成数据复刻五个经验分位点：
 
 \[
-T_{d,v,c,k}=Q_{R^{param}_{d,v}}\left(f_c(x),p_k\right),\qquad
-(p_1,\ldots,p_5)=(0.10,0.30,0.50,0.70,0.90).
+I^{real}_{d,v,c}=
+\left[
+Q_{0.05}\!\left(f_c(R^{param}_{d,v})\right),
+1.2Q_{0.95}\!\left(f_c(R^{param}_{d,v})\right)
+\right].
 \]
 
-`intensity=1..5` 仅表示这个 dataset/profile/capability 内部从相对弱到相对强。
-不能比较 Electricity 的 intensity 3 与 Traffic 的 intensity 3 的绝对强度；也不能
-把不同能力的档号解释为相同物理量或相同难度。
+上限放大系数默认且冻结为 `1.2`，让能力测试可以在真实高位之上有限地凸显主特征。
+固定该 profile 的 nuisance 后，先估计生成器从 \(\lambda=0\) 到 \(\lambda=1\) 的
+主特征响应区间 \(I^{gen}_{d,v,c}\)，再计算：
 
-生成器固定该 profile 的 nuisance，并反解结构参数：
+\[
+I^{feasible}_{d,v,c}
+=I^{real}_{d,v,c}\cap I^{gen}_{d,v,c}.
+\]
+
+五个 target 是可行交集内相对坐标 `0/0.25/0.50/0.75/1.00` 的等距点。
+`intensity=1..5` 仅表示这个 dataset/profile/capability 内部从相对弱到相对强；它们
+不是经验分位数。不能比较 Electricity 的 intensity 3 与 Traffic 的 intensity 3 的
+绝对强度，也不能把不同能力的档号解释为相同物理量或相同难度。
+
+生成器在可行交集内反解结构参数：
 
 \[
 \lambda_{d,v,c}(k)=
@@ -132,9 +145,9 @@ T_{d,v,c,k}=Q_{R^{param}_{d,v}}\left(f_c(x),p_k\right),\qquad
 \max(10^{-6},0.02(T_5-T_1)).
 \]
 
-若不满足，记录 `insufficient_local_target_range` 或
-`insufficient_local_intensity_spacing`，不人为拉开分位点，也不借用其他 dataset 的
-目标。
+若真实容忍区间不足，记录 `insufficient_local_real_tolerance_range`；若真实与生成器
+没有足够宽的交集，记录 `no_real_generator_tolerance_overlap`；档间距仍不足则记录
+`insufficient_local_intensity_spacing`。不外推生成器，也不借用其他 dataset 的范围。
 
 独立 seed bank 验证 calibrated realized mean 的单调性和误差。最大误差按该
 dataset-local target range 归一化，容差为 0.20。校准失败的 cell 同样记为
@@ -166,6 +179,13 @@ dataset-local target range 归一化，容差为 0.20。校准失败的 cell 同
 construction predictability contract 是配置级必要条件。它证明预测所需信息在
 预测时可用，但不证明任意模型都能利用该信息；模型有效性仍由 E1 的 matched
 baseline/oracle 和正式模型实验检验。
+
+对 `regime_switching`，生成器使用 history 与 future 连续共享的重复两状态方波时钟。
+真实数据不需要也通常不会含有同一个离散潜变量；校准只提取一个可观察量：在控制趋势
+和普通季节谐波后，history-only 选择的方波 clock 对历史拟合增加了多少解释力，即
+`regime_clock_history_incremental_r2`。这个量回答“该真实 dataset 容许多强的重复
+状态组织”，而不声称识别了真实生成机制。历史选钟后的 future 验证继续作为诊断审计，
+但 `qualified=0` 不再直接令能力 unsupported。
 
 ## 6. 三路拆分与防泄漏
 
@@ -253,11 +273,15 @@ synthetic_v2_generator_conditioning_artifact.v4
 顶层必须声明：
 
 ```text
-policy_id = dataset-local-relative-quantiles-v1
-percentile_levels = [0.10, 0.30, 0.50, 0.70, 0.90]
+policy_id = dataset-local-real-bounded-generator-feasible-v1
+relative_dose_levels = [0.00, 0.25, 0.50, 0.75, 1.00]
+real_tolerance = {lower_quantile = 0.05, upper_quantile = 0.95,
+                  upper_multiplier = 1.2}
 ```
 
-每个 profile 必须记录 `dataset_id`。每个 supported capability 记录
+为了兼容 v4 reader，artifact 中的旧字段 `percentile_levels` 仍承载同一组相对坐标，
+但这些值不再具有 percentile 含义。每个 profile 必须记录 `dataset_id`。每个
+supported capability 记录
 `target_feature`、`target_values`、`intensity_lambdas`、
 `calibrated_realized_strengths` 和 calibration 审计；unsupported capability 记录
 reason 与 detail，且不能被在线选择。

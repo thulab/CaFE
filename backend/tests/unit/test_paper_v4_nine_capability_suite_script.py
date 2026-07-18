@@ -103,9 +103,25 @@ def test_dataset_local_profile_ids_never_use_global_pool(module) -> None:
 
 def test_relative_intensity_policy_is_dataset_local(module) -> None:
     policy = module.intensity_policy()
-    assert policy["policy_id"] == "dataset-local-relative-quantiles-v1"
-    assert policy["percentile_levels"] == [0.1, 0.3, 0.5, 0.7, 0.9]
+    assert policy["policy_id"] == (
+        "dataset-local-real-bounded-generator-feasible-v1"
+    )
+    assert policy["relative_dose_levels"] == [0.0, 0.25, 0.5, 0.75, 1.0]
+    assert policy["real_tolerance"]["upper_multiplier"] == 1.2
     assert "not comparable across datasets" in policy["definition"]
+
+
+def test_real_tolerance_uses_q05_and_expands_q95_by_1_2(module) -> None:
+    values = np.arange(1.0, 101.0)
+
+    audit = module.real_tolerance_audit(values)
+
+    assert audit["supported"] is True
+    assert audit["lower"] == pytest.approx(np.quantile(values, 0.05))
+    assert audit["raw_upper"] == pytest.approx(np.quantile(values, 0.95))
+    assert audit["tolerated_upper"] == pytest.approx(
+        1.2 * np.quantile(values, 0.95)
+    )
 
 
 def test_target_spacing_audit_rejects_flat_or_unresolved_levels(module) -> None:
@@ -281,9 +297,8 @@ def test_build_suite_keeps_calibration_failure_as_unsupported(
     monkeypatch.setattr(
         module,
         "qualify_regime_reference_rows",
-        lambda input_rows, _spec, **kwargs: (
-            input_rows,
-            {"qualified_window_count": len(input_rows)},
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ValueError("no recurring clock")
         ),
     )
     monkeypatch.setattr(
@@ -304,13 +319,25 @@ def test_build_suite_keeps_calibration_failure_as_unsupported(
         lambda *args, **kwargs: {"noise_scale_multiplier": 1.0},
     )
 
-    def fake_calibration(*, capability_id, target_values, **kwargs):
+    def fake_calibration(
+        *,
+        capability_id,
+        real_tolerance_bounds,
+        relative_dose_levels,
+        **kwargs,
+    ):
+        target_values = [
+            real_tolerance_bounds[0]
+            + level * (real_tolerance_bounds[1] - real_tolerance_bounds[0])
+            for level in relative_dose_levels
+        ]
         status = "unsupported" if capability_id == "trend" else "supported"
         return (
             {"structure_scale": 1.0},
             [0.1, 0.3, 0.5, 0.7, 0.9],
             {
                 "status": status,
+                "target_values": target_values,
                 "realized_values": target_values,
                 "max_normalized_error": 1.0 if status == "unsupported" else 0.0,
             },
@@ -363,8 +390,12 @@ def test_build_suite_keeps_calibration_failure_as_unsupported(
     assert "trend" not in profile["capabilities"]
     assert artifact["schema_version"].endswith(".v4")
     assert artifact["intensity_policy"]["policy_id"] == (
-        "dataset-local-relative-quantiles-v1"
+        "dataset-local-real-bounded-generator-feasible-v1"
     )
+    assert cells["regime_switching"]["status"] == "supported"
+    assert cells["regime_switching"]["structure_audit"][
+        "recurring_regime_qualification"
+    ]["hard_requirement"] is False
     conditioning = module.resolve_generator_conditioning(
         capability_id="multi_seasonal",
         profile_id=profile["profile_id"],

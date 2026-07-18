@@ -29,7 +29,7 @@ from app.services.synthetic_generation_service import (  # noqa: E402
 )
 from app.services.synthetic_generator_conditioning import (  # noqa: E402
     ARTIFACT_SCHEMA_VERSION,
-    INTENSITY_POLICY_ID,
+    REAL_BOUNDED_INTENSITY_POLICY_ID,
     resolve_generator_conditioning,
 )
 
@@ -265,8 +265,11 @@ def validate_artifact_alignment(
             f"{ARTIFACT_SCHEMA_VERSION}"
         )
     policy = generator_artifact.get("intensity_policy", {})
-    if policy.get("policy_id") != INTENSITY_POLICY_ID:
-        raise ValueError(f"E1 requires intensity policy {INTENSITY_POLICY_ID}")
+    if policy.get("policy_id") != REAL_BOUNDED_INTENSITY_POLICY_ID:
+        raise ValueError(
+            "E1 requires intensity policy "
+            f"{REAL_BOUNDED_INTENSITY_POLICY_ID}"
+        )
     if (
         support_matrix.get("schema_version")
         != "paper_v4_dataset_capability_support_matrix.v1"
@@ -494,7 +497,7 @@ def generate_samples(
                             0 if covariates is None else int(covariates.shape[1])
                         ),
                         "target_feature": conditioning.target_feature,
-                        "target_percentile_level": conditioning.target_percentile_levels[
+                        "target_relative_level": conditioning.target_percentile_levels[
                             intensity - 1
                         ],
                         "target_strength": conditioning.target_values[
@@ -605,7 +608,7 @@ def dose_response_analysis(
                 "intensity": intensity,
                 "feature": feature_name,
                 "sample_count": len(values),
-                "target_percentile_level": capability["target_percentile_levels"][
+                "target_relative_level": capability["target_percentile_levels"][
                     int(intensity) - 1
                 ],
                 "dataset_local_target": target,

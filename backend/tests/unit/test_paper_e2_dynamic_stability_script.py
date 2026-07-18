@@ -49,7 +49,7 @@ def v4_artifact() -> dict:
         "parameters": {"structure_scale": 1.0},
         "intensity_lambdas": [0.1, 0.3, 0.5, 0.7, 0.9],
         "target_feature": "trend_strength",
-        "target_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+        "target_percentile_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
         "target_values": [0.05, 0.1, 0.2, 0.35, 0.55],
         "calibrated_realized_strengths": [0.05, 0.1, 0.2, 0.35, 0.55],
         "calibration": {"status": "supported", "max_normalized_error": 0.01},
@@ -59,8 +59,14 @@ def v4_artifact() -> dict:
         "schema_version": "synthetic_v2_generator_conditioning_artifact.v4",
         "created_at": "2026-07-18T00:00:00+00:00",
         "intensity_policy": {
-            "policy_id": "dataset-local-relative-quantiles-v1",
-            "percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+            "policy_id": "dataset-local-real-bounded-generator-feasible-v1",
+            "percentile_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
+            "relative_dose_levels": [0.0, 0.25, 0.5, 0.75, 1.0],
+            "real_tolerance": {
+                "lower_quantile": 0.05,
+                "upper_quantile": 0.95,
+                "upper_multiplier": 1.2,
+            },
             "definition": "dataset-local relative intensity",
         },
         "profiles": {
@@ -126,6 +132,14 @@ def test_default_design_uses_v4_dataset_local_supported_cells(tmp_path):
     assert config["skipped_profile_capability_count"] == 1
     assert config["expected_generated_sample_count"] == 1_600
     assert config["intensity_policy"]["comparability"] == "within_dataset_only"
+    assert config["intensity_policy"]["relative_dose_levels"] == [
+        0.0,
+        0.25,
+        0.5,
+        0.75,
+        1.0,
+    ]
+    assert "percentile_levels" not in config["intensity_policy"]
     assert "canonical_scale_id" not in config
     assert len(config["round_seeds"]) == 5
     assert config["samples_per_round_per_cell"] == 32
@@ -202,7 +216,8 @@ def test_generation_pairs_sample_seed_across_intensities(tmp_path, monkeypatch):
             "generator_conditioning": {
                 "target_feature": "trend_strength",
                 "target_strength": float(intensity),
-                "target_percentile_level": intensity / 5,
+                "target_relative_level": (intensity - 1) / 4,
+                "target_percentile_level": (intensity - 1) / 4,
             },
         }
         return target, latent, None, {"trend_strength": float(intensity)}
@@ -221,6 +236,8 @@ def test_generation_pairs_sample_seed_across_intensities(tmp_path, monkeypatch):
         "within_dataset_only"
     }
     assert "canonical_target_strength" not in rows[0]
+    assert rows[0]["target_relative_level"] == 0.0
+    assert "target_percentile_level" not in rows[0]
     assert all(len({row["sample_seed"] for row in group}) == 1 for group in grouped.values())
     assert len(
         {

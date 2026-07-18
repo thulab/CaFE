@@ -306,7 +306,7 @@ def generator_cells(
                 "dataset_id": conditioning.dataset_id,
                 "status": "supported",
                 "target_feature": conditioning.target_feature,
-                "target_percentile_levels": list(
+                "target_relative_levels": list(
                     conditioning.target_percentile_levels
                 ),
                 "target_values": list(conditioning.target_values),
@@ -338,7 +338,8 @@ def experiment_config(
         artifact.get("schema_version")
         != "synthetic_v2_generator_conditioning_artifact.v4"
         or not isinstance(policy, dict)
-        or policy.get("policy_id") != "dataset-local-relative-quantiles-v1"
+        or policy.get("policy_id")
+        != "dataset-local-real-bounded-generator-feasible-v1"
     ):
         raise ValueError(
             "E2 requires the v4 dataset-local generator conditioning artifact"
@@ -357,9 +358,14 @@ def experiment_config(
         "experiment_id": EXPERIMENT_ID,
         "intensity_policy": {
             "policy_id": str(policy["policy_id"]),
-            "percentile_levels": [
-                float(value) for value in policy["percentile_levels"]
+            "relative_dose_levels": [
+                float(value)
+                for value in policy.get(
+                    "relative_dose_levels",
+                    policy["percentile_levels"],
+                )
             ],
+            "real_tolerance": dict(policy.get("real_tolerance", {})),
             "definition": str(policy["definition"]),
             "comparability": "within_dataset_only",
         },
@@ -602,9 +608,10 @@ def sample_row(
         "acceptance_attempts": int(latent["acceptance"]["attempts"]),
         "target_feature": latent["generator_conditioning"]["target_feature"],
         "target_strength": latent["generator_conditioning"]["target_strength"],
-        "target_percentile_level": latent["generator_conditioning"][
-            "target_percentile_level"
-        ],
+        "target_relative_level": latent["generator_conditioning"].get(
+            "target_relative_level",
+            latent["generator_conditioning"].get("target_percentile_level"),
+        ),
         "intensity_comparability": "within_dataset_only",
     }
 

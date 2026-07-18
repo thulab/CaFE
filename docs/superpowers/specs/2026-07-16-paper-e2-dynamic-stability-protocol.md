@@ -36,8 +36,9 @@ runtime/paper_exp/v4/02_real_evaluation_suite/
 生成器必须使用 v4 dataset-local policy：
 
 ```text
-policy_id = dataset-local-relative-quantiles-v1
-percentiles = q10/q30/q50/q70/q90
+policy_id = dataset-local-real-bounded-generator-feasible-v1
+real_tolerance = [q05, 1.2*q95]
+relative_dose_levels = 0/0.25/0.50/0.75/1.00
 ```
 
 旧 global/canonical conditioning artifact 明确拒绝。运行目录固定为：
@@ -55,7 +56,7 @@ conditioning、feature gate、near-distance 三者齐全的 cells。
 
 - task view / 变量结构不支持；
 - 有效窗口不足；
-- dataset-local 五档没有足够间距；
+- dataset-local 真实容忍区间与生成器响应区间没有足够宽的可行交集；
 - conditioning 或 gate 校准失败；
 - 某模型不支持目标数、协变量数、context 或 horizon。
 

@@ -216,8 +216,9 @@ conditioning artifact 使用
 `synthetic_v2_generator_conditioning_artifact.v4`，并声明：
 
 ```text
-intensity_policy.policy_id = dataset-local-relative-quantiles-v1
-intensity_policy.percentile_levels = [0.10, 0.30, 0.50, 0.70, 0.90]
+intensity_policy.policy_id = dataset-local-real-bounded-generator-feasible-v1
+intensity_policy.relative_dose_levels = [0.00, 0.25, 0.50, 0.75, 1.00]
+intensity_policy.real_tolerance = [q05, 1.2*q95]
 ```
 
 每个 supported capability 至少记录：
@@ -227,22 +228,26 @@ dataset_id
 profile_id
 capability_id
 target_feature
-target_percentile_levels
+target_relative_levels
 target_values
 intensity_lambdas
 calibrated_realized_strengths
 calibration
 ```
 
+v4 reader 兼容字段 `percentile_levels/target_percentile_levels` 仍镜像同一组相对坐标，
+但在该 policy 下不表示经验分位数。
+
 每个 unsupported cell 至少记录 dataset/profile/capability、reason 和 detail。旧的全局
 强度字段不会被读取；旧 schema fail closed。
 
 ## 8. 论文简短表述
 
-本文对每个真实 dataset 独立构建 task-specific profile，并在其 parameter split 上将
-九类能力的五档强度定义为主 realized feature 的 q10/q30/q50/q70/q90。合成生成器在
-固定 dataset-local nuisance 下反解各档结构参数；变量结构、有效窗口、档间距或校准
-不足的能力如实标记 unsupported。候选样本随后使用同一 dataset 的独立真实拆分完成
+本文对每个真实 dataset 独立构建 task-specific profile，并在其 parameter split 上以
+主 realized feature 的 `[q05,1.2×q95]` 定义真实容忍区间。合成生成器在固定
+dataset-local nuisance 下估计自身响应区间，并在二者交集内取五个等距相对档后反解
+结构参数；变量结构、有效窗口、可行交集、档间距或校准不足的能力如实标记
+unsupported。候选样本随后使用同一 dataset 的独立真实拆分完成
 control-feature support 与 full/context/feature DCR-NNDR 防复制校验。实验只比较
 dataset 内的相对强度和模型表现变化，并用同一 dataset 的真实预测排名检验合成能力
 排名的外部一致性。

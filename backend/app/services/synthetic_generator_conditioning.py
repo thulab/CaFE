@@ -13,6 +13,12 @@ ARTIFACT_PATH = Path(__file__).resolve().parents[1] / "data" / "synthetic_v2_gen
 SCHEMA_VERSION = "synthetic_generator_conditioning.v4"
 ARTIFACT_SCHEMA_VERSION = "synthetic_v2_generator_conditioning_artifact.v4"
 INTENSITY_POLICY_ID = "dataset-local-relative-quantiles-v1"
+REAL_BOUNDED_INTENSITY_POLICY_ID = (
+    "dataset-local-real-bounded-generator-feasible-v1"
+)
+SUPPORTED_INTENSITY_POLICY_IDS = frozenset(
+    {INTENSITY_POLICY_ID, REAL_BOUNDED_INTENSITY_POLICY_ID}
+)
 
 
 @dataclass(frozen=True)
@@ -44,6 +50,10 @@ class GeneratorConditioning:
         return float(self.intensity_lambdas[index])
 
     def metadata(self, intensity: int) -> dict[str, Any]:
+        target_level = self.target_percentile_levels[int(intensity) - 1]
+        real_bounded = (
+            self.intensity_policy_id == REAL_BOUNDED_INTENSITY_POLICY_ID
+        )
         return {
             "schema_version": SCHEMA_VERSION,
             "artifact_schema_version": self.artifact_schema_version,
@@ -60,11 +70,23 @@ class GeneratorConditioning:
             "base_lambda": (int(intensity) - 1) / 4,
             "profile_lambda": self.lambda_for(intensity),
             "intensity_semantics": (
-                "dataset-local relative strength quantile; target strength is not comparable "
-                "across datasets and is not model difficulty"
+                (
+                    "dataset-local relative position inside the real-bounded "
+                    "generator-feasible interval"
+                )
+                if real_bounded
+                else "dataset-local relative strength quantile"
             ),
             "intensity_policy_id": self.intensity_policy_id,
-            "target_percentile_level": self.target_percentile_levels[int(intensity) - 1],
+            "target_relative_level": target_level,
+            # Kept for existing API/import consumers. Under the real-bounded
+            # policy this is a serialization alias, not an empirical quantile.
+            "target_percentile_level": target_level,
+            "target_level_semantics": (
+                "relative_position"
+                if real_bounded
+                else "empirical_quantile"
+            ),
             "target_feature": self.target_feature,
             "target_strength": self.target_values[int(intensity) - 1],
             "calibrated_expected_strength": self.calibrated_realized_strengths[int(intensity) - 1],
@@ -252,7 +274,10 @@ def _is_compatible_artifact(artifact: Any) -> bool:
     if artifact.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
         return False
     policy = artifact.get("intensity_policy")
-    if not isinstance(policy, dict) or policy.get("policy_id") != INTENSITY_POLICY_ID:
+    if (
+        not isinstance(policy, dict)
+        or policy.get("policy_id") not in SUPPORTED_INTENSITY_POLICY_IDS
+    ):
         return False
     if not str(policy.get("definition", "")).strip():
         return False
@@ -260,11 +285,33 @@ def _is_compatible_artifact(artifact: Any) -> bool:
         percentile_levels = tuple(float(value) for value in policy.get("percentile_levels", ()))
     except (TypeError, ValueError):
         return False
-    return (
+    base_compatible = (
         _valid_five_level_curve(percentile_levels, strict=True)
         and percentile_levels[0] >= 0.0
         and percentile_levels[-1] <= 1.0
         and isinstance(artifact.get("profiles"), dict)
+    )
+    if (
+        not base_compatible
+        or policy.get("policy_id") != REAL_BOUNDED_INTENSITY_POLICY_ID
+    ):
+        return base_compatible
+    tolerance = policy.get("real_tolerance")
+    try:
+        relative_levels = tuple(
+            float(value)
+            for value in policy.get("relative_dose_levels", ())
+        )
+        lower_quantile = float(tolerance["lower_quantile"])
+        upper_quantile = float(tolerance["upper_quantile"])
+        upper_multiplier = float(tolerance["upper_multiplier"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        relative_levels == percentile_levels
+        and relative_levels == (0.0, 0.25, 0.5, 0.75, 1.0)
+        and 0.0 <= lower_quantile < upper_quantile <= 1.0
+        and upper_multiplier >= 1.0
     )
 
 

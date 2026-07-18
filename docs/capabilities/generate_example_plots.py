@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Generate paired, gate-qualified capts-paper-v2 examples for the HTML atlas.
+"""Generate legacy paired mechanism illustrations for the HTML atlas.
 
-For each capability the script uses one registered online profile and ranks a
-fixed visualization-only seed bank.  A representative seed must pass all
+These plots use the committed pre-real-bounded online artifact and are not
+Paper v4 qualification evidence. For each capability the script uses one
+registered online profile and ranks a fixed visualization-only seed bank. A representative seed must pass all
 online gates at intensities 1, 3, and 5, have a strictly increasing primary
 feature, and minimize normalized distance to the selected dataset/profile's
-three local q10/q50/q90 targets.
+three legacy local q10/q50/q90 targets.
 The default pool has 64 seeds; the high-variance nonlinear statistic uses a
 predeclared 256-seed pool. Reusing the seed keeps all nuisance draws and
 structural clocks paired.

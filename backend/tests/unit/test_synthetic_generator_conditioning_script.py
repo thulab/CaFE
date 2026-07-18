@@ -149,6 +149,50 @@ def test_capability_calibration_uses_dataset_local_targets_and_cross_fit():
     assert summary["validation_sample_count"] == 256
 
 
+def test_capability_calibration_spans_real_generator_overlap():
+    module = load_calibration_module()
+    module.structure_scale_grid = lambda _capability_id: (0.1, 0.2, 0.4)
+    module.mean_feature_over_seed_banks = lambda **kwargs: (
+        kwargs["parameters"]["structure_scale"] * kwargs["intensity_lambda"]
+    )
+    module.simulate_feature_means = lambda **kwargs: {
+        kwargs["feature_names"][0]: (
+            kwargs["parameters"]["structure_scale"]
+            * kwargs["intensity_lambda"]
+        )
+    }
+
+    parameters, lambdas, summary = module.calibrate_capability_conditioning(
+        spec=SimpleNamespace(
+            profile_id="test",
+            context_length=168,
+            horizon=24,
+            target_dim=1,
+            season_length=24,
+        ),
+        capability_id="trend",
+        profile_nuisance={},
+        real_feature_summary={},
+        target_values=None,
+        real_tolerance_bounds=(0.05, 0.30),
+        sample_count=8,
+        seed=7,
+    )
+
+    assert np.isclose(parameters["structure_scale"], 0.3)
+    assert np.allclose(
+        summary["target_values"],
+        [0.05, 0.1125, 0.175, 0.2375, 0.3],
+    )
+    assert np.allclose(
+        lambdas,
+        [1 / 6, 0.375, 7 / 12, 19 / 24, 1.0],
+    )
+    assert np.isclose(summary["real_tolerance_lower"], 0.05)
+    assert np.isclose(summary["real_tolerance_upper"], 0.30)
+    assert summary["status"] == "supported"
+
+
 def test_high_variance_capability_uses_larger_seed_bank():
     module = load_calibration_module()
     observed_sample_counts: list[int] = []

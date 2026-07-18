@@ -5,6 +5,7 @@ import argparse
 import gc
 import hashlib
 import json
+import math
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -812,10 +813,12 @@ def calibrate_capability_conditioning(
     capability_id: str,
     profile_nuisance: dict[str, float],
     real_feature_summary: dict[str, dict[str, float]],
-    target_values: list[float],
+    target_values: list[float] | None,
     sample_count: int,
     seed: int,
     primary_feature: str | None = None,
+    real_tolerance_bounds: tuple[float, float] | None = None,
+    relative_dose_levels: tuple[float, ...] = (0.0, 0.25, 0.50, 0.75, 1.0),
 ) -> tuple[dict[str, float], list[float], dict[str, Any]]:
     capability_nuisance = derive_capability_nuisance(
         capability_id,
@@ -823,15 +826,57 @@ def calibrate_capability_conditioning(
         real_feature_summary,
     )
     primary_feature = primary_feature or PRIMARY_TARGET_FEATURE[capability_id]
-    desired = [float(value) for value in target_values]
-    if len(desired) != 5 or any(
-        right < left for left, right in zip(desired, desired[1:])
-    ):
-        raise ValueError(f"invalid dataset-local targets for {capability_id}: {desired}")
-    target_scale_floor = (
-        0.005 if primary_feature == "nonlinear_conditional_gain" else 0.05
-    )
-    target_scale = max(desired[-1] - desired[0], target_scale_floor)
+    if (target_values is None) == (real_tolerance_bounds is None):
+        raise ValueError(
+            "provide exactly one of target_values or real_tolerance_bounds"
+        )
+    if real_tolerance_bounds is not None:
+        real_lower, real_upper = (
+            float(real_tolerance_bounds[0]),
+            float(real_tolerance_bounds[1]),
+        )
+        if (
+            not math.isfinite(real_lower)
+            or not math.isfinite(real_upper)
+            or real_upper <= real_lower
+        ):
+            raise ValueError(
+                f"invalid real tolerance bounds for {capability_id}: "
+                f"{real_tolerance_bounds}"
+            )
+        if (
+            len(relative_dose_levels) != 5
+            or relative_dose_levels[0] != 0.0
+            or relative_dose_levels[-1] != 1.0
+            or any(
+                right <= left
+                for left, right in zip(
+                    relative_dose_levels,
+                    relative_dose_levels[1:],
+                )
+            )
+        ):
+            raise ValueError(
+                f"invalid relative dose levels: {relative_dose_levels}"
+            )
+        desired: list[float] = []
+        upper_scale_target = real_upper
+        target_selection_method = (
+            "five evenly spaced relative doses inside the intersection of the "
+            "dataset-local real tolerance interval and generator response range"
+        )
+    else:
+        desired = [float(value) for value in target_values or ()]
+        if len(desired) != 5 or any(
+            right < left for left, right in zip(desired, desired[1:])
+        ):
+            raise ValueError(
+                f"invalid dataset-local targets for {capability_id}: {desired}"
+            )
+        real_lower = float("nan")
+        real_upper = float("nan")
+        upper_scale_target = desired[-1]
+        target_selection_method = "exact dataset-local target values"
     high_variance_calibration = (
         capability_id in HIGH_VARIANCE_CAPABILITY_IDS
     )
@@ -869,7 +914,10 @@ def calibrate_capability_conditioning(
             sample_count=fit_samples_per_seed_bank,
             seeds=fit_seeds,
         )
-    structure_scale = invert_monotone_feature_curve(scale_results, [desired[-1]])[0]
+    structure_scale = invert_monotone_feature_curve(
+        scale_results,
+        [upper_scale_target],
+    )[0]
     parameters = {**capability_nuisance, "structure_scale": float(structure_scale)}
 
     lambda_feature_values: dict[float, float] = {}
@@ -884,6 +932,60 @@ def calibrate_capability_conditioning(
             seeds=fit_seeds,
         )
 
+    generator_lower = float(lambda_feature_values[min(lambda_feature_values)])
+    generator_upper = float(
+        np.maximum.accumulate(
+            np.asarray(
+                [
+                    lambda_feature_values[key]
+                    for key in sorted(lambda_feature_values)
+                ],
+                dtype=float,
+            )
+        )[-1]
+    )
+    if real_tolerance_bounds is not None:
+        feasible_lower = max(real_lower, generator_lower)
+        feasible_upper = min(real_upper, generator_upper)
+        magnitude = max(abs(feasible_lower), abs(feasible_upper), 1.0)
+        minimum_span = LOCAL_MIN_TARGET_RANGE * magnitude
+        if feasible_upper - feasible_lower <= minimum_span:
+            return (
+                {name: round_float(value) for name, value in parameters.items()},
+                [],
+                {
+                    "status": "unsupported",
+                    "reason_code": "no_real_generator_tolerance_overlap",
+                    "primary_target_feature": primary_feature,
+                    "target_values": [],
+                    "realized_values": [],
+                    "real_tolerance_lower": round_float(real_lower),
+                    "real_tolerance_upper": round_float(real_upper),
+                    "generator_response_lower": round_float(generator_lower),
+                    "generator_response_upper": round_float(generator_upper),
+                    "feasible_lower": round_float(feasible_lower),
+                    "feasible_upper": round_float(feasible_upper),
+                    "minimum_feasible_span": round_float(minimum_span),
+                    "structure_scale": round_float(structure_scale),
+                    "lambda_grid_feature_means": {
+                        str(round_float(key)): round_float(value)
+                        for key, value in lambda_feature_values.items()
+                    },
+                    "structure_scale_grid_feature_means": {
+                        str(round_float(key)): round_float(value)
+                        for key, value in scale_results.items()
+                    },
+                },
+            )
+        desired = [
+            feasible_lower + float(level) * (feasible_upper - feasible_lower)
+            for level in relative_dose_levels
+        ]
+
+    target_scale_floor = (
+        0.005 if primary_feature == "nonlinear_conditional_gain" else 0.05
+    )
+    target_scale = max(desired[-1] - desired[0], target_scale_floor)
     intensity_lambdas = invert_monotone_feature_curve(
         lambda_feature_values,
         desired,
@@ -921,6 +1023,32 @@ def calibrate_capability_conditioning(
             "status": status,
             "primary_target_feature": primary_feature,
             "target_values": [round_float(value) for value in desired],
+            "target_selection_method": target_selection_method,
+            "relative_dose_levels": [
+                round_float(value) for value in relative_dose_levels
+            ],
+            "real_tolerance_lower": (
+                round_float(real_lower)
+                if real_tolerance_bounds is not None
+                else None
+            ),
+            "real_tolerance_upper": (
+                round_float(real_upper)
+                if real_tolerance_bounds is not None
+                else None
+            ),
+            "generator_response_lower": round_float(generator_lower),
+            "generator_response_upper": round_float(generator_upper),
+            "feasible_lower": (
+                round_float(desired[0])
+                if real_tolerance_bounds is not None
+                else None
+            ),
+            "feasible_upper": (
+                round_float(desired[-1])
+                if real_tolerance_bounds is not None
+                else None
+            ),
             "realized_values": [round_float(value) for value in realized_values],
             "normalized_absolute_errors": [round_float(value) for value in normalized_errors],
             "max_normalized_error": round_float(max_normalized_error),

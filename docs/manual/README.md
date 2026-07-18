@@ -226,7 +226,7 @@ http://127.0.0.1:5173
    合成数据路径：
    - `Test case set name` 是生成集合的名称前缀；多选能力时，每个能力维度生成一个测试用例集。
    - `Capabilities` 可多选。当前九个能力为趋势、多季节性、时变季节性、可预测状态切换、非线性持续性、可预测间歇性、公共因子、层级一致性和已知未来协变量响应。具体 dataset 不一定支持全部能力；缺少变量结构或校准条件时，后端会明确拒绝该 cell。
-   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Target dimension`、`Seed`、`Frequency`。主季节周期由后端根据预选 dataset-local profile 解析；单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。一次 shard 只绑定一个 dataset/profile，五档 intensity 是该 profile 内部的 q10/q30/q50/q70/q90，不跨 dataset 比较。
+   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Target dimension`、`Seed`、`Frequency`。主季节周期由后端根据预选 dataset-local profile 解析；单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。一次 shard 只绑定一个 dataset/profile，五档 intensity 是该 profile 的真实容忍区间与生成器响应区间交集内，从弱到强的五个相对位置，不跨 dataset 比较。
    - `Covariate response` 会生成 known-future 协变量 `weather` 和 `event`，结果页会在目标预测图下方单独显示协变量曲线。
    - 点「Generate synthetic test cases」后，后端生成 synthetic shard，并自动预选到下一步。
    - 研究实验样本可用脚本导入到平台库，便于在前端查看样本曲线。例如：

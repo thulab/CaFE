@@ -56,7 +56,6 @@ from build_synthetic_v2_generator_conditioning_artifact import (  # noqa: E402
     derive_profile_nuisance,
     finite_values,
     qualify_regime_reference_rows,
-    quantiles_for_levels,
     summarize_real_features,
 )
 from build_paper_v4_profile_suite import (  # noqa: E402
@@ -91,7 +90,11 @@ DEFAULT_CALIBRATION_SAMPLES = 16
 DEFAULT_QUALIFICATION_SAMPLES_PER_CELL = 8
 DEFAULT_MAX_ATTEMPTS = 64
 DEFAULT_SEED = 2026071804
-RELATIVE_INTENSITY_PERCENTILE_LEVELS = (0.10, 0.30, 0.50, 0.70, 0.90)
+RELATIVE_INTENSITY_LEVELS = (0.0, 0.25, 0.50, 0.75, 1.0)
+REAL_TOLERANCE_LOWER_QUANTILE = 0.05
+REAL_TOLERANCE_UPPER_QUANTILE = 0.95
+REAL_TOLERANCE_UPPER_MULTIPLIER = 1.20
+REAL_DIAGNOSTIC_QUANTILE_LEVELS = (0.05, 0.10, 0.30, 0.50, 0.70, 0.90, 0.95)
 MIN_TARGET_SPAN_RELATIVE_TO_MAGNITUDE = 1e-6
 MIN_ADJACENT_GAP_FRACTION_OF_SPAN = 0.02
 
@@ -593,14 +596,70 @@ def source_profile(
 
 def intensity_policy() -> dict[str, Any]:
     return {
-        "policy_id": "dataset-local-relative-quantiles-v1",
-        "percentile_levels": list(RELATIVE_INTENSITY_PERCENTILE_LEVELS),
+        "policy_id": "dataset-local-real-bounded-generator-feasible-v1",
+        # Retained under the v4 artifact field name for reader compatibility;
+        # these values are relative positions, not empirical percentiles.
+        "percentile_levels": list(RELATIVE_INTENSITY_LEVELS),
+        "relative_dose_levels": list(RELATIVE_INTENSITY_LEVELS),
+        "real_tolerance": {
+            "lower_quantile": REAL_TOLERANCE_LOWER_QUANTILE,
+            "upper_quantile": REAL_TOLERANCE_UPPER_QUANTILE,
+            "upper_multiplier": REAL_TOLERANCE_UPPER_MULTIPLIER,
+        },
         "definition": (
-            "For every dataset/task/capability cell, intensity levels 1..5 target "
-            "the p10/p30/p50/p70/p90 primary-feature quantiles of that dataset's "
-            "leakage-protected L=504 parameter split. Values are not comparable "
+            "For every dataset/task/capability cell, real data defines a "
+            "dataset-local q05 to 1.2*q95 tolerance interval. Intensity levels "
+            "1..5 are five evenly spaced relative doses inside its intersection "
+            "with the generator response range. Values are not comparable "
             "across datasets."
         ),
+    }
+
+
+def real_tolerance_audit(values: np.ndarray) -> dict[str, Any]:
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if not finite.size:
+        return {
+            "supported": False,
+            "reason_code": "no_finite_primary_feature",
+            "quantiles": {},
+        }
+    quantile_values = np.quantile(
+        finite,
+        REAL_DIAGNOSTIC_QUANTILE_LEVELS,
+    )
+    quantiles = {
+        f"q{int(round(level * 100)):02d}": round_float(value)
+        for level, value in zip(
+            REAL_DIAGNOSTIC_QUANTILE_LEVELS,
+            quantile_values,
+            strict=True,
+        )
+    }
+    lower = float(np.quantile(finite, REAL_TOLERANCE_LOWER_QUANTILE))
+    raw_upper = float(np.quantile(finite, REAL_TOLERANCE_UPPER_QUANTILE))
+    tolerated_upper = REAL_TOLERANCE_UPPER_MULTIPLIER * raw_upper
+    magnitude = max(abs(lower), abs(tolerated_upper), 1.0)
+    minimum_span = MIN_TARGET_SPAN_RELATIVE_TO_MAGNITUDE * magnitude
+    reason_code = (
+        None
+        if tolerated_upper - lower > minimum_span
+        else "insufficient_local_real_tolerance_range"
+    )
+    return {
+        "supported": reason_code is None,
+        "reason_code": reason_code,
+        "sample_count": int(finite.size),
+        "lower_quantile": REAL_TOLERANCE_LOWER_QUANTILE,
+        "upper_quantile": REAL_TOLERANCE_UPPER_QUANTILE,
+        "upper_multiplier": REAL_TOLERANCE_UPPER_MULTIPLIER,
+        "lower": round_float(lower),
+        "raw_upper": round_float(raw_upper),
+        "tolerated_upper": round_float(tolerated_upper),
+        "span": round_float(tolerated_upper - lower),
+        "minimum_span": round_float(minimum_span),
+        "quantiles": quantiles,
     }
 
 
@@ -609,7 +668,7 @@ def target_spacing_audit(values: list[float]) -> dict[str, Any]:
     if targets.shape != (5,) or not np.isfinite(targets).all():
         return {
             "supported": False,
-            "reason_code": "missing_or_nonfinite_local_target_quantiles",
+            "reason_code": "missing_or_nonfinite_local_targets",
             "target_values": [round_float(value) for value in targets],
         }
     gaps = np.diff(targets)
@@ -720,6 +779,7 @@ def support_matrix_row(
     view_support: dict[int, dict[str, Any]],
     bucket_failures: dict[int, str],
     structure_audit: dict[str, Any] | None = None,
+    real_tolerance: dict[str, Any] | None = None,
     target_spacing: dict[str, Any] | None = None,
     conditioning_calibration: dict[str, Any] | None = None,
     task_view_audit: dict[str, Any] | None = None,
@@ -749,6 +809,7 @@ def support_matrix_row(
         ],
         "structure_audit": structure_audit,
         "task_view_audit": task_view_audit,
+        "real_tolerance": real_tolerance,
         "target_spacing": target_spacing,
         "conditioning_calibration": conditioning_calibration,
         "view_support": {
@@ -1045,35 +1106,36 @@ def build_suite(
                     master_spec,
                 )
                 try:
-                    capability_measurements, qualification = (
-                        qualify_regime_reference_rows(
-                            annotated,
-                            master_spec,
-                            audits=audits,
-                        )
+                    _qualified_rows, qualification = qualify_regime_reference_rows(
+                        annotated,
+                        master_spec,
+                        audits=audits,
                     )
                     structure_audit = {
                         **structure_audit,
                         "recurring_regime_qualification": {
-                            "status": "supported",
+                            "status": "detected",
+                            "hard_requirement": False,
                             **qualification,
                         },
                     }
                 except ValueError as error:
                     structure_audit = {
                         **structure_audit,
-                        "supported": False,
-                        "reason_code": (
-                            "insufficient_dataset_local_recurring_regime_structure"
-                        ),
                         "recurring_regime_qualification": {
-                            "status": "unsupported",
+                            "status": "not_detected",
+                            "hard_requirement": False,
                             "detail": str(error),
                         },
                     }
-                    capability_measurements = []
+                # The recurring two-state clock is the synthetic stress
+                # mechanism, not a structure that real data must already
+                # contain.  All real parameter windows define its observable
+                # primary-feature tolerance; the qualification above remains
+                # diagnostic only.
+                capability_measurements = annotated
             primary_values = finite_values(capability_measurements, primary)
-            spacing_audit: dict[str, Any]
+            real_tolerance = real_tolerance_audit(primary_values)
             if not structure_audit["supported"]:
                 spacing_audit = {
                     "supported": False,
@@ -1081,19 +1143,12 @@ def build_suite(
                     "target_values": [],
                     "status": "not_evaluated_due_to_structure",
                 }
-                targets = []
-            elif primary_values.size:
-                targets = quantiles_for_levels(
-                    primary_values,
-                    RELATIVE_INTENSITY_PERCENTILE_LEVELS,
-                )
-                spacing_audit = target_spacing_audit(targets)
             else:
-                targets = []
                 spacing_audit = {
                     "supported": False,
-                    "reason_code": "no_finite_primary_feature",
+                    "reason_code": None,
                     "target_values": [],
+                    "status": "pending_generator_response_calibration",
                 }
             view_failures = [
                 row["reason_code"]
@@ -1104,7 +1159,7 @@ def build_suite(
                 reason
                 for reason in (
                     structure_audit["reason_code"],
-                    spacing_audit["reason_code"],
+                    real_tolerance["reason_code"],
                     *view_failures,
                 )
                 if reason
@@ -1119,6 +1174,7 @@ def build_suite(
                         view_support=view_support[capability_id],
                         bucket_failures=bucket_failures,
                         structure_audit=structure_audit,
+                        real_tolerance=real_tolerance,
                         target_spacing=spacing_audit,
                     )
                 )
@@ -1139,7 +1195,12 @@ def build_suite(
                         capability_id=capability_id,
                         profile_nuisance=nuisance,
                         real_feature_summary=real_feature_summary,
-                        target_values=targets,
+                        target_values=None,
+                        real_tolerance_bounds=(
+                            float(real_tolerance["lower"]),
+                            float(real_tolerance["tolerated_upper"]),
+                        ),
+                        relative_dose_levels=RELATIVE_INTENSITY_LEVELS,
                         sample_count=per_grid_samples,
                         seed=_seed_for(
                             seed,
@@ -1159,6 +1220,7 @@ def build_suite(
                         view_support=view_support[capability_id],
                         bucket_failures=bucket_failures,
                         structure_audit=structure_audit,
+                        real_tolerance=real_tolerance,
                         target_spacing=spacing_audit,
                         conditioning_calibration={
                             "status": "unsupported",
@@ -1169,15 +1231,60 @@ def build_suite(
                 )
                 continue
             if calibration["status"] != "supported":
+                targets = [
+                    float(value)
+                    for value in calibration.get("target_values", [])
+                ]
+                spacing_audit = (
+                    target_spacing_audit(targets)
+                    if targets
+                    else {
+                        "supported": False,
+                        "reason_code": calibration.get(
+                            "reason_code",
+                            "conditioning_calibration_failed",
+                        ),
+                        "target_values": [],
+                    }
+                )
+                calibration_reason = str(
+                    calibration.get(
+                        "reason_code",
+                        "conditioning_calibration_failed",
+                    )
+                )
                 support_matrix.append(
                     support_matrix_row(
                         source,
                         capability_id,
                         status="unsupported",
-                        reason_codes=("conditioning_calibration_failed",),
+                        reason_codes=(calibration_reason,),
                         view_support=view_support[capability_id],
                         bucket_failures=bucket_failures,
                         structure_audit=structure_audit,
+                        real_tolerance=real_tolerance,
+                        target_spacing=spacing_audit,
+                        conditioning_calibration=calibration,
+                    )
+                )
+                continue
+            targets = [
+                float(value) for value in calibration["target_values"]
+            ]
+            spacing_audit = target_spacing_audit(targets)
+            if not spacing_audit["supported"]:
+                support_matrix.append(
+                    support_matrix_row(
+                        source,
+                        capability_id,
+                        status="unsupported",
+                        reason_codes=(
+                            str(spacing_audit["reason_code"]),
+                        ),
+                        view_support=view_support[capability_id],
+                        bucket_failures=bucket_failures,
+                        structure_audit=structure_audit,
+                        real_tolerance=real_tolerance,
                         target_spacing=spacing_audit,
                         conditioning_calibration=calibration,
                     )
@@ -1187,14 +1294,13 @@ def build_suite(
                 "parameters": parameters,
                 "intensity_lambdas": intensity_lambdas,
                 "target_feature": primary,
-                "target_percentile_levels": list(
-                    RELATIVE_INTENSITY_PERCENTILE_LEVELS
-                ),
+                "target_percentile_levels": list(RELATIVE_INTENSITY_LEVELS),
+                "target_relative_levels": list(RELATIVE_INTENSITY_LEVELS),
                 "target_values": targets,
                 "calibrated_realized_strengths": calibration["realized_values"],
                 "calibration": calibration,
                 "calibration_method": (
-                    "dataset-local relative-quantile inverse calibration"
+                    "dataset-local real-bounded generator-feasible inverse calibration"
                 ),
             }
             support_matrix.append(
@@ -1206,6 +1312,7 @@ def build_suite(
                     view_support=view_support[capability_id],
                     bucket_failures=bucket_failures,
                     structure_audit=structure_audit,
+                    real_tolerance=real_tolerance,
                     target_spacing=spacing_audit,
                     conditioning_calibration=calibration,
                 )
@@ -1686,7 +1793,9 @@ def write_support_matrix_csv(
                 "generator_profile_id",
                 "gate_profile_ids",
                 "target_feature",
-                "target_percentile_levels",
+                "target_relative_levels",
+                "real_tolerance_lower",
+                "real_tolerance_upper",
                 "target_values",
             ),
         )
@@ -1707,8 +1816,16 @@ def write_support_matrix_csv(
                     "generator_profile_id": row["generator_profile_id"],
                     "gate_profile_ids": json.dumps(row["gate_profile_ids"]),
                     "target_feature": PRIMARY_TARGET_FEATURE[row["capability_id"]],
-                    "target_percentile_levels": json.dumps(
-                        RELATIVE_INTENSITY_PERCENTILE_LEVELS
+                    "target_relative_levels": json.dumps(
+                        RELATIVE_INTENSITY_LEVELS
+                    ),
+                    "real_tolerance_lower": (
+                        (row.get("real_tolerance") or {}).get("lower")
+                    ),
+                    "real_tolerance_upper": (
+                        (row.get("real_tolerance") or {}).get(
+                            "tolerated_upper"
+                        )
                     ),
                     "target_values": json.dumps(
                         target_spacing.get("target_values", [])

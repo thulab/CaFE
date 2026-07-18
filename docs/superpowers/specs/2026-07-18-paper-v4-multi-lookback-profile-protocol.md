@@ -134,11 +134,12 @@ calibration split
 禁止先混合多个 dataset 再拆分，也禁止一个 dataset 因校准失败而改用另一个 dataset
 的 gate 或 nearest-neighbour reference。
 
-五档 intensity 由该 dataset/task 的 L=504 parameter split primary feature 的
-`{q10,q30,q50,q70,q90}` 定义，表示 dataset 内的相对弱到相对强；它们不是本 profile
-文件中的描述性 `{p05,p25,p50,p75,p95}`。某项能力若真实特征没有足够档间距、变量结构
-不满足要求，或生成后无法同时通过单调性和局部 gate，应明确记录为 `unsupported`，
-无需强行凑齐九能力或五档。
+五档 intensity 由该 dataset/task 的 L=504 parameter split primary feature
+`[q05, 1.2×q95]` 真实容忍区间与生成器响应区间的交集定义；五档取交集内
+`0/0.25/0.50/0.75/1.00` 的相对位置，表示 dataset 内从弱到强。它们不是本 profile
+文件中的描述性 `{p05,p25,p50,p75,p95}`。某项能力若真实容忍区间与生成器没有足够宽
+的交集、变量结构不满足要求，或生成后无法同时通过单调性和局部 gate，应明确记录为
+`unsupported`，无需强行凑齐九能力或五档。
 
 ## 7. 结论边界
 
