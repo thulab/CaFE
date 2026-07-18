@@ -1442,6 +1442,8 @@ def nonlinear_conditional_gain(
     values: np.ndarray,
     season_length: int | None,
 ) -> float:
+    """Bias-corrected nonlinear-lag gain after linear lag conditioning."""
+
     seasonal_lag = max(4, int(season_length or 4))
     nonlinear_lag = max(2, seasonal_lag // 2)
     start = max(seasonal_lag, nonlinear_lag, 1)
@@ -1461,7 +1463,9 @@ def nonlinear_conditional_gain(
     nonlinear = np.column_stack(
         [linear, np.sin(1.1 * lag_nonlinear) ** 2]
     )
-    return max(0.0, r2(target, nonlinear) - r2(target, linear))
+    return float(
+        adjusted_r2(target, nonlinear) - adjusted_r2(target, linear)
+    )
 
 
 def r2(y: np.ndarray, design: np.ndarray) -> float:
@@ -1474,6 +1478,24 @@ def r2(y: np.ndarray, design: np.ndarray) -> float:
     if denom <= 1e-12:
         return 0.0
     return float(1.0 - np.sum((y - fitted) ** 2) / denom)
+
+
+def adjusted_r2(y: np.ndarray, design: np.ndarray) -> float:
+    observations = int(len(y))
+    try:
+        predictor_count = max(int(np.linalg.matrix_rank(design)) - 1, 0)
+    except np.linalg.LinAlgError:
+        return 0.0
+    residual_degrees_of_freedom = observations - predictor_count - 1
+    if observations <= 1 or residual_degrees_of_freedom <= 0:
+        return 0.0
+    raw_r2 = r2(y, design)
+    return float(
+        1.0
+        - (1.0 - raw_r2)
+        * (observations - 1)
+        / residual_degrees_of_freedom
+    )
 
 
 def robust_scale(values: np.ndarray) -> np.ndarray:

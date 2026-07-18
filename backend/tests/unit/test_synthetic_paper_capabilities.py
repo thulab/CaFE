@@ -10,6 +10,7 @@ from app.services.synthetic_generation_service import (
     _nonlinear_conditional_gain,
     _nonlinear_multi_lag_gain,
     _realized_features,
+    _regime_clock_history_incremental_r2,
     _standardize_by_context,
     _standardize_hierarchy_by_context,
 )
@@ -19,8 +20,8 @@ PRIMARY_INTENSITY_FEATURE = {
     "trend": "trend_strength",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
-    "regime_switching": "change_point_shift_energy",
-    "nonlinear_persistence": "nonlinear_multi_lag_gain",
+    "regime_switching": "regime_clock_history_incremental_r2",
+    "nonlinear_persistence": "nonlinear_conditional_gain",
     "predictable_intermittency": "spike_rate",
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
@@ -94,7 +95,9 @@ def test_scheduled_and_structured_generators_do_not_hide_future_only_structure()
     pulse_centers = intermittent["pulse_centers"]
     assert sum(center < context_length for center in pulse_centers) >= 2
     assert any(center >= context_length for center in pulse_centers)
-    assert len(set(np.diff(pulse_centers))) == 1
+    observed_intervals = set(np.diff(pulse_centers))
+    assert len(observed_intervals) > 1
+    assert observed_intervals == set(intermittent["pulse_interval_pattern"])
 
     hierarchy_values, hierarchy, _ = _generate_sample_values(
         "hierarchical_coherence",
@@ -124,6 +127,8 @@ def test_scheduled_and_structured_generators_do_not_hide_future_only_structure()
     assert covariates is not None
     assert np.any(covariates[context_length:, 1] == 1.0)
     assert covariate_metadata["future_event_start"] >= context_length
+    assert len(covariate_metadata["weather_effect_by_target"]) == 1
+    assert len(covariate_metadata["event_effect_by_target"]) == 1
     assert covariate_metadata["predictability"]["evidence"]["historical_event_count"] >= 2
 
 
@@ -178,7 +183,7 @@ def test_realized_primary_features_follow_intensity_direction():
         for intensity in range(1, 6):
             values_for_intensity: list[float] = []
             for seed in range(24):
-                values, _, covariates = _generate_sample_values(
+                values, metadata, covariates = _generate_sample_values(
                     capability_id,
                     context_length + horizon,
                     context_length,
@@ -198,6 +203,16 @@ def test_realized_primary_features_follow_intensity_direction():
                     season_length,
                     context_length,
                 )
+                if capability_id == "regime_switching":
+                    features["regime_clock_history_incremental_r2"] = (
+                        _regime_clock_history_incremental_r2(
+                            standardized,
+                            context_length=context_length,
+                            season_length=season_length,
+                            cut_points=metadata["cut_points"],
+                            dwell_length=int(metadata["dwell_length"]),
+                        )
+                    )
                 values_for_intensity.append(features[feature_name])
             intensity_means.append(float(np.mean(values_for_intensity)))
 
@@ -219,7 +234,7 @@ def test_conditional_nonlinear_gain_does_not_label_plain_seasonality_as_nonlinea
     conditional_gain = _nonlinear_conditional_gain(seasonal, 24)
 
     assert old_gain > 0.04
-    assert conditional_gain < 0.01
+    assert abs(conditional_gain) < 0.01
 
 
 def test_conditional_nonlinear_gain_detects_the_generated_recurrence():
@@ -236,3 +251,26 @@ def test_conditional_nonlinear_gain_detects_the_generated_recurrence():
         )
 
     assert _nonlinear_conditional_gain(values, 24) > 0.005
+
+
+def test_nonlinear_generator_discards_initialization_transient():
+    ratios: list[float] = []
+    for seed in range(64):
+        values, metadata, _ = _generate_sample_values(
+            "nonlinear_persistence",
+            192,
+            168,
+            1,
+            24,
+            5,
+            np.random.default_rng(seed),
+        )
+        first_cycle_scale = float(np.std(values[:24, 0]))
+        stable_history_scale = float(np.std(values[24:168, 0]))
+        ratios.append(
+            first_cycle_scale / max(stable_history_scale, 1e-9)
+        )
+        assert metadata["burn_in_steps"] >= 256
+
+    assert 0.5 < float(np.median(ratios)) < 2.0
+    assert float(np.quantile(ratios, 0.90)) < 2.0

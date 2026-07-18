@@ -59,7 +59,7 @@ FEATURE_GATE_BUCKET_SPECS = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the real-only joint control-feature support artifact for capts-paper-v1."
+        description="Build the real-only joint control-feature support artifact for capts-paper-v2."
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT_PATH)
@@ -190,13 +190,13 @@ def build_artifact(
         "target_features": "diagnostic empirical quantiles only; not an online rejection condition",
     }
     artifact = {
-        "schema_version": "synthetic_v2_feature_gate_online.v1",
+        "schema_version": "synthetic_v2_feature_gate_online.v2",
         "created_at": created_at,
         "config": config,
         "buckets": online_buckets,
     }
     summary = {
-        "schema_version": "synthetic_v2_feature_gate_calibration.v1",
+        "schema_version": "synthetic_v2_feature_gate_calibration.v2",
         "created_at": created_at,
         "config": config,
         "buckets": summaries,
@@ -379,7 +379,10 @@ def calibrate_capability(
         if values.size == 0:
             continue
         target_reference[name] = {
-            "direction": INTENSITY_FEATURE_DIRECTIONS[capability_id].get(name, "increase"),
+            "direction": INTENSITY_FEATURE_DIRECTIONS[capability_id].get(
+                name,
+                "diagnostic",
+            ),
             "quantiles": quantile_map(values),
         }
 

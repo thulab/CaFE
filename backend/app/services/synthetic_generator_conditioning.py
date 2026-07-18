@@ -9,7 +9,7 @@ from typing import Any
 
 
 ARTIFACT_PATH = Path(__file__).resolve().parents[1] / "data" / "synthetic_v2_generator_conditioning_artifact.json"
-SCHEMA_VERSION = "synthetic_generator_conditioning.v2"
+SCHEMA_VERSION = "synthetic_generator_conditioning.v3"
 
 
 @dataclass(frozen=True)

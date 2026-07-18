@@ -199,9 +199,9 @@ def test_profile_conditioned_generators_preserve_horizon_prefixes():
 def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
     artifact = load_generator_conditioning_artifact()
     assert artifact is not None
-    assert artifact["schema_version"] == "synthetic_v2_generator_conditioning_artifact.v2"
+    assert artifact["schema_version"] == "synthetic_v2_generator_conditioning_artifact.v3"
     assert artifact["canonical_intensity"]["scale_id"] == (
-        "synthetic-v2-paper-v1-frozen-2026-07-16"
+        "synthetic-v2-paper-v2-shortcut-resistant-2026-07-18"
     )
     assert len(artifact["canonical_intensity"]["scale_fingerprint"]) == 16
     assert artifact["config"]["canonical_scale_id"] == artifact["canonical_intensity"]["scale_id"]
@@ -215,7 +215,16 @@ def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
             )
             assert capability["canonical_calibration"]["status"] == "supported"
             assert capability["canonical_calibration"]["fit_sample_count"] >= 64
-            assert capability["canonical_calibration"]["fit_seed_bank_count"] == 2
+            expected_bank_count = (
+                4
+                if capability_id
+                in {"nonlinear_persistence", "covariate_response"}
+                else 2
+            )
+            assert (
+                capability["canonical_calibration"]["fit_seed_bank_count"]
+                == expected_bank_count
+            )
             assert capability["canonical_calibration"]["validation_sample_count"] >= 256
             assert capability["canonical_calibration"]["validation_seed_is_independent"] is True
             assert len(capability["local_real_percentiles_at_canonical_targets"]) == 5
@@ -232,6 +241,24 @@ def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
         all(right > left for left, right in zip(row["target_values"], row["target_values"][1:]))
         for row in canonical.values()
     )
+    assert canonical["regime_switching"]["primary_feature"] == (
+        "regime_clock_history_incremental_r2"
+    )
+    assert canonical["regime_switching"]["target_values"][0] == 0.1
+    assert canonical["regime_switching"]["target_resolution"]["method"] == (
+        "qualification_boundary_to_q90_linear_grid"
+    )
+    assert canonical["nonlinear_persistence"]["primary_feature"] == (
+        "nonlinear_conditional_gain"
+    )
+    assert canonical["nonlinear_persistence"]["target_values"][0] == 0.0
+    assert canonical["nonlinear_persistence"]["target_resolution"]["method"] == (
+        "adjusted_r2_null_to_q90_linear_grid"
+    )
+    for profile in artifact["profiles"].values():
+        nonlinear = profile["capabilities"].get("nonlinear_persistence")
+        if nonlinear is not None:
+            assert nonlinear["canonical_calibration"]["fit_sample_count"] >= 512
     assert artifact["config"]["canonical_reference_profile_ids_by_capability"][
         "regime_switching"
     ] == [
@@ -243,7 +270,7 @@ def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
         "electricity_hourly_daily_2048ctx_24h"
     ]
     assert all(
-        artifact["profiles"][profile_id]["conditioning_role"] == "paper_v1_online"
+        artifact["profiles"][profile_id]["conditioning_role"] == "paper_v2_online"
         for profile_id in artifact["config"]["online_conditioning_profile_ids"]
     )
     assert artifact["profiles"]["electricity_hourly_daily_2048ctx_24h"][

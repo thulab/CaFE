@@ -24,7 +24,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     assert trend_capability["label_i18n"]["zh-CN"] == "趋势"
     assert trend_capability["paper_included"] is True
     assert trend_capability["paper_track"] == "univariate"
-    assert trend_capability["generator_version"] == "capts-paper-v1"
+    assert trend_capability["generator_version"] == "capts-paper-v2"
     assert trend_capability["predictability_contract"]
     assert trend_capability["intensity_features"]["trend_strength"] == "increase"
     assert trend_capability["limits"]["context_length"]["min"] == 16
@@ -58,6 +58,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert covariate.target_dim == 1
         assert covariate.covariate_columns == ["weather", "event"]
         assert covariate.generation_config["intensity"] == 3
+        assert covariate.generation_config["generator_version"] == "capts-paper-v2"
         assert covariate.generation_config["difficulty"] == 3
         assert covariate.generation_config["requested_season_length"] == 8
         assert covariate.generation_config["season_length"] == 24
@@ -72,21 +73,22 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert trend_sample is not None
         trend_metadata = trend_sample.sample_metadata
         assert trend_metadata["intensity"] == 3
+        assert trend_metadata["generator_version"] == "capts-paper-v2"
         assert trend_metadata["difficulty"] == 3
-        assert trend_metadata["latent_params"]["generator_version"] == "capts-paper-v1"
+        assert trend_metadata["latent_params"]["generator_version"] == "capts-paper-v2"
         assert trend_metadata["latent_params"]["predictability"]["construction_validated"] is True
         assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
         assert trend_metadata["latent_params"]["acceptance"]["attempts"] == 1
         assert trend_metadata["latent_params"]["acceptance"]["profile_selection_stage"] == "pre_generation"
         assert trend_metadata["latent_params"]["generator_conditioning"]["profile_id"] == trend_metadata["anchor_profile_id"]
-        assert trend_metadata["latent_params"]["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v3"
+        assert trend_metadata["latent_params"]["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v4"
         assert "trend_strength" in trend_metadata["latent_params"]["acceptance"]["validation"]["target_features"]
         feature_gate = trend_metadata["latent_params"]["acceptance"]["validation"]["feature_gate"]
         assert feature_gate["accepted"] is True
         assert feature_gate["enforced"] is True
         assert feature_gate["support_method"] == "shrunk_robust_mahalanobis"
         assert feature_gate["calibration_coverage"] == 0.95
-        assert feature_gate["artifact_schema_version"] == "synthetic_v2_feature_gate_online.v1"
+        assert feature_gate["artifact_schema_version"] == "synthetic_v2_feature_gate_online.v2"
         assert feature_gate["matched_profile_id"] in {
             "m4_hourly_daily_168ctx",
             "electricity_hourly_daily_168ctx",
@@ -96,6 +98,10 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert feature_gate["target_percentile_diagnostics"]["trend_strength"]
         assert trend_metadata["latent_params"]["acceptance"]["validation"]["near_distance_gate"]["accepted"] is True
         assert trend_metadata["latent_params"]["acceptance"]["validation"]["predictability_gate"]["accepted"] is True
+        contrast = trend_metadata["latent_params"]["acceptance"]["validation"]["capability_contrast"]
+        assert contrast["future_target_used_for_forecast"] is False
+        assert contrast["enforced_online"] is False
+        assert contrast["selection_role"] == "diagnostic_only"
         assert trend_metadata["latent_params"]["acceptance"]["validation"]["novelty_check"] == "online_dcr_nndr_gate"
         assert "trend_strength" in trend_metadata["realized_features"]
         assert "nonlinear_lag1_gain" in trend_metadata["realized_features"]

@@ -32,6 +32,7 @@ def row(index: int, *, group_id: str, start: int) -> dict:
             "curvature_abs": value * 0.25,
             "seasonal_strength": 0.5 + value * 0.1,
             "noise_ratio": 0.2 + value * 0.05,
+            "outlier_rate": value * 0.005,
             "spike_rate": value * 0.01,
         },
     }

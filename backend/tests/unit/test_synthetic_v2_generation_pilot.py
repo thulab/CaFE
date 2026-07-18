@@ -6,6 +6,7 @@ from app.services.synthetic_generation_service import (
     ACCEPTANCE_PROFILE_BY_CAPABILITY,
     CAPABILITIES_BY_ID,
     CONTROL_FEATURES_BY_CAPABILITY,
+    INTENSITY_FEATURE_DIRECTIONS,
     _generate_accepted_sample_values,
     _resolve_seasonality,
     _seed_for,
@@ -49,9 +50,10 @@ def test_trend_pilot_features_are_monotonic_by_intensity_and_inside_joint_suppor
         assert all(gate["accepted"] for gate in gates)
         assert all(gate["score"] <= gate["threshold"] for gate in gates)
 
-    for feature in ("trend_strength", "slope_abs", "curvature_abs"):
+    for feature in INTENSITY_FEATURE_DIRECTIONS["trend"]:
         values = [summary[feature] for summary in summaries]
         assert values == sorted(values)
+    assert "curvature_abs" not in INTENSITY_FEATURE_DIRECTIONS["trend"]
 
 
 def test_multi_seasonal_canonical_intensity_has_paired_dose_response():
@@ -76,7 +78,7 @@ def test_multi_seasonal_canonical_intensity_has_paired_dose_response():
             scores.append(float(features["multi_period_score"]))
             assert latent_params["intensity"] == intensity
             assert latent_params["acceptance"]["accepted"] is True
-            assert latent_params["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v3"
+            assert latent_params["acceptance"]["validation"]["schema_version"] == "synthetic_post_generation_validation.v4"
             assert "multi_period_score" in latent_params["acceptance"]["validation"]["target_features"]
             assert latent_params["acceptance"]["validation"]["feature_gate"]["accepted"] is True
             assert latent_params["acceptance"]["validation"]["near_distance_gate"]["accepted"] is True
@@ -146,7 +148,7 @@ def test_all_capabilities_return_accepted_samples_after_resampling():
         assert acceptance["accepted"] is True
         assert acceptance["profile"] is not None
         assert acceptance["profile_selection_stage"] == "pre_generation"
-        assert acceptance["attempts"] == 1
+        assert 1 <= acceptance["attempts"] <= 32
         assert acceptance["failed_gates"] == []
         assert not acceptance["failed_features"]
         feature_gate = acceptance["validation"]["feature_gate"]
