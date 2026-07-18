@@ -901,7 +901,7 @@
         <div class="hero-meta" aria-label="版本信息">
           <span>9 capabilities</span>
           <span>5 dataset-local intensities</span>
-          <span>dataset-local policy · 2026-07-18</span>
+          <span>capts-paper-v3 · 2026-07-19</span>
           <span>shortcut-resistant generators</span>
         </div>
         <div class="hero-note" aria-label="关键原则">
@@ -1028,7 +1028,7 @@
             \mathbb{E}_{\xi}[f_c(G_c)]\approx T_{b,c,k}.
           \]
           <p class="equation-caption">
-            大多数生成器采用上式的仿射剂量；非线性持续性还对依赖强度执行 \([0,1]\) 截断。不同能力的 \(\alpha_c,\beta_c\) 在各节给出。
+            大多数生成器采用上式的仿射剂量；非线性持续性还对依赖强度执行 \([0,1]\) 截断。Intensity 只缩放各节明确标出的机制强度；周期、相位、符号、载荷、事件时钟、递推族与 nuisance 在同 seed 的五档间保持不变。
           </p>
         </div>
         <div class="table-wrap">
@@ -1079,10 +1079,10 @@
               <tr><td>\(T_{b,c,k}\)</td><td>能力 \(c\) 在该 dataset/profile 第 \(k\) 档的主特征目标。</td><td>可行交集内相对坐标 0/.25/.50/.75/1 的等距点。</td></tr>
               <tr><td>\(A_c(k;b)\)</td><td>进入能力方程的结构振幅或效应强度。</td><td>通常为 \(\kappa_{b,c}(\alpha_c+\beta_c\lambda_{b,c}(k))\)。</td></tr>
               <tr><td>\(s_t\)</td><td>主季节基函数。</td><td>\(s_t=\sin(2\pi t/P)\)。</td></tr>
-              <tr><td>\(q_t\)</td><td>慢周期基函数。</td><td>\(q_t=\cos(2\pi t/(4P))\)。</td></tr>
+              <tr><td>\(q_{t,j}(P_q,\psi_j)\)</td><td>低幅慢周期残差。</td><td>\(\cos(2\pi t/P_q+\psi_j)\)；各能力单独给定 \(P_q\)，它属于 nuisance，不由 intensity 控制。</td></tr>
               <tr><td>\(x_t\)</td><td>以预测原点为参照的时间轴。</td><td>\(x_t=(t-(C-1))/P\)，以“主周期数”为单位。</td></tr>
               <tr><td>\(m_s,m_q,m_\ell,m_\epsilon\)</td><td>主季节、慢周期、局部分量和噪声的 profile nuisance multiplier。</td><td>从真实分布估计；不是 intensity 的控制对象。</td></tr>
-              <tr><td>\(z_{t,j}(a)\)</td><td>历史归一化后振幅为 \(a\sqrt{m_\epsilon}\) 的非周期稳定 AR(2) 背景。</td><td>\(z_t=(r_s+r_{f,j})z_{t-1}-r_sr_{f,j}z_{t-2}+\eta_t\)，非季节单变量 nuisance 使用 \(r_s\in[0.82,0.94]\)，结构化动态因子使用 \(r_s\in[0.94,0.985]\)，且 \(r_{f,j}\sim U(0.15,0.32)\)。</td></tr>
+              <tr><td>\(z_{t,j}(a)\)</td><td>历史归一化后的非周期稳定 AR(2) 过程。</td><td>\(z_t=(r_s+r_{f,j})z_{t-1}-r_sr_{f,j}z_{t-2}+\eta_t\)；普通背景和结构化因子各自使用源码中的有界稳定根，后者的 fast root 可为负，均不由 intensity 改变。</td></tr>
               <tr><td>\(b_j^{\mathrm{bg}}\)</td><td>profile-conditioned 背景斜率。</td><td>若启用：\(\delta_j a_{\mathrm{bg}}U(0.75,1.25)\)。</td></tr>
               <tr><td>\(\epsilon_{t,j}\)</td><td>profile-conditioned 独立创新噪声。</td><td>高斯或方差标准化 Student-\(t_\nu\)，scale 为基准噪声乘 \(m_\epsilon\)。</td></tr>
               <tr><td>\(Y,\mathbf y_t\)</td><td>生成的目标矩阵及第 \(t\) 时刻的目标向量。</td><td>\(Y\in\mathbb R^{T\times d}\)。</td></tr>
@@ -1125,7 +1125,8 @@
           \[
           \begin{aligned}
             A_{\mathrm{tr}}(k;b)&=\kappa_{b,\mathrm{tr}}\!\left(0.002+0.098\lambda_{b,\mathrm{tr}}(k)\right),\\
-            \beta_j&=\delta_jA_{\mathrm{tr}}u_j,\qquad \gamma_j=0.06\beta_j,\\
+            \beta_j&=\delta_jA_{\mathrm{tr}}u_j,\qquad
+            \gamma_j=r_j\beta_j,\quad r_j\sim U(0.04,0.08),\\
             y_{t,j}&=\beta_jx_t+\gamma_jx_t^2+z_{t,j}(0.12)+\epsilon_{t,j}.
           \end{aligned}
           \]
@@ -1133,12 +1134,12 @@
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>趋势能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
               <tr><td>\(A_{\mathrm{tr}}\)</td><td>趋势原始剂量。</td><td>\(\kappa_{b,\mathrm{tr}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\delta_j\)</td><td>趋势方向。</td><td>等概率取 \(-1\) 或 \(+1\)。</td></tr>
               <tr><td>\(u_j\)</td><td>通道形状扰动。</td><td>\(U(0.9,1.1)\)。</td></tr>
-              <tr><td>\(\beta_j,\gamma_j\)</td><td>在归一化时间轴 \(x_t\) 上的一次、二次系数。</td><td>\(\gamma_j=0.06\beta_j\)，二者同号。</td></tr>
+              <tr><td>\(\beta_j,\gamma_j,r_j\)</td><td>在归一化时间轴 \(x_t\) 上的一次、二次系数及曲率比。</td><td>\(\gamma_j=r_j\beta_j,\ r_j\sim U(0.04,0.08)\)，二者同号。</td></tr>
             </tbody>
           </table>
         </div>
@@ -1172,29 +1173,36 @@
           </div>
           <span class="badge amber">I↑：附加周期能量↑</span>
         </div>
-        <p class="section-intro">保持主周期分量不变，逐档增强 \(2P\) 与 \(P/2\) 两个附加周期的能量，检验模型能否同时解析并延续多尺度周期结构。</p>
+        <p class="section-intro">保持 profile 主周期分量不变，从每个样本自己的有界候选池中选择两个可分辨附加周期，并逐档增强其能量，检验模型能否同时解析并延续多尺度周期结构。</p>
         <h3>生成方程</h3>
         <div class="equation-card">
           <span class="eq-number">02-1</span>
           \[
           \begin{aligned}
-            P_1&=P,\quad P_2=2P,\quad P_3=\max(4,\lfloor P/2\rfloor),\\
+            P_{\max}&=\max(4,\lfloor C/2\rfloor),\qquad
+            P_1=\min(P,P_{\max}),\\
+            (P_2,P_3)&=\operatorname{select}_{\xi}\mathcal C(P_1,C),\\
+            \mathcal C(P_1,C)
+              &=\left\{\operatorname{round}(rP_1):
+              r\in\{.5,.625,.75,.875,1.25,1.5,1.75,2,2.5,3\}\right\},\\
+            4&\le P_r\le P_{\max},\qquad
+            |P_r^{-1}-P_s^{-1}|\ge C^{-1}\quad(r\ne s),\\
             A_{\mathrm{ms}}(k;b)&=\kappa_{b,\mathrm{ms}}\!\left(0.10+0.70\lambda_{b,\mathrm{ms}}(k)\right),\\
             y_{t,j}&=a_{1j}\sin(2\pi t/P_1+\phi_{1j})
               +A_{\mathrm{ms}}u_{2j}\sin(2\pi t/P_2+\phi_{2j})\\
-              &\quad+0.35A_{\mathrm{ms}}u_{3j}\sin(2\pi t/P_3+\phi_{3j})
+              &\quad+0.55A_{\mathrm{ms}}u_{3j}\sin(2\pi t/P_3+\phi_{3j})
               +0.05m_q\cos(2\pi t/P_s+\psi_j)
               +b_j^{\mathrm{bg}}x_t+\epsilon_{t,j},
           \end{aligned}
           \]
-          <p class="equation-caption">其中 \(P_s=\max(7P,P+1)\)，是低幅慢残差周期，不属于 intensity 的目标结构。</p>
+          <p class="equation-caption">其中 \(P_s=\max(7P_1,P_1+1)\)，是低幅慢残差周期，不属于 intensity 的目标结构；\(\operatorname{select}_{\xi}\) 优先选择一短一长的可分辨周期，必要时按源码规则从全部合法整数周期补齐。</p>
         </div>
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>多季节性能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
-              <tr><td>\(P_1,P_2,P_3\)</td><td>主周期、长附加周期、短附加周期。</td><td>\(P,2P,\max(4,\lfloor P/2\rfloor)\)。</td></tr>
+              <tr><td>\(P_1,P_2,P_3\)</td><td>截断后的 profile 主周期与两个样本特有附加周期。</td><td>优先各取一个短于、长于 \(P_1\) 的候选；不足时从所有满足频率分辨率的整数周期补齐。</td></tr>
               <tr><td>\(a_{1j}\)</td><td>主周期振幅。</td><td>\(m_sU(0.9,1.1)\)，不随 intensity 改变。</td></tr>
               <tr><td>\(A_{\mathrm{ms}}\)</td><td>附加周期基础振幅。</td><td>\(\kappa_{b,\mathrm{ms}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(u_{2j},u_{3j}\)</td><td>附加周期通道扰动。</td><td>独立 \(U(0.8,1.2)\)。</td></tr>
@@ -1203,11 +1211,11 @@
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>intensity 只改变两个附加周期共享的 \(A_{\mathrm{ms}}\)，主周期、周期个数、周期位置与噪声保持不变。</p>
+        <p>intensity 只改变两个附加周期共享的 \(A_{\mathrm{ms}}\)；同 seed 下的三个周期、相位、分量比例 \(1:0.55\)、主周期幅度、慢残差与噪声均保持不变。</p>
         <div class="lambda-strip"><span><b>I1</b>r=0</span><span><b>I2</b>r=.25</span><span><b>I3</b>r=.50</span><span><b>I4</b>r=.75</span><span><b>I5</b>r=1</span></div>
         <div class="target-list"><a class="primary-target" href="#feature-multi_period_score">multi_period_score ↑</a></div>
         <p class="table-note">控制特征：trend_strength、outlier_rate、spike_rate。单周期 residualizer 会把第二周期的一部分记作 noise，因此 noise_ratio 不作为该能力的独立控制量。</p>
-        <div class="contract"><strong>PREDICTABILITY</strong><span>最长预测周期为 \(2P\)，历史必须至少覆盖该周期两次，即 \(C\ge4P\)。</span></div>
+        <div class="contract"><strong>PREDICTABILITY</strong><span>必须成功选择三个两两可分辨周期，且历史覆盖最长所选周期至少两次，即 \(C\ge2\max(P_1,P_2,P_3)\)。</span></div>
         <h3>校准样例</h3>
         <div class="gallery">
           <a class="sample-card" href="assets/examples/multi_seasonal-intensity-1.png" target="_blank"><img loading="lazy" src="assets/examples/multi_seasonal-intensity-1.png" alt="多季节性能力 intensity 1 的校准样本"><div><strong>intensity = 1</strong><span>打开原图 ↗</span></div></a>
@@ -1234,24 +1242,31 @@
           <span class="eq-number">03-1</span>
           \[
           \begin{aligned}
-            M&=4P,\qquad m_{t,j}=\sin(2\pi t/M+\psi_j),\\
+            M&\sim\mathcal M(P,C),\\
+            \mathcal M(P,C)&=\left\{\operatorname{round}(rP):
+              r\in\{2,2.5,3,3.5\},\
+              2\operatorname{round}(rP)\le C\right\},\\
+            a_2&\sim U(0.12,0.28),\qquad \chi\sim U(0,2\pi),\\
+            \theta_{t,j}&=2\pi t/M+\psi_j,\qquad
+            m_{t,j}=\frac{\sin\theta_{t,j}+a_2\sin(2\theta_{t,j}+\chi)}{1+a_2},\\
             A_{\mathrm{tv}}(k;b)&=\kappa_{b,\mathrm{tv}}\!\left(0.10+0.90\lambda_{b,\mathrm{tv}}(k)\right),\\
-            \rho_A&=0.06+0.34A_{\mathrm{tv}},\qquad
-            \rho_\phi=0.01+0.07A_{\mathrm{tv}},\\
+            \rho_A&=\operatorname{clip}_{[0,.95]}(0.06+0.34A_{\mathrm{tv}}),\\
+            \rho_\phi&=\operatorname{clip}_{[0,.22]}(0.01+0.07A_{\mathrm{tv}}),\\
             y_{t,j}&=m_s(1+\rho_A m_{t,j})
               \sin\!\left(2\pi t/P+\phi_j+2\pi\rho_\phi m_{t,j}\right)\\
               &\quad+0.15m_q\cos(2\pi t/(2P)+\phi_j/2)
               +b_j^{\mathrm{bg}}x_t+\epsilon_{t,j}.
           \end{aligned}
           \]
+          <p class="equation-caption">若 \(\mathcal M(P,C)\) 为空，源码只构造有限 fallback 供记录，并把 construction contract 标为失败；正式 supported 样本不会使用该 fallback。</p>
         </div>
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>时变季节性能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
-              <tr><td>\(M\)</td><td>调制周期。</td><td>\(M=4P\)。</td></tr>
-              <tr><td>\(m_{t,j}\)</td><td>通道 \(j\) 的平滑调制信号。</td><td>相位 \(\psi_j\sim U(0,2\pi)\)。</td></tr>
+              <tr><td>\(M\)</td><td>样本特有的调制周期。</td><td>从可在历史中出现至少两轮的 \(2P,2.5P,3P,3.5P\) 候选中选择。</td></tr>
+              <tr><td>\(m_{t,j},a_2,\chi\)</td><td>通道 \(j\) 的有界双谐波调制信号及其形状参数。</td><td>\(\psi_j,\chi\sim U(0,2\pi)\)，\(a_2\sim U(0.12,0.28)\)。</td></tr>
               <tr><td>\(A_{\mathrm{tv}}\)</td><td>统一的调制剂量。</td><td>\(\kappa_{b,\mathrm{tv}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\rho_A\)</td><td>相对振幅调制深度。</td><td>振幅包络为 \(1+\rho_Am_{t,j}\)。</td></tr>
               <tr><td>\(\rho_\phi\)</td><td>以“周期”为单位的相位调制深度。</td><td>实际相位偏移为 \(2\pi\rho_\phi m_{t,j}\)。</td></tr>
@@ -1259,14 +1274,14 @@
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>同一个 \(A_{\mathrm{tv}}\) 同时推动振幅深度与相位深度，调制周期始终为 \(4P\)，不随 intensity 改变。</p>
+        <p>intensity 只通过 \(A_{\mathrm{tv}}\) 同时缩放振幅深度与相位深度；同 seed 下的 \(M,a_2,\chi\)、调制/载波相位、主周期、慢残差与噪声均不改变。</p>
         <div class="lambda-strip"><span><b>I1</b>r=0</span><span><b>I2</b>r=.25</span><span><b>I3</b>r=.50</span><span><b>I4</b>r=.75</span><span><b>I5</b>r=1</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-seasonal_amplitude_modulation">seasonal_amplitude_modulation ↑</a>
           <a href="#feature-seasonal_phase_variation">seasonal_phase_variation ↑</a>
         </div>
         <p class="table-note">控制特征：trend_strength、outlier_rate、spike_rate；平滑调制会被固定季节模板计入 residual，因此 noise_ratio 不作为独立控制量。</p>
-        <div class="contract"><strong>PREDICTABILITY</strong><span>历史至少观察一个完整调制周期，即 \(C\ge4P\)；预测期按同一周期律连续延伸。</span></div>
+        <div class="contract"><strong>PREDICTABILITY</strong><span>必须存在可行调制周期且历史至少观察两轮，即 \(C\ge2M\)；预测期按同一样本特有的双谐波调制律连续延伸。</span></div>
         <h3>校准样例</h3>
         <div class="gallery">
           <a class="sample-card" href="assets/examples/time_varying_seasonality-intensity-1.png" target="_blank"><img loading="lazy" src="assets/examples/time_varying_seasonality-intensity-1.png" alt="时变季节性能力 intensity 1 的校准样本"><div><strong>intensity = 1</strong><span>打开原图 ↗</span></div></a>
@@ -1282,36 +1297,41 @@
             <div>
               <p class="section-kicker">Univariate capability</p>
               <h2>可预测状态切换 <small>regime_switching</small></h2>
-              <div class="capability-meta"><span class="badge">单目标</span><span class="badge">固定切换时钟</span><span class="badge blue">主特征 regime_clock_history_incremental_r2</span></div>
+              <div class="capability-meta"><span class="badge">单目标</span><span class="badge">显式驻留 motif</span><span class="badge blue">主特征 regime_clock_history_incremental_r2</span></div>
             </div>
           </div>
           <span class="badge amber">I↑：状态间距↑</span>
         </div>
-        <p class="section-intro">状态按照固定 dwell length 交替出现；历史中至少出现两次切换，预测期继续同一时钟，排除不可预测的未来随机 change point。</p>
+        <p class="section-intro">状态按样本特有、历史中重复暴露的四段驻留 motif 交替出现；预测期继续同一 motif，既排除不可预测的未来随机 change point，也避免所有样本共享一个等间隔方波时钟。</p>
         <h3>生成方程</h3>
         <div class="equation-card">
           <span class="eq-number">04-1</span>
           \[
           \begin{aligned}
-            D&=\max\!\left(4,\min\!\left(2P,\max(4,\lfloor C/3\rfloor)\right)\right),\\
-            \tau_f&=C+\lfloor P/2\rfloor,\qquad
-            r_t=r_0(-1)^{N(t)},\\
+            D_0&=\max\!\left(4,\min\!\left(\max(4,\lfloor3P/4\rfloor),
+              \max(4,\lfloor C/11\rfloor)\right)\right),\\
+            s_D&=\max(1,\lfloor D_0/4\rfloor),\\
+            \boldsymbol D&=\operatorname{perm}_{\xi}
+              \left(\max(4,D_0-s_D),D_0,D_0+s_D,D_0+2s_D\right),\\
+            \tau_f&=C+\min(12,\max(1,\lfloor P/2\rfloor)),\qquad
+            \tau_{n+1}-\tau_n=D_{n\bmod4},\\
+            r_t&=r_0(-1)^{N(t)},\\
             A_{\mathrm{rs}}(k;b)&=\kappa_{b,\mathrm{rs}}\!\left(0.25+0.85\lambda_{b,\mathrm{rs}}(k)\right),\\
             y_{t,j}&=A_{\mathrm{rs}}u_jr_t+z_{t,j}(0.22)
               +b_j^{\mathrm{bg}}x_t+\epsilon_{t,j}.
           \end{aligned}
           \]
           <p class="equation-caption">
-            切换点集合为 \(\{\tau_f+nD:n\in\mathbb Z\}\cap(0,T)\)，\(N(t)\) 是 \(t\) 前已发生的切换次数；生成器从首个预测期切换点 \(\tau_f\) 向历史回推完整时钟。
+            \(N(t)\) 是 \(t\) 前已发生的切换次数；生成器以 \(\tau_f\) 为锚点，按同一循环 motif 向历史回填、向未来延伸。驻留长度均至少为 4。
           </p>
         </div>
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>状态切换能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
-              <tr><td>\(D\)</td><td>每个 regime 的固定驻留长度。</td><td>由 \(C,P\) 确定，intensity 不改变它。</td></tr>
-              <tr><td>\(\tau_f\)</td><td>首个预测期切换点。</td><td>\(C+\lfloor P/2\rfloor\)。</td></tr>
+              <tr><td>\(D_0,s_D,\boldsymbol D\)</td><td>基础驻留长度、离散扩展量与四段循环 motif。</td><td>候选四段按样本 seed 随机排列；同 seed 下不随 intensity 改变。</td></tr>
+              <tr><td>\(\tau_f\)</td><td>用于向两侧回填切换序列的预测侧锚点。</td><td>\(C+\min(12,\max(1,\lfloor P/2\rfloor))\)，不依赖请求的 horizon；实际窗口内的首个未来切换可由 motif 向前回填得到。</td></tr>
               <tr><td>\(r_t\)</td><td>交替状态变量。</td><td>\(\{-1,+1\}\)，初始符号随机。</td></tr>
               <tr><td>\(A_{\mathrm{rs}}\)</td><td>两个状态中心的半间距。</td><td>\(\kappa_{b,\mathrm{rs}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(u_j\)</td><td>通道状态尺度扰动。</td><td>\(U(0.9,1.1)\)。</td></tr>
@@ -1319,7 +1339,7 @@
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>intensity 只改变状态间隔 \(2A_{\mathrm{rs}}u_j\)，不改变切换次数、dwell length、状态顺序或未来切换位置。五档分别瞄准该 dataset/profile 的 history-clock 主特征真实容忍区间与生成器响应区间交集内的五个相对位置。</p>
+        <p>intensity 只改变状态间隔 \(2A_{\mathrm{rs}}u_j\)；同 seed 下的四段驻留 motif、切换次数、交替顺序、锚点、背景与噪声保持不变。五档分别瞄准该 dataset/profile 的 history-clock 主特征真实容忍区间与生成器响应区间交集内的五个相对位置。</p>
         <div class="lambda-strip"><span><b>I1</b>r=0</span><span><b>I2</b>r=.25</span><span><b>I3</b>r=.50</span><span><b>I4</b>r=.75</span><span><b>I5</b>r=1</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-regime_clock_history_incremental_r2">regime_clock_history_incremental_r2 ↑</a>
@@ -1327,7 +1347,7 @@
           <a href="#feature-level_shift_strength">level_shift_strength ↑</a>
         </div>
         <p class="table-note">状态切换会机械性地改变现有 residual、spike 与 outlier 摘要，因此当前 feature gate 采用显式 no-control contract，仍强制 construction、dataset-local dose 与 near-distance gate。真实数据中的 recurring-clock future qualification 只作诊断：它校准的是可观察强度范围，不要求真实序列具有与合成方波完全相同的潜在机制。</p>
-        <div class="contract"><strong>PREDICTABILITY</strong><span>历史切换数不少于 2，预测期切换数不少于 1，且所有切换等间隔并严格交替。</span></div>
+        <div class="contract"><strong>PREDICTABILITY</strong><span>历史切换间隔至少覆盖四段 motif 两轮，预测期切换数不少于 1；状态严格交替，驻留 motif 在边界前后保持不变。</span></div>
         <h3>校准样例</h3>
         <div class="gallery">
           <a class="sample-card" href="assets/examples/regime_switching-intensity-1.png" target="_blank"><img loading="lazy" src="assets/examples/regime_switching-intensity-1.png" alt="状态切换能力 intensity 1 的校准样本"><div><strong>intensity = 1</strong><span>打开原图 ↗</span></div></a>
@@ -1343,7 +1363,7 @@
             <div>
               <p class="section-kicker">Univariate capability</p>
               <h2>非线性多滞后持续性 <small>nonlinear_persistence</small></h2>
-              <div class="capability-meta"><span class="badge">单目标</span><span class="badge">稳定递推 v2</span><span class="badge blue">主特征 nonlinear_conditional_gain</span></div>
+              <div class="capability-meta"><span class="badge">单目标</span><span class="badge">稳定多滞后递推</span><span class="badge blue">主特征 nonlinear_conditional_gain</span></div>
             </div>
           </div>
           <span class="badge amber">I↑：条件非线性增益↑</span>
@@ -1354,16 +1374,26 @@
           <span class="eq-number">05-1</span>
           \[
           \begin{aligned}
-            L_s&=P,\qquad L_n=\max(2,\lfloor P/2\rfloor),\\
+            L_s&=P,\qquad
+            L_n\sim\left\{\max(2,\lfloor P/3\rfloor),
+              \max(2,\lfloor P/2\rfloor),\max(2,\lfloor2P/3\rfloor)\right\},\\
             B&=\max(256,8P),\qquad
               \tilde z_{0:P-1,j}\overset{\mathrm{iid}}{\sim}N(0,1),\\
             d(k;b)&=\operatorname{clip}_{[0,1]}
               \left\{\kappa_{b,\mathrm{nl}}\!\left(0.02+0.98\lambda_{b,\mathrm{nl}}(k)\right)\right\},\\
-            g(u)&=\sin^2(1.1u)-0.25,\\
-            \tilde z_{t,j}&=0.10\tilde z_{t-1,j}+0.05d\,\tilde z_{t-L_s,j}
-              +0.75d\,g(\tilde z_{t-L_n,j})+\eta_{t,j},\\
+            g(u)&\in\left\{
+              \sin^2(\omega u+a)-\sin^2(a),\
+              \tanh(\omega u+a)-\tanh(a)\right\},\\
+            \phi&\in\{.08,.10,.12\},\quad
+            m\in\{.03,.05,.07\},\quad
+            \omega\in\{.8,1,1.2,1.4\},\\
+            \beta_{\mathrm{nl}}&=\min\!\left(
+              .72d,\frac{.90-\phi-m}{\omega}\right),\\
+            \tilde z_{t,j}&=\phi\tilde z_{t-1,j}
+              +m\tilde z_{t-L_s,j}
+              +\beta_{\mathrm{nl}}g(\tilde z_{t-L_n,j})+\eta_{t,j},\\
             z_{t,j}&=\tilde z_{B+t,j},\\
-            y_{t,j}&=(1+2d)z_{t,j}+z^{(\mathrm{bg})}_{t,j}(0.03)
+            y_{t,j}&=2z_{t,j}+z^{(\mathrm{bg})}_{t,j}(0.03)
               +b_j^{\mathrm{bg}}x_t.
           \end{aligned}
           \]
@@ -1371,13 +1401,14 @@
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>非线性持续性能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
               <tr><td>\(\tilde z_{t,j},z_{t,j}\)</td><td>完整递推状态与发布窗口内的稳定状态。</td><td>先生成固定 burn-in，再令 \(z_t=\tilde z_{B+t}\)。</td></tr>
               <tr><td>\(B\)</td><td>丢弃的初始化 burn-in 长度。</td><td>\(\max(256,8P)\)，防止前 \(P\) 点初始化瞬态进入样本。</td></tr>
-              <tr><td>\(L_s,L_n\)</td><td>线性 profile-scale 长滞后与非线性中程滞后。</td><td>\(P\) 与 \(\max(2,\lfloor P/2\rfloor)\)；它们是递推滞后，不是固定周期载波。</td></tr>
-              <tr><td>\(d\)</td><td>统一依赖强度。</td><td>\(\kappa_{b,\mathrm{nl}}\) 由当前 dataset/profile 的 supported conditioning 给出，并截断到 \([0,1]\)。</td></tr>
-              <tr><td>\(g(u)\)</td><td>中心化的有界非线性变换。</td><td>\(\sin^2(1.1u)-0.25\)，当前 transform version 2。</td></tr>
+              <tr><td>\(L_s,L_n\)</td><td>线性 profile-scale 长滞后与样本特有的非线性中程滞后。</td><td>\(L_s=P\)；\(L_n\) 从 \(P/3,P/2,2P/3\) 对应的三个整数候选中选择。</td></tr>
+              <tr><td>\(d\)</td><td>进入稳定性上限前的非线性剂量。</td><td>\(\kappa_{b,\mathrm{nl}}\) 由当前 dataset/profile 的 supported conditioning 给出，并截断到 \([0,1]\)。</td></tr>
+              <tr><td>\(g(u),\omega,a\)</td><td>在零点平移归零的有界非线性变换、频率与偏置。</td><td>样本级选择 shifted sine-squared 或 shifted tanh；\(a\in\{-.6,-.3,.3,.6\}\)。</td></tr>
+              <tr><td>\(\phi,m,\beta_{\mathrm{nl}}\)</td><td>短滞后、季节滞后与非线性项系数。</td><td>只有 \(\beta_{\mathrm{nl}}\) 由 intensity 缩放；\(\phi,m\) 为样本级固定 nuisance。</td></tr>
               <tr><td>\(\eta_{t,j}\)</td><td>递推创新。</td><td>基准 scale 0.12，服从 profile 噪声族。</td></tr>
             </tbody>
           </table>
@@ -1386,18 +1417,18 @@
         <div class="equation-card">
           <span class="eq-number">05-2</span>
           \[
-            0.10+0.05d+1.1(0.75d)&lt;1,
+            \phi+m+\omega\beta_{\mathrm{nl}}\le0.90&lt;1,
             \qquad C\ge2L_s.
           \]
           <p class="equation-caption">左式是当前构造门控采用的 Lipschitz 系数上界；不满足时直接拒绝生成。</p>
         </div>
-        <p>intensity 同时增强 profile-scale 线性记忆与非线性项，但两者比例固定；主特征是在控制所有线性滞后后，\(\sin^2\) 项带来的有符号 adjusted-\(R^2\) 增益。五档使用该 dataset/profile 的真实容忍与生成器响应交集内五个相对位置；自由度修正与保留负值使无结构时的期望接近 0。</p>
+        <p>intensity 只缩放非线性系数 \(\beta_{\mathrm{nl}}\)；同 seed 下的线性记忆 \(\phi,m\)、\(L_n\)、变换族、\(\omega,a\)、创新、发布振幅与背景均不改变。主特征用预注册的三个候选中程滞后，在控制其线性项后加入平方、立方项，计算有符号 adjusted-\(R^2\) 增益；它不读取生成器实际抽中的变换族。</p>
         <div class="lambda-strip"><span><b>I1</b>r=0</span><span><b>I2</b>r=.25</span><span><b>I3</b>r=.50</span><span><b>I4</b>r=.75</span><span><b>I5</b>r=1</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-nonlinear_conditional_gain">nonlinear_conditional_gain ↑</a>
           <a href="#feature-nonlinear_multi_lag_gain">nonlinear_multi_lag_gain ↑</a>
         </div>
-        <p class="table-note">控制特征：trend_strength、outlier_rate、spike_rate。旧版 nonlinear_lag1_gain 仍作为通用诊断量计算，但不是当前主标尺。离线 predictive-headroom audit 对递归非线性修正使用跨 profile 固定的 50% shrinkage，抑制多步误差累积且不按被评分 future 调整。</p>
+        <p class="table-note">控制特征：trend_strength、outlier_rate、spike_rate。nonlinear_lag1_gain 与 nonlinear_multi_lag_gain 仍作为通用辅助诊断量计算，但不是当前主标尺。离线 predictive-headroom audit 对递归非线性修正使用跨 profile 固定的 50% shrinkage，抑制多步误差累积且不按被评分 future 调整。</p>
         <div class="contract"><strong>PREDICTABILITY</strong><span>所有使用的滞后均在历史内至少出现两次，递推在预测边界不换系数，且稳定性上界严格小于 1。</span></div>
         <h3>校准样例</h3>
         <div class="gallery">
@@ -1425,16 +1456,18 @@
           <span class="eq-number">06-1</span>
           \[
           \begin{aligned}
+            P_e&\le P,\qquad \rho\sim U(0.14,0.22),\qquad
+            \boldsymbol o=\operatorname{perm}_{\xi}(-1,0,1),\\
             \boldsymbol\Delta&=\left(
-              \max(4,\operatorname{round}(0.75P)),
-              \max(4,P),
-              \max(4,\operatorname{round}(1.25P))
-            \right),\\
-            \tau_f&=C+\lfloor P/2\rfloor,\qquad
+              \max(2,P_e+\operatorname{round}(\rho P_e)o_r)
+            \right)_{r=1}^{3},\\
+            \tau_f&=C+\min(P_e-1,\lfloor\nu P_e\rfloor),
+              \qquad \nu\sim U(0,1),\\
             \tau_{n+1}-\tau_n=\Delta_{n\bmod3},\qquad
-            \mathcal T=\{\tau_n:n\in\mathbb Z\}\cap[0,T),\\
-            w&=\max(0.65,P/40),\qquad
-            h_t=\sum_{\tau\in\mathcal T}\exp\!\left[-\frac12\left(\frac{t-\tau}{w}\right)^2\right],\\
+            w&=\max(0.65,P_e/40),\qquad R=\max(1,\lceil4w\rceil),\\
+            \mathcal T^+&=\{\tau_n:n\in\mathbb Z\}\cap[0,T+R),\\
+            h_t&=\sum_{\tau\in\mathcal T^+}\mathbf1\{|t-\tau|\le R\}
+              \exp\!\left[-\frac12\left(\frac{t-\tau}{w}\right)^2\right],\\
             A_{\mathrm{pi}}(k;b)&=\kappa_{b,\mathrm{pi}}\!\left(0.35+1.25\lambda_{b,\mathrm{pi}}(k)\right),\\
             y_{t,j}&=A_{\mathrm{pi}}u_jh_t+z_{t,j}(0.18)
               +b_j^{\mathrm{bg}}x_t+\epsilon_{t,j}.
@@ -1444,12 +1477,12 @@
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>可预测间歇性能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
-              <tr><td>\(\boldsymbol\Delta\)</td><td>循环使用的三段间隔 motif。</td><td>约为 \((0.75P,P,1.25P)\)，每段至少为 4。</td></tr>
-              <tr><td>\(\mathcal T\)</td><td>由 motif 向历史和未来递推得到的脉冲中心集合。</td><td>相邻中心不等间隔；同 seed 下不随 intensity 改变。</td></tr>
-              <tr><td>\(\tau_f\)</td><td>首个预测期脉冲中心。</td><td>\(C+\lfloor P/2\rfloor\)。</td></tr>
-              <tr><td>\(w\)</td><td>高斯脉冲宽度。</td><td>\(\max(0.65,P/40)\)，不随 intensity 改变。</td></tr>
+              <tr><td>\(P_e,\rho,\boldsymbol o,\boldsymbol\Delta\)</td><td>有效周期、相对扩展量、随机顺序与三段循环 motif。</td><td>从 \(P_e=P\) 开始；若历史不足以暴露 motif，则逐步减小 \(P_e\)。每段至少为 2。</td></tr>
+              <tr><td>\(\mathcal T^+\)</td><td>由 motif 向历史和未来递推得到的脉冲中心集合。</td><td>相邻中心不等间隔；额外保留窗口右侧 \(R\) 内的中心，使落入窗口的脉冲左尾不被截断。</td></tr>
+              <tr><td>\(\tau_f,\nu\)</td><td>用于向两侧回填调度的预测侧锚点及样本相位。</td><td>\(\nu\) 由 seed 决定，锚点不依赖请求的 horizon；实际窗口内的首个未来脉冲可由 motif 向前回填得到。</td></tr>
+              <tr><td>\(w\)</td><td>高斯脉冲宽度。</td><td>\(\max(0.65,P_e/40)\)，不随 intensity 改变。</td></tr>
               <tr><td>\(h_t\)</td><td>所有高斯脉冲的叠加形状。</td><td>中心、宽度固定，仅振幅变化。</td></tr>
               <tr><td>\(A_{\mathrm{pi}}\)</td><td>脉冲基础振幅。</td><td>\(\kappa_{b,\mathrm{pi}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(u_j\)</td><td>通道脉冲尺度扰动。</td><td>\(U(0.9,1.1)\)。</td></tr>
@@ -1465,7 +1498,7 @@
           <a href="#feature-outlier_rate">outlier_rate ↑</a>
         </div>
         <p class="table-note">脉冲本身会机械性改变分解、spike 与 outlier 摘要，因此 feature gate 使用显式 no-control contract；其必要性由离线 pulse-clock aware/blind contrast 检验。</p>
-        <div class="contract"><strong>PREDICTABILITY</strong><span>历史脉冲数不少于 4，从而完整暴露三段间隔 motif；预测期脉冲数不少于 1，并按同一 motif 相位继续。</span></div>
+        <div class="contract"><strong>PREDICTABILITY</strong><span>历史脉冲中心不少于 7，从而暴露三段间隔 motif 至少两轮；预测期脉冲数不少于 1，并按同一 motif 相位继续。</span></div>
         <h3>校准样例</h3>
         <div class="gallery">
           <a class="sample-card" href="assets/examples/predictable_intermittency-intensity-1.png" target="_blank"><img loading="lazy" src="assets/examples/predictable_intermittency-intensity-1.png" alt="可预测间歇性能力 intensity 1 的校准样本"><div><strong>intensity = 1</strong><span>打开原图 ↗</span></div></a>
@@ -1495,7 +1528,11 @@
             f_t&=z_t^{(f)}(1),\qquad
             u_{t,j}=z_{t,j}^{(\ell)}(0.45m_\ell),\\
             A_{\mathrm{cf}}(k;b)&=\kappa_{b,\mathrm{cf}}\!\left(0.15+1.05\lambda_{b,\mathrm{cf}}(k)\right),\\
-            \ell_j&=\delta_jU(0.8,1.2),\\
+            \sigma_\ell&\sim U(0.15,0.30),\qquad
+            v_j=\operatorname{clip}_{[.55,1.65]}
+              \left(\exp(N(0,\sigma_\ell^2))\right),\\
+            \ell_j&=\delta_jv_j
+              \left(\frac1d\sum_{r=1}^{d}v_r^2\right)^{-1/2},\\
             y_{t,j}&=A_{\mathrm{cf}}\ell_jf_t
               +u_{t,j}
               +b_j^{\mathrm{bg}}x_t+\epsilon_{t,j}.
@@ -1505,17 +1542,17 @@
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>公共因子能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
-              <tr><td>\(f_t\)</td><td>所有通道共享的一维潜在因子。</td><td>历史归一化的稳定非周期 AR(2)。</td></tr>
+              <tr><td>\(f_t\)</td><td>所有通道共享的一维潜在因子。</td><td>样本特有的稳定实根 AR(2)：slow root 围绕 \(\operatorname{clip}(.945+.03\rho_{\rm res},.92,.97)\) 在 \(\pm.025\) 内抽样并限于 \([.88,.985]\)，fast root \(\sim U(-.15,.35)\)，再按历史归一化。</td></tr>
               <tr><td>\(u_{t,j}\)</td><td>通道私有的动态局部分量。</td><td>各通道使用独立创新与 fast root，振幅固定为 \(0.45m_\ell\sqrt{m_\epsilon}\)。</td></tr>
               <tr><td>\(A_{\mathrm{cf}}\)</td><td>共享因子强度。</td><td>\(\kappa_{b,\mathrm{cf}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
-              <tr><td>\(\ell_j\)</td><td>通道 \(j\) 的固定 factor loading。</td><td>符号随机，绝对值 \(U(0.8,1.2)\)。</td></tr>
+              <tr><td>\(\ell_j,\sigma_\ell\)</td><td>通道 \(j\) 的样本特有 factor loading 与对数尺度。</td><td>符号随机、幅值为截断 log-normal，并归一化到 RMS 为 1。</td></tr>
             </tbody>
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>intensity 只改变共享因子振幅 \(A_{\mathrm{cf}}\)；factor rank 恒为 1，loadings、共享/局部动态系数和噪声不随档位一起变化。</p>
+        <p>intensity 只改变共享因子振幅 \(A_{\mathrm{cf}}\)；同 seed 下 factor rank 恒为 1，loadings、共享/局部 AR(2) 根、局部分量、背景与噪声均不随档位一起变化。</p>
         <div class="lambda-strip"><span><b>I1</b>r=0</span><span><b>I2</b>r=.25</span><span><b>I3</b>r=.50</span><span><b>I4</b>r=.75</span><span><b>I5</b>r=1</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-pca_top1_explained">pca_top1_explained ↑</a>
@@ -1550,11 +1587,13 @@
           <span class="eq-number">08-1</span>
           \[
           \begin{aligned}
-            J&=d-1,\qquad u_t=z_t^{(s)}(0.55),\\
-            \widetilde \ell_{t,j}
-              &=z_{t,j}^{(\ell)}(0.55m_\ell),\\
-            \ell_{t,j}&=\widetilde\ell_{t,j}
-              -\frac1J\sum_{r=1}^{J}\widetilde\ell_{t,r},\\
+            J&=d-1,\qquad R=J-1,\qquad u_t=z_t^{(s)}(0.55),\\
+            \mathbf f_t&=\left(f_{t,1},\ldots,f_{t,R}\right),\qquad
+              f_{t,r}=0.55m_\ell z_{t,r}^{(\ell)}(1),\\
+            L&=H_JQ,\qquad H_J^\top H_J=I_R,\quad
+              \mathbf1_J^\top H_J=0,\quad Q^\top Q=I_R,\\
+            \boldsymbol\ell_t&=L\mathbf f_t,\qquad
+              \mathbf1_J^\top\boldsymbol\ell_t=0,\\
             A_{\mathrm{hc}}(k;b)&=\kappa_{b,\mathrm{hc}}\!\left(0.10+0.70\lambda_{b,\mathrm{hc}}(k)\right),\\
             c_{t,j}&=\frac{u_t+\epsilon_t^{(c)}}{J}
               +A_{\mathrm{hc}}\ell_{t,j}+\epsilon_{t,j}^{(i)},\\
@@ -1562,16 +1601,17 @@
             \mathbf y_t=(p_t,c_{t,1},\ldots,c_{t,J}).
           \end{aligned}
           \]
-          <p class="equation-caption">逐时刻对局部分量和 idiosyncratic noise 做跨子节点去均值，故它们在父节点求和时严格抵消。</p>
+          <p class="equation-caption">\(H_J\) 是 Helmert 零和基，\(Q\) 是每个样本由 QR 分解得到的随机正交旋转；局部分量及 idiosyncratic noise 逐时刻去均值，故它们在父节点求和时严格抵消。</p>
         </div>
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>层级一致性能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
               <tr><td>\(J,p_t,c_{t,j}\)</td><td>子节点数、父节点、子节点。</td><td>\(J=d-1\ge2\)，\(p_t=\sum_jc_{t,j}\)。</td></tr>
               <tr><td>\(u_t\)</td><td>所有子节点共同承担的非周期总量分量。</td><td>稳定 AR(2)，平均分配为 \(u_t/J\)。</td></tr>
-              <tr><td>\(\ell_{t,j}\)</td><td>逐时刻零和的子节点局部分量。</td><td>\(\sum_j\ell_{t,j}=0\)。</td></tr>
+              <tr><td>\(\mathbf f_t,R\)</td><td>样本特有的稳定 AR(2) 局部潜在路径及其秩。</td><td>\(R=J-1\)，完整覆盖子节点零和对比子空间。</td></tr>
+              <tr><td>\(H_J,Q,L,\boldsymbol\ell_t\)</td><td>Helmert 零和基、样本旋转、载荷矩阵与局部分量。</td><td>\(L=H_JQ\)，\(\sum_j\ell_{t,j}=0\)；旋转避免固定子坐标投影。</td></tr>
               <tr><td>\(A_{\mathrm{hc}}\)</td><td>子节点异质性剂量。</td><td>\(\kappa_{b,\mathrm{hc}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\epsilon_t^{(c)}\)</td><td>父子共享的 common noise。</td><td>基准 scale 0.03。</td></tr>
               <tr><td>\(\epsilon_{t,j}^{(i)}\)</td><td>逐时刻零和的 idiosyncratic noise。</td><td>基准 scale 0.04，\(\sum_j\epsilon_{t,j}^{(i)}=0\)。</td></tr>
@@ -1579,7 +1619,7 @@
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>intensity 只改变 \(A_{\mathrm{hc}}\)，加总关系在所有档位均严格成立；不注入预测期随机 shock。噪声族与尺度由当前 dataset/profile 的 nuisance 拟合决定。</p>
+        <p>intensity 只改变 \(A_{\mathrm{hc}}\)；同 seed 下的局部秩 \(J-1\)、旋转载荷、潜在路径、共享过程与噪声保持不变，加总关系在所有档位均严格成立，也不注入预测期随机 shock。</p>
         <div class="lambda-strip"><span><b>I1</b>r=0</span><span><b>I2</b>r=.25</span><span><b>I3</b>r=.50</span><span><b>I4</b>r=.75</span><span><b>I5</b>r=1</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-hierarchy_child_heterogeneity">hierarchy_child_heterogeneity ↑</a>
@@ -1616,13 +1656,18 @@
           \begin{aligned}
             w_t&=z_t^{(w)}(1),\qquad
             a_{t,j}=z_{t,j}^{(0)}(0.24),\\
-            W&=\max\!\left(2,\min\!\left(4,\max(2,\lfloor P_0/8\rfloor)\right)\right),\\
-            \tau_r&=\min\!\left(C-W,\max(1,\lfloor rC/4\rfloor)\right),\quad r=1,2,3,\\
-            \tau_4&=C+\max(1,\lfloor P_0/2\rfloor)-\lfloor W/2\rfloor,\\
+            W_{\max}&=\max\!\left(1,\min\!\left(5,H,\max(2,\operatorname{round}(P/4))\right)\right),\\
+            W&\sim U_{\mathbb Z}\!\left(\min(2,W_{\max}),W_{\max}\right),\\
+            (a_r,b_r)&\in\{(.12,.28),(.40,.56),(.70,.86)\},\\
+            L_r&=\min(C-W,\max(0,\operatorname{round}(a_rC))),\\
+            U_r&=\min(C-W,\max(L_r,\operatorname{round}(b_rC))),\qquad
+            \tau_r\sim U_{\mathbb Z}(L_r,U_r),\quad r=1,2,3,\\
+            \tau_4&=C+U_{\mathbb Z}\!\left(0,
+              \min(H,\max(W,P))-W\right),\\
             e_t&=\mathbb{1}\!\left[t\in\bigcup_{r=1}^{4}[\tau_r,\tau_r+W)\right],\\
             A_{\mathrm{cv}}(k;b)&=\kappa_{b,\mathrm{cv}}\!\left(0.25+0.95\lambda_{b,\mathrm{cv}}(k)\right),\\
             \beta_{w,j}&=\delta_jA_{\mathrm{cv}}U(0.6,1.0),\qquad
-            \beta_{e,j}=A_{\mathrm{cv}}U(0.9,1.3),\\
+            \beta_{e,j}=\delta'_jA_{\mathrm{cv}}U(0.9,1.3),\\
             r_{t,j}&=\rho r_{t-1,j}+\eta_{t,j},\\
             y_{t,j}&=a_{t,j}+b_0x_t
               +\beta_{w,j}w_t+\beta_{e,j}e_t+r_{t,j}.
@@ -1632,14 +1677,14 @@
         <div class="table-wrap">
           <table class="symbol-table">
             <caption>协变量响应能力专属符号</caption>
-            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
+            <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v3 参照</th></tr></thead>
             <tbody>
               <tr><td>\(w_t\)</td><td>完整提供到预测期的非周期天气协变量。</td><td>历史归一化的稳定 AR(2)，不是固定正弦载波。</td></tr>
               <tr><td>\(a_{t,j}\)</td><td>与协变量无关的目标基线。</td><td>通道独立的稳定 AR(2)，振幅 \(0.24\sqrt{m_\epsilon}\)。</td></tr>
               <tr><td>\(e_t\)</td><td>二元事件协变量。</td><td>3 个历史事件 + 1 个预测期事件。</td></tr>
-              <tr><td>\(\tau_r,W\)</td><td>事件起点和宽度。</td><td>前三次位于历史的 \(1/4,1/2,3/4\) 处并截断到 \(C-W\)；第四次位于预测期；\(W\in[2,4]\)。</td></tr>
+              <tr><td>\(\tau_r,W\)</td><td>样本特有的事件起点和宽度。</td><td>三次历史事件分别从三个互不重叠的 context 比例带抽样并保证完整；一次未来事件从预测期前 \(\min(H,\max(W,P))\) 点内抽样并保证完整。</td></tr>
               <tr><td>\(A_{\mathrm{cv}}\)</td><td>协变量效应基础尺度。</td><td>\(\kappa_{b,\mathrm{cv}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
-              <tr><td>\(\beta_{w,j},\beta_{e,j}\)</td><td>天气与事件效应系数。</td><td>天气可正可负；事件效应为正。</td></tr>
+              <tr><td>\(\beta_{w,j},\beta_{e,j}\)</td><td>天气与事件效应系数。</td><td>二者均按通道独立选择正负号；相对幅值在同 seed 的五档间固定。</td></tr>
               <tr><td>\(r_{t,j},\rho\)</td><td>目标残差及其 profile-conditioned AR 系数。</td><td>\(\rho\) 是 nuisance，不随 intensity 改变。</td></tr>
             </tbody>
           </table>
@@ -1722,7 +1767,7 @@
               <tr id="feature-trend_strength"><td>trend_strength</td><td>\(\operatorname{Str}(e,\widehat\tau+e)\)</td><td>二次趋势解释的相对方差；范围 \([0,1]\)。</td><td>trend 主目标</td></tr>
               <tr id="feature-seasonal_strength"><td>seasonal_strength</td><td>\(\operatorname{Str}(e,\widehat s+e)\)</td><td>固定 phase template 解释的相对方差。</td><td>季节 nuisance 控制</td></tr>
               <tr id="feature-slope_abs"><td>slope_abs</td><td>\(|\widehat\beta_1|\)，其中 \(\widehat\tau(u)=\widehat\beta_2u^2+\widehat\beta_1u+\widehat\beta_0\)</td><td>归一化时间轴上的绝对一次趋势系数。</td><td>trend 辅助目标</td></tr>
-              <tr id="feature-curvature_abs"><td>curvature_abs</td><td>\(|\widehat\beta_2|\)</td><td>归一化时间轴上的绝对二次曲率系数；生成器固定 curvature/slope 形状比，context 标准化后不要求其独立单调。</td><td>trend shape diagnostic</td></tr>
+              <tr id="feature-curvature_abs"><td>curvature_abs</td><td>\(|\widehat\beta_2|\)</td><td>归一化时间轴上的绝对二次曲率系数；生成器逐样本抽取有界 curvature/slope 比，context 标准化后不要求其独立单调。</td><td>trend shape diagnostic</td></tr>
               <tr id="feature-noise_ratio"><td>noise_ratio</td><td>\(\operatorname{clip}(\operatorname{Var}(e)/\operatorname{Var}(\mathcal R(y)),0,1)\)</td><td>固定趋势与季节分解未解释的方差比例。</td><td>nuisance 诊断</td></tr>
               <tr id="feature-acf1"><td>acf1</td><td>\(\rho_1(\mathcal R(y))\)</td><td>lag-1 自相关，可保留正负号。</td><td>依赖诊断</td></tr>
               <tr id="feature-acf_abs_mean"><td>acf_abs_mean</td><td>\(\frac1L\sum_{\ell=1}^{L}|\rho_\ell(\mathcal R(y))|,\ L=\min(10,\max(1,\lfloor T/4\rfloor))\)</td><td>短滞后绝对自相关的平均。</td><td>依赖 / 残差诊断</td></tr>
@@ -1742,7 +1787,7 @@
               <tr id="feature-seasonal_phase_variation"><td>seasonal_phase_variation</td><td>\(\operatorname{Std}_r(\operatorname{unwrap}(\operatorname{atan2}(b_r,a_r)))/\pi\)</td><td>逐周期一阶谐波相位的展开标准差。</td><td>time-varying 辅助目标</td></tr>
               <tr id="feature-nonlinear_lag1_gain"><td>nonlinear_lag1_gain</td><td>\(\max(0,R^2(y_t;1,y_{t-1},y_{t-1}^2,\sin y_{t-1})-R^2(y_t;1,y_{t-1}))\)</td><td>只相对 lag-1 线性基线测得的旧版非线性增益。</td><td>通用非线性诊断</td></tr>
               <tr id="feature-nonlinear_multi_lag_gain"><td>nonlinear_multi_lag_gain</td><td>\(\max(0,R^2(y_t;1,y_{t-1},y_{t-P},\sin(2y_{t-L_n}))-R^2(y_t;1,y_{t-1}))\)</td><td>线性季节项与非线性中程滞后共同带来的增益。</td><td>nonlinear 辅助目标</td></tr>
-              <tr id="feature-nonlinear_conditional_gain"><td>nonlinear_conditional_gain</td><td>\(\bar R^2(y_t;D_L,\sin^2(1.1y_{t-L_n}))-\bar R^2(y_t;D_L)\)，\(D_L=(1,y_{t-1},y_{t-P},y_{t-L_n})\)</td><td>控制所有线性滞后后的有符号 adjusted-\(R^2\) 增益；消除嵌套回归与零截断的正偏地板。</td><td>nonlinear 主目标</td></tr>
+              <tr id="feature-nonlinear_conditional_gain"><td>nonlinear_conditional_gain</td><td>\(\bar R^2(y_t;D_L,\{y_{t-\ell}^2,y_{t-\ell}^3\}_{\ell\in\mathcal L})-\bar R^2(y_t;D_L)\)，其中 \(\mathcal L=\{\lfloor P/3\rfloor,\lfloor P/2\rfloor,\lfloor2P/3\rfloor\}\) 经最小 lag 2 与去重处理，\(D_L=(1,y_{t-1},y_{t-P},\{y_{t-\ell}\}_{\ell\in\mathcal L})\)</td><td>控制预注册候选滞后的全部线性项后，平方与立方项带来的有符号 adjusted-\(R^2\) 增益；不使用生成元数据中的实际变换族。</td><td>nonlinear 主目标</td></tr>
 
               <tr id="feature-avg_abs_target_corr"><td>avg_abs_target_corr</td><td>\(\frac1{d(d-1)}\sum_{i\ne j}|\operatorname{corr}(Y_{\cdot i},Y_{\cdot j})|\)</td><td>所有有向非对角通道对的平均绝对相关。</td><td>common_factor 辅助目标</td></tr>
               <tr id="feature-pca_top1_explained"><td>pca_top1_explained</td><td>\(\sigma_1^2/\sum_r\sigma_r^2\)，\(\sigma_r\) 为中心化 \(Y\) 的奇异值</td><td>第一主成分解释的总方差比例。</td><td>common_factor 主目标</td></tr>
@@ -1791,7 +1836,7 @@
         </div>
         <div class="source-list">
           <a href="../../backend/app/services/synthetic_generation_service.py">生成器源码<br><code>backend/app/services/synthetic_generation_service.py</code></a>
-          <a href="../superpowers/specs/2026-07-01-synthetic-v2-capability-modeling-definitions.md">能力建模定义<br><code>docs/superpowers/specs/2026-07-01-…definitions.md</code></a>
+          <a href="../developer/synthetic-data-methodology.md">当前生成方法<br><code>docs/developer/synthetic-data-methodology.md</code></a>
           <a href="assets/examples/manifest.json">样例 manifest<br><code>assets/examples/manifest.json</code></a>
           <a href="generate_example_plots.py">绘图与配对门控脚本<br><code>generate_example_plots.py</code></a>
         </div>
@@ -1801,7 +1846,7 @@
       </section>
 
       <footer>
-        TSBenchmark Capability Atlas · definitions synchronized with the repository state on 2026-07-18.
+        TSBenchmark Capability Atlas · capts-paper-v3 definitions synchronized with the repository state on 2026-07-19.
       </footer>
     </main>
   </div>

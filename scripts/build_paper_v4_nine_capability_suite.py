@@ -33,10 +33,12 @@ for import_path in (BACKEND_DIR, SCRIPT_DIR):
 
 from app.services.synthetic_feature_gate import evaluate_feature_support_gate  # noqa: E402
 from app.services.synthetic_generation_service import (  # noqa: E402
+    PAPER_GENERATOR_VERSION,
     PAPER_UNIVARIATE_CAPABILITY_IDS,
     _attempt_seed,
     _generate_sample_values,
     _realized_features,
+    _regime_clock_history_incremental_r2,
     _seed_for,
 )
 from app.services.synthetic_generator_conditioning import (  # noqa: E402
@@ -423,6 +425,42 @@ def synthetic_paired_view(
         context_length,
     )
     return view_target, view_covariates
+
+
+def synthetic_view_features(
+    *,
+    capability_id: str,
+    target: np.ndarray,
+    covariates: np.ndarray | None,
+    season_length: int,
+    context_length: int,
+    latent: dict[str, Any],
+) -> dict[str, float]:
+    """Measure a generated suffix view, including latent-aligned diagnostics."""
+
+    features = _realized_features(
+        target,
+        covariates,
+        season_length,
+        context_length,
+    )
+    if capability_id == "regime_switching":
+        view_start = MAX_CONTEXT_LENGTH - int(context_length)
+        cut_points = [
+            int(point) - view_start
+            for point in latent["cut_points"]
+            if int(point) > view_start
+        ]
+        features["regime_clock_history_incremental_r2"] = (
+            _regime_clock_history_incremental_r2(
+                target,
+                context_length=context_length,
+                season_length=season_length,
+                cut_points=cut_points,
+                dwell_length=int(latent["dwell_length"]),
+            )
+        )
+    return features
 
 
 def load_source_views(
@@ -1179,13 +1217,19 @@ def build_suite(
                     )
                 )
                 continue
-            # Regime and nonlinear observables have materially higher
-            # Monte-Carlo variance than the other seven capability features.
+            # Regime, time-varying seasonal, and nonlinear observables have
+            # materially higher Monte-Carlo variance than the other six
+            # capability features.
             # Doubling their fit bank is pre-registered here; the independent
             # validation bank and the common error tolerance stay unchanged.
             per_grid_samples = (
                 calibration_samples * 2
-                if capability_id in {"regime_switching", "nonlinear_persistence"}
+                if capability_id
+                in {
+                    "regime_switching",
+                    "time_varying_seasonality",
+                    "nonlinear_persistence",
+                }
                 else calibration_samples
             )
             try:
@@ -1347,6 +1391,7 @@ def build_suite(
     )
     config = {
         "schema_version": SCHEMA_VERSION,
+        "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": created_at,
         "context_lengths": list(CONTEXT_LENGTHS),
         "max_context_length": MAX_CONTEXT_LENGTH,
@@ -1366,6 +1411,7 @@ def build_suite(
     }
     generator_artifact = {
         "schema_version": "synthetic_v2_generator_conditioning_artifact.v4",
+        "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": created_at,
         "config": config,
         "intensity_policy": intensity_policy(),
@@ -1373,6 +1419,7 @@ def build_suite(
     }
     feature_artifact = {
         "schema_version": "synthetic_v2_feature_gate_online.v1",
+        "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": created_at,
         "config": {
             **config,
@@ -1383,6 +1430,7 @@ def build_suite(
     }
     near_artifact = {
         "schema_version": "synthetic_v2_near_distance_online.v2",
+        "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": created_at,
         "dataset_summary_schema_version": SCHEMA_VERSION,
         "config": {
@@ -1510,11 +1558,13 @@ def qualify_suite(
                             context_length=context_length,
                             hierarchy=hierarchy,
                         )
-                        features = _realized_features(
-                            view_target,
-                            view_covariates,
-                            season_length,
-                            context_length,
+                        features = synthetic_view_features(
+                            capability_id=capability_id,
+                            target=view_target,
+                            covariates=view_covariates,
+                            season_length=season_length,
+                            context_length=context_length,
+                            latent=metadata,
                         )
                         view_profile_id = gate_profile_id(
                             dataset_id,
@@ -1686,6 +1736,7 @@ def qualify_suite(
     }
     result = {
         "schema_version": "paper_v4_nine_capability_qualification.v2",
+        "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
             "context_lengths": list(CONTEXT_LENGTHS),

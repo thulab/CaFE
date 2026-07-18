@@ -81,7 +81,17 @@ def test_scheduled_and_structured_generators_do_not_hide_future_only_structure()
     cut_points = regime["cut_points"]
     assert sum(point < context_length for point in cut_points) >= 2
     assert any(point >= context_length for point in cut_points)
-    assert len(set(np.diff(cut_points))) == 1
+    dwell_pattern = regime["dwell_pattern"]
+    assert len(dwell_pattern) >= 3
+    assert len(set(dwell_pattern)) > 1
+    observed_dwell = np.diff(cut_points)
+    assert set(observed_dwell).issubset(set(dwell_pattern))
+    assert (
+        regime["predictability"]["evidence"][
+            "duration_motif_repetitions_in_context"
+        ]
+        >= 2.0
+    )
 
     _, intermittent, _ = _generate_sample_values(
         "predictable_intermittency",

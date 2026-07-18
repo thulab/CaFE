@@ -48,6 +48,47 @@ def test_positive_tail_threshold_fails_closed_when_all_distances_are_zero():
         module.positive_lower_tail_quantile(np.asarray([0.0, 0.0]), 0.01)
 
 
+def test_online_artifact_preserves_small_positive_feature_scales():
+    module = load_calibration_module()
+    spec = module.BucketSpec("unit", "tsf_univariate", "unit.zip", 8, 4, 1, 4)
+    reference_rows = [
+        {
+            "raw": np.full(12, float(index)),
+            "context_raw": np.full(8, float(index)),
+            "features": {"spike_rate": index * 3e-7},
+        }
+        for index in range(3)
+    ]
+    thresholds = {
+        name: 0.1
+        for name in (
+            "raw_mae_p01",
+            "raw_mae_p05",
+            "raw_l2_p01",
+            "raw_l2_p05",
+            "feature_l2_p01",
+            "feature_l2_p05",
+            "raw_mae_nndr_p01",
+            "raw_mae_nndr_p05",
+            "context_raw_mae_p01",
+            "context_raw_mae_p05",
+            "context_raw_l2_p01",
+            "context_raw_l2_p05",
+            "context_raw_mae_nndr_p01",
+            "context_raw_mae_nndr_p05",
+        )
+    }
+
+    bucket = module.online_artifact_bucket(
+        spec,
+        reference_rows,
+        thresholds=thresholds,
+    )
+
+    assert bucket["feature_names"] == ["spike_rate"]
+    assert bucket["feature_scale"][0] > 0.0
+
+
 def test_evaluate_risk_flags_exact_copy_and_spares_far_sample():
     module = load_calibration_module()
     train = [

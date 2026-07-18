@@ -24,6 +24,7 @@ for path in (BACKEND_DIR, SCRIPT_DIR):
 
 from app.services.synthetic_generation_service import (  # noqa: E402
     CONTROL_FEATURES_BY_CAPABILITY,
+    PAPER_GENERATOR_VERSION,
     TARGET_FEATURES_BY_CAPABILITY,
     _generate_sample_values,
     _normalize_covariates,
@@ -495,6 +496,7 @@ def build_artifact(
     except ValueError:
         data_dir_label = str(data_dir)
     config = {
+        "generator_version": PAPER_GENERATOR_VERSION,
         "data_dir": data_dir_label,
         "max_windows_per_bucket": int(max_windows),
         "calibration_fraction": float(calibration_fraction),
@@ -547,6 +549,7 @@ def build_artifact(
     }
     artifact = {
         "schema_version": "synthetic_v2_generator_conditioning_artifact.v4",
+        "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": created_at,
         "config": config,
         "intensity_policy": {

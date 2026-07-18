@@ -696,7 +696,7 @@ def main() -> None:
     )
     missing = [str(path) for path in required if not path.exists()]
     if missing:
-        raise SystemExit("missing capts-paper-v2 artifacts:\n" + "\n".join(missing))
+        raise SystemExit("missing legacy illustration artifacts:\n" + "\n".join(missing))
 
     generator_artifact = read_json(GENERATOR_ARTIFACT_PATH)
     feature_artifact = read_json(FEATURE_GATE_ARTIFACT_PATH)

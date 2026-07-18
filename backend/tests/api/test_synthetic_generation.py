@@ -24,7 +24,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
     assert trend_capability["label_i18n"]["zh-CN"] == "趋势"
     assert trend_capability["paper_included"] is True
     assert trend_capability["paper_track"] == "univariate"
-    assert trend_capability["generator_version"] == "capts-paper-v2"
+    assert trend_capability["generator_version"] == "capts-paper-v3"
     assert trend_capability["predictability_contract"]
     assert trend_capability["intensity_features"]["trend_strength"] == "increase"
     assert trend_capability["limits"]["context_length"]["min"] == 16
@@ -58,7 +58,7 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert covariate.target_dim == 1
         assert covariate.covariate_columns == ["weather", "event"]
         assert covariate.generation_config["intensity"] == 3
-        assert covariate.generation_config["generator_version"] == "capts-paper-v2"
+        assert covariate.generation_config["generator_version"] == "capts-paper-v3"
         assert covariate.generation_config["difficulty"] == 3
         assert covariate.generation_config["intensity_policy_id"] == (
             "dataset-local-relative-quantiles-v1"
@@ -89,14 +89,14 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert trend_sample is not None
         trend_metadata = trend_sample.sample_metadata
         assert trend_metadata["intensity"] == 3
-        assert trend_metadata["generator_version"] == "capts-paper-v2"
+        assert trend_metadata["generator_version"] == "capts-paper-v3"
         assert trend_metadata["difficulty"] == 3
         assert trend_metadata["intensity_policy_id"] == "dataset-local-relative-quantiles-v1"
         assert trend_metadata["target_percentile_level"] == 0.5
         assert trend_metadata["anchor_dataset_id"]
         assert trend_metadata["target_feature"] == "trend_strength"
         assert "canonical_scale_id" not in trend_metadata
-        assert trend_metadata["latent_params"]["generator_version"] == "capts-paper-v2"
+        assert trend_metadata["latent_params"]["generator_version"] == "capts-paper-v3"
         assert trend_metadata["latent_params"]["predictability"]["construction_validated"] is True
         assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
         assert trend_metadata["latent_params"]["acceptance"]["attempts"] == 1

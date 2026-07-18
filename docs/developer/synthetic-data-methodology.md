@@ -1,8 +1,8 @@
 # CapTS-Bench Dataset-local Synthetic v2 方法
 
-更新日期：2026-07-18
+更新日期：2026-07-19
 
-本文描述当前 `capts-paper-v2` 生成器和 Paper v4 实验协议。当前原则只有一个：
+本文描述当前 `capts-paper-v3` 生成器和 Paper v4 实验协议。当前原则只有一个：
 
 > 每个真实 dataset 独立定义 profile、五档相对强度、feature-support gate 和
 > near-distance gate；不同 dataset 的真实窗口和统计量不合并。
@@ -91,7 +91,7 @@ dataset。
 support matrix 对每个 dataset 固定列出九个能力，并审计四个 lookback。不是所有
 dataset 都必须支持九个能力：
 
-- 缂少所需 task view；
+- 缺少所需 task view；
 - 变量结构不满足要求；
 - 有效、隔离后的窗口数量不足；
 - dataset-local 五个目标没有足够间距；
@@ -155,15 +155,29 @@ dataset-local target range 归一化，容差为 0.20。校准失败的 cell 同
 
 ## 5. 生成公式与可预测性边界
 
-最新生成公式保留 shortcut-resistant 修订：
+`capts-paper-v3` 将机制强度、识别复杂度和未来随机性分开。对同一 candidate seed，
+五档共享相同的周期、motif、lag、变换族、载荷、协变量路径、背景和噪声；intensity
+只缩放当前能力的机制贡献。主要公式约束如下：
 
-- 除季节能力外，不给所有任务叠加同一个强固定季节载波；
-- `regime_switching` 的状态规律在 history 中重复出现并延续至 future；
-- `predictable_intermittency` 使用历史可识别的非等间隔 motif；
-- `nonlinear_persistence` 经过稳定 burn-in 后才发布轨迹；
-- `covariate_response` 的预测期信号由 known-future covariates 提供；
-- 层级任务始终保持 parent 等于 children 之和；
-- 禁止只在 future 中注入无先兆 cut point、burst 或 shock。
+- `trend`：逐样本固定方向、shape scale 和有界二次曲率比；
+- `multi_seasonal`：保留 profile 主周期，另采样两个谱间距可分辨、在 history
+  至少出现两次的整数周期；
+- `time_varying_seasonality`：逐样本采样可充分暴露的 modulation period 和有界
+  二谐波 modulation law，五档只改变 AM/FM depth；
+- `regime_switching`：逐样本四段 explicit-duration motif 在 history/future
+  确定重复，不再使用全局等 dwell 方波；
+- `nonlinear_persistence`：逐样本固定稳定 lag、非线性变换族和递归参数，五档只改变
+  非线性依赖系数；
+- `predictable_intermittency`：逐样本三段非等间隔 motif 和 phase 确定延续，五档只改变
+  pulse strength；短 horizon 没有 future pulse 时如实标为 construction unsupported；
+- `common_factor`：rank 固定为 1，逐样本稳定 AR(2) 因子和 RMS-normalized loadings，
+  五档只缩放 shared contribution；
+- `hierarchical_coherence`：逐样本稳定 zero-sum contrast paths 和正交 loadings，
+  五档只缩放 child heterogeneity，parent 始终等于 children 之和；
+- `covariate_response`：逐样本事件时钟和系数相对比例固定，预测期信号只来自提供给模型的
+  known-future weather/event covariates。
+
+所有能力都禁止只在 future 中注入 history 没有展示其规律的 cut point、burst 或 shock。
 
 生成完整 \(L+H\) 曲线后，只用 context 统计量标准化：
 
@@ -180,7 +194,8 @@ construction predictability contract 是配置级必要条件。它证明预测�
 预测时可用，但不证明任意模型都能利用该信息；模型有效性仍由 E1 的 matched
 baseline/oracle 和正式模型实验检验。
 
-对 `regime_switching`，生成器使用 history 与 future 连续共享的重复两状态方波时钟。
+对 `regime_switching`，生成器使用 history 与 future 连续共享的两状态
+explicit-duration motif。
 真实数据不需要也通常不会含有同一个离散潜变量；校准只提取一个可观察量：在控制趋势
 和普通季节谐波后，history-only 选择的方波 clock 对历史拟合增加了多少解释力，即
 `regime_clock_history_incremental_r2`。这个量回答“该真实 dataset 容许多强的重复
@@ -273,6 +288,7 @@ synthetic_v2_generator_conditioning_artifact.v4
 顶层必须声明：
 
 ```text
+generator_version = capts-paper-v3
 policy_id = dataset-local-real-bounded-generator-feasible-v1
 relative_dose_levels = [0.00, 0.25, 0.50, 0.75, 1.00]
 real_tolerance = {lower_quantile = 0.05, upper_quantile = 0.95,

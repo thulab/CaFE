@@ -80,6 +80,36 @@ def test_hierarchy_view_preserves_additivity(module) -> None:
         assert np.max(np.abs(view[:, 0] - view[:, 1] - view[:, 2])) < 1e-10
 
 
+def test_regime_suffix_views_record_the_primary_feature(module) -> None:
+    target, latent, _ = module._generate_sample_values(
+        "regime_switching",
+        module.MAX_CONTEXT_LENGTH + module.HORIZON,
+        module.MAX_CONTEXT_LENGTH,
+        1,
+        24,
+        5,
+        np.random.default_rng(17),
+    )
+    for context_length in module.CONTEXT_LENGTHS:
+        view, _ = module.synthetic_paired_view(
+            target,
+            None,
+            context_length=context_length,
+            hierarchy=None,
+        )
+        features = module.synthetic_view_features(
+            capability_id="regime_switching",
+            target=view,
+            covariates=None,
+            season_length=24,
+            context_length=context_length,
+            latent=latent,
+        )
+        value = features["regime_clock_history_incremental_r2"]
+        assert np.isfinite(value)
+        assert value > 0.0
+
+
 def test_mapping_assigns_all_nine_capabilities(module) -> None:
     assert {
         module.task_id_for_capability(capability_id)

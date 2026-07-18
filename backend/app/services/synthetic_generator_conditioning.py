@@ -42,6 +42,7 @@ class GeneratorConditioning:
     artifact_schema_version: str
     artifact_created_at: str | None
     calibration_method: str
+    artifact_generator_version: str | None = None
 
     def lambda_for(self, intensity: int) -> float:
         index = int(intensity) - 1
@@ -58,6 +59,7 @@ class GeneratorConditioning:
             "schema_version": SCHEMA_VERSION,
             "artifact_schema_version": self.artifact_schema_version,
             "artifact_created_at": self.artifact_created_at,
+            "artifact_generator_version": self.artifact_generator_version,
             "profile_id": self.profile_id,
             "dataset_id": self.dataset_id,
             "capability_id": self.capability_id,
@@ -237,6 +239,7 @@ def resolve_generator_conditioning(
         artifact_schema_version=str(source.get("schema_version", "unknown")),
         artifact_created_at=source.get("created_at"),
         calibration_method=str(capability.get("calibration_method", "unknown")),
+        artifact_generator_version=source.get("generator_version"),
     )
 
 

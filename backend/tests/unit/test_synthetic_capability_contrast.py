@@ -67,7 +67,10 @@ def test_capability_forecasts_cannot_read_future_targets():
     np.testing.assert_allclose(first["blind"], second["blind"])
     np.testing.assert_allclose(first["aware"], second["aware"])
     assert first["future_target_used_for_forecast"] is False
-    assert first["aware_method"] == "construction_effect_plus_ar2_residual"
+    assert (
+        first["aware_method"]
+        == "history_estimated_known_future_covariate_regression"
+    )
     assert first["aware_information_set"].endswith(
         "_plus_known_future_covariates"
     )

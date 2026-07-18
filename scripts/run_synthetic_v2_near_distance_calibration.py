@@ -312,7 +312,10 @@ def online_artifact_bucket(
         "split": split_summary or {},
         "feature_names": list(feature_names),
         "feature_center": round_nested(feature_center),
-        "feature_scale": round_nested(feature_scale),
+        # Scales can legitimately be far below 1e-6 for nearly constant real
+        # features. Six-decimal serialization would turn them into zero and make
+        # an otherwise valid online bucket fail its compatibility check.
+        "feature_scale": round_nested(feature_scale, digits=12),
         "reference_raw": round_nested(np.vstack([row["raw"] for row in reference_rows])),
         "reference_context_raw": round_nested(np.vstack([row["context_raw"] for row in reference_rows])),
         "reference_features_z": round_nested(reference_features_z),

@@ -159,7 +159,7 @@ CAPABILITIES_BY_ID: dict[str, SyntheticCapability] = {
     capability.capability_id: capability for capability in SYNTHETIC_CAPABILITIES
 }
 
-PAPER_GENERATOR_VERSION = "capts-paper-v2"
+PAPER_GENERATOR_VERSION = "capts-paper-v3"
 PAPER_UNIVARIATE_CAPABILITY_IDS: tuple[str, ...] = (
     "trend",
     "multi_seasonal",
@@ -1246,7 +1246,7 @@ BOUNDED_ACCEPTANCE_FEATURES = {
 }
 
 # Legacy pilot-cap tables are retained only so archived pre-paper experiment
-# scripts remain readable. The online capts-paper-v2 generation path does not call
+# scripts remain readable. The online capts-paper-v3 generation path does not call
 # these tables or `_accept_synthetic_features`; it uses synthetic_feature_gate.
 
 
@@ -1919,9 +1919,10 @@ def _generate_trend(
     _, _, time_axis = _base_features(length, context_length, season_length)
     trend_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
     shape_scale = rng.uniform(0.9, 1.1, size=target_dim)
+    curvature_ratio = rng.uniform(0.04, 0.08, size=target_dim)
     trend_scale = structure_scale * (0.002 + 0.098 * lam)
     slope = trend_direction * trend_scale * shape_scale
-    curvature = trend_direction * trend_scale * 0.06 * shape_scale
+    curvature = slope * curvature_ratio
     values = time_axis[:, None] * slope + (time_axis[:, None] ** 2) * curvature
     background, background_metadata = _stable_nonperiodic_process(
         length,
@@ -1945,6 +1946,7 @@ def _generate_trend(
                 evidence={
                     "context_observation_count": int(context_length),
                     "forecast_law": "same_polynomial_coefficients",
+                    "trend_basis": "sample_specific_bounded_quadratic",
                     "background_law": "stable_ar2_nonperiodic",
                 },
             ),
@@ -1956,6 +1958,15 @@ def _generate_trend(
             "slope_abs_mean": float(np.mean(np.abs(slope))),
             "curvature_mean": float(np.mean(curvature)),
             "curvature_abs_mean": float(np.mean(np.abs(curvature))),
+            "trend_direction_by_target": [
+                float(value) for value in trend_direction
+            ],
+            "trend_shape_scale_by_target": [
+                float(value) for value in shape_scale
+            ],
+            "curvature_ratio_by_target": [
+                float(value) for value in curvature_ratio
+            ],
             "background_process": background_metadata,
             "noise_scale": float(noise_scale),
         },
@@ -1975,26 +1986,131 @@ def _generate_multi_seasonal(
     lam = _conditioned_lambda(intensity, conditioning)
     structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     t = np.arange(length, dtype=float)
-    primary_period = max(4, season_length)
-    secondary_period = primary_period * 2
-    tertiary_period = max(4, primary_period // 2)
-    values = np.zeros((length, target_dim))
-    period_amplitudes: list[dict[str, float]] = []
+    profile_period = max(4, int(season_length))
+    maximum_period = max(4, int(context_length) // 2)
+    primary_period = min(profile_period, maximum_period)
 
-    def add_period(period: int, amplitude: np.ndarray) -> None:
+    # Resolve two additional periods once per sample.  The candidates stay
+    # close to the real-profile period, are integer valued, complete at least
+    # two cycles in context, and are separated at the context's Fourier
+    # resolution.  This avoids one repository-wide P/2, P, 2P fingerprint
+    # while keeping every selected clock observable and deterministic.
+    ratio_pool = (0.50, 0.625, 0.75, 0.875, 1.25, 1.50, 1.75, 2.00, 2.50, 3.00)
+    candidate_periods = sorted(
+        {
+            int(round(primary_period * ratio))
+            for ratio in ratio_pool
+            if 4 <= int(round(primary_period * ratio)) <= maximum_period
+        }
+        - {primary_period}
+    )
+    minimum_frequency_gap = 1.0 / max(1, int(context_length))
+
+    def sufficiently_resolved(period: int, selected: list[int]) -> bool:
+        frequency = 1.0 / period
+        return all(
+            abs(frequency - 1.0 / existing) >= minimum_frequency_gap
+            for existing in selected
+        )
+
+    selected_periods = [primary_period]
+    shuffled_candidates = [
+        int(value)
+        for value in rng.permutation(np.asarray(candidate_periods, dtype=int))
+    ]
+    shorter = [
+        period
+        for period in shuffled_candidates
+        if period < primary_period and sufficiently_resolved(period, selected_periods)
+    ]
+    if shorter:
+        selected_periods.append(shorter[0])
+    longer = [
+        period
+        for period in shuffled_candidates
+        if period > primary_period and sufficiently_resolved(period, selected_periods)
+    ]
+    if longer:
+        selected_periods.append(longer[0])
+    for period in shuffled_candidates:
+        if len(selected_periods) >= 3:
+            break
+        if period not in selected_periods and sufficiently_resolved(period, selected_periods):
+            selected_periods.append(period)
+    if len(selected_periods) < 3:
+        # Very short contexts or boundary periods can exhaust the ratio pool.
+        # Complete the set from all resolvable integer periods without adding
+        # any future randomness.
+        for period in rng.permutation(np.arange(4, maximum_period + 1, dtype=int)):
+            candidate = int(period)
+            if candidate not in selected_periods and sufficiently_resolved(candidate, selected_periods):
+                selected_periods.append(candidate)
+            if len(selected_periods) >= 3:
+                break
+
+    values = np.zeros((length, target_dim))
+    period_components: list[dict[str, Any]] = []
+
+    def add_period(
+        period: int,
+        amplitude: np.ndarray,
+        phase: np.ndarray,
+        *,
+        role: str,
+        amplitude_multiplier: np.ndarray,
+    ) -> None:
         nonlocal values
-        phase = rng.uniform(0, 2 * np.pi, size=target_dim)
         values += amplitude[None, :] * np.sin(2 * np.pi * t[:, None] / period + phase[None, :])
-        period_amplitudes.append({"period": float(period), "amplitude_mean": float(np.mean(amplitude))})
+        period_components.append(
+            {
+                "period": int(period),
+                "role": role,
+                "phase_by_target": [float(value) for value in phase],
+                "amplitude_multiplier_by_target": [
+                    float(value) for value in amplitude_multiplier
+                ],
+                "amplitude_by_target": [float(value) for value in amplitude],
+                "amplitude_mean": float(np.mean(amplitude)),
+            }
+        )
 
     seasonal_multiplier = _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
-    amp = seasonal_multiplier * rng.uniform(0.9, 1.1, size=target_dim)
-    add_period(primary_period, amp)
+    component_phases = [
+        rng.uniform(0, 2 * np.pi, size=target_dim)
+        for _ in selected_periods
+    ]
+    component_amplitude_multipliers = [
+        rng.uniform(0.9, 1.1, size=target_dim),
+        *[
+            rng.uniform(0.8, 1.2, size=target_dim)
+            for _ in selected_periods[1:]
+        ],
+    ]
+    primary_amplitude = (
+        seasonal_multiplier * component_amplitude_multipliers[0]
+    )
+    add_period(
+        primary_period,
+        primary_amplitude,
+        component_phases[0],
+        role="profile_primary",
+        amplitude_multiplier=component_amplitude_multipliers[0],
+    )
     additional_period_strength = structure_scale * (0.10 + 0.70 * lam)
-    amp = additional_period_strength * rng.uniform(0.8, 1.2, size=target_dim)
-    add_period(secondary_period, amp)
-    amp = 0.35 * additional_period_strength * rng.uniform(0.8, 1.2, size=target_dim)
-    add_period(tertiary_period, amp)
+    additional_role_scales = (1.0, 0.55)
+    for index, period in enumerate(selected_periods[1:]):
+        amplitude = (
+            additional_period_strength
+            * additional_role_scales[index]
+            * component_amplitude_multipliers[index + 1]
+        )
+        add_period(
+            period,
+            amplitude,
+            component_phases[index + 1],
+            role=f"additional_{index + 1}",
+            amplitude_multiplier=component_amplitude_multipliers[index + 1],
+        )
     slow_period = max(primary_period * 7, primary_period + 1)
     slow_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
     slow_amplitude = 0.05 * _conditioned_parameter(conditioning, "slow_amplitude_multiplier", 1.0)
@@ -2009,16 +2125,49 @@ def _generate_multi_seasonal(
         {
             **_paper_generator_metadata(
                 "multi_seasonal",
-                validated=context_length >= 2 * secondary_period,
+                validated=(
+                    len(selected_periods) >= 3
+                    and context_length >= 2 * max(selected_periods)
+                ),
                 evidence={
-                    "longest_period": int(secondary_period),
-                    "longest_period_cycles_in_context": float(context_length / secondary_period),
+                    "period_selection_law": "sample_specific_bounded_profile_relative_pool",
+                    "profile_period": int(profile_period),
+                    "profile_period_clipped_to_context": bool(
+                        primary_period != profile_period
+                    ),
+                    "longest_period": int(max(selected_periods)),
+                    "longest_period_cycles_in_context": float(
+                        context_length / max(selected_periods)
+                    ),
+                    "minimum_pairwise_frequency_gap": float(
+                        min(
+                            abs(1.0 / left - 1.0 / right)
+                            for index, left in enumerate(selected_periods)
+                            for right in selected_periods[index + 1 :]
+                        )
+                    ),
+                    "context_fourier_resolution": float(
+                        minimum_frequency_gap
+                    ),
+                    "forecast_law": "fixed_harmonic_continuation",
                 },
             ),
             "anchor_profile": "m4_hourly_daily_168ctx",
-            "periods": [int(item["period"]) for item in period_amplitudes],
-            "period_amplitudes": period_amplitudes,
+            "profile_period": int(profile_period),
+            "periods": [int(item["period"]) for item in period_components],
+            "period_components": period_components,
+            # Backward-compatible compact representation.
+            "period_amplitudes": [
+                {
+                    "period": int(item["period"]),
+                    "amplitude_mean": float(item["amplitude_mean"]),
+                }
+                for item in period_components
+            ],
             "additional_period_strength": float(additional_period_strength),
+            "additional_period_scale_by_component": list(
+                additional_role_scales[: max(0, len(selected_periods) - 1)]
+            ),
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
             "noise_scale": float(noise_scale),
         },
@@ -2039,13 +2188,62 @@ def _generate_regime_switching(
     structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     _, _, time_axis = _base_features(length, context_length, season_length)
     background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
-    dwell_length = max(4, min(2 * max(4, season_length), max(4, context_length // 3)))
-    future_switch_at = context_length + max(1, int(season_length) // 2)
-    first_switch = future_switch_at
-    while first_switch - dwell_length > 0:
-        first_switch -= dwell_length
-    cut_points = list(range(first_switch, length, dwell_length))
-    cut_points = [int(point) for point in cut_points if 0 < point < length]
+    horizon = max(0, int(length) - int(context_length))
+
+    # Each sample receives its own bounded explicit-duration motif.  The motif
+    # is repeated unchanged through history and forecast, making it learnable
+    # from context without making every sample share one constant dwell clock.
+    # Its construction is independent of intensity: intensity only changes
+    # the state separation below.
+    minimum_dwell = 4
+    base_dwell = max(
+        minimum_dwell,
+        min(
+            max(minimum_dwell, (3 * int(season_length)) // 4),
+            max(minimum_dwell, int(context_length) // 11),
+        ),
+    )
+    dwell_spread = max(1, base_dwell // 4)
+    dwell_candidates = np.asarray(
+        [
+            max(minimum_dwell, base_dwell - dwell_spread),
+            base_dwell,
+            base_dwell + dwell_spread,
+            base_dwell + 2 * dwell_spread,
+        ],
+        dtype=int,
+    )
+    dwell_pattern = [
+        int(value) for value in rng.permutation(dwell_candidates)
+    ]
+    dwell_length = max(
+        minimum_dwell,
+        int(round(float(np.median(dwell_pattern)))),
+    )
+
+    # Anchor one history-predictable switch near the forecast origin, then
+    # backfill and extend the same motif.  The anchor phase does not depend on
+    # requested horizon, so extending a horizon preserves the existing prefix.
+    forecast_anchor = int(
+        context_length
+        + min(12, max(1, int(season_length) // 2))
+    )
+    cut_points = [forecast_anchor]
+    cursor = forecast_anchor
+    interval_index = -1
+    while cursor - dwell_pattern[interval_index % len(dwell_pattern)] > 0:
+        cursor -= dwell_pattern[interval_index % len(dwell_pattern)]
+        cut_points.append(int(cursor))
+        interval_index -= 1
+    cursor = forecast_anchor
+    interval_index = 0
+    while cursor + dwell_pattern[interval_index % len(dwell_pattern)] < length:
+        cursor += dwell_pattern[interval_index % len(dwell_pattern)]
+        cut_points.append(int(cursor))
+        interval_index += 1
+    cut_points = sorted(
+        int(point) for point in cut_points if 0 < point < length
+    )
 
     state = np.zeros(length, dtype=float)
     boundaries = [0, *cut_points, length]
@@ -2071,7 +2269,16 @@ def _generate_regime_switching(
     values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
     historical_switches = [point for point in cut_points if point < context_length]
     future_switches = [point for point in cut_points if point >= context_length]
-    validated = len(historical_switches) >= 2 and len(future_switches) >= 1
+    historical_intervals = np.diff(historical_switches)
+    motif_repetitions_in_context = (
+        float(len(historical_intervals)) / len(dwell_pattern)
+        if dwell_pattern
+        else 0.0
+    )
+    validated = (
+        motif_repetitions_in_context >= 2.0
+        and len(future_switches) >= 1
+    )
     return (
         values,
         {
@@ -2081,7 +2288,14 @@ def _generate_regime_switching(
                 evidence={
                     "historical_switch_count": len(historical_switches),
                     "future_switch_count": len(future_switches),
-                    "constant_dwell_length": int(dwell_length),
+                    "explicit_duration_motif": [
+                        int(value) for value in dwell_pattern
+                    ],
+                    "duration_motif_length": len(dwell_pattern),
+                    "duration_motif_repetitions_in_context": (
+                        motif_repetitions_in_context
+                    ),
+                    "forecast_law": "deterministic_history_exposed_duration_motif",
                     "alternating_state_order": True,
                 },
             ),
@@ -2089,7 +2303,14 @@ def _generate_regime_switching(
             "cut_points": cut_points,
             "forecast_switch": int(bool(future_switches)),
             "future_switch_at": int(future_switches[0]) if future_switches else None,
+            "forecast_switch_offset": (
+                int(future_switches[0] - context_length)
+                if future_switches
+                else None
+            ),
             "dwell_length": int(dwell_length),
+            "dwell_pattern": [int(value) for value in dwell_pattern],
+            "dwell_pattern_length": len(dwell_pattern),
             "regime_strength": float(regime_strength),
             "background_process": background_metadata,
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
@@ -2112,13 +2333,47 @@ def _generate_time_varying_seasonality(
     structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     t = np.arange(length, dtype=float)
     primary_period = max(4, season_length)
-    modulation_period = primary_period * 4
+    modulation_period_candidates = tuple(
+        sorted(
+            {
+                max(primary_period + 1, int(round(primary_period * ratio)))
+                for ratio in (2.0, 2.5, 3.0, 3.5)
+                if 2 * int(round(primary_period * ratio)) <= context_length
+            }
+        )
+    )
+    if modulation_period_candidates:
+        modulation_period = int(rng.choice(modulation_period_candidates))
+    else:
+        # Keep a deterministic, finite fallback for configurations that cannot
+        # expose two modulation cycles.  The construction contract remains
+        # false, allowing the caller to record the capability as unsupported.
+        modulation_period = max(
+            primary_period + 1,
+            context_length // 2,
+        )
+    modulation_second_harmonic_ratio = float(rng.uniform(0.12, 0.28))
+    modulation_second_harmonic_phase = float(rng.uniform(0, 2 * np.pi))
     modulation_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
     carrier_phase = rng.uniform(0, 2 * np.pi, size=target_dim)
     modulation_strength = structure_scale * (0.10 + 0.90 * lam)
-    amplitude_depth = 0.06 + 0.34 * modulation_strength
-    phase_depth_cycles = 0.01 + 0.07 * modulation_strength
-    modulation = np.sin(2 * np.pi * t[:, None] / modulation_period + modulation_phase[None, :])
+    amplitude_depth = float(
+        np.clip(0.06 + 0.34 * modulation_strength, 0.0, 0.95)
+    )
+    phase_depth_cycles = float(
+        np.clip(0.01 + 0.07 * modulation_strength, 0.0, 0.22)
+    )
+    modulation_angle = (
+        2 * np.pi * t[:, None] / modulation_period
+        + modulation_phase[None, :]
+    )
+    modulation = (
+        np.sin(modulation_angle)
+        + modulation_second_harmonic_ratio
+        * np.sin(
+            2 * modulation_angle + modulation_second_harmonic_phase
+        )
+    ) / (1.0 + modulation_second_harmonic_ratio)
     amplitude = 1.0 + amplitude_depth * modulation
     phase_modulation = 2 * np.pi * phase_depth_cycles * modulation
     seasonal_multiplier = _conditioned_parameter(conditioning, "seasonal_amplitude_multiplier", 1.0)
@@ -2142,13 +2397,32 @@ def _generate_time_varying_seasonality(
         {
             **_paper_generator_metadata(
                 "time_varying_seasonality",
-                validated=context_length >= modulation_period,
+                validated=context_length >= 2 * modulation_period,
                 evidence={
                     "modulation_period": int(modulation_period),
                     "modulation_cycles_in_context": float(context_length / modulation_period),
-                    "forecast_modulation_law": "periodic_continuation",
+                    "modulation_period_candidates": [
+                        int(value)
+                        for value in modulation_period_candidates
+                    ],
+                    "modulation_basis": "bounded_two_harmonic_fourier",
+                    "forecast_modulation_law": "sample_specific_periodic_continuation",
                 },
             ),
+            "primary_period": int(primary_period),
+            "modulation_period": int(modulation_period),
+            "modulation_period_candidates": [
+                int(value) for value in modulation_period_candidates
+            ],
+            "modulation_basis": "bounded_two_harmonic_fourier",
+            "modulation_second_harmonic_ratio": modulation_second_harmonic_ratio,
+            "modulation_second_harmonic_phase": modulation_second_harmonic_phase,
+            "modulation_phase_by_target": [
+                float(value) for value in modulation_phase
+            ],
+            "carrier_phase_by_target": [
+                float(value) for value in carrier_phase
+            ],
             "modulation_strength": float(modulation_strength),
             "amplitude_depth": float(amplitude_depth),
             "amplitude_delta_mean": float(2 * amplitude_depth),
@@ -2158,6 +2432,23 @@ def _generate_time_varying_seasonality(
         },
         None,
     )
+
+
+def _bounded_nonlinear_response(
+    values: np.ndarray,
+    *,
+    family: str,
+    frequency: float,
+    offset: float,
+) -> np.ndarray:
+    argument = float(frequency) * np.asarray(values, dtype=float) + float(
+        offset
+    )
+    if family == "shifted_sine_squared":
+        return np.sin(argument) ** 2 - np.sin(float(offset)) ** 2
+    if family == "shifted_tanh":
+        return np.tanh(argument) - np.tanh(float(offset))
+    raise ValueError(f"unsupported nonlinear transform family: {family}")
 
 
 def _generate_nonlinear_persistence(
@@ -2184,38 +2475,52 @@ def _generate_nonlinear_persistence(
         slow_root_base=0.84,
     )
     seasonal_lag = max(4, int(season_length))
-    nonlinear_lag = max(2, seasonal_lag // 2)
-    dependency_strength = float(
-        np.clip(structure_scale * (0.02 + 0.98 * lam), 0.0, 1.0)
+    nonlinear_lag_candidates = sorted(
+        {
+            max(2, seasonal_lag // 3),
+            max(2, seasonal_lag // 2),
+            max(2, (2 * seasonal_lag) // 3),
+        }
     )
-    ar_phi = 0.10
-    transform_version = int(
-        round(
-            _conditioned_parameter(
-                conditioning,
-                "nonlinear_transform_version",
-                2.0,
+    nonlinear_lag = int(rng.choice(nonlinear_lag_candidates))
+    transform_family = str(
+        rng.choice(
+            np.asarray(
+                ["shifted_sine_squared", "shifted_tanh"],
+                dtype=object,
             )
         )
     )
-    if transform_version >= 2:
-        seasonal_memory = 0.05 * dependency_strength
-        nonlinear_strength = 0.75 * dependency_strength
-        nonlinear_frequency = 1.10
-        stability_bound = (
-            ar_phi
-            + seasonal_memory
-            + nonlinear_frequency * nonlinear_strength
-        )
-        warmup_scale = 1.00
-        innovation_scale = 0.12
-    else:
-        seasonal_memory = 0.25 * dependency_strength
-        nonlinear_strength = 0.30 * dependency_strength
-        nonlinear_frequency = 2.0
-        stability_bound = ar_phi + seasonal_memory + 2.0 * nonlinear_strength
-        warmup_scale = 0.30
-        innovation_scale = 0.06
+    nonlinear_frequency = float(
+        rng.choice(np.asarray([0.8, 1.0, 1.2, 1.4]))
+    )
+    nonlinear_offset = float(
+        rng.choice(np.asarray([-0.6, -0.3, 0.3, 0.6]))
+    )
+    ar_phi = float(rng.choice(np.asarray([0.08, 0.10, 0.12])))
+    seasonal_memory = float(
+        rng.choice(np.asarray([0.03, 0.05, 0.07]))
+    )
+    dependency_strength = float(
+        np.clip(structure_scale * (0.02 + 0.98 * lam), 0.0, 1.0)
+    )
+    stability_margin = 0.90
+    maximum_nonlinear_strength = max(
+        0.0,
+        (stability_margin - ar_phi - seasonal_memory)
+        / max(nonlinear_frequency, 1e-9),
+    )
+    nonlinear_strength = min(
+        0.72 * dependency_strength,
+        maximum_nonlinear_strength,
+    )
+    stability_bound = (
+        ar_phi
+        + seasonal_memory
+        + nonlinear_frequency * nonlinear_strength
+    )
+    warmup_scale = 1.00
+    innovation_scale = 0.12
     burn_in_steps = max(256, 8 * seasonal_lag)
     recurrence_length = burn_in_steps + length
     state = np.zeros((recurrence_length, target_dim))
@@ -2225,31 +2530,27 @@ def _generate_nonlinear_persistence(
         warmup_scale,
         size=(warmup, target_dim),
     )
+    innovations = _conditioned_noise(
+        rng,
+        (recurrence_length - warmup, target_dim),
+        innovation_scale,
+        conditioning,
+    )
     for idx in range(warmup, recurrence_length):
-        nonlinear_response = (
-            np.sin(
-                nonlinear_frequency * state[idx - nonlinear_lag]
-            )
-            if transform_version < 2
-            else np.sin(
-                nonlinear_frequency * state[idx - nonlinear_lag]
-            )
-            ** 2
-            - 0.25
+        nonlinear_response = _bounded_nonlinear_response(
+            state[idx - nonlinear_lag],
+            family=transform_family,
+            frequency=nonlinear_frequency,
+            offset=nonlinear_offset,
         )
         state[idx] = (
             ar_phi * state[idx - 1]
             + seasonal_memory * state[idx - seasonal_lag]
             + nonlinear_strength * nonlinear_response
-            + _conditioned_noise(
-                rng,
-                (target_dim,),
-                innovation_scale,
-                conditioning,
-            )
+            + innovations[idx - warmup]
         )
     state = state[burn_in_steps : burn_in_steps + length]
-    recurrence_amplitude = 1.0 + 2.0 * dependency_strength
+    recurrence_amplitude = 2.0
     values = recurrence_amplitude * state + stochastic_background
     values += background
     validated = context_length >= 2 * seasonal_lag and stability_bound < 1.0
@@ -2263,7 +2564,8 @@ def _generate_nonlinear_persistence(
                     "maximum_lag": int(seasonal_lag),
                     "maximum_lag_observations_in_context": float(context_length / seasonal_lag),
                     "coefficient_stability_bound": float(stability_bound),
-                    "transform_version": int(transform_version),
+                    "transform_family": transform_family,
+                    "history_exposed_nonlinear_lag": int(nonlinear_lag),
                     "burn_in_steps": int(burn_in_steps),
                 },
             ),
@@ -2274,13 +2576,15 @@ def _generate_nonlinear_persistence(
             "nonlinear_lag": int(nonlinear_lag),
             "nonlinear_strength": float(nonlinear_strength),
             "nonlinear_frequency": float(nonlinear_frequency),
-            "nonlinear_transform": (
-                "sin_squared_centered"
-                if transform_version >= 2
-                else "sin"
-            ),
+            "nonlinear_offset": float(nonlinear_offset),
+            "nonlinear_transform": transform_family,
+            "stability_bound": float(stability_bound),
             "burn_in_steps": int(burn_in_steps),
             "recurrence_amplitude": float(recurrence_amplitude),
+            "innovation_probe": [
+                float(value)
+                for value in innovations[:8].reshape(-1)
+            ],
             "background_process": background_metadata,
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
             "noise_scale": innovation_scale
@@ -2307,33 +2611,91 @@ def _generate_predictable_intermittency(
     structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     _, _, time_axis = _base_features(length, context_length, season_length)
     nominal_period = max(4, int(season_length))
-    interval_pattern = (
-        max(4, int(round(0.75 * nominal_period))),
-        max(4, int(round(1.00 * nominal_period))),
-        max(4, int(round(1.25 * nominal_period))),
+    motif_length = 3
+    required_repetitions = 2
+
+    # Each sample receives its own bounded interval motif.  The motif is drawn
+    # once, exposed repeatedly in context, and then continued without future
+    # randomness.  Reducing the effective period is only a feasibility fallback
+    # for context/season combinations that cannot expose two complete repeats.
+    phase_fraction = float(rng.random())
+    motif_order = rng.permutation(np.asarray((-1, 0, 1), dtype=int))
+    relative_spread = float(rng.uniform(0.14, 0.22))
+
+    def build_interval_pattern(period: int) -> tuple[int, ...]:
+        spread = max(1, int(round(relative_spread * period)))
+        return tuple(
+            max(2, int(period + spread * int(offset)))
+            for offset in motif_order
+        )
+
+    def build_pulse_centers(
+        pattern: tuple[int, ...],
+        schedule_end: int,
+        forecast_center: int,
+    ) -> list[int]:
+        centers = [forecast_center]
+        cursor = forecast_center
+        interval_index = -1
+        while cursor - pattern[interval_index % len(pattern)] >= 0:
+            cursor -= pattern[interval_index % len(pattern)]
+            centers.append(int(cursor))
+            interval_index -= 1
+        cursor = forecast_center
+        interval_index = 0
+        while cursor + pattern[interval_index % len(pattern)] < schedule_end:
+            cursor += pattern[interval_index % len(pattern)]
+            centers.append(int(cursor))
+            interval_index += 1
+        return sorted(center for center in centers if 0 <= center < schedule_end)
+
+    effective_period = nominal_period
+    interval_pattern = build_interval_pattern(effective_period)
+    forecast_offset = min(
+        effective_period - 1,
+        int(np.floor(phase_fraction * effective_period)),
     )
-    forecast_center = context_length + max(1, int(season_length) // 2)
-    pulse_centers = [int(forecast_center)]
-    cursor = int(forecast_center)
-    interval_index = -1
-    while cursor - interval_pattern[interval_index % len(interval_pattern)] >= 0:
-        cursor -= interval_pattern[interval_index % len(interval_pattern)]
-        pulse_centers.append(int(cursor))
-        interval_index -= 1
-    cursor = int(forecast_center)
-    interval_index = 0
-    while cursor + interval_pattern[interval_index % len(interval_pattern)] < length:
-        cursor += interval_pattern[interval_index % len(interval_pattern)]
-        pulse_centers.append(int(cursor))
-        interval_index += 1
-    pulse_centers = sorted(
-        center for center in pulse_centers if 0 <= center < length
+    forecast_center = int(context_length + forecast_offset)
+    pulse_centers = build_pulse_centers(
+        interval_pattern,
+        length,
+        forecast_center,
     )
-    pulse_width = max(0.65, nominal_period / 40.0)
+    minimum_historical_centers = required_repetitions * motif_length + 1
+    while (
+        sum(center < context_length for center in pulse_centers)
+        < minimum_historical_centers
+        and effective_period > 2
+    ):
+        effective_period -= 1
+        interval_pattern = build_interval_pattern(effective_period)
+        forecast_offset = min(
+            effective_period - 1,
+            int(np.floor(phase_fraction * effective_period)),
+        )
+        forecast_center = int(context_length + forecast_offset)
+        pulse_centers = build_pulse_centers(
+            interval_pattern,
+            length,
+            forecast_center,
+        )
+
+    pulse_width = max(0.65, effective_period / 40.0)
+    pulse_support_radius = int(max(1, np.ceil(4 * pulse_width)))
+    pulse_shape_centers = build_pulse_centers(
+        interval_pattern,
+        length + pulse_support_radius,
+        forecast_center,
+    )
     t = np.arange(length, dtype=float)
     pulse_shape = np.zeros(length, dtype=float)
-    for center in pulse_centers:
-        pulse_shape += np.exp(-0.5 * ((t - center) / pulse_width) ** 2)
+    for center in pulse_shape_centers:
+        distance = np.abs(t - center)
+        pulse_shape += np.where(
+            distance <= pulse_support_radius,
+            np.exp(-0.5 * (distance / pulse_width) ** 2),
+            0.0,
+        )
     pulse_strength = structure_scale * (0.35 + 1.25 * lam)
     channel_scale = rng.uniform(0.9, 1.1, size=target_dim)
     values = pulse_strength * pulse_shape[:, None] * channel_scale[None, :]
@@ -2353,9 +2715,25 @@ def _generate_predictable_intermittency(
     values += _conditioned_noise(rng, (length, target_dim), 0.05, conditioning)
     historical_centers = [center for center in pulse_centers if center < context_length]
     future_centers = [center for center in pulse_centers if center >= context_length]
+    historical_intervals = np.diff(historical_centers)
+    if len(historical_intervals) > motif_length:
+        interval_reconstruction_mae = float(
+            np.mean(
+                np.abs(
+                    historical_intervals[motif_length:]
+                    - historical_intervals[:-motif_length]
+                )
+            )
+        )
+    else:
+        interval_reconstruction_mae = float("inf")
+    repetitions_in_context = float(
+        len(historical_intervals) / motif_length
+    )
     validated = (
-        len(historical_centers) >= len(interval_pattern) + 1
+        len(historical_centers) >= minimum_historical_centers
         and len(future_centers) >= 1
+        and interval_reconstruction_mae <= 1e-12
     )
     return (
         values,
@@ -2369,17 +2747,20 @@ def _generate_predictable_intermittency(
                     "interval_pattern": [
                         int(value) for value in interval_pattern
                     ],
-                    "interval_pattern_repetitions_in_context": float(
-                        len(historical_centers) / len(interval_pattern)
-                    ),
+                    "interval_pattern_repetitions_in_context": repetitions_in_context,
+                    "interval_reconstruction_mae": interval_reconstruction_mae,
+                    "event_window_radius": int(max(1, np.ceil(2 * pulse_width))),
                 },
             ),
-            "pulse_period": int(nominal_period),
+            "pulse_period": int(effective_period),
+            "requested_pulse_period": int(nominal_period),
             "pulse_interval_pattern": [
                 int(value) for value in interval_pattern
             ],
+            "pulse_interval_motif_length": int(motif_length),
             "pulse_centers": pulse_centers,
             "pulse_width": float(pulse_width),
+            "pulse_support_radius": int(pulse_support_radius),
             "pulse_strength": float(pulse_strength),
             "burst_count": len(pulse_centers),
             "background_process": background_metadata,
@@ -2388,6 +2769,88 @@ def _generate_predictable_intermittency(
         },
         None,
     )
+
+
+def _sample_specific_rank1_factor(
+    length: int,
+    context_length: int,
+    rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Generate one stable, sample-specific non-periodic AR(2) factor."""
+    process_seed = int(rng.integers(0, 2**32 - 1))
+    process_rng = np.random.default_rng(process_seed)
+    residual_phi = _conditioned_parameter(
+        conditioning,
+        "residual_ar_phi",
+        0.0,
+    )
+    slow_root_center = float(
+        np.clip(0.945 + 0.03 * residual_phi, 0.92, 0.97)
+    )
+    slow_root = float(
+        process_rng.uniform(
+            max(0.88, slow_root_center - 0.025),
+            min(0.985, slow_root_center + 0.025),
+        )
+    )
+    fast_root = float(process_rng.uniform(-0.15, 0.35))
+    phi_1 = slow_root + fast_root
+    phi_2 = -(slow_root * fast_root)
+
+    warmup = 96
+    innovations = _conditioned_noise(
+        process_rng,
+        (warmup + length,),
+        0.18,
+        conditioning,
+    )
+    state = np.zeros(warmup + length, dtype=float)
+    state[0] = innovations[0]
+    state[1] = phi_1 * state[0] + innovations[1]
+    for index in range(2, warmup + length):
+        state[index] = (
+            phi_1 * state[index - 1]
+            + phi_2 * state[index - 2]
+            + innovations[index]
+        )
+    factor = state[warmup:]
+    history = factor[:context_length]
+    center = float(np.mean(history))
+    scale = float(np.std(history))
+    if scale <= 1e-8:
+        scale = 1.0
+    noise_multiplier = _conditioned_parameter(
+        conditioning,
+        "noise_scale_multiplier",
+        1.0,
+    )
+    realized_amplitude = float(np.sqrt(noise_multiplier))
+    factor = realized_amplitude * (factor - center) / scale
+    return factor, {
+        "law": "sample_specific_stable_real_root_ar2_nonperiodic",
+        "process_seed": int(process_seed),
+        "slow_root": float(slow_root),
+        "fast_root": float(fast_root),
+        "phi_1": float(phi_1),
+        "phi_2": float(phi_2),
+        "spectral_radius": float(max(abs(slow_root), abs(fast_root))),
+        "warmup_steps": int(warmup),
+        "amplitude": float(realized_amplitude),
+        "path_checksum": hashlib.sha256(
+            np.ascontiguousarray(factor).tobytes()
+        ).hexdigest(),
+        "innovation_distribution": (
+            "student_t"
+            if _conditioned_parameter(
+                conditioning,
+                "noise_degrees_of_freedom",
+                0.0,
+            )
+            > 2.05
+            else "gaussian"
+        ),
+    }
 
 
 def _generate_common_factor(
@@ -2402,20 +2865,26 @@ def _generate_common_factor(
     lam = _conditioned_lambda(intensity, conditioning)
     structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     _, _, time_axis = _base_features(length, context_length, season_length)
-    shared_factor_values, factor_metadata = _stable_nonperiodic_process(
+    shared_factor, factor_metadata = _sample_specific_rank1_factor(
         length,
         context_length,
-        1,
         rng,
         conditioning,
-        amplitude=1.0,
-        innovation_scale=0.18,
     )
-    shared_factor = shared_factor_values[:, 0]
     shared_strength = structure_scale * (0.15 + 1.05 * lam)
     signs = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
-    loadings = signs * rng.uniform(0.8, 1.2, size=target_dim)
-    values = shared_strength * shared_factor[:, None] * loadings[None, :]
+    loading_log_scale = float(rng.uniform(0.15, 0.30))
+    loading_magnitudes = np.clip(
+        np.exp(rng.normal(0.0, loading_log_scale, size=target_dim)),
+        0.55,
+        1.65,
+    )
+    loading_magnitudes /= np.sqrt(np.mean(loading_magnitudes**2))
+    loadings = signs * loading_magnitudes
+    shared_contribution = (
+        shared_strength * shared_factor[:, None] * loadings[None, :]
+    )
+    values = np.array(shared_contribution, copy=True)
     local_amplitude = 0.45 * _conditioned_parameter(conditioning, "local_amplitude_multiplier", 1.0)
     local_components, local_metadata = _stable_nonperiodic_process(
         length,
@@ -2429,8 +2898,15 @@ def _generate_common_factor(
     values += local_components
     background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
     values += background
-    values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
+    observation_noise = _conditioned_noise(
+        rng,
+        (length, target_dim),
+        0.08,
+        conditioning,
+    )
+    values += observation_noise
     validated = target_dim >= 3 and context_length >= 32
+    nuisance_component = local_components + background + observation_noise
     return (
         values,
         {
@@ -2439,18 +2915,33 @@ def _generate_common_factor(
                 validated=validated,
                 evidence={
                     "target_dim": int(target_dim),
-                    "shared_factor_law": "stable_ar2_nonperiodic",
+                    "shared_factor_law": (
+                        "sample_specific_stable_real_root_ar2_nonperiodic"
+                    ),
+                    "shared_factor_spectral_radius": float(
+                        factor_metadata["spectral_radius"]
+                    ),
                     "loadings_constant_across_boundary": True,
+                    "factor_rank_constant_across_intensity": True,
+                    "future_law": "same_factor_ar2_and_fixed_loadings",
                 },
             ),
             "factor_rank": 1,
             "shared_factor_strength": float(shared_strength),
             "shared_factor_process": factor_metadata,
+            "shared_contribution_checksum": hashlib.sha256(
+                np.ascontiguousarray(shared_contribution).tobytes()
+            ).hexdigest(),
             "local_process": local_metadata,
             "local_amplitude": float(local_amplitude),
+            "nuisance_component_checksum": hashlib.sha256(
+                np.ascontiguousarray(nuisance_component).tobytes()
+            ).hexdigest(),
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
             "noise_scale": 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
             "loadings": [float(value) for value in loadings],
+            "loading_log_scale": float(loading_log_scale),
+            "loading_rms": float(np.sqrt(np.mean(loadings**2))),
         },
         None,
     )
@@ -2479,21 +2970,49 @@ def _generate_hierarchical_coherence(
         innovation_scale=0.20,
     )
     shared_component = shared_values[:, 0]
-    local_components, local_metadata = _stable_nonperiodic_process(
-        length,
-        context_length,
-        child_count,
-        rng,
+    local_rank = child_count - 1
+    local_amplitude = 0.55 * _conditioned_parameter(
         conditioning,
-        amplitude=0.55
-        * _conditioned_parameter(
-            conditioning,
-            "local_amplitude_multiplier",
-            1.0,
-        ),
-        innovation_scale=0.24,
+        "local_amplitude_multiplier",
+        1.0,
     )
+    local_latent_paths = np.zeros((length, local_rank), dtype=float)
+    local_processes: list[dict[str, Any]] = []
+    for component_index in range(local_rank):
+        local_path, local_process = _sample_specific_rank1_factor(
+            length,
+            context_length,
+            rng,
+            conditioning,
+        )
+        local_latent_paths[:, component_index] = local_amplitude * local_path
+        local_processes.append(
+            {
+                **local_process,
+                "component_index": int(component_index),
+                "scaled_amplitude": float(
+                    local_amplitude * float(local_process["amplitude"])
+                ),
+            }
+        )
+
+    # A Helmert basis spans the exact zero-sum child subspace.  Rotating that
+    # basis once per sample avoids a fixed child-coordinate projection while
+    # preserving both the hierarchy and the local contrast rank.
+    zero_sum_basis = np.zeros((child_count, local_rank), dtype=float)
+    for column in range(local_rank):
+        prefix_size = column + 1
+        denominator = np.sqrt(prefix_size * (prefix_size + 1))
+        zero_sum_basis[:prefix_size, column] = 1.0 / denominator
+        zero_sum_basis[prefix_size, column] = -prefix_size / denominator
+    rotation_raw = rng.normal(0.0, 1.0, size=(local_rank, local_rank))
+    rotation, triangular = np.linalg.qr(rotation_raw)
+    diagonal_sign = np.where(np.diag(triangular) >= 0.0, 1.0, -1.0)
+    rotation *= diagonal_sign[None, :]
+    local_loadings = zero_sum_basis @ rotation
+    local_components = local_latent_paths @ local_loadings.T
     local_components -= np.mean(local_components, axis=1, keepdims=True)
+
     common_noise_seed, idiosyncratic_noise_seed = rng.integers(0, 2**32 - 1, size=2)
     common_noise_rng = np.random.default_rng(int(common_noise_seed))
     idiosyncratic_noise_rng = np.random.default_rng(int(idiosyncratic_noise_seed))
@@ -2521,15 +3040,42 @@ def _generate_hierarchical_coherence(
                 validated=validated,
                 evidence={
                     "target_dim": int(target_dim),
+                    "child_count": int(child_count),
+                    "local_contrast_rank": int(local_rank),
                     "future_only_shock_count": 0,
                     "component_laws_constant_across_boundary": True,
+                    "local_law": "sample_specific_stable_ar2_zero_sum_contrasts",
                 },
             ),
             "hierarchy": "target_0=sum(target_1:)",
             "child_count": int(child_count),
+            "local_contrast_rank": int(local_rank),
             "heterogeneity_strength": float(heterogeneity_strength),
             "shared_process": shared_metadata,
-            "local_process": local_metadata,
+            "shared_component_checksum": hashlib.sha256(
+                np.ascontiguousarray(shared_component).tobytes()
+            ).hexdigest(),
+            "local_process": {
+                "law": "sample_specific_stable_ar2_zero_sum_contrasts",
+                "component_processes": local_processes,
+            },
+            "local_contrast_loadings": [
+                [float(value) for value in row]
+                for row in local_loadings
+            ],
+            "local_latent_paths_checksum": hashlib.sha256(
+                np.ascontiguousarray(local_latent_paths).tobytes()
+            ).hexdigest(),
+            "local_components_checksum": hashlib.sha256(
+                np.ascontiguousarray(local_components).tobytes()
+            ).hexdigest(),
+            "common_noise_checksum": hashlib.sha256(
+                np.ascontiguousarray(common_noise).tobytes()
+            ).hexdigest(),
+            "idiosyncratic_noise_checksum": hashlib.sha256(
+                np.ascontiguousarray(idiosyncratic_noise).tobytes()
+            ).hexdigest(),
+            "local_amplitude": float(local_amplitude),
             "noise_scale": 0.04 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
             "coherence_residual_mean_abs": float(np.mean(np.abs(parent[:, 0] - np.sum(children, axis=1)))),
         },
@@ -2552,8 +3098,19 @@ def _generate_covariate_response(
     target_noise_rng = np.random.default_rng(int(target_noise_seed))
     effect_strength = structure_scale * (0.25 + 0.95 * lam)
     weather_sign = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
-    beta_weather = weather_sign * effect_strength * rng.uniform(0.6, 1.0, size=target_dim)
-    beta_event = effect_strength * rng.uniform(0.9, 1.3, size=target_dim)
+    event_sign = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
+    weather_effect_ratio = weather_sign * rng.uniform(
+        0.6,
+        1.0,
+        size=target_dim,
+    )
+    event_effect_ratio = event_sign * rng.uniform(
+        0.9,
+        1.3,
+        size=target_dim,
+    )
+    beta_weather = effect_strength * weather_effect_ratio
+    beta_event = effect_strength * event_effect_ratio
     weather_values, weather_metadata = _stable_nonperiodic_process(
         length,
         context_length,
@@ -2565,14 +3122,44 @@ def _generate_covariate_response(
     )
     weather = weather_values[:, 0]
     event = np.zeros(length)
-    event_width = max(2, min(4, max(2, season_length // 8)))
-    history_starts = [
-        max(1, context_length // 4),
-        max(1, context_length // 2),
-        max(1, (3 * context_length) // 4),
-    ]
-    history_starts = sorted({min(context_length - event_width, start) for start in history_starts})
-    future_start = context_length + max(1, int(season_length) // 2) - event_width // 2
+    horizon = max(1, int(length) - int(context_length))
+    maximum_event_width = max(
+        1,
+        min(
+            5,
+            horizon,
+            max(2, int(round(int(season_length) / 4))),
+        ),
+    )
+    minimum_event_width = min(2, maximum_event_width)
+    event_width = int(
+        rng.integers(minimum_event_width, maximum_event_width + 1)
+    )
+
+    # Three disjoint context bands provide repeated coefficient evidence while
+    # their exact event positions remain sample-specific.  The future event is
+    # sampled inside the first profile-period of the forecast so extending the
+    # horizon preserves an existing trajectory prefix.
+    history_starts: list[int] = []
+    history_limit = max(0, int(context_length) - event_width)
+    for lower_fraction, upper_fraction in (
+        (0.12, 0.28),
+        (0.40, 0.56),
+        (0.70, 0.86),
+    ):
+        lower = min(
+            history_limit,
+            max(0, int(round(lower_fraction * context_length))),
+        )
+        upper = min(
+            history_limit,
+            max(lower, int(round(upper_fraction * context_length))),
+        )
+        history_starts.append(int(rng.integers(lower, upper + 1)))
+    forecast_span = min(horizon, max(event_width, int(season_length)))
+    maximum_future_offset = max(0, forecast_span - event_width)
+    future_offset = int(rng.integers(0, maximum_future_offset + 1))
+    future_start = int(context_length + future_offset)
     event_starts = [*history_starts, int(future_start)]
     for start in event_starts:
         event[int(start) : min(length, int(start) + event_width)] = 1.0
@@ -2588,8 +3175,6 @@ def _generate_covariate_response(
         amplitude=0.24,
         innovation_scale=0.24,
     )
-    values = baseline + base_trend_scale * time_axis[:, None]
-    values = values + weather[:, None] * beta_weather + event[:, None] * beta_event
     innovations = _conditioned_noise(
         target_noise_rng,
         (length, target_dim),
@@ -2600,8 +3185,25 @@ def _generate_covariate_response(
     residual = np.array(innovations, copy=True)
     for index in range(1, length):
         residual[index] += residual_ar_phi * residual[index - 1]
-    values += residual
-    validated = len(history_starts) >= 2 and context_length <= future_start < length
+    nuisance_component = (
+        baseline
+        + base_trend_scale * time_axis[:, None]
+        + residual
+    )
+    unit_covariate_effect = (
+        weather[:, None] * weather_effect_ratio
+        + event[:, None] * event_effect_ratio
+    )
+    values = nuisance_component + effect_strength * unit_covariate_effect
+    validated = (
+        len(history_starts) >= 3
+        and all(
+            0 <= start <= context_length - event_width
+            for start in history_starts
+        )
+        and context_length <= future_start
+        and future_start + event_width <= length
+    )
     return (
         values,
         {
@@ -2611,6 +3213,12 @@ def _generate_covariate_response(
                 evidence={
                     "historical_event_count": len(history_starts),
                     "future_event_count": 1,
+                    "historical_events_complete_in_context": True,
+                    "future_event_complete_in_horizon": bool(
+                        future_start + event_width <= length
+                    ),
+                    "event_schedule": "sample_specific_fixed_known_future",
+                    "response_form": "instantaneous_linear",
                     "future_covariates_supplied": True,
                 },
             ),
@@ -2618,6 +3226,12 @@ def _generate_covariate_response(
             "effect_strength": float(effect_strength),
             "weather_process": weather_metadata,
             "baseline_process": baseline_metadata,
+            "weather_effect_ratio_by_target": [
+                float(value) for value in weather_effect_ratio
+            ],
+            "event_effect_ratio_by_target": [
+                float(value) for value in event_effect_ratio
+            ],
             "weather_effect_by_target": [
                 float(value) for value in beta_weather
             ],
@@ -2629,7 +3243,14 @@ def _generate_covariate_response(
             "event_starts": [int(start) for start in event_starts],
             "event_width": int(event_width),
             "future_event_start": int(future_start),
+            "future_event_offset": int(future_offset),
             "residual_ar_phi": float(residual_ar_phi),
+            "covariate_path_checksum": hashlib.sha256(
+                np.ascontiguousarray(covariates).tobytes()
+            ).hexdigest(),
+            "nuisance_component_checksum": hashlib.sha256(
+                np.ascontiguousarray(nuisance_component).tobytes()
+            ).hexdigest(),
             "noise_scale": 0.08 * _conditioned_parameter(conditioning, "noise_scale_multiplier", 1.0),
         },
         covariates,
@@ -3080,11 +3701,23 @@ def _nonlinear_multi_lag_gain(values: np.ndarray, season_length: int) -> float:
 
 
 def _nonlinear_conditional_gain(values: np.ndarray, season_length: int) -> float:
-    """Bias-corrected nonlinear-lag gain after linear lag conditioning."""
+    """Bias-corrected nonlinear gain over a fixed, low-complexity lag set.
+
+    The baseline conditions on every candidate lag linearly.  The augmented
+    model adds quadratic and cubic terms for the same lags, avoiding privileged
+    knowledge of a generated transform family while remaining sensitive to
+    bounded smooth nonlinear responses.
+    """
 
     seasonal_lag = max(4, int(season_length))
-    nonlinear_lag = max(2, seasonal_lag // 2)
-    start = max(seasonal_lag, nonlinear_lag, 1)
+    nonlinear_lags = sorted(
+        {
+            max(2, seasonal_lag // 3),
+            max(2, seasonal_lag // 2),
+            max(2, (2 * seasonal_lag) // 3),
+        }
+    )
+    start = max(seasonal_lag, *nonlinear_lags, 1)
     if values.size - start < 8:
         return 0.0
     target = values[start:]
@@ -3092,21 +3725,23 @@ def _nonlinear_conditional_gain(values: np.ndarray, season_length: int) -> float
     lag_seasonal = values[: values.size - seasonal_lag]
     if lag_seasonal.size > target.size:
         lag_seasonal = lag_seasonal[-target.size :]
-    lag_nonlinear = values[
-        start - nonlinear_lag : values.size - nonlinear_lag
+    lagged_nonlinear = [
+        values[start - lag : values.size - lag]
+        for lag in nonlinear_lags
     ]
     linear = np.column_stack(
         [
             np.ones_like(target),
             lag1,
             lag_seasonal,
-            lag_nonlinear,
+            *lagged_nonlinear,
         ]
     )
     nonlinear = np.column_stack(
         [
             linear,
-            np.sin(1.1 * lag_nonlinear) ** 2,
+            *[lagged**2 for lagged in lagged_nonlinear],
+            *[lagged**3 for lagged in lagged_nonlinear],
         ]
     )
     return float(
