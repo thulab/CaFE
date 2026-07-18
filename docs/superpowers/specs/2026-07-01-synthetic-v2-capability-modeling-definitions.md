@@ -1,10 +1,10 @@
-# CapTS-Bench 论文能力维度定义（paper-v1）
+# CapTS-Bench 论文能力维度定义（paper-v2）
 
-日期：2026-07-16
+日期：2026-07-18
 
 ## 1. 定位与版本
 
-本文档定义 `capts-paper-v1` 生成器进入论文主实验的能力集合。论文暂定标题为：
+本文档定义 `capts-paper-v2` shortcut-resistant 生成器进入论文主实验的能力集合。论文暂定标题为：
 
 > CapTS-Bench: A Real-Anchored, Capability-Focused Live Benchmark for Time Series Foundation Models
 
@@ -20,8 +20,8 @@
 | 单变量 | `multi_seasonal` | Multi-seasonal composition | 附加周期的能量 |
 | 单变量 | `time_varying_seasonality` | Evolving seasonality | 振幅/相位调制强度 |
 | 单变量 | `regime_switching` | Predictable regime switching | 状态水平差异 |
-| 单变量 | `nonlinear_persistence` | Nonlinear multi-lag persistence | 季节滞后与非线性滞后的联合依赖强度 |
-| 单变量 | `predictable_intermittency` | Predictable intermittency | 周期性稀疏脉冲的显著性 |
+| 单变量 | `nonlinear_persistence` | Nonlinear multi-lag persistence | profile-scale 线性长滞后与非线性滞后的联合依赖强度 |
+| 单变量 | `predictable_intermittency` | Predictable intermittency | 非等间隔、历史可识别的稀疏脉冲显著性 |
 | 结构化 | `common_factor` | Shared latent factor | 共享因子相对通道局部成分的强度 |
 | 结构化 | `hierarchical_coherence` | Hierarchical coherence | 子节点异质性；加总关系始终严格成立 |
 | 结构化 | `covariate_response` | Known-future covariate response | 已知未来协变量的效应强度 |
@@ -41,13 +41,21 @@
 
 construction gate 只能证明生成过程提供了可用信息，不能代替模型层面的可预测性实验。正式实验仍需与 naive、seasonal naive 和 capability-specific oracle 比较。
 
+paper-v2 额外禁止把同一个强固定周期载波叠加到所有能力。`multi_seasonal` 与 `time_varying_seasonality` 可以把周期作为目标机制；其余能力使用 profile-conditioned、稳定但无固定周期的 AR(2) 背景。对该背景，取两个实根：非季节单变量 nuisance 使用 `r_s ∈ [0.82,0.94]`，结构化动态因子使用 `r_s ∈ [0.94,0.985]`，并统一取 `r_f ∈ [0.15,0.32]`，令：
+
+```text
+z_t = (r_s+r_f) z_{t-1} - r_s r_f z_{t-2} + eps_t
+```
+
+该过程只用 context 统计量归一化。这样保留持续性、噪声族和尾部等真实 nuisance，同时不会让一个固定 seasonal-naive 同时破解趋势、脉冲、公共因子、层级与协变量任务。
+
 ### 3.2 intensity 是结构干预，不是预设难度
 
-`intensity ∈ {1,2,3,4,5}` 是同一 capability 内跨真实基底共享的绝对结构强度档位，基础坐标为 `u=(intensity-1)/4`；不同 capability 的主指标量纲不同，不能横向解释为相同数值强度。对 capability `c`，先在冻结的 development reference corpus 上定义唯一目标曲线 `T_{c,1..5}`：每个参考 profile 计算主目标特征的 q20/q35/q50/q70/q90，再对 profile 等权取逐坐标中位数。`nonlinear_persistence` 因低端可观测性限制预注册为 q35/q50/q60/q75/q90。一个数据集的额外 context/horizon 研究 bucket 不重复参与全局标尺，避免靠增加 bucket 数量改变其权重。
+`intensity ∈ {1,2,3,4,5}` 是同一 capability 内跨真实基底共享的绝对结构强度档位，基础坐标为 `u=(intensity-1)/4`；不同 capability 的主指标量纲不同，不能横向解释为相同数值强度。对 capability `c`，先在冻结的 development reference corpus 上定义唯一目标曲线 `T_{c,1..5}`：每个参考 profile 计算主目标特征的 q20/q35/q50/q70/q90，再对 profile 等权取逐坐标中位数。`regime_switching` 是显式例外：I1 固定为 history-clock qualification 边界 0.10，I5 为等 profile 权重的 qualified-real q90，I2–I4 在同一绝对统计量尺度上等距。`nonlinear_persistence` 也采用可解释端点：I1 为有符号 adjusted-\(R^2\) 的零效应边界，I5 为等 profile 权重的 real q90，中间等距。这两个例外避免可用真实窗口或近零估计器分布过窄时五档退化。一个数据集的额外 context/horizon 研究 bucket 不重复参与全局标尺，避免靠增加 bucket 数量改变其权重。
 
-每个样本先选定真实 bucket `b`，再使用只由该 bucket 真实参数拟合分区估计的单调逆映射 `λ_{b,c}(intensity)`，使合成样本主目标特征的批量中位数逼近同一个 `T_{c,intensity}`。因此 bucket 决定 nuisance 和“怎样生成到该强度”，不再决定“该强度是多少”。目标落在 bucket 局部真实分布的经验分位仍写入 metadata；它可以接近 0 或 1，表示相对于该真实基底的温和样本或反事实压力测试，而不是重新定义 intensity。
+每个样本先选定真实 bucket `b`，再使用只由该 bucket 真实参数拟合分区估计的单调逆映射 `λ_{b,c}(intensity)`，使独立 seed bank 上合成样本主目标特征的均值逼近同一个 `T_{c,intensity}`。因此 bucket 决定 nuisance 和“怎样生成到该强度”，不再决定“该强度是多少”。目标落在 bucket 局部真实分布的经验分位仍写入 metadata；它可以接近 0 或 1，表示相对于该真实基底的温和样本或反事实压力测试，而不是重新定义 intensity。
 
-噪声尺度、尾部形态、季节残差和局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。五档是正式报告与主实验的离散剂量；生成器标定使用更密的连续 `λ`/结构尺度网格，并记录 `canonical_target_strength` 与 `calibrated_profile_expected_strength`，因此不需要为了提高标定精度扩大主实验组合数。论文不预设模型误差随 intensity 单调，只要求预注册的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为 `α_{b,c}(λ_{b,c}(intensity))`。
+噪声尺度、尾部形态、非周期背景持续性和局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。五档是正式报告与主实验的离散剂量；生成器标定使用更密的连续 `λ`/结构尺度网格，并记录 `canonical_target_strength` 与 `calibrated_profile_expected_strength`，因此不需要为了提高标定精度扩大主实验组合数。论文不预设模型误差随 intensity 单调，只要求预注册的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为 `α_{b,c}(λ_{b,c}(intensity))`。
 
 绝对标尺必须有版本。artifact 同时记录 `canonical_scale_id`、由参考 profile 与目标曲线计算的 fingerprint、参考语料清单和用途。新增/删除校准数据或改变目标曲线必须发布新 `scale_id`，不能在看到模型结果后静默重拟合。
 
@@ -64,13 +72,13 @@ construction gate 只能证明生成过程提供了可用信息，不能代替�
 ```text
 x_t = (t - forecast_origin) / P
 g_t = s * x_t + c * x_t^2
-y_t = alpha(λ) * g_t + seasonal_residue_t + slow_t + eps_t
+y_t = alpha(λ) * g_t + nonperiodic_AR2_t + eps_t
 ```
 
-- intensity 只提高 `alpha(λ)`；季节残差和噪声固定。
+- intensity 只提高 `alpha(λ)`；AR(2) 背景和噪声固定。
 - slope 与 curvature 的符号按样本采样，但 context 和 horizon 共用同一组系数。
-- contract：context 至少覆盖两个主周期，且同一多项式规律跨 forecast boundary 连续。
-- realized target features：`trend_strength`、`slope_abs`、`curvature_abs`，预期均随 intensity 增大。
+- contract：context 至少 32 点，且同一多项式与稳定背景规律跨 forecast boundary 连续。
+- realized target features：`trend_strength` 与 `slope_abs` 预期增大；`curvature_abs` 仅作 shape diagnostic。生成器固定 curvature/slope 比例，context 标准化后不要求曲率系数独立单调。
 
 ### 4.2 `multi_seasonal`
 
@@ -109,13 +117,13 @@ y_t = A_t sin(2πt/P + φ + ψ_t) + residue_t + eps_t
 
 ```text
 z_t ∈ {-1,+1}, z_t every D steps alternates deterministically
-y_t = alpha(λ) z_t + seasonal_t + slow_t + eps_t
+y_t = alpha(λ) z_t + nonperiodic_AR2_t + eps_t
 ```
 
 - `D` 在一个样本内固定；预测区间的下一切换点通过同一时钟确定。
 - intensity 只提高两个状态的水平差异，不改变切换次数、驻留时长或噪声。
 - contract：context 中至少有两次历史切换，horizon 中至少有一次切换，全部相邻切点间隔相同，状态顺序交替。
-- realized target features：`change_point_shift_energy`、`level_shift_strength`，预期增大。
+- primary realized feature：`regime_clock_history_incremental_r2`。它只在 context 上比较“趋势 + 普通季节谐波 + clock-period 谐波”基线与额外加入离散 regime state 后的拟合；通用 `change_point_shift_energy` 和 `level_shift_strength` 只保留为辅助诊断。
 
 这个维度测“从重复状态时钟预测下一次切换”，不再测无先兆 structural break robustness。后者如果需要，应作为单独 stress track，而不是 capability forecast track。
 
@@ -124,17 +132,19 @@ y_t = alpha(λ) z_t + seasonal_t + slow_t + eps_t
 生成式：
 
 ```text
-r_t = φ r_{t-1}
-    + a(λ) r_{t-P}
-    + b(λ) sin(2 r_{t-P/2})
+r_t = 0.10 r_{t-1}
+    + 0.05 d(λ) r_{t-P}
+    + 0.75 d(λ) [sin²(1.1 r_{t-P/2}) - 0.25]
     + eps_t
-y_t = r_t + seasonal_residue_t + slow_t
+y_t = [1+2d(λ)] r_t + weak_nonperiodic_AR2_t
 ```
 
-- `φ` 固定，intensity 共同提高季节滞后和非线性中程滞后的依赖强度。
-- 生成器检查保守稳定性界 `|φ| + |a| + 2|b| < 1`。
+- intensity 共同提高 profile-scale 线性长滞后和非线性中程滞后的依赖强度，二者比例固定；`P` 在这里定义递推滞后尺度，不叠加固定周期载波。
+- 递推先运行固定 `max(256, 8P)` 步 burn-in，再截取发布轨迹；初始化的前 `P` 个随机状态不得直接出现在样本中。
+- 生成器检查保守稳定性界 `0.10 + 0.05d + 1.1×0.75d < 1`。
 - contract：context 至少覆盖两个最大滞后，所有递推系数跨边界不变。
-- realized target feature：相对 AR(1)，加入季节滞后和非线性项后的增量拟合度 `nonlinear_multi_lag_gain`，预期增大。
+- primary realized feature：`nonlinear_conditional_gain`。它是完整线性滞后设计 \(D_L=(1,y_{t-1},y_{t-P},y_{t-P/2})\) 与额外加入 \(\sin^2(1.1y_{t-P/2})\) 后的**有符号 adjusted-\(R^2\) 差**。自由度修正和保留负值共同消除无结构时由嵌套回归与逐样本截断造成的正偏地板；`nonlinear_multi_lag_gain` 仅保留为辅助诊断。
+- 离线 predictive-headroom audit 使用固定 50% shrinkage 的递归非线性 oracle：\(\hat y_{\rm aware}=\hat y_{\rm blind}+0.5(\hat y_{\rm nonlinear}-\hat y_{\rm blind})\)。它在所有 profile 共用同一系数，避免递归误差累积，且不能按被评分 future 调整。
 
 该维度明确不声称 ARFIMA 或 fractional differencing 意义上的 long memory。
 
@@ -143,13 +153,14 @@ y_t = r_t + seasonal_residue_t + slow_t
 生成式：
 
 ```text
-pulse_t = Σ_k exp(-(t-c_k)^2 / (2w^2)),  c_{k+1}-c_k=P
-y_t = alpha(λ) pulse_t + weak_seasonal_t + eps_t
+pulse_t = Σ_k exp(-(t-c_k)^2 / (2w^2))
+c_{k+1}-c_k cycles through [round(.75P), P, round(1.25P)]
+y_t = alpha(λ) pulse_t + nonperiodic_AR2_t + eps_t
 ```
 
-- pulse centers 由一个固定事件时钟产生；horizon 中的 pulse 与历史 pulse 同源。
+- pulse centers 由一个重复的三段间隔 motif 产生；horizon 中的 pulse 与历史 pulse 同源，但 lag-P seasonal naive 不再是 oracle。
 - intensity 只提高 pulse prominence，事件频率、宽度和噪声固定。
-- contract：context 中至少两个 pulse，horizon 中至少一个 pulse，pulse 间隔恒定。
+- contract：context 暴露完整间隔 motif，horizon 中至少一个 pulse。
 - realized target features：`burst_rate`、`spike_rate`、`outlier_rate`，预期增大。
 
 该维度不再把不可预测 Bernoulli burst 与异方差噪声混成一个“能力”。异方差更适合未来的 probabilistic forecasting track。
@@ -161,13 +172,14 @@ y_t = alpha(λ) pulse_t + weak_seasonal_t + eps_t
 生成式：
 
 ```text
-f_t = 0.75 seasonal_t + 0.25 slow_t
-y_{t,j} = alpha(λ) b_j f_t + local_{t,j} + eps_{t,j}
+f_t = shared_nonperiodic_AR2_t
+u_{t,j} = channel_specific_nonperiodic_AR2_t
+y_{t,j} = alpha(λ) b_j f_t + u_{t,j} + eps_{t,j}
 ```
 
 - factor rank、loading 和噪声固定；intensity 只提高 shared factor strength。
-- 各通道保留固定幅度、不同周期/相位的局部成分，避免所有通道成为简单缩放复制。
-- contract：至少三个 target channels；共享因子公式和 loading 跨 forecast boundary 不变。
+- 各通道保留固定幅度、独立创新和 fast root 的局部动态成分，避免所有通道成为简单缩放复制。
+- contract：至少三个 target channels、context 至少 32 点；共享/局部动态公式和 loading 跨 forecast boundary 不变。
 - realized target features：`pca_top1_explained` 与 `avg_abs_target_corr` 增大，`effective_factor_rank` 减小。
 - 正式实验需增加 channel-independent 对照或 channel permutation，证明收益来自跨通道结构。
 
@@ -199,7 +211,7 @@ y_t = base_t
     + eps_t
 ```
 
-- weather 包含带创新的外生过程；未来实现值不能只由 target history 精确外推，但会作为 known-future covariate 提供。
+- weather 是带创新的非周期稳定 AR(2) 外生过程；未来实现值不能只由 target history 精确外推，但会作为 known-future covariate 提供。
 - 历史段固定安排至少三个 event effect 样例，预测段保证至少一个 event。
 - intensity 只提高统一的 covariate effect scale，事件数、位置规则和噪声固定。
 - contract：历史中至少两个效应样例；horizon 中存在已提供的 future event；系数跨边界不变。
@@ -215,7 +227,8 @@ y_t = base_t
 3. **Selectivity**：构建 capability × feature effect matrix；目标 feature 的效应应明显大于非目标 feature 的漂移。
 4. **Real support**：非目标 control features 落在对应真实 bucket 的联合支持域内。
 5. **Novelty**：通过独立校准的近距离门限和 copy/jitter/shift/warp 攻击测试。
-6. **Predictive headroom**：capability-specific oracle 明显优于 naive；否则该生成过程没有形成有效的可预测任务。
-7. **Family robustness**：论文主结果不能只依赖一种公式；每个能力后续至少补充一个 held-out generator family。
+6. **Shortcut resistance**：对非季节能力，固定 `seasonal-naive(P)` 不得相对 last-value 形成统一捷径。
+7. **Predictive headroom**：在预注册 seed bank 的 I5 上，capability-aware forecast 相对 capability-blind matched baseline 的配对 loss difference 之 ratio-of-means 单侧下界和胜率均达标；I1–I4 作为诊断报告，不要求显式 null 边界也产生正 headroom。不使用会过度加权低 blind-loss 样本的逐样本 relative-gain 均值。该比较只做聚合资格审计，不按单样本未来误差筛选生成结果。
+8. **Family robustness**：论文主结果不能只依赖一种公式；每个能力后续至少补充一个 held-out generator family。
 
-现有 API 测试和生成器单元测试只覆盖第 1 项与小样本 dose-response sanity check。其余项目应在大规模模型实验前重新校准，旧 `synthetic-v2` runtime 结果不作为 `capts-paper-v1` 的有效实验结果。
+旧 `capts-paper-v1` 与 paper-v4 prototype runtime 结果不作为 `capts-paper-v2` 的有效实验结果；generator conditioning、feature-support 与 shortcut audit 均须以新 scale ID 重新冻结。

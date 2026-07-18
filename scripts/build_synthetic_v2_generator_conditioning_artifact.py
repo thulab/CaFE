@@ -28,6 +28,7 @@ from app.services.synthetic_generation_service import (  # noqa: E402
     _generate_sample_values,
     _normalize_covariates,
     _realized_features,
+    _regime_clock_history_incremental_r2,
     _seed_for,
     _standardize_by_context,
     _standardize_hierarchy_by_context,
@@ -41,7 +42,10 @@ from build_synthetic_v2_feature_gate_artifact import (  # noqa: E402
     split_real_rows_three_way,
 )
 from run_synthetic_v2_near_distance_calibration import BucketSpec, load_real_bucket  # noqa: E402
-from synthetic_capability_qualification import regime_clock_features  # noqa: E402
+from synthetic_capability_qualification import (  # noqa: E402
+    REGIME_HISTORY_INCREMENTAL_R2_MIN,
+    regime_clock_features,
+)
 
 
 DEFAULT_DATA_DIR = REPO_ROOT / "runtime/research"
@@ -57,10 +61,14 @@ DEFAULT_SUMMARY_PATH = REPO_ROOT / "runtime/research/synthetic-v2-generator-cond
 DEFAULT_SEED = 20260715
 DEFAULT_CALIBRATION_SAMPLES = 64
 FIT_SEED_BANK_COUNT = 2
+HIGH_VARIANCE_FIT_SEED_BANK_COUNT = 4
+HIGH_VARIANCE_CAPABILITY_IDS = frozenset(
+    {"nonlinear_persistence", "covariate_response"}
+)
 TARGET_PERCENTILE_LEVELS = (0.20, 0.35, 0.50, 0.70, 0.90)
 CAPABILITY_REFERENCE_PERCENTILE_LEVELS = {
-    # Below the real median, multi-lag nonlinear gain is not distinguishable
-    # from the estimator floor induced by seasonal nuisance in every profile.
+    # Below the real median, conditional nonlinear gain is not reliably
+    # distinguishable from its finite-sample estimator floor in every profile.
     "nonlinear_persistence": (0.55, 0.625, 0.70, 0.80, 0.90),
 }
 STRUCTURE_SCALE_GRID = (
@@ -102,9 +110,9 @@ STRUCTURE_SCALE_GRID = (
 LAMBDA_GRID = tuple(float(value) for value in np.linspace(0.0, 1.0, 11))
 CANONICAL_CALIBRATION_TOLERANCE = 0.20
 CANONICAL_MIN_ADJACENT_GAP_FRACTION = 0.10
-CANONICAL_SCALE_ID = "synthetic-v2-paper-v1-frozen-2026-07-16"
+CANONICAL_SCALE_ID = "synthetic-v2-paper-v2-shortcut-resistant-2026-07-18"
 CANONICAL_REFERENCE_CORPUS_ROLE = (
-    "paper-v1 frozen development calibration only; external dataset-family validation "
+    "paper-v2 frozen development calibration only; external dataset-family validation "
     "and all GIFT-Eval official test windows are excluded from scale fitting"
 )
 MIN_REGIME_QUALIFIED_PARAMETER_WINDOWS = 30
@@ -324,8 +332,8 @@ PRIMARY_TARGET_FEATURE = {
     "trend": "trend_strength",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
-    "regime_switching": "change_point_shift_energy",
-    "nonlinear_persistence": "nonlinear_multi_lag_gain",
+    "regime_switching": "regime_clock_history_incremental_r2",
+    "nonlinear_persistence": "nonlinear_conditional_gain",
     "predictable_intermittency": "spike_rate",
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
@@ -369,6 +377,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--buckets", nargs="*", default=None)
     parser.add_argument("--skip-asset-identity-check", action="store_true")
+    parser.add_argument(
+        "--allow-unsupported",
+        action="store_true",
+        help=(
+            "Write a diagnostic artifact with unsupported cells instead of "
+            "failing; never use such an artifact for online generation."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -388,6 +404,7 @@ def main() -> int:
         seed=args.seed,
         bucket_ids=tuple(args.buckets) if args.buckets else None,
         validate_asset_identities=not args.skip_asset_identity_check,
+        allow_unsupported=args.allow_unsupported,
     )
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     args.artifact.write_text(
@@ -419,6 +436,7 @@ def build_artifact(
     seed: int,
     bucket_ids: tuple[str, ...] | None = None,
     validate_asset_identities: bool = True,
+    allow_unsupported: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     all_specs = (*FEATURE_GATE_BUCKET_SPECS, *CANONICAL_ONLY_BUCKET_SPECS)
     specs_by_id = {spec.profile_id: spec for spec in all_specs}
@@ -505,16 +523,28 @@ def build_artifact(
         capability_qualification_summaries: dict[str, dict[str, Any]] = {}
         for capability_id in spec.synthetic_capabilities:
             capability_rows = parameter_rows
-            if (
-                capability_id == "regime_switching"
-                and spec.profile_id
-                in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY["regime_switching"]
-            ):
-                capability_rows, qualification_summary = qualify_regime_reference_rows(
+            if capability_id == "regime_switching":
+                annotated_rows, regime_audits = annotate_regime_clock_rows(
                     parameter_rows,
                     spec,
                 )
-                capability_qualification_summaries[capability_id] = qualification_summary
+                capability_rows = annotated_rows
+                if (
+                    spec.profile_id
+                    in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY[
+                        "regime_switching"
+                    ]
+                ):
+                    capability_rows, qualification_summary = (
+                        qualify_regime_reference_rows(
+                            annotated_rows,
+                            spec,
+                            audits=regime_audits,
+                        )
+                    )
+                    capability_qualification_summaries[
+                        capability_id
+                    ] = qualification_summary
             capability_parameter_counts[capability_id] = len(capability_rows)
             percentile_levels = reference_percentile_levels(capability_id)
             local_target_quantiles[capability_id] = {
@@ -632,7 +662,7 @@ def build_artifact(
             "conditioning_role": (
                 "research_only_pending_near_distance_gate"
                 if spec.profile_id in RESEARCH_ONLY_CONDITIONING_PROFILE_IDS
-                else "paper_v1_online"
+                else "paper_v2_online"
             ),
             "context_length": int(spec.context_length),
             "horizon": int(spec.horizon),
@@ -655,7 +685,7 @@ def build_artifact(
             }
         )
 
-    if unsupported_cells:
+    if unsupported_cells and not allow_unsupported:
         raise ValueError(
             "canonical intensity calibration is unsupported for: " + ", ".join(unsupported_cells)
         )
@@ -670,16 +700,26 @@ def build_artifact(
         "calibration_fraction": float(calibration_fraction),
         "gate_reference_fraction_of_development": float(gate_reference_fraction),
         "calibration_samples_per_grid_cell": int(calibration_samples),
-        "calibration_fit_seed_banks": FIT_SEED_BANK_COUNT,
-        "calibration_fit_samples_total_per_grid_cell": int(
+        "calibration_fit_seed_banks_default": FIT_SEED_BANK_COUNT,
+        "calibration_fit_samples_total_per_grid_cell_default": int(
             calibration_samples * FIT_SEED_BANK_COUNT
         ),
+        "high_variance_calibration": {
+            "capability_ids": sorted(HIGH_VARIANCE_CAPABILITY_IDS),
+            "fit_seed_bank_count": HIGH_VARIANCE_FIT_SEED_BANK_COUNT,
+            "fit_samples_per_seed_bank": max(calibration_samples, 128),
+            "fit_samples_total_per_grid_cell": int(
+                max(calibration_samples, 128)
+                * HIGH_VARIANCE_FIT_SEED_BANK_COUNT
+            ),
+            "minimum_validation_sample_count": 1024,
+        },
         "seed": int(seed),
         "split_policy": "generator parameters are fit only on the parameter split",
         "profile_selection_policy": "balanced uniform over exact task/window profiles",
         "intensity_policy": (
-            "capability-global canonical realized-strength targets with endpoint-preserving 10% "
-            "minimum adjacent resolution and profile-specific inverse maps"
+            "capability-global absolute realized-strength anchors with capability-specific "
+            "boundary rules, equal-profile real upper anchors, and profile-specific inverse maps"
         ),
         "canonical_reference_profile_ids": list(CANONICAL_REFERENCE_PROFILE_IDS),
         "canonical_reference_profile_ids_by_capability": {
@@ -693,7 +733,7 @@ def build_artifact(
         ),
         "research_only_conditioning_policy": (
             "inverse conditioning is retained for window-length research, but a profile is not "
-            "paper-v1 online until feature-support and near-distance gates are both calibrated"
+            "paper-v2 online until feature-support and near-distance gates are both calibrated"
         ),
         "canonical_profile_weighting": "equal profile weight",
         "canonical_scale_id": CANONICAL_SCALE_ID,
@@ -713,9 +753,11 @@ def build_artifact(
         "canonical_scale_change_policy": (
             "adding/removing reference profiles or changing target curves requires a new scale_id"
         ),
+        "unsupported_cells": unsupported_cells,
+        "diagnostic_allow_unsupported": bool(allow_unsupported),
     }
     artifact = {
-        "schema_version": "synthetic_v2_generator_conditioning_artifact.v2",
+        "schema_version": "synthetic_v2_generator_conditioning_artifact.v3",
         "created_at": created_at,
         "config": config,
         "canonical_intensity": {
@@ -723,8 +765,10 @@ def build_artifact(
             "scale_fingerprint": scale_fingerprint,
             "reference_corpus_role": CANONICAL_REFERENCE_CORPUS_ROLE,
             "policy": (
-                "coordinate-wise median of equal-profile local quantile curves, followed by an "
-                "endpoint-preserving 10%-of-range adjacent-resolution projection"
+                "capability-specific absolute anchor curves: regime and nonlinear start at "
+                "formal null/qualification boundaries and end at equal-profile real q90; "
+                "other capabilities use equal-profile real quantiles with an endpoint-preserving "
+                "10%-of-range adjacent-resolution projection"
             ),
             "default_reference_percentile_levels": list(TARGET_PERCENTILE_LEVELS),
             "asset_identities": asset_identities,
@@ -756,7 +800,7 @@ def build_artifact(
         "profiles": profiles,
     }
     summary = {
-        "schema_version": "synthetic_v2_generator_conditioning_calibration.v2",
+        "schema_version": "synthetic_v2_generator_conditioning_calibration.v3",
         "created_at": created_at,
         "config": config,
         "canonical_intensity": artifact["canonical_intensity"],
@@ -950,7 +994,66 @@ def derive_canonical_target_definitions(
             )
         matrix = np.asarray([curve for _profile_id, curve in curves], dtype=float)
         raw_target_values = np.maximum.accumulate(np.median(matrix, axis=0))
-        target_values = enforce_target_resolution(raw_target_values)
+        if capability_id == "regime_switching":
+            upper_anchor = float(raw_target_values[-1])
+            lower_anchor = float(REGIME_HISTORY_INCREMENTAL_R2_MIN)
+            if upper_anchor <= lower_anchor:
+                raise ValueError(
+                    "regime canonical upper anchor does not exceed the "
+                    f"predictability boundary: {upper_anchor} <= {lower_anchor}"
+                )
+            target_values = np.linspace(lower_anchor, upper_anchor, 5)
+            aggregation = (
+                "I1 is the frozen history-clock predictability boundary; I5 is "
+                "the equal-profile median q90 of qualified real windows; I2-I4 "
+                "are equally spaced on that absolute feature scale"
+            )
+            target_resolution = {
+                "method": "qualification_boundary_to_q90_linear_grid",
+                "lower_anchor": round_float(lower_anchor),
+                "upper_anchor": round_float(upper_anchor),
+                "applied": True,
+            }
+        elif capability_id == "nonlinear_persistence":
+            upper_anchor = float(raw_target_values[-1])
+            lower_anchor = 0.0
+            if upper_anchor <= lower_anchor:
+                raise ValueError(
+                    "nonlinear canonical q90 does not exceed the adjusted-R2 "
+                    f"null boundary: {upper_anchor} <= {lower_anchor}"
+                )
+            target_values = np.linspace(lower_anchor, upper_anchor, 5)
+            aggregation = (
+                "I1 is the signed adjusted-R2 null boundary; I5 is the "
+                "equal-profile median q90 of real windows; I2-I4 are equally "
+                "spaced on that absolute feature scale"
+            )
+            target_resolution = {
+                "method": "adjusted_r2_null_to_q90_linear_grid",
+                "lower_anchor": round_float(lower_anchor),
+                "upper_anchor": round_float(upper_anchor),
+                "applied": True,
+            }
+        else:
+            target_values = enforce_target_resolution(raw_target_values)
+            aggregation = (
+                "coordinate-wise median of local parameter-split quantile curves, then "
+                "endpoint-preserving minimum-gap projection"
+            )
+            target_resolution = {
+                "method": "endpoint_preserving_minimum_gap_projection",
+                "minimum_adjacent_gap_fraction_of_raw_range": (
+                    CANONICAL_MIN_ADJACENT_GAP_FRACTION
+                ),
+                "applied": bool(
+                    not np.allclose(
+                        target_values,
+                        raw_target_values,
+                        rtol=0.0,
+                        atol=1e-12,
+                    )
+                ),
+            }
         if any(right <= left for left, right in zip(target_values, target_values[1:])):
             raise ValueError(
                 f"{capability_id} canonical target curve is not strictly increasing: "
@@ -972,18 +1075,8 @@ def derive_canonical_target_definitions(
                 for profile_id, _curve in curves
             },
             "profile_weighting": "equal",
-            "aggregation": (
-                "coordinate-wise median of local parameter-split quantile curves, then "
-                "endpoint-preserving minimum-gap projection"
-            ),
-            "target_resolution": {
-                "minimum_adjacent_gap_fraction_of_raw_range": (
-                    CANONICAL_MIN_ADJACENT_GAP_FRACTION
-                ),
-                "applied": bool(
-                    not np.allclose(target_values, raw_target_values, rtol=0.0, atol=1e-12)
-                ),
-            },
+            "aggregation": aggregation,
+            "target_resolution": target_resolution,
         }
     return definitions
 
@@ -1016,16 +1109,16 @@ def enforce_target_resolution(values: np.ndarray) -> np.ndarray:
 def qualify_regime_reference_rows(
     rows: list[dict[str, Any]],
     spec: Any,
+    *,
+    audits: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    audits = [
-        regime_clock_features(
-            row["target"],
-            context_length=int(spec.context_length),
-            season_length=int(spec.season_length),
-        )
-        for row in rows
+    if audits is None:
+        rows, audits = annotate_regime_clock_rows(rows, spec)
+    qualified_rows = [
+        row
+        for row, audit in zip(rows, audits, strict=True)
+        if audit["qualified"]
     ]
-    qualified_rows = [row for row, audit in zip(rows, audits, strict=True) if audit["qualified"]]
     qualified_rate = len(qualified_rows) / max(len(rows), 1)
     if (
         len(qualified_rows) < MIN_REGIME_QUALIFIED_PARAMETER_WINDOWS
@@ -1066,6 +1159,33 @@ def qualify_regime_reference_rows(
         },
         "thresholds": qualified_audits[0]["thresholds"],
     }
+
+
+def annotate_regime_clock_rows(
+    rows: list[dict[str, Any]],
+    spec: Any,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    audits = [
+        regime_clock_features(
+            row["target"],
+            context_length=int(spec.context_length),
+            season_length=int(spec.season_length),
+        )
+        for row in rows
+    ]
+    annotated_rows = [
+        {
+            **row,
+            "features": {
+                **row.get("features", {}),
+                "regime_clock_history_incremental_r2": float(
+                    audit["history_incremental_r2"]
+                ),
+            },
+        }
+        for row, audit in zip(rows, audits, strict=True)
+    ]
+    return annotated_rows, audits
 
 
 def summarize_real_features(rows: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
@@ -1148,12 +1268,28 @@ def calibrate_capability_conditioning(
         0.005 if primary_feature == "nonlinear_conditional_gain" else 0.05
     )
     target_scale = max(desired[-1] - desired[0], target_scale_floor)
+    high_variance_calibration = (
+        capability_id in HIGH_VARIANCE_CAPABILITY_IDS
+    )
+    fit_seed_bank_count = (
+        HIGH_VARIANCE_FIT_SEED_BANK_COUNT
+        if high_variance_calibration
+        else FIT_SEED_BANK_COUNT
+    )
+    fit_samples_per_seed_bank = (
+        max(sample_count, 128)
+        if high_variance_calibration
+        else sample_count
+    )
     fit_seeds = tuple(
         _seed_for(seed, capability_id, 10_000 + bank_index)
-        for bank_index in range(FIT_SEED_BANK_COUNT)
+        for bank_index in range(fit_seed_bank_count)
     )
     validation_seed = _seed_for(seed, capability_id, 20_000)
-    validation_sample_count = max(sample_count * FIT_SEED_BANK_COUNT, 256)
+    validation_sample_count = max(
+        fit_samples_per_seed_bank * fit_seed_bank_count,
+        1024 if high_variance_calibration else 256,
+    )
     scale_results: dict[float, float] = {}
     for structure_scale in structure_scale_grid(capability_id):
         scale_results[structure_scale] = mean_feature_over_seed_banks(
@@ -1166,7 +1302,7 @@ def calibrate_capability_conditioning(
             },
             intensity_lambda=1.0,
             feature_name=primary_feature,
-            sample_count=sample_count,
+            sample_count=fit_samples_per_seed_bank,
             seeds=fit_seeds,
         )
     structure_scale = invert_monotone_feature_curve(scale_results, [desired[-1]])[0]
@@ -1180,7 +1316,7 @@ def calibrate_capability_conditioning(
             parameters={**profile_nuisance, **parameters},
             intensity_lambda=intensity_lambda,
             feature_name=primary_feature,
-            sample_count=sample_count,
+            sample_count=fit_samples_per_seed_bank,
             seeds=fit_seeds,
         )
 
@@ -1226,9 +1362,11 @@ def calibrate_capability_conditioning(
             "max_normalized_error": round_float(max_normalized_error),
             "tolerance": CANONICAL_CALIBRATION_TOLERANCE,
             "target_scale": round_float(target_scale),
-            "fit_sample_count": int(sample_count * FIT_SEED_BANK_COUNT),
-            "fit_seed_bank_count": FIT_SEED_BANK_COUNT,
-            "fit_samples_per_seed_bank": int(sample_count),
+            "fit_sample_count": int(
+                fit_samples_per_seed_bank * fit_seed_bank_count
+            ),
+            "fit_seed_bank_count": fit_seed_bank_count,
+            "fit_samples_per_seed_bank": int(fit_samples_per_seed_bank),
             "validation_sample_count": int(validation_sample_count),
             "validation_seed_is_independent": True,
             "monotone_realized": monotone_realized,
@@ -1385,7 +1523,7 @@ def simulate_feature_means(
     length = int(spec.context_length + spec.horizon)
     for sample_index in range(sample_count):
         rng = np.random.default_rng(_seed_for(seed, capability_id, sample_index))
-        target, _latent, covariates = _generate_sample_values(
+        target, latent, covariates = _generate_sample_values(
             capability_id,
             length,
             int(spec.context_length),
@@ -1407,14 +1545,23 @@ def simulate_feature_means(
         measurement_covariates = (
             covariates[:measurement_end] if covariates is not None else None
         )
-        rows.append(
-            _realized_features(
-                measurement_target,
-                measurement_covariates,
-                int(spec.season_length),
-                int(spec.context_length),
-            )
+        features = _realized_features(
+            measurement_target,
+            measurement_covariates,
+            int(spec.season_length),
+            int(spec.context_length),
         )
+        if capability_id == "regime_switching":
+            features["regime_clock_history_incremental_r2"] = (
+                _regime_clock_history_incremental_r2(
+                    measurement_target,
+                    context_length=int(spec.context_length),
+                    season_length=int(spec.season_length),
+                    cut_points=latent["cut_points"],
+                    dwell_length=int(latent["dwell_length"]),
+                )
+            )
+        rows.append(features)
     return {name: float(np.mean([row[name] for row in rows])) for name in feature_names}
 
 

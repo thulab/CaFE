@@ -1,13 +1,13 @@
 # CapTS-Bench 真实锚点与 Synthetic v2 方法
 
-更新日期：2026-07-16
+更新日期：2026-07-18
 
-本文描述仓库当前的 paper-v1 实现，而不是早期 synthetic pilot。当前冻结标尺为：
+本文描述仓库当前的 capts-paper-v2 实现，而不是早期 synthetic pilot。当前冻结标尺为：
 
 ```text
-canonical_scale_id          = synthetic-v2-paper-v1-frozen-2026-07-16
-canonical_scale_fingerprint = a76b66924562be4f
-generator_version           = capts-paper-v1
+canonical_scale_id          = synthetic-v2-paper-v2-shortcut-resistant-2026-07-18
+canonical_scale_fingerprint = 715a6bb980f0e4aa
+generator_version           = capts-paper-v2
 ```
 
 方法的代码与机器可读事实分别以以下内容为准：
@@ -16,7 +16,8 @@ generator_version           = capts-paper-v1
 - 绝对强度与 bucket conditioning：`backend/app/services/synthetic_generator_conditioning.py`
 - 三个冻结 artifact：`synthetic_v2_generator_conditioning_artifact.json`、`synthetic_v2_feature_gate_artifact.json`、`synthetic_v2_near_distance_artifact.json`
 - 标尺冻结协议：`docs/superpowers/specs/2026-07-16-synthetic-v2-canonical-reference-v1-freeze.md`
-- 正式方法实验：`docs/superpowers/specs/2026-07-16-paper-e1-method-validity-protocol.md`
+- v2 shortcut 审计：`docs/superpowers/baselines/2026-07-18-capts-paper-v2-shortcut-audit.md`
+- 旧 E1 协议（须按 v2 重跑）：`docs/superpowers/specs/2026-07-16-paper-e1-method-validity-protocol.md`
 
 旧文档中的 11 能力集合、bucket-local intensity、p95 乘启发式倍率、12 次失败后仍保存样本、DCR/NNDR 仅离线等说法均不再代表当前实现。
 
@@ -37,7 +38,7 @@ CapTS-Bench 使用动态生成的测试样本评估时序模型在不同结构�
 - 合成生成器有意干预某个 primary realized feature，用于构造 capability-focused stress tests。
 - 真实 Shard 仍用于直接评估实际数据表现，并与合成能力成绩做关联分析。
 
-动态生成和 near-distance gate 能降低相对已提交 reference 的近复制风险，但不能证明未知预训练语料中不存在相似模式。当前九个 capability 也不是已经证明相互正交的九个潜在坐标；E1 实验支持“能力聚焦的结构压力测试”，不支持无保留地宣称“完全 disentangled capabilities”。
+动态生成和 near-distance gate 能降低相对已提交 reference 的近复制风险，但不能证明未知预训练语料中不存在相似模式。当前九个 capability 也不是已经证明相互正交的九个潜在坐标；在新的完整 E1 重跑前，正确表述是“能力聚焦的结构压力测试”，不能无保留地宣称“完全 disentangled capabilities”。
 
 ## 2. 完整数据链路
 
@@ -79,9 +80,9 @@ b=(profile\_id,frequency,context,horizon,target\_dim,covariate\_dim,season\_leng
 | --- | ---: | --- |
 | canonical reference profiles | 18 | 只定义每个 capability 的全局五档 target；其中一部分是 canonical-only，不直接在线生成 |
 | generator conditioning profiles | 9 | 为精确任务/窗口拟合 nuisance、结构尺度和到全局 target 的逆映射 |
-| paper-v1 online profiles | 8 | 同时具备 conditioning、feature-support 和 near-distance artifact，可由平台正式生成 |
+| capts-paper-v2 online profiles | 8 | 同时具备 conditioning、feature-support 和 near-distance artifact，可由平台正式生成 |
 
-`electricity_hourly_daily_2048ctx_24h` 已有 generator conditioning，但没有冻结的 2048-context near-distance artifact，因此是 `research_only_pending_near_distance_gate`，不属于 paper-v1 在线集合。它在相关 artifact 补齐前会 fail closed。
+`electricity_hourly_daily_2048ctx_24h` 已有 generator conditioning，但没有冻结的 2048-context near-distance artifact，因此是 `research_only_pending_near_distance_gate`，不属于 capts-paper-v2 在线集合。它在相关 artifact 补齐前会 fail closed。
 
 canonical-only profile 只扩充标尺覆盖面，不会自动成为在线 bucket。反过来，在线 M4、Electricity、Traffic profile 可以使用由更广泛 development corpus 定义的同一个绝对强度标尺。
 
@@ -142,19 +143,22 @@ near-distance artifact 使用独立的 real-train / real-holdout 拆分。holdou
 
 | Capability | 任务协议 | 生成机制 | Primary realized feature |
 | --- | --- | --- | --- |
-| `trend` | 单目标 | 跨 forecast boundary 连续的线性/二次趋势，叠加固定季节残差 | `trend_strength` |
+| `trend` | 单目标 | 跨 forecast boundary 连续的线性/二次趋势，叠加非周期稳定 AR(2) 背景 | `trend_strength` |
 | `multi_seasonal` | 单目标 | 主周期与多个历史可见的附加周期叠加 | `multi_period_score` |
 | `time_varying_seasonality` | 单目标 | 振幅和相位按历史可观察的平滑规律调制 | `seasonal_amplitude_modulation` |
-| `regime_switching` | 单目标 | 历史中重复出现、预测期继续运行的固定状态时钟 | `change_point_shift_energy` |
-| `nonlinear_persistence` | 单目标 | 稳定的短滞后、季节滞后和非线性多滞后递推 | `nonlinear_multi_lag_gain` |
-| `predictable_intermittency` | 单目标 | 历史可识别事件时钟驱动的周期性稀疏脉冲 | `spike_rate` |
-| `common_factor` | 多目标，当前在线为 3 targets | 共享潜在因子与目标局部成分 | `pca_top1_explained` |
+| `regime_switching` | 单目标 | 历史中重复出现、预测期继续运行的固定状态时钟 | `regime_clock_history_incremental_r2` |
+| `nonlinear_persistence` | 单目标 | 稳定的短滞后、profile-scale 长滞后和非线性多滞后递推；不叠加周期载波 | `nonlinear_conditional_gain` |
+| `predictable_intermittency` | 单目标 | 历史可识别的非等间隔 motif 驱动稀疏脉冲 | `spike_rate` |
+| `common_factor` | 多目标，当前在线为 3 targets | 共享非周期动态因子与目标局部成分 | `pca_top1_explained` |
 | `hierarchical_coherence` | 多目标，当前在线为 parent + 2 children | 父节点始终严格等于子节点之和，强度改变 child heterogeneity | `hierarchy_child_heterogeneity` |
 | `covariate_response` | 单目标 + known-future covariates | 历史已有作用样例，预测期提供 weather/event 等已知信号 | `covariate_incremental_r2` |
 
 `common_factor` 和 `hierarchical_coherence` 是多目标预测；`covariate_response` 是单目标加 known-future covariates。论文中可统称 structured capabilities，但模型输入、基线和结果必须按三种协议分别解释。
 
-`lead_lag_coupling`、`coherent_regime_shift`、旧的伪 long-memory 和随机 burst 能力已不在注册表中。仓库的历史 baseline 或图片仍可能包含旧名称，它们不能用于描述 paper-v1 当前能力集合。
+`nonlinear_persistence` 的内部状态先运行 `max(256, 8P)` 步固定 burn-in，
+再截取长度 \(C+H\) 的发布轨迹；随机初始化段不会作为历史前缀暴露给模型。
+
+`lead_lag_coupling`、`coherent_regime_shift`、旧的伪 long-memory 和随机 burst 能力已不在注册表中。仓库的历史 baseline 或图片仍可能包含旧名称，它们不能用于描述 capts-paper-v2 当前能力集合。
 
 ## 6. Capability-global absolute intensity
 
@@ -162,7 +166,16 @@ near-distance artifact 使用独立的 real-train / real-holdout 拆分。holdou
 
 `intensity ∈ {1,2,3,4,5}` 在同一 capability 内表示跨 bucket 共享的绝对 realized-strength target。不同 capability 的主指标量纲不同，因此 `trend=3` 与 `common_factor=3` 不能解释为相同物理强度，也不表示相同模型难度。
 
-对 capability \(c\)，每个冻结 reference profile 先计算自己的五点分位曲线；默认分位为 q20/q35/q50/q70/q90，`nonlinear_persistence` 为 q55/q62.5/q70/q80/q90。随后对 profile 等权逐坐标取中位数，并做 endpoint-preserving 的相邻分辨率投影：中间相邻 target 至少相隔原始 target range 的 10%。
+对 capability \(c\)，每个冻结 reference profile 先计算自己的五点分位曲线；默认分位为 q20/q35/q50/q70/q90。随后对 profile 等权逐坐标取中位数，并做 endpoint-preserving 的相邻分辨率投影：中间相邻 target 至少相隔原始 target range 的 10%。
+
+`regime_switching` 是预注册例外：I1 固定为 history-clock qualification
+边界 0.10，I5 为 qualified-real 的等 profile 权重 q90，I2–I4 在该绝对
+统计量尺度上等距。这样不会把一次性 change point 混入标尺，也不会让
+合格真实窗口集中在狭窄强区间时五档失去分辨率。
+
+`nonlinear_persistence` 同样使用可解释端点：I1 是有符号
+`nonlinear_conditional_gain` 的 adjusted-\(R^2\) 零效应边界，I5 是等 profile
+权重的 real q90，I2–I4 等距。这样低档不会挤在有限样本估计器的零点噪声内。
 
 \[
 T_{c,k}=\operatorname{Project}_{10\%}\left(
@@ -178,16 +191,16 @@ bucket 不再用自己的 q20--q90 重新定义 intensity。对每个在线 `buc
 
 \[
 \lambda_{b,c}(k)=\arg\min_{\lambda}
-\left|\operatorname{median}_{seed} f_c(G_c(\theta_{b,c},\lambda))-T_{c,k}\right|.
+\left|\mathbb E_{seed} f_c(G_c(\theta_{b,c},\lambda))-T_{c,k}\right|.
 \]
 
-标定使用两个独立 fit seed banks，每个 grid cell 各 64 个样本，共 128 个；响应曲线单调化后连续反解。第三组独立 256 样本验证五档 realized median：必须单调，且相对 capability target range 的最大归一化误差不超过 0.20，否则该 conditioning cell 不可发布。
+标定默认使用两个独立 fit seed banks、每个 grid cell 各 64 个样本。方差更高的 `nonlinear_persistence` 与 `covariate_response` 使用四个独立 fit banks、每 bank 至少 128 个样本。响应均值曲线单调化后连续反解。另一组独立样本验证五档 realized mean：普通能力样本数至少 256，高方差能力至少 1024；结果必须单调，且相对 capability target range 的最大归一化误差不超过 0.20，否则该 conditioning cell 不可发布。
 
 artifact 同时记录：
 
 - `canonical_scale_id` 与 content-derived fingerprint；
 - 每档 `canonical_target_strength`；
-- bucket 的 `profile_lambda` 和 `calibrated_profile_median_strength`；
+- bucket 的 `profile_lambda` 和 `calibrated_profile_expected_strength`；
 - target 在该 bucket 真实窗口中的 `local_real_percentile`；
 - reference profile、held-out family、资产哈希和协议代码版本。
 
@@ -218,7 +231,33 @@ s_i=\operatorname{BLAKE2s}(seed\Vert capability\Vert i)\bmod(2^{32}-1).
 
 只在 forecast horizon 新采样随机 change point、burst 或 hierarchy shock 的配置不允许进入生成。每个样本记录 capability-specific contract、evidence 和 `construction_validated`。该条件是配置级必要条件；失败会立即返回 `synthetic_predictability_contract_failed`，不会通过重采样绕过。
 
-construction gate 证明信息存在，不等于证明任意模型都能利用。模型层可预测性由 naive、seasonal-naive、capability oracle 和后续正式模型实验验证。
+construction gate 证明信息存在，不等于证明任意模型都能利用。模型层可预测性由
+固定 seed bank 上的 capability-aware forecast 与 capability-blind matched baseline
+对照，以及后续正式模型实验验证。这里的 aware predictor 是 construction oracle：
+可读取已冻结的机制参数（如周期族、历史事件时钟、固定效应系数），并在协议允许时
+读取 known-future covariates；blind predictor 只从 context 选择通用预测器。两者都
+不能读取 future target 的任何实现值，future target 只用于事后计分。该 oracle
+contrast 验证的是“构造是否留下可利用的预测增益”，不是正式模型之间的公平比赛。
+其中 nonlinear oracle 在通用 blind forecast 与非线性递推 forecast 之间使用冻结的
+50% correction shrinkage：
+\(\hat y_{\mathrm{aware}}=\hat y_{\mathrm{blind}}+
+0.5(\hat y_{\mathrm{nonlinear}}-\hat y_{\mathrm{blind}})\)。
+该系数跨 profile 固定，用于抑制递归多步误差累积，不按被评分 future 调整。
+
+该 contrast 不进入逐样本 acceptance。按未来误差拒绝单条样本会选择“恰好容易预测”
+的 future 并产生选择偏差，因此在线元数据只记录诊断，发布资格由预注册 seed bank
+在 I5 的配对聚合增益下界与胜率决定；I1–I4 仍完整报告，但 I1 可以是显式 null
+边界，因此不要求每一档都产生正的 oracle headroom。为避免对 blind loss 很小的简单样本赋予畸高权重，
+增益使用 ratio of means，而不是逐样本相对增益的均值：
+
+\[
+\widehat G=
+\frac{\overline{L_{\mathrm{blind}}-L_{\mathrm{aware}}}}
+{\overline{L_{\mathrm{blind}}}},\qquad
+\operatorname{LCB}_{0.95}=
+\frac{\overline{\Delta L}-1.645\,\operatorname{SE}(\Delta L)}
+{\overline{L_{\mathrm{blind}}}}.
+\]
 
 ## 8. 当前在线硬门控
 
@@ -246,12 +285,12 @@ d_c^b(x)=\sqrt{(z-\mu)^T\Pi(z-\mu)/D},
 
 | Capability | Online controls |
 | --- | --- |
-| `trend` | `seasonal_strength`, `noise_ratio`, `spike_rate` |
+| `trend` | `outlier_rate`, `spike_rate` |
 | `multi_seasonal` | `trend_strength`, `outlier_rate`, `spike_rate` |
 | `time_varying_seasonality` | `trend_strength`, `outlier_rate`, `spike_rate` |
-| `regime_switching` | `outlier_rate`, `spike_rate`, `diff_spike_rate` |
-| `nonlinear_persistence` | `seasonal_strength`, `noise_ratio`, `spike_rate` |
-| `predictable_intermittency` | `trend_strength`, `seasonal_strength`, `noise_ratio` |
+| `regime_switching` | 无独立 observable control（显式 no-control contract） |
+| `nonlinear_persistence` | `trend_strength`, `outlier_rate`, `spike_rate` |
+| `predictable_intermittency` | 无独立 observable control（显式 no-control contract） |
 | `common_factor` | `trend_strength`, `outlier_rate`, `spike_rate` |
 | `hierarchical_coherence` | `hierarchy_residual_mean_abs`, `outlier_rate`, `spike_rate` |
 | `covariate_response` | `covariate_residual_acf_abs_mean`, `covariate_residual_outlier_rate`, `covariate_residual_spike_rate` |
@@ -305,20 +344,20 @@ MMD/SWD 是批量方法报告，不是每个 Web 请求的在线 gate。当前 E
 
 ## 10. 当前正式证据与已知限制
 
-E1 v1 使用 8 个在线 profile、23 个 `profile × capability` cells、5 档 intensity、两轮独立 seed、每轮每格 64 个样本，共 14720 个最终样本。预注册 8 类判据中 6 类通过：
+旧 `capts-paper-v1` E1 结果使用共享周期 carrier、通用 change-point 主指标和旧非线性
+统计量，不能作为 `capts-paper-v2` 的有效证据。当前 v2 conditioning 已有 28 个
+`profile × capability` cells 全部 supported，独立验证的最大 normalized dose error
+为 0.165820。128-seed 的
+[shortcut-resistance baseline](../superpowers/baselines/2026-07-18-capts-paper-v2-shortcut-audit.md)
+中，9/9 capability-aware contrast 与 7/7 非季节 seasonal-naive shortcut 判据通过。
 
-| 判据 | 当前结果 |
-| --- | --- |
-| construction predictability | 14720 / 14720 通过 |
-| online control support | 115 / 115 intensity cells 通过；首轮 99.82% |
-| MMD/SWD 相对 shifted negative | MMD 22 / 23、SWD 23 / 23 比 negative 更近，通过聚合阈值 |
-| DCR/NNDR | 115 / 115 intensity cells 无 strict/combined risk |
-| 跨轮重复 | 115 / 115 intensity cells 的三种 duplicate rate 均为 0 |
-| naive / seasonal-naive / oracle | 9 / 9 capability 的 oracle win rate ≥ 50% |
-| canonical dose-response | 22 / 23 通过；全部 Spearman=1，M4 regime 误差 0.25597 略超 0.25 |
-| realized control selectivity | 63 / 69 通过 |
+完整论文实验仍需重新报告：
 
-因此当前可支持的表述是：生成器提供稳定、可预测、真实控制特征受约束且低近复制风险的多种结构 stress tests。当前不能声称：
+- I=1/3/5 的完整 contrast 诊断与所有 profile 的 canonical dose-response；
+- control-feature MMD/SWD、DCR/NNDR、跨 seed 重复率；
+- held-out 真实数据上的 synthetic-to-real 能力缺陷对应性。
+
+当前不能声称：
 
 - 九种 realized features 已完全正交；
 - 所有 profile 的绝对 target 都在任意有限样本实验中无误差命中；
@@ -326,7 +365,10 @@ E1 v1 使用 8 个在线 profile、23 个 `profile × capability` cells、5 档 
 - synthetic 与 real 的整体分布必须不可区分；
 - discriminative score 或 train-on-synthetic/test-on-real predictive score 已作为在线质量门槛。
 
-E1 已观察到 trend/change-point、intermittency/nonlinear 等 feature overlap，以及部分 amplitude-changing capability 对 `noise_ratio` 等 ratio feature 的机械影响。论文若继续使用“capability-focused”表述，应公开这些 overlap；若改为“disentangled capabilities”主张，则必须修改机制或特征后发布新实验版本并重跑 E1，不能覆盖 v1 结果。
+旧 E1 已观察到 trend/change-point、intermittency/nonlinear 等 feature overlap，以及部分
+amplitude-changing capability 对 `noise_ratio` 等 ratio feature 的机械影响。v2 已移除
+会强迫共享周期 carrier 的 target-coupled controls，但仍应使用“capability-focused”
+而不是“完全 disentangled”表述，除非新的正交性实验能够支持更强主张。
 
 ## 11. 变更与扩展规则
 
