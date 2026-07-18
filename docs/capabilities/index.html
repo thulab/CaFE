@@ -570,13 +570,13 @@
       font-size: 14px;
       font-weight: 700;
     }
-    .anchor-table td:not(:first-child),
-    .anchor-table th:not(:first-child) {
+    .target-table td:not(:first-child),
+    .target-table th:not(:first-child) {
       text-align: right;
       font-family: var(--mono);
       white-space: nowrap;
     }
-    .anchor-table { min-width: 980px; }
+    .target-table { min-width: 980px; }
     .feature-table { min-width: 1120px; }
     .feature-table td:nth-child(1) {
       color: var(--primary);
@@ -845,14 +845,14 @@
         <span class="brand-mark" aria-hidden="true"></span>
         <span>
           <strong>TSBenchmark</strong>
-          <small>Capability Atlas · capts-paper-v2</small>
+          <small>Capability Atlas · dataset-local intensity</small>
         </span>
       </a>
 
       <p class="nav-label">定义基础</p>
       <ul class="nav-list">
         <li><a href="#scope"><span class="nav-num">A</span>范围与生成链路</a></li>
-        <li><a href="#intensity"><span class="nav-num">B</span>Intensity 绝对标尺</a></li>
+        <li><a href="#intensity"><span class="nav-num">B</span>Intensity 相对标尺</a></li>
         <li><a href="#common-symbols"><span class="nav-num">C</span>公共符号表</a></li>
       </ul>
 
@@ -895,13 +895,13 @@
         <h1>预测能力生成定义与强度标尺</h1>
         <p class="lead">
           本页是当前九项论文能力的可执行数学说明：生成方程说明“样本怎样构造”，
-          intensity 标尺说明“结构强度怎样统一”，统计特征说明“最终怎样验收”。
+          intensity 标尺说明“结构强度怎样在 dataset 内分档”，统计特征说明“最终怎样验收”。
           六项单变量能力与三项结构化能力分轨定义、分轨报告。
         </p>
         <div class="hero-meta" aria-label="版本信息">
           <span>9 capabilities</span>
-          <span>5 absolute intensities</span>
-          <span>capts-paper-v2 · 2026-07-18</span>
+          <span>5 dataset-local intensities</span>
+          <span>dataset-local policy · 2026-07-18</span>
           <span>shortcut-resistant generators</span>
         </div>
         <div class="hero-note" aria-label="关键原则">
@@ -920,13 +920,13 @@
           <span class="badge blue">公式以当前源码为准</span>
         </div>
         <p class="section-intro">
-          每个样本由一个真实数据 profile \(b\)、一个能力 \(c\)、一个强度级别
+          每个样本由一个真实 dataset \(d\) 及其 profile \(b\)、一个能力 \(c\)、一个强度级别
           \(k\in\{1,\dots,5\}\) 和一个随机种子 \(\xi\) 唯一确定。真实数据不提供待复制的
-          单条曲线，而提供 nuisance 分布、canonical 强度参照与两个回验门限。
+          单条曲线，而提供 dataset-local nuisance、五档相对强度目标与两个回验门限。
         </p>
         <div class="flow" aria-label="生成流程">
           <div class="flow-step"><span>01 · PROFILE</span><strong>提取真实统计分布</strong><small>季节长度、噪声、持续性、趋势背景、尾部与协变量残差。</small></div>
-          <div class="flow-step"><span>02 · DOSE</span><strong>反标定能力剂量</strong><small>求 \(\lambda_{b,c}(k)\)，对齐统一的 primary feature anchor。</small></div>
+          <div class="flow-step"><span>02 · DOSE</span><strong>反标定能力剂量</strong><small>求 \(\lambda_{b,c}(k)\)，对齐该 dataset 的 q10/q30/q50/q70/q90。</small></div>
           <div class="flow-step"><span>03 · GENERATE</span><strong>执行机制生成器</strong><small>固定可预测结构，随机化相位、符号、负载与噪声。</small></div>
           <div class="flow-step"><span>04 · ACCEPT</span><strong>在线三重验收</strong><small>construction gate、feature-support gate、near-distance gate。</small></div>
           <div class="flow-step"><span>05 · AUDIT</span><strong>离线构念验收</strong><small>能力感知基线须稳定优于能力盲基线，并排除固定 seasonal-naive shortcut。</small></div>
@@ -934,7 +934,7 @@
         <div class="two-col">
           <div class="mini-card">
             <h3>生成方程不是 intensity 定义</h3>
-            <p>方程中的 \(A_c(k;b)\) 是结构参数；最终 intensity 由独立 seed bank 上主统计特征 \(f_c\) 的期望是否对齐 canonical anchor \(a_{c,k}\) 来定义，而不是逐样本筛选。</p>
+            <p>方程中的 \(A_c(k;b)\) 是结构参数；最终 intensity 由独立 seed bank 上主统计特征 \(f_c\) 的期望是否对齐该 dataset/profile 的分位目标 \(T_{b,c,k}\) 来定义，而不是逐样本筛选。</p>
           </div>
           <div class="mini-card">
             <h3>intensity 不是模型难度</h3>
@@ -965,25 +965,40 @@
       <section class="section" id="intensity">
         <div class="section-head">
           <div>
-            <p class="section-kicker">B · Absolute intensity scale</p>
-            <h2>Intensity 的统一定义</h2>
+            <p class="section-kicker">B · Dataset-local intensity scale</p>
+            <h2>Intensity 的逐数据集定义</h2>
           </div>
-          <span class="badge amber">不是 bucket 内相对分位数</span>
+          <span class="badge amber">q10 · q30 · q50 · q70 · q90</span>
         </div>
         <p class="section-intro">
-          当前标尺先固定每项能力的全局主特征锚点 \(a_{c,1:5}\)，再针对 profile 反求剂量
-          \(\lambda_{b,c}(k)\)。因此，不同真实 bucket 即使原始结构分布不同，标号相同的
-          intensity 仍瞄准同一个绝对统计强度，而不是各自在 bucket 内取“较强”的样本。
+          对每个 dataset/profile 与能力，先从隔离的 parameter split 计算主特征
+          q10/q30/q50/q70/q90，再反求五档剂量 \(\lambda_{b,c}(k)\)。Intensity 编号只表示
+          该 dataset 内从相对弱到相对强；不同 dataset 的 I3 不要求具有相同主特征数值。
         </p>
         <div class="equation-card">
           <span class="eq-number">I-1</span>
+          \[
+            T_{b,c,k}
+            =
+            Q_{p_k}\!\left(
+              \{f_c(x):x\in R^{\mathrm{parameter}}_b\}
+            \right),
+            \qquad
+            (p_1,\ldots,p_5)=(.10,.30,.50,.70,.90).
+          \]
+          <p class="equation-caption">
+            \(R^{\mathrm{parameter}}_b\) 只包含该 dataset 的无泄漏 parameter split；其他 dataset 的窗口不参与分位数计算。
+          </p>
+        </div>
+        <div class="equation-card">
+          <span class="eq-number">I-2</span>
           \[
             \lambda_{b,c}(k)
             = \arg\min_{\lambda\in[0,1]}
               \left|
                 \mathbb{E}_{\xi}
                 \!\left[f_c\!\left(G_c(b,\lambda;\xi)\right)\right]
-                - a_{c,k}
+                - T_{b,c,k}
               \right|,
             \qquad k\in\{1,\ldots,5\}.
           \]
@@ -992,37 +1007,37 @@
           </p>
         </div>
         <div class="equation-card">
-          <span class="eq-number">I-2</span>
+          <span class="eq-number">I-3</span>
           \[
             A_c(k;b)=\kappa_{b,c}\bigl(\alpha_c+\beta_c\lambda_{b,c}(k)\bigr),
             \qquad
-            \mathbb{E}_{\xi}[f_c(G_c)]\approx a_{c,k}.
+            \mathbb{E}_{\xi}[f_c(G_c)]\approx T_{b,c,k}.
           \]
           <p class="equation-caption">
             大多数生成器采用上式的仿射剂量；非线性持续性还对依赖强度执行 \([0,1]\) 截断。不同能力的 \(\alpha_c,\beta_c\) 在各节给出。
           </p>
         </div>
         <div class="table-wrap">
-          <table class="anchor-table">
-            <caption>当前 capts-paper-v2 全局 canonical anchors；数值是 primary realized feature 的目标值，而非生成器原始振幅。</caption>
+          <table class="target-table">
+            <caption>五档在每个 supported dataset/profile 内采用相同的分位位置，但 target 数值由各自真实 parameter split 决定。</caption>
             <thead>
               <tr><th>能力 / 主特征</th><th>I=1</th><th>I=2</th><th>I=3</th><th>I=4</th><th>I=5</th></tr>
             </thead>
             <tbody>
-              <tr><td>trend · <a href="#feature-trend_strength">trend_strength</a></td><td>0.052671</td><td>0.111241</td><td>0.181668</td><td>0.360725</td><td>0.638373</td></tr>
-              <tr><td>multi_seasonal · <a href="#feature-multi_period_score">multi_period_score</a></td><td>0.091153</td><td>0.131908</td><td>0.178193</td><td>0.262510</td><td>0.438378</td></tr>
-              <tr><td>time_varying_seasonality · <a href="#feature-seasonal_amplitude_modulation">seasonal_amplitude_modulation</a></td><td>0.204583</td><td>0.267745</td><td>0.333875</td><td>0.421035</td><td>0.586160</td></tr>
-              <tr><td>regime_switching · <a href="#feature-regime_clock_history_incremental_r2">regime_clock_history_incremental_r2</a></td><td>0.100000</td><td>0.149735</td><td>0.199471</td><td>0.249206</td><td>0.298941</td></tr>
-              <tr><td>nonlinear_persistence · <a href="#feature-nonlinear_conditional_gain">nonlinear_conditional_gain</a></td><td>0.000000</td><td>0.001407</td><td>0.002813</td><td>0.004220</td><td>0.005626</td></tr>
-              <tr><td>predictable_intermittency · <a href="#feature-spike_rate">spike_rate</a></td><td>0.000000</td><td>0.013089</td><td>0.024660</td><td>0.039267</td><td>0.115707</td></tr>
-              <tr><td>common_factor · <a href="#feature-pca_top1_explained">pca_top1_explained</a></td><td>0.666437</td><td>0.728578</td><td>0.768614</td><td>0.810267</td><td>0.875161</td></tr>
-              <tr><td>hierarchical_coherence · <a href="#feature-hierarchy_child_heterogeneity">hierarchy_child_heterogeneity</a></td><td>0.231446</td><td>0.316778</td><td>0.372378</td><td>0.390318</td><td>0.410841</td></tr>
-              <tr><td>covariate_response · <a href="#feature-covariate_incremental_r2">covariate_incremental_r2</a></td><td>0.157646</td><td>0.211182</td><td>0.233026</td><td>0.258420</td><td>0.296870</td></tr>
+              <tr><td>trend · <a href="#feature-trend_strength">trend_strength</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>multi_seasonal · <a href="#feature-multi_period_score">multi_period_score</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>time_varying_seasonality · <a href="#feature-seasonal_amplitude_modulation">seasonal_amplitude_modulation</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>regime_switching · <a href="#feature-regime_clock_history_incremental_r2">regime_clock_history_incremental_r2</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>nonlinear_persistence · <a href="#feature-nonlinear_conditional_gain">nonlinear_conditional_gain</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>predictable_intermittency · <a href="#feature-spike_rate">spike_rate</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>common_factor · <a href="#feature-pca_top1_explained">pca_top1_explained</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>hierarchical_coherence · <a href="#feature-hierarchy_child_heterogeneity">hierarchy_child_heterogeneity</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
+              <tr><td>covariate_response · <a href="#feature-covariate_incremental_r2">covariate_incremental_r2</a></td><td>q10</td><td>q30</td><td>q50</td><td>q70</td><td>q90</td></tr>
             </tbody>
           </table>
         </div>
         <p class="table-note">
-          锚点用于跨 bucket 对齐，但不主张跨能力数值可直接比较；例如 PCA 方差解释率与 regime-clock incremental \(R^2\) 没有相同物理单位。
+          若变量结构不支持某项能力、五个 target 没有足够间距，或反标定无法稳定命中并保持单调，该 dataset/capability 记为 <code>unsupported</code>，不生成样本也不进入汇总。
         </p>
       </section>
 
@@ -1043,11 +1058,11 @@
               <tr><td>\(C,H,T\)</td><td>历史长度、预测长度、总窗口长度。</td><td>\(T=C+H\)，预测边界位于 \(t=C\)。</td></tr>
               <tr><td>\(P_0,P\)</td><td>profile 给出的主季节长度及生成器安全季节长度。</td><td>\(P=\max(4,P_0)\)。</td></tr>
               <tr><td>\(j,d\)</td><td>目标通道索引与目标维度。</td><td>\(j=1,\ldots,d\)；单变量能力 \(d=1\)。</td></tr>
-              <tr><td>\(b,c,k\)</td><td>真实 profile、能力 ID、intensity 级别。</td><td>\(k\in\{1,\ldots,5\}\)。</td></tr>
+              <tr><td>\(d,b,c,k\)</td><td>dataset、其局部 profile、能力 ID、intensity 级别。</td><td>\(k\in\{1,\ldots,5\}\)。</td></tr>
               <tr><td>\(\xi\)</td><td>一个样本的随机性集合。</td><td>包括相位、符号、负载、噪声等；配对实验固定 \(\xi\)。</td></tr>
               <tr><td>\(\lambda_{b,c}(k)\)</td><td>由反标定得到的 profile-conditioned 剂量。</td><td>\([0,1]\)，不默认等于 \((k-1)/4\)。</td></tr>
-              <tr><td>\(\kappa_{b,c}\)</td><td>profile 与能力联合标定的结构 scale。</td><td>与 \(\lambda\) 一起把原始参数映射到 absolute anchor。</td></tr>
-              <tr><td>\(a_{c,k}\)</td><td>能力 \(c\) 在第 \(k\) 档的 canonical 主特征锚点。</td><td>见上一节锚点表。</td></tr>
+              <tr><td>\(\kappa_{b,c}\)</td><td>dataset/profile 与能力联合拟合的结构乘数。</td><td>只在该 profile 内与 \(\lambda\) 一起映射生成参数。</td></tr>
+              <tr><td>\(T_{b,c,k}\)</td><td>能力 \(c\) 在该 dataset/profile 第 \(k\) 档的主特征目标。</td><td>依次为 parameter split 的 q10/q30/q50/q70/q90。</td></tr>
               <tr><td>\(A_c(k;b)\)</td><td>进入能力方程的结构振幅或效应强度。</td><td>通常为 \(\kappa_{b,c}(\alpha_c+\beta_c\lambda_{b,c}(k))\)。</td></tr>
               <tr><td>\(s_t\)</td><td>主季节基函数。</td><td>\(s_t=\sin(2\pi t/P)\)。</td></tr>
               <tr><td>\(q_t\)</td><td>慢周期基函数。</td><td>\(q_t=\cos(2\pi t/(4P))\)。</td></tr>
@@ -1106,7 +1121,7 @@
             <caption>趋势能力专属符号</caption>
             <thead><tr><th>符号</th><th>定义</th><th>取值 / 当前 v2 参照</th></tr></thead>
             <tbody>
-              <tr><td>\(A_{\mathrm{tr}}\)</td><td>趋势原始剂量。</td><td>\(\kappa_{b,\mathrm{tr}}=1.6461643\)（示例 profile：<code>traffic_hourly_daily_168ctx</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{tr}}\)</td><td>趋势原始剂量。</td><td>\(\kappa_{b,\mathrm{tr}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\delta_j\)</td><td>趋势方向。</td><td>等概率取 \(-1\) 或 \(+1\)。</td></tr>
               <tr><td>\(u_j\)</td><td>通道形状扰动。</td><td>\(U(0.9,1.1)\)。</td></tr>
               <tr><td>\(\beta_j,\gamma_j\)</td><td>在归一化时间轴 \(x_t\) 上的一次、二次系数。</td><td>\(\gamma_j=0.06\beta_j\)，二者同号。</td></tr>
@@ -1114,8 +1129,8 @@
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>仅 \(A_{\mathrm{tr}}\) 随 intensity 改变；方向、形状、AR(2) 背景和噪声在同 seed 下保持配对。当前 profile 的 \(\lambda(k)\) 为：</p>
-        <div class="lambda-strip"><span><b>I1</b>0.0000</span><span><b>I2</b>0.1360</span><span><b>I3</b>0.2785</span><span><b>I4</b>0.5315</span><span><b>I5</b>0.9871</span></div>
+        <p>仅 \(A_{\mathrm{tr}}\) 随 intensity 改变；方向、形状、AR(2) 背景和噪声在同 seed 下保持配对。具体 \(\lambda(k)\) 按 dataset/profile 独立反标定：</p>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-trend_strength">trend_strength ↑</a>
           <a href="#feature-slope_abs">slope_abs ↑</a>
@@ -1167,7 +1182,7 @@
             <tbody>
               <tr><td>\(P_1,P_2,P_3\)</td><td>主周期、长附加周期、短附加周期。</td><td>\(P,2P,\max(4,\lfloor P/2\rfloor)\)。</td></tr>
               <tr><td>\(a_{1j}\)</td><td>主周期振幅。</td><td>\(m_sU(0.9,1.1)\)，不随 intensity 改变。</td></tr>
-              <tr><td>\(A_{\mathrm{ms}}\)</td><td>附加周期基础振幅。</td><td>\(\kappa_{b,\mathrm{ms}}=1.6439771\)（示例 profile：<code>m4_hourly_daily_168ctx</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{ms}}\)</td><td>附加周期基础振幅。</td><td>\(\kappa_{b,\mathrm{ms}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(u_{2j},u_{3j}\)</td><td>附加周期通道扰动。</td><td>独立 \(U(0.8,1.2)\)。</td></tr>
               <tr><td>\(\phi_{rj},\psi_j\)</td><td>各谐波随机相位。</td><td>独立 \(U(0,2\pi)\)。</td></tr>
             </tbody>
@@ -1175,7 +1190,7 @@
         </div>
         <h3>Intensity 控制与目标特征</h3>
         <p>intensity 只改变两个附加周期共享的 \(A_{\mathrm{ms}}\)，主周期、周期个数、周期位置与噪声保持不变。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.2391</span><span><b>I2</b>0.3308</span><span><b>I3</b>0.4268</span><span><b>I4</b>0.5960</span><span><b>I5</b>0.9898</span></div>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list"><a class="primary-target" href="#feature-multi_period_score">multi_period_score ↑</a></div>
         <p class="table-note">控制特征：trend_strength、outlier_rate、spike_rate。单周期 residualizer 会把第二周期的一部分记作 noise，因此 noise_ratio 不作为该能力的独立控制量。</p>
         <div class="contract"><strong>PREDICTABILITY</strong><span>最长预测周期为 \(2P\)，历史必须至少覆盖该周期两次，即 \(C\ge4P\)。</span></div>
@@ -1223,7 +1238,7 @@
             <tbody>
               <tr><td>\(M\)</td><td>调制周期。</td><td>\(M=4P\)。</td></tr>
               <tr><td>\(m_{t,j}\)</td><td>通道 \(j\) 的平滑调制信号。</td><td>相位 \(\psi_j\sim U(0,2\pi)\)。</td></tr>
-              <tr><td>\(A_{\mathrm{tv}}\)</td><td>统一的调制剂量。</td><td>\(\kappa_{b,\mathrm{tv}}=2.4585919\)（示例 profile：<code>electricity_hourly_daily_168ctx</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{tv}}\)</td><td>统一的调制剂量。</td><td>\(\kappa_{b,\mathrm{tv}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\rho_A\)</td><td>相对振幅调制深度。</td><td>振幅包络为 \(1+\rho_Am_{t,j}\)。</td></tr>
               <tr><td>\(\rho_\phi\)</td><td>以“周期”为单位的相位调制深度。</td><td>实际相位偏移为 \(2\pi\rho_\phi m_{t,j}\)。</td></tr>
             </tbody>
@@ -1231,7 +1246,7 @@
         </div>
         <h3>Intensity 控制与目标特征</h3>
         <p>同一个 \(A_{\mathrm{tv}}\) 同时推动振幅深度与相位深度，调制周期始终为 \(4P\)，不随 intensity 改变。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.2269</span><span><b>I2</b>0.3560</span><span><b>I3</b>0.4904</span><span><b>I4</b>0.6665</span><span><b>I5</b>0.9998</span></div>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-seasonal_amplitude_modulation">seasonal_amplitude_modulation ↑</a>
           <a href="#feature-seasonal_phase_variation">seasonal_phase_variation ↑</a>
@@ -1284,20 +1299,20 @@
               <tr><td>\(D\)</td><td>每个 regime 的固定驻留长度。</td><td>由 \(C,P\) 确定，intensity 不改变它。</td></tr>
               <tr><td>\(\tau_f\)</td><td>首个预测期切换点。</td><td>\(C+\lfloor P/2\rfloor\)。</td></tr>
               <tr><td>\(r_t\)</td><td>交替状态变量。</td><td>\(\{-1,+1\}\)，初始符号随机。</td></tr>
-              <tr><td>\(A_{\mathrm{rs}}\)</td><td>两个状态中心的半间距。</td><td>\(\kappa_{b,\mathrm{rs}}=0.5919698\)（示例 profile：<code>traffic_hourly_daily_168ctx</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{rs}}\)</td><td>两个状态中心的半间距。</td><td>\(\kappa_{b,\mathrm{rs}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(u_j\)</td><td>通道状态尺度扰动。</td><td>\(U(0.9,1.1)\)。</td></tr>
             </tbody>
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>intensity 只改变状态间隔 \(2A_{\mathrm{rs}}u_j\)，不改变切换次数、dwell length、状态顺序或未来切换位置。I1 锚定 history-clock 可预测性边界 0.10，I5 锚定 qualified-real q90，中间三档在同一绝对统计量尺度上等距。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.3408</span><span><b>I2</b>0.5215</span><span><b>I3</b>0.6855</span><span><b>I4</b>0.8431</span><span><b>I5</b>0.9999</span></div>
+        <p>intensity 只改变状态间隔 \(2A_{\mathrm{rs}}u_j\)，不改变切换次数、dwell length、状态顺序或未来切换位置。五档分别瞄准该 dataset/profile 的 history-clock 主特征 q10/q30/q50/q70/q90。</p>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-regime_clock_history_incremental_r2">regime_clock_history_incremental_r2 ↑</a>
           <a href="#feature-change_point_shift_energy">change_point_shift_energy ↑</a>
           <a href="#feature-level_shift_strength">level_shift_strength ↑</a>
         </div>
-        <p class="table-note">状态切换会机械性地改变现有 residual、spike 与 outlier 摘要，因此当前 feature gate 采用显式 no-control contract，仍强制 construction、absolute dose 与 near-distance gate。</p>
+        <p class="table-note">状态切换会机械性地改变现有 residual、spike 与 outlier 摘要，因此当前 feature gate 采用显式 no-control contract，仍强制 construction、dataset-local dose 与 near-distance gate。</p>
         <div class="contract"><strong>PREDICTABILITY</strong><span>历史切换数不少于 2，预测期切换数不少于 1，且所有切换等间隔并严格交替。</span></div>
         <h3>校准样例</h3>
         <div class="gallery">
@@ -1347,7 +1362,7 @@
               <tr><td>\(\tilde z_{t,j},z_{t,j}\)</td><td>完整递推状态与发布窗口内的稳定状态。</td><td>先生成固定 burn-in，再令 \(z_t=\tilde z_{B+t}\)。</td></tr>
               <tr><td>\(B\)</td><td>丢弃的初始化 burn-in 长度。</td><td>\(\max(256,8P)\)，防止前 \(P\) 点初始化瞬态进入样本。</td></tr>
               <tr><td>\(L_s,L_n\)</td><td>线性 profile-scale 长滞后与非线性中程滞后。</td><td>\(P\) 与 \(\max(2,\lfloor P/2\rfloor)\)；它们是递推滞后，不是固定周期载波。</td></tr>
-              <tr><td>\(d\)</td><td>统一依赖强度。</td><td>\(\kappa_{b,\mathrm{nl}}=0.7086242\)（示例 profile：<code>traffic_hourly_daily_168ctx</code>），并截断到 \([0,1]\)。</td></tr>
+              <tr><td>\(d\)</td><td>统一依赖强度。</td><td>\(\kappa_{b,\mathrm{nl}}\) 由当前 dataset/profile 的 supported conditioning 给出，并截断到 \([0,1]\)。</td></tr>
               <tr><td>\(g(u)\)</td><td>中心化的有界非线性变换。</td><td>\(\sin^2(1.1u)-0.25\)，当前 transform version 2。</td></tr>
               <tr><td>\(\eta_{t,j}\)</td><td>递推创新。</td><td>基准 scale 0.12，服从 profile 噪声族。</td></tr>
             </tbody>
@@ -1362,8 +1377,8 @@
           \]
           <p class="equation-caption">左式是当前构造门控采用的 Lipschitz 系数上界；不满足时直接拒绝生成。</p>
         </div>
-        <p>intensity 同时增强 profile-scale 线性记忆与非线性项，但两者比例固定；canonical 主标尺是在控制所有线性滞后后，\(\sin^2\) 项带来的有符号 adjusted-\(R^2\) 增益。自由度修正与保留负值使无结构时的期望接近 0。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.0723</span><span><b>I2</b>0.4828</span><span><b>I3</b>0.6953</span><span><b>I4</b>0.8606</span><span><b>I5</b>1.0000</span></div>
+        <p>intensity 同时增强 profile-scale 线性记忆与非线性项，但两者比例固定；主特征是在控制所有线性滞后后，\(\sin^2\) 项带来的有符号 adjusted-\(R^2\) 增益。五档使用该 dataset/profile 的主特征 q10/q30/q50/q70/q90；自由度修正与保留负值使无结构时的期望接近 0。</p>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-nonlinear_conditional_gain">nonlinear_conditional_gain ↑</a>
           <a href="#feature-nonlinear_multi_lag_gain">nonlinear_multi_lag_gain ↑</a>
@@ -1422,14 +1437,14 @@
               <tr><td>\(\tau_f\)</td><td>首个预测期脉冲中心。</td><td>\(C+\lfloor P/2\rfloor\)。</td></tr>
               <tr><td>\(w\)</td><td>高斯脉冲宽度。</td><td>\(\max(0.65,P/40)\)，不随 intensity 改变。</td></tr>
               <tr><td>\(h_t\)</td><td>所有高斯脉冲的叠加形状。</td><td>中心、宽度固定，仅振幅变化。</td></tr>
-              <tr><td>\(A_{\mathrm{pi}}\)</td><td>脉冲基础振幅。</td><td>\(\kappa_{b,\mathrm{pi}}=0.9392696\)（示例 profile：<code>m4_hourly_daily_168ctx</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{pi}}\)</td><td>脉冲基础振幅。</td><td>\(\kappa_{b,\mathrm{pi}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(u_j\)</td><td>通道脉冲尺度扰动。</td><td>\(U(0.9,1.1)\)。</td></tr>
             </tbody>
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
         <p>intensity 只改变 \(A_{\mathrm{pi}}\)，不改变脉冲数量、间隔 motif、宽度或预测期位置；非周期 AR(2) 背景与噪声在配对档位间完全相同。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.0000</span><span><b>I2</b>0.1443</span><span><b>I3</b>0.2194</span><span><b>I4</b>0.2882</span><span><b>I5</b>1.0000</span></div>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-spike_rate">spike_rate ↑</a>
           <a href="#feature-burst_rate">burst_rate ↑</a>
@@ -1480,14 +1495,14 @@
             <tbody>
               <tr><td>\(f_t\)</td><td>所有通道共享的一维潜在因子。</td><td>历史归一化的稳定非周期 AR(2)。</td></tr>
               <tr><td>\(u_{t,j}\)</td><td>通道私有的动态局部分量。</td><td>各通道使用独立创新与 fast root，振幅固定为 \(0.45m_\ell\sqrt{m_\epsilon}\)。</td></tr>
-              <tr><td>\(A_{\mathrm{cf}}\)</td><td>共享因子强度。</td><td>\(\kappa_{b,\mathrm{cf}}=0.7964853\)（示例 profile：<code>traffic_hourly_panel_168ctx</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{cf}}\)</td><td>共享因子强度。</td><td>\(\kappa_{b,\mathrm{cf}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\ell_j\)</td><td>通道 \(j\) 的固定 factor loading。</td><td>符号随机，绝对值 \(U(0.8,1.2)\)。</td></tr>
             </tbody>
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
         <p>intensity 只改变共享因子振幅 \(A_{\mathrm{cf}}\)；factor rank 恒为 1，loadings、共享/局部动态系数和噪声不随档位一起变化。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.4045</span><span><b>I2</b>0.5230</span><span><b>I3</b>0.6133</span><span><b>I4</b>0.7311</span><span><b>I5</b>0.9997</span></div>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-pca_top1_explained">pca_top1_explained ↑</a>
           <a href="#feature-effective_factor_rank">effective_factor_rank ↓</a>
@@ -1543,15 +1558,15 @@
               <tr><td>\(J,p_t,c_{t,j}\)</td><td>子节点数、父节点、子节点。</td><td>\(J=d-1\ge2\)，\(p_t=\sum_jc_{t,j}\)。</td></tr>
               <tr><td>\(u_t\)</td><td>所有子节点共同承担的非周期总量分量。</td><td>稳定 AR(2)，平均分配为 \(u_t/J\)。</td></tr>
               <tr><td>\(\ell_{t,j}\)</td><td>逐时刻零和的子节点局部分量。</td><td>\(\sum_j\ell_{t,j}=0\)。</td></tr>
-              <tr><td>\(A_{\mathrm{hc}}\)</td><td>子节点异质性剂量。</td><td>\(\kappa_{b,\mathrm{hc}}=0.9184510\)（示例 profile：<code>m5_daily_hierarchy_365ctx_28h</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{hc}}\)</td><td>子节点异质性剂量。</td><td>\(\kappa_{b,\mathrm{hc}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\epsilon_t^{(c)}\)</td><td>父子共享的 common noise。</td><td>基准 scale 0.03。</td></tr>
               <tr><td>\(\epsilon_{t,j}^{(i)}\)</td><td>逐时刻零和的 idiosyncratic noise。</td><td>基准 scale 0.04，\(\sum_j\epsilon_{t,j}^{(i)}=0\)。</td></tr>
             </tbody>
           </table>
         </div>
         <h3>Intensity 控制与目标特征</h3>
-        <p>intensity 只改变 \(A_{\mathrm{hc}}\)，加总关系在所有档位均严格成立；不注入预测期随机 shock。当前 profile 使用 Student-\(t_8\) 噪声与 \(m_\epsilon=0.75\)。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.4954</span><span><b>I2</b>0.7359</span><span><b>I3</b>0.8921</span><span><b>I4</b>0.9424</span><span><b>I5</b>1.0000</span></div>
+        <p>intensity 只改变 \(A_{\mathrm{hc}}\)，加总关系在所有档位均严格成立；不注入预测期随机 shock。噪声族与尺度由当前 dataset/profile 的 nuisance 拟合决定。</p>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-hierarchy_child_heterogeneity">hierarchy_child_heterogeneity ↑</a>
           <a href="#feature-hierarchy_residual_mean_abs">hierarchy_residual_mean_abs = 0</a>
@@ -1609,7 +1624,7 @@
               <tr><td>\(a_{t,j}\)</td><td>与协变量无关的目标基线。</td><td>通道独立的稳定 AR(2)，振幅 \(0.24\sqrt{m_\epsilon}\)。</td></tr>
               <tr><td>\(e_t\)</td><td>二元事件协变量。</td><td>3 个历史事件 + 1 个预测期事件。</td></tr>
               <tr><td>\(\tau_r,W\)</td><td>事件起点和宽度。</td><td>前三次位于历史的 \(1/4,1/2,3/4\) 处并截断到 \(C-W\)；第四次位于预测期；\(W\in[2,4]\)。</td></tr>
-              <tr><td>\(A_{\mathrm{cv}}\)</td><td>协变量效应基础尺度。</td><td>\(\kappa_{b,\mathrm{cv}}=0.1670062\)（示例 profile：<code>gefcom2014_load_hourly_covariate_168ctx_24h</code>）。</td></tr>
+              <tr><td>\(A_{\mathrm{cv}}\)</td><td>协变量效应基础尺度。</td><td>\(\kappa_{b,\mathrm{cv}}\) 由当前 dataset/profile 的 supported conditioning 给出。</td></tr>
               <tr><td>\(\beta_{w,j},\beta_{e,j}\)</td><td>天气与事件效应系数。</td><td>天气可正可负；事件效应为正。</td></tr>
               <tr><td>\(r_{t,j},\rho\)</td><td>目标残差及其 profile-conditioned AR 系数。</td><td>\(\rho\) 是 nuisance，不随 intensity 改变。</td></tr>
             </tbody>
@@ -1617,7 +1632,7 @@
         </div>
         <h3>Intensity 控制与目标特征</h3>
         <p>intensity 只改变 \(\beta_w,\beta_e\) 的共同尺度；天气轨迹、事件位置、事件宽度、残差相关性和噪声在同 seed 下保持配对。</p>
-        <div class="lambda-strip"><span><b>I1</b>0.4138</span><span><b>I2</b>0.6610</span><span><b>I3</b>0.7516</span><span><b>I4</b>0.8528</span><span><b>I5</b>1.0000</span></div>
+        <div class="lambda-strip"><span><b>I1</b>q10</span><span><b>I2</b>q30</span><span><b>I3</b>q50</span><span><b>I4</b>q70</span><span><b>I5</b>q90</span></div>
         <div class="target-list">
           <a class="primary-target" href="#feature-covariate_incremental_r2">covariate_incremental_r2 ↑</a>
           <a href="#feature-future_abs_covariate_target_corr">future_abs_covariate_target_corr ↑</a>
@@ -1743,23 +1758,22 @@
             <p class="section-kicker">F · Version & provenance</p>
             <h2>版本、样例与可复现性</h2>
           </div>
-          <span class="badge blue">27 / 27 images qualified</span>
+          <span class="badge blue">mechanism illustrations</span>
         </div>
         <div class="two-col">
           <div class="mini-card">
             <h3>公式来源</h3>
-            <p>生成方程逐项对齐当前 <code>synthetic_generation_service.py</code>；primary feature 与 capts-paper-v2 protocol 对齐。数值 \(\kappa,\lambda,a\) 来自 <code>synthetic-v2-paper-v2-shortcut-resistant-2026-07-18</code>（fingerprint <code>715a6bb980f0e4aa</code>）。</p>
+            <p>生成方程逐项对齐当前 <code>synthetic_generation_service.py</code>；primary feature 与 dataset-local protocol 对齐。每个 dataset/profile 的 \(T,\kappa,\lambda\) 由当前 conditioning artifact 独立给出；本页不发布可跨 dataset 复用的固定数值。</p>
           </div>
           <div class="mini-card">
             <h3>样例选择</h3>
-            <p>每项能力在冻结的 64-seed 可视化池中选一个 nuisance-paired seed 生成 I=1/3/5；高方差的 nonlinear statistic 预先使用 256-seed 池。三档均在图示的注册 profile 上通过 construction、feature-support、near-distance 三类检查，主特征严格递增，并最小化到三档 anchor 的归一化距离。</p>
+            <p>现有 I=1/3/5 图片用于说明机制项如何改变，不作为当前 dataset-local 校准的资格证据。正式实验只读取新支持矩阵和对应 dataset/profile 的 construction、feature-support、near-distance 结果。</p>
           </div>
         </div>
         <div class="callout">
-          <strong>图中 anchor 与 realized value。</strong> 右上角 anchor 是当前 canonical target；
-          realized value 是该单条样本在图中所列 \(C,H\) 上测得的主统计量。该代表性筛选仅服务于
-          结构可视化，不进入在线样本接收，也不查看 forecast error 或 capability contrast；正式标尺
-          约束的是独立 seed bank 的均值与单调性。样例 manifest 保存筛选策略、候选编号和门控结果。
+          <strong>图中旧标注。</strong> 图片内若仍显示历史 target 数值，只能用于解释该图自身，
+          不能视为当前 dataset/profile 的 q10/q50/q90。当前资格以重建后的 dataset-local artifact
+          和支持矩阵为准；<code>unsupported</code> 的 dataset/capability 不发布正式样本。
         </div>
         <div class="source-list">
           <a href="../../backend/app/services/synthetic_generation_service.py">生成器源码<br><code>backend/app/services/synthetic_generation_service.py</code></a>

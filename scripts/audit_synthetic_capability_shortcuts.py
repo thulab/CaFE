@@ -26,6 +26,7 @@ from app.services.synthetic_generation_service import (  # noqa: E402
     _standardize_hierarchy_by_context,
 )
 from app.services.synthetic_generator_conditioning import (  # noqa: E402
+    INTENSITY_POLICY_ID,
     load_generator_conditioning_artifact,
     resolve_generator_conditioning,
 )
@@ -107,10 +108,50 @@ def run_audit(
     artifact = load_generator_conditioning_artifact()
     if artifact is None:
         raise FileNotFoundError("generator conditioning artifact is missing")
+    if artifact["intensity_policy"].get("policy_id") != INTENSITY_POLICY_ID:
+        raise ValueError(f"shortcut audit requires intensity policy {INTENSITY_POLICY_ID}")
     rows: list[dict[str, Any]] = []
+    unsupported_cells: list[dict[str, Any]] = []
     high_intensity = max(intensities)
     for capability_id, profile_id in AUDIT_PROFILE_BY_CAPABILITY.items():
-        profile = artifact["profiles"][profile_id]
+        profile = artifact["profiles"].get(profile_id)
+        if profile is None:
+            unsupported_cells.append(
+                {
+                    "dataset_id": None,
+                    "profile_id": profile_id,
+                    "capability_id": capability_id,
+                    "reason": "profile_missing",
+                }
+            )
+            continue
+        capability = profile.get("capabilities", {}).get(capability_id)
+        if not _is_supported_capability(capability):
+            calibration = (
+                capability.get("calibration", {})
+                if isinstance(capability, dict)
+                else {}
+            )
+            unsupported_cells.append(
+                {
+                    "dataset_id": profile.get("dataset_id"),
+                    "profile_id": profile_id,
+                    "capability_id": capability_id,
+                    "reason": (
+                        "capability_missing"
+                        if capability is None
+                        else (
+                            capability.get(
+                                "unsupported_reason",
+                                calibration.get("status", "unsupported"),
+                            )
+                            if isinstance(capability, dict)
+                            else "invalid_capability_config"
+                        )
+                    ),
+                }
+            )
+            continue
         context_length = int(profile["context_length"])
         horizon = int(profile["horizon"])
         target_dim = int(profile["target_dim"])
@@ -193,9 +234,15 @@ def run_audit(
             )
             rows.append(
                 {
+                    "dataset_id": conditioning.dataset_id,
                     "capability_id": capability_id,
                     "profile_id": profile_id,
                     "intensity": intensity,
+                    "target_percentile_level": conditioning.target_percentile_levels[
+                        intensity - 1
+                    ],
+                    "target_feature": conditioning.target_feature,
+                    "target_strength": conditioning.target_values[intensity - 1],
                     "seasonal_naive_mae_mean": float(
                         np.mean(seasonal_errors)
                     ),
@@ -209,17 +256,18 @@ def run_audit(
         row for row in rows if int(row["intensity"]) == high_intensity
     ]
     overall_passed = bool(
-        all(row["fixed_seasonal_shortcut_passed"] for row in high_rows)
+        high_rows
+        and all(row["fixed_seasonal_shortcut_passed"] for row in high_rows)
         and all(row["capability_contrast"]["passed"] for row in high_rows)
     )
     return {
-        "schema_version": "synthetic_capability_shortcut_audit.v1",
+        "schema_version": "synthetic_capability_shortcut_audit.v2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "generator_artifact_schema_version": artifact["schema_version"],
-        "canonical_scale_id": artifact["canonical_intensity"]["scale_id"],
-        "canonical_scale_fingerprint": artifact["canonical_intensity"][
-            "scale_fingerprint"
-        ],
+        "intensity_policy": dict(artifact["intensity_policy"]),
+        "supported_cell_count": len(AUDIT_PROFILE_BY_CAPABILITY) - len(unsupported_cells),
+        "unsupported_cell_count": len(unsupported_cells),
+        "unsupported_cells": unsupported_cells,
         "seed_count": int(seed_count),
         "intensities": list(intensities),
         "qualification_intensity": int(high_intensity),
@@ -230,6 +278,20 @@ def run_audit(
         "rows": rows,
         "overall_passed": overall_passed,
     }
+
+
+def _is_supported_capability(capability: Any) -> bool:
+    calibration = (
+        capability.get("calibration")
+        if isinstance(capability, dict)
+        else None
+    )
+    return bool(
+        isinstance(capability, dict)
+        and capability.get("status", "supported") == "supported"
+        and isinstance(calibration, dict)
+        and calibration.get("status") == "supported"
+    )
 
 
 def _audit_seed(

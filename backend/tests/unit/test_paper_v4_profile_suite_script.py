@@ -26,15 +26,15 @@ def load_module():
     return module
 
 
-def test_source_suite_is_unique_hourly_and_domain_diverse() -> None:
+def test_dataset_suite_is_unique_hourly_and_domain_diverse() -> None:
     module = load_module()
-    sources = module.SOURCE_SPECS
+    datasets = module.DATASET_SPECS
 
-    assert len(sources) == 13
-    assert len({source.source_id for source in sources}) == len(sources)
-    assert len({source.family_id for source in sources}) == 11
-    assert len({source.domain for source in sources}) == 5
-    assert {source.frequency for source in sources} == {"h"}
+    assert len(datasets) == 13
+    assert len({dataset.dataset_id for dataset in datasets}) == len(datasets)
+    assert len({dataset.domain for dataset in datasets}) == 5
+    assert {dataset.frequency for dataset in datasets} == {"h"}
+    assert all(not hasattr(dataset, "family_id") for dataset in datasets)
 
 
 def test_nested_views_share_exact_future() -> None:
@@ -60,24 +60,80 @@ def test_nested_views_share_exact_future() -> None:
     assert views[504][0] == 0
 
 
-def test_family_balancing_does_not_double_weight_sibling_configs() -> None:
+def test_build_suite_emits_only_dataset_local_profiles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     module = load_module()
-    rows = [
-        {"family_id": "A", "source_id": "A1"},
-        {"family_id": "A", "source_id": "A1"},
-        {"family_id": "A", "source_id": "A2"},
-        {"family_id": "B", "source_id": "B1"},
-        {"family_id": "B", "source_id": "B1"},
-        {"family_id": "B", "source_id": "B1"},
+    datasets = (
+        module.DatasetSpec("dataset_a", "Dataset A", "Domain A", "fake", "a"),
+        module.DatasetSpec("dataset_b", "Dataset B", "Domain B", "fake", "b"),
+    )
+
+    def fake_build_profile_rows(dataset, **_kwargs):
+        feature_value = 1.0 if dataset.dataset_id == "dataset_a" else 100.0
+        rows = [
+            {
+                "dataset_id": dataset.dataset_id,
+                "dataset_name": dataset.dataset_name,
+                "domain": dataset.domain,
+                "context_length": context_length,
+                "full__trend_strength": feature_value,
+            }
+            for context_length in module.CONTEXT_LENGTHS
+        ]
+        return rows, {
+            "dataset_id": dataset.dataset_id,
+            "dataset_name": dataset.dataset_name,
+            "domain": dataset.domain,
+            "paired_master_window_count": 1,
+        }
+
+    monkeypatch.setattr(module, "build_profile_rows", fake_build_profile_rows)
+    suite, rows, inventory = module.build_suite(
+        datasets=datasets,
+        gift_eval_dir=Path("/unused"),
+        data_dir=Path("/unused"),
+        max_windows=30,
+    )
+
+    assert suite["schema_version"].endswith(".v2")
+    assert suite["selection"]["dataset_count"] == 2
+    assert "family_count" not in suite["selection"]
+    assert "global_profiles" not in suite
+    assert "sources" not in suite
+    assert len(suite["profiles"]) == 8
+    assert {row["dataset_id"] for row in rows} == {"dataset_a", "dataset_b"}
+    assert {item["dataset_id"] for item in inventory} == {
+        "dataset_a",
+        "dataset_b",
+    }
+    assert (
+        suite["profiles"]["dataset_a__L96_H48"]["features"][
+            "full__trend_strength"
+        ]["p50"]
+        == pytest.approx(1.0)
+    )
+    assert (
+        suite["profiles"]["dataset_b__L96_H48"]["features"][
+            "full__trend_strength"
+        ]["p50"]
+        == pytest.approx(100.0)
+    )
+
+
+def test_selected_dataset_specs_rejects_unknown_ids() -> None:
+    module = load_module()
+
+    with pytest.raises(ValueError, match="unknown profile datasets"):
+        module.selected_dataset_specs(["missing"])
+
+    selected = module.selected_dataset_specs(
+        ["gift_ett2_h", "gift_ett1_h"]
+    )
+    assert [dataset.dataset_id for dataset in selected] == [
+        "gift_ett2_h",
+        "gift_ett1_h",
     ]
-
-    weights = module.source_balanced_weights(rows)
-
-    assert float(weights.sum()) == pytest.approx(1.0)
-    assert float(weights[:3].sum()) == pytest.approx(0.5)
-    assert float(weights[3:].sum()) == pytest.approx(0.5)
-    assert float(weights[:2].sum()) == pytest.approx(0.25)
-    assert float(weights[2]) == pytest.approx(0.25)
 
 
 def test_weighted_quantile_uses_positive_finite_mass() -> None:

@@ -225,8 +225,8 @@ INTENSITY_FEATURE_DIRECTIONS: dict[str, dict[str, str]] = {
 }
 
 MOCK_ANCHOR = {
-    "anchor_mode": "preselected_profile_conditioned",
-    "anchor_source_uri": "synthetic-anchor://public/profile-conditioned-v2",
+    "anchor_mode": "preselected_dataset_profile_conditioned",
+    "anchor_source_uri": "synthetic-anchor://public/dataset-local-profile-conditioned-v1",
 }
 
 ANCHOR_FEATURE_QUANTILES: dict[str, dict[str, dict[str, float]]] = {
@@ -508,7 +508,7 @@ CONTROL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     # spike/outlier summaries after context standardization.  There is no
     # independent observable nuisance among the current feature family, so the
     # feature-support artifact records an explicit no-control contract.  Real
-    # parameter support, construction predictability, canonical dose, and the
+    # parameter support, construction predictability, dataset-local dose, and the
     # near-distance gate remain mandatory.
     "regime_switching": (),
     # Recurrence strength mechanically changes the variance attributed to the
@@ -726,8 +726,19 @@ def _generate_capability_shard(
                 "available_profile_ids": list(anchor_profile_candidates),
             },
         )
-    selected_profile_pool = (
-        (requested_anchor_profile,) if requested_anchor_profile is not None else anchor_profile_candidates
+    selected_anchor_profile = (
+        requested_anchor_profile
+        if requested_anchor_profile is not None
+        else select_balanced_profile_id(
+            anchor_profile_candidates,
+            capability_id=capability.capability_id,
+            seed=config.seed,
+            sample_index=0,
+        )
+    )
+    selected_profile_pool = (selected_anchor_profile,)
+    anchor_profile_selection = (
+        "explicit" if requested_anchor_profile is not None else "seeded_single_profile"
     )
     target_columns = [f"target_{index}" for index in range(target_dim)]
     covariate_columns = list(capability.covariate_columns)
@@ -754,12 +765,7 @@ def _generate_capability_shard(
     sample_metadata: list[dict[str, Any]] = []
     for sample_index in range(config.sample_count):
         sample_seed = _seed_for(config.seed, capability.capability_id, sample_index)
-        anchor_profile_id = select_balanced_profile_id(
-            selected_profile_pool,
-            capability_id=capability.capability_id,
-            seed=config.seed,
-            sample_index=sample_index,
-        )
+        anchor_profile_id = selected_anchor_profile
         conditioning = profile_conditionings[anchor_profile_id]
         target, latent_params, covariates, realized_features = _generate_accepted_sample_values(
             capability.capability_id,
@@ -805,18 +811,14 @@ def _generate_capability_shard(
                 "sample_seed": sample_seed,
                 "anchor_profile_id": anchor_profile_id,
                 "anchor_profiles": list(selected_profile_pool),
-                "anchor_profile_selection": (
-                    "explicit" if requested_anchor_profile is not None else "balanced_uniform"
-                ),
-                "canonical_scale_id": conditioning.canonical_scale_id,
-                "canonical_scale_fingerprint": conditioning.canonical_scale_fingerprint,
-                "canonical_target_feature": conditioning.canonical_target_feature,
-                "canonical_target_strength": conditioning.canonical_target_values[
+                "anchor_profile_selection": anchor_profile_selection,
+                "anchor_dataset_id": conditioning.dataset_id,
+                "intensity_policy_id": conditioning.intensity_policy_id,
+                "target_percentile_level": conditioning.target_percentile_levels[
                     config.intensity - 1
                 ],
-                "local_real_percentile": conditioning.local_real_percentiles[
-                    config.intensity - 1
-                ],
+                "target_feature": conditioning.target_feature,
+                "target_strength": conditioning.target_values[config.intensity - 1],
                 "season_length": conditioning.season_length,
                 "requested_season_length": config.season_length,
                 "season_length_source": "preselected_anchor_profile",
@@ -828,7 +830,18 @@ def _generate_capability_shard(
             }
         )
 
-    canonical_conditioning = next(iter(profile_conditionings.values()))
+    representative_conditioning = next(iter(profile_conditionings.values()))
+    dataset_local_targets = {
+        profile_id: {
+            "dataset_id": conditioning.dataset_id,
+            "target_feature": conditioning.target_feature,
+            "target_strength": conditioning.target_values[config.intensity - 1],
+            "calibrated_expected_strength": conditioning.calibrated_realized_strengths[
+                config.intensity - 1
+            ],
+        }
+        for profile_id, conditioning in profile_conditionings.items()
+    }
     generation_config = {
         "schema_version": "synthetic_generation.v1",
         "generator_version": PAPER_GENERATOR_VERSION,
@@ -839,14 +852,17 @@ def _generate_capability_shard(
         "intensity": config.intensity,
         "difficulty": config.intensity,
         "intensity_definition": (
-            "capability-global canonical realized strength; not a required monotonic model-error difficulty"
+            "dataset-local relative strength quantile; raw target strengths are not comparable "
+            "across datasets and intensity is not model difficulty"
         ),
-        "canonical_scale_id": canonical_conditioning.canonical_scale_id,
-        "canonical_scale_fingerprint": canonical_conditioning.canonical_scale_fingerprint,
-        "canonical_target_feature": canonical_conditioning.canonical_target_feature,
-        "canonical_target_strength": canonical_conditioning.canonical_target_values[
+        "intensity_policy_id": representative_conditioning.intensity_policy_id,
+        "target_percentile_level": representative_conditioning.target_percentile_levels[
             config.intensity - 1
         ],
+        "dataset_local_targets": dataset_local_targets,
+        "anchor_dataset_ids": sorted(
+            {conditioning.dataset_id for conditioning in profile_conditionings.values()}
+        ),
         "seed": config.seed,
         "context_length": context,
         "horizon": horizon,
@@ -863,9 +879,7 @@ def _generate_capability_shard(
         "feature_gate_calibration_buckets": feature_gate_buckets,
         "generator_conditioning_profiles": list(selected_profile_pool),
         "anchor_profiles": list(selected_profile_pool),
-        "anchor_profile_selection": (
-            "explicit" if requested_anchor_profile is not None else "balanced_uniform"
-        ),
+        "anchor_profile_selection": anchor_profile_selection,
         "frequency": config.frequency,
         **MOCK_ANCHOR,
     }
@@ -1526,7 +1540,7 @@ def _generate_accepted_sample_values(
         near_distance = evaluate_near_distance_gate(
             target=target,
             features=realized_features,
-            profile_ids=near_distance_profile_ids or _profile_ids_for_capability(capability_id),
+            profile_ids=(anchor_profile_id,) if anchor_profile_id is not None else (),
             context_length=context_length,
             horizon=horizon,
             artifact=near_distance_artifact,
@@ -1560,7 +1574,8 @@ def _generate_accepted_sample_values(
             **latent_params,
             "intensity": int(intensity),
             "intensity_definition": (
-                "capability-global canonical realized strength; model-error monotonicity is evaluated separately"
+                "dataset-local relative strength quantile; raw strength is not comparable "
+                "across datasets and model-error monotonicity is evaluated separately"
             ),
             "acceptance": {
                 "accepted": bool(accepted),

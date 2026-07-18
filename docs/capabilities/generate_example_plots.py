@@ -4,7 +4,8 @@
 For each capability the script uses one registered online profile and ranks a
 fixed visualization-only seed bank.  A representative seed must pass all
 online gates at intensities 1, 3, and 5, have a strictly increasing primary
-feature, and minimize normalized distance to the three canonical anchors.
+feature, and minimize normalized distance to the selected dataset/profile's
+three local q10/q50/q90 targets.
 The default pool has 64 seeds; the high-variance nonlinear statistic uses a
 predeclared 256-seed pool. Reusing the seed keeps all nuisance draws and
 structural clocks paired.
@@ -111,7 +112,7 @@ CAPABILITIES = (
     CapabilityPlotSpec(
         "trend",
         "趋势外推",
-        "traffic_hourly_daily_168ctx",
+        "m4_hourly_daily_168ctx",
         168,
         24,
         1,
@@ -138,7 +139,7 @@ CAPABILITIES = (
     CapabilityPlotSpec(
         "regime_switching",
         "状态切换",
-        "traffic_hourly_daily_168ctx",
+        "m4_hourly_daily_168ctx",
         168,
         24,
         1,
@@ -156,7 +157,7 @@ CAPABILITIES = (
     CapabilityPlotSpec(
         "predictable_intermittency",
         "可预测间歇性",
-        "m4_hourly_daily_168ctx",
+        "electricity_hourly_daily_168ctx",
         168,
         24,
         1,
@@ -357,7 +358,7 @@ def find_paired_examples(
     anchors = np.asarray(
         generator_artifact["profiles"][spec.profile_id]["capabilities"][
             spec.capability_id
-        ]["canonical_target_values"],
+        ]["target_values"],
         dtype=float,
     )[[intensity - 1 for intensity in INTENSITIES]]
     anchor_range = max(float(anchors[-1] - anchors[0]), 1e-9)
@@ -475,7 +476,7 @@ def plot_example(
     intensity: int,
     seed: int,
     sample: dict[str, Any],
-    canonical_target: float,
+    dataset_local_target: float,
 ) -> Path:
     target = np.asarray(sample["target"], dtype=float)
     covariates = sample["covariates"]
@@ -661,7 +662,7 @@ def plot_example(
     figure.text(
         0.925,
         0.952,
-        f"{primary}\n{realized:.4f}  /  anchor {canonical_target:.4f}",
+        f"{primary}\n{realized:.4f}  /  local target {dataset_local_target:.4f}",
         ha="right",
         va="top",
         color="#1e3a8a",
@@ -712,7 +713,7 @@ def main() -> None:
         capability_record = generator_artifact["profiles"][
             spec.profile_id
         ]["capabilities"][spec.capability_id]
-        anchors = capability_record["canonical_target_values"]
+        anchors = capability_record["target_values"]
         for intensity in INTENSITIES:
             sample = examples[intensity]
             image_path = plot_example(
@@ -746,7 +747,7 @@ def main() -> None:
                         float(sample["features"][primary]),
                         8,
                     ),
-                    "canonical_target_value": float(anchors[intensity - 1]),
+                    "dataset_local_target_value": float(anchors[intensity - 1]),
                     "image": image_path.relative_to(
                         Path(__file__).resolve().parent
                     ).as_posix(),
@@ -761,13 +762,8 @@ def main() -> None:
         )
 
     manifest = {
-        "schema_version": "capability_example_manifest.v2",
-        "generator_scale_id": generator_artifact["canonical_intensity"][
-            "scale_id"
-        ],
-        "generator_scale_fingerprint": generator_artifact[
-            "canonical_intensity"
-        ]["scale_fingerprint"],
+        "schema_version": "capability_example_manifest.v3",
+        "intensity_policy": generator_artifact["intensity_policy"],
         "source_artifacts": [
             str(path.relative_to(REPO_ROOT)) for path in required
         ],
@@ -777,7 +773,8 @@ def main() -> None:
             "nuisance-paired seed per capability whose intensities 1, 3, and 5 "
             "all pass construction, feature-support, and near-distance gates; "
             "require a strictly increasing primary feature and minimize its "
-            "normalized distance to the three canonical anchors; forecast "
+            "normalized distance to the selected dataset/profile's three local "
+            "q10/q50/q90 targets; forecast "
             "error and capability contrast are never used for selection, and "
             "this policy is not part of online sample acceptance"
         ),

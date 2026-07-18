@@ -225,17 +225,21 @@ http://127.0.0.1:5173
 
    合成数据路径：
    - `Test case set name` 是生成集合的名称前缀；多选能力时，每个能力维度生成一个测试用例集。
-   - `Capabilities` 可多选。当前内置能力包括趋势、多季节性、状态切换、长记忆非线性、间歇异方差、公共因子、lead-lag、协同状态切换和协变量响应。
-   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Target dimension`、`Seed`、`Frequency`。主季节周期由后端根据真实 profile bucket 解析；单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。
+   - `Capabilities` 可多选。当前九个能力为趋势、多季节性、时变季节性、可预测状态切换、非线性持续性、可预测间歇性、公共因子、层级一致性和已知未来协变量响应。具体 dataset 不一定支持全部能力；缺少变量结构或校准条件时，后端会明确拒绝该 cell。
+   - 共享参数包括 `Sample count`、`Context`、`Horizon`、`Intensity`（结构强度）、`Target dimension`、`Seed`、`Frequency`。主季节周期由后端根据预选 dataset-local profile 解析；单变量能力固定目标维度为 1；多变量和协变量能力使用目标维度参数。一次 shard 只绑定一个 dataset/profile，五档 intensity 是该 profile 内部的 q10/q30/q50/q70/q90，不跨 dataset 比较。
    - `Covariate response` 会生成 known-future 协变量 `weather` 和 `event`，结果页会在目标预测图下方单独显示协变量曲线。
    - 点「Generate synthetic test cases」后，后端生成 synthetic shard，并自动预选到下一步。
    - 研究实验样本可用脚本导入到平台库，便于在前端查看样本曲线。例如：
      ```bash
      cd backend
      uv run python ../scripts/import_synthetic_v2_experiment_shards.py \
-       --summary ../runtime/research/synthetic-v2-univariate-capabilities-experiment/summary.json
+       --dataset-id m4_hourly \
+       --profile-id m4_hourly_daily_168ctx \
+       --capabilities trend multi_seasonal regime_switching \
+       --context-length 168 \
+       --horizon 24
      ```
-     脚本默认写入 `backend/runtime/tsbenchmark.db` 和 `backend/runtime/synthetic/imports/`，按 `capability × intensity` 生成测试用例集；同一 summary 和参数重复执行会跳过已导入 shard，可加 `--allow-duplicates` 强制新建。旧参数名 `--difficulties` 仍作为兼容别名保留。
+     `dataset-id/profile-id` 必须对应同一个 v4 dataset-local conditioning profile；该 profile 不支持的能力会记录为 `unsupported` 并跳过。脚本默认写入 `backend/runtime/tsbenchmark.db` 和 `backend/runtime/synthetic/imports/`，按 `dataset × capability × intensity` 生成测试用例集；同一配置重复执行会跳过已导入 shard，可加 `--allow-duplicates` 强制新建。旧参数名 `--difficulties` 仍作为兼容别名保留。
 
    如果第 2 步选择复用已有集合，本步只显示提示并继续到已有测试用例集选择。
 4. **Select test cases**：在可搜索、可分页的列表中勾选一个或多个测试用例集。刚生成的集合会自动预选；也可以搜索名称、数据集、目标列、能力维度或 ID，并追加已有集合。列表详情会显示真实/合成类型、样本数、窗口、目标列；只有测试用例集实际带协变量时才显示协变量列，合成集合还会显示能力、结构强度和 seed。点「Create track from selected sets」后，系统基于所选集合创建评测赛道与默认榜单；合成集合会按能力维度自动拆成多个 capability block。

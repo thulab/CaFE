@@ -5,7 +5,6 @@ import argparse
 import gc
 import hashlib
 import json
-import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,20 +41,10 @@ from build_synthetic_v2_feature_gate_artifact import (  # noqa: E402
     split_real_rows_three_way,
 )
 from run_synthetic_v2_near_distance_calibration import BucketSpec, load_real_bucket  # noqa: E402
-from synthetic_capability_qualification import (  # noqa: E402
-    REGIME_HISTORY_INCREMENTAL_R2_MIN,
-    regime_clock_features,
-)
+from synthetic_capability_qualification import regime_clock_features  # noqa: E402
 
 
 DEFAULT_DATA_DIR = REPO_ROOT / "runtime/research"
-DEFAULT_GIFT_EVAL_DIR = Path.home() / "xmy/gift-eval"
-DEFAULT_GIFT_EVAL_CODE_DIR = Path.home() / "xmy/gift-eval-code"
-DEFAULT_NIXTLA_HIERARCHY_ZIP = Path.home() / "xmy/reference-data/nixtla-hierarchical/datasets.zip"
-DEFAULT_UCI_HYDRAULIC_ZIP = (
-    Path.home() / "xmy/reference-data/uci-condition-monitoring-hydraulic-systems.zip"
-)
-DEFAULT_SKCHANGE_DIR = Path.home() / "xmy/reference-data/skchange"
 DEFAULT_ARTIFACT_PATH = REPO_ROOT / "backend/app/data/synthetic_v2_generator_conditioning_artifact.json"
 DEFAULT_SUMMARY_PATH = REPO_ROOT / "runtime/research/synthetic-v2-generator-conditioning/summary.json"
 DEFAULT_SEED = 20260715
@@ -65,12 +54,11 @@ HIGH_VARIANCE_FIT_SEED_BANK_COUNT = 4
 HIGH_VARIANCE_CAPABILITY_IDS = frozenset(
     {"nonlinear_persistence", "covariate_response"}
 )
-TARGET_PERCENTILE_LEVELS = (0.20, 0.35, 0.50, 0.70, 0.90)
-CAPABILITY_REFERENCE_PERCENTILE_LEVELS = {
-    # Below the real median, conditional nonlinear gain is not reliably
-    # distinguishable from its finite-sample estimator floor in every profile.
-    "nonlinear_persistence": (0.55, 0.625, 0.70, 0.80, 0.90),
-}
+TARGET_PERCENTILE_LEVELS = (0.10, 0.30, 0.50, 0.70, 0.90)
+INTENSITY_POLICY_ID = "dataset-local-relative-quantiles-v1"
+LOCAL_CALIBRATION_TOLERANCE = 0.20
+LOCAL_MIN_TARGET_RANGE = 1e-6
+LOCAL_MIN_ADJACENT_GAP_FRACTION = 0.02
 STRUCTURE_SCALE_GRID = (
     0.0025,
     0.005,
@@ -108,178 +96,8 @@ STRUCTURE_SCALE_GRID = (
     4.0,
 )
 LAMBDA_GRID = tuple(float(value) for value in np.linspace(0.0, 1.0, 11))
-CANONICAL_CALIBRATION_TOLERANCE = 0.20
-CANONICAL_MIN_ADJACENT_GAP_FRACTION = 0.10
-CANONICAL_SCALE_ID = "synthetic-v2-paper-v2-shortcut-resistant-2026-07-18"
-CANONICAL_REFERENCE_CORPUS_ROLE = (
-    "paper-v2 frozen development calibration only; external dataset-family validation "
-    "and all GIFT-Eval official test windows are excluded from scale fitting"
-)
 MIN_REGIME_QUALIFIED_PARAMETER_WINDOWS = 30
 MIN_REGIME_QUALIFIED_RATE = 0.10
-PAPER_UNIVARIATE_CAPABILITY_IDS = (
-    "trend",
-    "multi_seasonal",
-    "time_varying_seasonality",
-    "regime_switching",
-    "nonlinear_persistence",
-    "predictable_intermittency",
-)
-CANONICAL_ONLY_BUCKET_SPECS = (
-    BucketSpec(
-        "gift_hospital_monthly_60ctx_12h",
-        "gift_univariate",
-        "hospital",
-        60,
-        12,
-        12,
-        12,
-        synthetic_capabilities=PAPER_UNIVARIATE_CAPABILITY_IDS,
-    ),
-    BucketSpec(
-        "gift_jena_weather_hourly_168ctx_24h",
-        "gift_univariate",
-        "jena_weather/H",
-        168,
-        24,
-        24,
-        24,
-        synthetic_capabilities=PAPER_UNIVARIATE_CAPABILITY_IDS,
-    ),
-    BucketSpec(
-        "gift_bizitobs_l2c_hourly_168ctx_24h",
-        "gift_univariate",
-        "bizitobs_l2c/H",
-        168,
-        24,
-        24,
-        24,
-        synthetic_capabilities=PAPER_UNIVARIATE_CAPABILITY_IDS,
-    ),
-    BucketSpec(
-        "gift_jena_weather_hourly_panel_168ctx",
-        "gift_panel",
-        "jena_weather/H",
-        168,
-        24,
-        24,
-        24,
-        target_dim=3,
-        synthetic_capabilities=("common_factor",),
-    ),
-    BucketSpec(
-        "gift_bizitobs_l2c_hourly_panel_168ctx",
-        "gift_panel",
-        "bizitobs_l2c/H",
-        168,
-        24,
-        12,
-        24,
-        target_dim=3,
-        synthetic_capabilities=("common_factor",),
-    ),
-    BucketSpec(
-        "nixtla_labour_monthly_hierarchy_60ctx_12h",
-        "nixtla_binary_hierarchy",
-        "Labour",
-        60,
-        12,
-        12,
-        12,
-        target_dim=3,
-        hierarchy="additive_first",
-        max_groups=16,
-        synthetic_capabilities=("hierarchical_coherence",),
-    ),
-    BucketSpec(
-        "nixtla_tourism_large_monthly_hierarchy_60ctx_12h",
-        "nixtla_binary_hierarchy",
-        "TourismLarge",
-        60,
-        12,
-        12,
-        12,
-        target_dim=3,
-        hierarchy="additive_first",
-        max_groups=24,
-        synthetic_capabilities=("hierarchical_coherence",),
-    ),
-    BucketSpec(
-        "gefcom2014_solar_hourly_covariate_168ctx_24h",
-        "gefcom2014_solar",
-        "GEFCom2014.zip",
-        168,
-        24,
-        24,
-        24,
-        covariate_dim=12,
-        task=1,
-        synthetic_capabilities=("covariate_response",),
-    ),
-    BucketSpec(
-        "uci_hydraulic_eps1_420ctx_60h",
-        "uci_hydraulic_cycle",
-        "uci-condition-monitoring-hydraulic-systems.zip:EPS1",
-        420,
-        60,
-        60,
-        60,
-        synthetic_capabilities=("regime_switching",),
-    ),
-    BucketSpec(
-        "skchange_hvac_unit0_504ctx_144h",
-        "skchange_hvac",
-        "skchange/datasets/data/hvac_system/data.csv:unit=0",
-        504,
-        144,
-        8,
-        144,
-        task=0,
-        synthetic_capabilities=("regime_switching",),
-    ),
-)
-GENERIC_UNIVARIATE_REFERENCE_PROFILE_IDS = (
-    "m4_hourly_daily_168ctx",
-    "electricity_hourly_daily_168ctx",
-    "traffic_hourly_daily_168ctx",
-    "gift_hospital_monthly_60ctx_12h",
-    "gift_jena_weather_hourly_168ctx_24h",
-    "gift_bizitobs_l2c_hourly_168ctx_24h",
-)
-CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY = {
-    "trend": GENERIC_UNIVARIATE_REFERENCE_PROFILE_IDS,
-    "multi_seasonal": GENERIC_UNIVARIATE_REFERENCE_PROFILE_IDS,
-    "time_varying_seasonality": GENERIC_UNIVARIATE_REFERENCE_PROFILE_IDS,
-    "regime_switching": (
-        "uci_hydraulic_eps1_420ctx_60h",
-        "skchange_hvac_unit0_504ctx_144h",
-    ),
-    "nonlinear_persistence": GENERIC_UNIVARIATE_REFERENCE_PROFILE_IDS,
-    "predictable_intermittency": GENERIC_UNIVARIATE_REFERENCE_PROFILE_IDS,
-    "common_factor": (
-        "electricity_hourly_panel_168ctx",
-        "traffic_hourly_panel_168ctx",
-        "gift_jena_weather_hourly_panel_168ctx",
-        "gift_bizitobs_l2c_hourly_panel_168ctx",
-    ),
-    "hierarchical_coherence": (
-        "m5_daily_hierarchy_365ctx_28h",
-        "nixtla_labour_monthly_hierarchy_60ctx_12h",
-        "nixtla_tourism_large_monthly_hierarchy_60ctx_12h",
-    ),
-    "covariate_response": (
-        "m5_daily_covariate_365ctx_28h",
-        "gefcom2014_load_hourly_covariate_168ctx_24h",
-        "gefcom2014_solar_hourly_covariate_168ctx_24h",
-    ),
-}
-CANONICAL_REFERENCE_PROFILE_IDS = tuple(
-    dict.fromkeys(
-        profile_id
-        for profile_ids in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY.values()
-        for profile_id in profile_ids
-    )
-)
 CONDITIONING_PROFILE_IDS = (
     "m4_hourly_daily_168ctx",
     "electricity_hourly_daily_168ctx",
@@ -299,34 +117,23 @@ ONLINE_CONDITIONING_PROFILE_IDS = tuple(
     for profile_id in CONDITIONING_PROFILE_IDS
     if profile_id not in RESEARCH_ONLY_CONDITIONING_PROFILE_IDS
 )
-GIFT_EVAL_HELD_OUT_FAMILIES = (
-    "solar",
-    "covid_deaths",
-    "kdd_cup_2018_with_missing",
-    "restaurant",
-    "hierarchical_sales",
-    "LOOP_SEATTLE",
-    "SZ_TAXI",
-    "M_DENSE",
-    "ett1",
-    "ett2",
-    "bitbrains_fast_storage",
-    "bitbrains_rnd",
-    "bizitobs_application",
-    "bizitobs_service",
-)
+DATASET_ID_BY_PROFILE_ID = {
+    "m4_hourly_daily_168ctx": "m4_hourly",
+    "electricity_hourly_daily_168ctx": "electricity",
+    "traffic_hourly_daily_168ctx": "traffic",
+    "electricity_hourly_panel_168ctx": "electricity",
+    "traffic_hourly_panel_168ctx": "traffic",
+    "m5_daily_covariate_365ctx_28h": "m5",
+    "m5_daily_hierarchy_365ctx_28h": "m5",
+    "gefcom2014_load_hourly_covariate_168ctx_24h": "gefcom2014_load",
+    "electricity_hourly_daily_2048ctx_24h": "electricity",
+}
 EXPECTED_ASSET_IDENTITIES = {
-    "gift_eval_arrow_manifest_sha256": "0f410dd0eadce583886e7141e556f3a40c069472ad6a1b6c3bd1663d5860c120",
-    "gift_eval_protocol_git_commit": "6fdb10df9c17411f0aef5ff862afbec23627c12f",
-    "nixtla_hierarchy_sha256": "6512d9aa80f111ee26480bc6f3f4eb3b5655d4ceecc384933100edc85adf704b",
     "m5_sha256": "0349ba38a2efd30d0f5acc6394c1110e140e1a990c650d7b5ca44c5b25dd12f5",
     "gefcom2014_sha256": "d68d957270edd93b26a37d0f9b5e901f942abdf34c75eacbe14e417beb16e154",
     "m4_hourly_sha256": "18085bd3c34e41cdc07441aa61c5610dac9e916b9489a6a381f8e89fd01c8a66",
     "electricity_hourly_sha256": "eff447075dde68dca0105ab7e2851c5637967ae3bb21556fd8b931f196d5968c",
     "traffic_hourly_sha256": "3db12ba866a9c9d3c8109b7b6d189a990c38d0e5002fa2617022157358d08299",
-    "uci_hydraulic_sha256": "24128aad2ee45eea7e6b63ebbd9992cdf25d0483a2cebefbfc13bc69079af1f2",
-    "skchange_hvac_csv_sha256": "1da08ee5922db6d4d6f4ab32a0e6a9666fc41680ed75dcffe53ac9e1819fff99",
-    "skchange_git_commit": "f209def94199607b11b1ae9b3108d80e3e87e624",
 }
 PRIMARY_TARGET_FEATURE = {
     "trend": "trend_strength",
@@ -359,15 +166,6 @@ def parse_args() -> argparse.Namespace:
         description="Fit real-profile-conditioned nuisance parameters and intensity mappings."
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--gift-eval-dir", type=Path, default=DEFAULT_GIFT_EVAL_DIR)
-    parser.add_argument("--gift-eval-code-dir", type=Path, default=DEFAULT_GIFT_EVAL_CODE_DIR)
-    parser.add_argument(
-        "--nixtla-hierarchy-zip",
-        type=Path,
-        default=DEFAULT_NIXTLA_HIERARCHY_ZIP,
-    )
-    parser.add_argument("--uci-hydraulic-zip", type=Path, default=DEFAULT_UCI_HYDRAULIC_ZIP)
-    parser.add_argument("--skchange-dir", type=Path, default=DEFAULT_SKCHANGE_DIR)
     parser.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT_PATH)
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY_PATH)
     parser.add_argument("--max-windows", type=int, default=DEFAULT_MAX_WINDOWS)
@@ -377,14 +175,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--buckets", nargs="*", default=None)
     parser.add_argument("--skip-asset-identity-check", action="store_true")
-    parser.add_argument(
-        "--allow-unsupported",
-        action="store_true",
-        help=(
-            "Write a diagnostic artifact with unsupported cells instead of "
-            "failing; never use such an artifact for online generation."
-        ),
-    )
     return parser.parse_args()
 
 
@@ -392,11 +182,6 @@ def main() -> int:
     args = parse_args()
     artifact, summary = build_artifact(
         data_dir=args.data_dir,
-        gift_eval_dir=args.gift_eval_dir,
-        gift_eval_code_dir=args.gift_eval_code_dir,
-        nixtla_hierarchy_zip=args.nixtla_hierarchy_zip,
-        uci_hydraulic_zip=args.uci_hydraulic_zip,
-        skchange_dir=args.skchange_dir,
         max_windows=args.max_windows,
         calibration_fraction=args.calibration_fraction,
         gate_reference_fraction=args.gate_reference_fraction,
@@ -404,7 +189,6 @@ def main() -> int:
         seed=args.seed,
         bucket_ids=tuple(args.buckets) if args.buckets else None,
         validate_asset_identities=not args.skip_asset_identity_check,
-        allow_unsupported=args.allow_unsupported,
     )
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     args.artifact.write_text(
@@ -424,11 +208,6 @@ def main() -> int:
 def build_artifact(
     *,
     data_dir: Path,
-    gift_eval_dir: Path = DEFAULT_GIFT_EVAL_DIR,
-    gift_eval_code_dir: Path = DEFAULT_GIFT_EVAL_CODE_DIR,
-    nixtla_hierarchy_zip: Path = DEFAULT_NIXTLA_HIERARCHY_ZIP,
-    uci_hydraulic_zip: Path = DEFAULT_UCI_HYDRAULIC_ZIP,
-    skchange_dir: Path = DEFAULT_SKCHANGE_DIR,
     max_windows: int,
     calibration_fraction: float,
     gate_reference_fraction: float,
@@ -436,25 +215,15 @@ def build_artifact(
     seed: int,
     bucket_ids: tuple[str, ...] | None = None,
     validate_asset_identities: bool = True,
-    allow_unsupported: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    all_specs = (*FEATURE_GATE_BUCKET_SPECS, *CANONICAL_ONLY_BUCKET_SPECS)
-    specs_by_id = {spec.profile_id: spec for spec in all_specs}
-    required_profile_ids = (*CANONICAL_REFERENCE_PROFILE_IDS, *CONDITIONING_PROFILE_IDS)
-    missing_reference_profiles = sorted(set(required_profile_ids) - set(specs_by_id))
-    if missing_reference_profiles:
+    specs_by_id = {spec.profile_id: spec for spec in FEATURE_GATE_BUCKET_SPECS}
+    missing_profiles = sorted(set(CONDITIONING_PROFILE_IDS) - set(specs_by_id))
+    if missing_profiles:
         raise ValueError(
-            "canonical or conditioning profiles are not registered: "
-            + ", ".join(missing_reference_profiles)
+            "conditioning profiles are not registered: "
+            + ", ".join(missing_profiles)
         )
-    asset_identities = resolve_asset_identities(
-        data_dir=data_dir,
-        gift_eval_dir=gift_eval_dir,
-        gift_eval_code_dir=gift_eval_code_dir,
-        nixtla_hierarchy_zip=nixtla_hierarchy_zip,
-        uci_hydraulic_zip=uci_hydraulic_zip,
-        skchange_dir=skchange_dir,
-    )
+    asset_identities = resolve_asset_identities(data_dir=data_dir)
     if validate_asset_identities:
         assert_expected_asset_identities(asset_identities)
     selected = [
@@ -472,16 +241,12 @@ def build_artifact(
 
     created_at = datetime.now(timezone.utc).isoformat()
     calibration_inputs: dict[str, ProfileCalibrationInput] = {}
-    input_profile_ids = tuple(dict.fromkeys(required_profile_ids))
+    input_profile_ids = tuple(spec.profile_id for spec in selected)
     for profile_id in input_profile_ids:
         spec = specs_by_id[profile_id]
         asset_path = resolve_profile_asset_path(
             spec,
             data_dir=data_dir,
-            gift_eval_dir=gift_eval_dir,
-            nixtla_hierarchy_zip=nixtla_hierarchy_zip,
-            uci_hydraulic_zip=uci_hydraulic_zip,
-            skchange_dir=skchange_dir,
         )
         rows = load_real_bucket(spec, asset_path, max_windows=max_windows)
         parameter_rows, _gate_reference, _gate_calibration, split_summary = split_real_rows_three_way(
@@ -528,13 +293,7 @@ def build_artifact(
                     parameter_rows,
                     spec,
                 )
-                capability_rows = annotated_rows
-                if (
-                    spec.profile_id
-                    in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY[
-                        "regime_switching"
-                    ]
-                ):
+                try:
                     capability_rows, qualification_summary = (
                         qualify_regime_reference_rows(
                             annotated_rows,
@@ -542,9 +301,17 @@ def build_artifact(
                             audits=regime_audits,
                         )
                     )
-                    capability_qualification_summaries[
-                        capability_id
-                    ] = qualification_summary
+                    capability_qualification_summaries[capability_id] = {
+                        "status": "supported",
+                        **qualification_summary,
+                    }
+                except ValueError as error:
+                    capability_rows = []
+                    capability_qualification_summaries[capability_id] = {
+                        "status": "unsupported",
+                        "reason": "insufficient_dataset_local_recurring_regime_structure",
+                        "detail": str(error),
+                    }
             capability_parameter_counts[capability_id] = len(capability_rows)
             percentile_levels = reference_percentile_levels(capability_id)
             local_target_quantiles[capability_id] = {
@@ -557,10 +324,6 @@ def build_artifact(
             }
             primary_feature = PRIMARY_TARGET_FEATURE[capability_id]
             values = finite_values(capability_rows, primary_feature)
-            if not values.size:
-                raise ValueError(
-                    f"{spec.profile_id}/{capability_id} has no finite {primary_feature} values"
-                )
             primary_values[capability_id] = values
         calibration_inputs[spec.profile_id] = ProfileCalibrationInput(
             spec=spec,
@@ -576,18 +339,9 @@ def build_artifact(
         del rows, parameter_rows
         gc.collect()
 
-    canonical_definitions = derive_canonical_target_definitions(calibration_inputs)
-    scale_fingerprint = canonical_scale_fingerprint(
-        canonical_definitions,
-        asset_identities=asset_identities,
-    )
-    canonical_reference_summaries = [
-        canonical_reference_summary(calibration_inputs[profile_id])
-        for profile_id in CANONICAL_REFERENCE_PROFILE_IDS
-    ]
     profiles: dict[str, dict[str, Any]] = {}
     summaries: list[dict[str, Any]] = []
-    unsupported_cells: list[str] = []
+    unsupported_cells: list[dict[str, Any]] = []
     for spec in selected:
         calibration_input = calibration_inputs[spec.profile_id]
         real_feature_summary = calibration_input.real_feature_summary
@@ -595,74 +349,123 @@ def build_artifact(
         capability_configs: dict[str, dict[str, Any]] = {}
         capability_summaries: dict[str, dict[str, Any]] = {}
         for capability_id in spec.synthetic_capabilities:
-            canonical_definition = canonical_definitions[capability_id]
-            canonical_target_values = canonical_definition["target_values"]
-            local_real_percentiles = empirical_percentiles(
-                calibration_input.primary_values[capability_id],
-                canonical_target_values,
+            percentile_levels = reference_percentile_levels(capability_id)
+            primary_feature = PRIMARY_TARGET_FEATURE[capability_id]
+            target_values = calibration_input.local_target_quantiles.get(
+                capability_id, {}
+            ).get(primary_feature, [])
+            structural = calibration_input.capability_qualification_summaries.get(
+                capability_id,
+                {"status": "supported"},
             )
-            parameters, intensity_lambdas, calibration_summary = calibrate_capability_conditioning(
-                spec=spec,
-                capability_id=capability_id,
-                profile_nuisance=profile_nuisance,
-                real_feature_summary=real_feature_summary,
-                canonical_target_values=canonical_target_values,
-                sample_count=calibration_samples,
-                seed=_seed_for(seed, spec.profile_id, len(capability_configs) + 1),
+            support = local_target_support(
+                target_values,
+                structural_status=structural,
             )
-            if calibration_summary["status"] != "supported":
+            base_config: dict[str, Any] = {
+                "status": support["status"],
+                "target_feature": primary_feature,
+                "target_percentile_levels": list(percentile_levels),
+                "target_values": target_values,
+                "dataset_local_target_quantiles": calibration_input.local_target_quantiles.get(
+                    capability_id, {}
+                ),
+                "structural_qualification": structural,
+                "calibration_method": (
+                    "dataset-local parameter-split quantile targets with "
+                    "dataset-local inverse calibration"
+                ),
+            }
+            if support["status"] != "supported":
+                unsupported_reason = str(support["reason"])
                 unsupported_cells.append(
-                    f"{spec.profile_id}/{capability_id}"
-                    f"(max_error={calibration_summary['max_normalized_error']},"
-                    f"monotone={calibration_summary['monotone_realized']})"
+                    {
+                        "dataset_id": DATASET_ID_BY_PROFILE_ID[spec.profile_id],
+                        "profile_id": spec.profile_id,
+                        "capability_id": capability_id,
+                        "reason": unsupported_reason,
+                        "detail": support.get("detail"),
+                    }
                 )
+                capability_configs[capability_id] = {
+                    **base_config,
+                    "unsupported_reason": unsupported_reason,
+                    "unsupported_detail": support.get("detail"),
+                }
+                capability_summaries[capability_id] = capability_configs[
+                    capability_id
+                ]
+                continue
+
+            parameters, intensity_lambdas, calibration_summary = (
+                calibrate_capability_conditioning(
+                    spec=spec,
+                    capability_id=capability_id,
+                    profile_nuisance=profile_nuisance,
+                    real_feature_summary=real_feature_summary,
+                    target_values=target_values,
+                    sample_count=calibration_samples,
+                    seed=_seed_for(
+                        seed,
+                        spec.profile_id,
+                        len(capability_configs) + 1,
+                    ),
+                )
+            )
+            status = str(calibration_summary["status"])
             capability_configs[capability_id] = {
+                **base_config,
+                "status": status,
                 "parameters": parameters,
                 "intensity_lambdas": intensity_lambdas,
-                "canonical_reference_percentile_levels": canonical_definition[
-                    "reference_percentile_levels"
+                "calibrated_realized_strengths": calibration_summary[
+                    "realized_values"
                 ],
-                "canonical_target_feature": canonical_definition["primary_feature"],
-                "canonical_target_values": canonical_target_values,
-                "canonical_raw_reference_quantile_values": canonical_definition[
-                    "raw_reference_quantile_values"
-                ],
-                "calibrated_realized_strengths": calibration_summary["realized_values"],
-                "local_real_percentiles_at_canonical_targets": local_real_percentiles,
-                "local_real_target_quantiles": calibration_input.local_target_quantiles[
-                    capability_id
-                ],
-                "canonical_calibration": {
-                    key: value
-                    for key, value in calibration_summary.items()
-                    if key
-                    in {
-                        "status",
-                        "normalized_absolute_errors",
-                        "max_normalized_error",
-                        "tolerance",
-                        "target_scale",
-                        "fit_sample_count",
-                        "fit_seed_bank_count",
-                        "fit_samples_per_seed_bank",
-                        "validation_sample_count",
-                        "validation_seed_is_independent",
+                "calibration": calibration_summary,
+            }
+            if status != "supported":
+                capability_configs[capability_id].update(
+                    {
+                        "unsupported_reason": "inverse_calibration_failed",
+                        "unsupported_detail": {
+                            "max_normalized_error": calibration_summary[
+                                "max_normalized_error"
+                            ],
+                            "monotone_realized": calibration_summary[
+                                "monotone_realized"
+                            ],
+                        },
                     }
-                },
-                "calibration_method": "capability-global canonical target inverse calibration",
-            }
-            capability_summaries[capability_id] = {
-                **calibration_summary,
-                "local_real_percentiles_at_canonical_targets": local_real_percentiles,
-            }
+                )
+            capability_summaries[capability_id] = capability_configs[
+                capability_id
+            ]
+            if status != "supported":
+                unsupported_cells.append(
+                    {
+                        "dataset_id": DATASET_ID_BY_PROFILE_ID[spec.profile_id],
+                        "profile_id": spec.profile_id,
+                        "capability_id": capability_id,
+                        "reason": "inverse_calibration_failed",
+                        "detail": {
+                            "max_normalized_error": calibration_summary[
+                                "max_normalized_error"
+                            ],
+                            "monotone_realized": calibration_summary[
+                                "monotone_realized"
+                            ],
+                        },
+                    }
+                )
 
         frequency = profile_frequency(spec.profile_id)
         profiles[spec.profile_id] = {
             "profile_id": spec.profile_id,
+            "dataset_id": DATASET_ID_BY_PROFILE_ID[spec.profile_id],
             "conditioning_role": (
                 "research_only_pending_near_distance_gate"
                 if spec.profile_id in RESEARCH_ONLY_CONDITIONING_PROFILE_IDS
-                else "paper_v2_online"
+                else "dataset_local_online"
             ),
             "context_length": int(spec.context_length),
             "horizon": int(spec.horizon),
@@ -678,16 +481,12 @@ def build_artifact(
         }
         summaries.append(
             {
+                "dataset_id": DATASET_ID_BY_PROFILE_ID[spec.profile_id],
                 "profile_id": spec.profile_id,
                 "parameter_window_count": calibration_input.parameter_window_count,
                 "nuisance_parameters": profile_nuisance,
                 "capabilities": capability_summaries,
             }
-        )
-
-    if unsupported_cells and not allow_unsupported:
-        raise ValueError(
-            "canonical intensity calibration is unsupported for: " + ", ".join(unsupported_cells)
         )
 
     try:
@@ -716,16 +515,15 @@ def build_artifact(
         },
         "seed": int(seed),
         "split_policy": "generator parameters are fit only on the parameter split",
-        "profile_selection_policy": "balanced uniform over exact task/window profiles",
-        "intensity_policy": (
-            "capability-global absolute realized-strength anchors with capability-specific "
-            "boundary rules, equal-profile real upper anchors, and profile-specific inverse maps"
+        "profile_selection_policy": (
+            "explicit dataset profile; no cross-dataset pooling or fallback"
         ),
-        "canonical_reference_profile_ids": list(CANONICAL_REFERENCE_PROFILE_IDS),
-        "canonical_reference_profile_ids_by_capability": {
-            capability_id: list(profile_ids)
-            for capability_id, profile_ids in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY.items()
-        },
+        "intensity_policy": (
+            "dataset-bucket-local parameter-split quantiles; intensity is ordinal "
+            "only within one dataset/profile/capability"
+        ),
+        "intensity_policy_id": INTENSITY_POLICY_ID,
+        "target_percentile_levels": list(TARGET_PERCENTILE_LEVELS),
         "conditioning_profile_ids": list(CONDITIONING_PROFILE_IDS),
         "online_conditioning_profile_ids": list(ONLINE_CONDITIONING_PROFILE_IDS),
         "research_only_conditioning_profile_ids": list(
@@ -735,76 +533,37 @@ def build_artifact(
             "inverse conditioning is retained for window-length research, but a profile is not "
             "paper-v2 online until feature-support and near-distance gates are both calibrated"
         ),
-        "canonical_profile_weighting": "equal profile weight",
-        "canonical_scale_id": CANONICAL_SCALE_ID,
-        "canonical_scale_fingerprint": scale_fingerprint,
-        "canonical_reference_corpus_role": CANONICAL_REFERENCE_CORPUS_ROLE,
         "gift_eval_test_tail_policy": (
             "exclude prediction_length * windows using frozen short-term protocol before "
             "candidate window construction"
         ),
-        "canonical_reference_asset_identities": asset_identities,
-        "gift_eval_held_out_families": list(GIFT_EVAL_HELD_OUT_FAMILIES),
-        "other_held_out_sources": {
-            "nixtla_hierarchy": ["Traffic", "Wiki2", "TourismSmall"],
-            "gefcom2014": ["Wind"],
-            "skchange_hvac": ["unit_1"],
-        },
-        "canonical_scale_change_policy": (
-            "adding/removing reference profiles or changing target curves requires a new scale_id"
-        ),
+        "asset_identities": asset_identities,
         "unsupported_cells": unsupported_cells,
-        "diagnostic_allow_unsupported": bool(allow_unsupported),
+        "unsupported_policy": (
+            "record unsupported dataset/profile/capability cells and exclude "
+            "them from online generation without failing other datasets"
+        ),
     }
     artifact = {
-        "schema_version": "synthetic_v2_generator_conditioning_artifact.v3",
+        "schema_version": "synthetic_v2_generator_conditioning_artifact.v4",
         "created_at": created_at,
         "config": config,
-        "canonical_intensity": {
-            "scale_id": CANONICAL_SCALE_ID,
-            "scale_fingerprint": scale_fingerprint,
-            "reference_corpus_role": CANONICAL_REFERENCE_CORPUS_ROLE,
-            "policy": (
-                "capability-specific absolute anchor curves: regime and nonlinear start at "
-                "formal null/qualification boundaries and end at equal-profile real q90; "
-                "other capabilities use equal-profile real quantiles with an endpoint-preserving "
-                "10%-of-range adjacent-resolution projection"
+        "intensity_policy": {
+            "policy_id": INTENSITY_POLICY_ID,
+            "percentile_levels": list(TARGET_PERCENTILE_LEVELS),
+            "definition": (
+                "intensity 1..5 denotes dataset/profile-local relative realized "
+                "strength; target values are not absolute-comparable across datasets"
             ),
-            "default_reference_percentile_levels": list(TARGET_PERCENTILE_LEVELS),
-            "asset_identities": asset_identities,
-            "reference_qualification": {
-                profile_id: calibration_inputs[
-                    profile_id
-                ].capability_qualification_summaries
-                for profile_id in CANONICAL_REFERENCE_PROFILE_IDS
-                if calibration_inputs[profile_id].capability_qualification_summaries
-            },
-            "reference_preprocessing": {
-                "uci_hydraulic_eps1_420ctx_60h": (
-                    "block-average each official 60-second EPS1 cycle from 100 Hz to 1 Hz, "
-                    "then concatenate cycles in source order"
-                ),
-                "skchange_hvac_unit0_504ctx_144h": (
-                    "regularize unit 0 to a 10-minute grid and linearly interpolate short gaps "
-                    "only when total missingness is at most 1%"
-                ),
-            },
-            "held_out": {
-                "gift_eval_families": list(GIFT_EVAL_HELD_OUT_FAMILIES),
-                "nixtla_hierarchy": ["Traffic", "Wiki2", "TourismSmall"],
-                "gefcom2014": ["Wind"],
-                "skchange_hvac": ["unit_1"],
-            },
-            "capabilities": canonical_definitions,
+            "target_source": "the selected dataset bucket parameter split only",
         },
         "profiles": profiles,
     }
     summary = {
-        "schema_version": "synthetic_v2_generator_conditioning_calibration.v3",
+        "schema_version": "synthetic_v2_generator_conditioning_calibration.v4",
         "created_at": created_at,
         "config": config,
-        "canonical_intensity": artifact["canonical_intensity"],
-        "canonical_reference_profiles": canonical_reference_summaries,
+        "intensity_policy": artifact["intensity_policy"],
         "profiles": summaries,
     }
     return artifact, summary
@@ -814,58 +573,29 @@ def resolve_profile_asset_path(
     spec: BucketSpec,
     *,
     data_dir: Path,
-    gift_eval_dir: Path,
-    nixtla_hierarchy_zip: Path,
-    uci_hydraulic_zip: Path,
-    skchange_dir: Path,
 ) -> Path:
-    if spec.kind in {"gift_univariate", "gift_panel"}:
-        return gift_eval_dir / spec.asset_name
-    if spec.kind == "nixtla_binary_hierarchy":
-        return nixtla_hierarchy_zip
-    if spec.kind == "uci_hydraulic_cycle":
-        return uci_hydraulic_zip
-    if spec.kind == "skchange_hvac":
-        return skchange_dir
+    if spec.profile_id not in CONDITIONING_PROFILE_IDS:
+        raise ValueError(f"{spec.profile_id} is not a dataset-local conditioning profile")
     return data_dir / spec.asset_name
 
 
 def resolve_asset_identities(
     *,
     data_dir: Path,
-    gift_eval_dir: Path,
-    gift_eval_code_dir: Path,
-    nixtla_hierarchy_zip: Path,
-    uci_hydraulic_zip: Path,
-    skchange_dir: Path,
 ) -> dict[str, str]:
-    skchange_hvac_csv = skchange_dir / "skchange/datasets/data/hvac_system/data.csv"
     required_files = {
-        "nixtla_hierarchy_sha256": nixtla_hierarchy_zip,
         "m5_sha256": data_dir / "m5-forecasting-accuracy.zip",
         "gefcom2014_sha256": data_dir / "GEFCom2014.zip",
         "m4_hourly_sha256": data_dir / "m4_hourly_dataset.zip",
         "electricity_hourly_sha256": data_dir / "electricity_hourly_dataset.zip",
         "traffic_hourly_sha256": data_dir / "traffic_hourly_dataset.zip",
-        "uci_hydraulic_sha256": uci_hydraulic_zip,
-        "skchange_hvac_csv_sha256": skchange_hvac_csv,
     }
     missing = [str(path) for path in required_files.values() if not path.is_file()]
     if missing:
-        raise FileNotFoundError("canonical reference assets are missing: " + ", ".join(missing))
-    if not gift_eval_dir.is_dir():
-        raise FileNotFoundError(f"GIFT-Eval Arrow directory not found: {gift_eval_dir}")
-    if not gift_eval_code_dir.is_dir():
-        raise FileNotFoundError(f"GIFT-Eval protocol repository not found: {gift_eval_code_dir}")
-    if not skchange_dir.is_dir():
-        raise FileNotFoundError(f"skchange repository not found: {skchange_dir}")
-    identities = {
-        "gift_eval_arrow_manifest_sha256": gift_eval_arrow_manifest_sha256(gift_eval_dir),
-        "gift_eval_protocol_git_commit": git_head(gift_eval_code_dir),
-        "skchange_git_commit": git_head(skchange_dir),
-    }
-    identities.update({name: sha256_file(path) for name, path in required_files.items()})
-    return identities
+        raise FileNotFoundError(
+            "dataset-local conditioning assets are missing: " + ", ".join(missing)
+        )
+    return {name: sha256_file(path) for name, path in required_files.items()}
 
 
 def assert_expected_asset_identities(actual: dict[str, str]) -> None:
@@ -876,7 +606,7 @@ def assert_expected_asset_identities(actual: dict[str, str]) -> None:
     }
     if mismatches:
         raise ValueError(
-            "canonical reference asset identity mismatch: "
+            "dataset-local conditioning asset identity mismatch: "
             + json.dumps(mismatches, sort_keys=True)
         )
 
@@ -889,221 +619,55 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def gift_eval_arrow_manifest_sha256(root: Path) -> str:
-    names = {"dataset_info.json", "state.json"}
-    paths = sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file() and (path.name in names or (path.name.startswith("data-") and path.suffix == ".arrow"))
-    )
-    if not paths:
-        raise ValueError(f"GIFT-Eval Arrow manifest is empty: {root}")
-    manifest = hashlib.sha256()
-    for path in paths:
-        relative = path.relative_to(root).as_posix()
-        manifest.update(f"{sha256_file(path)}  ./{relative}\n".encode("utf-8"))
-    return manifest.hexdigest()
-
-
-def git_head(path: Path) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def canonical_reference_summary(calibration_input: ProfileCalibrationInput) -> dict[str, Any]:
-    spec = calibration_input.spec
-    return {
-        "profile_id": spec.profile_id,
-        "source_kind": spec.kind,
-        "source_asset": spec.asset_name,
-        "role": (
-            "canonical_and_conditioning"
-            if spec.profile_id in CONDITIONING_PROFILE_IDS
-            else "canonical_only"
-        ),
-        "context_length": int(spec.context_length),
-        "horizon": int(spec.horizon),
-        "season_length": int(spec.season_length),
-        "target_dim": int(spec.target_dim),
-        "covariate_dim": int(spec.covariate_dim),
-        "parameter_window_count": calibration_input.parameter_window_count,
-        "capability_parameter_counts": calibration_input.capability_parameter_counts,
-        "capability_qualification": calibration_input.capability_qualification_summaries,
-        "contributed_capabilities": [
-            capability_id
-            for capability_id, profile_ids in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY.items()
-            if spec.profile_id in profile_ids
-        ],
-        "split": calibration_input.split_summary,
-        "local_target_quantiles": calibration_input.local_target_quantiles,
-        "real_feature_summary": calibration_input.real_feature_summary,
-    }
-
-
-def canonical_scale_fingerprint(
-    canonical_definitions: dict[str, dict[str, Any]],
+def local_target_support(
+    values: list[float],
     *,
-    asset_identities: dict[str, str] | None = None,
-) -> str:
-    payload = {
-        "scale_id": CANONICAL_SCALE_ID,
-        "reference_profile_ids": list(CANONICAL_REFERENCE_PROFILE_IDS),
-        "reference_profile_ids_by_capability": {
-            capability_id: list(profile_ids)
-            for capability_id, profile_ids in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY.items()
-        },
-        "asset_identities": asset_identities or EXPECTED_ASSET_IDENTITIES,
-        "capabilities": canonical_definitions,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:16]
-
-
-def derive_canonical_target_definitions(
-    calibration_inputs: dict[str, ProfileCalibrationInput],
-) -> dict[str, dict[str, Any]]:
-    profile_curves: dict[str, list[tuple[str, list[float]]]] = {}
-    for capability_id, profile_ids in CANONICAL_REFERENCE_PROFILE_IDS_BY_CAPABILITY.items():
-        for profile_id in profile_ids:
-            calibration_input = calibration_inputs[profile_id]
-            if capability_id not in calibration_input.spec.synthetic_capabilities:
-                raise ValueError(
-                    f"{profile_id} does not declare canonical capability {capability_id}"
-                )
-            primary_feature = PRIMARY_TARGET_FEATURE[capability_id]
-            curve = calibration_input.local_target_quantiles[capability_id].get(primary_feature)
-            if curve is None or len(curve) != len(reference_percentile_levels(capability_id)):
-                raise ValueError(
-                    f"{profile_id}/{capability_id} has no complete local quantile curve for "
-                    f"{primary_feature}"
-                )
-            profile_curves.setdefault(capability_id, []).append((profile_id, curve))
-
-    definitions: dict[str, dict[str, Any]] = {}
-    for capability_id, curves in sorted(profile_curves.items()):
-        minimum_profile_count = 2 if capability_id == "regime_switching" else 3
-        if len(curves) < minimum_profile_count:
-            raise ValueError(
-                f"{capability_id} needs at least {minimum_profile_count} canonical profiles, "
-                f"got {len(curves)}"
-            )
-        matrix = np.asarray([curve for _profile_id, curve in curves], dtype=float)
-        raw_target_values = np.maximum.accumulate(np.median(matrix, axis=0))
-        if capability_id == "regime_switching":
-            upper_anchor = float(raw_target_values[-1])
-            lower_anchor = float(REGIME_HISTORY_INCREMENTAL_R2_MIN)
-            if upper_anchor <= lower_anchor:
-                raise ValueError(
-                    "regime canonical upper anchor does not exceed the "
-                    f"predictability boundary: {upper_anchor} <= {lower_anchor}"
-                )
-            target_values = np.linspace(lower_anchor, upper_anchor, 5)
-            aggregation = (
-                "I1 is the frozen history-clock predictability boundary; I5 is "
-                "the equal-profile median q90 of qualified real windows; I2-I4 "
-                "are equally spaced on that absolute feature scale"
-            )
-            target_resolution = {
-                "method": "qualification_boundary_to_q90_linear_grid",
-                "lower_anchor": round_float(lower_anchor),
-                "upper_anchor": round_float(upper_anchor),
-                "applied": True,
-            }
-        elif capability_id == "nonlinear_persistence":
-            upper_anchor = float(raw_target_values[-1])
-            lower_anchor = 0.0
-            if upper_anchor <= lower_anchor:
-                raise ValueError(
-                    "nonlinear canonical q90 does not exceed the adjusted-R2 "
-                    f"null boundary: {upper_anchor} <= {lower_anchor}"
-                )
-            target_values = np.linspace(lower_anchor, upper_anchor, 5)
-            aggregation = (
-                "I1 is the signed adjusted-R2 null boundary; I5 is the "
-                "equal-profile median q90 of real windows; I2-I4 are equally "
-                "spaced on that absolute feature scale"
-            )
-            target_resolution = {
-                "method": "adjusted_r2_null_to_q90_linear_grid",
-                "lower_anchor": round_float(lower_anchor),
-                "upper_anchor": round_float(upper_anchor),
-                "applied": True,
-            }
-        else:
-            target_values = enforce_target_resolution(raw_target_values)
-            aggregation = (
-                "coordinate-wise median of local parameter-split quantile curves, then "
-                "endpoint-preserving minimum-gap projection"
-            )
-            target_resolution = {
-                "method": "endpoint_preserving_minimum_gap_projection",
-                "minimum_adjacent_gap_fraction_of_raw_range": (
-                    CANONICAL_MIN_ADJACENT_GAP_FRACTION
-                ),
-                "applied": bool(
-                    not np.allclose(
-                        target_values,
-                        raw_target_values,
-                        rtol=0.0,
-                        atol=1e-12,
-                    )
-                ),
-            }
-        if any(right <= left for left, right in zip(target_values, target_values[1:])):
-            raise ValueError(
-                f"{capability_id} canonical target curve is not strictly increasing: "
-                f"{target_values.tolist()}"
-            )
-        percentile_levels = reference_percentile_levels(capability_id)
-        definitions[capability_id] = {
-            "primary_feature": PRIMARY_TARGET_FEATURE[capability_id],
-            "target_values": [round_float(value) for value in target_values],
-            "raw_reference_quantile_values": [
-                round_float(value) for value in raw_target_values
-            ],
-            "reference_percentile_levels": list(percentile_levels),
-            "contributing_profile_ids": [profile_id for profile_id, _curve in curves],
-            "contributing_parameter_window_counts": {
-                profile_id: calibration_inputs[profile_id].capability_parameter_counts[
-                    capability_id
-                ]
-                for profile_id, _curve in curves
-            },
-            "profile_weighting": "equal",
-            "aggregation": aggregation,
-            "target_resolution": target_resolution,
+    structural_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    structural = structural_status or {"status": "supported"}
+    if structural.get("status") != "supported":
+        return {
+            "status": "unsupported",
+            "reason": str(structural.get("reason", "unsupported_dataset_structure")),
+            "detail": structural.get("detail"),
         }
-    return definitions
-
-
-def enforce_target_resolution(values: np.ndarray) -> np.ndarray:
-    resolved = np.asarray(values, dtype=float).copy()
-    if resolved.shape != (5,) or not np.isfinite(resolved).all():
-        raise ValueError(f"canonical target resolution expects five finite values: {resolved}")
-    if np.any(np.diff(resolved) < 0.0):
-        raise ValueError(f"canonical target resolution expects a monotone curve: {resolved}")
-    raw_start = float(resolved[0])
-    raw_end = float(resolved[-1])
-    raw_range = raw_end - raw_start
-    if raw_range <= 0.0:
-        raise ValueError(f"canonical target curve has no usable range: {resolved}")
-    minimum_gap = CANONICAL_MIN_ADJACENT_GAP_FRACTION * raw_range
-    for index in range(1, len(resolved)):
-        resolved[index] = max(resolved[index], resolved[index - 1] + minimum_gap)
-    if resolved[-1] > raw_end:
-        resolved[-1] = raw_end
-        for index in range(len(resolved) - 2, -1, -1):
-            resolved[index] = min(resolved[index], resolved[index + 1] - minimum_gap)
-    resolved[0] = raw_start
-    resolved[-1] = raw_end
-    if np.any(np.diff(resolved) < minimum_gap - 1e-12):
-        raise ValueError(f"failed to enforce canonical target resolution: {resolved}")
-    return resolved
+    target = np.asarray(values, dtype=float)
+    if target.shape != (5,) or not np.isfinite(target).all():
+        return {
+            "status": "unsupported",
+            "reason": "missing_or_nonfinite_local_target_quantiles",
+            "detail": {"target_values": list(values)},
+        }
+    gaps = np.diff(target)
+    target_range = float(target[-1] - target[0])
+    if target_range < LOCAL_MIN_TARGET_RANGE:
+        return {
+            "status": "unsupported",
+            "reason": "insufficient_local_target_range",
+            "detail": {
+                "target_range": round_float(target_range),
+                "minimum": LOCAL_MIN_TARGET_RANGE,
+            },
+        }
+    minimum_gap = max(
+        LOCAL_MIN_TARGET_RANGE,
+        LOCAL_MIN_ADJACENT_GAP_FRACTION * target_range,
+    )
+    if np.any(gaps < minimum_gap):
+        return {
+            "status": "unsupported",
+            "reason": "insufficient_local_intensity_spacing",
+            "detail": {
+                "target_values": [round_float(value) for value in target],
+                "adjacent_gaps": [round_float(value) for value in gaps],
+                "minimum_gap": round_float(minimum_gap),
+            },
+        }
+    return {
+        "status": "supported",
+        "target_range": round_float(target_range),
+        "minimum_adjacent_gap": round_float(float(np.min(gaps))),
+    }
 
 
 def qualify_regime_reference_rows(
@@ -1248,7 +812,7 @@ def calibrate_capability_conditioning(
     capability_id: str,
     profile_nuisance: dict[str, float],
     real_feature_summary: dict[str, dict[str, float]],
-    canonical_target_values: list[float],
+    target_values: list[float],
     sample_count: int,
     seed: int,
     primary_feature: str | None = None,
@@ -1259,11 +823,11 @@ def calibrate_capability_conditioning(
         real_feature_summary,
     )
     primary_feature = primary_feature or PRIMARY_TARGET_FEATURE[capability_id]
-    desired = [float(value) for value in canonical_target_values]
+    desired = [float(value) for value in target_values]
     if len(desired) != 5 or any(
         right < left for left, right in zip(desired, desired[1:])
     ):
-        raise ValueError(f"invalid canonical targets for {capability_id}: {desired}")
+        raise ValueError(f"invalid dataset-local targets for {capability_id}: {desired}")
     target_scale_floor = (
         0.005 if primary_feature == "nonlinear_conditional_gain" else 0.05
     )
@@ -1347,7 +911,7 @@ def calibrate_capability_conditioning(
     max_normalized_error = max(normalized_errors)
     status = (
         "supported"
-        if monotone_realized and max_normalized_error <= CANONICAL_CALIBRATION_TOLERANCE
+        if monotone_realized and max_normalized_error <= LOCAL_CALIBRATION_TOLERANCE
         else "unsupported"
     )
     return (
@@ -1356,11 +920,11 @@ def calibrate_capability_conditioning(
         {
             "status": status,
             "primary_target_feature": primary_feature,
-            "canonical_target_values": [round_float(value) for value in desired],
+            "target_values": [round_float(value) for value in desired],
             "realized_values": [round_float(value) for value in realized_values],
             "normalized_absolute_errors": [round_float(value) for value in normalized_errors],
             "max_normalized_error": round_float(max_normalized_error),
-            "tolerance": CANONICAL_CALIBRATION_TOLERANCE,
+            "tolerance": LOCAL_CALIBRATION_TOLERANCE,
             "target_scale": round_float(target_scale),
             "fit_sample_count": int(
                 fit_samples_per_seed_bank * fit_seed_bank_count
@@ -1496,6 +1060,7 @@ def simulate_feature_means(
         )
     conditioning = GeneratorConditioning(
         profile_id=spec.profile_id,
+        dataset_id=DATASET_ID_BY_PROFILE_ID.get(spec.profile_id, spec.profile_id),
         capability_id=capability_id,
         context_length=int(spec.context_length),
         horizon=int(spec.horizon),
@@ -1506,15 +1071,12 @@ def simulate_feature_means(
         ),
         parameters=parameters,
         intensity_lambdas=(intensity_lambda,) * 5,
-        canonical_reference_percentile_levels=reference_percentile_levels(capability_id),
-        canonical_target_feature=PRIMARY_TARGET_FEATURE[capability_id],
-        canonical_target_values=(0.0,) * 5,
-        calibrated_realized_strengths=(0.0,) * 5,
-        local_real_percentiles=(0.0,) * 5,
-        local_real_target_quantiles={},
+        target_percentile_levels=reference_percentile_levels(capability_id),
+        target_feature=PRIMARY_TARGET_FEATURE[capability_id],
+        target_values=(0.0, 0.25, 0.5, 0.75, 1.0),
+        calibrated_realized_strengths=(0.0, 0.25, 0.5, 0.75, 1.0),
         calibration_max_normalized_error=0.0,
-        canonical_scale_id=CANONICAL_SCALE_ID,
-        canonical_scale_fingerprint="calibration-in-progress",
+        intensity_policy_id=INTENSITY_POLICY_ID,
         artifact_schema_version="calibration-in-memory",
         artifact_created_at=None,
         calibration_method="in-memory grid",
@@ -1625,21 +1187,8 @@ def quantiles_for_levels(values: np.ndarray, levels: tuple[float, ...]) -> list[
     return [round_float(value) for value in np.quantile(values, levels)]
 
 
-def reference_percentile_levels(capability_id: str) -> tuple[float, ...]:
-    return CAPABILITY_REFERENCE_PERCENTILE_LEVELS.get(
-        capability_id,
-        TARGET_PERCENTILE_LEVELS,
-    )
-
-
-def empirical_percentiles(values: np.ndarray, targets: list[float]) -> list[float]:
-    finite = np.sort(np.asarray(values, dtype=float)[np.isfinite(values)])
-    if not finite.size:
-        raise ValueError("cannot compute local real percentiles from an empty sample")
-    return [
-        round_float(np.searchsorted(finite, target, side="right") / finite.size)
-        for target in targets
-    ]
+def reference_percentile_levels(_capability_id: str) -> tuple[float, ...]:
+    return TARGET_PERCENTILE_LEVELS
 
 
 def median_feature(features: dict[str, dict[str, float]], name: str, default: float) -> float:

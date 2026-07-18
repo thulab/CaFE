@@ -37,12 +37,12 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v4_multi_lookback_profile_suite.v1"
+SCHEMA_VERSION = "paper_v4_dataset_local_multi_lookback_profile_suite.v2"
 CONTEXT_LENGTHS = (96, 168, 336, 504)
 MAX_CONTEXT_LENGTH = max(CONTEXT_LENGTHS)
 HORIZON = 48
 SEASON_LENGTH = 24
-DEFAULT_MAX_WINDOWS_PER_SOURCE = 240
+DEFAULT_MAX_WINDOWS_PER_DATASET = 240
 DEFAULT_GIFT_EVAL_DIR = Path.home() / "xmy/gift-eval"
 DEFAULT_DATA_DIR = REPO_ROOT / "runtime/research"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp/v4/00_profile_suite"
@@ -54,117 +54,103 @@ QUANTILE_LEVELS = (0.05, 0.25, 0.50, 0.75, 0.95)
 
 
 @dataclass(frozen=True)
-class SourceSpec:
-    source_id: str
+class DatasetSpec:
+    dataset_id: str
     dataset_name: str
-    family_id: str
     domain: str
     kind: str
     asset_name: str
     frequency: str = "h"
 
 
-SOURCE_SPECS = (
-    SourceSpec(
+DATASET_SPECS = (
+    DatasetSpec(
         "m4_hourly",
         "M4 Hourly",
-        "m4_hourly",
         "Econ/Fin",
         "tsf_univariate",
         "m4_hourly_dataset.zip",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_electricity_h",
         "Electricity/H",
-        "electricity",
         "Energy",
         "gift_univariate",
         "electricity/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_solar_h",
         "Solar/H",
-        "solar",
         "Energy",
         "gift_univariate",
         "solar/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_ett1_h",
         "ETT1/H",
-        "ETT",
         "Energy",
         "gift_univariate",
         "ett1/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_ett2_h",
         "ETT2/H",
-        "ETT",
         "Energy",
         "gift_univariate",
         "ett2/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_jena_weather_h",
         "Jena Weather/H",
-        "jena_weather",
         "Nature",
         "gift_univariate",
         "jena_weather/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_kdd_cup_h",
         "KDD Cup 2018/H",
-        "kdd_cup_2018",
         "Nature",
         "gift_univariate",
         "kdd_cup_2018_with_missing/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_loop_seattle_h",
         "Loop Seattle/H",
-        "LOOP_SEATTLE",
         "Transport",
         "gift_univariate",
         "LOOP_SEATTLE/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_sz_taxi_h",
         "SZ-Taxi/H",
-        "SZ_TAXI",
         "Transport",
         "gift_univariate",
         "SZ_TAXI/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_m_dense_h",
         "M_DENSE/H",
-        "M_DENSE",
         "Transport",
         "gift_univariate",
         "M_DENSE/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_bitbrains_fast_h",
         "Bitbrains Fast Storage/H",
-        "bitbrains",
         "Web/CloudOps",
         "gift_univariate",
         "bitbrains_fast_storage/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_bitbrains_rnd_h",
         "Bitbrains RND/H",
-        "bitbrains",
         "Web/CloudOps",
         "gift_univariate",
         "bitbrains_rnd/H",
     ),
-    SourceSpec(
+    DatasetSpec(
         "gift_bizitobs_l2c_h",
         "BizITObs L2C/H",
-        "bizitobs_l2c",
         "Web/CloudOps",
         "gift_univariate",
         "bizitobs_l2c/H",
@@ -183,36 +169,38 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gift-eval-dir", type=Path, default=DEFAULT_GIFT_EVAL_DIR)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument(
-        "--max-windows-per-source",
+        "--max-windows-per-dataset",
         type=int,
-        default=DEFAULT_MAX_WINDOWS_PER_SOURCE,
+        default=DEFAULT_MAX_WINDOWS_PER_DATASET,
     )
-    parser.add_argument("--sources", nargs="*", default=None)
+    parser.add_argument("--datasets", nargs="*", default=None)
     return parser.parse_args()
 
 
-def selected_source_specs(source_ids: Iterable[str] | None) -> tuple[SourceSpec, ...]:
-    if source_ids is None:
-        return SOURCE_SPECS
-    requested = tuple(str(source_id) for source_id in source_ids)
-    by_id = {source.source_id: source for source in SOURCE_SPECS}
+def selected_dataset_specs(
+    dataset_ids: Iterable[str] | None,
+) -> tuple[DatasetSpec, ...]:
+    if dataset_ids is None:
+        return DATASET_SPECS
+    requested = tuple(str(dataset_id) for dataset_id in dataset_ids)
+    by_id = {dataset.dataset_id: dataset for dataset in DATASET_SPECS}
     unknown = sorted(set(requested) - set(by_id))
     if unknown:
-        raise ValueError("unknown profile sources: " + ", ".join(unknown))
-    return tuple(by_id[source_id] for source_id in requested)
+        raise ValueError("unknown profile datasets: " + ", ".join(unknown))
+    return tuple(by_id[dataset_id] for dataset_id in requested)
 
 
-def source_asset_path(
-    source: SourceSpec,
+def dataset_asset_path(
+    dataset: DatasetSpec,
     *,
     gift_eval_dir: Path,
     data_dir: Path,
 ) -> Path:
-    if source.kind == "gift_univariate":
-        return gift_eval_dir / source.asset_name
-    if source.kind == "tsf_univariate":
-        return data_dir / source.asset_name
-    raise ValueError(f"unsupported source kind: {source.kind}")
+    if dataset.kind == "gift_univariate":
+        return gift_eval_dir / dataset.asset_name
+    if dataset.kind == "tsf_univariate":
+        return data_dir / dataset.asset_name
+    raise ValueError(f"unsupported dataset kind: {dataset.kind}")
 
 
 def nested_view(master_window: np.ndarray, context_length: int) -> np.ndarray:
@@ -253,38 +241,6 @@ def weighted_quantile(
             right=value_array[-1],
         )
     ]
-
-
-def source_balanced_weights(rows: list[dict[str, Any]]) -> np.ndarray:
-    """Give every family equal mass, then every config inside a family equal mass."""
-
-    families = sorted({str(row["family_id"]) for row in rows})
-    sources_by_family = {
-        family_id: sorted(
-            {
-                str(row["source_id"])
-                for row in rows
-                if str(row["family_id"]) == family_id
-            }
-        )
-        for family_id in families
-    }
-    counts_by_source = {
-        source_id: sum(str(row["source_id"]) == source_id for row in rows)
-        for source_ids in sources_by_family.values()
-        for source_id in source_ids
-    }
-    weights = []
-    for row in rows:
-        family_id = str(row["family_id"])
-        source_id = str(row["source_id"])
-        weights.append(
-            1.0
-            / len(families)
-            / len(sources_by_family[family_id])
-            / counts_by_source[source_id]
-        )
-    return np.asarray(weights, dtype=float)
 
 
 def select_series_balanced_candidates(
@@ -380,18 +336,18 @@ def summarize_feature_rows(
 
 
 def build_profile_rows(
-    source: SourceSpec,
+    dataset: DatasetSpec,
     *,
     gift_eval_dir: Path,
     data_dir: Path,
     max_windows: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    path = source_asset_path(
-        source,
+    path = dataset_asset_path(
+        dataset,
         gift_eval_dir=gift_eval_dir,
         data_dir=data_dir,
     )
-    if source.kind == "gift_univariate":
+    if dataset.kind == "gift_univariate":
         frequency, native_records = read_gift_arrow_targets(path)
         test_tail_steps = gift_eval_short_term_test_holdout_steps(
             frequency,
@@ -412,7 +368,7 @@ def build_profile_rows(
         declared_horizon = int(metadata.get("horizon", HORIZON))
         if declared_horizon != HORIZON:
             raise ValueError(
-                f"{source.source_id} declares horizon={declared_horizon}, expected {HORIZON}"
+                f"{dataset.dataset_id} declares horizon={declared_horizon}, expected {HORIZON}"
             )
         test_tail_steps = 0
         validation_steps = HORIZON
@@ -502,7 +458,7 @@ def build_profile_rows(
             continue
 
         master_window_id = (
-            f"{source.source_id}:{series_id}:{start}:{MAX_CONTEXT_LENGTH}:{HORIZON}"
+            f"{dataset.dataset_id}:{series_id}:{start}:{MAX_CONTEXT_LENGTH}:{HORIZON}"
         )
         raw_future = raw_master[MAX_CONTEXT_LENGTH:]
         future_sha256 = hashlib.sha256(
@@ -524,17 +480,16 @@ def build_profile_rows(
                 context_length,
             )
             row: dict[str, Any] = {
-                "source_id": source.source_id,
-                "dataset_name": source.dataset_name,
-                "family_id": source.family_id,
-                "domain": source.domain,
+                "dataset_id": dataset.dataset_id,
+                "dataset_name": dataset.dataset_name,
+                "domain": dataset.domain,
                 "master_window_id": master_window_id,
                 "future_sha256": future_sha256,
                 "series_id": series_id,
                 "item_id": item_id,
                 "channel_index": channel_index,
                 "window_start": start,
-                "source_cutoff": cutoff,
+                "dataset_cutoff": cutoff,
                 "context_length": context_length,
                 "horizon": HORIZON,
                 "season_length": SEASON_LENGTH,
@@ -562,13 +517,13 @@ def build_profile_rows(
 
     if accepted_master_count < 30:
         raise ValueError(
-            f"{source.source_id} produced only {accepted_master_count} paired windows"
+            f"{dataset.dataset_id} produced only {accepted_master_count} paired windows"
         )
     return feature_rows, {
-        **asdict(source),
+        **asdict(dataset),
         "asset_path": str(path),
         "asset_sha256": sha256_path(path),
-        "source_frequency": frequency,
+        "dataset_frequency": frequency,
         "split_policy": split_policy,
         "official_test_tail_steps": int(test_tail_steps),
         "validation_excluded_steps": int(validation_steps),
@@ -585,70 +540,50 @@ def build_profile_rows(
 
 def build_suite(
     *,
-    sources: tuple[SourceSpec, ...],
+    datasets: tuple[DatasetSpec, ...],
     gift_eval_dir: Path,
     data_dir: Path,
     max_windows: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     all_rows: list[dict[str, Any]] = []
-    source_inventory: list[dict[str, Any]] = []
-    for index, source in enumerate(sources):
+    dataset_inventory: list[dict[str, Any]] = []
+    for index, dataset in enumerate(datasets):
         print(
-            f"[{index + 1}/{len(sources)}] profiling {source.source_id}",
+            f"[{index + 1}/{len(datasets)}] profiling {dataset.dataset_id}",
             flush=True,
         )
         rows, inventory = build_profile_rows(
-            source,
+            dataset,
             gift_eval_dir=gift_eval_dir,
             data_dir=data_dir,
             max_windows=max_windows,
         )
         all_rows.extend(rows)
-        source_inventory.append(inventory)
+        dataset_inventory.append(inventory)
 
     profiles: dict[str, Any] = {}
-    global_profiles: dict[str, Any] = {}
     for context_length in CONTEXT_LENGTHS:
         length_rows = [
             row for row in all_rows if int(row["context_length"]) == context_length
         ]
-        for source in sources:
-            source_rows = [
+        for dataset in datasets:
+            dataset_rows = [
                 row
                 for row in length_rows
-                if str(row["source_id"]) == source.source_id
+                if str(row["dataset_id"]) == dataset.dataset_id
             ]
-            profile_id = f"{source.source_id}__L{context_length}_H{HORIZON}"
+            profile_id = f"{dataset.dataset_id}__L{context_length}_H{HORIZON}"
             profiles[profile_id] = {
                 "profile_id": profile_id,
-                "source_id": source.source_id,
-                "dataset_name": source.dataset_name,
-                "family_id": source.family_id,
-                "domain": source.domain,
+                "dataset_id": dataset.dataset_id,
+                "dataset_name": dataset.dataset_name,
+                "domain": dataset.domain,
                 "context_length": context_length,
                 "horizon": HORIZON,
                 "season_length": SEASON_LENGTH,
-                "window_count": len(source_rows),
-                "features": summarize_feature_rows(source_rows),
+                "window_count": len(dataset_rows),
+                "features": summarize_feature_rows(dataset_rows),
             }
-        weights = source_balanced_weights(length_rows)
-        global_id = f"family_macro__L{context_length}_H{HORIZON}"
-        global_profiles[global_id] = {
-            "profile_id": global_id,
-            "role": "family-balanced reference distribution",
-            "context_length": context_length,
-            "horizon": HORIZON,
-            "season_length": SEASON_LENGTH,
-            "source_count": len({row["source_id"] for row in length_rows}),
-            "family_count": len({row["family_id"] for row in length_rows}),
-            "domain_count": len({row["domain"] for row in length_rows}),
-            "window_count": len(length_rows),
-            "weighting": (
-                "equal family mass; equal source-config mass within family; "
-                "equal paired-window mass within source config"
-            ),
-            "features": summarize_feature_rows(length_rows, weights=weights),
-        }
 
     suite = {
         "schema_version": SCHEMA_VERSION,
@@ -657,36 +592,34 @@ def build_suite(
             "context_lengths": list(CONTEXT_LENGTHS),
             "horizon": HORIZON,
             "season_length": SEASON_LENGTH,
-            "max_windows_per_source": max_windows,
+            "max_windows_per_dataset": max_windows,
             "pairing_policy": (
                 "select one raw 504+48 master window, then expose suffix contexts "
                 "of length 96, 168, 336, and 504 with the identical raw future"
             ),
             "sampling_policy": (
-                "sample family uniformly, source config uniformly within family, "
-                "then paired master window uniformly within source"
+                "each dataset is calibrated independently; select paired master "
+                "windows within that dataset with series/channel-first coverage"
             ),
             "profile_role": (
-                "real-data nuisance/support calibration; dataset identity is "
-                "provenance and a robustness stratum, not a benchmark axis"
+                "dataset-local real-data nuisance, relative-intensity, support, "
+                "and near-distance calibration"
             ),
         },
         "selection": {
-            "source_count": len(sources),
-            "family_count": len({source.family_id for source in sources}),
-            "domain_count": len({source.domain for source in sources}),
-            "domains": sorted({source.domain for source in sources}),
+            "dataset_count": len(datasets),
+            "domain_count": len({dataset.domain for dataset in datasets}),
+            "domains": sorted({dataset.domain for dataset in datasets}),
             "inclusion_rule": (
-                "public GIFT-Eval/Monash hourly source; supports a leakage-safe "
+                "public GIFT-Eval/Monash hourly dataset; supports a leakage-safe "
                 "504+48 window; univariate or channel-wise univariate evaluation"
             ),
             "performance_blind": True,
         },
-        "sources": source_inventory,
+        "datasets": dataset_inventory,
         "profiles": profiles,
-        "global_profiles": global_profiles,
     }
-    return suite, all_rows, source_inventory
+    return suite, all_rows, dataset_inventory
 
 
 def write_outputs(
@@ -701,16 +634,16 @@ def write_outputs(
         raise FileExistsError(f"profile suite is already sealed: {output_dir}")
     write_json(output_dir / "profile_suite.json", suite)
     write_csv(output_dir / "profile_rows.csv", rows)
-    write_csv(output_dir / "source_inventory.csv", inventory)
+    write_csv(output_dir / "dataset_inventory.csv", inventory)
     (output_dir / "report.md").write_text(render_report(suite), encoding="utf-8")
     manifest_files = [
         "profile_suite.json",
         "profile_rows.csv",
-        "source_inventory.csv",
+        "dataset_inventory.csv",
         "report.md",
     ]
     manifest = {
-        "schema_version": "paper_v4_profile_suite_manifest.v1",
+        "schema_version": "paper_v4_dataset_local_profile_suite_manifest.v2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "protocol_path": str(PROTOCOL_PATH.relative_to(REPO_ROOT)),
         "protocol_sha256": sha256_path(PROTOCOL_PATH),
@@ -734,29 +667,28 @@ def render_report(suite: dict[str, Any]) -> str:
         "",
         f"- Shape: `H={config['horizon']}`, `L={config['context_lengths']}`, "
         f"`period={config['season_length']}`.",
-        f"- Coverage: {suite['selection']['source_count']} configs, "
-        f"{suite['selection']['family_count']} families, "
+        f"- Coverage: {suite['selection']['dataset_count']} datasets, "
         f"{suite['selection']['domain_count']} domains.",
         "- Pairing: every accepted master window contributes all four L views "
         "with the same raw 48-step future.",
-        "- Aggregation: family -> source config -> paired window, equal mass at "
-        "each level.",
+        "- Calibration: every profile is dataset-local; no pooled or cross-dataset "
+        "profile is emitted.",
         "",
-        "| source | domain | family | paired windows | used series | missing rejects |",
-        "|---|---|---|---:|---:|---:|",
+        "| dataset | domain | paired windows | used series | missing rejects |",
+        "|---|---|---:|---:|---:|",
     ]
-    for source in suite["sources"]:
+    for dataset in suite["datasets"]:
         lines.append(
-            f"| {source['dataset_name']} | {source['domain']} | "
-            f"{source['family_id']} | {source['paired_master_window_count']} | "
-            f"{source['used_series_count']} | {source['rejected_missing_count']} |"
+            f"| {dataset['dataset_name']} | {dataset['domain']} | "
+            f"{dataset['paired_master_window_count']} | "
+            f"{dataset['used_series_count']} | {dataset['rejected_missing_count']} |"
         )
     lines.extend(
         [
             "",
-            "The dataset label is retained only for provenance and source-domain "
-            "robustness analysis. Synthetic sampling uses the frozen hierarchical "
-            "sampling policy and does not expose a dataset identity to models.",
+            "Each dataset independently defines its nuisance distribution, "
+            "relative intensity targets, feature-support gate, and near-distance "
+            "reference. Profiles are never merged across datasets.",
             "",
         ]
     )
@@ -800,14 +732,14 @@ def round_float(value: float) -> float:
 
 def main() -> int:
     args = parse_args()
-    if args.max_windows_per_source < 30:
-        raise ValueError("--max-windows-per-source must be at least 30")
-    sources = selected_source_specs(args.sources)
+    if args.max_windows_per_dataset < 30:
+        raise ValueError("--max-windows-per-dataset must be at least 30")
+    datasets = selected_dataset_specs(args.datasets)
     suite, rows, inventory = build_suite(
-        sources=sources,
+        datasets=datasets,
         gift_eval_dir=args.gift_eval_dir.resolve(),
         data_dir=args.data_dir.resolve(),
-        max_windows=int(args.max_windows_per_source),
+        max_windows=int(args.max_windows_per_dataset),
     )
     write_outputs(args.output_dir.resolve(), suite=suite, rows=rows, inventory=inventory)
     print(f"profile suite: {args.output_dir.resolve()}", flush=True)

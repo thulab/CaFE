@@ -60,21 +60,42 @@ def test_synthetic_capabilities_and_generation_materialize_shards(app, client):
         assert covariate.generation_config["intensity"] == 3
         assert covariate.generation_config["generator_version"] == "capts-paper-v2"
         assert covariate.generation_config["difficulty"] == 3
+        assert covariate.generation_config["intensity_policy_id"] == (
+            "dataset-local-relative-quantiles-v1"
+        )
+        assert covariate.generation_config["target_percentile_level"] == 0.5
+        assert covariate.generation_config["dataset_local_targets"]
+        assert covariate.generation_config["anchor_dataset_ids"]
+        assert "canonical_scale_id" not in covariate.generation_config
         assert covariate.generation_config["requested_season_length"] == 8
         assert covariate.generation_config["season_length"] == 24
         assert covariate.generation_config["season_length_source"] == "preselected_anchor_profile"
-        assert covariate.generation_config["anchor_mode"] == "preselected_profile_conditioned"
+        assert covariate.generation_config["anchor_mode"] == (
+            "preselected_dataset_profile_conditioned"
+        )
         assert covariate.generation_config["anchor_profiles"] == [
             "gefcom2014_load_hourly_covariate_168ctx_24h",
         ]
-        assert covariate.generation_config["anchor_profile_selection"] == "balanced_uniform"
+        assert (
+            covariate.generation_config["anchor_profile_selection"]
+            == "seeded_single_profile"
+        )
 
-        trend_sample = session.exec(select(SampleIndex).where(SampleIndex.shard_id == trend.shard_id)).first()
+        trend_samples = session.exec(
+            select(SampleIndex).where(SampleIndex.shard_id == trend.shard_id)
+        ).all()
+        assert len({item.sample_metadata["anchor_profile_id"] for item in trend_samples}) == 1
+        trend_sample = trend_samples[0]
         assert trend_sample is not None
         trend_metadata = trend_sample.sample_metadata
         assert trend_metadata["intensity"] == 3
         assert trend_metadata["generator_version"] == "capts-paper-v2"
         assert trend_metadata["difficulty"] == 3
+        assert trend_metadata["intensity_policy_id"] == "dataset-local-relative-quantiles-v1"
+        assert trend_metadata["target_percentile_level"] == 0.5
+        assert trend_metadata["anchor_dataset_id"]
+        assert trend_metadata["target_feature"] == "trend_strength"
+        assert "canonical_scale_id" not in trend_metadata
         assert trend_metadata["latent_params"]["generator_version"] == "capts-paper-v2"
         assert trend_metadata["latent_params"]["predictability"]["construction_validated"] is True
         assert trend_metadata["latent_params"]["acceptance"]["accepted"] is True
@@ -145,7 +166,7 @@ def test_generation_can_pin_a_preselected_anchor_profile(app, client):
     response = client.post(
         "/synthetic/shards",
         json={
-            "name": "traffic-conditioned trend",
+            "name": "m4-conditioned trend",
             "capabilities": ["trend"],
             "context_length": 168,
             "horizon": 24,
@@ -154,7 +175,7 @@ def test_generation_can_pin_a_preselected_anchor_profile(app, client):
             "target_dim": 1,
             "seed": 9,
             "frequency": "h",
-            "anchor_profile_ids": {"trend": "traffic_hourly_daily_168ctx"},
+            "anchor_profile_ids": {"trend": "m4_hourly_daily_168ctx"},
         },
     )
 
@@ -164,16 +185,16 @@ def test_generation_can_pin_a_preselected_anchor_profile(app, client):
         shard = session.get(Shard, shard_id)
         assert shard is not None
         assert shard.generation_config["anchor_profile_selection"] == "explicit"
-        assert shard.generation_config["anchor_profiles"] == ["traffic_hourly_daily_168ctx"]
+        assert shard.generation_config["anchor_profiles"] == ["m4_hourly_daily_168ctx"]
         samples = session.exec(select(SampleIndex).where(SampleIndex.shard_id == shard_id)).all()
         assert {sample.sample_metadata["anchor_profile_id"] for sample in samples} == {
-            "traffic_hourly_daily_168ctx"
+            "m4_hourly_daily_168ctx"
         }
         assert all(
             sample.sample_metadata["latent_params"]["acceptance"]["validation"]["feature_gate"][
                 "matched_profile_id"
             ]
-            == "traffic_hourly_daily_168ctx"
+            == "m4_hourly_daily_168ctx"
             for sample in samples
         )
 

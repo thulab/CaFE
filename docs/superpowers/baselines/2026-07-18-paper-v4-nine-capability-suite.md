@@ -1,88 +1,104 @@
-# Paper v4：九能力四档 Profile 与合格样本验收
+# Paper v4：逐 Dataset 九能力 Suite 重建记录
 
 日期：2026-07-18
+状态：旧结果作废；真实 ETT1 dataset-local smoke 通过；正式多 dataset freeze 待重建
 
-## 结论
+## 作废结论
 
-九个能力维度已经全部具备 `H=48`、`L={96,168,336,504}` 的真实 profile、生成器
-conditioning、controlled-feature support 与 near-distance 校准产物。层级数据使用
-M5 Daily 的严格加和结构，在 H=48 下可用，因此没有退回 H=28。
+此前记录的 `360/360` 母样本合格和 4 个 task-level conditioning profile 基于跨
+dataset 汇总后的真实分布与统一强度，不再是有效论文证据。旧
+`capability_dataset_mapping.csv`、全局 conditioning/gate artifact 和相关哈希全部
+作废，运行目录已清理。
 
-独立种子验收覆盖：
+## 新契约
+
+新 suite 使用：
 
 ```text
-9 capabilities × 5 intensities × 8 master samples = 360 master samples
-4 paired lookback views per master sample
+schema = paper_v4_nine_capability_suite.v2
+intensity_policy = dataset-local-relative-quantiles-v1
+percentiles = q10/q30/q50/q70/q90
 ```
 
-结果为 `360/360` 母样本合格、`1,440/1,440` 视图同时通过，失败数为 0。每条母样本只
-生成一次，四档 L 共享同一段原始 48 步 future。
+每个 dataset：
 
-## 能力结果
+- 独立构造四个 lookback profile；
+- 固定输出九能力 support matrix；
+- 缺 task view、变量结构、窗口或档间距时如实记 `unsupported`；
+- supported cell 独立拟合 conditioning、feature-support 和 near-distance；
+- qualification 不读取其他 dataset 的统计量。
 
-| 能力 | 任务结构 | 合格/期望 | 平均尝试次数 |
-|---|---|---:|---:|
-| trend | 单变量 | 40/40 | 1.0 |
-| multi_seasonal | 单变量 | 40/40 | 1.0 |
-| time_varying_seasonality | 单变量 | 40/40 | 1.0 |
-| regime_switching | 单变量 | 40/40 | 1.0 |
-| nonlinear_persistence | 单变量 | 40/40 | 1.0 |
-| predictable_intermittency | 单变量 | 40/40 | 1.0 |
-| common_factor | 三变量面板 | 40/40 | 1.0 |
-| hierarchical_coherence | 三变量严格加和层级 | 40/40 | 1.0 |
-| covariate_response | 单目标＋多外生变量 | 40/40 | 1.0 |
+## ETT1 真实 Smoke
 
-所有九个 conditioning 的五档主特征校准状态均为 `supported`，最大归一化校准误差为
-0.1072，低于既定容差。
+配置：
 
-## Profile 与数据集对应
+```text
+dataset = gift_ett1_h
+master windows = 120
+H = 48
+L = 96/168/336/504
+conditioning calibration samples = 4（smoke）
+qualification samples = 每个 supported capability × intensity 1 条
+```
 
-| 能力 | 真实 profile 数据集 |
-|---|---|
-| 六个单变量能力 | M4 Hourly；Electricity/H；Solar/H；ETT1/H；ETT2/H；Jena Weather/H；KDD Cup 2018/H；Loop Seattle/H；SZ-Taxi/H；M_DENSE/H；Bitbrains Fast Storage/H；Bitbrains RND/H；BizITObs L2C/H |
-| common_factor | Electricity Hourly；Traffic Hourly；Jena Weather/H；BizITObs L2C/H |
-| hierarchical_coherence | M5 Daily |
-| covariate_response | GEFCom2014 Load；GEFCom2014 Solar |
+完整九能力 support matrix：
 
-单变量正式 source profile 为 `13×4=52` 个；结构能力 source profile 为
-`(4+1+2)×4=28` 个；合计 80 个 source×L profile。在线生成按任务使用 4 个
-L=504 master conditioning profiles，并使用 `4 tasks×4 L=16` 个 view-specific
-feature/near-distance gate profiles。
+| capability | status | reason / calibration |
+| --- | --- | --- |
+| `trend` | supported | max normalized error 0.0955 |
+| `time_varying_seasonality` | supported | max normalized error 0.1061 |
+| `predictable_intermittency` | supported | max normalized error 0.0692 |
+| `multi_seasonal` | unsupported | conditioning calibration failed |
+| `regime_switching` | unsupported | 46 个 parameter windows 中 recurring-regime qualified 为 0 |
+| `nonlinear_persistence` | unsupported | conditioning calibration failed |
+| `common_factor` | unsupported | variable structure not supported |
+| `hierarchical_coherence` | unsupported | variable structure not supported |
+| `covariate_response` | unsupported | variable structure not supported |
 
-## 关键校准修正
+这正是新协议期望的行为：一个 dataset 固定审计九项，但只对真实结构与校准充分的能力
+生成样本。没有从其他 dataset 借 target 或 task view。
 
-首轮审计没有把失败掩盖成重试通过，而是修正了两个机制问题：
+qualification 覆盖 3 个 supported capabilities × 5 档 × 1 条，共 15 条母样本；
+`15/15` 通过 construction、四 lookback feature-support 和四 lookback
+near-distance，全部首轮通过，失败数为 0。
 
-1. 多数据集不能先全局 group split。否则 GEFCom Load 可能只在 reference、Solar 只在
-   calibration，跨数据集距离会抬高 novelty 阈值。正式版在每个数据集内部先做三路无
-   泄漏切分，再将三个 partition 分别按来源等权汇总。
-2. GEFCom 长窗口真实 covariate residual outlier rate 的 P75 为 0.003623。Student-t
-   残差会系统性超出 controlled-feature support，因此在 intensity 拟合之前依据真实
-   control profile 选择 Gaussian residual；这属于生成机制预条件，不是放宽 gate。
+feature-gate artifact 同时冻结每个 dataset/profile/capability 的
+gate-reference 与 gate-calibration 标准化 control vectors，供 E1 直接复用同一 split；
+不再在 E1 运行时从原始数据重建 split。
 
-层级 L=336 的早期边界失败来自 artifact 小数序列化。正式 feature artifact 对非空支持
-阈值加入 `1.00001` 的纯数值 rounding guard，不改变 conformal coverage 目标。
-
-## 产物
-
-目录：
+## 新输出
 
 ```text
 runtime/paper_exp/v4/01_nine_capability_suite/
+  profile_suite.json
+  dataset_capability_support_matrix.json
+  dataset_capability_support_matrix.csv
+  generator_conditioning_artifact.json
+  feature_gate_artifact.json
+  near_distance_artifact.json
+  qualification.json
+  manifest.json
 ```
 
-关键哈希：
+当前 smoke 哈希：
 
 ```text
-profile_suite.json                  350a0adc8d9f99f054e340f974c7274415bc96da847b509698e6e149141da375
+dataset_capability_support_matrix.json
+  0fbf59a4057d643645d73da639cc26ab491c5c17b03f46ba2a0c447a8ac410d1
 generator_conditioning_artifact.json
-                                    48a9504c61a7903dc71c3465d182af8c12b10f8d1c512726b693cbfef83bf9a9
-feature_gate_artifact.json          67110e40a35f35cdba5864e5b6bab9922061c8511952e0f685daade11a190120
-near_distance_artifact.json         3139b7a29036d2adf73463b2e79862eb093b8ca7ef23fb479f9bf6dae4c78392
-qualification.json                  dc4cff303d5b4f5fca1f097d9112fc8ccc89f944763481e36c8c2038ab0adaf5
-capability_dataset_mapping.csv      ef78a8277a7cf8fa3a595a5bd96d71a44dc22f635b4c18157884cb8470237a75
-manifest.json                       fcd8f4b8b31324d5750f1336dc1bd0eaf53edfe49b4faf9ffff48612f3dc09b9
+  947f94d15635bad4e8c2dc325794397879c5ced4981eaf5873c7bddee8a1b2c6
+feature_gate_artifact.json
+  bfce9a9878d104b84e70dfbeb625c5b94702b3b422588383908b9d2c6b848094
+near_distance_artifact.json
+  63000d88d074bc5d05ead8465be65147b7f9b4c0d3e433d577d6505edb481546
+qualification.json
+  9339f9ae8a05245ea666434d8af3c2954a324e160807a36722f6b1e360570d90
+manifest.json
+  052a914bc2c1001af347a465693b0447e2ec21cc91731f768aa3543e1f36793b
 ```
+
+这些是 smoke artifact，不替代正式多 dataset、正式 calibration sample count 的
+freeze。
 
 协议：
 

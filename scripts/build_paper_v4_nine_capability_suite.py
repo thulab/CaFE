@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Build the paper-v4 four-lookback profiles and qualify all nine generators.
+"""Build dataset-local paper-v4 profiles and qualify supported generators.
 
 The central invariant is pairing: a synthetic task is generated once at L=504,
 H=48 and the L={96,168,336,504} benchmark views are suffixes of that same
 master task.  Acceptance requires every view to pass its own real-calibrated
-feature-support and near-distance gates.
+feature-support and near-distance gates.  Datasets are never pooled: each
+dataset/task view owns its split, relative-intensity targets, conditioning, and
+gate artifacts.  Unsupported capability cells remain explicit audit records.
 """
 from __future__ import annotations
 
@@ -32,7 +34,6 @@ for import_path in (BACKEND_DIR, SCRIPT_DIR):
 from app.services.synthetic_feature_gate import evaluate_feature_support_gate  # noqa: E402
 from app.services.synthetic_generation_service import (  # noqa: E402
     PAPER_UNIVARIATE_CAPABILITY_IDS,
-    TARGET_FEATURES_BY_CAPABILITY,
     _attempt_seed,
     _generate_sample_values,
     _realized_features,
@@ -50,15 +51,17 @@ from build_synthetic_v2_feature_gate_artifact import (  # noqa: E402
     split_real_rows_three_way,
 )
 from build_synthetic_v2_generator_conditioning_artifact import (  # noqa: E402
+    annotate_regime_clock_rows,
     calibrate_capability_conditioning,
     derive_profile_nuisance,
-    empirical_percentiles,
     finite_values,
+    qualify_regime_reference_rows,
     quantiles_for_levels,
-    reference_percentile_levels,
     summarize_real_features,
 )
-from build_paper_v4_profile_suite import SOURCE_SPECS as UNIVARIATE_SOURCE_SPECS  # noqa: E402
+from build_paper_v4_profile_suite import (  # noqa: E402
+    DATASET_SPECS as UNIVARIATE_DATASET_SPECS,
+)
 from run_synthetic_v2_near_distance_calibration import (  # noqa: E402
     BucketSpec,
     load_real_bucket,
@@ -70,7 +73,7 @@ from run_synthetic_v2_near_distance_calibration import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v4_nine_capability_suite.v1"
+SCHEMA_VERSION = "paper_v4_nine_capability_suite.v2"
 CONTEXT_LENGTHS = (96, 168, 336, 504)
 MAX_CONTEXT_LENGTH = max(CONTEXT_LENGTHS)
 HORIZON = 48
@@ -83,18 +86,14 @@ PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/2026-07-18-paper-v4-nine-capability-profile-and-generation-protocol.md"
 )
-PAPER_V2_CANONICAL_PATH = (
-    REPO_ROOT
-    / "runtime/paper_exp/v2/00_transfer_protocol_freeze/generator_conditioning_artifact.json"
-)
-PAPER_V1_CANONICAL_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_generator_conditioning_artifact.json"
-)
-DEFAULT_MAX_WINDOWS_PER_SOURCE = 120
+DEFAULT_MAX_WINDOWS_PER_DATASET = 120
 DEFAULT_CALIBRATION_SAMPLES = 16
 DEFAULT_QUALIFICATION_SAMPLES_PER_CELL = 8
 DEFAULT_MAX_ATTEMPTS = 64
 DEFAULT_SEED = 2026071804
+RELATIVE_INTENSITY_PERCENTILE_LEVELS = (0.10, 0.30, 0.50, 0.70, 0.90)
+MIN_TARGET_SPAN_RELATIVE_TO_MAGNITUDE = 1e-6
+MIN_ADJACENT_GAP_FRACTION_OF_SPAN = 0.02
 
 STRUCTURED_CAPABILITY_IDS = (
     "common_factor",
@@ -106,7 +105,7 @@ PRIMARY_TARGET_FEATURE = {
     "trend": "trend_strength",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
-    "regime_switching": "change_point_shift_energy",
+    "regime_switching": "regime_clock_history_incremental_r2",
     "nonlinear_persistence": "nonlinear_conditional_gain",
     "predictable_intermittency": "spike_rate",
     "common_factor": "pca_top1_explained",
@@ -117,9 +116,8 @@ PRIMARY_TARGET_FEATURE = {
 
 @dataclass(frozen=True)
 class RealSource:
-    source_id: str
+    dataset_id: str
     dataset_name: str
-    family_id: str
     domain: str
     task_id: str
     kind: str
@@ -183,80 +181,24 @@ TASK_DESIGNS = {
 }
 
 
-UNIVARIATE_CALIBRATION_SOURCES = (
+UNIVARIATE_CALIBRATION_SOURCES = tuple(
     RealSource(
-        "m4_hourly",
-        "M4 Hourly",
-        "m4_hourly",
-        "Econ/Fin",
+        dataset.dataset_id,
+        dataset.dataset_name,
+        dataset.domain,
         "univariate",
-        "tsf_univariate",
-        "m4_hourly_dataset.zip",
+        dataset.kind,
+        dataset.asset_name,
         24,
-        "h",
-    ),
-    RealSource(
-        "gift_electricity_h",
-        "Electricity/H",
-        "electricity",
-        "Energy",
-        "univariate",
-        "gift_univariate",
-        "electricity/H",
-        24,
-        "h",
-    ),
-    RealSource(
-        "gift_ett1_h",
-        "ETT1/H",
-        "ETT",
-        "Energy",
-        "univariate",
-        "gift_univariate",
-        "ett1/H",
-        24,
-        "h",
-    ),
-    RealSource(
-        "gift_loop_seattle_h",
-        "Loop Seattle/H",
-        "LOOP_SEATTLE",
-        "Transport",
-        "univariate",
-        "gift_univariate",
-        "LOOP_SEATTLE/H",
-        24,
-        "h",
-    ),
-    RealSource(
-        "gift_bitbrains_fast_h",
-        "Bitbrains Fast Storage/H",
-        "bitbrains",
-        "Web/CloudOps",
-        "univariate",
-        "gift_univariate",
-        "bitbrains_fast_storage/H",
-        24,
-        "h",
-    ),
-    RealSource(
-        "gift_bizitobs_l2c_h",
-        "BizITObs L2C/H",
-        "bizitobs_l2c",
-        "Web/CloudOps",
-        "univariate",
-        "gift_univariate",
-        "bizitobs_l2c/H",
-        24,
-        "h",
-    ),
+        dataset.frequency,
+    )
+    for dataset in UNIVARIATE_DATASET_SPECS
 )
 
 STRUCTURED_SOURCES = (
     RealSource(
         "electricity_hourly_panel",
         "Electricity Hourly",
-        "electricity",
         "Energy",
         "common_factor",
         "tsf_panel",
@@ -268,7 +210,6 @@ STRUCTURED_SOURCES = (
     RealSource(
         "traffic_hourly_panel",
         "Traffic Hourly",
-        "traffic",
         "Transport",
         "common_factor",
         "tsf_panel",
@@ -280,7 +221,6 @@ STRUCTURED_SOURCES = (
     RealSource(
         "gift_jena_weather_panel",
         "Jena Weather/H",
-        "jena_weather",
         "Nature",
         "common_factor",
         "gift_panel",
@@ -292,7 +232,6 @@ STRUCTURED_SOURCES = (
     RealSource(
         "gift_bizitobs_l2c_panel",
         "BizITObs L2C/H",
-        "bizitobs_l2c",
         "Web/CloudOps",
         "common_factor",
         "gift_panel",
@@ -304,7 +243,6 @@ STRUCTURED_SOURCES = (
     RealSource(
         "m5_daily_hierarchy",
         "M5 Daily",
-        "m5",
         "Retail",
         "hierarchy",
         "m5_hierarchy",
@@ -317,7 +255,6 @@ STRUCTURED_SOURCES = (
     RealSource(
         "gefcom2014_load",
         "GEFCom2014 Load",
-        "gefcom2014_load",
         "Energy",
         "covariate",
         "gefcom2014_load",
@@ -329,7 +266,6 @@ STRUCTURED_SOURCES = (
     RealSource(
         "gefcom2014_solar",
         "GEFCom2014 Solar",
-        "gefcom2014_solar",
         "Energy",
         "covariate",
         "gefcom2014_solar",
@@ -349,9 +285,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--gift-eval-dir", type=Path, default=DEFAULT_GIFT_EVAL_DIR)
     parser.add_argument(
-        "--max-windows-per-source",
+        "--max-windows-per-dataset",
         type=int,
-        default=DEFAULT_MAX_WINDOWS_PER_SOURCE,
+        default=DEFAULT_MAX_WINDOWS_PER_DATASET,
+    )
+    parser.add_argument(
+        "--datasets",
+        nargs="*",
+        default=None,
+        help="Optional dataset_id subset; every selected dataset still emits all nine rows.",
     )
     parser.add_argument(
         "--calibration-samples",
@@ -377,7 +319,7 @@ def source_asset_path(source: RealSource, *, data_dir: Path, gift_eval_dir: Path
 
 def master_bucket_spec(source: RealSource, *, max_windows: int) -> BucketSpec:
     return BucketSpec(
-        profile_id=f"{source.source_id}__master_L504_H48_E48",
+        profile_id=f"{source.dataset_id}__master_L504_H48_E48",
         kind=source.kind,
         asset_name=source.asset_name,
         context_length=MAX_CONTEXT_LENGTH,
@@ -394,28 +336,33 @@ def master_bucket_spec(source: RealSource, *, max_windows: int) -> BucketSpec:
     )
 
 
-def task_bucket_spec(task: TaskDesign, context_length: int) -> BucketSpec:
+def dataset_bucket_spec(source: RealSource, context_length: int) -> BucketSpec:
+    task = TASK_DESIGNS[source.task_id]
     return BucketSpec(
-        profile_id=gate_profile_id(task.task_id, context_length),
-        kind="pooled_real_profile",
-        asset_name="multiple",
+        profile_id=gate_profile_id(
+            source.dataset_id,
+            source.task_id,
+            context_length,
+        ),
+        kind=source.kind,
+        asset_name=source.asset_name,
         context_length=context_length,
         horizon=HORIZON,
         stride=HORIZON,
-        season_length=task.season_length,
-        target_dim=task.target_dim,
-        covariate_dim=task.covariate_dim,
-        hierarchy=task.hierarchy,
+        season_length=source.season_length,
+        target_dim=source.target_dim,
+        covariate_dim=source.covariate_dim,
+        hierarchy=source.hierarchy,
         synthetic_capabilities=task.capabilities,
     )
 
 
-def generator_profile_id(task_id: str) -> str:
-    return f"paper_v4_{task_id}_global_L504_H48"
+def generator_profile_id(dataset_id: str, task_id: str) -> str:
+    return f"{dataset_id}__{task_id}__L504_H48"
 
 
-def gate_profile_id(task_id: str, context_length: int) -> str:
-    return f"paper_v4_{task_id}_global_L{context_length}_H48"
+def gate_profile_id(dataset_id: str, task_id: str, context_length: int) -> str:
+    return f"{dataset_id}__{task_id}__L{context_length}_H48"
 
 
 def paired_view(
@@ -490,7 +437,7 @@ def load_source_views(
     }
     for row_index, row in enumerate(master_rows):
         original_group = str(row.get("group_id") or "single-series")
-        source_group = f"{source.source_id}:{original_group}"
+        source_group = f"{source.dataset_id}:{original_group}"
         source_start = int(row.get("window_start") or 0)
         for context_length in CONTEXT_LENGTHS:
             target, covariates = paired_view(
@@ -501,7 +448,7 @@ def load_source_views(
             )
             spec = replace(
                 loader_spec,
-                profile_id=f"{source.source_id}__L{context_length}_H48",
+                profile_id=f"{source.dataset_id}__L{context_length}_H48",
                 context_length=context_length,
                 horizon=HORIZON,
             )
@@ -510,14 +457,13 @@ def load_source_views(
                 {
                     "group_id": source_group,
                     "window_start": source_start + MAX_CONTEXT_LENGTH - context_length,
-                    "source_id": source.source_id,
-                    "family_id": source.family_id,
+                    "dataset_id": source.dataset_id,
                     "master_row_index": row_index,
                 }
             )
             views[context_length].append(view)
     return views, {
-        "source": asdict(source),
+        "dataset": asdict(source),
         "asset_path": relative_or_absolute(path),
         "master_window_count": len(master_rows),
         "master_shape": {
@@ -528,8 +474,8 @@ def load_source_views(
     }
 
 
-def balanced_three_way_split(
-    source_rows: dict[str, list[dict[str, Any]]],
+def dataset_three_way_split(
+    rows: list[dict[str, Any]],
     spec: BucketSpec,
     *,
     seed: int,
@@ -539,102 +485,30 @@ def balanced_three_way_split(
     list[dict[str, Any]],
     list[dict[str, Any]],
     dict[str, Any],
-    dict[str, Any],
 ]:
-    """Split inside each dataset, then pool equal-source partitions.
+    """Create the three leakage-protected roles inside exactly one dataset."""
 
-    A global group split is invalid for heterogeneous pooled profiles: with two
-    sources it can compare Load only against Solar only and inflate the natural
-    real-real distance.  Source-local splitting keeps every gate threshold
-    anchored to within-dataset variation while preserving group/temporal
-    leakage protection.
-    """
-
-    eligible = {
-        source_id: rows
-        for source_id, rows in source_rows.items()
-        if len(rows) >= minimum_rows
-    }
-    if not eligible:
-        raise ValueError(f"{spec.profile_id} has no source with {minimum_rows} rows")
-    source_partitions: dict[
-        str,
-        tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]],
-    ] = {}
-    source_splits: dict[str, dict[str, Any]] = {}
-    excluded_reasons: dict[str, str] = {}
-    for source_index, source_id in enumerate(sorted(eligible)):
-        source_spec = replace(spec, profile_id=f"{spec.profile_id}__{source_id}")
-        try:
-            source_parameter, source_reference, source_calibration, summary = (
-                split_real_rows_three_way(
-                    eligible[source_id],
-                    source_spec,
-                    calibration_fraction=DEFAULT_CALIBRATION_FRACTION,
-                    gate_reference_fraction=DEFAULT_GATE_REFERENCE_FRACTION,
-                    seed=_seed_for(seed, source_spec.profile_id, source_index),
-                )
-            )
-        except ValueError as error:
-            excluded_reasons[source_id] = str(error)
-            continue
-        source_partitions[source_id] = (
-            source_parameter,
-            source_reference,
-            source_calibration,
+    if len(rows) < minimum_rows:
+        raise ValueError(
+            f"{spec.profile_id} has {len(rows)} rows; at least {minimum_rows} required"
         )
-        source_splits[source_id] = summary
-    if not source_partitions:
-        raise ValueError(f"{spec.profile_id} has no source with a valid three-way split")
-
-    # Balance after source-local splitting.  This keeps the larger temporal
-    # history needed for embargo, while giving each source exactly equal mass
-    # inside each of the three downstream roles.
-    partition_caps = tuple(
-        min(len(parts[index]) for parts in source_partitions.values())
-        for index in range(3)
+    parameter, reference, calibration, split_summary = split_real_rows_three_way(
+        rows,
+        spec,
+        calibration_fraction=DEFAULT_CALIBRATION_FRACTION,
+        gate_reference_fraction=DEFAULT_GATE_REFERENCE_FRACTION,
+        seed=seed,
     )
-    parameter: list[dict[str, Any]] = []
-    reference: list[dict[str, Any]] = []
-    calibration: list[dict[str, Any]] = []
-    for parts in source_partitions.values():
-        parameter.extend(sample_evenly(parts[0], partition_caps[0]))
-        reference.extend(sample_evenly(parts[1], partition_caps[1]))
-        calibration.extend(sample_evenly(parts[2], partition_caps[2]))
-    split_summary = {
-        "policy": "source_local_three_way_then_equal_source_pool",
-        "source_count": len(source_partitions),
-        "generator_parameter_count": len(parameter),
-        "gate_reference_count": len(reference),
-        "gate_calibration_count": len(calibration),
-        "balanced_partition_rows_per_source": {
-            "generator_parameter": partition_caps[0],
-            "gate_reference": partition_caps[1],
-            "gate_calibration": partition_caps[2],
+    return (
+        parameter,
+        reference,
+        calibration,
+        {
+            **split_summary,
+            "policy": "dataset_local_three_way_no_pooling",
+            "dataset_id": rows[0].get("dataset_id"),
         },
-        "source_splits": source_splits,
-    }
-    pool_summary = {
-        "eligible_source_ids": sorted(source_partitions),
-        "excluded_source_ids": sorted(set(source_rows) - set(source_partitions)),
-        "excluded_reasons": {
-            **{
-                source_id: f"fewer than {minimum_rows} rows"
-                for source_id in sorted(set(source_rows) - set(eligible))
-            },
-            **excluded_reasons,
-        },
-        "source_input_row_counts": {
-            source_id: len(rows) for source_id, rows in source_rows.items()
-        },
-        "balanced_partition_rows_per_source": {
-            "generator_parameter": partition_caps[0],
-            "gate_reference": partition_caps[1],
-            "gate_calibration": partition_caps[2],
-        },
-        "pooled_count": len(parameter) + len(reference) + len(calibration),
-    }
-    return parameter, reference, calibration, split_summary, pool_summary
+    )
 
 
 def calibrate_feature_gate_with_rounding_guard(
@@ -655,7 +529,43 @@ def calibrate_feature_gate_with_rounding_guard(
         # because the score is evaluated after that serialization.
         support["threshold"] = round_float(float(support["threshold"]) * 1.00001)
         support["serialization_rounding_guard"] = 1.00001
+    support["reference_control_z"] = standardized_control_vectors(
+        reference,
+        support,
+    )
+    support["calibration_control_z"] = standardized_control_vectors(
+        calibration,
+        support,
+    )
     return config
+
+
+def standardized_control_vectors(
+    rows: list[dict[str, Any]],
+    support: dict[str, Any],
+) -> list[list[float]]:
+    """Freeze the exact dataset-local real controls used by paper E1.
+
+    E1 should consume the already split and calibrated real reference rather
+    than reconstructing a potentially different split from raw source files.
+    Empty vectors are retained for capabilities whose construction changes all
+    available observables and therefore has no valid nuisance control.
+    """
+
+    names = tuple(str(name) for name in support["feature_names"])
+    if not names:
+        return [[] for _row in rows]
+    center = np.asarray(support["feature_center"], dtype=float)
+    scale = np.maximum(np.asarray(support["feature_scale"], dtype=float), 1e-9)
+    result: list[list[float]] = []
+    for row in rows:
+        features = row["features"]
+        values = np.asarray([float(features[name]) for name in names], dtype=float)
+        normalized = (values - center) / scale
+        if not np.all(np.isfinite(normalized)):
+            raise ValueError("non-finite standardized control vector")
+        result.append([round_float(float(value)) for value in normalized])
+    return result
 
 
 def source_profile(
@@ -664,10 +574,9 @@ def source_profile(
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "profile_id": f"{source.source_id}__L{context_length}_H48",
-        "source_id": source.source_id,
+        "profile_id": f"{source.dataset_id}__L{context_length}_H48",
+        "dataset_id": source.dataset_id,
         "dataset_name": source.dataset_name,
-        "family_id": source.family_id,
         "domain": source.domain,
         "task_id": source.task_id,
         "context_length": context_length,
@@ -682,36 +591,180 @@ def source_profile(
     }
 
 
-def compose_canonical_intensity() -> dict[str, Any]:
-    paper_v2 = read_json(PAPER_V2_CANONICAL_PATH)["canonical_intensity"]
-    paper_v1 = read_json(PAPER_V1_CANONICAL_PATH)["canonical_intensity"]
-    capabilities = {
-        capability_id: (
-            paper_v2["capabilities"][capability_id]
-            if capability_id in PAPER_UNIVARIATE_CAPABILITY_IDS
-            else paper_v1["capabilities"][capability_id]
-        )
-        for capability_id in ALL_CAPABILITY_IDS
-    }
-    fingerprint_payload = json.dumps(
-        {
-            capability_id: {
-                "primary_feature": PRIMARY_TARGET_FEATURE[capability_id],
-                "target_values": capabilities[capability_id]["target_values"],
-            }
-            for capability_id in ALL_CAPABILITY_IDS
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
+def intensity_policy() -> dict[str, Any]:
     return {
-        "scale_id": "synthetic-v2-paper-v4-nine-capability-frozen-2026-07-18",
-        "scale_fingerprint": hashlib.sha256(fingerprint_payload).hexdigest(),
-        "policy": (
-            "paper-v2 final-shape canonical scale for six univariate capabilities; "
-            "frozen paper-v1 structured canonical scale for three structured capabilities"
+        "policy_id": "dataset-local-relative-quantiles-v1",
+        "percentile_levels": list(RELATIVE_INTENSITY_PERCENTILE_LEVELS),
+        "definition": (
+            "For every dataset/task/capability cell, intensity levels 1..5 target "
+            "the p10/p30/p50/p70/p90 primary-feature quantiles of that dataset's "
+            "leakage-protected L=504 parameter split. Values are not comparable "
+            "across datasets."
         ),
-        "capabilities": capabilities,
+    }
+
+
+def target_spacing_audit(values: list[float]) -> dict[str, Any]:
+    targets = np.asarray(values, dtype=float)
+    if targets.shape != (5,) or not np.isfinite(targets).all():
+        return {
+            "supported": False,
+            "reason_code": "missing_or_nonfinite_local_target_quantiles",
+            "target_values": [round_float(value) for value in targets],
+        }
+    gaps = np.diff(targets)
+    span = float(targets[-1] - targets[0])
+    magnitude = max(float(np.max(np.abs(targets))), 1.0)
+    absolute_floor = MIN_TARGET_SPAN_RELATIVE_TO_MAGNITUDE * magnitude
+    adjacent_floor = max(
+        absolute_floor,
+        MIN_ADJACENT_GAP_FRACTION_OF_SPAN * max(span, 0.0),
+    )
+    reason_code: str | None = None
+    if span <= absolute_floor:
+        reason_code = "insufficient_local_target_range"
+    elif np.any(gaps < adjacent_floor):
+        reason_code = "insufficient_local_intensity_spacing"
+    supported = reason_code is None
+    return {
+        "supported": supported,
+        "reason_code": reason_code,
+        "target_values": [round_float(value) for value in targets],
+        "target_span": round_float(span),
+        "adjacent_gaps": [round_float(value) for value in gaps],
+        "minimum_target_span": round_float(absolute_floor),
+        "minimum_adjacent_gap": round_float(adjacent_floor),
+    }
+
+
+def structural_support_audit(
+    source: RealSource,
+    capability_id: str,
+) -> dict[str, Any]:
+    reason: str | None = None
+    if capability_id == "common_factor" and source.target_dim < 3:
+        reason = "requires_at_least_three_synchronous_targets"
+    elif capability_id == "hierarchical_coherence" and (
+        source.target_dim < 3 or source.hierarchy != "additive_first"
+    ):
+        reason = "requires_explicit_additive_hierarchy"
+    elif capability_id == "covariate_response" and source.covariate_dim < 1:
+        reason = "requires_known_future_covariates"
+    return {
+        "supported": reason is None,
+        "reason_code": reason,
+        "target_dim": source.target_dim,
+        "covariate_dim": source.covariate_dim,
+        "hierarchy": source.hierarchy,
+    }
+
+
+def task_view_support_audit(
+    source: RealSource,
+    capability_id: str,
+) -> dict[str, Any]:
+    required_task_id = task_id_for_capability(capability_id)
+    variable_structure = structural_support_audit(source, capability_id)
+    required_structure = {
+        "univariate": {
+            "minimum_target_dim": 1,
+            "known_future_covariates_required": False,
+            "hierarchy_required": None,
+        },
+        "common_factor": {
+            "minimum_target_dim": 3,
+            "known_future_covariates_required": False,
+            "hierarchy_required": None,
+        },
+        "hierarchy": {
+            "minimum_target_dim": 3,
+            "known_future_covariates_required": False,
+            "hierarchy_required": "additive_first",
+        },
+        "covariate": {
+            "minimum_target_dim": 1,
+            "known_future_covariates_required": True,
+            "hierarchy_required": None,
+        },
+    }[required_task_id]
+    reason: str | None = None
+    if source.task_id != required_task_id:
+        reason = (
+            "variable_structure_not_supported"
+            if not variable_structure["supported"]
+            else "missing_required_task_view"
+        )
+    elif not variable_structure["supported"]:
+        reason = "variable_structure_not_supported"
+    return {
+        "supported": reason is None,
+        "reason_code": reason,
+        "required_task_id": required_task_id,
+        "available_task_id": source.task_id,
+        "required_structure": required_structure,
+        "available_structure": {
+            "target_dim": source.target_dim,
+            "covariate_dim": source.covariate_dim,
+            "hierarchy": source.hierarchy,
+        },
+        "variable_structure_audit": variable_structure,
+    }
+
+
+def support_matrix_row(
+    source: RealSource,
+    capability_id: str,
+    *,
+    status: str,
+    reason_codes: tuple[str, ...],
+    view_support: dict[int, dict[str, Any]],
+    bucket_failures: dict[int, str],
+    structure_audit: dict[str, Any] | None = None,
+    target_spacing: dict[str, Any] | None = None,
+    conditioning_calibration: dict[str, Any] | None = None,
+    task_view_audit: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    required_task_id = task_id_for_capability(capability_id)
+    task_view_audit = task_view_audit or task_view_support_audit(
+        source,
+        capability_id,
+    )
+    return {
+        "dataset_id": source.dataset_id,
+        "dataset_name": source.dataset_name,
+        "domain": source.domain,
+        "task_id": required_task_id,
+        "available_task_id": source.task_id,
+        "capability_id": capability_id,
+        "status": status,
+        "supported": status == "supported",
+        "reason_codes": list(reason_codes),
+        "generator_profile_id": generator_profile_id(
+            source.dataset_id,
+            required_task_id,
+        ),
+        "gate_profile_ids": [
+            gate_profile_id(source.dataset_id, required_task_id, context_length)
+            for context_length in CONTEXT_LENGTHS
+        ],
+        "structure_audit": structure_audit,
+        "task_view_audit": task_view_audit,
+        "target_spacing": target_spacing,
+        "conditioning_calibration": conditioning_calibration,
+        "view_support": {
+            str(context_length): view_support.get(
+                context_length,
+                {
+                    "supported": False,
+                    "reason_code": "bucket_not_built",
+                },
+            )
+            for context_length in CONTEXT_LENGTHS
+        },
+        "bucket_failures": {
+            str(context_length): detail
+            for context_length, detail in sorted(bucket_failures.items())
+        },
     }
 
 
@@ -754,93 +807,203 @@ def build_suite(
     max_windows: int,
     calibration_samples: int,
     seed: int,
+    dataset_ids: tuple[str, ...] | None = None,
 ) -> None:
     created_at = datetime.now(timezone.utc).isoformat()
-    sources = (*UNIVARIATE_CALIBRATION_SOURCES, *STRUCTURED_SOURCES)
+    all_sources = (*UNIVARIATE_CALIBRATION_SOURCES, *STRUCTURED_SOURCES)
+    available_ids = {source.dataset_id for source in all_sources}
+    unknown_ids = sorted(set(dataset_ids or ()) - available_ids)
+    if unknown_ids:
+        raise ValueError("unknown dataset ids: " + ", ".join(unknown_ids))
+    sources = tuple(
+        source
+        for source in all_sources
+        if dataset_ids is None or source.dataset_id in dataset_ids
+    )
+    if not sources:
+        raise ValueError("no datasets selected")
     source_views: dict[str, dict[int, list[dict[str, Any]]]] = {}
     inventories: list[dict[str, Any]] = []
     profiles: list[dict[str, Any]] = []
     for source_index, source in enumerate(sources):
-        print(f"[source {source_index + 1}/{len(sources)}] {source.source_id}", flush=True)
+        print(
+            f"[dataset {source_index + 1}/{len(sources)}] {source.dataset_id}",
+            flush=True,
+        )
         views, inventory = load_source_views(
             source,
             data_dir=data_dir,
             gift_eval_dir=gift_eval_dir,
             max_windows=max_windows,
         )
-        source_views[source.source_id] = views
+        source_views[source.dataset_id] = views
         inventories.append(inventory)
         profiles.extend(
             source_profile(source, context_length, views[context_length])
             for context_length in CONTEXT_LENGTHS
         )
 
-    canonical_intensity = compose_canonical_intensity()
     generator_profiles: dict[str, dict[str, Any]] = {}
     feature_buckets: dict[str, dict[str, Any]] = {}
     near_buckets: dict[str, dict[str, Any]] = {}
     split_summaries: dict[str, dict[str, Any]] = {}
-    pool_summaries: dict[str, dict[str, Any]] = {}
+    support_matrix: list[dict[str, Any]] = []
 
-    for task_index, task in enumerate(TASK_DESIGNS.values()):
-        task_sources = [source for source in sources if source.task_id == task.task_id]
-        task_parameter_rows: dict[int, list[dict[str, Any]]] = {}
-        for context_length in CONTEXT_LENGTHS:
-            spec = task_bucket_spec(task, context_length)
-            parameter, reference, calibration, split_summary, pool_summary = (
-                balanced_three_way_split(
-                    {
-                        source.source_id: source_views[source.source_id][context_length]
-                        for source in task_sources
-                    },
-                    spec,
-                    seed=_seed_for(seed, spec.profile_id, 0),
+    for dataset_index, source in enumerate(sources):
+        task = TASK_DESIGNS[source.task_id]
+        for capability_id in ALL_CAPABILITY_IDS:
+            if capability_id in task.capabilities:
+                continue
+            task_view_audit = task_view_support_audit(source, capability_id)
+            support_matrix.append(
+                support_matrix_row(
+                    source,
+                    capability_id,
+                    status="unsupported",
+                    reason_codes=(str(task_view_audit["reason_code"]),),
+                    view_support={},
+                    bucket_failures={},
+                    structure_audit=task_view_audit[
+                        "variable_structure_audit"
+                    ],
+                    task_view_audit=task_view_audit,
                 )
             )
-            task_parameter_rows[context_length] = parameter
-            pool_summaries[gate_profile_id(task.task_id, context_length)] = pool_summary
+        parameter_rows: dict[int, list[dict[str, Any]]] = {}
+        view_support: dict[str, dict[int, dict[str, Any]]] = {
+            capability_id: {} for capability_id in task.capabilities
+        }
+        bucket_failures: dict[int, str] = {}
+        for context_length in CONTEXT_LENGTHS:
+            spec = dataset_bucket_spec(source, context_length)
+            try:
+                parameter, reference, calibration, split_summary = (
+                    dataset_three_way_split(
+                        source_views[source.dataset_id][context_length],
+                        spec,
+                        seed=_seed_for(seed, source.dataset_id, 0),
+                    )
+                )
+            except ValueError as error:
+                bucket_failures[context_length] = str(error)
+                for capability_id in task.capabilities:
+                    view_support[capability_id][context_length] = {
+                        "supported": False,
+                        "reason_code": "dataset_split_failed",
+                        "detail": str(error),
+                    }
+                continue
+            parameter_rows[context_length] = parameter
             split_summaries[spec.profile_id] = split_summary
+            capability_gates: dict[str, dict[str, Any]] = {}
+            for capability_id in task.capabilities:
+                try:
+                    capability_gates[capability_id] = (
+                        calibrate_feature_gate_with_rounding_guard(
+                            capability_id,
+                            reference,
+                            calibration,
+                        )
+                    )
+                    view_support[capability_id][context_length] = {
+                        "supported": True,
+                        "reason_code": None,
+                        "feature_gate": "supported",
+                    }
+                except Exception as error:
+                    view_support[capability_id][context_length] = {
+                        "supported": False,
+                        "reason_code": "feature_gate_calibration_failed",
+                        "detail": str(error),
+                    }
             feature_buckets[spec.profile_id] = {
                 "profile_id": spec.profile_id,
+                "dataset_id": source.dataset_id,
+                "task_id": source.task_id,
                 "context_length": context_length,
                 "horizon": HORIZON,
-                "season_length": task.season_length,
-                "target_dim": task.target_dim,
-                "covariate_dim": task.covariate_dim,
+                "season_length": source.season_length,
+                "target_dim": source.target_dim,
+                "covariate_dim": source.covariate_dim,
                 "split": split_summary,
-                "capabilities": {
-                    capability_id: calibrate_feature_gate_with_rounding_guard(
-                        capability_id,
-                        reference,
-                        calibration,
-                    )
-                    for capability_id in task.capabilities
-                },
+                "capabilities": capability_gates,
             }
-            thresholds, _diagnostics = thresholds_from_split(reference, calibration)
-            near_buckets[spec.profile_id] = online_artifact_bucket(
-                spec,
-                sample_evenly(reference, min(192, len(reference))),
-                thresholds=thresholds,
-                split_summary=split_summary,
-            )
+            try:
+                thresholds, _diagnostics = thresholds_from_split(reference, calibration)
+                near_buckets[spec.profile_id] = online_artifact_bucket(
+                    spec,
+                    sample_evenly(reference, min(192, len(reference))),
+                    thresholds=thresholds,
+                    split_summary=split_summary,
+                )
+            except Exception as error:
+                bucket_failures[context_length] = str(error)
+                for capability_id in task.capabilities:
+                    current = view_support[capability_id][context_length]
+                    current.update(
+                        {
+                            "supported": False,
+                            "reason_code": "near_distance_calibration_failed",
+                            "detail": str(error),
+                        }
+                    )
 
-        master_spec = task_bucket_spec(task, MAX_CONTEXT_LENGTH)
-        master_spec = replace(master_spec, profile_id=generator_profile_id(task.task_id))
-        parameter = task_parameter_rows[MAX_CONTEXT_LENGTH]
-        master_split = split_summaries[gate_profile_id(task.task_id, MAX_CONTEXT_LENGTH)]
+        master_spec = dataset_bucket_spec(source, MAX_CONTEXT_LENGTH)
+        master_spec = replace(
+            master_spec,
+            profile_id=generator_profile_id(source.dataset_id, source.task_id),
+        )
+        master_parameter = parameter_rows.get(MAX_CONTEXT_LENGTH)
+        if master_parameter is None:
+            for capability_id in task.capabilities:
+                support_matrix.append(
+                    support_matrix_row(
+                        source,
+                        capability_id,
+                        status="unsupported",
+                        reason_codes=("dataset_split_failed",),
+                        view_support=view_support[capability_id],
+                        bucket_failures=bucket_failures,
+                    )
+                )
+            continue
+        master_gate_id = gate_profile_id(
+            source.dataset_id,
+            source.task_id,
+            MAX_CONTEXT_LENGTH,
+        )
+        master_split = split_summaries[master_gate_id]
         measured = measurement_rows(
-            parameter,
+            master_parameter,
             context_length=MAX_CONTEXT_LENGTH,
             horizon=HORIZON,
-            season_length=task.season_length,
+            season_length=source.season_length,
         )
         real_feature_summary = summarize_real_features(measured)
-        nuisance = derive_profile_nuisance(
-            real_feature_summary,
-            MAX_CONTEXT_LENGTH,
-            task.season_length,
-        )
+        try:
+            nuisance = derive_profile_nuisance(
+                real_feature_summary,
+                MAX_CONTEXT_LENGTH,
+                source.season_length,
+            )
+        except Exception as error:
+            for capability_id in task.capabilities:
+                support_matrix.append(
+                    support_matrix_row(
+                        source,
+                        capability_id,
+                        status="unsupported",
+                        reason_codes=("conditioning_profile_failed",),
+                        view_support=view_support[capability_id],
+                        bucket_failures=bucket_failures,
+                        conditioning_calibration={
+                            "status": "unsupported",
+                            "reason_code": "conditioning_profile_failed",
+                            "detail": str(error),
+                        },
+                    )
+                )
+            continue
         controlled_feature_preconditioning: dict[str, Any] = {
             "method": "none",
             "changes": {},
@@ -869,24 +1032,97 @@ def build_suite(
         capability_configs: dict[str, dict[str, Any]] = {}
         for capability_index, capability_id in enumerate(task.capabilities):
             print(
-                f"[conditioning {task_index + 1}/{len(TASK_DESIGNS)}] "
-                f"{task.task_id}/{capability_id}",
+                f"[conditioning {dataset_index + 1}/{len(sources)}] "
+                f"{source.dataset_id}/{source.task_id}/{capability_id}",
                 flush=True,
             )
-            definition = canonical_intensity["capabilities"][capability_id]
-            targets = [float(value) for value in definition["target_values"]]
             primary = PRIMARY_TARGET_FEATURE[capability_id]
-            primary_values = finite_values(measured, primary)
-            if not primary_values.size:
-                raise ValueError(f"{task.task_id}/{capability_id} has no finite {primary}")
-            local_quantiles = {
-                name: quantiles_for_levels(
-                    finite_values(measured, name),
-                    reference_percentile_levels(capability_id),
+            structure_audit = structural_support_audit(source, capability_id)
+            capability_measurements = measured
+            if capability_id == "regime_switching":
+                annotated, audits = annotate_regime_clock_rows(
+                    measured,
+                    master_spec,
                 )
-                for name in TARGET_FEATURES_BY_CAPABILITY[capability_id]
-                if finite_values(measured, name).size
-            }
+                try:
+                    capability_measurements, qualification = (
+                        qualify_regime_reference_rows(
+                            annotated,
+                            master_spec,
+                            audits=audits,
+                        )
+                    )
+                    structure_audit = {
+                        **structure_audit,
+                        "recurring_regime_qualification": {
+                            "status": "supported",
+                            **qualification,
+                        },
+                    }
+                except ValueError as error:
+                    structure_audit = {
+                        **structure_audit,
+                        "supported": False,
+                        "reason_code": (
+                            "insufficient_dataset_local_recurring_regime_structure"
+                        ),
+                        "recurring_regime_qualification": {
+                            "status": "unsupported",
+                            "detail": str(error),
+                        },
+                    }
+                    capability_measurements = []
+            primary_values = finite_values(capability_measurements, primary)
+            spacing_audit: dict[str, Any]
+            if not structure_audit["supported"]:
+                spacing_audit = {
+                    "supported": False,
+                    "reason_code": None,
+                    "target_values": [],
+                    "status": "not_evaluated_due_to_structure",
+                }
+                targets = []
+            elif primary_values.size:
+                targets = quantiles_for_levels(
+                    primary_values,
+                    RELATIVE_INTENSITY_PERCENTILE_LEVELS,
+                )
+                spacing_audit = target_spacing_audit(targets)
+            else:
+                targets = []
+                spacing_audit = {
+                    "supported": False,
+                    "reason_code": "no_finite_primary_feature",
+                    "target_values": [],
+                }
+            view_failures = [
+                row["reason_code"]
+                for row in view_support[capability_id].values()
+                if not row["supported"]
+            ]
+            pre_calibration_reasons = [
+                reason
+                for reason in (
+                    structure_audit["reason_code"],
+                    spacing_audit["reason_code"],
+                    *view_failures,
+                )
+                if reason
+            ]
+            if pre_calibration_reasons:
+                support_matrix.append(
+                    support_matrix_row(
+                        source,
+                        capability_id,
+                        status="unsupported",
+                        reason_codes=tuple(dict.fromkeys(pre_calibration_reasons)),
+                        view_support=view_support[capability_id],
+                        bucket_failures=bucket_failures,
+                        structure_audit=structure_audit,
+                        target_spacing=spacing_audit,
+                    )
+                )
+                continue
             # Regime and nonlinear observables have materially higher
             # Monte-Carlo variance than the other seven capability features.
             # Doubling their fit bank is pre-registered here; the independent
@@ -896,56 +1132,98 @@ def build_suite(
                 if capability_id in {"regime_switching", "nonlinear_persistence"}
                 else calibration_samples
             )
-            parameters, intensity_lambdas, calibration = calibrate_capability_conditioning(
-                spec=master_spec,
-                capability_id=capability_id,
-                profile_nuisance=nuisance,
-                real_feature_summary=real_feature_summary,
-                canonical_target_values=targets,
-                sample_count=per_grid_samples,
-                seed=_seed_for(seed, master_spec.profile_id, 100 + capability_index),
-                primary_feature=primary,
-            )
-            if calibration["status"] != "supported":
-                raise ValueError(
-                    f"unsupported conditioning {task.task_id}/{capability_id}: "
-                    f"max_normalized_error={calibration['max_normalized_error']}"
+            try:
+                parameters, intensity_lambdas, calibration = (
+                    calibrate_capability_conditioning(
+                        spec=master_spec,
+                        capability_id=capability_id,
+                        profile_nuisance=nuisance,
+                        real_feature_summary=real_feature_summary,
+                        target_values=targets,
+                        sample_count=per_grid_samples,
+                        seed=_seed_for(
+                            seed,
+                            master_spec.profile_id,
+                            100 + capability_index,
+                        ),
+                        primary_feature=primary,
+                    )
                 )
+            except Exception as error:
+                support_matrix.append(
+                    support_matrix_row(
+                        source,
+                        capability_id,
+                        status="unsupported",
+                        reason_codes=("conditioning_calibration_failed",),
+                        view_support=view_support[capability_id],
+                        bucket_failures=bucket_failures,
+                        structure_audit=structure_audit,
+                        target_spacing=spacing_audit,
+                        conditioning_calibration={
+                            "status": "unsupported",
+                            "reason_code": "conditioning_calibration_failed",
+                            "detail": str(error),
+                        },
+                    )
+                )
+                continue
+            if calibration["status"] != "supported":
+                support_matrix.append(
+                    support_matrix_row(
+                        source,
+                        capability_id,
+                        status="unsupported",
+                        reason_codes=("conditioning_calibration_failed",),
+                        view_support=view_support[capability_id],
+                        bucket_failures=bucket_failures,
+                        structure_audit=structure_audit,
+                        target_spacing=spacing_audit,
+                        conditioning_calibration=calibration,
+                    )
+                )
+                continue
             capability_configs[capability_id] = {
                 "parameters": parameters,
                 "intensity_lambdas": intensity_lambdas,
-                "canonical_reference_percentile_levels": definition[
-                    "reference_percentile_levels"
-                ],
-                "canonical_target_feature": primary,
-                "canonical_target_values": targets,
-                "canonical_raw_reference_quantile_values": definition[
-                    "raw_reference_quantile_values"
-                ],
-                "calibrated_realized_strengths": calibration["realized_values"],
-                "local_real_percentiles_at_canonical_targets": empirical_percentiles(
-                    primary_values,
-                    targets,
+                "target_feature": primary,
+                "target_percentile_levels": list(
+                    RELATIVE_INTENSITY_PERCENTILE_LEVELS
                 ),
-                "local_real_target_quantiles": local_quantiles,
-                "canonical_calibration": calibration,
+                "target_values": targets,
+                "calibrated_realized_strengths": calibration["realized_values"],
+                "calibration": calibration,
                 "calibration_method": (
-                    "frozen canonical target with pooled real-profile inverse calibration"
+                    "dataset-local relative-quantile inverse calibration"
                 ),
             }
+            support_matrix.append(
+                support_matrix_row(
+                    source,
+                    capability_id,
+                    status="supported",
+                    reason_codes=(),
+                    view_support=view_support[capability_id],
+                    bucket_failures=bucket_failures,
+                    structure_audit=structure_audit,
+                    target_spacing=spacing_audit,
+                    conditioning_calibration=calibration,
+                )
+            )
         generator_profiles[master_spec.profile_id] = {
             "profile_id": master_spec.profile_id,
-            "conditioning_role": "paper_v4_pooled_train_only_master_task",
-            "dataset_name": " + ".join(source.dataset_name for source in task_sources),
-            "family_id": f"pooled_{task.task_id}",
+            "dataset_id": source.dataset_id,
+            "conditioning_role": "paper_v4_dataset_local_train_only_master_task",
+            "dataset_name": source.dataset_name,
+            "task_id": source.task_id,
             "context_length": MAX_CONTEXT_LENGTH,
             "horizon": HORIZON,
-            "target_dim": task.target_dim,
-            "covariate_dim": task.covariate_dim,
-            "hierarchy": task.hierarchy,
-            "season_length": task.season_length,
+            "target_dim": source.target_dim,
+            "covariate_dim": source.covariate_dim,
+            "hierarchy": source.hierarchy,
+            "season_length": source.season_length,
             "feature_measurement_horizon": HORIZON,
-            "frequency": task.frequency,
+            "frequency": source.frequency,
             "selection_weight": 1.0,
             "nuisance_parameters": nuisance,
             "controlled_feature_preconditioning": controlled_feature_preconditioning,
@@ -954,6 +1232,12 @@ def build_suite(
             "capabilities": capability_configs,
         }
 
+    support_matrix.sort(
+        key=lambda row: (
+            str(row["dataset_id"]),
+            ALL_CAPABILITY_IDS.index(str(row["capability_id"])),
+        )
+    )
     config = {
         "schema_version": SCHEMA_VERSION,
         "created_at": created_at,
@@ -966,17 +1250,18 @@ def build_suite(
             "the identical untouched 48-step future"
         ),
         "profile_role": (
-            "real-window empirical calibration; profiles are not synthetic samples"
+            "dataset-local real-window empirical calibration; no cross-dataset pooling"
         ),
-        "max_windows_per_source": max_windows,
+        "dataset_is_independent_unit": True,
+        "max_windows_per_dataset": max_windows,
         "calibration_samples_per_grid_cell": calibration_samples,
         "seed": seed,
     }
     generator_artifact = {
-        "schema_version": "synthetic_v2_generator_conditioning_artifact.v2",
+        "schema_version": "synthetic_v2_generator_conditioning_artifact.v4",
         "created_at": created_at,
         "config": config,
-        "canonical_intensity": canonical_intensity,
+        "intensity_policy": intensity_policy(),
         "profiles": generator_profiles,
     }
     feature_artifact = {
@@ -992,7 +1277,7 @@ def build_suite(
     near_artifact = {
         "schema_version": "synthetic_v2_near_distance_online.v2",
         "created_at": created_at,
-        "source_summary_schema_version": SCHEMA_VERSION,
+        "dataset_summary_schema_version": SCHEMA_VERSION,
         "config": {
             **config,
             "artifact_reference_count": 192,
@@ -1001,19 +1286,17 @@ def build_suite(
         },
         "buckets": near_buckets,
     }
-    mapping = build_capability_dataset_mapping(profiles)
     profile_suite = {
         "schema_version": SCHEMA_VERSION,
         "created_at": created_at,
         "config": config,
-        "source_inventory": inventories,
-        "structured_source_profiles": [
+        "dataset_inventory": inventories,
+        "structured_dataset_profiles": [
             profile for profile in profiles if profile["task_id"] != "univariate"
         ],
-        "calibration_source_profiles": profiles,
-        "pool_summaries": pool_summaries,
+        "calibration_dataset_profiles": profiles,
         "split_summaries": split_summaries,
-        "capability_dataset_mapping": mapping,
+        "support_matrix": support_matrix,
     }
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / "config.json", config)
@@ -1021,54 +1304,19 @@ def build_suite(
     write_json(output_dir / "generator_conditioning_artifact.json", generator_artifact)
     write_json(output_dir / "feature_gate_artifact.json", feature_artifact)
     write_json(output_dir / "near_distance_artifact.json", near_artifact)
-    write_mapping_csv(output_dir / "capability_dataset_mapping.csv", mapping)
-
-
-def build_capability_dataset_mapping(
-    calibration_profiles: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    structured_by_task: dict[str, list[dict[str, Any]]] = {}
-    for profile in calibration_profiles:
-        structured_by_task.setdefault(str(profile["task_id"]), []).append(profile)
-    univariate_datasets = [
+    write_json(
+        output_dir / "dataset_capability_support_matrix.json",
         {
-            "source_id": source.source_id,
-            "dataset_name": source.dataset_name,
-            "family_id": source.family_id,
-            "domain": source.domain,
-        }
-        for source in UNIVARIATE_SOURCE_SPECS
-    ]
-    mapping: list[dict[str, Any]] = []
-    for capability_id in ALL_CAPABILITY_IDS:
-        task_id = task_id_for_capability(capability_id)
-        if task_id == "univariate":
-            datasets = univariate_datasets
-        else:
-            unique: dict[str, dict[str, Any]] = {}
-            for profile in structured_by_task[task_id]:
-                unique[str(profile["source_id"])] = {
-                    "source_id": profile["source_id"],
-                    "dataset_name": profile["dataset_name"],
-                    "family_id": profile["family_id"],
-                    "domain": profile["domain"],
-                }
-            datasets = [unique[source_id] for source_id in sorted(unique)]
-        mapping.append(
-            {
-                "capability_id": capability_id,
-                "task_id": task_id,
-                "context_lengths": list(CONTEXT_LENGTHS),
-                "horizon": HORIZON,
-                "generator_profile_id": generator_profile_id(task_id),
-                "gate_profile_ids": [
-                    gate_profile_id(task_id, context_length)
-                    for context_length in CONTEXT_LENGTHS
-                ],
-                "datasets": datasets,
-            }
-        )
-    return mapping
+            "schema_version": "paper_v4_dataset_capability_support_matrix.v1",
+            "created_at": created_at,
+            "intensity_policy": intensity_policy(),
+            "cells": support_matrix,
+        },
+    )
+    write_support_matrix_csv(
+        output_dir / "dataset_capability_support_matrix.csv",
+        support_matrix,
+    )
 
 
 def task_id_for_capability(capability_id: str) -> str:
@@ -1088,26 +1336,41 @@ def qualify_suite(
     generator_artifact = read_json(output_dir / "generator_conditioning_artifact.json")
     feature_artifact = read_json(output_dir / "feature_gate_artifact.json")
     near_artifact = read_json(output_dir / "near_distance_artifact.json")
+    support_artifact = read_json(
+        output_dir / "dataset_capability_support_matrix.json"
+    )
+    supported_cells = [
+        cell for cell in support_artifact["cells"] if cell["status"] == "supported"
+    ]
     accepted_rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
-    for capability_index, capability_id in enumerate(ALL_CAPABILITY_IDS):
-        task = TASK_DESIGNS[task_id_for_capability(capability_id)]
-        profile_id = generator_profile_id(task.task_id)
+    for cell_index, cell in enumerate(supported_cells):
+        capability_id = str(cell["capability_id"])
+        dataset_id = str(cell["dataset_id"])
+        task_id = str(cell["task_id"])
+        profile_id = str(cell["generator_profile_id"])
+        profile = generator_artifact["profiles"][profile_id]
+        target_dim = int(profile["target_dim"])
+        season_length = int(profile["season_length"])
+        hierarchy = profile.get("hierarchy")
         conditioning = resolve_generator_conditioning(
             capability_id=capability_id,
             profile_id=profile_id,
             context_length=MAX_CONTEXT_LENGTH,
             horizon=HORIZON,
-            target_dim=task.target_dim,
+            target_dim=target_dim,
             artifact=generator_artifact,
         )
         if conditioning is None:
-            raise RuntimeError(f"missing generator conditioning: {profile_id}/{capability_id}")
+            raise RuntimeError(
+                f"support matrix claims missing conditioning: "
+                f"{profile_id}/{capability_id}"
+            )
         for intensity in range(1, 6):
             for sample_index in range(samples_per_cell):
                 base_seed = _seed_for(
                     seed,
-                    f"{capability_id}:intensity:{intensity}",
+                    f"{dataset_id}:{task_id}:{capability_id}:intensity:{intensity}",
                     sample_index,
                 )
                 accepted: dict[str, Any] | None = None
@@ -1119,8 +1382,8 @@ def qualify_suite(
                         capability_id,
                         MAX_CONTEXT_LENGTH + HORIZON,
                         MAX_CONTEXT_LENGTH,
-                        task.target_dim,
-                        task.season_length,
+                        target_dim,
+                        season_length,
                         intensity,
                         rng,
                         generator_conditioning=conditioning,
@@ -1138,22 +1401,26 @@ def qualify_suite(
                             target,
                             covariates,
                             context_length=context_length,
-                            hierarchy=task.hierarchy,
+                            hierarchy=hierarchy,
                         )
                         features = _realized_features(
                             view_target,
                             view_covariates,
-                            task.season_length,
+                            season_length,
                             context_length,
                         )
-                        view_profile_id = gate_profile_id(task.task_id, context_length)
+                        view_profile_id = gate_profile_id(
+                            dataset_id,
+                            task_id,
+                            context_length,
+                        )
                         feature_gate = evaluate_feature_support_gate(
                             capability_id=capability_id,
                             features=features,
                             profile_ids=(view_profile_id,),
                             context_length=context_length,
                             horizon=HORIZON,
-                            target_dim=task.target_dim,
+                            target_dim=target_dim,
                             artifact=feature_artifact,
                         )
                         near_gate = evaluate_near_distance_gate(
@@ -1190,8 +1457,10 @@ def qualify_suite(
                             }
                         )
                     candidate = {
+                        "dataset_id": dataset_id,
                         "capability_id": capability_id,
-                        "task_id": task.task_id,
+                        "task_id": task_id,
+                        "generator_profile_id": profile_id,
                         "intensity": intensity,
                         "sample_index": sample_index,
                         "base_seed": base_seed,
@@ -1216,7 +1485,9 @@ def qualify_suite(
                     last_rejection = candidate
                 if accepted is None:
                     failures.append(last_rejection or {
+                        "dataset_id": dataset_id,
                         "capability_id": capability_id,
+                        "task_id": task_id,
                         "intensity": intensity,
                         "sample_index": sample_index,
                         "reason": "no_attempt",
@@ -1224,14 +1495,66 @@ def qualify_suite(
                 else:
                     accepted_rows.append(accepted)
             print(
-                f"[qualify {capability_index + 1}/{len(ALL_CAPABILITY_IDS)}] "
-                f"{capability_id} intensity={intensity}",
+                f"[qualify {cell_index + 1}/{len(supported_cells)}] "
+                f"{dataset_id}/{task_id}/{capability_id} intensity={intensity}",
                 flush=True,
             )
-    expected = len(ALL_CAPABILITY_IDS) * 5 * samples_per_cell
+    expected = len(supported_cells) * 5 * samples_per_cell
+    by_cell = {
+        f"{cell['dataset_id']}::{cell['task_id']}::{cell['capability_id']}": {
+            "dataset_id": cell["dataset_id"],
+            "task_id": cell["task_id"],
+            "capability_id": cell["capability_id"],
+            "expected": 5 * samples_per_cell,
+            "accepted": sum(
+                row["dataset_id"] == cell["dataset_id"]
+                and row["task_id"] == cell["task_id"]
+                and row["capability_id"] == cell["capability_id"]
+                for row in accepted_rows
+            ),
+            "failed": sum(
+                row.get("dataset_id") == cell["dataset_id"]
+                and row.get("task_id") == cell["task_id"]
+                and row.get("capability_id") == cell["capability_id"]
+                for row in failures
+            ),
+            "mean_attempts": round_float(
+                np.mean(
+                    [
+                        row["attempt"] + 1
+                        for row in accepted_rows
+                        if row["dataset_id"] == cell["dataset_id"]
+                        and row["task_id"] == cell["task_id"]
+                        and row["capability_id"] == cell["capability_id"]
+                    ]
+                )
+                if any(
+                    row["dataset_id"] == cell["dataset_id"]
+                    and row["task_id"] == cell["task_id"]
+                    and row["capability_id"] == cell["capability_id"]
+                    for row in accepted_rows
+                )
+                else math.nan
+            ),
+        }
+        for cell in supported_cells
+    }
     by_capability = {
         capability_id: {
-            "expected": 5 * samples_per_cell,
+            "supported_dataset_count": sum(
+                cell["capability_id"] == capability_id for cell in supported_cells
+            ),
+            "unsupported_dataset_count": sum(
+                cell["capability_id"] == capability_id
+                and cell["status"] != "supported"
+                for cell in support_artifact["cells"]
+            ),
+            "expected": sum(
+                row["capability_id"] == capability_id
+                for row in by_cell.values()
+            )
+            * 5
+            * samples_per_cell,
             "accepted": sum(
                 row["capability_id"] == capability_id for row in accepted_rows
             ),
@@ -1255,7 +1578,7 @@ def qualify_suite(
         for capability_id in ALL_CAPABILITY_IDS
     }
     result = {
-        "schema_version": "paper_v4_nine_capability_qualification.v1",
+        "schema_version": "paper_v4_nine_capability_qualification.v2",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
             "context_lengths": list(CONTEXT_LENGTHS),
@@ -1270,14 +1593,17 @@ def qualify_suite(
             ),
         },
         "expected_sample_count": expected,
+        "supported_cell_count": len(supported_cells),
+        "unsupported_cell_count": len(support_artifact["cells"]) - len(supported_cells),
         "accepted_sample_count": len(accepted_rows),
         "failed_sample_count": len(failures),
         "evaluated_view_count": expected * len(CONTEXT_LENGTHS),
         "accepted_view_count": len(accepted_rows) * len(CONTEXT_LENGTHS),
-        "all_nine_capabilities_qualified": (
+        "all_supported_cells_qualified": (
             len(failures) == 0
-            and all(row["accepted"] == row["expected"] for row in by_capability.values())
+            and all(row["accepted"] == row["expected"] for row in by_cell.values())
         ),
+        "by_cell": by_cell,
         "by_capability": by_capability,
         "accepted_samples": accepted_rows,
         "failures": failures,
@@ -1296,63 +1622,97 @@ def qualify_suite(
 
 def render_report(profile_suite: dict[str, Any], qualification: dict[str, Any]) -> str:
     lines = [
-        "# Paper v4 九能力四档 lookback profile 与生成验收",
+        "# Paper v4 dataset-local 九能力四档 lookback profile 与生成验收",
         "",
         f"- Lookback：`{CONTEXT_LENGTHS}`",
         f"- Prediction length：`H={HORIZON}`",
         "- 配对：同一条 L=504 母样本截取四个后缀视图，48 步 future 完全相同",
+        "- 校准：每个 dataset/task 独立三路切分，不做跨数据集 pooling",
+        "- 强度：dataset-local p10/p30/p50/p70/p90 相对强度，不跨数据集比较绝对值",
+        f"- Supported cells：`{qualification['supported_cell_count']}`",
+        f"- Unsupported cells：`{qualification['unsupported_cell_count']}`",
         f"- 合格样本：`{qualification['accepted_sample_count']}` / "
         f"`{qualification['expected_sample_count']}`",
-        f"- 九能力全部合格：`{qualification['all_nine_capabilities_qualified']}`",
+        f"- 所有 supported cells 合格："
+        f"`{qualification['all_supported_cells_qualified']}`",
         "",
         "## 能力验收",
         "",
-        "| 能力 | 合格/期望 | 失败 | 平均尝试次数 |",
+        "| 能力 | 支持/不支持 dataset cells | 合格/期望 | 失败 |",
         "|---|---:|---:|---:|",
     ]
     for capability_id, row in qualification["by_capability"].items():
         lines.append(
-            f"| `{capability_id}` | {row['accepted']}/{row['expected']} | "
-            f"{row['failed']} | {row['mean_attempts']} |"
+            f"| `{capability_id}` | {row['supported_dataset_count']}/"
+            f"{row['unsupported_dataset_count']} | "
+            f"{row['accepted']}/{row['expected']} | {row['failed']} |"
         )
     lines.extend(
         [
             "",
-            "## Profile 与数据集",
+            "## Dataset × task × capability 支持矩阵",
             "",
-            "| 能力 | 数据集 |",
-            "|---|---|",
+            "| Dataset | Task | 能力 | 状态 | 原因 |",
+            "|---|---|---|---|---|",
         ]
     )
-    for row in profile_suite["capability_dataset_mapping"]:
-        datasets = ", ".join(dataset["dataset_name"] for dataset in row["datasets"])
-        lines.append(f"| `{row['capability_id']}` | {datasets} |")
+    for row in profile_suite["support_matrix"]:
+        reasons = ", ".join(row["reason_codes"]) or "-"
+        lines.append(
+            f"| `{row['dataset_id']}` | `{row['task_id']}` | "
+            f"`{row['capability_id']}` | `{row['status']}` | {reasons} |"
+        )
     return "\n".join(lines) + "\n"
 
 
-def write_mapping_csv(path: Path, mapping: list[dict[str, Any]]) -> None:
+def write_support_matrix_csv(
+    path: Path,
+    support_matrix: list[dict[str, Any]],
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=(
-                "capability_id",
+                "dataset_id",
+                "dataset_name",
+                "domain",
                 "task_id",
-                "context_lengths",
-                "horizon",
+                "available_task_id",
+                "capability_id",
+                "status",
+                "reason_codes",
+                "task_view_audit",
                 "generator_profile_id",
                 "gate_profile_ids",
-                "datasets",
+                "target_feature",
+                "target_percentile_levels",
+                "target_values",
             ),
         )
         writer.writeheader()
-        for row in mapping:
+        for row in support_matrix:
+            target_spacing = row.get("target_spacing") or {}
             writer.writerow(
                 {
-                    **{key: row[key] for key in writer.fieldnames if key in row},
-                    "context_lengths": json.dumps(row["context_lengths"]),
+                    "dataset_id": row["dataset_id"],
+                    "dataset_name": row["dataset_name"],
+                    "domain": row["domain"],
+                    "task_id": row["task_id"],
+                    "available_task_id": row["available_task_id"],
+                    "capability_id": row["capability_id"],
+                    "status": row["status"],
+                    "reason_codes": json.dumps(row["reason_codes"]),
+                    "task_view_audit": json.dumps(row["task_view_audit"]),
+                    "generator_profile_id": row["generator_profile_id"],
                     "gate_profile_ids": json.dumps(row["gate_profile_ids"]),
-                    "datasets": json.dumps(row["datasets"], ensure_ascii=False),
+                    "target_feature": PRIMARY_TARGET_FEATURE[row["capability_id"]],
+                    "target_percentile_levels": json.dumps(
+                        RELATIVE_INTENSITY_PERCENTILE_LEVELS
+                    ),
+                    "target_values": json.dumps(
+                        target_spacing.get("target_values", [])
+                    ),
                 }
             )
 
@@ -1371,7 +1731,7 @@ def write_manifest(output_dir: Path) -> None:
     write_json(
         output_dir / "manifest.json",
         {
-            "schema_version": "paper_v4_nine_capability_manifest.v1",
+            "schema_version": "paper_v4_nine_capability_manifest.v2",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "builder_path": str(Path(__file__).resolve().relative_to(REPO_ROOT)),
             "builder_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -1439,8 +1799,8 @@ def json_default(value: Any) -> Any:
 
 def main() -> int:
     args = parse_args()
-    if args.max_windows_per_source < 60:
-        raise ValueError("max-windows-per-source must be at least 60")
+    if args.max_windows_per_dataset < 60:
+        raise ValueError("max-windows-per-dataset must be at least 60")
     if args.calibration_samples < 4:
         raise ValueError("calibration-samples must be at least 4")
     if args.qualification_samples_per_cell < 1:
@@ -1453,9 +1813,10 @@ def main() -> int:
             output_dir,
             data_dir=args.data_dir.resolve(),
             gift_eval_dir=args.gift_eval_dir.resolve(),
-            max_windows=int(args.max_windows_per_source),
+            max_windows=int(args.max_windows_per_dataset),
             calibration_samples=int(args.calibration_samples),
             seed=int(args.seed),
+            dataset_ids=tuple(args.datasets) if args.datasets else None,
         )
     if args.stage in {"all", "qualify"}:
         qualification = qualify_suite(
@@ -1464,9 +1825,10 @@ def main() -> int:
             max_attempts=int(args.max_attempts),
             seed=int(args.seed),
         )
-        if not qualification["all_nine_capabilities_qualified"]:
+        if not qualification["all_supported_cells_qualified"]:
             raise RuntimeError(
-                f"qualification failed for {qualification['failed_sample_count']} samples"
+                "qualification failed for "
+                f"{qualification['failed_sample_count']} supported-cell samples"
             )
     print(f"paper-v4 nine-capability suite: {output_dir}", flush=True)
     return 0

@@ -38,19 +38,24 @@ from app.services.synthetic_generator_conditioning import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_e2_dynamic_stability.v1"
-EXPERIMENT_VERSION = "v1"
+SCHEMA_VERSION = "paper_e2_dynamic_stability.v3"
+EXPERIMENT_VERSION = "v4"
 EXPERIMENT_ID = "E2_dynamic_stability"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp" / EXPERIMENT_VERSION / EXPERIMENT_ID
-GENERATOR_ARTIFACT_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_generator_conditioning_artifact.json"
+NINE_CAPABILITY_SUITE_DIR = (
+    REPO_ROOT / "runtime/paper_exp/v4/01_nine_capability_suite"
 )
-FEATURE_GATE_ARTIFACT_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_feature_gate_artifact.json"
+GENERATOR_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "generator_conditioning_artifact.json"
+FEATURE_GATE_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "feature_gate_artifact.json"
+NEAR_DISTANCE_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "near_distance_artifact.json"
+SUPPORT_MATRIX_PATH = (
+    NINE_CAPABILITY_SUITE_DIR / "dataset_capability_support_matrix.json"
 )
-NEAR_DISTANCE_ARTIFACT_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_near_distance_artifact.json"
+REAL_EVALUATION_SUITE_DIR = (
+    REPO_ROOT / "runtime/paper_exp/v4/02_real_evaluation_suite"
 )
+REAL_SAMPLES_PATH = REAL_EVALUATION_SUITE_DIR / "real_samples.jsonl"
+REAL_DATASET_SUPPORT_PATH = REAL_EVALUATION_SUITE_DIR / "dataset_support.json"
 PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/2026-07-16-paper-e2-dynamic-stability-protocol.md"
@@ -107,7 +112,7 @@ MAX_CROSS_ROUND_DUPLICATE_RATE = 0.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the paper-v1 E2 dynamic benchmark stability experiment."
+        description="Run the paper-v4 dataset-local E2 dynamic stability experiment."
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--base-url", default="http://127.0.0.1:10810")
@@ -131,6 +136,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--keep-loaded", action="store_true")
+    parser.add_argument(
+        "--skip-real-alignment",
+        action="store_true",
+        help="Run a synthetic-only dynamic-stability smoke without the real suite.",
+    )
     return parser.parse_args()
 
 
@@ -139,11 +149,28 @@ def main() -> int:
     validate_cli_args(args)
     output_dir = args.output_dir.resolve()
     generator_artifact = read_json(GENERATOR_ARTIFACT_PATH)
-    config = experiment_config(args, generator_artifact)
+    support_matrix = read_json(SUPPORT_MATRIX_PATH)
+    config = experiment_config(
+        args,
+        generator_artifact,
+        support_matrix=support_matrix,
+    )
+    if (
+        args.stage in {"all", "infer", "analyze"}
+        and not args.skip_real_alignment
+    ):
+        require_file(REAL_SAMPLES_PATH)
+        require_file(REAL_DATASET_SUPPORT_PATH)
     prepare_or_resume_output(output_dir, config=config, resume=args.resume)
 
     if args.stage in {"all", "generate"}:
-        generate_samples_if_needed(output_dir, config=config, artifact=generator_artifact)
+        generate_samples_if_needed(
+            output_dir,
+            config=config,
+            artifact=generator_artifact,
+            feature_gate_artifact=read_json(FEATURE_GATE_ARTIFACT_PATH),
+            near_distance_artifact=read_json(NEAR_DISTANCE_ARTIFACT_PATH),
+        )
     if args.stage in {"all", "infer"}:
         require_file(output_dir / "samples.jsonl")
         run_inference(output_dir, config=config, args=args)
@@ -188,19 +215,162 @@ def validate_cli_args(args: argparse.Namespace) -> None:
         raise ValueError("bootstrap-replicates must be at least 100")
 
 
-def experiment_config(args: argparse.Namespace, artifact: dict[str, Any]) -> dict[str, Any]:
-    online = list(artifact["config"]["online_conditioning_profile_ids"])
-    profile_capability_count = sum(
-        len(artifact["profiles"][profile_id]["capabilities"]) for profile_id in online
+def generator_cells(
+    artifact: dict[str, Any],
+    *,
+    support_matrix: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    profiles = artifact.get("profiles", {})
+    matrix_cells = (
+        list(support_matrix.get("cells", []))
+        if isinstance(support_matrix, dict)
+        else []
     )
+    if matrix_cells:
+        candidates = matrix_cells
+    else:
+        candidates = [
+            {
+                "dataset_id": profile.get("dataset_id"),
+                "task_id": profile.get("task_id"),
+                "capability_id": capability_id,
+                "generator_profile_id": profile_id,
+                "status": capability.get("calibration", {}).get(
+                    "status",
+                    "unsupported",
+                ),
+                "reason_codes": [],
+            }
+            for profile_id, profile in sorted(profiles.items())
+            for capability_id, capability in sorted(
+                profile.get("capabilities", {}).items()
+            )
+        ]
+    eligible: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for cell in candidates:
+        profile_id = str(cell.get("generator_profile_id", ""))
+        capability_id = str(cell.get("capability_id", ""))
+        key = (profile_id, capability_id)
+        if not profile_id or not capability_id or key in seen:
+            continue
+        seen.add(key)
+        base = {
+            "dataset_id": cell.get("dataset_id"),
+            "task_id": cell.get("task_id"),
+            "profile_id": profile_id,
+            "capability_id": capability_id,
+        }
+        if cell.get("status") != "supported":
+            skipped.append(
+                {
+                    **base,
+                    "status": "unsupported",
+                    "reason_codes": list(
+                        cell.get("reason_codes") or ["unsupported_by_suite"]
+                    ),
+                }
+            )
+            continue
+        profile = profiles.get(profile_id)
+        if not isinstance(profile, dict):
+            skipped.append(
+                {
+                    **base,
+                    "status": "unsupported",
+                    "reason_codes": ["generator_profile_missing"],
+                }
+            )
+            continue
+        conditioning = resolve_generator_conditioning(
+            capability_id=capability_id,
+            profile_id=profile_id,
+            context_length=int(profile.get("context_length", -1)),
+            horizon=int(profile.get("horizon", -1)),
+            target_dim=int(profile.get("target_dim", -1)),
+            artifact=artifact,
+        )
+        if conditioning is None:
+            skipped.append(
+                {
+                    **base,
+                    "status": "unsupported",
+                    "reason_codes": ["generator_conditioning_incompatible"],
+                }
+            )
+            continue
+        eligible.append(
+            {
+                **base,
+                "dataset_id": conditioning.dataset_id,
+                "status": "supported",
+                "target_feature": conditioning.target_feature,
+                "target_percentile_levels": list(
+                    conditioning.target_percentile_levels
+                ),
+                "target_values": list(conditioning.target_values),
+            }
+        )
+    return (
+        sorted(
+            eligible,
+            key=lambda row: (str(row["dataset_id"]), str(row["capability_id"])),
+        ),
+        sorted(
+            skipped,
+            key=lambda row: (
+                str(row.get("dataset_id")),
+                str(row.get("capability_id")),
+            ),
+        ),
+    )
+
+
+def experiment_config(
+    args: argparse.Namespace,
+    artifact: dict[str, Any],
+    *,
+    support_matrix: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    policy = artifact.get("intensity_policy")
+    if (
+        artifact.get("schema_version")
+        != "synthetic_v2_generator_conditioning_artifact.v4"
+        or not isinstance(policy, dict)
+        or policy.get("policy_id") != "dataset-local-relative-quantiles-v1"
+    ):
+        raise ValueError(
+            "E2 requires the v4 dataset-local generator conditioning artifact"
+        )
+    eligible_cells, skipped_cells = generator_cells(
+        artifact,
+        support_matrix=support_matrix,
+    )
+    conditioning_profile_ids = sorted(
+        {str(cell["profile_id"]) for cell in eligible_cells}
+    )
+    profile_capability_count = len(eligible_cells)
     return {
         "schema_version": SCHEMA_VERSION,
         "experiment_version": EXPERIMENT_VERSION,
         "experiment_id": EXPERIMENT_ID,
-        "canonical_scale_id": artifact["canonical_intensity"]["scale_id"],
-        "canonical_scale_fingerprint": artifact["canonical_intensity"]["scale_fingerprint"],
-        "online_conditioning_profile_ids": online,
+        "intensity_policy": {
+            "policy_id": str(policy["policy_id"]),
+            "percentile_levels": [
+                float(value) for value in policy["percentile_levels"]
+            ],
+            "definition": str(policy["definition"]),
+            "comparability": "within_dataset_only",
+        },
+        "conditioning_profile_ids": conditioning_profile_ids,
+        "eligible_profile_capability_cells": eligible_cells,
+        "skipped_profile_capability_cells": skipped_cells,
+        "dataset_count": len(
+            {str(cell["dataset_id"]) for cell in eligible_cells}
+        ),
         "profile_capability_count": profile_capability_count,
+        "skipped_profile_capability_count": len(skipped_cells),
         "intensities": list(INTENSITIES),
         "round_seeds": [int(seed) for seed in args.round_seeds],
         "samples_per_round_per_cell": int(args.samples_per_round),
@@ -213,6 +383,10 @@ def experiment_config(args: argparse.Namespace, artifact: dict[str, Any]) -> dic
         "paired_seed_policy": (
             "within profile/capability/round/sample_index, all models and all intensities use "
             "the same generated base seed"
+        ),
+        "intensity_analysis_policy": (
+            "intensity is an ordered relative-strength coordinate only within a dataset; "
+            "absolute target strengths are never pooled or compared across datasets"
         ),
         "requested_models": list(args.models),
         "baseline_models": list(BASELINE_MODELS),
@@ -229,6 +403,11 @@ def experiment_config(args: argparse.Namespace, artifact: dict[str, Any]) -> dic
         "forecast_timeout_seconds": int(args.forecast_timeout_seconds),
         "model_load_timeout_seconds": int(args.model_load_timeout_seconds),
         "bootstrap_replicates": int(args.bootstrap_replicates),
+        "skip_real_alignment": bool(args.skip_real_alignment),
+        "real_evaluation_suite": {
+            "sample_path": relative_path(REAL_SAMPLES_PATH),
+            "dataset_support_path": relative_path(REAL_DATASET_SUPPORT_PATH),
+        },
         "service": {
             "base_url": args.base_url,
             "api_prefix": args.api_prefix,
@@ -271,7 +450,18 @@ def prepare_or_resume_output(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "predictions").mkdir(exist_ok=True)
     (output_dir / "failures").mkdir(exist_ok=True)
+    if not config.get("skip_real_alignment", False):
+        (output_dir / "real_predictions").mkdir(exist_ok=True)
+        (output_dir / "real_failures").mkdir(exist_ok=True)
     write_json(config_path, config)
+    write_json(
+        output_dir / "skipped_profile_capability_cells.json",
+        {
+            "schema_version": "paper_e2_skipped_cells.v1",
+            "intensity_comparability": "within_dataset_only",
+            "cells": config.get("skipped_profile_capability_cells", []),
+        },
+    )
 
 
 def generate_samples_if_needed(
@@ -279,6 +469,8 @@ def generate_samples_if_needed(
     *,
     config: dict[str, Any],
     artifact: dict[str, Any],
+    feature_gate_artifact: dict[str, Any] | None = None,
+    near_distance_artifact: dict[str, Any] | None = None,
 ) -> None:
     sample_path = output_dir / "samples.jsonl"
     if sample_path.exists():
@@ -298,30 +490,33 @@ def generate_samples_if_needed(
         )
     created = 0
     with temporary.open("w", encoding="utf-8") as handle:
-        for profile_id in config["online_conditioning_profile_ids"]:
+        for cell in config["eligible_profile_capability_cells"]:
+            profile_id = str(cell["profile_id"])
+            capability_id = str(cell["capability_id"])
             profile = artifact["profiles"][profile_id]
-            for capability_id in sorted(profile["capabilities"]):
-                conditioning = resolve_generator_conditioning(
-                    capability_id=capability_id,
-                    profile_id=profile_id,
-                    context_length=int(profile["context_length"]),
-                    horizon=int(profile["horizon"]),
-                    target_dim=int(profile["target_dim"]),
-                    artifact=artifact,
-                )
-                if conditioning is None:
-                    raise RuntimeError(f"missing conditioning for {profile_id}/{capability_id}")
-                for round_index, round_seed in enumerate(config["round_seeds"], start=1):
-                    for sample_index in range(config["samples_per_round_per_cell"]):
-                        sample_seed = _seed_for(
-                            int(round_seed),
-                            f"{profile_id}:{capability_id}",
-                            sample_index,
-                        )
-                        for intensity in INTENSITIES:
-                            target, latent, covariates, features = _generate_accepted_sample_values(
+            conditioning = resolve_generator_conditioning(
+                capability_id=capability_id,
+                profile_id=profile_id,
+                context_length=int(profile["context_length"]),
+                horizon=int(profile["horizon"]),
+                target_dim=int(profile["target_dim"]),
+                artifact=artifact,
+            )
+            if conditioning is None:
+                raise RuntimeError(f"missing conditioning for {profile_id}/{capability_id}")
+            for round_index, round_seed in enumerate(config["round_seeds"], start=1):
+                for sample_index in range(config["samples_per_round_per_cell"]):
+                    sample_seed = _seed_for(
+                        int(round_seed),
+                        f"{profile_id}:{capability_id}",
+                        sample_index,
+                    )
+                    for intensity in INTENSITIES:
+                        target, latent, covariates, features = (
+                            _generate_accepted_sample_values(
                                 capability_id,
-                                int(profile["context_length"]) + int(profile["horizon"]),
+                                int(profile["context_length"])
+                                + int(profile["horizon"]),
                                 int(profile["context_length"]),
                                 int(profile["target_dim"]),
                                 int(profile["season_length"]),
@@ -329,28 +524,37 @@ def generate_samples_if_needed(
                                 sample_seed,
                                 anchor_profile_id=profile_id,
                                 generator_conditioning=conditioning,
+                                generator_conditioning_artifact=artifact,
+                                feature_gate_artifact=feature_gate_artifact,
+                                near_distance_artifact=near_distance_artifact,
+                                acceptance_profile_ids=(profile_id,),
                             )
-                            row = sample_row(
-                                profile=profile,
-                                profile_id=profile_id,
-                                capability_id=capability_id,
-                                intensity=intensity,
-                                round_index=round_index,
-                                round_seed=int(round_seed),
-                                sample_index=sample_index,
-                                sample_seed=sample_seed,
-                                target=target,
-                                covariates=covariates,
-                                features=features,
-                                latent=latent,
+                        )
+                        row = sample_row(
+                            profile=profile,
+                            profile_id=profile_id,
+                            capability_id=capability_id,
+                            intensity=intensity,
+                            round_index=round_index,
+                            round_seed=int(round_seed),
+                            sample_index=sample_index,
+                            sample_seed=sample_seed,
+                            target=target,
+                            covariates=covariates,
+                            features=features,
+                            latent=latent,
+                        )
+                        handle.write(
+                            json.dumps(row, ensure_ascii=False, sort_keys=True)
+                            + "\n"
+                        )
+                        created += 1
+                        if created % 500 == 0:
+                            print(
+                                f"generated {created}/"
+                                f"{config['expected_generated_sample_count']}",
+                                flush=True,
                             )
-                            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-                            created += 1
-                            if created % 500 == 0:
-                                print(
-                                    f"generated {created}/{config['expected_generated_sample_count']}",
-                                    flush=True,
-                                )
     os.replace(temporary, sample_path)
     if created != int(config["expected_generated_sample_count"]):
         raise AssertionError(f"unexpected generated sample count: {created}")
@@ -376,9 +580,10 @@ def sample_row(
         f"{profile_id}__{capability_id}__i{intensity}__r{round_index}__s{sample_index:03d}"
     )
     return {
-        "schema_version": "paper_e2_sample.v1",
+        "schema_version": "paper_e2_sample.v2",
         "sample_id": sample_id,
         "profile_id": profile_id,
+        "dataset_id": str(profile["dataset_id"]),
         "capability_id": capability_id,
         "intensity": int(intensity),
         "round_index": int(round_index),
@@ -395,12 +600,12 @@ def sample_row(
         "covariates": None if covariates is None else np.asarray(covariates, dtype=float).tolist(),
         "realized_features": clean_float_mapping(features),
         "acceptance_attempts": int(latent["acceptance"]["attempts"]),
-        "canonical_target_feature": latent["generator_conditioning"][
-            "canonical_target_feature"
+        "target_feature": latent["generator_conditioning"]["target_feature"],
+        "target_strength": latent["generator_conditioning"]["target_strength"],
+        "target_percentile_level": latent["generator_conditioning"][
+            "target_percentile_level"
         ],
-        "canonical_target_strength": latent["generator_conditioning"][
-            "canonical_target_strength"
-        ],
+        "intensity_comparability": "within_dataset_only",
     }
 
 
@@ -420,6 +625,13 @@ def run_inference(
         write_json(output_dir / "model_catalog.json", {"models": catalog})
         requested = resolve_requested_models(catalog, config["requested_models"])
         run_baselines(output_dir)
+        run_real = not bool(config.get("skip_real_alignment", False))
+        if run_real:
+            run_baselines(
+                output_dir,
+                sample_path=REAL_SAMPLES_PATH,
+                prediction_kind="real",
+            )
         statuses = read_json_if_exists(output_dir / "model_status.json", default={"models": {}})
         for model in requested:
             model_id = str(model["model_id"])
@@ -442,7 +654,9 @@ def run_inference(
                 succeeded = count_jsonl(prediction_path) if prediction_path.exists() else 0
                 compatible_count = sum(
                     model_supports_sample(model, sample)
-                    for sample in iter_jsonl(output_dir / "samples.jsonl")
+                    for sample in iter_forecast_samples(
+                        output_dir / "samples.jsonl"
+                    )
                 )
                 status = {
                     "model_id": model_id,
@@ -461,6 +675,74 @@ def run_inference(
                 f"in {status['elapsed_seconds']:.1f}s",
                 flush=True,
             )
+        if run_real:
+            real_statuses = read_json_if_exists(
+                output_dir / "real_model_status.json",
+                default={"models": {}},
+            )
+            for model in requested:
+                model_id = str(model["model_id"])
+                print(f"starting real model: {model_id}", flush=True)
+                started = time.monotonic()
+                try:
+                    status = run_one_model(
+                        client,
+                        model,
+                        output_dir=output_dir,
+                        execution=config["model_execution"][model_id],
+                        devices=str(config["devices"]),
+                        request_max_attempts=int(config["request_max_attempts"]),
+                        forecast_timeout_seconds=int(
+                            config["forecast_timeout_seconds"]
+                        ),
+                        load_timeout_seconds=int(
+                            config["model_load_timeout_seconds"]
+                        ),
+                        keep_loaded=args.keep_loaded,
+                        sample_path=REAL_SAMPLES_PATH,
+                        prediction_kind="real",
+                        status_filename="real_model_status.json",
+                    )
+                except Exception as error:  # noqa: BLE001
+                    prediction_path = prediction_path_for(
+                        output_dir,
+                        model_id,
+                        prediction_kind="real",
+                    )
+                    succeeded = (
+                        count_jsonl(prediction_path)
+                        if prediction_path.exists()
+                        else 0
+                    )
+                    compatible_count = sum(
+                        model_supports_sample(model, sample)
+                        for sample in iter_forecast_samples(REAL_SAMPLES_PATH)
+                    )
+                    status = {
+                        "model_id": model_id,
+                        "prediction_kind": "real",
+                        "status": "failed",
+                        "compatible_sample_count": compatible_count,
+                        "succeeded_count": succeeded,
+                        "error": str(error),
+                        "elapsed_seconds": round(
+                            time.monotonic() - started,
+                            3,
+                        ),
+                        "prediction_path": relative_path(prediction_path),
+                    }
+                real_statuses["models"][model_id] = status
+                write_json(
+                    output_dir / "real_model_status.json",
+                    real_statuses,
+                )
+                print(
+                    f"real model {model_id}: {status['status']} "
+                    f"{status['succeeded_count']}/"
+                    f"{status.get('compatible_sample_count')} "
+                    f"in {status['elapsed_seconds']:.1f}s",
+                    flush=True,
+                )
     finally:
         client.close()
 
@@ -636,11 +918,21 @@ def resolve_requested_models(
     return resolved
 
 
-def run_baselines(output_dir: Path) -> None:
+def run_baselines(
+    output_dir: Path,
+    *,
+    sample_path: Path | None = None,
+    prediction_kind: str = "synthetic",
+) -> None:
+    sample_path = sample_path or output_dir / "samples.jsonl"
     for model_id in BASELINE_MODELS:
-        prediction_path = prediction_path_for(output_dir, model_id)
+        prediction_path = prediction_path_for(
+            output_dir,
+            model_id,
+            prediction_kind=prediction_kind,
+        )
         if prediction_path.exists():
-            expected = count_jsonl(output_dir / "samples.jsonl")
+            expected = count_jsonl(sample_path)
             observed = count_jsonl(prediction_path)
             if observed != expected:
                 raise ValueError(
@@ -649,7 +941,7 @@ def run_baselines(output_dir: Path) -> None:
             continue
         temporary = prediction_path.with_suffix(".jsonl.in_progress")
         with temporary.open("w", encoding="utf-8") as handle:
-            for sample in iter_jsonl(output_dir / "samples.jsonl"):
+            for sample in iter_forecast_samples(sample_path):
                 target = np.asarray(sample["target"], dtype=float)
                 context = int(sample["context_length"])
                 history = target[:context]
@@ -665,7 +957,7 @@ def run_baselines(output_dir: Path) -> None:
                 row = prediction_row(model_id, "baseline", sample, forecast)
                 handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
         os.replace(temporary, prediction_path)
-        print(f"baseline complete: {model_id}", flush=True)
+        print(f"{prediction_kind} baseline complete: {model_id}", flush=True)
 
 
 def run_one_model(
@@ -679,19 +971,27 @@ def run_one_model(
     forecast_timeout_seconds: int,
     load_timeout_seconds: int,
     keep_loaded: bool,
+    sample_path: Path | None = None,
+    prediction_kind: str = "synthetic",
+    status_filename: str = "model_status.json",
 ) -> dict[str, Any]:
+    sample_path = sample_path or output_dir / "samples.jsonl"
     model_id = str(model["model_id"])
-    prediction_path = prediction_path_for(output_dir, model_id)
+    prediction_path = prediction_path_for(
+        output_dir,
+        model_id,
+        prediction_kind=prediction_kind,
+    )
     done = successful_sample_ids(prediction_path)
     compatible_count = sum(
         model_supports_sample(model, sample)
-        for sample in iter_jsonl(output_dir / "samples.jsonl")
+        for sample in iter_forecast_samples(sample_path)
     )
     if len(done) > compatible_count:
         raise ValueError(f"prediction file for {model_id} has too many unique samples")
     if len(done) == compatible_count:
         previous = read_json_if_exists(
-            output_dir / "model_status.json",
+            output_dir / status_filename,
             default={"models": {}},
         ).get("models", {}).get(model_id)
         if (
@@ -715,7 +1015,7 @@ def run_one_model(
     bucket_stats: list[dict[str, Any]] = []
     loaded_topology: dict[str, Any] | None = None
     pending_groups = pending_request_group_counts(
-        output_dir / "samples.jsonl",
+        sample_path,
         model=model,
         done=done,
     )
@@ -731,13 +1031,19 @@ def run_one_model(
             )
             with prediction_path.open("a", encoding="utf-8") as output_handle:
                 failure_path = output_dir / "failures" / f"{safe_filename(model_id)}.jsonl"
+                if prediction_kind == "real":
+                    failure_path = (
+                        output_dir
+                        / "real_failures"
+                        / f"{safe_filename(model_id)}.jsonl"
+                    )
                 with failure_path.open("a", encoding="utf-8") as failure_handle:
                     bucket_stats = asyncio.run(
                         run_model_requests(
                             forecast_url=client.base + "/forecast",
                             model_id=model_id,
                             model=model,
-                            sample_path=output_dir / "samples.jsonl",
+                            sample_path=sample_path,
                             done=done,
                             pending_groups=pending_groups,
                             http_concurrency=int(execution["http_concurrency"]),
@@ -759,6 +1065,7 @@ def run_one_model(
     succeeded = count_jsonl(prediction_path) if prediction_path.exists() else 0
     return {
         "model_id": model_id,
+        "prediction_kind": prediction_kind,
         "status": "complete" if succeeded == compatible_count else "incomplete",
         "compatible_sample_count": compatible_count,
         "succeeded_count": succeeded,
@@ -784,7 +1091,7 @@ def pending_request_group_counts(
     done: set[str],
 ) -> dict[tuple[Any, ...], int]:
     counts: dict[tuple[Any, ...], int] = defaultdict(int)
-    for sample in iter_jsonl(sample_path):
+    for sample in iter_forecast_samples(sample_path):
         if sample["sample_id"] in done or not model_supports_sample(model, sample):
             continue
         counts[request_group_key(sample)] += 1
@@ -838,7 +1145,7 @@ async def run_model_requests(
 
             async def producer() -> None:
                 produced = 0
-                for sample in iter_jsonl(sample_path):
+                for sample in iter_forecast_samples(sample_path):
                     if (
                         sample["sample_id"] in done
                         or not model_supports_sample(model, sample)
@@ -1127,22 +1434,44 @@ def prediction_row(
         target[:context].tolist(),
         seasonal_period=int(sample["season_length"]),
     )
-    if sample["capability_id"] == "hierarchical_coherence" and values.shape[1] >= 3:
+    if (
+        sample.get("capability_id") == "hierarchical_coherence"
+        and values.shape[1] >= 3
+    ):
         residual = values[:, 0] - np.sum(values[:, 1:], axis=1)
         metrics["coherence_mae"] = float(np.mean(np.abs(residual)))
-    return {
-        "schema_version": "paper_e2_prediction.v1",
+    row = {
+        "schema_version": (
+            "paper_e2_prediction.v2"
+            if "capability_id" in sample
+            else "paper_e2_real_prediction.v1"
+        ),
         "model_id": model_id,
         "model_group": model_group,
         "sample_id": sample["sample_id"],
-        "profile_id": sample["profile_id"],
-        "capability_id": sample["capability_id"],
-        "intensity": int(sample["intensity"]),
-        "round_index": int(sample["round_index"]),
-        "sample_index": int(sample["sample_index"]),
+        "dataset_id": sample["dataset_id"],
         "metrics": clean_float_mapping(metrics),
         "forecast": values.tolist(),
     }
+    if "capability_id" in sample:
+        row.update(
+            {
+                "profile_id": sample["profile_id"],
+                "capability_id": sample["capability_id"],
+                "intensity": int(sample["intensity"]),
+                "round_index": int(sample["round_index"]),
+                "sample_index": int(sample["sample_index"]),
+            }
+        )
+    else:
+        row.update(
+            {
+                "task_id": sample.get("task_id", "univariate"),
+                "context_length": int(sample["context_length"]),
+                "horizon": int(sample["horizon"]),
+            }
+        )
+    return row
 
 
 def analyze_experiment(
@@ -1205,6 +1534,39 @@ def analyze_experiment(
     for filename, rows in outputs.items():
         write_csv(output_dir / filename, rows)
 
+    alignment = analyze_synthetic_real_alignment(
+        output_dir,
+        config=config,
+        catalog=catalog,
+        synthetic_predictions=prediction_rows,
+    )
+    write_json(
+        output_dir / "synthetic_real_rank_alignment.json",
+        alignment,
+    )
+    if alignment["status"] != "skipped":
+        write_csv(
+            output_dir / "real_model_ranks.csv",
+            alignment["real_model_ranks"],
+        )
+        write_csv(
+            output_dir / "synthetic_model_ranks.csv",
+            alignment["synthetic_model_ranks"],
+        )
+        write_csv(
+            output_dir / "synthetic_real_rank_alignment.csv",
+            alignment["rows"],
+        )
+        outputs.update(
+            {
+                "real_model_ranks.csv": alignment["real_model_ranks"],
+                "synthetic_model_ranks.csv": alignment[
+                    "synthetic_model_ranks"
+                ],
+                "synthetic_real_rank_alignment.csv": alignment["rows"],
+            }
+        )
+
     statistics = summarize_stability(
         cv_rows=cv_rows,
         bootstrap_rows=bootstrap_rows,
@@ -1220,7 +1582,453 @@ def analyze_experiment(
         "model_coverage": coverage_rows,
         "statistics": statistics,
         "criteria": criteria,
+        "synthetic_real_alignment": alignment["summary"],
         "table_rows": {filename: len(rows) for filename, rows in outputs.items()},
+    }
+
+
+def analyze_synthetic_real_alignment(
+    output_dir: Path,
+    *,
+    config: dict[str, Any],
+    catalog: dict[str, dict[str, Any]],
+    synthetic_predictions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if config.get("skip_real_alignment", False):
+        return {
+            "schema_version": "paper_e2_synthetic_real_rank_alignment.v1",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "skipped",
+            "reason": "skip_real_alignment",
+            "summary": {
+                "status": "skipped",
+                "aligned_dataset_count": 0,
+                "insufficient_dataset_count": 0,
+            },
+            "real_model_coverage": [],
+            "real_model_ranks": [],
+            "synthetic_model_ranks": [],
+            "rows": [],
+        }
+
+    require_file(REAL_SAMPLES_PATH)
+    require_file(REAL_DATASET_SUPPORT_PATH)
+    real_samples = list(iter_forecast_samples(REAL_SAMPLES_PATH))
+    if not real_samples:
+        raise RuntimeError("real evaluation suite contains no supported samples")
+    dataset_support = read_json(REAL_DATASET_SUPPORT_PATH)
+    supported_dataset_ids = supported_real_dataset_ids(
+        dataset_support,
+        real_samples=real_samples,
+    )
+    expected_by_model = expected_prediction_counts(
+        REAL_SAMPLES_PATH,
+        catalog=catalog,
+        requested_models=config["requested_models"],
+    )
+    expected_by_model.update(
+        {model_id: len(real_samples) for model_id in BASELINE_MODELS}
+    )
+    real_predictions: list[dict[str, Any]] = []
+    coverage: list[dict[str, Any]] = []
+    for model_id in (*BASELINE_MODELS, *config["requested_models"]):
+        expected = int(expected_by_model[model_id])
+        path = prediction_path_for(
+            output_dir,
+            model_id,
+            prediction_kind="real",
+        )
+        observed = count_jsonl(path) if path.exists() else 0
+        coverage.append(
+            {
+                "model_id": model_id,
+                "expected_count": expected,
+                "observed_count": observed,
+                "coverage": float(observed / expected) if expected else None,
+                "complete": observed == expected,
+            }
+        )
+        if observed != expected:
+            raise RuntimeError(
+                f"cannot analyze incomplete real model {model_id}: "
+                f"{observed}/{expected}; resume inference"
+            )
+        if path.exists():
+            real_predictions.extend(iter_jsonl(path))
+
+    real_alignment_lookback = max(
+        int(sample.get("context_length", sample.get("lookback", 0)))
+        for sample in real_samples
+    )
+    real_alignment_sample_ids = {
+        str(sample["sample_id"])
+        for sample in real_samples
+        if int(sample.get("context_length", sample.get("lookback", 0)))
+        == real_alignment_lookback
+    }
+    real_alignment_predictions = [
+        row
+        for row in real_predictions
+        if str(row["sample_id"]) in real_alignment_sample_ids
+    ]
+    real_rank_rows = real_model_rank_rows(
+        real_alignment_predictions,
+        supported_dataset_ids=supported_dataset_ids,
+    )
+    synthetic_rank_rows = synthetic_model_rank_rows(
+        synthetic_predictions,
+        supported_dataset_ids=supported_dataset_ids,
+    )
+    real_by_dataset = group_rows(real_rank_rows, "dataset_id")
+    synthetic_by_dataset = group_rows(synthetic_rank_rows, "dataset_id")
+    synthetic_samples_by_dataset = group_rows(
+        [
+            row
+            for row in synthetic_predictions
+            if str(row["dataset_id"]) in supported_dataset_ids
+        ],
+        "dataset_id",
+    )
+    real_samples_by_dataset = group_rows(
+        [
+            row
+            for row in real_alignment_predictions
+            if str(row["dataset_id"]) in supported_dataset_ids
+        ],
+        "dataset_id",
+    )
+    rows: list[dict[str, Any]] = []
+    for dataset_id in sorted(
+        set(real_by_dataset) | set(synthetic_by_dataset)
+    ):
+        dataset_key = (dataset_id,) if not isinstance(dataset_id, tuple) else dataset_id
+        real_rows = real_by_dataset.get(dataset_key, [])
+        synthetic_rows = synthetic_by_dataset.get(dataset_key, [])
+        real_lookup = {str(row["model_id"]): row for row in real_rows}
+        synthetic_lookup = {
+            str(row["model_id"]): row for row in synthetic_rows
+        }
+        models = sorted(set(real_lookup) & set(synthetic_lookup))
+        real_ranks = np.asarray(
+            [real_lookup[model_id]["real_rank"] for model_id in models],
+            dtype=float,
+        )
+        synthetic_ranks = np.asarray(
+            [
+                synthetic_lookup[model_id]["synthetic_average_rank"]
+                for model_id in models
+            ],
+            dtype=float,
+        )
+        enough = len(models) >= 2
+        spearman = (
+            spearman_rank_correlation(synthetic_ranks, real_ranks)
+            if enough
+            else None
+        )
+        kendall = (
+            kendall_tau_b(synthetic_ranks, real_ranks)
+            if enough
+            else None
+        )
+        top_k = min(3, len(models))
+        synthetic_top = set(
+            sorted(
+                models,
+                key=lambda model_id: (
+                    synthetic_lookup[model_id]["synthetic_average_rank"],
+                    model_id,
+                ),
+            )[:top_k]
+        )
+        real_top = set(
+            sorted(
+                models,
+                key=lambda model_id: (
+                    real_lookup[model_id]["real_rank"],
+                    model_id,
+                ),
+            )[:top_k]
+        )
+        pairwise = (
+            pairwise_ordering_agreement(synthetic_ranks, real_ranks)
+            if enough
+            else {
+                "agreement": None,
+                "comparable_pair_count": 0,
+                "agreement_pair_count": 0,
+            }
+        )
+        synthetic_dataset_rows = synthetic_samples_by_dataset.get(
+            dataset_key,
+            [],
+        )
+        real_dataset_rows = real_samples_by_dataset.get(dataset_key, [])
+        rows.append(
+            {
+                "dataset_id": dataset_key[0],
+                "status": "aligned" if enough else "insufficient_common_models",
+                "spearman_rho": spearman,
+                "kendall_tau_b": kendall,
+                "top_k": top_k,
+                "top_k_overlap_count": len(synthetic_top & real_top),
+                "top_k_overlap_rate": (
+                    float(len(synthetic_top & real_top) / top_k)
+                    if top_k
+                    else None
+                ),
+                "pairwise_ordering_agreement": pairwise["agreement"],
+                "pairwise_comparable_count": pairwise[
+                    "comparable_pair_count"
+                ],
+                "pairwise_agreement_count": pairwise[
+                    "agreement_pair_count"
+                ],
+                "effective_capability_count": len(
+                    {
+                        str(row["capability_id"])
+                        for row in synthetic_dataset_rows
+                        if str(row["model_id"]) in models
+                    }
+                ),
+                "effective_intensity_count": len(
+                    {
+                        int(row["intensity"])
+                        for row in synthetic_dataset_rows
+                        if str(row["model_id"]) in models
+                    }
+                ),
+                "effective_model_count": len(models),
+                "synthetic_sample_count": len(
+                    {
+                        str(row["sample_id"])
+                        for row in synthetic_dataset_rows
+                        if str(row["model_id"]) in models
+                    }
+                ),
+                "real_sample_count": len(
+                    {
+                        str(row["sample_id"])
+                        for row in real_dataset_rows
+                        if str(row["model_id"]) in models
+                    }
+                ),
+                "models": ";".join(models),
+                "synthetic_top_models": ";".join(sorted(synthetic_top)),
+                "real_top_models": ";".join(sorted(real_top)),
+            }
+        )
+    aligned = [row for row in rows if row["status"] == "aligned"]
+    return {
+        "schema_version": "paper_e2_synthetic_real_rank_alignment.v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "status": "completed",
+        "real_alignment_lookback": real_alignment_lookback,
+        "intensity_policy": (
+            "dataset-local capability x intensity cells are equally weighted; "
+            "no ranks are imputed for unsupported or incompatible models"
+        ),
+        "summary": {
+            "status": "completed",
+            "supported_real_dataset_count": len(supported_dataset_ids),
+            "unsupported_real_dataset_count": sum(
+                isinstance(row, dict) and row.get("status") != "supported"
+                for row in dataset_support.get("datasets", [])
+            ),
+            "aligned_dataset_count": len(aligned),
+            "insufficient_dataset_count": len(rows) - len(aligned),
+        },
+        "real_dataset_support": dataset_support.get("datasets", []),
+        "real_model_coverage": coverage,
+        "real_model_ranks": real_rank_rows,
+        "synthetic_model_ranks": synthetic_rank_rows,
+        "rows": rows,
+    }
+
+
+def supported_real_dataset_ids(
+    dataset_support: dict[str, Any],
+    *,
+    real_samples: list[dict[str, Any]],
+) -> set[str]:
+    observed = {str(row["dataset_id"]) for row in real_samples}
+    candidates = dataset_support.get("datasets")
+    if isinstance(candidates, list):
+        supported = {
+            str(row["dataset_id"])
+            for row in candidates
+            if isinstance(row, dict)
+            and (
+                row.get("status", "supported") == "supported"
+                or row.get("supported") is True
+            )
+        }
+        return observed & supported
+    mapping = dataset_support.get("dataset_support")
+    if isinstance(mapping, dict):
+        supported = {
+            str(dataset_id)
+            for dataset_id, value in mapping.items()
+            if value is True
+            or (
+                isinstance(value, dict)
+                and (
+                    value.get("status", "supported") == "supported"
+                    or value.get("supported") is True
+                )
+            )
+        }
+        return observed & supported
+    return observed
+
+
+def real_model_rank_rows(
+    predictions: list[dict[str, Any]],
+    *,
+    supported_dataset_ids: set[str],
+) -> list[dict[str, Any]]:
+    grouped = group_rows(
+        [
+            row
+            for row in predictions
+            if str(row["dataset_id"]) in supported_dataset_ids
+        ],
+        "dataset_id",
+        "model_id",
+    )
+    score_rows = [
+        {
+            "dataset_id": key[0],
+            "model_id": key[1],
+            "model_group": group[0]["model_group"],
+            "real_mean_mase": float(
+                np.mean([float(row["metrics"]["mase"]) for row in group])
+            ),
+            "real_sample_count": len(
+                {str(row["sample_id"]) for row in group}
+            ),
+        }
+        for key, group in sorted(grouped.items())
+    ]
+    by_dataset = group_rows(score_rows, "dataset_id")
+    for group in by_dataset.values():
+        ranks = average_ranks(
+            np.asarray([row["real_mean_mase"] for row in group], dtype=float)
+        )
+        for row, rank in zip(group, ranks, strict=True):
+            row["real_rank"] = float(rank)
+            row["effective_model_count"] = len(group)
+    return score_rows
+
+
+def synthetic_model_rank_rows(
+    predictions: list[dict[str, Any]],
+    *,
+    supported_dataset_ids: set[str],
+) -> list[dict[str, Any]]:
+    cell_groups = group_rows(
+        [
+            row
+            for row in predictions
+            if str(row["dataset_id"]) in supported_dataset_ids
+        ],
+        "dataset_id",
+        "capability_id",
+        "intensity",
+        "model_id",
+    )
+    cell_rows = [
+        {
+            "dataset_id": key[0],
+            "capability_id": key[1],
+            "intensity": int(key[2]),
+            "model_id": key[3],
+            "model_group": group[0]["model_group"],
+            "cell_mean_mase": float(
+                np.mean([float(row["metrics"]["mase"]) for row in group])
+            ),
+            "sample_count": len({str(row["sample_id"]) for row in group}),
+        }
+        for key, group in sorted(cell_groups.items())
+    ]
+    by_cell = group_rows(
+        cell_rows,
+        "dataset_id",
+        "capability_id",
+        "intensity",
+    )
+    for group in by_cell.values():
+        ranks = average_ranks(
+            np.asarray([row["cell_mean_mase"] for row in group], dtype=float)
+        )
+        for row, rank in zip(group, ranks, strict=True):
+            row["cell_rank"] = float(rank)
+    by_model = group_rows(cell_rows, "dataset_id", "model_id")
+    return [
+        {
+            "dataset_id": key[0],
+            "model_id": key[1],
+            "model_group": group[0]["model_group"],
+            "synthetic_average_rank": float(
+                np.mean([float(row["cell_rank"]) for row in group])
+            ),
+            "effective_capability_count": len(
+                {str(row["capability_id"]) for row in group}
+            ),
+            "effective_intensity_count": len(
+                {int(row["intensity"]) for row in group}
+            ),
+            "effective_cell_count": len(group),
+            "synthetic_sample_count": sum(
+                int(row["sample_count"]) for row in group
+            ),
+        }
+        for key, group in sorted(by_model.items())
+    ]
+
+
+def average_ranks(values: np.ndarray) -> np.ndarray:
+    array = np.asarray(values, dtype=float)
+    order = np.argsort(array, kind="stable")
+    ranks = np.empty(len(array), dtype=float)
+    start = 0
+    while start < len(order):
+        stop = start + 1
+        while stop < len(order) and array[order[stop]] == array[order[start]]:
+            stop += 1
+        ranks[order[start:stop]] = (start + 1 + stop) / 2
+        start = stop
+    return ranks
+
+
+def spearman_rank_correlation(left: np.ndarray, right: np.ndarray) -> float:
+    left_ranks = average_ranks(np.asarray(left, dtype=float))
+    right_ranks = average_ranks(np.asarray(right, dtype=float))
+    if np.std(left_ranks) <= 1e-12 or np.std(right_ranks) <= 1e-12:
+        return 0.0
+    return float(np.corrcoef(left_ranks, right_ranks)[0, 1])
+
+
+def pairwise_ordering_agreement(
+    left: np.ndarray,
+    right: np.ndarray,
+) -> dict[str, Any]:
+    comparable = 0
+    agreements = 0
+    for first in range(len(left)):
+        for second in range(first + 1, len(left)):
+            left_delta = float(left[first] - left[second])
+            right_delta = float(right[first] - right[second])
+            if abs(left_delta) <= 1e-12 or abs(right_delta) <= 1e-12:
+                continue
+            comparable += 1
+            agreements += int(np.sign(left_delta) == np.sign(right_delta))
+    return {
+        "agreement": (
+            float(agreements / comparable) if comparable else None
+        ),
+        "comparable_pair_count": comparable,
+        "agreement_pair_count": agreements,
     }
 
 
@@ -1245,6 +2053,7 @@ def round_score_rows(predictions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "model_id": model_id,
                 "model_group": next(iter(model_groups)),
+                "dataset_id": group[0].get("dataset_id", profile_id),
                 "profile_id": profile_id,
                 "capability_id": capability_id,
                 "intensity": intensity,
@@ -1275,6 +2084,7 @@ def score_cv_rows(round_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "model_id": key[0],
                 "model_group": ordered[0]["model_group"],
+                "dataset_id": ordered[0].get("dataset_id", key[1]),
                 "profile_id": key[1],
                 "capability_id": key[2],
                 "intensity": key[3],
@@ -1321,6 +2131,7 @@ def bootstrap_ci_rows(
             {
                 "model_id": key[0],
                 "model_group": group[0]["model_group"],
+                "dataset_id": group[0].get("dataset_id", key[1]),
                 "profile_id": key[1],
                 "capability_id": key[2],
                 "intensity": key[3],
@@ -1376,6 +2187,7 @@ def rank_stability_rows(round_rows: list[dict[str, Any]]) -> list[dict[str, Any]
             rows.append(
                 {
                     "ranking_scope": scope,
+                    "dataset_id": scoped_group[0].get("dataset_id", key[0]),
                     "profile_id": key[0],
                     "capability_id": key[1],
                     "intensity": key[2],
@@ -1429,7 +2241,7 @@ def model_profile_icc_rows(round_rows: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def cross_round_distance_rows(sample_path: Path) -> list[dict[str, Any]]:
-    samples = list(iter_jsonl(sample_path))
+    samples = list(iter_forecast_samples(sample_path))
     grouped = group_rows(samples, "profile_id", "capability_id", "intensity")
     rows: list[dict[str, Any]] = []
     for key, group in sorted(grouped.items()):
@@ -1481,6 +2293,7 @@ def cross_round_distance_rows(sample_path: Path) -> list[dict[str, Any]]:
         nndr = np.asarray(nndr_values, dtype=float)
         rows.append(
             {
+                "dataset_id": group[0].get("dataset_id", key[0]),
                 "profile_id": key[0],
                 "capability_id": key[1],
                 "intensity": key[2],
@@ -1715,7 +2528,7 @@ def expected_prediction_counts(
     requested_models: list[str],
 ) -> dict[str, int]:
     counts = {model_id: 0 for model_id in requested_models}
-    for sample in iter_jsonl(sample_path):
+    for sample in iter_forecast_samples(sample_path):
         for model_id in requested_models:
             counts[model_id] += int(model_supports_sample(catalog[model_id], sample))
     return counts
@@ -1733,8 +2546,14 @@ def successful_sample_ids(path: Path) -> set[str]:
     return identifiers
 
 
-def prediction_path_for(output_dir: Path, model_id: str) -> Path:
-    return output_dir / "predictions" / f"{safe_filename(model_id)}.jsonl"
+def prediction_path_for(
+    output_dir: Path,
+    model_id: str,
+    *,
+    prediction_kind: str = "synthetic",
+) -> Path:
+    directory = "real_predictions" if prediction_kind == "real" else "predictions"
+    return output_dir / directory / f"{safe_filename(model_id)}.jsonl"
 
 
 def safe_filename(value: str) -> str:
@@ -1794,7 +2613,11 @@ def render_report(summary: dict[str, Any]) -> str:
     lines = [
         "# E2 — Dynamic evaluation stability",
         "",
-        f"- Scale: `{summary['config']['canonical_scale_id']}` / `{summary['config']['canonical_scale_fingerprint']}`",
+        f"- Intensity policy: `{summary['config']['intensity_policy']['policy_id']}` "
+        "(relative strength; comparable only within each dataset).",
+        f"- Eligible / skipped profile-capability cells: "
+        f"{summary['config']['profile_capability_count']} / "
+        f"{summary['config']['skipped_profile_capability_count']}.",
         f"- Rounds × samples: {len(summary['config']['round_seeds'])} × {summary['config']['samples_per_round_per_cell']} per profile/capability/intensity.",
         f"- Requested foundation models: {', '.join(summary['config']['requested_models'])}.",
         f"- Criteria: {criteria['passed_count']} / {criteria['criterion_count']} passed.",
@@ -1825,6 +2648,26 @@ def render_report(summary: dict[str, Any]) -> str:
     )
     for model_id, value in sorted(stats["model_profile_icc"]["by_model"].items()):
         lines.append(f"| `{model_id}` | {value:.4f} |")
+    alignment = summary.get("synthetic_real_alignment", {})
+    lines.extend(
+        [
+            "",
+            "## Synthetic–real rank alignment",
+            "",
+        ]
+    )
+    if alignment.get("status") == "skipped":
+        lines.append("- Skipped by `--skip-real-alignment`.")
+    else:
+        lines.append(
+            f"- Aligned datasets: {alignment.get('aligned_dataset_count', 0)}; "
+            f"insufficient common-model datasets: "
+            f"{alignment.get('insufficient_dataset_count', 0)}."
+        )
+        lines.append(
+            "- Rankings are compared only within the same dataset; unsupported "
+            "cells and incompatible models receive no imputed worst rank."
+        )
     lines.append("")
     lines.append("Detailed cell/model/round results are retained in the CSV and JSONL files in this directory.")
     return "\n".join(lines) + "\n"
@@ -1835,9 +2678,17 @@ def write_manifest(output_dir: Path, *, config: dict[str, Any]) -> None:
         "generator_conditioning_artifact": GENERATOR_ARTIFACT_PATH,
         "feature_gate_artifact": FEATURE_GATE_ARTIFACT_PATH,
         "near_distance_artifact": NEAR_DISTANCE_ARTIFACT_PATH,
+        "dataset_capability_support_matrix": SUPPORT_MATRIX_PATH,
         "runner": RUNNER_PATH,
         "protocol": PROTOCOL_PATH,
     }
+    if not config.get("skip_real_alignment", False):
+        inputs.update(
+            {
+                "real_evaluation_samples": REAL_SAMPLES_PATH,
+                "real_evaluation_dataset_support": REAL_DATASET_SUPPORT_PATH,
+            }
+        )
     files = {
         str(path.relative_to(output_dir)): {
             "sha256": sha256_file(path),
@@ -1904,6 +2755,41 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                     yield json.loads(line)
                 except json.JSONDecodeError as error:
                     raise ValueError(f"invalid JSONL at {path}:{line_number}") from error
+
+
+def iter_forecast_samples(path: Path) -> Iterator[dict[str, Any]]:
+    for row in iter_jsonl(path):
+        if "target_history" not in row:
+            yield row
+            continue
+        history = np.asarray(row["target_history"], dtype=float)
+        future = np.asarray(row["target_future"], dtype=float)
+        if history.ndim == 1:
+            history = history[:, None]
+        if future.ndim == 1:
+            future = future[:, None]
+        if history.ndim != 2 or future.ndim != 2:
+            raise ValueError(
+                f"real sample {row.get('sample_id')} target arrays must be 1D or 2D"
+            )
+        if history.shape[1] != future.shape[1]:
+            raise ValueError(
+                f"real sample {row.get('sample_id')} target dimensions differ"
+            )
+        lookback = int(row.get("context_length", row.get("lookback", len(history))))
+        horizon = int(row.get("horizon", len(future)))
+        if history.shape[0] != lookback or future.shape[0] != horizon:
+            raise ValueError(
+                f"real sample {row.get('sample_id')} shape does not match lookback/horizon"
+            )
+        yield {
+            **row,
+            "context_length": lookback,
+            "target_dim": int(row.get("target_dim", history.shape[1])),
+            "covariate_dim": int(row.get("covariate_dim", 0)),
+            "target": np.vstack([history, future]).tolist(),
+            "covariates": row.get("covariates"),
+        }
 
 
 def count_jsonl(path: Path) -> int:

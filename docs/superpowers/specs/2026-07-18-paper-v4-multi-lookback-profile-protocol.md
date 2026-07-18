@@ -1,24 +1,33 @@
-# Paper v4：多 lookback、真实数据锚定的 profile 协议
+# Paper v4：逐数据集、多 lookback profile 协议
 
 日期：2026-07-18
+状态：替代同日发布的 pooled/family-balanced profile 协议
 
-## 1. 研究目标与固定 shape
+## 1. 研究单位
 
-本协议服务于能力维度 benchmark，而不是长上下文 scaling 研究。预测长度固定为
-`H=48`，模型获得四个等权候选 lookback：
+真实数据与合成测试的对应单位固定为单个 dataset config。ETT1/H、ETT2/H、
+Bitbrains Fast/RND 等配置分别视为独立 dataset，不再组成 family，也不共享 profile。
+
+对任意 dataset \(d\)，正式 shape 为：
 
 ```text
+H = 48
 L ∈ {96, 168, 336, 504}
+season_length = 24
 ```
 
-最终允许每个模型按预注册主指标选择一个 best-of-four lookback。数据集不作为主结果轴；
-它只负责约束合成样本的真实 nuisance/support 分布，并作为来源域稳健性分层。
+每个 `dataset × L` 独立形成 profile：
 
-## 2. 为什么四档 L 必须共享母样本
+```text
+{dataset_id}__L{L}_H48
+```
 
-若分别在 96、168、336、504 上独立生成样本或重新定义五档 intensity，lookback 比较会同时
-改变样本、future 与难度标尺。正式 profile 因此先选取一条 `504+48` 的真实母窗口，再取
-其末尾历史形成四个 nested view：
+系统不生成 pooled、global 或 family-macro profile。某个 dataset 的 nuisance、相对
+intensity、feature-support 与 near-distance 校准均不得读取其他 dataset 的窗口。
+
+## 2. 为什么四档 L 共享母样本
+
+先从 dataset 内选择一条 `504+48` 母窗口，再从历史末尾裁出四个 nested view：
 
 ```text
 master: [---------------- context 504 ----------------][future 48]
@@ -28,103 +37,118 @@ L=168:                                      [context 168][future 48]
 L=96:                                             [ctx 96][future 48]
 ```
 
-同一 `master_window_id` 的四个 view 必须拥有完全相同的 raw future、来源 series 和
-forecast origin。后续合成数据也应生成 `504+48` 母样本，再暴露四个 suffix context；
-不得为四个 L 独立抽 seed。
+同一 `master_window_id` 的四个 view 必须共享 dataset、series/channel、forecast
+origin、raw future 和 `future_sha256`。任一 view 因缺失或近常数不合格，整条母窗口
+退出。后续合成也必须先生成一条母样本，再暴露四个 suffix context；不得为四个 L
+分别抽 seed。
 
-Canonical intensity 只冻结一次，不能按 L 重定义。各长度 profile 只描述
-length-conditional nuisance、control-feature support 与 near-distance reference。
-
-## 3. 数据集选择
+## 3. Dataset 集合与选择规则
 
 ### 3.1 纳入标准
 
-1. 来自公开的 GIFT-Eval 或其收录的 Monash M4 Hourly；
-2. 小时频率，主季节周期统一为 24，避免把频率差异误记为能力差异；
-3. 在排除官方 test tail 和相邻 validation horizon 后，仍支持 `504+48`；
-4. 可按单变量或 GIFT-Eval 官方 `to_univariate` 语义拆 channel；
-5. 选择只依据来源、频率、长度和领域覆盖，不读取任何模型成绩。
+1. 来自公开 GIFT-Eval 或 Monash M4 Hourly；
+2. 小时频率，主季节周期为 24；
+3. 排除真实 test tail 和 validation embargo 后仍支持 `504+48`；
+4. 可按单变量或官方 channel-wise univariate 语义提取目标；
+5. 选择不读取模型成绩。
 
-### 3.2 正式来源集合
+当前配置共 13 个 dataset、5 个业务领域：
 
-| source config | family | domain |
-|---|---|---|
-| M4 Hourly | M4 Hourly | Econ/Fin |
-| Electricity/H | Electricity | Energy |
-| Solar/H | Solar | Energy |
-| ETT1/H、ETT2/H | ETT | Energy |
-| Jena Weather/H | Jena Weather | Nature |
-| KDD Cup 2018/H | KDD Cup 2018 | Nature |
-| Loop Seattle/H | Loop Seattle | Transport |
-| SZ-Taxi/H | SZ-Taxi | Transport |
-| M_DENSE/H | M_DENSE | Transport |
-| Bitbrains Fast Storage/H、Bitbrains RND/H | Bitbrains | Web/CloudOps |
-| BizITObs L2C/H | BizITObs L2C | Web/CloudOps |
+| dataset | domain |
+|---|---|
+| M4 Hourly | Econ/Fin |
+| Electricity/H | Energy |
+| Solar/H | Energy |
+| ETT1/H | Energy |
+| ETT2/H | Energy |
+| Jena Weather/H | Nature |
+| KDD Cup 2018/H | Nature |
+| Loop Seattle/H | Transport |
+| SZ-Taxi/H | Transport |
+| M_DENSE/H | Transport |
+| Bitbrains Fast Storage/H | Web/CloudOps |
+| Bitbrains RND/H | Web/CloudOps |
+| BizITObs L2C/H | Web/CloudOps |
 
-总计 13 个 source config、11 个独立 family、5 个领域。ETT1/2 与两套 Bitbrains 保留为
-同 family 内部的来源变体，不获得双倍 family 权重。
-
-Daily、weekly、monthly 版本不进入本轮。它们需要分别冻结 season length、H 和特征估计器，
-不能在同一主表中与 hourly profile 直接混合。
+这些 dataset 相互独立。数量更多不会改变已有 dataset 的 profile，只会增加新的独立
+实验单元。
 
 ## 4. 时间隔离与窗口选择
 
-GIFT-Eval 来源按官方 short-term 规则计算 test tail，profile 只能读取：
+GIFT-Eval dataset 按官方 short-term 规则隔离 test tail，profile 只能读取：
 
 ```text
 series[: series_length - official_test_tail - 48]
 ```
 
-最后额外删除的 48 点作为 validation embargo。M4 Hourly 的 Monash TSF 只包含训练历史，
-因此删除末尾 48 点作为内部 validation embargo。
+紧邻 test tail 的 48 点作为 validation embargo。M4 Hourly 的 Monash TSF 只有训练
+历史，因此保留末尾 48 点作为内部 validation embargo。
 
-每个 source config 最多等距选择 240 个母窗口。缺失值处理在每个 nested view 内独立执行：
+每个 dataset 最多选择 240 条母窗口。抽样先覆盖不同 series/channel，再在已有
+series/channel 内增加时间 origin，避免少数长序列垄断 profile。每个 nested view：
 
 - 至少 50% observed 且至少两个有限值；
-- 只在该 view 内线性插值，并最近值填充两端；
-- 任一 L view 不合格，则整条母窗口从四个 L 同时删除；
-- 任一 context 近常数，则四个 L 同时删除。
-
-该 complete-case pairing 防止不同 L 获得不同难度的样本集合。
+- 只在 view 内线性插值，并用最近值填充两端；
+- context 必须满足 informative-target 检查；
+- 任一 L 失败时四个 L 同时删除。
 
 ## 5. Profile 内容
 
-每个 `source config × L` 形成一个 provenance profile，同时形成四个
-family-macro reference profile。profile 至少保存：
+每个 `dataset × L` profile 只汇总该 dataset 的有效窗口，保存：
 
-- source、family、domain、series/channel、forecast origin；
+- `dataset_id`、dataset name、domain；
+- context、horizon、season length、window count；
+- full `L+48` realized-feature 的 p05/p25/p50/p75/p95；
+- fixed measurement `L+24` realized-feature 的
+  p05/p25/p50/p75/p95。
+
+逐窗口审计记录额外保存：
+
+- series/channel、forecast origin、dataset cutoff；
 - `master_window_id` 与 raw future SHA-256；
-- context、horizon、period、observed fraction；
-- full `L+48` realized-feature 分位数；
-- canonical measurement `L+24` realized-feature 分位数；
-- source asset hash、时间截止规则、候选数、拒绝数与有效 series 数。
+- observed fraction 和全部有效 realized features。
 
-数据集名称不会提供给模型，也不决定合成样本标签。
+dataset inventory 保存资产哈希、频率、时间隔离规则、候选/接受/拒绝数量与有效
+series 数。profile 的描述性分位数不是跨 dataset 可比的绝对能力标尺，也不直接等同
+于后续五档 intensity target。
 
-## 6. 家族平衡聚合与合成采样
+## 6. 下游校准边界
 
-全局 profile 不对所有窗口做 micro average。权重按三级分配：
+后续能力 suite 必须在每个 dataset 内先做独立且可复现的
+parameter/reference/calibration 划分，再分别构造：
 
 ```text
-family 等权
-  -> family 内 source config 等权
-    -> source config 内 paired master window 等权
+parameter split
+  -> dataset-local nuisance
+  -> dataset-local relative intensity targets
+  -> generator inverse calibration
+
+reference split
+  -> dataset-local feature-support reference
+  -> dataset-local near-distance reference
+
+calibration split
+  -> dataset-local gate / DCR / NNDR thresholds
 ```
 
-因此 ETT1/2 合计只占一个 family，Bitbrains 两套配置合计也只占一个 family。正式合成采样
-沿用同一层级：先均匀选 family，再选 source config，最后选 profile/window nuisance。
-最终论文能力分数也应先在来源内汇总，再做 family macro。
+禁止先混合多个 dataset 再拆分，也禁止一个 dataset 因校准失败而改用另一个 dataset
+的 gate 或 nearest-neighbour reference。
 
-## 7. 与旧 paper-v2/v3 的关系
+五档 intensity 由该 dataset/task 的 L=504 parameter split primary feature 的
+`{q10,q30,q50,q70,q90}` 定义，表示 dataset 内的相对弱到相对强；它们不是本 profile
+文件中的描述性 `{p05,p25,p50,p75,p95}`。某项能力若真实特征没有足够档间距、变量结构
+不满足要求，或生成后无法同时通过单调性和局部 gate，应明确记录为 `unsupported`，
+无需强行凑齐九能力或五档。
 
-旧实验固定 `504/48/24`，且 dataset-local synthetic predictor 的方差较大。v4 不修改或
-覆盖已封存 artifact，而是新增多 lookback profile suite：
+## 7. 结论边界
 
-- 旧结果只作为方法开发证据；
-- v4 的数据集集合和 weighting 在新模型推理前冻结；
-- v4 不复用 paper-v2 的 504 profile 冒充 96/168/336 profile；
-- 未来真实迁移确认集必须使用新增、未查看模型成绩的真实 family，不能再把本 profile
-  corpus 声称为完全独立的 confirmatory set。
+该设计允许的主张是：
+
+> 在某个具体真实 dataset 所定义的环境中，模型对某项相对能力强度的表现如何变化。
+
+不同 dataset 的同一 intensity 编号只表示各自分布中的相对位置，不能解释为相同的绝对
+feature strength。跨 dataset 汇总时比较的是模型响应方向、标准化斜率、相对性能变化
+或排名稳定性，而不是直接平均 realized feature 数值。
 
 ## 8. 产物
 
@@ -135,16 +159,25 @@ cd backend
 uv run python ../scripts/build_paper_v4_profile_suite.py
 ```
 
-默认输出：
+可用 `--datasets <dataset_id ...>` 只构建指定 dataset，使用
+`--max-windows-per-dataset` 调整每个 dataset 的上限。默认输出：
 
 ```text
 runtime/paper_exp/v4/00_profile_suite/
   profile_suite.json
   profile_rows.csv
-  source_inventory.csv
+  dataset_inventory.csv
   report.md
   manifest.json
 ```
 
-`manifest.json` 封存协议、脚本、来源资产和输出哈希。默认目录一旦存在 manifest，构建器
-拒绝覆盖。
+`profile_suite.json` 只含 `datasets` 与 dataset-local `profiles`，不含
+`sources`、`family_id` 或 `global_profiles`。`manifest.json` 封存协议、builder 与
+输出哈希；目录存在 manifest 时构建器拒绝覆盖。
+
+## 9. 与旧产物的关系
+
+旧 `paper_v4_multi_lookback_profile_suite.v1`、`source_inventory.csv` 和
+`family_macro__L*_H48` 全部作废，不得被新实验读取。重建必须使用
+`paper_v4_dataset_local_multi_lookback_profile_suite.v2`，并同步重建所有依赖旧 pooled
+profile 或全局 canonical intensity 的 conditioning、gate、qualification 和推理产物。

@@ -28,28 +28,24 @@ from app.services.synthetic_generation_service import (  # noqa: E402
     _seed_for,
 )
 from app.services.synthetic_generator_conditioning import (  # noqa: E402
+    ARTIFACT_SCHEMA_VERSION,
+    INTENSITY_POLICY_ID,
     resolve_generator_conditioning,
 )
-from build_synthetic_v2_feature_gate_artifact import (  # noqa: E402
-    FEATURE_GATE_BUCKET_SPECS,
-    split_real_rows_three_way,
-)
-from run_synthetic_v2_near_distance_calibration import load_real_bucket  # noqa: E402
 
 
-SCHEMA_VERSION = "paper_e1_method_validity.v1"
-EXPERIMENT_VERSION = "v1"
+SCHEMA_VERSION = "paper_e1_method_validity.v2"
+EXPERIMENT_VERSION = "v4"
 EXPERIMENT_ID = "E1_method_validity"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp" / EXPERIMENT_VERSION / EXPERIMENT_ID
-DEFAULT_DATA_DIR = REPO_ROOT / "runtime/research"
-GENERATOR_ARTIFACT_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_generator_conditioning_artifact.json"
+NINE_CAPABILITY_SUITE_DIR = (
+    REPO_ROOT / "runtime/paper_exp/v4/01_nine_capability_suite"
 )
-FEATURE_GATE_ARTIFACT_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_feature_gate_artifact.json"
-)
-NEAR_DISTANCE_ARTIFACT_PATH = (
-    REPO_ROOT / "backend/app/data/synthetic_v2_near_distance_artifact.json"
+GENERATOR_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "generator_conditioning_artifact.json"
+FEATURE_GATE_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "feature_gate_artifact.json"
+NEAR_DISTANCE_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "near_distance_artifact.json"
+SUPPORT_MATRIX_PATH = (
+    NINE_CAPABILITY_SUITE_DIR / "dataset_capability_support_matrix.json"
 )
 DEFAULT_ROUND_SEEDS = (2026071601, 2026071602)
 DEFAULT_SAMPLES_PER_ROUND = 64
@@ -69,10 +65,9 @@ NEGATIVE_CONTROL_SHIFT_IQR = 3.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the paper-v1 E1 synthetic-method validity experiment without large models."
+        description="Run the paper-v4 E1 dataset-local synthetic-method validity experiment."
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--samples-per-round", type=int, default=DEFAULT_SAMPLES_PER_ROUND)
     parser.add_argument("--round-seeds", nargs=2, type=int, default=DEFAULT_ROUND_SEEDS)
     parser.add_argument(
@@ -93,17 +88,32 @@ def main() -> int:
     generator_artifact = read_json(GENERATOR_ARTIFACT_PATH)
     feature_artifact = read_json(FEATURE_GATE_ARTIFACT_PATH)
     near_artifact = read_json(NEAR_DISTANCE_ARTIFACT_PATH)
-    validate_artifact_alignment(generator_artifact, feature_artifact, near_artifact)
+    support_matrix = read_json(SUPPORT_MATRIX_PATH)
+    validate_artifact_alignment(
+        generator_artifact,
+        feature_artifact,
+        near_artifact,
+        support_matrix,
+    )
+    capability_support = capability_support_summary(
+        generator_artifact,
+        support_matrix,
+    )
+    if capability_support["supported_count"] == 0:
+        raise ValueError("E1 has no supported dataset/profile/capability cells")
     config = experiment_config(
         generator_artifact=generator_artifact,
         samples_per_round=args.samples_per_round,
         round_seeds=tuple(args.round_seeds),
-        data_dir=args.data_dir,
+        capability_support=capability_support,
     )
     write_json(output_dir / "config.json", config)
 
     internal_samples = generate_samples(
         generator_artifact=generator_artifact,
+        feature_artifact=feature_artifact,
+        near_artifact=near_artifact,
+        supported_cells=capability_support["supported_cells"],
         samples_per_round=args.samples_per_round,
         round_seeds=tuple(args.round_seeds),
     )
@@ -123,9 +133,7 @@ def main() -> int:
     baseline_rows, baseline_summary = baseline_analysis(sample_rows)
     distribution_rows, distribution_summary = distribution_analysis(
         internal_samples,
-        data_dir=args.data_dir,
         feature_artifact=feature_artifact,
-        generator_artifact=generator_artifact,
     )
 
     csv_outputs = {
@@ -138,6 +146,9 @@ def main() -> int:
         "novelty_dcr_nndr.csv": novelty_rows,
         "cross_round_repetition.csv": repetition_rows,
         "baseline_oracle_response.csv": baseline_rows,
+        "dataset_capability_support_matrix.csv": support_matrix_output_rows(
+            capability_support
+        ),
     }
     for filename, rows in csv_outputs.items():
         write_csv(output_dir / filename, rows)
@@ -157,6 +168,7 @@ def main() -> int:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": config,
         "sample_count": len(sample_rows),
+        "capability_support": capability_support,
         "dose_response": dose_summary,
         "selectivity": selectivity_summary,
         "construction_predictability": construction_summary,
@@ -183,20 +195,28 @@ def experiment_config(
     generator_artifact: dict[str, Any],
     samples_per_round: int,
     round_seeds: tuple[int, int],
-    data_dir: Path,
+    capability_support: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if capability_support is None:
+        raise ValueError("paper-v4 E1 requires the dataset capability support matrix")
+    support = capability_support
+    intensity_policy = generator_artifact["intensity_policy"]
+    profile_ids = sorted(
+        {str(cell["profile_id"]) for cell in support["supported_cells"]}
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "experiment_version": EXPERIMENT_VERSION,
         "experiment_id": EXPERIMENT_ID,
         "large_models_used": False,
-        "canonical_scale_id": generator_artifact["canonical_intensity"]["scale_id"],
-        "canonical_scale_fingerprint": generator_artifact["canonical_intensity"][
-            "scale_fingerprint"
-        ],
-        "online_conditioning_profile_ids": generator_artifact["config"][
-            "online_conditioning_profile_ids"
-        ],
+        "intensity_policy": dict(intensity_policy),
+        "conditioning_profile_ids": profile_ids,
+        "dataset_ids": sorted(
+            {str(cell["dataset_id"]) for cell in support["supported_cells"]}
+        ),
+        "support_matrix_path": relative_or_absolute(SUPPORT_MATRIX_PATH),
+        "supported_dataset_profile_capability_count": support["supported_count"],
+        "unsupported_dataset_profile_capability_count": support["unsupported_count"],
         "intensities": list(INTENSITIES),
         "round_seeds": list(round_seeds),
         "samples_per_round_per_cell": int(samples_per_round),
@@ -204,7 +224,10 @@ def experiment_config(
             "within profile/capability/round/sample_index, the same sample seed is reused across "
             "all five intensities"
         ),
-        "data_dir": relative_or_absolute(data_dir),
+        "real_control_vector_source": (
+            "frozen dataset-local gate-reference and gate-calibration vectors "
+            "inside the feature-gate artifact"
+        ),
         "criteria": {
             "dose_max_normalized_error": DOSE_MAX_NORMALIZED_ERROR,
             "dose_min_spearman": DOSE_MIN_SPEARMAN,
@@ -234,113 +257,269 @@ def validate_artifact_alignment(
     generator_artifact: dict[str, Any],
     feature_artifact: dict[str, Any],
     near_artifact: dict[str, Any],
+    support_matrix: dict[str, Any],
 ) -> None:
-    online = tuple(generator_artifact["config"]["online_conditioning_profile_ids"])
+    if generator_artifact.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
+        raise ValueError(
+            "E1 requires dataset-local generator conditioning artifact "
+            f"{ARTIFACT_SCHEMA_VERSION}"
+        )
+    policy = generator_artifact.get("intensity_policy", {})
+    if policy.get("policy_id") != INTENSITY_POLICY_ID:
+        raise ValueError(f"E1 requires intensity policy {INTENSITY_POLICY_ID}")
+    if (
+        support_matrix.get("schema_version")
+        != "paper_v4_dataset_capability_support_matrix.v1"
+    ):
+        raise ValueError("E1 requires the paper-v4 dataset capability support matrix")
+    supported_cells = [
+        cell for cell in support_matrix.get("cells", [])
+        if cell.get("status") == "supported"
+    ]
+    if not supported_cells:
+        raise ValueError("E1 support matrix has no supported cells")
+    profile_ids = tuple(
+        sorted({str(cell["generator_profile_id"]) for cell in supported_cells})
+    )
     generator_profiles = set(generator_artifact["profiles"])
     feature_profiles = set(feature_artifact["buckets"])
     near_profiles = set(near_artifact["buckets"])
     missing = {
-        "generator": sorted(set(online) - generator_profiles),
-        "feature_gate": sorted(set(online) - feature_profiles),
-        "near_distance": sorted(set(online) - near_profiles),
+        "generator": sorted(set(profile_ids) - generator_profiles),
+        "feature_gate": sorted(set(profile_ids) - feature_profiles),
+        "near_distance": sorted(set(profile_ids) - near_profiles),
     }
     if any(missing.values()):
-        raise ValueError(f"paper-v1 online artifact alignment failed: {missing}")
-    for profile_id in online:
-        if generator_artifact["profiles"][profile_id].get("conditioning_role") != "paper_v1_online":
-            raise ValueError(f"{profile_id} is not marked paper_v1_online")
+        raise ValueError(f"paper-v4 online artifact alignment failed: {missing}")
+    for profile_id in profile_ids:
+        profile = generator_artifact["profiles"][profile_id]
+        if (
+            profile.get("conditioning_role")
+            != "paper_v4_dataset_local_train_only_master_task"
+        ):
+            raise ValueError(f"{profile_id} is not a paper-v4 dataset-local master")
+        if not str(profile.get("dataset_id", "")).strip():
+            raise ValueError(f"{profile_id} has no dataset_id")
+    for cell in supported_cells:
+        profile_id = str(cell["generator_profile_id"])
+        capability_id = str(cell["capability_id"])
+        profile = generator_artifact["profiles"][profile_id]
+        if str(cell.get("dataset_id")) != str(profile.get("dataset_id")):
+            raise ValueError(f"{profile_id}/{capability_id} dataset identity mismatch")
+        capability = profile.get("capabilities", {}).get(capability_id)
+        if not is_supported_capability(capability):
+            raise ValueError(
+                f"{profile_id}/{capability_id} is supported in the matrix "
+                "but missing supported generator conditioning"
+            )
+        feature_capabilities = feature_artifact["buckets"][profile_id].get(
+            "capabilities", {}
+        )
+        if capability_id not in feature_capabilities:
+            raise ValueError(
+                f"{profile_id}/{capability_id} has no feature-gate calibration"
+            )
+
+
+def capability_support_summary(
+    generator_artifact: dict[str, Any],
+    support_matrix: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    supported: list[dict[str, Any]] = []
+    unsupported: list[dict[str, Any]] = []
+    if support_matrix is None:
+        raise ValueError("dataset capability support matrix is required")
+    seen: set[tuple[str, str]] = set()
+    for cell in support_matrix.get("cells", []):
+        profile_id = str(cell.get("generator_profile_id", ""))
+        capability_id = str(cell.get("capability_id", ""))
+        key = (profile_id, capability_id)
+        if not profile_id or not capability_id or key in seen:
+            continue
+        seen.add(key)
+        row = {
+            "dataset_id": str(cell.get("dataset_id", "")),
+            "task_id": str(cell.get("task_id", "")),
+            "profile_id": profile_id,
+            "capability_id": capability_id,
+        }
+        profile = generator_artifact.get("profiles", {}).get(profile_id, {})
+        capability = profile.get("capabilities", {}).get(capability_id)
+        if cell.get("status") == "supported" and is_supported_capability(capability):
+            supported.append({**row, "status": "supported", "reason_codes": []})
+        else:
+            reason_codes = [
+                str(reason)
+                for reason in (cell.get("reason_codes") or [])
+                if str(reason)
+            ]
+            if cell.get("status") == "supported":
+                reason_codes.append("generator_conditioning_missing_or_unsupported")
+            if not reason_codes:
+                reason_codes = ["unsupported_by_dataset_suite"]
+            unsupported.append(
+                {
+                    **row,
+                    "status": "unsupported",
+                    "reason_codes": reason_codes,
+                    "reason": reason_codes[0],
+                }
+            )
+    return {
+        "supported_count": len(supported),
+        "unsupported_count": len(unsupported),
+        "supported_cells": supported,
+        "unsupported_cells": unsupported,
+    }
+
+
+def support_matrix_output_rows(
+    capability_support: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows = [
+        *capability_support["supported_cells"],
+        *capability_support["unsupported_cells"],
+    ]
+    return [
+        {
+            "dataset_id": row["dataset_id"],
+            "task_id": row["task_id"],
+            "profile_id": row["profile_id"],
+            "capability_id": row["capability_id"],
+            "status": row["status"],
+            "reason_codes": ";".join(row.get("reason_codes", [])),
+        }
+        for row in sorted(
+            rows,
+            key=lambda item: (
+                str(item["dataset_id"]),
+                str(item["capability_id"]),
+            ),
+        )
+    ]
+
+
+def is_supported_capability(capability: Any) -> bool:
+    calibration = (
+        capability.get("calibration")
+        if isinstance(capability, dict)
+        else None
+    )
+    return bool(
+        isinstance(capability, dict)
+        and capability.get("status", "supported") == "supported"
+        and isinstance(calibration, dict)
+        and calibration.get("status") == "supported"
+    )
 
 
 def generate_samples(
     *,
     generator_artifact: dict[str, Any],
+    feature_artifact: dict[str, Any],
+    near_artifact: dict[str, Any],
+    supported_cells: list[dict[str, Any]],
     samples_per_round: int,
     round_seeds: tuple[int, int],
 ) -> list[dict[str, Any]]:
     samples: list[dict[str, Any]] = []
-    for profile_id in generator_artifact["config"]["online_conditioning_profile_ids"]:
+    for cell in supported_cells:
+        profile_id = str(cell["profile_id"])
+        capability_id = str(cell["capability_id"])
         profile = generator_artifact["profiles"][profile_id]
-        for capability_id in sorted(profile["capabilities"]):
-            conditioning = resolve_generator_conditioning(
-                capability_id=capability_id,
-                profile_id=profile_id,
-                context_length=int(profile["context_length"]),
-                horizon=int(profile["horizon"]),
-                target_dim=int(profile["target_dim"]),
-                artifact=generator_artifact,
-            )
-            if conditioning is None:
-                raise RuntimeError(f"missing conditioning for {profile_id}/{capability_id}")
-            for round_index, round_seed in enumerate(round_seeds, start=1):
-                for sample_index in range(samples_per_round):
-                    sample_seed = _seed_for(
-                        round_seed,
-                        f"{profile_id}:{capability_id}",
-                        sample_index,
+        capability = profile["capabilities"][capability_id]
+        if not is_supported_capability(capability):
+            raise RuntimeError(f"unsupported E1 cell {profile_id}/{capability_id}")
+        conditioning = resolve_generator_conditioning(
+            capability_id=capability_id,
+            profile_id=profile_id,
+            context_length=int(profile["context_length"]),
+            horizon=int(profile["horizon"]),
+            target_dim=int(profile["target_dim"]),
+            artifact=generator_artifact,
+        )
+        if conditioning is None:
+            raise RuntimeError(f"missing conditioning for {profile_id}/{capability_id}")
+        for round_index, round_seed in enumerate(round_seeds, start=1):
+            for sample_index in range(samples_per_round):
+                sample_seed = _seed_for(
+                    round_seed,
+                    f"{profile_id}:{capability_id}",
+                    sample_index,
+                )
+                for intensity in INTENSITIES:
+                    target, latent, covariates, features = _generate_accepted_sample_values(
+                        capability_id,
+                        int(profile["context_length"]) + int(profile["horizon"]),
+                        int(profile["context_length"]),
+                        int(profile["target_dim"]),
+                        int(profile["season_length"]),
+                        intensity,
+                        sample_seed,
+                        anchor_profile_id=profile_id,
+                        generator_conditioning=conditioning,
+                        generator_conditioning_artifact=generator_artifact,
+                        feature_gate_artifact=feature_artifact,
+                        near_distance_artifact=near_artifact,
+                        acceptance_profile_ids=(profile_id,),
                     )
-                    for intensity in INTENSITIES:
-                        target, latent, covariates, features = _generate_accepted_sample_values(
-                            capability_id,
-                            int(profile["context_length"]) + int(profile["horizon"]),
-                            int(profile["context_length"]),
-                            int(profile["target_dim"]),
-                            int(profile["season_length"]),
-                            intensity,
-                            sample_seed,
-                            anchor_profile_id=profile_id,
-                            generator_conditioning=conditioning,
-                        )
-                        forecasts = forecast_metrics(
-                            capability_id=capability_id,
-                            target=target,
-                            covariates=covariates,
-                            context_length=int(profile["context_length"]),
-                            season_length=int(profile["season_length"]),
-                            latent=latent,
-                        )
-                        acceptance = latent["acceptance"]
-                        validation = acceptance["validation"]
-                        near_bucket = matching_near_bucket(
-                            validation["near_distance_gate"], profile_id
-                        )
-                        row = {
-                            "schema_version": "paper_e1_sample.v1",
-                            "profile_id": profile_id,
-                            "capability_id": capability_id,
-                            "intensity": intensity,
-                            "round_index": round_index,
-                            "round_seed": round_seed,
-                            "sample_index": sample_index,
-                            "sample_seed": sample_seed,
-                            "context_length": int(profile["context_length"]),
-                            "horizon": int(profile["horizon"]),
-                            "season_length": int(profile["season_length"]),
-                            "target_dim": int(profile["target_dim"]),
-                            "covariate_dim": 0 if covariates is None else int(covariates.shape[1]),
-                            "canonical_target_feature": conditioning.canonical_target_feature,
-                            "canonical_target_strength": conditioning.canonical_target_values[
-                                intensity - 1
-                            ],
-                            "realized_features": clean_float_mapping(features),
-                            "construction_predictability": latent["predictability"],
-                            "acceptance_attempts": int(acceptance["attempts"]),
-                            "feature_gate": compact_feature_gate(validation["feature_gate"]),
-                            "near_distance_gate": compact_near_distance_gate(
-                                validation["near_distance_gate"], near_bucket
+                    forecasts = forecast_metrics(
+                        capability_id=capability_id,
+                        target=target,
+                        covariates=covariates,
+                        context_length=int(profile["context_length"]),
+                        season_length=int(profile["season_length"]),
+                        latent=latent,
+                    )
+                    acceptance = latent["acceptance"]
+                    validation = acceptance["validation"]
+                    near_bucket = matching_near_bucket(
+                        validation["near_distance_gate"], profile_id
+                    )
+                    row = {
+                        "schema_version": "paper_e1_sample.v2",
+                        "dataset_id": conditioning.dataset_id,
+                        "profile_id": profile_id,
+                        "capability_id": capability_id,
+                        "intensity": intensity,
+                        "round_index": round_index,
+                        "round_seed": round_seed,
+                        "sample_index": sample_index,
+                        "sample_seed": sample_seed,
+                        "context_length": int(profile["context_length"]),
+                        "horizon": int(profile["horizon"]),
+                        "season_length": int(profile["season_length"]),
+                        "target_dim": int(profile["target_dim"]),
+                        "covariate_dim": (
+                            0 if covariates is None else int(covariates.shape[1])
+                        ),
+                        "target_feature": conditioning.target_feature,
+                        "target_percentile_level": conditioning.target_percentile_levels[
+                            intensity - 1
+                        ],
+                        "target_strength": conditioning.target_values[
+                            intensity - 1
+                        ],
+                        "realized_features": clean_float_mapping(features),
+                        "construction_predictability": latent["predictability"],
+                        "acceptance_attempts": int(acceptance["attempts"]),
+                        "feature_gate": compact_feature_gate(validation["feature_gate"]),
+                        "near_distance_gate": compact_near_distance_gate(
+                            validation["near_distance_gate"], near_bucket
+                        ),
+                        "forecast_mae": forecasts,
+                    }
+                    samples.append(
+                        {
+                            "row": row,
+                            "target": np.asarray(target, dtype=float),
+                            "covariates": (
+                                None
+                                if covariates is None
+                                else np.asarray(covariates, dtype=float)
                             ),
-                            "forecast_mae": forecasts,
                         }
-                        samples.append(
-                            {
-                                "row": row,
-                                "target": np.asarray(target, dtype=float),
-                                "covariates": (
-                                    None
-                                    if covariates is None
-                                    else np.asarray(covariates, dtype=float)
-                                ),
-                            }
-                        )
+                    )
     return samples
 
 
@@ -403,23 +582,34 @@ def dose_response_analysis(
     rows: list[dict[str, Any]] = []
     profile_checks: list[dict[str, Any]] = []
     for (profile_id, capability_id, intensity), group in sorted(grouped.items()):
-        feature_name = group[0]["canonical_target_feature"]
+        profile = generator_artifact["profiles"][profile_id]
+        capability = profile["capabilities"][capability_id]
+        if not is_supported_capability(capability):
+            continue
+        feature_name = str(capability["target_feature"])
         values = np.asarray(
             [row["realized_features"][feature_name] for row in group], dtype=float
         )
-        target = float(group[0]["canonical_target_strength"])
-        canonical_values = generator_artifact["canonical_intensity"]["capabilities"][
-            capability_id
-        ]["target_values"]
-        scale = max(float(canonical_values[-1]) - float(canonical_values[0]), 0.05)
+        target_values = [float(value) for value in capability["target_values"]]
+        target = target_values[int(intensity) - 1]
+        scale = float(target_values[-1]) - float(target_values[0])
+        if not math.isfinite(scale) or scale <= 0.0:
+            raise ValueError(
+                f"unsupported non-positive target range for {profile_id}/{capability_id}"
+            )
         rows.append(
             {
+                "dataset_id": profile["dataset_id"],
                 "profile_id": profile_id,
                 "capability_id": capability_id,
                 "intensity": intensity,
                 "feature": feature_name,
                 "sample_count": len(values),
-                "canonical_target": target,
+                "target_percentile_level": capability["target_percentile_levels"][
+                    int(intensity) - 1
+                ],
+                "dataset_local_target": target,
+                "dataset_local_target_range": scale,
                 "realized_mean": float(np.mean(values)),
                 "realized_std": float(np.std(values)),
                 "realized_p05": float(np.quantile(values, 0.05)),
@@ -434,12 +624,13 @@ def dose_response_analysis(
         max_error = max(float(item["normalized_absolute_error"]) for item in ordered)
         rho = spearman(realized)
         passed = bool(
-            rho >= DOSE_MIN_SPEARMAN
+            rho + 1e-12 >= DOSE_MIN_SPEARMAN
             and realized[-1] > realized[0]
             and max_error <= DOSE_MAX_NORMALIZED_ERROR
         )
         profile_checks.append(
             {
+                "dataset_id": generator_artifact["profiles"][profile_id]["dataset_id"],
                 "profile_id": profile_id,
                 "capability_id": capability_id,
                 "spearman": rho,
@@ -510,12 +701,18 @@ def selectivity_analysis(
                 }
             )
 
-    primary_features = {
-        capability_id: definition["primary_feature"]
-        for capability_id, definition in generator_artifact["canonical_intensity"][
-            "capabilities"
-        ].items()
-    }
+    primary_features: dict[str, str] = {}
+    for profile in generator_artifact["profiles"].values():
+        for capability_id, definition in profile.get("capabilities", {}).items():
+            if not is_supported_capability(definition):
+                continue
+            feature_name = str(definition["target_feature"])
+            previous = primary_features.setdefault(capability_id, feature_name)
+            if previous != feature_name:
+                raise ValueError(
+                    f"inconsistent target feature for {capability_id}: "
+                    f"{previous!r} != {feature_name!r}"
+                )
     response_rows: list[dict[str, Any]] = []
     for (profile_id, capability_id), group in sorted(paired_groups.items()):
         by_intensity = group_rows(group, "intensity")
@@ -772,100 +969,113 @@ def baseline_analysis(
 def distribution_analysis(
     internal_samples: list[dict[str, Any]],
     *,
-    data_dir: Path,
     feature_artifact: dict[str, Any],
-    generator_artifact: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    spec_by_id = {spec.profile_id: spec for spec in FEATURE_GATE_BUCKET_SPECS}
     synthetic_groups = group_rows(
         internal_samples,
         lambda item: item["row"]["profile_id"],
         lambda item: item["row"]["capability_id"],
     )
-    config = feature_artifact["config"]
     rows: list[dict[str, Any]] = []
-    online = generator_artifact["config"]["online_conditioning_profile_ids"]
-    for profile_id in online:
-        spec = spec_by_id[profile_id]
-        real_rows = load_real_bucket(
-            spec,
-            data_dir / spec.asset_name,
-            max_windows=int(config["max_windows_per_bucket"]),
-        )
-        _parameter, reference, calibration, split = split_real_rows_three_way(
-            real_rows,
-            spec,
-            calibration_fraction=float(config["calibration_fraction"]),
-            gate_reference_fraction=float(config["gate_reference_fraction_of_development"]),
-            seed=_seed_for(int(config["seed"]), profile_id, 0),
-        )
-        artifact_split = feature_artifact["buckets"][profile_id]["split"]
-        expected_counts = (
-            int(artifact_split["gate_reference_count"]),
-            int(artifact_split["gate_calibration_count"]),
-        )
-        observed_counts = (len(reference), len(calibration))
-        if observed_counts != expected_counts:
-            raise ValueError(
-                f"feature split reconstruction mismatch for {profile_id}: "
-                f"expected={expected_counts}, observed={observed_counts}, split={split}"
-            )
-        for capability_id in sorted(generator_artifact["profiles"][profile_id]["capabilities"]):
-            support = feature_artifact["buckets"][profile_id]["capabilities"][capability_id][
-                "control_support"
-            ]
-            names = tuple(support["feature_names"])
-            center = np.asarray(support["feature_center"], dtype=float)
-            scale = np.maximum(np.asarray(support["feature_scale"], dtype=float), 1e-9)
-            real_reference = matrix_from_feature_rows(reference, names, center, scale)
-            real_calibration = matrix_from_feature_rows(calibration, names, center, scale)
-            synthetic = np.vstack(
-                [
-                    feature_vector(item["row"]["realized_features"], names, center, scale)
-                    for item in synthetic_groups[(profile_id, capability_id)]
-                ]
-            )
-            seed = _seed_for(20260716, f"distribution:{profile_id}:{capability_id}", 0)
-            bandwidth = reference_bandwidth(real_reference, seed=seed)
-            negative = real_calibration + NEGATIVE_CONTROL_SHIFT_IQR
-            mmd_real = rbf_mmd(real_reference, real_calibration, bandwidth=bandwidth)
-            mmd_synthetic = rbf_mmd(real_reference, synthetic, bandwidth=bandwidth)
-            mmd_negative = rbf_mmd(real_reference, negative, bandwidth=bandwidth)
-            swd_real = sliced_wasserstein_fixed(
-                real_reference, real_calibration, seed=seed
-            )
-            swd_synthetic = sliced_wasserstein_fixed(real_reference, synthetic, seed=seed)
-            swd_negative = sliced_wasserstein_fixed(real_reference, negative, seed=seed)
-            mmd_passed = mmd_synthetic < mmd_negative
-            swd_passed = swd_synthetic < swd_negative
+    for (profile_id, capability_id), group in sorted(synthetic_groups.items()):
+        bucket = feature_artifact["buckets"][profile_id]
+        support = bucket["capabilities"][capability_id]["control_support"]
+        names = tuple(str(name) for name in support["feature_names"])
+        base = {
+            "dataset_id": str(bucket["dataset_id"]),
+            "profile_id": profile_id,
+            "capability_id": capability_id,
+            "control_features": ";".join(names),
+            "real_reference_count": int(support["reference_count"]),
+            "real_calibration_count": int(support["calibration_count"]),
+            "synthetic_count": len(group),
+        }
+        if not names:
             rows.append(
                 {
-                    "profile_id": profile_id,
-                    "capability_id": capability_id,
-                    "control_features": ";".join(names),
-                    "real_reference_count": len(real_reference),
-                    "real_calibration_count": len(real_calibration),
-                    "synthetic_count": len(synthetic),
-                    "mmd_real_vs_real": mmd_real,
-                    "mmd_synthetic_vs_real": mmd_synthetic,
-                    "mmd_shifted_negative_vs_real": mmd_negative,
-                    "mmd_closer_than_shifted_negative": mmd_passed,
-                    "swd_real_vs_real": swd_real,
-                    "swd_synthetic_vs_real": swd_synthetic,
-                    "swd_shifted_negative_vs_real": swd_negative,
-                    "swd_closer_than_shifted_negative": swd_passed,
-                    "passed": bool(mmd_passed and swd_passed),
+                    **base,
+                    "status": "not_applicable_no_control_features",
+                    "mmd_real_vs_real": "",
+                    "mmd_synthetic_vs_real": "",
+                    "mmd_shifted_negative_vs_real": "",
+                    "mmd_closer_than_shifted_negative": "",
+                    "swd_real_vs_real": "",
+                    "swd_synthetic_vs_real": "",
+                    "swd_shifted_negative_vs_real": "",
+                    "swd_closer_than_shifted_negative": "",
+                    "passed": "",
                 }
             )
-        del real_rows, reference, calibration
-    summary = summarize_boolean_checks(rows, detail_key="profile_checks")
+            continue
+        real_reference = np.asarray(support["reference_control_z"], dtype=float)
+        real_calibration = np.asarray(
+            support["calibration_control_z"],
+            dtype=float,
+        )
+        expected_shape = (len(names),)
+        if (
+            real_reference.ndim != 2
+            or real_calibration.ndim != 2
+            or real_reference.shape[1:] != expected_shape
+            or real_calibration.shape[1:] != expected_shape
+            or len(real_reference) != int(support["reference_count"])
+            or len(real_calibration) != int(support["calibration_count"])
+        ):
+            raise ValueError(
+                f"invalid frozen E1 control vectors for {profile_id}/{capability_id}"
+            )
+        center = np.asarray(support["feature_center"], dtype=float)
+        scale = np.maximum(np.asarray(support["feature_scale"], dtype=float), 1e-9)
+        synthetic = np.vstack(
+            [
+                feature_vector(item["row"]["realized_features"], names, center, scale)
+                for item in group
+            ]
+        )
+        seed = _seed_for(20260716, f"distribution:{profile_id}:{capability_id}", 0)
+        bandwidth = reference_bandwidth(real_reference, seed=seed)
+        negative = real_calibration + NEGATIVE_CONTROL_SHIFT_IQR
+        mmd_real = rbf_mmd(real_reference, real_calibration, bandwidth=bandwidth)
+        mmd_synthetic = rbf_mmd(real_reference, synthetic, bandwidth=bandwidth)
+        mmd_negative = rbf_mmd(real_reference, negative, bandwidth=bandwidth)
+        swd_real = sliced_wasserstein_fixed(
+            real_reference, real_calibration, seed=seed
+        )
+        swd_synthetic = sliced_wasserstein_fixed(real_reference, synthetic, seed=seed)
+        swd_negative = sliced_wasserstein_fixed(real_reference, negative, seed=seed)
+        mmd_passed = mmd_synthetic < mmd_negative
+        swd_passed = swd_synthetic < swd_negative
+        rows.append(
+            {
+                **base,
+                "status": "evaluated",
+                "mmd_real_vs_real": mmd_real,
+                "mmd_synthetic_vs_real": mmd_synthetic,
+                "mmd_shifted_negative_vs_real": mmd_negative,
+                "mmd_closer_than_shifted_negative": mmd_passed,
+                "swd_real_vs_real": swd_real,
+                "swd_synthetic_vs_real": swd_synthetic,
+                "swd_shifted_negative_vs_real": swd_negative,
+                "swd_closer_than_shifted_negative": swd_passed,
+                "passed": bool(mmd_passed and swd_passed),
+            }
+        )
+    evaluated = [row for row in rows if row["status"] == "evaluated"]
+    summary = summarize_boolean_checks(evaluated, detail_key="profile_checks")
+    summary["not_applicable_count"] = len(rows) - len(evaluated)
     summary["mmd_closer_fraction"] = float(
-        np.mean([row["mmd_closer_than_shifted_negative"] for row in rows])
+        np.mean([row["mmd_closer_than_shifted_negative"] for row in evaluated])
+        if evaluated
+        else 0.0
     )
     summary["swd_closer_fraction"] = float(
-        np.mean([row["swd_closer_than_shifted_negative"] for row in rows])
+        np.mean([row["swd_closer_than_shifted_negative"] for row in evaluated])
+        if evaluated
+        else 0.0
     )
     summary["passed"] = bool(
+        evaluated
+        and
         summary["mmd_closer_fraction"] >= MIN_DISTRIBUTION_CLOSER_FRACTION
         and summary["swd_closer_fraction"] >= MIN_DISTRIBUTION_CLOSER_FRACTION
     )
@@ -1100,15 +1310,6 @@ def ridge_solve(design: np.ndarray, response: np.ndarray, ridge: float = 1e-5) -
     return np.linalg.solve(gram, design.T @ response)
 
 
-def matrix_from_feature_rows(
-    rows: list[dict[str, Any]],
-    names: tuple[str, ...],
-    center: np.ndarray,
-    scale: np.ndarray,
-) -> np.ndarray:
-    return np.vstack([feature_vector(row["features"], names, center, scale) for row in rows])
-
-
 def feature_vector(
     features: dict[str, float],
     names: tuple[str, ...],
@@ -1240,6 +1441,7 @@ def clean_float_mapping(values: dict[str, Any]) -> dict[str, float]:
 
 def render_report(summary: dict[str, Any]) -> str:
     criteria = summary["criteria"]
+    capability_support = summary["capability_support"]
     dose = summary["dose_response"]
     selectivity = summary["selectivity"]
     construction = summary["construction_predictability"]
@@ -1251,7 +1453,10 @@ def render_report(summary: dict[str, Any]) -> str:
     lines = [
         "# E1 — Synthetic method validity",
         "",
-        f"- Scale: `{summary['config']['canonical_scale_id']}` / `{summary['config']['canonical_scale_fingerprint']}`",
+        f"- Intensity policy: `{summary['config']['intensity_policy']['policy_id']}`; "
+        "strength is relative within each dataset/profile/capability.",
+        f"- Capability cells: {capability_support['supported_count']} supported; "
+        f"{capability_support['unsupported_count']} unsupported and skipped.",
         f"- Samples: {summary['sample_count']} accepted samples; no large forecasting model was used.",
         f"- Overall preregistered checks: {criteria['passed_count']} / {criteria['criterion_count']} passed.",
         "",
@@ -1272,6 +1477,7 @@ def render_report(summary: dict[str, Any]) -> str:
             f"- Construction contracts: {construction['passed_count']} / {construction['check_count']} passed.",
             f"- First-pass online acceptance: {support['overall_first_pass_rate']:.4f}; maximum attempts: {support['maximum_attempts']}.",
             f"- MMD/SWD closer-than-shifted fractions: {distribution['mmd_closer_fraction']:.4f} / {distribution['swd_closer_fraction']:.4f}.",
+            f"- Distribution cells without valid nuisance controls: {distribution['not_applicable_count']} (recorded as not applicable, not failed or silently dropped).",
             f"- DCR/NNDR cells: {novelty['passed_count']} / {novelty['check_count']} passed.",
             f"- Cross-round repetition checks: {repetition['passed_count']} / {repetition['check_count']} passed.",
             f"- Capability-oracle checks: {baselines['passed_count']} / {baselines['check_count']} passed.",
@@ -1364,6 +1570,7 @@ def write_manifest(output_dir: Path, *, config: dict[str, Any]) -> None:
         "generator_conditioning_artifact": GENERATOR_ARTIFACT_PATH,
         "feature_gate_artifact": FEATURE_GATE_ARTIFACT_PATH,
         "near_distance_artifact": NEAR_DISTANCE_ARTIFACT_PATH,
+        "dataset_capability_support_matrix": SUPPORT_MATRIX_PATH,
         "runner": Path(__file__).resolve(),
     }
     files = {

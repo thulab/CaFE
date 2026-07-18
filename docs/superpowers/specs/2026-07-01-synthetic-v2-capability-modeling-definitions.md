@@ -51,13 +51,31 @@ z_t = (r_s+r_f) z_{t-1} - r_s r_f z_{t-2} + eps_t
 
 ### 3.2 intensity 是结构干预，不是预设难度
 
-`intensity ∈ {1,2,3,4,5}` 是同一 capability 内跨真实基底共享的绝对结构强度档位，基础坐标为 `u=(intensity-1)/4`；不同 capability 的主指标量纲不同，不能横向解释为相同数值强度。对 capability `c`，先在冻结的 development reference corpus 上定义唯一目标曲线 `T_{c,1..5}`：每个参考 profile 计算主目标特征的 q20/q35/q50/q70/q90，再对 profile 等权取逐坐标中位数。`regime_switching` 是显式例外：I1 固定为 history-clock qualification 边界 0.10，I5 为等 profile 权重的 qualified-real q90，I2–I4 在同一绝对统计量尺度上等距。`nonlinear_persistence` 也采用可解释端点：I1 为有符号 adjusted-\(R^2\) 的零效应边界，I5 为等 profile 权重的 real q90，中间等距。这两个例外避免可用真实窗口或近零估计器分布过窄时五档退化。一个数据集的额外 context/horizon 研究 bucket 不重复参与全局标尺，避免靠增加 bucket 数量改变其权重。
+`intensity ∈ {1,2,3,4,5}` 是固定
+`dataset × task view × capability × context × horizon` 内部的相对结构强度。
+五档目标只由该 profile 的 generator-parameter split 定义：
 
-每个样本先选定真实 bucket `b`，再使用只由该 bucket 真实参数拟合分区估计的单调逆映射 `λ_{b,c}(intensity)`，使独立 seed bank 上合成样本主目标特征的均值逼近同一个 `T_{c,intensity}`。因此 bucket 决定 nuisance 和“怎样生成到该强度”，不再决定“该强度是多少”。目标落在 bucket 局部真实分布的经验分位仍写入 metadata；它可以接近 0 或 1，表示相对于该真实基底的温和样本或反事实压力测试，而不是重新定义 intensity。
+\[
+T_{b,c,k}=Q_{R^{param}_b}\left(f_c(x),p_k\right),\qquad
+(p_1,\ldots,p_5)=(0.10,0.30,0.50,0.70,0.90).
+\]
 
-噪声尺度、尾部形态、非周期背景持续性和局部通道成分等 nuisance 可以随 `b,c` 改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。五档是正式报告与主实验的离散剂量；生成器标定使用更密的连续 `λ`/结构尺度网格，并记录 `canonical_target_strength` 与 `calibrated_profile_expected_strength`，因此不需要为了提高标定精度扩大主实验组合数。论文不预设模型误差随 intensity 单调，只要求预注册的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为 `α_{b,c}(λ_{b,c}(intensity))`。
+每个样本先选定 profile `b`，再使用同一 profile 拟合的单调逆映射
+`λ_{b,c}(intensity)`，使独立 seed bank 上合成样本主目标特征的均值逼近
+`T_{b,c,intensity}`。profile 同时决定 nuisance、“相对强度是多少”和“怎样生成到该
+强度”。不同 dataset 的五档不做绝对强度比较，也不共享 target、nuisance 或逆映射。
 
-绝对标尺必须有版本。artifact 同时记录 `canonical_scale_id`、由参考 profile 与目标曲线计算的 fingerprint、参考语料清单和用途。新增/删除校准数据或改变目标曲线必须发布新 `scale_id`，不能在看到模型结果后静默重拟合。
+五档目标必须有限、严格递增，最小相邻间距不低于
+`max(1e-6, 0.02 * (T5-T1))`。不满足时，该
+`dataset × task view × capability` 如实记录为 `unsupported`，不人为投影出五档，也
+不借用其他 dataset 的 target。变量结构、窗口数或校准条件不满足时同理。
+
+噪声尺度、尾部形态、非周期背景持续性和局部通道成分等 nuisance 可以随 `b,c`
+改变，但在同一个 `b,c,seed` 的五档 intensity 中必须固定。生成器使用更密的连续
+`λ`/结构尺度网格，并记录 `target_values` 与
+`calibrated_realized_strengths`。论文不预设模型误差随 intensity 单调，只要求预注册
+的 realized target feature 按预期方向响应。形式上，文中各节的 `α(λ)` 均应理解为
+`α_{b,c}(λ_{b,c}(intensity))`。
 
 ### 3.3 时间参数不依赖总窗口长度
 
@@ -220,7 +238,8 @@ y_t = base_t
 
 ## 6. 进入主实验前的验收
 
-每个 capability × intensity × generator family 至少生成 500 个无需模型推理的样本，依次检查：
+每个 supported `dataset × capability × intensity × lookback` cell 至少生成预注册
+数量的无需模型推理样本，依次检查：
 
 1. **Construction gate**：全部样本满足本文件的 predictability contract。
 2. **Dose response**：预注册 realized target feature 的 bootstrap 置信区间和强度方向符合定义。
@@ -229,6 +248,9 @@ y_t = base_t
 5. **Novelty**：通过独立校准的近距离门限和 copy/jitter/shift/warp 攻击测试。
 6. **Shortcut resistance**：对非季节能力，固定 `seasonal-naive(P)` 不得相对 last-value 形成统一捷径。
 7. **Predictive headroom**：在预注册 seed bank 的 I5 上，capability-aware forecast 相对 capability-blind matched baseline 的配对 loss difference 之 ratio-of-means 单侧下界和胜率均达标；I1–I4 作为诊断报告，不要求显式 null 边界也产生正 headroom。不使用会过度加权低 blind-loss 样本的逐样本 relative-gain 均值。该比较只做聚合资格审计，不按单样本未来误差筛选生成结果。
-8. **Family robustness**：论文主结果不能只依赖一种公式；每个能力后续至少补充一个 held-out generator family。
+8. **Support accounting**：缺 task view、变量结构不支持、窗口不足、档间距不足或校准失败均写入完整九能力 support matrix；不补值，也不把 unsupported 当作最差结果。
 
-旧 `capts-paper-v1` 与 paper-v4 prototype runtime 结果不作为 `capts-paper-v2` 的有效实验结果；generator conditioning、feature-support 与 shortcut audit 均须以新 scale ID 重新冻结。
+旧 `capts-paper-v1`、跨 dataset pooled profile、canonical intensity 与 paper-v4
+prototype runtime 结果不作为当前实验的有效结果；generator conditioning、
+feature-support、near-distance 与 shortcut audit 均须按 dataset-local v4 schema
+重新生成。

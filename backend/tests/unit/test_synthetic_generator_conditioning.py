@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import copy
+
 import numpy as np
 
 from app.services.synthetic_generation_service import _generate_sample_values
 from app.services.synthetic_generator_conditioning import (
-    load_generator_conditioning_artifact,
+    ARTIFACT_SCHEMA_VERSION,
+    INTENSITY_POLICY_ID,
+    GeneratorConditioning,
     matching_generator_profiles,
     resolve_generator_conditioning,
     select_balanced_profile_id,
@@ -15,36 +19,28 @@ def conditioning_artifact() -> dict:
     capability = {
         "parameters": {"structure_scale": 0.75},
         "intensity_lambdas": [0.0, 0.1, 0.3, 0.6, 1.0],
-        "canonical_reference_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
-        "canonical_target_feature": "trend_strength",
-        "canonical_target_values": [0.0, 0.1, 0.2, 0.4, 0.7],
+        "target_percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+        "target_feature": "trend_strength",
+        "target_values": [0.02, 0.12, 0.25, 0.38, 0.55],
         "calibrated_realized_strengths": [0.01, 0.11, 0.21, 0.39, 0.69],
-        "local_real_percentiles_at_canonical_targets": [0.05, 0.2, 0.4, 0.75, 0.98],
-        "local_real_target_quantiles": {
-            "trend_strength": [0.02, 0.12, 0.25, 0.38, 0.55]
-        },
-        "canonical_calibration": {
+        "calibration": {
             "status": "supported",
             "max_normalized_error": 0.02,
         },
         "calibration_method": "unit-test",
     }
     return {
-        "schema_version": "unit-conditioning.v2",
+        "schema_version": ARTIFACT_SCHEMA_VERSION,
         "created_at": "2026-07-15T00:00:00+00:00",
-        "canonical_intensity": {
-            "scale_id": "unit-scale-v1",
-            "scale_fingerprint": "0123456789abcdef",
-            "capabilities": {
-                "trend": {
-                    "primary_feature": "trend_strength",
-                    "target_values": [0.0, 0.1, 0.2, 0.4, 0.7],
-                }
-            }
+        "intensity_policy": {
+            "policy_id": INTENSITY_POLICY_ID,
+            "percentile_levels": [0.1, 0.3, 0.5, 0.7, 0.9],
+            "definition": "five relative strength quantiles calibrated independently per dataset",
         },
         "profiles": {
             "profile_a": {
                 "profile_id": "profile_a",
+                "dataset_id": "dataset_a",
                 "context_length": 168,
                 "horizon": 24,
                 "target_dim": 1,
@@ -55,6 +51,7 @@ def conditioning_artifact() -> dict:
             },
             "profile_b": {
                 "profile_id": "profile_b",
+                "dataset_id": "dataset_b",
                 "context_length": 168,
                 "horizon": 24,
                 "target_dim": 1,
@@ -104,11 +101,12 @@ def test_conditioning_requires_an_exact_task_window_and_merges_parameters():
     }
     assert conditioning.lambda_for(3) == 0.3
     assert conditioning.metadata(3)["profile_id"] == "profile_a"
-    assert conditioning.metadata(3)["canonical_target_strength"] == 0.2
-    assert conditioning.metadata(3)["calibrated_profile_expected_strength"] == 0.21
-    assert conditioning.metadata(3)["local_real_percentile"] == 0.4
-    assert conditioning.metadata(3)["canonical_scale_id"] == "unit-scale-v1"
-    assert conditioning.metadata(3)["canonical_scale_fingerprint"] == "0123456789abcdef"
+    assert conditioning.metadata(3)["dataset_id"] == "dataset_a"
+    assert conditioning.metadata(3)["target_percentile_level"] == 0.5
+    assert conditioning.metadata(3)["target_strength"] == 0.25
+    assert conditioning.metadata(3)["calibrated_expected_strength"] == 0.21
+    assert conditioning.metadata(3)["intensity_policy_id"] == INTENSITY_POLICY_ID
+    assert "canonical_scale_id" not in conditioning.metadata(3)
 
 
 def test_balanced_profile_selection_is_deterministic_and_exactly_balanced():
@@ -140,35 +138,124 @@ def test_balanced_profile_selection_is_deterministic_and_exactly_balanced():
     }
 
 
+def test_dataset_profiles_keep_independent_target_strength_curves():
+    artifact = conditioning_artifact()
+    artifact["profiles"]["profile_b"]["capabilities"]["trend"] = copy.deepcopy(
+        artifact["profiles"]["profile_b"]["capabilities"]["trend"]
+    )
+    artifact["profiles"]["profile_b"]["capabilities"]["trend"]["target_values"] = [
+        0.2,
+        0.3,
+        0.4,
+        0.5,
+        0.6,
+    ]
+
+    first = resolve_generator_conditioning(
+        capability_id="trend",
+        profile_id="profile_a",
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    )
+    second = resolve_generator_conditioning(
+        capability_id="trend",
+        profile_id="profile_b",
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.target_percentile_levels == second.target_percentile_levels
+    assert first.target_values != second.target_values
+    assert first.dataset_id == "dataset_a"
+    assert second.dataset_id == "dataset_b"
+
+
+def test_legacy_canonical_artifact_fails_closed():
+    artifact = conditioning_artifact()
+    artifact["schema_version"] = "synthetic_v2_generator_conditioning_artifact.v3"
+    artifact["canonical_intensity"] = {"scale_id": "legacy-global-scale"}
+
+    assert matching_generator_profiles(
+        capability_id="trend",
+        profile_ids=("profile_a",),
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    ) == []
+    assert resolve_generator_conditioning(
+        capability_id="trend",
+        profile_id="profile_a",
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    ) is None
+
+
+def test_profile_percentile_levels_must_match_dataset_local_policy():
+    artifact = conditioning_artifact()
+    artifact["profiles"]["profile_a"]["capabilities"]["trend"]["target_percentile_levels"] = [
+        0.05,
+        0.25,
+        0.5,
+        0.75,
+        0.95,
+    ]
+
+    assert resolve_generator_conditioning(
+        capability_id="trend",
+        profile_id="profile_a",
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+    ) is None
+
+
 def test_profile_conditioned_generators_preserve_horizon_prefixes():
-    artifact = load_generator_conditioning_artifact()
-    assert artifact is not None
     cases = {
-        "trend": "traffic_hourly_daily_168ctx",
-        "multi_seasonal": "m4_hourly_daily_168ctx",
-        "time_varying_seasonality": "electricity_hourly_daily_168ctx",
-        "regime_switching": "traffic_hourly_daily_168ctx",
-        "nonlinear_persistence": "traffic_hourly_daily_168ctx",
-        "predictable_intermittency": "m4_hourly_daily_168ctx",
-        "common_factor": "traffic_hourly_panel_168ctx",
-        "hierarchical_coherence": "m5_daily_hierarchy_365ctx_28h",
-        "covariate_response": "m5_daily_covariate_365ctx_28h",
+        "trend": 1,
+        "multi_seasonal": 1,
+        "time_varying_seasonality": 1,
+        "regime_switching": 1,
+        "nonlinear_persistence": 1,
+        "predictable_intermittency": 1,
+        "common_factor": 3,
+        "hierarchical_coherence": 3,
+        "covariate_response": 1,
     }
-    for capability_id, profile_id in cases.items():
-        profile = artifact["profiles"][profile_id]
-        context_length = int(profile["context_length"])
-        horizon = int(profile["horizon"])
-        target_dim = int(profile["target_dim"])
-        season_length = int(profile["season_length"])
-        conditioning = resolve_generator_conditioning(
+    context_length = 168
+    horizon = 24
+    season_length = 24
+    for capability_id, target_dim in cases.items():
+        conditioning = GeneratorConditioning(
+            profile_id="dataset_a__task__L168_H24",
+            dataset_id="dataset_a",
             capability_id=capability_id,
-            profile_id=profile_id,
             context_length=context_length,
             horizon=horizon,
             target_dim=target_dim,
-            artifact=artifact,
+            season_length=season_length,
+            frequency="h",
+            parameters={"structure_scale": 1.0},
+            intensity_lambdas=(0.0, 0.25, 0.5, 0.75, 1.0),
+            target_percentile_levels=(0.1, 0.3, 0.5, 0.7, 0.9),
+            target_feature="unit_feature",
+            target_values=(0.1, 0.2, 0.3, 0.4, 0.5),
+            calibrated_realized_strengths=(0.1, 0.2, 0.3, 0.4, 0.5),
+            calibration_max_normalized_error=0.01,
+            intensity_policy_id=INTENSITY_POLICY_ID,
+            artifact_schema_version=ARTIFACT_SCHEMA_VERSION,
+            artifact_created_at="2026-07-18T00:00:00+00:00",
+            calibration_method="unit-test",
         )
-        assert conditioning is not None
         short, _, short_covariates = _generate_sample_values(
             capability_id,
             context_length + horizon,
@@ -194,92 +281,3 @@ def test_profile_conditioned_generators_preserve_horizon_prefixes():
         if short_covariates is not None:
             assert long_covariates is not None
             assert np.allclose(short_covariates, long_covariates[: len(short_covariates)])
-
-
-def test_committed_artifact_uses_one_canonical_strength_curve_per_capability():
-    artifact = load_generator_conditioning_artifact()
-    assert artifact is not None
-    assert artifact["schema_version"] == "synthetic_v2_generator_conditioning_artifact.v3"
-    assert artifact["canonical_intensity"]["scale_id"] == (
-        "synthetic-v2-paper-v2-shortcut-resistant-2026-07-18"
-    )
-    assert len(artifact["canonical_intensity"]["scale_fingerprint"]) == 16
-    assert artifact["config"]["canonical_scale_id"] == artifact["canonical_intensity"]["scale_id"]
-
-    canonical = artifact["canonical_intensity"]["capabilities"]
-    observed: dict[str, set[tuple[float, ...]]] = {}
-    for profile in artifact["profiles"].values():
-        for capability_id, capability in profile["capabilities"].items():
-            observed.setdefault(capability_id, set()).add(
-                tuple(capability["canonical_target_values"])
-            )
-            assert capability["canonical_calibration"]["status"] == "supported"
-            assert capability["canonical_calibration"]["fit_sample_count"] >= 64
-            expected_bank_count = (
-                4
-                if capability_id
-                in {"nonlinear_persistence", "covariate_response"}
-                else 2
-            )
-            assert (
-                capability["canonical_calibration"]["fit_seed_bank_count"]
-                == expected_bank_count
-            )
-            assert capability["canonical_calibration"]["validation_sample_count"] >= 256
-            assert capability["canonical_calibration"]["validation_seed_is_independent"] is True
-            assert len(capability["local_real_percentiles_at_canonical_targets"]) == 5
-
-    assert all(len(curves) == 1 for curves in observed.values())
-    assert {
-        capability_id: next(iter(curves))
-        for capability_id, curves in observed.items()
-    } == {
-        capability_id: tuple(definition["target_values"])
-        for capability_id, definition in canonical.items()
-    }
-    assert all(
-        all(right > left for left, right in zip(row["target_values"], row["target_values"][1:]))
-        for row in canonical.values()
-    )
-    assert canonical["regime_switching"]["primary_feature"] == (
-        "regime_clock_history_incremental_r2"
-    )
-    assert canonical["regime_switching"]["target_values"][0] == 0.1
-    assert canonical["regime_switching"]["target_resolution"]["method"] == (
-        "qualification_boundary_to_q90_linear_grid"
-    )
-    assert canonical["nonlinear_persistence"]["primary_feature"] == (
-        "nonlinear_conditional_gain"
-    )
-    assert canonical["nonlinear_persistence"]["target_values"][0] == 0.0
-    assert canonical["nonlinear_persistence"]["target_resolution"]["method"] == (
-        "adjusted_r2_null_to_q90_linear_grid"
-    )
-    for profile in artifact["profiles"].values():
-        nonlinear = profile["capabilities"].get("nonlinear_persistence")
-        if nonlinear is not None:
-            assert nonlinear["canonical_calibration"]["fit_sample_count"] >= 512
-    assert artifact["config"]["canonical_reference_profile_ids_by_capability"][
-        "regime_switching"
-    ] == [
-        "uci_hydraulic_eps1_420ctx_60h",
-        "skchange_hvac_unit0_504ctx_144h",
-    ]
-    assert len(artifact["config"]["online_conditioning_profile_ids"]) == 8
-    assert artifact["config"]["research_only_conditioning_profile_ids"] == [
-        "electricity_hourly_daily_2048ctx_24h"
-    ]
-    assert all(
-        artifact["profiles"][profile_id]["conditioning_role"] == "paper_v2_online"
-        for profile_id in artifact["config"]["online_conditioning_profile_ids"]
-    )
-    assert artifact["profiles"]["electricity_hourly_daily_2048ctx_24h"][
-        "conditioning_role"
-    ] == "research_only_pending_near_distance_gate"
-    qualification = artifact["canonical_intensity"]["reference_qualification"]
-    assert qualification["uci_hydraulic_eps1_420ctx_60h"]["regime_switching"][
-        "qualified_window_count"
-    ] >= 30
-    assert qualification["skchange_hvac_unit0_504ctx_144h"]["regime_switching"][
-        "qualified_window_count"
-    ] >= 30

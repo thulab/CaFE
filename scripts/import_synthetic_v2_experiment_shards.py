@@ -38,6 +38,10 @@ from app.services.synthetic_generation_service import (  # noqa: E402
     _write_generation_manifest,
     _seed_for,
 )
+from app.services.synthetic_generator_conditioning import (  # noqa: E402
+    GeneratorConditioning,
+    resolve_generator_conditioning,
+)
 
 
 DEFAULT_DATABASE_URL = f"sqlite:///{REPO_ROOT / 'backend/runtime/tsbenchmark.db'}"
@@ -54,17 +58,20 @@ DEFAULT_CAPABILITIES = (
     "covariate_response",
 )
 DEFAULT_INTENSITIES = (1, 2, 3, 4, 5)
-DEFAULT_CONTEXT_LENGTH = 168
-DEFAULT_HORIZON = 24
+DEFAULT_CONTEXT_LENGTH = 504
+DEFAULT_HORIZON = 48
 DEFAULT_SEASON_LENGTH = 24
 DEFAULT_SAMPLE_COUNT = 12
 DEFAULT_TARGET_DIM = 3
 DEFAULT_SEED = 20260701
+INTENSITY_PERCENTILE_LEVELS = (0.10, 0.30, 0.50, 0.70, 0.90)
 
 
 @dataclass(frozen=True)
 class ImportConfig:
     name: str
+    dataset_id: str
+    profile_id: str
     capabilities: tuple[str, ...]
     intensities: tuple[int, ...]
     sample_count: int
@@ -86,6 +93,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--summary", type=Path, help="Read capabilities and window parameters from a synthetic v2 summary.json.")
     parser.add_argument("--name", help="Dataset/test-case-set name prefix.")
+    parser.add_argument(
+        "--dataset-id",
+        help="Dataset identity whose local profile calibrated these samples.",
+    )
+    parser.add_argument(
+        "--profile-id",
+        help="Dataset-local generator profile id. Cross-dataset profiles are rejected.",
+    )
     parser.add_argument("--capabilities", nargs="+", help="Synthetic capability ids to import.")
     parser.add_argument("--intensities", nargs="+", type=int, help="Structure intensity levels to import.")
     parser.add_argument("--difficulties", nargs="+", type=int, help="Deprecated alias for --intensities.")
@@ -114,6 +129,11 @@ def parse_args() -> argparse.Namespace:
 
 def config_from_args(args: argparse.Namespace) -> ImportConfig:
     summary = read_summary(args.summary) if args.summary else {}
+    summary_config = (
+        summary.get("config")
+        if isinstance(summary.get("config"), dict)
+        else {}
+    )
     capabilities = tuple(args.capabilities or summary.get("requested_capabilities") or DEFAULT_CAPABILITIES)
     sample_count = int(
         args.sample_count
@@ -127,6 +147,18 @@ def config_from_args(args: argparse.Namespace) -> ImportConfig:
     name = args.name or default_name(args.summary, capabilities)
     return ImportConfig(
         name=name,
+        dataset_id=str(
+            args.dataset_id
+            or summary.get("dataset_id")
+            or summary_config.get("dataset_id")
+            or ""
+        ),
+        profile_id=str(
+            args.profile_id
+            or summary.get("profile_id")
+            or summary_config.get("profile_id")
+            or ""
+        ),
         capabilities=capabilities,
         intensities=tuple(args.intensities or args.difficulties or DEFAULT_INTENSITIES),
         sample_count=sample_count,
@@ -158,6 +190,19 @@ def default_name(summary_path: Path | None, capabilities: tuple[str, ...]) -> st
 
 
 def validate_config(config: ImportConfig) -> None:
+    if not config.dataset_id:
+        raise SystemExit(
+            "dataset_id is required; cross-dataset synthetic imports are unsupported"
+        )
+    if not config.profile_id:
+        raise SystemExit(
+            "profile_id is required; every import must use one dataset-local profile"
+        )
+    if not config.profile_id.startswith(f"{config.dataset_id}__"):
+        raise SystemExit(
+            "profile_id must be namespaced by dataset_id: "
+            f"expected prefix {config.dataset_id}__"
+        )
     missing = [capability_id for capability_id in config.capabilities if capability_id not in CAPABILITIES_BY_ID]
     if missing:
         raise SystemExit(f"unknown synthetic capabilities: {', '.join(missing)}")
@@ -188,33 +233,57 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
     init_db(engine)
     with Session(engine) as session:
         existing = existing_import_keys(session)
+        conditionings, unsupported = resolve_import_conditionings(config)
         planned = [
-            (capability_id, intensity, import_key(config, capability_id, intensity))
-            for capability_id in config.capabilities
+            (
+                capability_id,
+                intensity,
+                import_key(
+                    config,
+                    capability_id,
+                    intensity,
+                    conditionings[capability_id],
+                ),
+                conditionings[capability_id],
+            )
+            for capability_id in conditionings
             for intensity in config.intensities
         ]
         to_create = [
-            (capability_id, intensity, key)
-            for capability_id, intensity, key in planned
+            (capability_id, intensity, key, conditioning)
+            for capability_id, intensity, key, conditioning in planned
             if config.allow_duplicates or key not in existing
         ]
         skipped = [
-            {"capability_id": capability_id, "intensity": intensity, "difficulty": intensity, "import_key": key}
-            for capability_id, intensity, key in planned
+            {
+                "dataset_id": config.dataset_id,
+                "profile_id": config.profile_id,
+                "capability_id": capability_id,
+                "intensity": intensity,
+                "difficulty": intensity,
+                "import_key": key,
+            }
+            for capability_id, intensity, key, _conditioning in planned
             if not config.allow_duplicates and key in existing
         ]
         if not to_create:
             return {
                 "created_count": 0,
                 "skipped_count": len(skipped),
+                "unsupported_count": len(unsupported),
                 "created_shards": [],
                 "skipped": skipped,
+                "unsupported": unsupported,
+                "dataset_id": config.dataset_id,
+                "profile_id": config.profile_id,
                 "database_url": config.database_url,
                 "runtime_dir": str(config.runtime_dir),
             }
 
         generation_id = new_id()
-        source_uri = f"synthetic-v2-import://{generation_id}"
+        source_uri = (
+            f"synthetic-v2-import://{config.dataset_id}/{generation_id}"
+        )
         manifest = DatasetManifest(
             name=config.name,
             domain="synthetic",
@@ -230,7 +299,7 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
 
         created: list[dict[str, Any]] = []
         try:
-            for capability_id, intensity, key in to_create:
+            for capability_id, intensity, key, conditioning in to_create:
                 shard = create_imported_shard(
                     session,
                     config,
@@ -241,6 +310,7 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
                     capability_id,
                     intensity,
                     key,
+                    conditioning,
                 )
                 session.add(shard)
                 session.flush()
@@ -251,6 +321,8 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
                     {
                         "shard_id": shard.shard_id,
                         "name": shard.name,
+                        "dataset_id": config.dataset_id,
+                        "profile_id": config.profile_id,
                         "capability_id": capability_id,
                         "intensity": intensity,
                         "difficulty": intensity,
@@ -267,11 +339,57 @@ def import_experiment_shards(config: ImportConfig) -> dict[str, Any]:
     return {
         "created_count": len(created),
         "skipped_count": len(skipped),
+        "unsupported_count": len(unsupported),
         "created_shards": created,
         "skipped": skipped,
+        "unsupported": unsupported,
+        "dataset_id": config.dataset_id,
+        "profile_id": config.profile_id,
         "database_url": config.database_url,
         "runtime_dir": str(config.runtime_dir),
     }
+
+
+def resolve_import_conditionings(
+    config: ImportConfig,
+) -> tuple[dict[str, GeneratorConditioning], list[dict[str, str]]]:
+    conditionings: dict[str, GeneratorConditioning] = {}
+    unsupported: list[dict[str, str]] = []
+    for capability_id in config.capabilities:
+        conditioning = resolve_generator_conditioning(
+            capability_id=capability_id,
+            profile_id=config.profile_id,
+            context_length=config.context_length,
+            horizon=config.horizon,
+            target_dim=experiment_target_dim(capability_id, config.target_dim),
+        )
+        if conditioning is None:
+            unsupported.append(
+                {
+                    "dataset_id": config.dataset_id,
+                    "profile_id": config.profile_id,
+                    "capability_id": capability_id,
+                    "status": "unsupported",
+                    "reason": "dataset_profile_has_no_supported_conditioning",
+                }
+            )
+            continue
+        if conditioning.dataset_id != config.dataset_id:
+            raise SystemExit(
+                "profile dataset_id mismatch: "
+                f"{config.profile_id} belongs to {conditioning.dataset_id}, "
+                f"not {config.dataset_id}"
+            )
+        if tuple(conditioning.target_percentile_levels) != (
+            INTENSITY_PERCENTILE_LEVELS
+        ):
+            raise SystemExit(
+                "unsupported intensity policy: expected dataset/profile-local "
+                "q10/q30/q50/q70/q90"
+            )
+        conditionings[capability_id] = conditioning
+    return conditionings, unsupported
+
 
 def existing_import_keys(session: Session) -> set[str]:
     keys: set[str] = set()
@@ -282,16 +400,27 @@ def existing_import_keys(session: Session) -> set[str]:
     return keys
 
 
-def import_key(config: ImportConfig, capability_id: str, intensity: int) -> str:
+def import_key(
+    config: ImportConfig,
+    capability_id: str,
+    intensity: int,
+    conditioning: GeneratorConditioning,
+) -> str:
     payload = {
-        "schema_version": "synthetic_v2_platform_import.v1",
+        "schema_version": "synthetic_v2_dataset_local_platform_import.v2",
+        "dataset_id": config.dataset_id,
+        "profile_id": config.profile_id,
         "capability_id": capability_id,
         "intensity": intensity,
-        "difficulty": intensity,
+        "intensity_policy_id": conditioning.intensity_policy_id,
+        "target_percentile_level": conditioning.target_percentile_levels[
+            intensity - 1
+        ],
+        "target_strength": conditioning.target_values[intensity - 1],
         "sample_count": config.sample_count,
         "context_length": config.context_length,
         "horizon": config.horizon,
-        "season_length": config.season_length,
+        "season_length": conditioning.season_length,
         "target_dim": experiment_target_dim(capability_id, config.target_dim),
         "seed": config.seed,
         "frequency": config.frequency,
@@ -317,6 +446,7 @@ def create_imported_shard(
     capability_id: str,
     intensity: int,
     key: str,
+    conditioning: GeneratorConditioning,
 ) -> Shard:
     capability = CAPABILITIES_BY_ID[capability_id]
     context = int(config.context_length)
@@ -341,9 +471,12 @@ def create_imported_shard(
             sample_length,
             context,
             target_dim,
-            config.season_length,
+            conditioning.season_length,
             intensity,
             sample_seed,
+            anchor_profile_id=config.profile_id,
+            generator_conditioning=conditioning,
+            acceptance_profile_ids=(config.profile_id,),
         )
         values = np.concatenate([target, covariates], axis=1) if covariates is not None and covariates.size else target
         row_start = sample_index * sample_length
@@ -364,9 +497,11 @@ def create_imported_shard(
         all_values.extend(values.astype(float).tolist())
         sample_metadata.append(
             {
-                "schema_version": "synthetic_v2_import_sample_metadata.v1",
+                "schema_version": "synthetic_v2_dataset_local_import_sample_metadata.v2",
                 "experiment_sample_id": f"{capability_id}-i{intensity}-{sample_index:03d}",
                 "experiment_sample_index": experiment_index,
+                "dataset_id": config.dataset_id,
+                "profile_id": config.profile_id,
                 "capability_id": capability_id,
                 "capability_label": capability.label,
                 "intensity": intensity,
@@ -374,6 +509,12 @@ def create_imported_shard(
                 "seed": config.seed,
                 "sample_seed": sample_seed,
                 "paired_seed_across_intensity": True,
+                "intensity_policy_id": conditioning.intensity_policy_id,
+                "target_percentile_level": conditioning.target_percentile_levels[
+                    intensity - 1
+                ],
+                "target_feature": conditioning.target_feature,
+                "target_strength": conditioning.target_values[intensity - 1],
                 "latent_params": latent_params,
                 "realized_features": realized_features,
                 **MOCK_ANCHOR,
@@ -381,23 +522,36 @@ def create_imported_shard(
         )
 
     generation_config = {
-        "schema_version": "synthetic_v2_platform_import.v1",
+        "schema_version": "synthetic_v2_dataset_local_platform_import.v2",
         "generation_id": generation_id,
         "import_key": key,
         "source_summary": str(config.source_summary) if config.source_summary else None,
+        "dataset_id": config.dataset_id,
+        "profile_id": config.profile_id,
         "capability_id": capability_id,
         "capability_label": capability.label,
         "task_type": capability.task_type,
         "intensity": intensity,
         "difficulty": intensity,
         "intensity_definition": (
-            "capability-global canonical realized strength; not a required monotonic model-error difficulty"
+            "dataset/profile-local q10/q30/q50/q70/q90 primary-feature "
+            "strength; not comparable across datasets and not model difficulty"
         ),
+        "intensity_policy_id": conditioning.intensity_policy_id,
+        "target_percentile_levels": list(
+            conditioning.target_percentile_levels
+        ),
+        "target_percentile_level": conditioning.target_percentile_levels[
+            intensity - 1
+        ],
+        "target_feature": conditioning.target_feature,
+        "target_strength": conditioning.target_values[intensity - 1],
         "seed": config.seed,
         "context_length": context,
         "horizon": horizon,
         "sample_count": config.sample_count,
-        "season_length": config.season_length,
+        "season_length": conditioning.season_length,
+        "requested_season_length": config.season_length,
         "target_dim": target_dim,
         "requested_target_dim": config.target_dim,
         "covariate_columns": covariate_columns,
@@ -455,6 +609,7 @@ def print_summary(summary: dict[str, Any], *, as_json: bool) -> None:
         return
     print(f"created shards: {summary['created_count']}")
     print(f"skipped shards: {summary['skipped_count']}")
+    print(f"unsupported capabilities: {summary['unsupported_count']}")
     for shard in summary["created_shards"]:
         first = shard.get("first_sample_id") or "-"
         print(
