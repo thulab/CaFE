@@ -220,7 +220,7 @@ def test_oracle_compaction_selects_minimum_mase_and_shorter_tie(tmp_path):
     module = load_module(ANALYSIS_PATH, "paper_v5_e2_analysis_oracle")
     source = tmp_path / "predictions.jsonl"
     rows = []
-    for context, mase in ((96, 0.8), (168, 0.5), (336, 0.5), (504, 0.9)):
+    for context, mase in ((96, None), (168, 0.5), (336, 0.5), (504, 0.9)):
         rows.append(
             {
                 "model_id": "model",
@@ -233,9 +233,12 @@ def test_oracle_compaction_selects_minimum_mase_and_shorter_tie(tmp_path):
                 "context_length": context,
                 "metrics": {
                     "mase": mase,
-                    "mae": mase / 2,
-                    "mse": mase,
+                    "mae": 0.4 if mase is None else mase / 2,
+                    "mse": 0.8 if mase is None else mase,
                 },
+                "mase_unavailable_reason": (
+                    "flat_history" if mase is None else None
+                ),
                 "capability_id": "trend",
                 "intensity": 2,
                 "round_index": 1,
@@ -259,7 +262,54 @@ def test_oracle_compaction_selects_minimum_mase_and_shorter_tie(tmp_path):
     record = next(module.iter_jsonl(destination))
 
     assert audit["view_count"] == 4
+    assert audit["mase_unavailable_view_count"] == 1
     assert audit["master_count"] == 1
     assert record["oracle_context"] == 168
     assert record["oracle_mase"] == 0.5
     assert record["fixed_l504_mase"] == 0.9
+    assert record["context_mase"]["96"] is None
+    assert record["context_mase_unavailable_reason"] == {
+        "96": "flat_history"
+    }
+
+
+def test_source_alignment_reports_top_rank_and_real_mase_gaps():
+    module = load_module(ANALYSIS_PATH, "paper_v5_e2_analysis_alignment")
+    synthetic = module.pd.DataFrame(
+        [
+            {
+                "dataset_id": "dataset",
+                "model_id": model,
+                "synthetic_average_rank": rank,
+                "effective_capability_count": 3,
+                "score_policy": "oracle_context",
+            }
+            for model, rank in (("a", 1.0), ("b", 2.0), ("c", 3.0))
+        ]
+    )
+    real = module.pd.DataFrame(
+        [
+            {
+                "dataset_id": "dataset",
+                "model_id": model,
+                "real_source_mean_mase": mase,
+                "real_source_rank": rank,
+                "real_master_count": 40,
+                "score_policy": "oracle_context",
+            }
+            for model, mase, rank in (
+                ("a", 0.5, 1.0),
+                ("b", 0.75, 2.0),
+                ("c", 1.0, 3.0),
+            )
+        ]
+    )
+
+    row = module.source_alignment_rows(synthetic, real).iloc[0]
+
+    assert row["spearman_rho"] == 1.0
+    assert row["synthetic_top1_model"] == "a"
+    assert row["synthetic_top1_top2_rank_gap"] == 1.0
+    assert row["real_top1_model"] == "a"
+    assert row["real_top1_top2_mase_gap"] == 0.25
+    assert row["real_top1_top2_relative_mase_gap"] == 0.5

@@ -152,6 +152,7 @@ def compact_prediction_file(
 ) -> dict[str, Any]:
     masters: dict[str, dict[str, Any]] = {}
     view_count = 0
+    mase_unavailable_view_count = 0
     for row in iter_jsonl(source):
         if str(row["model_id"]) != model_id:
             raise ValueError(f"model mismatch in {source}")
@@ -160,9 +161,16 @@ def compact_prediction_file(
         if context not in CONTEXT_LENGTHS:
             raise ValueError(f"unexpected context in {source}: {context}")
         mase = row.get("metrics", {}).get("mase")
-        if mase is None or not math.isfinite(float(mase)):
+        if mase is not None and not math.isfinite(float(mase)):
             raise ValueError(
-                f"missing finite MASE for {model_id}/{master_id}/L{context}"
+                f"non-finite MASE for {model_id}/{master_id}/L{context}"
+            )
+        mae = float(row["metrics"]["mae"])
+        mse = float(row["metrics"]["mse"])
+        if not math.isfinite(mae) or not math.isfinite(mse):
+            raise ValueError(
+                f"non-finite error metric for "
+                f"{model_id}/{master_id}/L{context}"
             )
         record = masters.setdefault(
             master_id,
@@ -184,10 +192,15 @@ def compact_prediction_file(
             )
         context_row = {
             "view_id": row["view_id"],
-            "mase": float(mase),
-            "mae": float(row["metrics"]["mae"]),
-            "mse": float(row["metrics"]["mse"]),
+            "mase": float(mase) if mase is not None else None,
+            "mae": mae,
+            "mse": mse,
         }
+        if mase is None:
+            context_row["mase_unavailable_reason"] = str(
+                row.get("mase_unavailable_reason") or "unspecified"
+            )
+            mase_unavailable_view_count += 1
         if "request_seconds" in row:
             context_row["request_seconds"] = float(row["request_seconds"])
             context_row["request_attempts"] = int(row["request_attempts"])
@@ -229,8 +242,18 @@ def compact_prediction_file(
                     f"incomplete contexts for {model_id}/{master_id}: "
                     f"{sorted(observed)}"
                 )
+            finite_mase_contexts = [
+                context
+                for context in CONTEXT_LENGTHS
+                if record["contexts"][str(context)]["mase"] is not None
+            ]
+            if not finite_mase_contexts:
+                raise ValueError(
+                    f"MASE is unavailable for every context: "
+                    f"{model_id}/{master_id}"
+                )
             selected_context = min(
-                CONTEXT_LENGTHS,
+                finite_mase_contexts,
                 key=lambda context: (
                     record["contexts"][str(context)]["mase"],
                     context,
@@ -238,6 +261,11 @@ def compact_prediction_file(
             )
             selected = record["contexts"][str(selected_context)]
             fixed = record["contexts"][str(max(CONTEXT_LENGTHS))]
+            if fixed["mase"] is None:
+                raise ValueError(
+                    f"fixed L504 MASE is unavailable: "
+                    f"{model_id}/{master_id}"
+                )
             record.update(
                 {
                     "oracle_context": selected_context,
@@ -253,6 +281,13 @@ def compact_prediction_file(
                     "context_mae": {
                         context: record["contexts"][context]["mae"]
                         for context in sorted(record["contexts"], key=int)
+                    },
+                    "context_mase_unavailable_reason": {
+                        context: record["contexts"][context][
+                            "mase_unavailable_reason"
+                        ]
+                        for context in sorted(record["contexts"], key=int)
+                        if record["contexts"][context]["mase"] is None
                     },
                 }
             )
@@ -271,6 +306,7 @@ def compact_prediction_file(
         "model_id": model_id,
         "prediction_kind": prediction_kind,
         "view_count": view_count,
+        "mase_unavailable_view_count": mase_unavailable_view_count,
         "master_count": len(masters),
         "path": display_path(destination),
         "size_bytes": destination.stat().st_size,
@@ -619,11 +655,23 @@ def source_alignment_rows(
             models,
             "real_source_rank",
         ].to_numpy(dtype=float)
-        top_k = min(3, len(models))
-        synthetic_top = set(
+        synthetic_order = (
             synthetic.loc[models, "synthetic_average_rank"]
             .sort_values(kind="stable")
-            .index[:top_k]
+        )
+        real_mase_order = (
+            real.loc[models, "real_source_mean_mase"]
+            .sort_values(kind="stable")
+        )
+        synthetic_top_gap = float(
+            synthetic_order.iloc[1] - synthetic_order.iloc[0]
+        )
+        real_top_gap = float(
+            real_mase_order.iloc[1] - real_mase_order.iloc[0]
+        )
+        top_k = min(3, len(models))
+        synthetic_top = set(
+            synthetic_order.index[:top_k]
         )
         real_top = set(
             real.loc[models, "real_source_rank"]
@@ -663,6 +711,14 @@ def source_alignment_rows(
                 "pairwise_ordering_agreement": ordering_agreement(
                     synthetic_values,
                     real_values,
+                ),
+                "synthetic_top1_model": str(synthetic_order.index[0]),
+                "synthetic_top1_top2_rank_gap": synthetic_top_gap,
+                "real_top1_model": str(real_mase_order.index[0]),
+                "real_top1_top2_mase_gap": real_top_gap,
+                "real_top1_top2_relative_mase_gap": float(
+                    real_top_gap
+                    / max(abs(float(real_mase_order.iloc[0])), 1e-12)
                 ),
                 "synthetic_top_models": ";".join(
                     sorted(synthetic_top)
@@ -756,11 +812,73 @@ def summarize_rank_stability(frame: pd.DataFrame) -> dict[str, Any]:
         "kendall_tau_b_median": float(
             frame["kendall_tau_b_mean"].median()
         ),
+        "mean_pairwise_agreement": float(
+            frame["pairwise_agreement_mean"].mean()
+        ),
+        "mean_exact_rank_vector_pair_rate": float(
+            frame["exact_rank_vector_pair_rate"].mean()
+        ),
+        "mean_top1_pair_agreement_rate": float(
+            frame["top1_pair_agreement_rate"].mean()
+        ),
+        "mean_top3_overlap": float(frame["top3_overlap_mean"].mean()),
     }
+
+
+def variability_summary(
+    frame: pd.DataFrame,
+    *,
+    column: str,
+) -> dict[str, float]:
+    values = frame[column].to_numpy(dtype=float)
+    return {
+        "mean": float(values.mean()),
+        "median": float(np.median(values)),
+        "p90": float(np.quantile(values, 0.90)),
+        "p95": float(np.quantile(values, 0.95)),
+        "maximum": float(values.max()),
+    }
+
+
+def rank_breakdown(
+    frame: pd.DataFrame,
+    *,
+    group_key: str,
+) -> pd.DataFrame:
+    return (
+        frame.groupby(group_key, sort=True)
+        .agg(
+            cell_count=("dataset_id", "size"),
+            passed_cell_count=(
+                "passed_min_pairwise_agreement",
+                "sum",
+            ),
+            passed_cell_rate=(
+                "passed_min_pairwise_agreement",
+                "mean",
+            ),
+            median_worst_pairwise_agreement=(
+                "pairwise_agreement_min",
+                "median",
+            ),
+            median_worst_kendall_tau_b=(
+                "kendall_tau_b_min",
+                "median",
+            ),
+            mean_top1_pair_agreement_rate=(
+                "top1_pair_agreement_rate",
+                "mean",
+            ),
+            mean_top3_overlap=("top3_overlap_mean", "mean"),
+        )
+        .reset_index()
+    )
 
 
 def render_report(summary: dict[str, Any]) -> str:
     oracle = summary["rank_stability"]["oracle_context"]
+    score = summary["score_stability"]["oracle_context"]
+    difficulty = summary["difficulty_stability"]["oracle_context"]
     alignment = summary["source_alignment"]["oracle_context"]
     metrics = alignment["metrics"]
     return "\n".join(
@@ -784,6 +902,22 @@ def render_report(summary: dict[str, Any]) -> str:
                 f"- Median mean Kendall τ-b / global minimum: "
                 f"{oracle['kendall_tau_b_median']:.4f} / "
                 f"{oracle['kendall_tau_b_minimum']:.4f}."
+            ),
+            (
+                f"- Mean exact-rank pair rate / top-1 agreement / "
+                f"top-3 overlap: "
+                f"{oracle['mean_exact_rank_vector_pair_rate']:.4f} / "
+                f"{oracle['mean_top1_pair_agreement_rate']:.4f} / "
+                f"{oracle['mean_top3_overlap']:.4f}."
+            ),
+            (
+                f"- Median / p90 model score CV across rounds: "
+                f"{score['median']:.4f} / {score['p90']:.4f}."
+            ),
+            (
+                f"- Median / p90 common difficulty-multiplier CV: "
+                f"{difficulty['median']:.4f} / "
+                f"{difficulty['p90']:.4f}."
             ),
             "",
             "## E2-B synthetic–real source-window alignment",
@@ -896,6 +1030,8 @@ def analyze(
     )
     output_frames: dict[str, pd.DataFrame] = {}
     summaries: dict[str, Any] = {}
+    score_summaries: dict[str, Any] = {}
+    difficulty_summaries: dict[str, Any] = {}
     alignment_summaries: dict[str, Any] = {}
     real_dataset_ids = set(real_oracle["dataset_id"].unique())
     for score_policy, score_column in (
@@ -935,10 +1071,42 @@ def analyze(
                 f"synthetic_model_ranks{suffix}.csv": synthetic_ranks,
                 f"real_source_model_ranks{suffix}.csv": real_ranks,
                 f"synthetic_real_source_alignment{suffix}.csv": alignment,
+                f"cell_rank_stability_by_capability{suffix}.csv": (
+                    rank_breakdown(
+                        rank_stability,
+                        group_key="capability_id",
+                    )
+                ),
+                f"cell_rank_stability_by_intensity{suffix}.csv": (
+                    rank_breakdown(
+                        rank_stability,
+                        group_key="intensity",
+                    )
+                ),
+                f"cell_rank_stability_by_task{suffix}.csv": (
+                    rank_breakdown(
+                        rank_stability,
+                        group_key="task_id",
+                    )
+                ),
+                f"cell_rank_stability_by_dataset{suffix}.csv": (
+                    rank_breakdown(
+                        rank_stability,
+                        group_key="dataset_id",
+                    )
+                ),
             }
         )
         summaries[score_policy] = summarize_rank_stability(
             rank_stability
+        )
+        score_summaries[score_policy] = variability_summary(
+            score_stability,
+            column="mase_round_cv",
+        )
+        difficulty_summaries[score_policy] = variability_summary(
+            difficulty_stability,
+            column="difficulty_multiplier_cv",
         )
         alignment_summaries[score_policy] = alignment_summary(
             alignment,
@@ -956,6 +1124,8 @@ def analyze(
         "baseline_models": list(BASELINE_MODELS),
         "oracle_score_files": oracle_records,
         "rank_stability": summaries,
+        "score_stability": score_summaries,
+        "difficulty_stability": difficulty_summaries,
         "source_alignment": alignment_summaries,
         "minimum_pairwise_agreement": MIN_PAIRWISE_AGREEMENT,
         "bootstrap_replicates": bootstrap_replicates,
@@ -968,6 +1138,14 @@ def analyze(
             for filename, frame in output_frames.items()
         },
     }
+    inference_shards_path = e2_dir / "inference_shards.json"
+    if inference_shards_path.is_file():
+        shard_payload = read_json(inference_shards_path)
+        summary["distributed_inference"] = {
+            "path": display_path(inference_shards_path),
+            "sha256": file_sha256(inference_shards_path),
+            "shard_count": len(shard_payload.get("shards", [])),
+        }
     write_json(e2_dir / "inference_summary.json", summary)
     (e2_dir / "inference_report.md").write_text(
         render_report(summary),
@@ -984,6 +1162,8 @@ def analyze(
         "inference_report.md",
         *sorted(output_frames),
     ]
+    if inference_shards_path.is_file():
+        manifest_files.append("inference_shards.json")
     manifest = {
         "schema_version": "paper_v5_e2_inference_manifest.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
