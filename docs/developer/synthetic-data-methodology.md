@@ -277,6 +277,16 @@ E2 同时在合成与真实测试窗口上运行相同模型。合理的主结�
 这让真实数据承担外部效度检验：验证合成压力测试揭示的模型相对优劣，是否能对应到
 同一个真实 dataset 上的预测表现。
 
+E3 不再只用 MASE 生成能力画像。逐样本同时计算点误差和 evaluation-only
+mechanism fidelity：事件型能力比较事件检出、时间和幅度；周期型能力比较周期、
+相位和调制；结构化能力比较 factor subspace、hierarchy coherence 或 future
+covariate response。I1--I5 另做 paired dose-response。正式 capability 结果同时保留
+MASE rank、mechanism rank 和 point-error-gated ability rank，不能只选择其中最有利
+的一种。完整定义见
+`docs/superpowers/specs/2026-07-20-paper-v5-e3-mechanism-fidelity-protocol.md`。
+`covariate_response` 在完成同 history 的 intact/ablated future-covariate 配对推理前
+只输出诊断分，不进入正式机制排名。
+
 ## 9. Artifact 契约
 
 conditioning artifact 当前 schema 为：
