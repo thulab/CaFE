@@ -2,6 +2,13 @@
 
 日期：2026-07-19
 
+> 2026-07-20 方法学修正：本文件中的 E2-A“任意 32 样本轮次完整排名近乎一致”
+> 不再作为正式主判据。v3 的 round 只是确定性的 32 样本 batch，不是共享离散结构
+> 的生成层级。修正后的 E2 以两套独立 N=160 seed bank 的连续能力分数、
+> capability profile、正式模型排名和 tie-aware 模型对结论的复现性为共同结果。
+> 新协议见
+> `docs/superpowers/specs/2026-07-20-paper-v5-e2-seed-bank-reliability-protocol.md`。
+
 ## 1. 研究问题
 
 E2 固定回答两个问题。

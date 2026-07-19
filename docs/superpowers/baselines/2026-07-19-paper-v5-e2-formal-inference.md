@@ -1,5 +1,10 @@
 # Paper v5 E2 正式推理与分析记录
 
+> 2026-07-20 解释修正：本报告中的 E2-A 逐轮严格排名是 N=32 batch
+> 敏感性结果，不再作为生成器具有 round-level latent stability 的证据。正式 E2
+> 可靠性改为比较独立 N=160 seed banks，同时报告连续能力分数、capability
+> profile、正式排名和 tie-aware 模型对。原始结果与产物保持封存，不回写。
+
 日期：2026-07-19
 
 ## 1. 结论摘要
