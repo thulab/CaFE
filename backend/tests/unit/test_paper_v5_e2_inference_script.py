@@ -13,6 +13,7 @@ RUNNER_PATH = REPO_ROOT / "scripts/run_paper_v5_e2_inference.py"
 SOURCE_BUILDER_PATH = (
     REPO_ROOT / "scripts/build_paper_v5_real_source_window_suite.py"
 )
+ANALYSIS_PATH = REPO_ROOT / "scripts/analyze_paper_v5_e2.py"
 
 
 def load_module(path: Path, name: str):
@@ -180,3 +181,85 @@ def test_real_source_rows_use_multi_capability_univariate_references():
     assert rows[0]["source_role"].startswith(
         "dataset-local near-distance reference_raw"
     )
+
+
+def test_cell_rank_stability_is_evaluated_without_cross_cell_pooling():
+    module = load_module(ANALYSIS_PATH, "paper_v5_e2_analysis_rank")
+    rows = []
+    for round_index in range(1, 6):
+        for model_id, score in (("a", 1.0), ("b", 2.0), ("c", 3.0)):
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "dataset_id": "dataset",
+                    "task_id": "univariate",
+                    "capability_id": "trend",
+                    "intensity": 3,
+                    "round_index": round_index,
+                    "mase_mean": score + round_index * 0.01,
+                    "mase_std": 0.1,
+                    "master_sample_count": 32,
+                    "score_policy": "oracle_context",
+                    "model_rank": float(ord(model_id) - ord("a") + 1),
+                    "compatible_model_count": 3,
+                }
+            )
+    frame = module.pd.DataFrame(rows)
+
+    stability = module.rank_stability_rows(frame)
+
+    assert len(stability) == 1
+    assert stability.iloc[0]["pairwise_agreement_min"] == 1.0
+    assert stability.iloc[0]["exact_rank_vector_pair_rate"] == 1.0
+    assert bool(
+        stability.iloc[0]["passed_min_pairwise_agreement"]
+    )
+
+
+def test_oracle_compaction_selects_minimum_mase_and_shorter_tie(tmp_path):
+    module = load_module(ANALYSIS_PATH, "paper_v5_e2_analysis_oracle")
+    source = tmp_path / "predictions.jsonl"
+    rows = []
+    for context, mase in ((96, 0.8), (168, 0.5), (336, 0.5), (504, 0.9)):
+        rows.append(
+            {
+                "model_id": "model",
+                "model_group": "timer_service",
+                "master_sample_id": "master",
+                "view_id": f"master__L{context}",
+                "dataset_id": "dataset",
+                "task_id": "univariate",
+                "profile_id": "profile",
+                "context_length": context,
+                "metrics": {
+                    "mase": mase,
+                    "mae": mase / 2,
+                    "mse": mase,
+                },
+                "capability_id": "trend",
+                "intensity": 2,
+                "round_index": 1,
+                "round_seed": 101,
+                "sample_index": 0,
+                "paired_group_id": "group",
+            }
+        )
+    source.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    destination = tmp_path / "oracle.jsonl"
+
+    audit = module.compact_prediction_file(
+        source,
+        destination,
+        model_id="model",
+        prediction_kind="synthetic",
+    )
+    record = next(module.iter_jsonl(destination))
+
+    assert audit["view_count"] == 4
+    assert audit["master_count"] == 1
+    assert record["oracle_context"] == 168
+    assert record["oracle_mase"] == 0.5
+    assert record["fixed_l504_mase"] == 0.9
