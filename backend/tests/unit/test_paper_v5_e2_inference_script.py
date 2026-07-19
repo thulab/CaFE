@@ -143,6 +143,61 @@ def test_preflight_selects_one_master_per_cell(tmp_path):
     }
 
 
+def test_capability_subset_retains_every_requested_master(tmp_path):
+    module = load_module(
+        RUNNER_PATH,
+        "paper_v5_e2_inference_capability_subset",
+    )
+    source = tmp_path / "source.jsonl"
+    rows = []
+    for capability in ("trend", "regime_switching"):
+        for index in range(3):
+            row = synthetic_master(module)
+            row["sample_id"] = f"{capability}-{index}"
+            row["master_sample_id"] = row["sample_id"]
+            row["capability_id"] = capability
+            rows.append(row)
+    source.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+    destination = module.build_capability_subset_master_file(
+        source,
+        tmp_path / "subset.jsonl",
+        ["regime_switching"],
+    )
+    selected = list(module.iter_jsonl(destination))
+
+    assert len(selected) == 3
+    assert {
+        row["capability_id"] for row in selected
+    } == {"regime_switching"}
+
+
+def test_capability_subset_rejects_missing_capability(tmp_path):
+    module = load_module(
+        RUNNER_PATH,
+        "paper_v5_e2_inference_missing_capability",
+    )
+    source = tmp_path / "source.jsonl"
+    source.write_text(
+        json.dumps(synthetic_master(module)) + "\n",
+        encoding="utf-8",
+    )
+
+    try:
+        module.build_capability_subset_master_file(
+            source,
+            tmp_path / "subset.jsonl",
+            ["nonlinear_persistence"],
+        )
+    except ValueError as error:
+        assert "nonlinear_persistence" in str(error)
+    else:
+        raise AssertionError("missing capability should be rejected")
+
+
 def test_real_source_rows_use_multi_capability_univariate_references():
     module = load_module(
         SOURCE_BUILDER_PATH,

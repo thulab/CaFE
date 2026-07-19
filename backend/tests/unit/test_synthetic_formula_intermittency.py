@@ -24,7 +24,7 @@ def _generate(intensity: int, seed: int = 19):
     )
 
 
-def test_interval_motif_is_sample_specific_repeated_and_predictable_from_history():
+def test_interval_motif_is_dataset_relative_repeated_and_predictable():
     observed_motifs: set[tuple[int, ...]] = set()
     for seed in range(24):
         _, metadata, _ = _generate(5, seed)
@@ -66,7 +66,7 @@ def test_interval_motif_is_sample_specific_repeated_and_predictable_from_history
             if CONTEXT_LENGTH <= center < CONTEXT_LENGTH + HORIZON
         ] == future
 
-    assert len(observed_motifs) >= 6
+    assert observed_motifs == {(17, 29, 25)}
 
 
 def test_intensity_changes_only_pulse_strength_not_schedule_or_width():

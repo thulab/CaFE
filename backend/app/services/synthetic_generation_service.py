@@ -159,7 +159,7 @@ CAPABILITIES_BY_ID: dict[str, SyntheticCapability] = {
     capability.capability_id: capability for capability in SYNTHETIC_CAPABILITIES
 }
 
-PAPER_GENERATOR_VERSION = "capts-paper-v3"
+PAPER_GENERATOR_VERSION = "capts-paper-v4"
 PAPER_UNIVARIATE_CAPABILITY_IDS: tuple[str, ...] = (
     "trend",
     "multi_seasonal",
@@ -1819,6 +1819,7 @@ def _stable_nonperiodic_process(
     amplitude: float,
     innovation_scale: float = 1.0,
     slow_root_base: float = 0.955,
+    fixed_fast_root: float | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Generate a profile-conditioned, forecastable process without a fixed period.
 
@@ -1839,7 +1840,16 @@ def _stable_nonperiodic_process(
         slow_root = float(
             np.clip(slow_root_base + 0.04 * residual_phi, 0.94, 0.985)
         )
-    fast_roots = process_rng.uniform(0.15, 0.32, size=target_dim)
+    if fixed_fast_root is None:
+        fast_roots = process_rng.uniform(0.15, 0.32, size=target_dim)
+        fast_root_policy = "sample_specific_uniform"
+    else:
+        fast_roots = np.full(
+            target_dim,
+            float(np.clip(fixed_fast_root, 0.15, 0.32)),
+            dtype=float,
+        )
+        fast_root_policy = "fixed_nuisance_law"
     phi_1 = slow_root + fast_roots
     phi_2 = -(slow_root * fast_roots)
     warmup = 64
@@ -1874,6 +1884,7 @@ def _stable_nonperiodic_process(
         "law": "stable_ar2_nonperiodic",
         "slow_root": slow_root,
         "fast_root_mean": float(np.mean(fast_roots)),
+        "fast_root_policy": fast_root_policy,
         "phi_1_mean": float(np.mean(phi_1)),
         "phi_2_mean": float(np.mean(phi_2)),
         "amplitude": realized_amplitude,
@@ -1918,8 +1929,8 @@ def _generate_trend(
     structure_scale = _conditioned_parameter(conditioning, "structure_scale", 1.0)
     _, _, time_axis = _base_features(length, context_length, season_length)
     trend_direction = rng.choice(np.asarray([-1.0, 1.0]), size=target_dim)
-    shape_scale = rng.uniform(0.9, 1.1, size=target_dim)
-    curvature_ratio = rng.uniform(0.04, 0.08, size=target_dim)
+    shape_scale = np.ones(target_dim, dtype=float)
+    curvature_ratio = np.full(target_dim, 0.06, dtype=float)
     trend_scale = structure_scale * (0.002 + 0.098 * lam)
     slope = trend_direction * trend_scale * shape_scale
     curvature = slope * curvature_ratio
@@ -1933,6 +1944,7 @@ def _generate_trend(
         amplitude=0.12,
         innovation_scale=0.30,
         slow_root_base=0.84,
+        fixed_fast_root=0.235,
     )
     values += background
     values += _conditioned_noise(rng, (length, target_dim), 0.08, conditioning)
@@ -1946,7 +1958,10 @@ def _generate_trend(
                 evidence={
                     "context_observation_count": int(context_length),
                     "forecast_law": "same_polynomial_coefficients",
-                    "trend_basis": "sample_specific_bounded_quadratic",
+                    "trend_basis": "dataset_relative_fixed_quadratic",
+                    "submode_policy": (
+                        "fixed shape and curvature; random direction symmetry"
+                    ),
                     "background_law": "stable_ar2_nonperiodic",
                 },
             ),
@@ -2190,11 +2205,10 @@ def _generate_regime_switching(
     background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
     horizon = max(0, int(length) - int(context_length))
 
-    # Each sample receives its own bounded explicit-duration motif.  The motif
-    # is repeated unchanged through history and forecast, making it learnable
-    # from context without making every sample share one constant dwell clock.
-    # Its construction is independent of intensity: intensity only changes
-    # the state separation below.
+    # Use one non-uniform, dataset-relative duration motif.  It remains
+    # history-exposed and avoids a repository-wide constant clock, while
+    # removing the 24 sample-specific motif permutations that previously
+    # changed the prediction law inside one capability cell.
     minimum_dwell = 4
     base_dwell = max(
         minimum_dwell,
@@ -2204,17 +2218,11 @@ def _generate_regime_switching(
         ),
     )
     dwell_spread = max(1, base_dwell // 4)
-    dwell_candidates = np.asarray(
-        [
-            max(minimum_dwell, base_dwell - dwell_spread),
-            base_dwell,
-            base_dwell + dwell_spread,
-            base_dwell + 2 * dwell_spread,
-        ],
-        dtype=int,
-    )
     dwell_pattern = [
-        int(value) for value in rng.permutation(dwell_candidates)
+        int(base_dwell),
+        int(base_dwell + 2 * dwell_spread),
+        int(max(minimum_dwell, base_dwell - dwell_spread)),
+        int(base_dwell + dwell_spread),
     ]
     dwell_length = max(
         minimum_dwell,
@@ -2252,7 +2260,7 @@ def _generate_regime_switching(
         state[start:end] = initial_sign * (-1.0 if segment % 2 else 1.0)
 
     regime_strength = structure_scale * (0.25 + 0.85 * lam)
-    channel_scale = rng.uniform(0.9, 1.1, size=target_dim)
+    channel_scale = np.ones(target_dim, dtype=float)
     values = regime_strength * state[:, None] * channel_scale[None, :]
     stochastic_background, background_metadata = _stable_nonperiodic_process(
         length,
@@ -2263,6 +2271,7 @@ def _generate_regime_switching(
         amplitude=0.22,
         innovation_scale=0.25,
         slow_root_base=0.84,
+        fixed_fast_root=0.235,
     )
     values += stochastic_background
     values += background
@@ -2292,6 +2301,9 @@ def _generate_regime_switching(
                         int(value) for value in dwell_pattern
                     ],
                     "duration_motif_length": len(dwell_pattern),
+                    "duration_motif_policy": (
+                        "fixed_dataset_relative_nonuniform"
+                    ),
                     "duration_motif_repetitions_in_context": (
                         motif_repetitions_in_context
                     ),
@@ -2311,6 +2323,7 @@ def _generate_regime_switching(
             "dwell_length": int(dwell_length),
             "dwell_pattern": [int(value) for value in dwell_pattern],
             "dwell_pattern_length": len(dwell_pattern),
+            "initial_state_sign": float(initial_sign),
             "regime_strength": float(regime_strength),
             "background_process": background_metadata,
             "background_slope_abs_mean": float(np.mean(np.abs(background_slopes))),
@@ -2473,34 +2486,15 @@ def _generate_nonlinear_persistence(
         amplitude=0.03,
         innovation_scale=0.25,
         slow_root_base=0.84,
+        fixed_fast_root=0.235,
     )
     seasonal_lag = max(4, int(season_length))
-    nonlinear_lag_candidates = sorted(
-        {
-            max(2, seasonal_lag // 3),
-            max(2, seasonal_lag // 2),
-            max(2, (2 * seasonal_lag) // 3),
-        }
-    )
-    nonlinear_lag = int(rng.choice(nonlinear_lag_candidates))
-    transform_family = str(
-        rng.choice(
-            np.asarray(
-                ["shifted_sine_squared", "shifted_tanh"],
-                dtype=object,
-            )
-        )
-    )
-    nonlinear_frequency = float(
-        rng.choice(np.asarray([0.8, 1.0, 1.2, 1.4]))
-    )
-    nonlinear_offset = float(
-        rng.choice(np.asarray([-0.6, -0.3, 0.3, 0.6]))
-    )
-    ar_phi = float(rng.choice(np.asarray([0.08, 0.10, 0.12])))
-    seasonal_memory = float(
-        rng.choice(np.asarray([0.03, 0.05, 0.07]))
-    )
+    nonlinear_lag = max(2, seasonal_lag // 3)
+    transform_family = "shifted_tanh"
+    nonlinear_frequency = 1.4
+    nonlinear_offset = 0.6
+    ar_phi = 0.08
+    seasonal_memory = 0.05
     dependency_strength = float(
         np.clip(structure_scale * (0.02 + 0.98 * lam), 0.0, 1.0)
     )
@@ -2565,6 +2559,9 @@ def _generate_nonlinear_persistence(
                     "maximum_lag_observations_in_context": float(context_length / seasonal_lag),
                     "coefficient_stability_bound": float(stability_bound),
                     "transform_family": transform_family,
+                    "submode_policy": (
+                        "fixed dataset-relative lag and recurrence law"
+                    ),
                     "history_exposed_nonlinear_lag": int(nonlinear_lag),
                     "burn_in_steps": int(burn_in_steps),
                 },
@@ -2613,14 +2610,14 @@ def _generate_predictable_intermittency(
     nominal_period = max(4, int(season_length))
     motif_length = 3
     required_repetitions = 2
+    minimum_historical_centers = required_repetitions * motif_length + 1
 
-    # Each sample receives its own bounded interval motif.  The motif is drawn
-    # once, exposed repeatedly in context, and then continued without future
-    # randomness.  Reducing the effective period is only a feasibility fallback
-    # for context/season combinations that cannot expose two complete repeats.
+    # Use one non-uniform, dataset-relative interval motif.  Random phase keeps
+    # event locations diverse, while the forecast law no longer changes among
+    # six motif permutations and a continuum of spreads.
     phase_fraction = float(rng.random())
-    motif_order = rng.permutation(np.asarray((-1, 0, 1), dtype=int))
-    relative_spread = float(rng.uniform(0.14, 0.22))
+    motif_order = np.asarray((-1, 2, 1), dtype=int)
+    relative_spread = 0.18
 
     def build_interval_pattern(period: int) -> tuple[int, ...]:
         spread = max(1, int(round(relative_spread * period)))
@@ -2649,8 +2646,20 @@ def _generate_predictable_intermittency(
             interval_index += 1
         return sorted(center for center in centers if 0 <= center < schedule_end)
 
+    # Choose one context-feasible period before drawing phase.  Seven backward
+    # intervals must fit even when the anchor is exactly at the forecast
+    # boundary, so phase cannot silently select a different motif.
     effective_period = nominal_period
     interval_pattern = build_interval_pattern(effective_period)
+    while effective_period > 2:
+        backward_span = sum(
+            interval_pattern[-1 - (index % motif_length)]
+            for index in range(minimum_historical_centers)
+        )
+        if backward_span <= context_length:
+            break
+        effective_period -= 1
+        interval_pattern = build_interval_pattern(effective_period)
     forecast_offset = min(
         effective_period - 1,
         int(np.floor(phase_fraction * effective_period)),
@@ -2661,24 +2670,6 @@ def _generate_predictable_intermittency(
         length,
         forecast_center,
     )
-    minimum_historical_centers = required_repetitions * motif_length + 1
-    while (
-        sum(center < context_length for center in pulse_centers)
-        < minimum_historical_centers
-        and effective_period > 2
-    ):
-        effective_period -= 1
-        interval_pattern = build_interval_pattern(effective_period)
-        forecast_offset = min(
-            effective_period - 1,
-            int(np.floor(phase_fraction * effective_period)),
-        )
-        forecast_center = int(context_length + forecast_offset)
-        pulse_centers = build_pulse_centers(
-            interval_pattern,
-            length,
-            forecast_center,
-        )
 
     pulse_width = max(0.65, effective_period / 40.0)
     pulse_support_radius = int(max(1, np.ceil(4 * pulse_width)))
@@ -2697,7 +2688,7 @@ def _generate_predictable_intermittency(
             0.0,
         )
     pulse_strength = structure_scale * (0.35 + 1.25 * lam)
-    channel_scale = rng.uniform(0.9, 1.1, size=target_dim)
+    channel_scale = np.ones(target_dim, dtype=float)
     values = pulse_strength * pulse_shape[:, None] * channel_scale[None, :]
     stochastic_background, background_metadata = _stable_nonperiodic_process(
         length,
@@ -2708,6 +2699,7 @@ def _generate_predictable_intermittency(
         amplitude=0.18,
         innovation_scale=0.25,
         slow_root_base=0.84,
+        fixed_fast_root=0.235,
     )
     values += stochastic_background
     background, background_slopes = _background_trend(time_axis, target_dim, rng, conditioning)
@@ -2747,6 +2739,9 @@ def _generate_predictable_intermittency(
                     "interval_pattern": [
                         int(value) for value in interval_pattern
                     ],
+                    "interval_pattern_policy": (
+                        "fixed_dataset_relative_context_feasible_nonuniform"
+                    ),
                     "interval_pattern_repetitions_in_context": repetitions_in_context,
                     "interval_reconstruction_mae": interval_reconstruction_mae,
                     "event_window_radius": int(max(1, np.ceil(2 * pulse_width))),

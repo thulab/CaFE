@@ -54,6 +54,22 @@ def test_lin_concordance_is_one_only_for_identical_vectors() -> None:
     assert reliability.lin_concordance(values, values + 1.0) < 1.0
 
 
+def test_single_capability_profile_marks_correlations_not_applicable() -> None:
+    frame = pd.DataFrame([{"left": 0.1, "right": 0.12}])
+
+    result = reliability.vector_reliability(
+        frame,
+        left_column="left",
+        right_column="right",
+    )
+
+    assert result["pearson_r"] is None
+    assert result["spearman_rho"] is None
+    assert result["lin_ccc"] is None
+    assert result["mae"] == pytest.approx(0.02)
+    assert result["rmse"] == pytest.approx(0.02)
+
+
 def test_cell_model_comparison_retains_absolute_bank_shift() -> None:
     compared = reliability.compare_cell_model_scores(
         cell_scores("A"),

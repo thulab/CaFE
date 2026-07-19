@@ -33,7 +33,7 @@ def test_trend_intensity_only_scales_a_seed_fixed_quadratic_basis():
     high_values, high_latent, _ = _generate(seed=37, intensity=5)
 
     assert low_latent["predictability"]["evidence"]["trend_basis"] == (
-        "sample_specific_bounded_quadratic"
+        "dataset_relative_fixed_quadratic"
     )
     assert low_latent["trend_direction_by_target"] == high_latent[
         "trend_direction_by_target"
@@ -72,7 +72,7 @@ def test_trend_intensity_only_scales_a_seed_fixed_quadratic_basis():
     )
 
 
-def test_trend_curvature_shape_varies_across_samples_but_stays_bounded():
+def test_trend_curvature_shape_is_fixed_across_samples():
     ratios = np.asarray(
         [
             _generate(seed=seed, intensity=5)[1][
@@ -82,9 +82,7 @@ def test_trend_curvature_shape_varies_across_samples_but_stays_bounded():
         ]
     )
 
-    assert np.all(ratios >= 0.04)
-    assert np.all(ratios <= 0.08)
-    assert np.ptp(ratios) > 0.02
+    np.testing.assert_allclose(ratios, 0.06)
 
 
 def test_high_intensity_trend_is_visible_and_predictably_continued():

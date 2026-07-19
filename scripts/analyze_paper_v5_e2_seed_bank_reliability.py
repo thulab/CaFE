@@ -83,20 +83,17 @@ def bank_oracle_paths(
     bank_id: str,
     models: list[str],
 ) -> list[Path]:
-    paths: list[Path] = []
-    if bank_id == "A":
-        for model_id in models:
-            path = (
-                bank_dir
-                / "oracle_sample_scores"
-                / f"{e2.safe_filename(model_id)}.jsonl"
-            )
-            if not path.is_file():
-                raise FileNotFoundError(f"missing Bank A oracle scores: {path}")
-            paths.append(path)
-        return paths
+    existing = [
+        bank_dir
+        / "oracle_sample_scores"
+        / f"{e2.safe_filename(model_id)}.jsonl"
+        for model_id in models
+    ]
+    if all(path.is_file() for path in existing):
+        return existing
 
-    oracle_dir = output_dir / "bank_b_oracle_sample_scores"
+    paths: list[Path] = []
+    oracle_dir = output_dir / f"bank_{bank_id.lower()}_oracle_sample_scores"
     oracle_dir.mkdir(parents=True, exist_ok=True)
     for model_id in models:
         source = rank_pilot.find_prediction_path(bank_dir, model_id)
@@ -211,9 +208,20 @@ def vector_reliability(
     *,
     left_column: str,
     right_column: str,
-) -> dict[str, float]:
+) -> dict[str, float | None]:
     left = frame[left_column].to_numpy(dtype=float)
     right = frame[right_column].to_numpy(dtype=float)
+    if left.shape != right.shape or left.size == 0:
+        raise ValueError("reliability vectors must be equal and non-empty")
+    if left.size == 1:
+        absolute_difference = float(np.abs(left[0] - right[0]))
+        return {
+            "pearson_r": None,
+            "spearman_rho": None,
+            "lin_ccc": None,
+            "mae": absolute_difference,
+            "rmse": absolute_difference,
+        }
     return {
         "pearson_r": float(np.corrcoef(left, right)[0, 1]),
         "spearman_rho": float(

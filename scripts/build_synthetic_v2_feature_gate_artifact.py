@@ -59,7 +59,7 @@ FEATURE_GATE_BUCKET_SPECS = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the real-only joint control-feature support artifact for capts-paper-v3."
+        description="Build the real-only joint control-feature support artifact for capts-paper-v4."
     )
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--artifact", type=Path, default=DEFAULT_ARTIFACT_PATH)

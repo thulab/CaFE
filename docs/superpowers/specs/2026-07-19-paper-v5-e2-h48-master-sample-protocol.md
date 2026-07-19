@@ -136,5 +136,6 @@ uv run python ../scripts/generate_paper_v5_e2_master_samples.py
 
 - calibration suite manifest 完整；
 - 所有 supported cells 的统一 qualification 通过；
-- generator version 为 `capts-paper-v3`；
+- generator version 与冻结 calibration suite/manifest 完全一致；下一轮正式扩展
+  使用经 ETT1 小试验验证的 `capts-paper-v4`；
 - 轮次恰为 5、每轮样本数恰为 32。

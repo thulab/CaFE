@@ -1131,7 +1131,7 @@ def derive_capability_nuisance(
                 "seasonal_amplitude_multiplier": 1.0,
                 "noise_scale_multiplier": 1.0,
                 "noise_degrees_of_freedom": 0.0,
-                "nonlinear_transform_version": 2.0,
+                "nonlinear_transform_version": 3.0,
             }
         )
     elif capability_id == "predictable_intermittency":

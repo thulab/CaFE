@@ -108,6 +108,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://127.0.0.1:10810")
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
+    parser.add_argument(
+        "--capabilities",
+        nargs="+",
+        default=None,
+        help=(
+            "Optionally infer only the listed synthetic capabilities. "
+            "This creates a deterministic derived input inside output-dir "
+            "and skips real-source inference."
+        ),
+    )
     parser.add_argument("--devices", default="0,1")
     parser.add_argument("--request-max-attempts", type=int, default=3)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
@@ -194,6 +204,43 @@ def build_preflight_master_file(source: Path, destination: Path) -> Path:
             handle.write(
                 json.dumps(
                     selected[key],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+                + "\n"
+            )
+    os.replace(temporary, destination)
+    return destination
+
+
+def build_capability_subset_master_file(
+    source: Path,
+    destination: Path,
+    capabilities: list[str],
+) -> Path:
+    requested = set(capabilities)
+    selected = [
+        row
+        for row in iter_jsonl(source)
+        if str(row.get("capability_id")) in requested
+    ]
+    observed = {
+        str(row["capability_id"])
+        for row in selected
+    }
+    missing = sorted(requested - observed)
+    if missing:
+        raise ValueError(
+            f"synthetic input is missing requested capabilities: {missing}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        for row in selected:
+            handle.write(
+                json.dumps(
+                    row,
                     ensure_ascii=False,
                     sort_keys=True,
                     allow_nan=False,
@@ -408,6 +455,11 @@ def validate_cli_args(args: argparse.Namespace) -> None:
         raise ValueError("devices must be comma-separated GPU indexes")
     if args.request_max_attempts < 1:
         raise ValueError("request-max-attempts must be positive")
+    if args.capabilities is not None:
+        if len(set(args.capabilities)) != len(args.capabilities):
+            raise ValueError("capability ids must be unique")
+        if any(not str(value).strip() for value in args.capabilities):
+            raise ValueError("capability ids must be non-empty")
 
 
 def input_record(
@@ -476,6 +528,11 @@ def inference_config(
             "choose contexts in ascending order"
         ),
         "requested_models": list(args.models),
+        "synthetic_capability_filter": (
+            None
+            if args.capabilities is None
+            else sorted(args.capabilities)
+        ),
         "baseline_models": list(BASELINE_MODELS),
         "model_execution": {
             model_id: dict(MODEL_EXECUTION_CONFIG[model_id])
@@ -833,6 +890,14 @@ def main() -> int:
         if args.synthetic_manifest_path.is_file()
         else None
     )
+    if args.capabilities is not None:
+        synthetic_master_path = build_capability_subset_master_file(
+            synthetic_master_path,
+            output_dir / "capability_subset_master_samples.jsonl",
+            args.capabilities,
+        )
+        synthetic_manifest_path = None
+        args.skip_real_source = True
     if args.preflight_one_per_cell:
         if args.resume:
             raise ValueError(

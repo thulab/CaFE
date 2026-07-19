@@ -36,7 +36,7 @@ def _state_from_cuts(cut_points: list[int]) -> np.ndarray:
     return state
 
 
-def test_regime_uses_a_sample_specific_repeated_explicit_duration_motif():
+def test_regime_uses_one_dataset_relative_explicit_duration_motif():
     motifs: set[tuple[int, ...]] = set()
     for seed in range(12):
         _, metadata, _ = _generate(5, seed)
@@ -62,7 +62,7 @@ def test_regime_uses_a_sample_specific_repeated_explicit_duration_motif():
         assert metadata["predictability"]["construction_validated"] is True
         motifs.add(pattern)
 
-    assert len(motifs) > 1
+    assert motifs == {(15, 21, 12, 18)}
 
 
 def test_regime_intensity_changes_strength_but_not_duration_clock():

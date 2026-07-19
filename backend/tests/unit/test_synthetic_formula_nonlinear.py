@@ -51,7 +51,7 @@ def test_nonlinear_structure_and_innovations_are_intensity_invariant():
     assert high["stability_bound"] < 0.91
 
 
-def test_nonlinear_mechanisms_vary_by_sample_without_changing_complexity():
+def test_nonlinear_uses_one_dataset_relative_recurrence_law():
     structures = set()
     for seed in range(32):
         values, metadata, _ = _generate(5, seed)
@@ -67,7 +67,7 @@ def test_nonlinear_mechanisms_vary_by_sample_without_changing_complexity():
             )
         )
 
-    assert len(structures) >= 12
+    assert structures == {("shifted_tanh", 8, 1.4, 0.6)}
 
 
 def test_high_intensity_has_a_visible_bounded_nonlinear_response():
