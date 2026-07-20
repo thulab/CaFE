@@ -106,6 +106,24 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_MAX_ATTEMPTS,
     )
+    parser.add_argument(
+        "--datasets",
+        nargs="+",
+        default=None,
+        help=(
+            "Generate only supported cells belonging to these datasets. "
+            "Use with --stage shards after one unfiltered prepare run."
+        ),
+    )
+    parser.add_argument(
+        "--stage",
+        choices=("all", "prepare", "shards", "finalize"),
+        default="all",
+        help=(
+            "Split a formal run into config preparation, disjoint shard "
+            "generation, and deterministic finalization."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -202,6 +220,27 @@ def supported_cells(
             row["capability_id"],
         ),
     )
+
+
+def select_cells(
+    cells: list[dict[str, Any]],
+    dataset_ids: tuple[str, ...] | None,
+) -> list[dict[str, Any]]:
+    if dataset_ids is None:
+        return list(cells)
+    requested = set(dataset_ids)
+    observed_datasets = {str(cell["dataset_id"]) for cell in cells}
+    missing = sorted(requested - observed_datasets)
+    if missing:
+        raise ValueError(
+            "requested datasets have no supported cells: "
+            + ", ".join(missing)
+        )
+    return [
+        cell
+        for cell in cells
+        if str(cell["dataset_id"]) in requested
+    ]
 
 
 def compact_gate_audit(
@@ -682,6 +721,8 @@ def generate_collection(
     round_seeds: tuple[int, ...],
     samples_per_round: int,
     max_attempts: int,
+    dataset_ids: tuple[str, ...] | None = None,
+    stage: str = "all",
 ) -> dict[str, Any]:
     suite_dir = suite_dir.resolve()
     output_dir = output_dir.resolve()
@@ -708,6 +749,14 @@ def generate_collection(
     cells = supported_cells(support_artifact, generator_artifact)
     if not cells:
         raise ValueError("formal suite has no supported cells")
+    selected_cells = select_cells(cells, dataset_ids)
+    if stage == "all" and dataset_ids is not None:
+        raise ValueError(
+            "--datasets requires --stage shards; an all-stage run must "
+            "finalize the complete formal collection"
+        )
+    if stage in {"prepare", "finalize"} and dataset_ids is not None:
+        raise ValueError(f"--stage {stage} does not accept --datasets")
 
     output_dir.mkdir(parents=True, exist_ok=True)
     config = {
@@ -779,26 +828,69 @@ def generate_collection(
     else:
         write_json(config_path, config)
 
+    if stage == "prepare":
+        return {
+            "status": "prepared",
+            "master_sample_count": int(
+                config["expected_master_sample_count"]
+            ),
+            "paired_group_count": int(
+                config["expected_paired_group_count"]
+            ),
+            "supported_cell_count": len(cells),
+        }
+
     shard_records: list[dict[str, Any]] = []
-    for cell_index, cell in enumerate(cells, start=1):
-        print(
-            f"[cell {cell_index}/{len(cells)}] "
-            f"{cell['dataset_id']}/{cell['task_id']}/"
-            f"{cell['capability_id']}",
-            flush=True,
-        )
-        shard_records.append(
-            generate_cell_shard(
-                output_dir=output_dir,
-                cell=cell,
-                generator_artifact=generator_artifact,
-                feature_artifact=feature_artifact,
-                near_artifact=near_artifact,
-                round_seeds=round_seeds,
-                samples_per_round=samples_per_round,
-                max_attempts=max_attempts,
+    expected_per_cell = (
+        len(round_seeds) * samples_per_round * len(INTENSITIES)
+    )
+    if stage == "finalize":
+        for cell in cells:
+            path = shard_path(output_dir, cell)
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"missing formal sample shard: {path}"
+                )
+            shard_records.append(
+                validate_complete_shard(
+                    path,
+                    cell=cell,
+                    expected=expected_per_cell,
+                )
             )
-        )
+    else:
+        for cell_index, cell in enumerate(selected_cells, start=1):
+            print(
+                f"[cell {cell_index}/{len(selected_cells)}] "
+                f"{cell['dataset_id']}/{cell['task_id']}/"
+                f"{cell['capability_id']}",
+                flush=True,
+            )
+            shard_records.append(
+                generate_cell_shard(
+                    output_dir=output_dir,
+                    cell=cell,
+                    generator_artifact=generator_artifact,
+                    feature_artifact=feature_artifact,
+                    near_artifact=near_artifact,
+                    round_seeds=round_seeds,
+                    samples_per_round=samples_per_round,
+                    max_attempts=max_attempts,
+                )
+            )
+    if stage == "shards":
+        return {
+            "status": "shards_complete",
+            "master_sample_count": sum(
+                int(record["row_count"]) for record in shard_records
+            ),
+            "paired_group_count": sum(
+                int(record["paired_group_count"])
+                for record in shard_records
+            ),
+            "supported_cell_count": len(shard_records),
+        }
+
     samples_path = concatenate_shards(output_dir, shard_records)
     expected = int(config["expected_master_sample_count"])
     observed = count_jsonl(samples_path)
@@ -861,9 +953,16 @@ def main() -> int:
         round_seeds=round_seeds,
         samples_per_round=int(args.samples_per_round),
         max_attempts=int(args.max_attempts),
+        dataset_ids=(
+            None
+            if args.datasets is None
+            else tuple(str(value) for value in args.datasets)
+        ),
+        stage=str(args.stage),
     )
     print(
-        f"formal E2 master samples: {result['master_sample_count']} rows, "
+        f"formal E2 {result.get('status', 'complete')}: "
+        f"{result['master_sample_count']} rows, "
         f"{result['paired_group_count']} paired groups",
         flush=True,
     )

@@ -197,3 +197,25 @@ def test_completed_shard_requires_all_intensities_and_four_views(tmp_path):
             cell=cell,
             expected=5,
         )
+
+
+def test_select_cells_keeps_dataset_disjoint_generation_shards():
+    module = load_module()
+    cells = [
+        {
+            "dataset_id": dataset_id,
+            "task_id": "univariate",
+            "capability_id": capability_id,
+        }
+        for dataset_id, capability_id in (
+            ("dataset_a", "trend"),
+            ("dataset_a", "multi_seasonal"),
+            ("dataset_b", "trend"),
+        )
+    ]
+
+    selected = module.select_cells(cells, ("dataset_b",))
+
+    assert selected == [cells[2]]
+    with pytest.raises(ValueError, match="no supported cells"):
+        module.select_cells(cells, ("missing_dataset",))
