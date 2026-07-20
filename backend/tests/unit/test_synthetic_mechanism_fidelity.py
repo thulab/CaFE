@@ -301,3 +301,131 @@ def test_incoherent_parent_is_penalized_even_with_exact_children():
 
     assert ablated["mechanism_fidelity_score"] < 1.0
     assert ablated["selectivity_score"] < 0.5
+
+
+def test_controlled_regime_timing_shift_targets_timing_component():
+    target, latent, _ = generated_case("regime_switching", seed=41)
+    shifted = np.roll(target[CONTEXT_LENGTH:], 6, axis=0)
+
+    ablated = score_forecast(
+        "regime_switching",
+        target,
+        latent,
+        shifted,
+    )
+
+    assert ablated["detection_score"] == pytest.approx(1.0)
+    assert ablated["timing_score"] < 0.1
+    assert ablated["mechanism_fidelity_score"] < 0.4
+
+
+@pytest.mark.parametrize(
+    ("capability_id", "seed"),
+    (("trend", 17), ("regime_switching", 41)),
+)
+def test_controlled_amplitude_shrink_targets_magnitude_component(
+    capability_id: str,
+    seed: int,
+):
+    target, latent, _ = generated_case(capability_id, seed=seed)
+    future = target[CONTEXT_LENGTH:]
+    anchor = target[CONTEXT_LENGTH - 1 : CONTEXT_LENGTH]
+    shrunk = anchor + 0.5 * (future - anchor)
+
+    ablated = score_forecast(
+        capability_id,
+        target,
+        latent,
+        shrunk,
+    )
+
+    assert ablated["detection_score"] == pytest.approx(1.0)
+    assert ablated["timing_score"] == pytest.approx(1.0)
+    assert ablated["magnitude_score"] == pytest.approx(0.5)
+    assert ablated["selectivity_score"] == pytest.approx(1.0)
+
+
+def test_controlled_false_event_targets_intermittency_selectivity():
+    target, latent, _ = generated_case(
+        "predictable_intermittency",
+        seed=43,
+    )
+    false_event = target[CONTEXT_LENGTH:].copy()
+    false_event[:3] += 5.0 * float(np.std(false_event))
+
+    ablated = score_forecast(
+        "predictable_intermittency",
+        target,
+        latent,
+        false_event,
+    )
+
+    assert ablated["detection_score"] == pytest.approx(1.0)
+    assert ablated["timing_score"] == pytest.approx(1.0)
+    assert ablated["selectivity_score"] < 0.5
+    assert ablated["mechanism_fidelity_score"] < 0.8
+
+
+def test_blind_persistence_forecast_loses_nonlinear_contrast():
+    target, latent, _ = generated_case(
+        "nonlinear_persistence",
+        seed=19,
+    )
+    blind = np.repeat(
+        target[CONTEXT_LENGTH - 1 : CONTEXT_LENGTH],
+        HORIZON,
+        axis=0,
+    )
+
+    ablated = score_forecast(
+        "nonlinear_persistence",
+        target,
+        latent,
+        blind,
+    )
+
+    assert ablated["detection_score"] == pytest.approx(0.0)
+    assert ablated["timing_score"] == pytest.approx(0.0)
+    assert ablated["selectivity_score"] == pytest.approx(0.0)
+
+
+def test_desynchronized_channels_lose_common_factor_fidelity():
+    target, latent, _ = generated_case("common_factor", seed=23)
+    desynchronized = target[CONTEXT_LENGTH:].copy()
+    desynchronized[:, 1] = np.roll(desynchronized[:, 1], 13)
+    desynchronized[:, 2] = np.roll(desynchronized[:, 2], 27)
+
+    ablated = score_forecast(
+        "common_factor",
+        target,
+        latent,
+        desynchronized,
+    )
+
+    assert ablated["detection_score"] < 0.5
+    assert ablated["mechanism_fidelity_score"] < 0.7
+
+
+def test_paired_covariate_ablation_requires_forecast_response():
+    target, latent, covariates = generated_case(
+        "covariate_response",
+        seed=29,
+    )
+    forecast = target[CONTEXT_LENGTH:]
+
+    no_response = evaluate_mechanism_fidelity(
+        capability_id="covariate_response",
+        history=target[:CONTEXT_LENGTH],
+        target_future=forecast,
+        forecast=forecast,
+        counterfactual_forecast=forecast.copy(),
+        season_length=SEASON_LENGTH,
+        latent_params=latent,
+        intensity=5,
+        forecast_start_index=CONTEXT_LENGTH,
+        covariates=covariates,
+    )
+
+    assert no_response["formal_score_eligible"] is True
+    assert no_response["detection_score"] == pytest.approx(0.0)
+    assert no_response["mechanism_fidelity_score"] == pytest.approx(0.0)

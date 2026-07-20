@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Build Paper v5 E3 mechanism-aware capability profiles from sealed E2 output."""
+"""Build formal Paper v6 E3 mechanism-aware profiles from sealed E2 output."""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
 import math
+import os
 import shutil
 import sys
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -28,19 +30,52 @@ from app.services.synthetic_mechanism_fidelity import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v5_e3_mechanism_fidelity.v1"
+SCHEMA_VERSION = "paper_v6_e3_mechanism_fidelity.v2"
 EXPERIMENT_ID = "E3_mechanism_fidelity"
-DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v5/E2_dynamic_stability"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp/v5/E3_mechanism_fidelity_pilot"
+DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v6/E2_dynamic_stability"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp/v6/E3_mechanism_fidelity"
 DEFAULT_PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/"
-    "2026-07-20-paper-v5-e3-mechanism-fidelity-protocol.md"
+    "2026-07-20-paper-v6-e3-formal-mechanism-fidelity-protocol.md"
 )
-DEFAULT_MODELS = ("Chronos-2", "tabpfn-ts3")
+DEFAULT_MODELS = (
+    "Timer-3.5",
+    "Timer-3.0",
+    "Chronos-2",
+    "moirai2",
+    "toto2.0",
+    "timesfm2.5",
+    "tirex2",
+    "tabpfn-ts3",
+)
 BLIND_REFERENCE_MODEL = "naive"
 MAX_CONTEXT_LENGTH = 504
 HORIZON = 48
+DEFAULT_BOOTSTRAP_REPLICATES = 2_000
+DEFAULT_BOOTSTRAP_SEED = 20260720
+DEFAULT_CI_LEVEL = 0.95
+DEFAULT_EQUIVALENCE_MARGINS = (0.01, 0.02, 0.05)
+DEFAULT_PRIMARY_EQUIVALENCE_MARGIN = 0.02
+DEFAULT_SPLIT_SIZE = 80
+PROFILE_KEYS = ["dataset_id", "task_id", "capability_id"]
+METRIC_SPECS = {
+    "mase": {
+        "column": "mase_mean",
+        "higher_is_better": False,
+        "effect_scale": "relative",
+    },
+    "mechanism": {
+        "column": "mechanism_fidelity_score",
+        "higher_is_better": True,
+        "effect_scale": "absolute",
+    },
+    "ability": {
+        "column": "ability_score",
+        "higher_is_better": True,
+        "effect_scale": "absolute",
+    },
+}
 DEFAULT_DATASET_CAPABILITIES = {
     "gift_ett1_h": (
         "trend",
@@ -98,9 +133,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-paired-groups-per-cell",
         type=int,
-        default=8,
+        default=0,
         help=(
-            "Pilot cap per dataset/capability. Each selected paired group "
+            "Optional cap per dataset/capability. Each selected paired group "
             "retains all five intensity levels. Use 0 for all groups."
         ),
     )
@@ -117,6 +152,41 @@ def parse_args() -> argparse.Namespace:
             "Optional directory containing one <safe model id>.jsonl file. "
             "Rows must provide master_sample_id, context_length, forecast and "
             "ablation=future_covariates_zero."
+        ),
+    )
+    parser.add_argument(
+        "--bootstrap-replicates",
+        type=int,
+        default=DEFAULT_BOOTSTRAP_REPLICATES,
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=DEFAULT_BOOTSTRAP_SEED,
+    )
+    parser.add_argument(
+        "--ci-level",
+        type=float,
+        default=DEFAULT_CI_LEVEL,
+    )
+    parser.add_argument(
+        "--equivalence-margins",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_EQUIVALENCE_MARGINS),
+    )
+    parser.add_argument(
+        "--primary-equivalence-margin",
+        type=float,
+        default=DEFAULT_PRIMARY_EQUIVALENCE_MARGIN,
+    )
+    parser.add_argument(
+        "--split-size",
+        type=int,
+        default=DEFAULT_SPLIT_SIZE,
+        help=(
+            "Number of paired groups in each deterministic reliability half. "
+            "Use 0 to skip the split-half audit."
         ),
     )
     parser.add_argument("--overwrite", action="store_true")
@@ -219,8 +289,17 @@ def load_oracle_selection(
     e2_dir: Path,
     *,
     model_ids: list[str],
-    master_sample_ids: set[str],
+    samples: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, dict[str, Any]]], pd.DataFrame]:
+    master_sample_ids = set(samples)
+    desired_by_cell: dict[tuple[str, str, str], set[str]] = {}
+    for master_id, sample in samples.items():
+        key = (
+            str(sample["dataset_id"]),
+            str(sample["task_id"]),
+            str(sample["capability_id"]),
+        )
+        desired_by_cell.setdefault(key, set()).add(master_id)
     selections: dict[str, dict[str, dict[str, Any]]] = {}
     rows: list[dict[str, Any]] = []
     for model_id in [*model_ids, BLIND_REFERENCE_MODEL]:
@@ -244,11 +323,24 @@ def load_oracle_selection(
                         "oracle_mase": float(row["oracle_mase"]),
                     }
                 )
-        if set(model_rows) != master_sample_ids:
+        if model_id == BLIND_REFERENCE_MODEL and set(model_rows) != master_sample_ids:
             missing = len(master_sample_ids - set(model_rows))
             raise ValueError(
-                f"{model_id} oracle selection misses {missing} samples"
+                f"blind reference oracle selection misses {missing} samples"
             )
+        if model_id != BLIND_REFERENCE_MODEL:
+            if not model_rows:
+                raise ValueError(
+                    f"{model_id} has no compatible E3 capability cells"
+                )
+            observed = set(model_rows)
+            for key, desired in desired_by_cell.items():
+                count = len(observed & desired)
+                if count not in {0, len(desired)}:
+                    raise ValueError(
+                        f"{model_id} partially covers E3 cell {key}: "
+                        f"{count}/{len(desired)}"
+                    )
         if model_id != BLIND_REFERENCE_MODEL:
             selections[model_id] = model_rows
     return selections, pd.DataFrame(rows)
@@ -298,6 +390,9 @@ def load_covariate_ablation_predictions(
         return {}
     result: dict[str, dict[str, dict[str, Any]]] = {}
     for model_id in model_ids:
+        model_desired_ids = desired_ids & set(oracle_selections[model_id])
+        if not model_desired_ids:
+            continue
         path = directory / f"{safe_filename(model_id)}.jsonl"
         if not path.is_file():
             raise FileNotFoundError(
@@ -308,7 +403,7 @@ def load_covariate_ablation_predictions(
             for line in handle:
                 row = json.loads(line)
                 master_id = str(row.get("master_sample_id", ""))
-                if master_id not in desired_ids:
+                if master_id not in model_desired_ids:
                     continue
                 if str(row.get("ablation")) != "future_covariates_zero":
                     raise ValueError(
@@ -321,8 +416,8 @@ def load_covariate_ablation_predictions(
                 if int(row.get("context_length", -1)) != expected_context:
                     continue
                 model_rows[master_id] = row
-        if set(model_rows) != desired_ids:
-            missing = len(desired_ids - set(model_rows))
+        if set(model_rows) != model_desired_ids:
+            missing = len(model_desired_ids - set(model_rows))
             raise ValueError(
                 f"{model_id} covariate ablation misses {missing} oracle views"
             )
@@ -693,6 +788,634 @@ def capability_profiles(
     return profiles
 
 
+def model_capability_coverage(
+    samples: dict[str, dict[str, Any]],
+    oracle_selections: dict[str, dict[str, dict[str, Any]]],
+    model_ids: list[str],
+) -> pd.DataFrame:
+    cells = sorted(
+        {
+            (
+                str(sample["dataset_id"]),
+                str(sample["task_id"]),
+                str(sample["capability_id"]),
+            )
+            for sample in samples.values()
+        }
+    )
+    desired_counts = {
+        key: sum(
+            (
+                str(sample["dataset_id"]),
+                str(sample["task_id"]),
+                str(sample["capability_id"]),
+            )
+            == key
+            for sample in samples.values()
+        )
+        for key in cells
+    }
+    rows: list[dict[str, Any]] = []
+    for model_id in model_ids:
+        selected = oracle_selections[model_id]
+        for dataset_id, task_id, capability_id in cells:
+            observed = sum(
+                str(row["dataset_id"]) == dataset_id
+                and str(row["task_id"]) == task_id
+                and str(row["capability_id"]) == capability_id
+                for row in selected.values()
+            )
+            expected = desired_counts[
+                (dataset_id, task_id, capability_id)
+            ]
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "dataset_id": dataset_id,
+                    "task_id": task_id,
+                    "capability_id": capability_id,
+                    "supported": observed == expected,
+                    "selected_sample_count": observed,
+                    "expected_sample_count": expected,
+                    "unsupported_reason": (
+                        None
+                        if observed == expected
+                        else "model_input_contract_unsupported"
+                    ),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def profile_group_components(
+    sample_scores: pd.DataFrame,
+    oracle_scores: pd.DataFrame,
+    dose_scores: pd.DataFrame,
+) -> pd.DataFrame:
+    keys = ["model_id", *PROFILE_KEYS, "paired_group_id"]
+    components = (
+        sample_scores.groupby(keys, sort=True)
+        .agg(
+            round_index=("round_index", "min"),
+            sample_index=("sample_index", "min"),
+            intensity_count=("intensity", "nunique"),
+            mase_group_mean=("oracle_mase", "mean"),
+            level_mechanism_group_mean=(
+                "mechanism_fidelity_score",
+                "mean",
+            ),
+            formal_score_eligible=("formal_score_eligible", "all"),
+        )
+        .reset_index()
+    )
+    if not (components["intensity_count"] == 5).all():
+        raise ValueError("profile components must retain five intensities")
+    dose_columns = [
+        *keys,
+        "dose_response_score",
+        "formal_score_eligible",
+    ]
+    renamed_dose = dose_scores[dose_columns].rename(
+        columns={
+            "formal_score_eligible": "dose_formal_score_eligible",
+        }
+    )
+    components = components.merge(
+        renamed_dose,
+        on=keys,
+        how="left",
+        validate="one_to_one",
+    )
+    if components["dose_response_score"].isna().any():
+        raise ValueError("profile components miss dose-response scores")
+    blind = oracle_scores[
+        oracle_scores["model_id"] == BLIND_REFERENCE_MODEL
+    ]
+    blind = (
+        blind.groupby([*PROFILE_KEYS, "paired_group_id"], sort=True)
+        .agg(
+            blind_mase_group_mean=("oracle_mase", "mean"),
+            blind_intensity_count=("intensity", "nunique"),
+        )
+        .reset_index()
+    )
+    if not (blind["blind_intensity_count"] == 5).all():
+        raise ValueError("blind profile components must retain five intensities")
+    components = components.merge(
+        blind,
+        on=[*PROFILE_KEYS, "paired_group_id"],
+        how="left",
+        validate="many_to_one",
+    )
+    if components["blind_mase_group_mean"].isna().any():
+        raise ValueError("profile components miss blind MASE")
+    components["formal_score_eligible"] &= components[
+        "dose_formal_score_eligible"
+    ]
+    return components
+
+
+def aggregate_profile_components(
+    components: pd.DataFrame,
+    *,
+    bank_id: str,
+) -> pd.DataFrame:
+    keys = ["model_id", *PROFILE_KEYS]
+    profiles = (
+        components.groupby(keys, sort=True)
+        .agg(
+            paired_group_count=("paired_group_id", "size"),
+            mase_mean=("mase_group_mean", "mean"),
+            blind_mase_mean=("blind_mase_group_mean", "mean"),
+            level_mechanism_fidelity=(
+                "level_mechanism_group_mean",
+                "mean",
+            ),
+            dose_response_score=("dose_response_score", "mean"),
+            formal_score_eligible=("formal_score_eligible", "all"),
+        )
+        .reset_index()
+    )
+    profiles["bank_id"] = bank_id
+    profiles["sample_count"] = 5 * profiles["paired_group_count"]
+    profiles["mechanism_fidelity_score"] = (
+        0.7 * profiles["level_mechanism_fidelity"]
+        + 0.3 * profiles["dose_response_score"]
+    )
+    profiles["point_accuracy_gate"] = np.minimum(
+        1.0,
+        profiles["blind_mase_mean"] / profiles["mase_mean"],
+    )
+    profiles["ability_score"] = (
+        profiles["mechanism_fidelity_score"]
+        * profiles["point_accuracy_gate"]
+    ).where(profiles["formal_score_eligible"])
+    rank_keys = ["bank_id", *PROFILE_KEYS]
+    profiles["mase_rank"] = profiles.groupby(rank_keys, sort=False)[
+        "mase_mean"
+    ].rank(method="average", ascending=True)
+    profiles["mechanism_rank"] = profiles[
+        "mechanism_fidelity_score"
+    ].where(profiles["formal_score_eligible"]).groupby(
+        [profiles[key] for key in rank_keys],
+        sort=False,
+    ).rank(method="average", ascending=False)
+    profiles["ability_rank"] = profiles["ability_score"].groupby(
+        [profiles[key] for key in rank_keys],
+        sort=False,
+    ).rank(method="average", ascending=False)
+    return profiles
+
+
+def stable_bootstrap_seed(
+    base_seed: int,
+    values: tuple[Any, ...],
+) -> int:
+    payload = "|".join([str(base_seed), *(str(value) for value in values)])
+    digest = hashlib.sha256(payload.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False)
+
+
+def equivalence_state(
+    *,
+    ci_low: float,
+    ci_high: float,
+    margin: float,
+) -> str:
+    if ci_low > margin:
+        return "left_better"
+    if ci_high < -margin:
+        return "right_better"
+    if ci_low >= -margin and ci_high <= margin:
+        return "equivalent"
+    return "unresolved"
+
+
+def _effect(
+    left: np.ndarray | float,
+    right: np.ndarray | float,
+    *,
+    metric_id: str,
+) -> np.ndarray | float:
+    if metric_id == "mase":
+        denominator = np.maximum(
+            np.abs(left) + np.abs(right),
+            1e-12,
+        )
+        return 2.0 * (right - left) / denominator
+    return left - right
+
+
+def bootstrap_profile_statistics(
+    components: pd.DataFrame,
+    *,
+    bank_id: str,
+    bootstrap_replicates: int,
+    bootstrap_seed: int,
+    ci_level: float,
+    equivalence_margins: tuple[float, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if bootstrap_replicates < 1:
+        raise ValueError("bootstrap_replicates must be positive")
+    alpha = (1.0 - ci_level) / 2.0
+    interval_rows: list[dict[str, Any]] = []
+    pair_rows: list[dict[str, Any]] = []
+    for profile_key, cell in components.groupby(PROFILE_KEYS, sort=True):
+        model_ids = sorted(cell["model_id"].unique())
+        group_ids: list[str] | None = None
+        matrices: dict[str, list[np.ndarray]] = {
+            "mase": [],
+            "blind": [],
+            "level": [],
+            "dose": [],
+        }
+        formal_by_model: dict[str, bool] = {}
+        for model_id in model_ids:
+            model = cell[cell["model_id"] == model_id].sort_values(
+                "paired_group_id"
+            )
+            observed_groups = model["paired_group_id"].astype(str).tolist()
+            if group_ids is None:
+                group_ids = observed_groups
+            elif observed_groups != group_ids:
+                raise ValueError(
+                    f"models do not share paired groups for {profile_key}"
+                )
+            matrices["mase"].append(
+                model["mase_group_mean"].to_numpy(dtype=float)
+            )
+            matrices["blind"].append(
+                model["blind_mase_group_mean"].to_numpy(dtype=float)
+            )
+            matrices["level"].append(
+                model["level_mechanism_group_mean"].to_numpy(dtype=float)
+            )
+            matrices["dose"].append(
+                model["dose_response_score"].to_numpy(dtype=float)
+            )
+            formal_by_model[model_id] = bool(
+                model["formal_score_eligible"].all()
+            )
+        if not group_ids:
+            continue
+        values = {
+            name: np.column_stack(columns)
+            for name, columns in matrices.items()
+        }
+        group_count = len(group_ids)
+        rng = np.random.default_rng(
+            stable_bootstrap_seed(
+                bootstrap_seed,
+                (bank_id, *profile_key),
+            )
+        )
+        draws = rng.integers(
+            0,
+            group_count,
+            size=(bootstrap_replicates, group_count),
+        )
+        point_mase = values["mase"].mean(axis=0)
+        point_blind = values["blind"].mean(axis=0)
+        point_level = values["level"].mean(axis=0)
+        point_dose = values["dose"].mean(axis=0)
+        point_mechanism = 0.7 * point_level + 0.3 * point_dose
+        point_ability = point_mechanism * np.minimum(
+            1.0,
+            point_blind / point_mase,
+        )
+        boot_mase = values["mase"][draws].mean(axis=1)
+        boot_blind = values["blind"][draws].mean(axis=1)
+        boot_level = values["level"][draws].mean(axis=1)
+        boot_dose = values["dose"][draws].mean(axis=1)
+        boot_mechanism = 0.7 * boot_level + 0.3 * boot_dose
+        boot_ability = boot_mechanism * np.minimum(
+            1.0,
+            boot_blind / boot_mase,
+        )
+        point_metrics = {
+            "mase": point_mase,
+            "mechanism": point_mechanism,
+            "ability": point_ability,
+        }
+        boot_metrics = {
+            "mase": boot_mase,
+            "mechanism": boot_mechanism,
+            "ability": boot_ability,
+        }
+        profile_values = dict(zip(PROFILE_KEYS, profile_key, strict=True))
+        for metric_id, point_values in point_metrics.items():
+            boot_values = boot_metrics[metric_id]
+            formal_metric = metric_id == "mase"
+            for model_index, model_id in enumerate(model_ids):
+                eligible = formal_metric or formal_by_model[model_id]
+                low, high = np.quantile(
+                    boot_values[:, model_index],
+                    [alpha, 1.0 - alpha],
+                )
+                interval_rows.append(
+                    {
+                        **profile_values,
+                        "bank_id": bank_id,
+                        "model_id": model_id,
+                        "metric_id": metric_id,
+                        "score": float(point_values[model_index]),
+                        "bootstrap_ci_low": float(low),
+                        "bootstrap_ci_high": float(high),
+                        "bootstrap_replicates": bootstrap_replicates,
+                        "ci_level": ci_level,
+                        "paired_group_count": group_count,
+                        "formal_score_eligible": eligible,
+                    }
+                )
+            for left_index, right_index in combinations(
+                range(len(model_ids)),
+                2,
+            ):
+                left_model = model_ids[left_index]
+                right_model = model_ids[right_index]
+                eligible = (
+                    metric_id == "mase"
+                    or (
+                        formal_by_model[left_model]
+                        and formal_by_model[right_model]
+                    )
+                )
+                if not eligible:
+                    continue
+                point_effect = float(
+                    _effect(
+                        point_values[left_index],
+                        point_values[right_index],
+                        metric_id=metric_id,
+                    )
+                )
+                bootstrap_effect = np.asarray(
+                    _effect(
+                        boot_values[:, left_index],
+                        boot_values[:, right_index],
+                        metric_id=metric_id,
+                    ),
+                    dtype=float,
+                )
+                low, high = np.quantile(
+                    bootstrap_effect,
+                    [alpha, 1.0 - alpha],
+                )
+                for margin in equivalence_margins:
+                    pair_rows.append(
+                        {
+                            **profile_values,
+                            "bank_id": bank_id,
+                            "metric_id": metric_id,
+                            "effect_scale": METRIC_SPECS[metric_id][
+                                "effect_scale"
+                            ],
+                            "left_model": left_model,
+                            "right_model": right_model,
+                            "left_score": float(
+                                point_values[left_index]
+                            ),
+                            "right_score": float(
+                                point_values[right_index]
+                            ),
+                            "effect_left_better_positive": point_effect,
+                            "bootstrap_ci_low": float(low),
+                            "bootstrap_ci_high": float(high),
+                            "bootstrap_replicates": bootstrap_replicates,
+                            "ci_level": ci_level,
+                            "equivalence_margin": margin,
+                            "state": equivalence_state(
+                                ci_low=float(low),
+                                ci_high=float(high),
+                                margin=margin,
+                            ),
+                        }
+                    )
+    return pd.DataFrame(interval_rows), pd.DataFrame(pair_rows)
+
+
+def deterministic_split_components(
+    components: pd.DataFrame,
+    *,
+    split_size: int,
+) -> pd.DataFrame:
+    if split_size < 1:
+        raise ValueError("split_size must be positive")
+    assignments: list[dict[str, Any]] = []
+    reference = components.drop_duplicates(
+        [*PROFILE_KEYS, "paired_group_id"]
+    )
+    for profile_key, cell in reference.groupby(PROFILE_KEYS, sort=True):
+        ordered = cell.sort_values(
+            ["round_index", "sample_index", "paired_group_id"]
+        )
+        if len(ordered) < 2 * split_size:
+            raise ValueError(
+                f"{profile_key} has {len(ordered)} groups, "
+                f"needs {2 * split_size}"
+            )
+        for bank_id, selected in (
+            ("first", ordered.iloc[:split_size]),
+            ("second", ordered.iloc[split_size : 2 * split_size]),
+        ):
+            for paired_group_id in selected["paired_group_id"]:
+                assignments.append(
+                    {
+                        **dict(
+                            zip(
+                                PROFILE_KEYS,
+                                profile_key,
+                                strict=True,
+                            )
+                        ),
+                        "paired_group_id": paired_group_id,
+                        "bank_id": bank_id,
+                    }
+                )
+    assignment_frame = pd.DataFrame(assignments)
+    split = components.merge(
+        assignment_frame,
+        on=[*PROFILE_KEYS, "paired_group_id"],
+        how="inner",
+        validate="many_to_one",
+    )
+    return split
+
+
+def split_half_reliability(
+    split_profiles: pd.DataFrame,
+    split_pairs: pd.DataFrame,
+    *,
+    primary_margin: float,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    left = split_profiles[split_profiles["bank_id"] == "first"]
+    right = split_profiles[split_profiles["bank_id"] == "second"]
+    score_rows: list[dict[str, Any]] = []
+    for metric_id, spec in METRIC_SPECS.items():
+        score_column = str(spec["column"])
+        rank_column = (
+            "mase_rank"
+            if metric_id == "mase"
+            else f"{metric_id}_rank"
+        )
+        keys = ["model_id", *PROFILE_KEYS]
+        compared = left[keys + [score_column, rank_column]].merge(
+            right[keys + [score_column, rank_column]],
+            on=keys,
+            suffixes=("_first", "_second"),
+            validate="one_to_one",
+        )
+        compared = compared.dropna(
+            subset=[
+                f"{score_column}_first",
+                f"{score_column}_second",
+                f"{rank_column}_first",
+                f"{rank_column}_second",
+            ]
+        )
+        for profile_key, cell in compared.groupby(PROFILE_KEYS, sort=True):
+            first_scores = cell[f"{score_column}_first"].to_numpy(
+                dtype=float
+            )
+            second_scores = cell[f"{score_column}_second"].to_numpy(
+                dtype=float
+            )
+            first_ranks = cell[f"{rank_column}_first"].to_numpy(dtype=float)
+            second_ranks = cell[f"{rank_column}_second"].to_numpy(dtype=float)
+            pair_agreements: list[bool] = []
+            for left_index, right_index in combinations(
+                range(len(cell)),
+                2,
+            ):
+                first_effect = float(
+                    _effect(
+                        first_scores[left_index],
+                        first_scores[right_index],
+                        metric_id=metric_id,
+                    )
+                )
+                second_effect = float(
+                    _effect(
+                        second_scores[left_index],
+                        second_scores[right_index],
+                        metric_id=metric_id,
+                    )
+                )
+                pair_agreements.append(
+                    np.sign(first_effect) == np.sign(second_effect)
+                )
+            first_top = set(
+                cell.loc[
+                    cell[f"{rank_column}_first"]
+                    == cell[f"{rank_column}_first"].min(),
+                    "model_id",
+                ]
+            )
+            second_top = set(
+                cell.loc[
+                    cell[f"{rank_column}_second"]
+                    == cell[f"{rank_column}_second"].min(),
+                    "model_id",
+                ]
+            )
+            score_rows.append(
+                {
+                    **dict(
+                        zip(PROFILE_KEYS, profile_key, strict=True)
+                    ),
+                    "metric_id": metric_id,
+                    "model_count": len(cell),
+                    "rank_spearman": spearman_correlation(
+                        first_ranks,
+                        second_ranks,
+                    ),
+                    "exact_rank_vector": bool(
+                        np.array_equal(first_ranks, second_ranks)
+                    ),
+                    "point_pair_direction_agreement": (
+                        float(np.mean(pair_agreements))
+                        if pair_agreements
+                        else math.nan
+                    ),
+                    "top_model_exact_match": first_top == second_top,
+                    "top_model_jaccard": (
+                        len(first_top & second_top)
+                        / len(first_top | second_top)
+                    ),
+                }
+            )
+    reliability = pd.DataFrame(score_rows)
+    primary = split_pairs[
+        np.isclose(
+            split_pairs["equivalence_margin"],
+            primary_margin,
+        )
+    ]
+    pair_first = primary[primary["bank_id"] == "first"]
+    pair_second = primary[primary["bank_id"] == "second"]
+    pair_keys = [
+        *PROFILE_KEYS,
+        "metric_id",
+        "left_model",
+        "right_model",
+        "equivalence_margin",
+    ]
+    pair_comparison = pair_first[pair_keys + ["state"]].merge(
+        pair_second[pair_keys + ["state"]],
+        on=pair_keys,
+        suffixes=("_first", "_second"),
+        validate="one_to_one",
+    )
+    pair_comparison["state_match"] = (
+        pair_comparison["state_first"]
+        == pair_comparison["state_second"]
+    )
+    pair_comparison["direction_conflict"] = (
+        (
+            pair_comparison["state_first"] == "left_better"
+        )
+        & (pair_comparison["state_second"] == "right_better")
+    ) | (
+        (
+            pair_comparison["state_first"] == "right_better"
+        )
+        & (pair_comparison["state_second"] == "left_better")
+    )
+    pair_comparison["no_direction_contradiction"] = ~pair_comparison[
+        "direction_conflict"
+    ]
+    summary = {
+        "profile_metric_count": len(reliability),
+        "rank_spearman_mean": float(
+            reliability["rank_spearman"].mean()
+        ),
+        "exact_rank_vector_rate": float(
+            reliability["exact_rank_vector"].mean()
+        ),
+        "point_pair_direction_agreement_mean": float(
+            reliability["point_pair_direction_agreement"].mean()
+        ),
+        "top_model_exact_match_rate": float(
+            reliability["top_model_exact_match"].mean()
+        ),
+        "top_model_jaccard_mean": float(
+            reliability["top_model_jaccard"].mean()
+        ),
+        "primary_equivalence_margin": primary_margin,
+        "pair_state_count": len(pair_comparison),
+        "pair_state_exact_match_rate": float(
+            pair_comparison["state_match"].mean()
+        ),
+        "pair_no_direction_contradiction_rate": float(
+            pair_comparison["no_direction_contradiction"].mean()
+        ),
+        "pair_direction_conflict_count": int(
+            pair_comparison["direction_conflict"].sum()
+        ),
+    }
+    return reliability, pair_comparison, summary
+
+
 def spearman_correlation(left: np.ndarray, right: np.ndarray) -> float:
     x = pd.Series(np.asarray(left, dtype=float)).rank(method="average").to_numpy()
     y = pd.Series(np.asarray(right, dtype=float)).rank(method="average").to_numpy()
@@ -730,13 +1453,17 @@ def write_report(
     path: Path,
     *,
     profiles: pd.DataFrame,
+    pair_states: pd.DataFrame,
+    coverage: pd.DataFrame,
     sample_count: int,
     models: list[str],
     max_groups: int,
     covariate_ablation_available: bool,
+    split_summary: dict[str, Any] | None,
+    primary_margin: float,
 ) -> None:
     lines = [
-        "# Paper v5 E3：机制保真能力画像小试验",
+        "# Paper v6 E3：正式机制保真能力画像",
         "",
         "本结果同时保留点预测误差、机制保真度与能力总分。机制分只说明输出行为",
         "与合成机制一致，不表示模型内部识别了因果生成机制。",
@@ -744,6 +1471,7 @@ def write_report(
         f"- 模型：{', '.join(models)}",
         f"- 逐模型样本评分总行数：{sample_count}",
         f"- 每个 dataset × capability 的 paired groups 上限：{max_groups or '全部'}",
+        "- 不支持的模型 × 能力组合记为 N/A，不补成最差名次。",
         "- 单档机制分与 I1–I5 剂量响应按 0.7/0.3 合成。",
         "- 能力总分使用 naive MASE 安全门：MFS × min(1, naive MASE/model MASE)。",
         (
@@ -756,11 +1484,37 @@ def write_report(
             )
         ),
         "",
-        "## 能力画像",
+        "## 输入兼容范围",
         "",
-        "| Dataset | Capability | Model | MASE | Level MFS | Dose | MFS | Ability | MASE rank | Mechanism rank | Ability rank | Formal |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Capability | Supported models | Unsupported models |",
+        "|---|---|---|",
     ]
+    for capability_id, cell in coverage.groupby(
+        "capability_id",
+        sort=True,
+    ):
+        supported = sorted(cell.loc[cell["supported"], "model_id"])
+        unsupported = sorted(cell.loc[~cell["supported"], "model_id"])
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    str(capability_id),
+                    ", ".join(supported),
+                    ", ".join(unsupported) or "—",
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 能力画像",
+            "",
+            "| Dataset | Capability | Model | MASE [95% CI] | Level MFS | Dose | MFS [95% CI] | Ability [95% CI] | MASE rank | Mechanism rank | Ability rank | Formal |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        ]
+    )
     for row in profiles.itertuples(index=False):
         lines.append(
             "| "
@@ -769,11 +1523,23 @@ def write_report(
                     str(row.dataset_id),
                     str(row.capability_id),
                     str(row.model_id),
-                    _format_number(row.mase_mean),
+                    _format_interval(
+                        row.mase_mean,
+                        row.mase_ci_low,
+                        row.mase_ci_high,
+                    ),
                     _format_number(row.level_mechanism_fidelity),
                     _format_number(row.dose_response_score),
-                    _format_number(row.mechanism_fidelity_score),
-                    _format_number(row.ability_score),
+                    _format_interval(
+                        row.mechanism_fidelity_score,
+                        row.mechanism_ci_low,
+                        row.mechanism_ci_high,
+                    ),
+                    _format_interval(
+                        row.ability_score,
+                        row.ability_ci_low,
+                        row.ability_ci_high,
+                    ),
                     _format_number(row.mase_rank),
                     _format_number(row.mechanism_rank),
                     _format_number(row.ability_rank),
@@ -781,6 +1547,62 @@ def write_report(
                 ]
             )
             + " |"
+        )
+    primary = pair_states[
+        np.isclose(
+            pair_states["equivalence_margin"],
+            primary_margin,
+        )
+    ]
+    lines.extend(
+        [
+            "",
+            "## Tie-aware 模型对",
+            "",
+            f"主等价阈值为 {primary_margin:.2%}：MASE 使用对称相对差，"
+            "MFS/Ability 使用 `[0,1]` 绝对差。",
+            "",
+            "| Metric | Left better | Right better | Equivalent | Unresolved |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    state_counts = (
+        primary.groupby(["metric_id", "state"], sort=True)
+        .size()
+        .unstack(fill_value=0)
+    )
+    for metric_id in METRIC_SPECS:
+        counts = (
+            state_counts.loc[metric_id]
+            if metric_id in state_counts.index
+            else pd.Series(dtype=int)
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    metric_id,
+                    str(int(counts.get("left_better", 0))),
+                    str(int(counts.get("right_better", 0))),
+                    str(int(counts.get("equivalent", 0))),
+                    str(int(counts.get("unresolved", 0))),
+                ]
+            )
+            + " |"
+        )
+    if split_summary is not None:
+        lines.extend(
+            [
+                "",
+                "## 前 80 / 后 80 paired groups 可靠性",
+                "",
+                f"- 平均 rank Spearman：{split_summary['rank_spearman_mean']:.4f}",
+                f"- point pair 方向一致率：{split_summary['point_pair_direction_agreement_mean']:.4f}",
+                f"- top model 完全一致率：{split_summary['top_model_exact_match_rate']:.4f}",
+                f"- tie-aware pair state 完全一致率：{split_summary['pair_state_exact_match_rate']:.4f}",
+                f"- tie-aware pair 无方向冲突率：{split_summary['pair_no_direction_contradiction_rate']:.4f}",
+                f"- 明确方向冲突数：{split_summary['pair_direction_conflict_count']}",
+            ]
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -791,6 +1613,13 @@ def _format_number(value: Any) -> str:
     except (TypeError, ValueError):
         return "N/A"
     return f"{number:.4f}" if math.isfinite(number) else "N/A"
+
+
+def _format_interval(value: Any, low: Any, high: Any) -> str:
+    center = _format_number(value)
+    if center == "N/A":
+        return center
+    return f"{center} [{_format_number(low)}, {_format_number(high)}]"
 
 
 def sha256_file(path: Path) -> str:
@@ -822,6 +1651,28 @@ def main() -> None:
         raise ValueError("at least one model is required")
     if BLIND_REFERENCE_MODEL in model_ids:
         raise ValueError("naive is reserved as the point-accuracy reference")
+    if int(args.bootstrap_replicates) < 1:
+        raise ValueError("bootstrap-replicates must be positive")
+    if not 0.0 < float(args.ci_level) < 1.0:
+        raise ValueError("ci-level must be between zero and one")
+    equivalence_margins = tuple(
+        sorted({float(value) for value in args.equivalence_margins})
+    )
+    if (
+        not equivalence_margins
+        or any(value <= 0.0 for value in equivalence_margins)
+    ):
+        raise ValueError("equivalence margins must be positive")
+    primary_margin = float(args.primary_equivalence_margin)
+    if not any(
+        math.isclose(primary_margin, value)
+        for value in equivalence_margins
+    ):
+        raise ValueError(
+            "primary-equivalence-margin must be one of equivalence-margins"
+        )
+    if int(args.split_size) < 0:
+        raise ValueError("split-size cannot be negative")
     dataset_capabilities = selected_dataset_capabilities(list(args.datasets))
     output_dir = args.output_dir.resolve()
     if output_dir.exists():
@@ -840,7 +1691,12 @@ def main() -> None:
     oracle_selections, oracle_scores = load_oracle_selection(
         args.e2_dir,
         model_ids=model_ids,
-        master_sample_ids=set(samples),
+        samples=samples,
+    )
+    coverage = model_capability_coverage(
+        samples,
+        oracle_selections,
+        model_ids,
     )
     predictions: dict[str, dict[str, dict[str, Any]]] = {}
     for model_id in model_ids:
@@ -865,18 +1721,136 @@ def main() -> None:
     cells = intensity_cell_scores(sample_scores, oracle_scores)
     dose = paired_dose_response_scores(sample_scores)
     profiles = capability_profiles(cells, dose)
+    components = profile_group_components(
+        sample_scores,
+        oracle_scores,
+        dose,
+    )
+    all_intervals, all_pairs = bootstrap_profile_statistics(
+        components,
+        bank_id="all",
+        bootstrap_replicates=int(args.bootstrap_replicates),
+        bootstrap_seed=int(args.bootstrap_seed),
+        ci_level=float(args.ci_level),
+        equivalence_margins=equivalence_margins,
+    )
+    for metric_id in METRIC_SPECS:
+        interval = all_intervals[
+            all_intervals["metric_id"] == metric_id
+        ][
+            [
+                "model_id",
+                *PROFILE_KEYS,
+                "bootstrap_ci_low",
+                "bootstrap_ci_high",
+            ]
+        ].rename(
+            columns={
+                "bootstrap_ci_low": f"{metric_id}_ci_low",
+                "bootstrap_ci_high": f"{metric_id}_ci_high",
+            }
+        )
+        profiles = profiles.merge(
+            interval,
+            on=["model_id", *PROFILE_KEYS],
+            how="left",
+            validate="one_to_one",
+        )
+
+    split_profiles = pd.DataFrame()
+    split_intervals = pd.DataFrame()
+    split_pairs = pd.DataFrame()
+    split_reliability = pd.DataFrame()
+    split_pair_comparison = pd.DataFrame()
+    split_summary: dict[str, Any] | None = None
+    if int(args.split_size):
+        split_components = deterministic_split_components(
+            components,
+            split_size=int(args.split_size),
+        )
+        profile_parts: list[pd.DataFrame] = []
+        interval_parts: list[pd.DataFrame] = []
+        pair_parts: list[pd.DataFrame] = []
+        for bank_id, bank in split_components.groupby(
+            "bank_id",
+            sort=True,
+        ):
+            profile_parts.append(
+                aggregate_profile_components(bank, bank_id=str(bank_id))
+            )
+            intervals, pairs = bootstrap_profile_statistics(
+                bank,
+                bank_id=str(bank_id),
+                bootstrap_replicates=int(args.bootstrap_replicates),
+                bootstrap_seed=int(args.bootstrap_seed),
+                ci_level=float(args.ci_level),
+                equivalence_margins=equivalence_margins,
+            )
+            interval_parts.append(intervals)
+            pair_parts.append(pairs)
+        split_profiles = pd.concat(profile_parts, ignore_index=True)
+        split_intervals = pd.concat(interval_parts, ignore_index=True)
+        split_pairs = pd.concat(pair_parts, ignore_index=True)
+        (
+            split_reliability,
+            split_pair_comparison,
+            split_summary,
+        ) = split_half_reliability(
+            split_profiles,
+            split_pairs,
+            primary_margin=primary_margin,
+        )
 
     sample_scores.to_csv(output_dir / "sample_mechanism_scores.csv", index=False)
     cells.to_csv(output_dir / "intensity_cell_scores.csv", index=False)
     dose.to_csv(output_dir / "paired_dose_response_scores.csv", index=False)
     profiles.to_csv(output_dir / "capability_profiles.csv", index=False)
+    coverage.to_csv(output_dir / "model_capability_coverage.csv", index=False)
+    components.to_csv(output_dir / "profile_group_components.csv", index=False)
+    all_intervals.to_csv(
+        output_dir / "capability_bootstrap_intervals.csv",
+        index=False,
+    )
+    all_pairs.to_csv(
+        output_dir / "capability_pair_states.csv",
+        index=False,
+    )
+    if split_summary is not None:
+        split_profiles.to_csv(
+            output_dir / "split_half_capability_profiles.csv",
+            index=False,
+        )
+        split_intervals.to_csv(
+            output_dir / "split_half_bootstrap_intervals.csv",
+            index=False,
+        )
+        split_pairs.to_csv(
+            output_dir / "split_half_pair_states.csv",
+            index=False,
+        )
+        split_reliability.to_csv(
+            output_dir / "split_half_reliability.csv",
+            index=False,
+        )
+        split_pair_comparison.to_csv(
+            output_dir / "split_half_pair_state_comparison.csv",
+            index=False,
+        )
+        write_json(
+            output_dir / "split_half_summary.json",
+            split_summary,
+        )
     write_report(
         output_dir / "report.md",
         profiles=profiles,
+        pair_states=all_pairs,
+        coverage=coverage,
         sample_count=len(sample_scores),
         models=model_ids,
         max_groups=int(args.max_paired_groups_per_cell),
         covariate_ablation_available=bool(counterfactual_predictions),
+        split_summary=split_summary,
+        primary_margin=primary_margin,
     )
     summary = {
         "schema_version": SCHEMA_VERSION,
@@ -899,6 +1873,35 @@ def main() -> None:
         "mechanism_score_composition": {
             "level_fidelity_weight": 0.7,
             "dose_response_weight": 0.3,
+        },
+        "bootstrap": {
+            "unit": "paired_group_id_with_all_five_intensities",
+            "shared_draws_across_models": True,
+            "replicates": int(args.bootstrap_replicates),
+            "seed": int(args.bootstrap_seed),
+            "ci_level": float(args.ci_level),
+            "equivalence_margins": list(equivalence_margins),
+            "primary_equivalence_margin": primary_margin,
+            "mase_effect_scale": "symmetric_relative_difference",
+            "mechanism_and_ability_effect_scale": (
+                "absolute_difference_on_unit_interval"
+            ),
+        },
+        "split_half": (
+            {
+                "split_size": int(args.split_size),
+                "ordering": (
+                    "round_index_then_sample_index_then_paired_group_id"
+                ),
+                "summary": split_summary,
+            }
+            if split_summary is not None
+            else None
+        ),
+        "compatibility": {
+            "supported_profile_count": int(coverage["supported"].sum()),
+            "unsupported_profile_count": int((~coverage["supported"]).sum()),
+            "unsupported_policy": "N/A_not_worst_rank",
         },
         "ability_score": (
             "mechanism_fidelity_score * "
@@ -938,7 +1941,7 @@ def main() -> None:
         "outputs": outputs,
     }
     write_json(output_dir / "manifest.json", manifest)
-    print(f"E3 mechanism pilot complete: {output_dir}", flush=True)
+    print(f"E3 formal mechanism analysis complete: {output_dir}", flush=True)
 
 
 if __name__ == "__main__":

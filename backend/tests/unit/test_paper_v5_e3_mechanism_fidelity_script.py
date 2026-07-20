@@ -40,6 +40,8 @@ def sample_score_frame() -> pd.DataFrame:
                         "capability_id": "trend",
                         "intensity": intensity,
                         "paired_group_id": paired_group,
+                        "round_index": 0,
+                        "sample_index": int(paired_group[-1]),
                         "master_sample_id": (
                             f"{model_id}-{paired_group}-{intensity}"
                         ),
@@ -155,3 +157,117 @@ def test_covariate_ablation_loader_requires_matching_oracle_context(tmp_path):
     )
 
     assert result["model"]["sample"]["forecast"] == [[0.0], [0.0]]
+
+
+def test_model_capability_coverage_keeps_unsupported_as_na():
+    samples = {
+        "u": {
+            "dataset_id": "dataset",
+            "task_id": "univariate",
+            "capability_id": "trend",
+        },
+        "m": {
+            "dataset_id": "panel",
+            "task_id": "common_factor",
+            "capability_id": "common_factor",
+        },
+    }
+    selections = {
+        "univariate-only": {
+            "u": {
+                "dataset_id": "dataset",
+                "task_id": "univariate",
+                "capability_id": "trend",
+            }
+        }
+    }
+
+    coverage = e3.model_capability_coverage(
+        samples,
+        selections,
+        ["univariate-only"],
+    )
+
+    trend = coverage[coverage["capability_id"] == "trend"].iloc[0]
+    common = coverage[
+        coverage["capability_id"] == "common_factor"
+    ].iloc[0]
+    assert bool(trend["supported"])
+    assert not bool(common["supported"])
+    assert common["unsupported_reason"] == "model_input_contract_unsupported"
+
+
+def test_bootstrap_pair_states_use_metric_specific_equivalence_scales():
+    rows = []
+    for model_id, mase, mechanism in (
+        ("left", 0.8, 0.61),
+        ("right", 1.0, 0.60),
+    ):
+        for group_index in range(12):
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "dataset_id": "dataset",
+                    "task_id": "univariate",
+                    "capability_id": "trend",
+                    "paired_group_id": f"g{group_index:02d}",
+                    "round_index": 0,
+                    "sample_index": group_index,
+                    "mase_group_mean": mase,
+                    "blind_mase_group_mean": 1.0,
+                    "level_mechanism_group_mean": mechanism,
+                    "dose_response_score": mechanism,
+                    "formal_score_eligible": True,
+                }
+            )
+    components = pd.DataFrame(rows)
+
+    intervals, pairs = e3.bootstrap_profile_statistics(
+        components,
+        bank_id="all",
+        bootstrap_replicates=100,
+        bootstrap_seed=7,
+        ci_level=0.95,
+        equivalence_margins=(0.02,),
+    )
+
+    assert len(intervals) == 6
+    primary = pairs.set_index("metric_id")
+    assert primary.loc["mase", "effect_scale"] == "relative"
+    assert primary.loc["mase", "state"] == "left_better"
+    assert primary.loc["mechanism", "effect_scale"] == "absolute"
+    assert primary.loc["mechanism", "state"] == "equivalent"
+    assert primary.loc["ability", "state"] == "equivalent"
+
+
+def test_split_half_keeps_whole_paired_groups():
+    rows = []
+    for model_id in ("left", "right"):
+        for group_index in range(8):
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "dataset_id": "dataset",
+                    "task_id": "univariate",
+                    "capability_id": "trend",
+                    "paired_group_id": f"g{group_index:02d}",
+                    "round_index": 0,
+                    "sample_index": group_index,
+                }
+            )
+    split = e3.deterministic_split_components(
+        pd.DataFrame(rows),
+        split_size=4,
+    )
+
+    counts = split.groupby(["bank_id", "model_id"])[
+        "paired_group_id"
+    ].nunique()
+    assert (counts == 4).all()
+    first = set(
+        split.loc[split["bank_id"] == "first", "paired_group_id"]
+    )
+    second = set(
+        split.loc[split["bank_id"] == "second", "paired_group_id"]
+    )
+    assert first.isdisjoint(second)
