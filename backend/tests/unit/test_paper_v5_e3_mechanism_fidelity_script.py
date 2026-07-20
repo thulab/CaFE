@@ -159,6 +159,31 @@ def test_covariate_ablation_loader_requires_matching_oracle_context(tmp_path):
     assert result["model"]["sample"]["forecast"] == [[0.0], [0.0]]
 
 
+def test_covariate_ablation_input_record_freezes_manifest_and_files(
+    tmp_path,
+):
+    (tmp_path / "model.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "ablation": "future_covariates_zero",
+                "models": ["model"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    record = e3.covariate_ablation_input_record(
+        tmp_path,
+        counterfactual_predictions={"model": {"sample": {}}},
+    )
+
+    assert record is not None
+    assert len(record["manifest_sha256"]) == 64
+    assert len(record["files"]["model.jsonl"]["sha256"]) == 64
+
+
 def test_model_capability_coverage_keeps_unsupported_as_na():
     samples = {
         "u": {

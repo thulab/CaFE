@@ -33,7 +33,10 @@ from app.services.synthetic_mechanism_fidelity import (  # noqa: E402
 SCHEMA_VERSION = "paper_v6_e3_mechanism_fidelity.v2"
 EXPERIMENT_ID = "E3_mechanism_fidelity"
 DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v6/E2_dynamic_stability"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp/v6/E3_mechanism_fidelity"
+DEFAULT_OUTPUT_DIR = (
+    REPO_ROOT
+    / "runtime/paper_exp/v6/E3_mechanism_fidelity/formal_analysis"
+)
 DEFAULT_PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/"
@@ -423,6 +426,45 @@ def load_covariate_ablation_predictions(
             )
         result[model_id] = model_rows
     return result
+
+
+def covariate_ablation_input_record(
+    directory: Path | None,
+    *,
+    counterfactual_predictions: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any] | None:
+    if directory is None:
+        return None
+    manifest_path = directory / "manifest.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError(
+            f"missing covariate ablation manifest: {manifest_path}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if str(manifest.get("ablation")) != "future_covariates_zero":
+        raise ValueError("covariate ablation manifest has a wrong intervention")
+    expected_models = sorted(counterfactual_predictions)
+    manifest_models = sorted(
+        str(value) for value in manifest.get("models", [])
+    )
+    if manifest_models != expected_models:
+        raise ValueError(
+            "covariate ablation manifest model set does not match loaded files"
+        )
+    files: dict[str, Any] = {}
+    for model_id in expected_models:
+        path = directory / f"{safe_filename(model_id)}.jsonl"
+        files[path.name] = {
+            "model_id": model_id,
+            "size_bytes": path.stat().st_size,
+            "sha256": sha256_file(path),
+        }
+    return {
+        "directory": str(directory.resolve()),
+        "manifest_path": str(manifest_path.resolve()),
+        "manifest_sha256": sha256_file(manifest_path),
+        "files": files,
+    }
 
 
 def context_view(
@@ -1712,6 +1754,10 @@ def main() -> None:
         samples=samples,
         oracle_selections=oracle_selections,
     )
+    ablation_input = covariate_ablation_input_record(
+        args.covariate_ablation_predictions_dir,
+        counterfactual_predictions=counterfactual_predictions,
+    )
     sample_scores = evaluate_selected_predictions(
         samples,
         oracle_selections,
@@ -1917,6 +1963,25 @@ def main() -> None:
             if args.covariate_ablation_predictions_dir is not None
             else None
         ),
+        "source_inputs": {
+            "e2_sample_manifest": {
+                "path": str(
+                    (args.e2_dir / "sample_manifest.json").resolve()
+                ),
+                "sha256": sha256_file(
+                    args.e2_dir / "sample_manifest.json"
+                ),
+            },
+            "e2_inference_manifest": {
+                "path": str(
+                    (args.e2_dir / "inference_manifest.json").resolve()
+                ),
+                "sha256": sha256_file(
+                    args.e2_dir / "inference_manifest.json"
+                ),
+            },
+            "covariate_ablation": ablation_input,
+        },
     }
     write_json(output_dir / "summary.json", summary)
     outputs = {}
