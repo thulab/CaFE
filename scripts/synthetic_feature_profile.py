@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import math
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +76,202 @@ BOUNDED_FEATURES = {
     "avg_abs_covariate_target_corr",
     "future_abs_covariate_target_corr",
 }
+M5_KNOWN_FUTURE_COVARIATES = (
+    "day_of_week_sin",
+    "day_of_week_cos",
+    "event_count",
+    "snap",
+)
+M5_COVARIATE_PROVENANCE = (
+    "official calendar.csv fields fixed before the sales forecast issue time; "
+    "sell_price and derived price_change are excluded"
+)
+GEFCOM2014_WIND_NWP_COLUMNS = ("U10", "V10", "U100", "V100")
+GEFCOM2014_WIND_COVARIATE_PROVENANCE = (
+    "official TaskExpVars competition release joined to subsequently observed "
+    "targets by ZONEID and TIMESTAMP; forecasts are never stitched across releases"
+)
+PAPER_V7_SWISS_FACTOR_METER_INDICES = (0, 6, 12)
+PAPER_V7_GEFCOM2012_FACTOR_ZONE_INDICES = (0, 9, 19)
+PAPER_V7_SWISS_NWP_COLUMNS = (
+    "ghi_backwards",
+    "gni_backwards",
+    "relativehumidity",
+    "windspeed",
+    "winddirection",
+    "temperature",
+)
+PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS = (
+    "sin_hour",
+    "cos_hour",
+    "sin_day_of_week",
+    "cos_day_of_week",
+    "is_weekend",
+    "is_holiday",
+)
+PAPER_V7_SWISS_COVARIATE_PROVENANCE = (
+    "official Meteoblue 24-hour forecast cube; benchmark H48 repeats the "
+    "single latest vintage available at the last history origin to 30-minute "
+    "resolution and never stitches a later release"
+)
+PAPER_V7_GEFCOM2012_COVARIATE_PROVENANCE = (
+    "deterministic hour/day-of-week/weekend/official-holiday calendar fields; "
+    "observed temperature is excluded because it has no rolling issue-time vintage"
+)
+
+
+def file_sha256(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def read_paper_v7_processed_npz(
+    path: Path,
+    *,
+    expected_dataset_id: str,
+    required_arrays: tuple[str, ...],
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """Read one provenance-checked numeric-only Paper v7 processed asset."""
+
+    metadata_path = path.with_suffix(".metadata.json")
+    if not metadata_path.is_file():
+        raise FileNotFoundError(f"processed metadata not found: {metadata_path}")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if metadata.get("dataset_id") != expected_dataset_id:
+        raise ValueError(
+            f"processed dataset id mismatch: expected {expected_dataset_id!r}, "
+            f"got {metadata.get('dataset_id')!r}"
+        )
+    actual_hash = file_sha256(path)
+    expected_hash = str((metadata.get("output_npz") or {}).get("sha256") or "")
+    if not expected_hash or actual_hash != expected_hash:
+        raise ValueError(
+            f"processed NPZ hash mismatch for {path}: "
+            f"expected={expected_hash!r}, actual={actual_hash!r}"
+        )
+    with np.load(path, allow_pickle=False) as archive:
+        missing = sorted(set(required_arrays) - set(archive.files))
+        if missing:
+            raise ValueError(
+                f"processed NPZ {path} is missing arrays: {', '.join(missing)}"
+            )
+        arrays = {name: np.asarray(archive[name]).copy() for name in required_arrays}
+    row_counts = {array.shape[0] for array in arrays.values() if array.ndim > 0}
+    if len(row_counts) != 1:
+        raise ValueError(f"processed NPZ arrays have inconsistent rows: {row_counts}")
+    for name, array in arrays.items():
+        if array.dtype.hasobject:
+            raise ValueError(f"processed NPZ array {name!r} has object dtype")
+        if array.dtype.kind in "fc" and not np.isfinite(array).all():
+            raise ValueError(f"processed NPZ array {name!r} is non-finite")
+    timestamps = arrays.get("timestamps")
+    if timestamps is None or timestamps.dtype.kind != "M":
+        raise ValueError("processed NPZ timestamps must be datetime64")
+    if timestamps.size > 1 and np.any(np.diff(timestamps) <= np.timedelta64(0, "ns")):
+        raise ValueError("processed NPZ timestamps must be strictly increasing")
+    metadata["_processed_npz_sha256"] = actual_hash
+    metadata["_processed_metadata_sha256"] = file_sha256(metadata_path)
+    metadata["_processed_metadata_path"] = str(metadata_path)
+    return arrays, metadata
+
+
+def read_paper_v7_swiss_processed(
+    path: Path,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    arrays, metadata = read_paper_v7_processed_npz(
+        path,
+        expected_dataset_id="swiss_hierarchical_demand",
+        required_arrays=(
+            "timestamps",
+            "meters",
+            "aggregates",
+            "nwp_asof_timestamps",
+            "nwp_valid_timestamps",
+            "nwp_forecasts",
+        ),
+    )
+    if arrays["meters"].shape[1:] != (24,):
+        raise ValueError("Swiss processed meters must have shape [time, 24]")
+    if arrays["aggregates"].shape[1:] != (7,):
+        raise ValueError("Swiss processed aggregates must have shape [time, 7]")
+    if arrays["nwp_forecasts"].shape[1:] != (6, 24):
+        raise ValueError(
+            "Swiss processed NWP forecasts must have shape [time, 6, 24]"
+        )
+    if arrays["nwp_asof_timestamps"].dtype.kind != "M":
+        raise ValueError("Swiss NWP as-of timestamps must be datetime64")
+    valid = arrays["nwp_valid_timestamps"]
+    if valid.shape[1:] != (24,) or valid.dtype.kind != "M":
+        raise ValueError(
+            "Swiss NWP valid timestamps must have datetime64 shape [time, 24]"
+        )
+    if not np.array_equal(valid[:, 0], arrays["nwp_asof_timestamps"]):
+        raise ValueError("Swiss NWP lead-0 valid time must equal its as-of time")
+    if valid.shape[1] > 1 and not np.all(
+        np.diff(valid, axis=1) == np.timedelta64(1, "h")
+    ):
+        raise ValueError("Swiss NWP valid-time leads must increase hourly")
+    if list(metadata.get("nwp_variable_order") or ()) != list(
+        PAPER_V7_SWISS_NWP_COLUMNS
+    ):
+        raise ValueError("Swiss processed NWP variable order changed")
+    return arrays, metadata
+
+
+def read_paper_v7_gefcom2012_processed(
+    path: Path,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    arrays, metadata = read_paper_v7_processed_npz(
+        path,
+        expected_dataset_id="gefcom2012_load",
+        required_arrays=(
+            "timestamps",
+            "segment_ids",
+            "zones",
+            "total",
+            "canonical_hierarchy",
+            "calendar_covariates",
+        ),
+    )
+    if arrays["zones"].shape[1:] != (20,):
+        raise ValueError("GEFCom2012 processed zones must have shape [time, 20]")
+    if arrays["canonical_hierarchy"].shape[1:] != (3,):
+        raise ValueError(
+            "GEFCom2012 canonical hierarchy must have shape [time, 3]"
+        )
+    if arrays["calendar_covariates"].shape[1:] != (6,):
+        raise ValueError(
+            "GEFCom2012 calendar covariates must have shape [time, 6]"
+        )
+    segment_ids = arrays["segment_ids"]
+    if segment_ids.ndim != 1 or segment_ids.dtype.kind not in "iu":
+        raise ValueError("GEFCom2012 segment_ids must be a numeric integer vector")
+    unique_segments = np.unique(segment_ids)
+    if not np.array_equal(
+        unique_segments,
+        np.arange(len(unique_segments), dtype=unique_segments.dtype),
+    ) or np.any(np.diff(segment_ids) < 0):
+        raise ValueError("GEFCom2012 segment_ids must be ordered and contiguous")
+    timestamps = arrays["timestamps"]
+    for segment_id in unique_segments:
+        positions = np.flatnonzero(segment_ids == segment_id)
+        if positions.size == 0 or not np.array_equal(
+            positions,
+            np.arange(positions[0], positions[-1] + 1),
+        ):
+            raise ValueError("GEFCom2012 segment rows must form contiguous blocks")
+        if positions.size > 1 and not np.all(
+            np.diff(timestamps[positions]) == np.timedelta64(1, "h")
+        ):
+            raise ValueError("GEFCom2012 timestamps must be hourly within each segment")
+    if list(metadata.get("calendar_covariate_columns") or ()) != list(
+        PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS
+    ):
+        raise ValueError("GEFCom2012 calendar covariate order changed")
+    return arrays, metadata
 
 
 @dataclass(frozen=True)
@@ -633,11 +831,6 @@ def profile_m5_covariate(
     if active_sales.empty:
         active_sales = sales.reset_index(drop=True)
     selected_sales = sample_frame_evenly(active_sales, max_series)
-    prices = read_m5_prices(path, selected_sales[["store_id", "item_id"]].drop_duplicates())
-    price_lookup = {
-        (store_id, item_id): group.set_index("wm_yr_wk")["sell_price"].astype(float)
-        for (store_id, item_id), group in prices.groupby(["store_id", "item_id"])
-    }
     candidates = [
         (series_index, start)
         for series_index in range(len(selected_sales))
@@ -652,7 +845,6 @@ def profile_m5_covariate(
         covariates = m5_covariate_matrix(
             calendar,
             state_id=str(row["state_id"]),
-            price_series=price_lookup.get((row["store_id"], row["item_id"])),
         )
         window = target[start : start + spec.length, None]
         covariate_window = covariates[start : start + spec.length]
@@ -695,7 +887,87 @@ def profile_m5_covariate(
         "series_count": int(len(active_sales)),
         "used_series_count": len(used_series_ids),
         "target_columns": ["sales"],
-        "covariate_columns": ["event_count", "snap", "sell_price", "price_change"],
+        "covariate_columns": list(M5_KNOWN_FUTURE_COVARIATES),
+        "covariate_provenance": M5_COVARIATE_PROVENANCE,
+        "features": quantiles,
+        "target_feature_caps": caps,
+    }
+
+
+def profile_m5_sibling_panel(
+    path: Path,
+    *,
+    context_length: int,
+    horizon: int,
+    stride: int | None = None,
+    max_windows: int | None = None,
+    max_groups: int = 20,
+    target_dim: int = 3,
+    season_length: int | None = 7,
+    domain: str | None = "retail",
+    dataset_name: str | None = None,
+    target_features: list[str] | None = None,
+    target_max_multiplier: float = 2.0,
+) -> dict[str, Any]:
+    _calendar, sales, day_columns = read_m5_calendar_and_sales(path)
+    panels = sample_sequence_evenly(
+        m5_sibling_leaf_panels(
+            sales,
+            day_columns,
+            target_dim=target_dim,
+        ),
+        max_groups,
+    )
+    resolved_stride = stride or horizon
+    spec = WindowSpec(context_length, horizon, resolved_stride)
+    candidates = [
+        (group_index, start)
+        for group_index, (_group_id, _item_ids, values) in enumerate(panels)
+        for start in window_starts(values.shape[0], spec)
+    ]
+    candidates = limit_candidates(candidates, max_windows)
+    feature_rows: list[dict[str, float]] = []
+    used_group_ids: set[int] = set()
+    for group_index, start in candidates:
+        values = panels[group_index][2]
+        window = values[start : start + spec.length]
+        if window.shape != (spec.length, target_dim) or not np.isfinite(window).all():
+            continue
+        features = feature_vector(window, season_length=season_length)
+        features["group_index"] = float(group_index)
+        features["window_start"] = float(start)
+        feature_rows.append(features)
+        used_group_ids.add(group_index)
+
+    feature_names = [
+        name for name in DEFAULT_FEATURES if any(name in row for row in feature_rows)
+    ]
+    quantiles = summarize_feature_rows(feature_rows, feature_names)
+    caps = suggested_target_caps(
+        quantiles,
+        target_features=target_features
+        or ["pca_top1_explained", "avg_abs_target_corr"],
+        multiplier=target_max_multiplier,
+    )
+    return {
+        "schema_version": "synthetic_feature_profile.v1",
+        "dataset": dataset_name or "M5 daily sibling leaf panel",
+        "source_path": str(path),
+        "bucket": {
+            "domain": domain or "retail",
+            "frequency": "d",
+            "context_length": context_length,
+            "horizon": horizon,
+            "target_dim": target_dim,
+            "covariate_dim": 0,
+            "season_length": season_length,
+        },
+        "window_count": len(feature_rows),
+        "candidate_window_count": len(candidates),
+        "series_count": len(panels),
+        "used_series_count": len(used_group_ids),
+        "target_columns": [f"sibling_leaf_{index}" for index in range(target_dim)],
+        "panel_semantics": "disjoint item leaves sharing one store_id and dept_id",
         "features": quantiles,
         "target_feature_caps": caps,
     }
@@ -935,8 +1207,18 @@ def m5_covariate_matrix(
     calendar: pd.DataFrame,
     *,
     state_id: str,
-    price_series: pd.Series | None,
 ) -> np.ndarray:
+    if "date" in calendar.columns:
+        dates = pd.to_datetime(calendar["date"], errors="raise")
+        day_of_week = dates.dt.dayofweek.to_numpy(dtype=float)
+    elif "wday" in calendar.columns:
+        day_of_week = (
+            pd.to_numeric(calendar["wday"], errors="raise").to_numpy(dtype=float)
+            - 1.0
+        )
+    else:
+        day_of_week = np.arange(len(calendar), dtype=float) % 7.0
+    day_angle = 2.0 * np.pi * day_of_week / 7.0
     event_count = (
         calendar[[column for column in ("event_name_1", "event_name_2") if column in calendar.columns]]
         .notna()
@@ -945,23 +1227,49 @@ def m5_covariate_matrix(
     )
     snap_column = f"snap_{state_id}"
     snap = calendar[snap_column].to_numpy(dtype=float) if snap_column in calendar.columns else np.zeros(len(calendar))
-    if price_series is None or price_series.empty:
-        price = pd.Series(np.zeros(len(calendar), dtype=float))
-    else:
-        mapped = [float(price_series.get(week, np.nan)) for week in calendar["wm_yr_wk"].tolist()]
-        price = pd.Series(mapped, dtype=float).ffill().bfill()
-        if price.isna().any():
-            fill_value = float(price.dropna().median()) if price.notna().any() else 0.0
-            price = price.fillna(fill_value)
-    price_change = price.diff().fillna(0.0)
     return np.column_stack(
         [
+            np.sin(day_angle),
+            np.cos(day_angle),
             event_count,
             snap,
-            price.to_numpy(dtype=float),
-            price_change.to_numpy(dtype=float),
         ]
     )
+
+
+def m5_sibling_leaf_panels(
+    sales: pd.DataFrame,
+    day_columns: list[str],
+    *,
+    target_dim: int = 3,
+) -> list[tuple[str, tuple[str, ...], np.ndarray]]:
+    """Return disjoint sibling leaf panels without aggregate target leakage."""
+
+    if target_dim < 2:
+        raise ValueError("M5 sibling panels require target_dim >= 2")
+    panels: list[tuple[str, tuple[str, ...], np.ndarray]] = []
+    for (store_id, dept_id), siblings in sales.groupby(
+        ["store_id", "dept_id"],
+        sort=True,
+    ):
+        active = siblings.loc[siblings[day_columns].sum(axis=1) > 0].copy()
+        if len(active) < target_dim:
+            continue
+        active = active.sort_values(["item_id", "id"], kind="stable")
+        for start in range(0, len(active) - target_dim + 1, target_dim):
+            selected = active.iloc[start : start + target_dim]
+            item_ids = tuple(str(value) for value in selected["item_id"].tolist())
+            if len(set(item_ids)) != target_dim:
+                continue
+            values = selected[day_columns].to_numpy(dtype=float).T
+            panels.append(
+                (
+                    f"{store_id}:{dept_id}:chunk:{start // target_dim}",
+                    item_ids,
+                    values,
+                )
+            )
+    return panels
 
 
 def m5_hierarchy_values(sales: pd.DataFrame, day_columns: list[str], group: tuple[str, str]) -> np.ndarray:
@@ -1031,6 +1339,214 @@ def read_gefcom2014_load_frame(path: Path, *, task: int) -> tuple[pd.DataFrame, 
     with zipfile.ZipFile(io.BytesIO(nested_data)) as nested:
         frame, source_name = read_gefcom2014_load_frame_from_archive(nested, task=task)
     return frame, f"{nested_name}:{source_name}"
+
+
+def gefcom2014_wind_archive_bytes(path: Path) -> bytes:
+    """Return the official Wind track zip, accepting the full or track archive."""
+
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        if any(name.startswith("Wind/Task ") for name in names):
+            return path.read_bytes()
+        nested_name = first_matching_name(names, suffix="GEFCom2014-W_V2.zip")
+        return archive.read(nested_name)
+
+
+def read_gefcom2014_wind_nested_frames(
+    archive: zipfile.ZipFile,
+    *,
+    task: int,
+    predictors: bool,
+) -> dict[int, pd.DataFrame]:
+    nested_name = (
+        f"Wind/Task {task}/TaskExpVars{task}_W_Zone1_10.zip"
+        if predictors
+        else f"Wind/Task {task}/Task{task}_W_Zone1_10.zip"
+    )
+    if nested_name not in archive.namelist():
+        raise ValueError(
+            f"GEFCom2014 Wind task {task} is missing "
+            f"{'TaskExpVars' if predictors else 'target training'} archive"
+        )
+    with zipfile.ZipFile(io.BytesIO(archive.read(nested_name))) as nested:
+        csv_names = sorted(
+            name
+            for name in nested.namelist()
+            if name.lower().endswith(".csv")
+        )
+        frames: dict[int, pd.DataFrame] = {}
+        required = {
+            "ZONEID",
+            "TIMESTAMP",
+            *GEFCOM2014_WIND_NWP_COLUMNS,
+        }
+        if not predictors:
+            required.add("TARGETVAR")
+        for csv_name in csv_names:
+            with nested.open(csv_name) as handle:
+                frame = pd.read_csv(handle)
+            missing = sorted(required - set(frame.columns))
+            if missing:
+                raise ValueError(
+                    f"GEFCom2014 Wind {csv_name} is missing columns: "
+                    + ", ".join(missing)
+                )
+            zone_values = pd.to_numeric(frame["ZONEID"], errors="raise")
+            if zone_values.nunique() != 1:
+                raise ValueError(f"GEFCom2014 Wind {csv_name} mixes zones")
+            zone_id = int(zone_values.iloc[0])
+            parsed = pd.DataFrame(
+                {
+                    "TIMESTAMP": pd.to_datetime(
+                        frame["TIMESTAMP"],
+                        format="%Y%m%d %H:%M",
+                        errors="raise",
+                    ),
+                    **{
+                        column: pd.to_numeric(frame[column], errors="coerce")
+                        for column in (
+                            *(("TARGETVAR",) if not predictors else ()),
+                            *GEFCOM2014_WIND_NWP_COLUMNS,
+                        )
+                    },
+                }
+            ).sort_values("TIMESTAMP").reset_index(drop=True)
+            if parsed["TIMESTAMP"].duplicated().any():
+                raise ValueError(
+                    f"GEFCom2014 Wind task {task} zone {zone_id} duplicates timestamps"
+                )
+            deltas = parsed["TIMESTAMP"].diff().dropna()
+            if not deltas.empty and not bool((deltas == pd.Timedelta(hours=1)).all()):
+                raise ValueError(
+                    f"GEFCom2014 Wind task {task} zone {zone_id} is not hourly"
+                )
+            frames[zone_id] = parsed
+    if len(frames) != 10:
+        raise ValueError(
+            f"GEFCom2014 Wind task {task} expected 10 zones, got {len(frames)}"
+        )
+    return frames
+
+
+def read_gefcom2014_wind_training_frames(
+    path: Path,
+    *,
+    task: int,
+) -> dict[int, pd.DataFrame]:
+    with zipfile.ZipFile(io.BytesIO(gefcom2014_wind_archive_bytes(path))) as archive:
+        return read_gefcom2014_wind_nested_frames(
+            archive,
+            task=task,
+            predictors=False,
+        )
+
+
+def read_gefcom2014_wind_forecast_releases(
+    path: Path,
+    *,
+    minimum_future_steps: int,
+) -> list[dict[str, Any]]:
+    """Build issue-time-valid NWP/target pairs from consecutive competition tasks."""
+
+    if minimum_future_steps < 1:
+        raise ValueError("minimum_future_steps must be positive")
+    with zipfile.ZipFile(io.BytesIO(gefcom2014_wind_archive_bytes(path))) as archive:
+        names = set(archive.namelist())
+        task_numbers = sorted(
+            {
+                int(match.group(1))
+                for name in names
+                if (
+                    match := re.fullmatch(
+                        r"Wind/Task (\d+)/TaskExpVars\1_W_Zone1_10\.zip",
+                        name,
+                    )
+                )
+            }
+        )
+        training_cache: dict[int, dict[int, pd.DataFrame]] = {}
+
+        def training(task: int) -> dict[int, pd.DataFrame]:
+            if task not in training_cache:
+                training_cache[task] = read_gefcom2014_wind_nested_frames(
+                    archive,
+                    task=task,
+                    predictors=False,
+                )
+            return training_cache[task]
+
+        releases: list[dict[str, Any]] = []
+        for task in task_numbers:
+            next_target_name = (
+                f"Wind/Task {task + 1}/Task{task + 1}_W_Zone1_10.zip"
+            )
+            if next_target_name not in names:
+                continue
+            history = training(task)
+            realized = training(task + 1)
+            predictors = read_gefcom2014_wind_nested_frames(
+                archive,
+                task=task,
+                predictors=True,
+            )
+            future: dict[int, pd.DataFrame] = {}
+            release_valid_start: pd.Timestamp | None = None
+            release_valid_end: pd.Timestamp | None = None
+            complete = True
+            for zone_id in sorted(predictors):
+                forecast = predictors[zone_id]
+                actual = realized[zone_id][["TIMESTAMP", "TARGETVAR"]]
+                joined = forecast.merge(
+                    actual,
+                    on="TIMESTAMP",
+                    how="left",
+                    validate="one_to_one",
+                )
+                expected_start = history[zone_id]["TIMESTAMP"].iloc[-1] + pd.Timedelta(
+                    hours=1
+                )
+                if (
+                    len(joined) < minimum_future_steps
+                    or joined["TIMESTAMP"].iloc[0] != expected_start
+                    or joined.iloc[:minimum_future_steps].isna().any().any()
+                ):
+                    complete = False
+                    break
+                zone_start = joined["TIMESTAMP"].iloc[0]
+                zone_end = joined["TIMESTAMP"].iloc[-1]
+                if release_valid_start is None:
+                    release_valid_start = zone_start
+                    release_valid_end = zone_end
+                elif (
+                    zone_start != release_valid_start
+                    or zone_end != release_valid_end
+                ):
+                    complete = False
+                    break
+                future[zone_id] = joined
+            if complete and len(future) == 10:
+                releases.append(
+                    {
+                        "task": task,
+                        "release_id": f"GEFCom2014-W-TaskExpVars-{task}",
+                        "valid_start": release_valid_start,
+                        "valid_end": release_valid_end,
+                        "history": history,
+                        "future": future,
+                        "available_future_steps": min(
+                            len(frame) for frame in future.values()
+                        ),
+                        "covariate_provenance": (
+                            GEFCOM2014_WIND_COVARIATE_PROVENANCE
+                        ),
+                    }
+                )
+    if not releases:
+        raise ValueError(
+            "GEFCom2014 Wind has no complete competition predictor release "
+            f"covering H={minimum_future_steps}; covariate view fails closed"
+        )
+    return releases
 
 
 def read_gefcom2014_solar_frames(

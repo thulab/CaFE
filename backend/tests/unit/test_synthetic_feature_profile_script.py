@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import json
 import math
 import sys
 import zipfile
@@ -9,6 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 SCRIPT_PATH = Path(__file__).parents[3] / "scripts" / "synthetic_feature_profile.py"
@@ -241,8 +244,54 @@ def test_profile_m5_zip_can_extract_covariate_features(tmp_path):
 
     assert profile["bucket"]["frequency"] == "d"
     assert profile["bucket"]["covariate_dim"] == 4
+    assert profile["covariate_columns"] == [
+        "day_of_week_sin",
+        "day_of_week_cos",
+        "event_count",
+        "snap",
+    ]
+    assert "sell_price" not in profile["covariate_columns"]
+    assert "price_change" not in profile["covariate_columns"]
+    assert "fixed before" in profile["covariate_provenance"]
     assert profile["features"]["future_abs_covariate_target_corr"]["p50"] > 0
     assert profile["features"]["event_lift_abs"]["p50"] > 0
+
+
+def test_m5_sibling_panels_are_disjoint_leaf_targets() -> None:
+    profiler = load_profiler_module()
+    days = [f"d_{index}" for index in range(1, 9)]
+    rows = []
+    for item_index in range(7):
+        row = {
+            "id": f"ITEM_{item_index}_CA_1_validation",
+            "item_id": f"ITEM_{item_index}",
+            "dept_id": "HOBBIES_1",
+            "store_id": "CA_1",
+        }
+        row.update(
+            {
+                day: float(item_index + day_index + 1)
+                for day_index, day in enumerate(days)
+            }
+        )
+        rows.append(row)
+
+    panels = profiler.m5_sibling_leaf_panels(
+        pd.DataFrame(rows),
+        days,
+        target_dim=3,
+    )
+
+    assert len(panels) == 2
+    first_ids = set(panels[0][1])
+    second_ids = set(panels[1][1])
+    assert first_ids.isdisjoint(second_ids)
+    assert panels[0][2].shape == (len(days), 3)
+    assert panels[1][2].shape == (len(days), 3)
+    assert not np.allclose(
+        panels[0][2][:, 0] + panels[0][2][:, 1],
+        panels[0][2][:, 2],
+    )
 
 
 def test_profile_m5_zip_can_extract_hierarchy_features(tmp_path):
@@ -327,6 +376,122 @@ def test_profile_gefcom2014_load_zip_can_extract_temperature_covariates(tmp_path
     assert profile["bucket"]["frequency"] == "h"
     assert profile["bucket"]["covariate_dim"] == 2
     assert profile["features"]["future_abs_covariate_target_corr"]["p50"] > 0.5
+
+
+def _wind_nested_zone_zip(
+    *,
+    task: int,
+    timestamps: pd.DatetimeIndex,
+    predictors_only: bool,
+) -> bytes:
+    payload = io.BytesIO()
+    prefix = (
+        f"TaskExpVars{task}_W_Zone1_10"
+        if predictors_only
+        else f"Task{task}_W_Zone1_10"
+    )
+    with zipfile.ZipFile(payload, "w") as archive:
+        for zone_id in range(1, 11):
+            index = np.arange(len(timestamps), dtype=float)
+            frame = pd.DataFrame(
+                {
+                    "ZONEID": zone_id,
+                    "TIMESTAMP": timestamps.strftime("%Y%m%d %H:%M"),
+                    "U10": 1_000.0 + zone_id + index if predictors_only else zone_id + index,
+                    "V10": 2_000.0 + zone_id + index if predictors_only else 2 * zone_id + index,
+                    "U100": 3_000.0 + zone_id + index if predictors_only else 3 * zone_id + index,
+                    "V100": 4_000.0 + zone_id + index if predictors_only else 4 * zone_id + index,
+                }
+            )
+            if not predictors_only:
+                frame.insert(
+                    2,
+                    "TARGETVAR",
+                    zone_id + np.sin(index / 2.0),
+                )
+            archive.writestr(
+                f"{prefix}/{prefix.rsplit('_Zone1_10', 1)[0]}_Zone{zone_id}.csv",
+                frame.to_csv(index=False),
+            )
+    return payload.getvalue()
+
+
+def make_wind_track_fixture(tmp_path, *, predictor_steps: int = 6) -> Path:
+    start = pd.Timestamp("2026-01-01 01:00")
+    history = pd.date_range(start, periods=12, freq="h")
+    predictor = pd.date_range(
+        history[-1] + pd.Timedelta(hours=1),
+        periods=predictor_steps,
+        freq="h",
+    )
+    wind_payload = io.BytesIO()
+    with zipfile.ZipFile(wind_payload, "w") as wind:
+        wind.writestr(
+            "Wind/Task 1/Task1_W_Zone1_10.zip",
+            _wind_nested_zone_zip(
+                task=1,
+                timestamps=history,
+                predictors_only=False,
+            ),
+        )
+        wind.writestr(
+            "Wind/Task 1/TaskExpVars1_W_Zone1_10.zip",
+            _wind_nested_zone_zip(
+                task=1,
+                timestamps=predictor,
+                predictors_only=True,
+            ),
+        )
+        wind.writestr(
+            "Wind/Task 2/Task2_W_Zone1_10.zip",
+            _wind_nested_zone_zip(
+                task=2,
+                timestamps=history.append(predictor),
+                predictors_only=False,
+            ),
+        )
+    outer_path = tmp_path / "GEFCom2014.zip"
+    with zipfile.ZipFile(outer_path, "w") as outer:
+        outer.writestr(
+            "GEFCom2014 Data/GEFCom2014-W_V2.zip",
+            wind_payload.getvalue(),
+        )
+    return outer_path
+
+
+def test_gefcom_wind_release_uses_task_predictors_and_next_observed_targets(
+    tmp_path,
+) -> None:
+    profiler = load_profiler_module()
+    path = make_wind_track_fixture(tmp_path, predictor_steps=6)
+
+    releases = profiler.read_gefcom2014_wind_forecast_releases(
+        path,
+        minimum_future_steps=4,
+    )
+
+    assert len(releases) == 1
+    release = releases[0]
+    assert release["release_id"] == "GEFCom2014-W-TaskExpVars-1"
+    assert release["available_future_steps"] == 6
+    assert release["future"][1]["U10"].iloc[0] == 1_001.0
+    assert release["future"][1]["TARGETVAR"].iloc[0] == pytest.approx(
+        1.0 + math.sin(6.0)
+    )
+    assert "never stitched" in release["covariate_provenance"]
+
+
+def test_gefcom_wind_release_fails_closed_when_horizon_is_incomplete(
+    tmp_path,
+) -> None:
+    profiler = load_profiler_module()
+    path = make_wind_track_fixture(tmp_path, predictor_steps=3)
+
+    with pytest.raises(ValueError, match="fails closed"):
+        profiler.read_gefcom2014_wind_forecast_releases(
+            path,
+            minimum_future_steps=4,
+        )
 
 
 def test_profile_tsf_panel_summarizes_multitarget_features(tmp_path):
@@ -497,3 +662,87 @@ def test_profile_tsf_max_windows_is_global(tmp_path):
 
     assert profile["candidate_window_count"] == 5
     assert profile["window_count"] == 5
+
+
+def test_paper_v7_processed_reader_verifies_numeric_npz_and_hash(tmp_path):
+    profiler = load_profiler_module()
+    path = tmp_path / "fixture.npz"
+    np.savez_compressed(
+        path,
+        timestamps=np.asarray(
+            ["2026-01-01T00:00:00", "2026-01-01T01:00:00"],
+            dtype="datetime64[ns]",
+        ),
+        values=np.asarray([[1.0], [2.0]], dtype=float),
+    )
+    metadata = {
+        "dataset_id": "fixture",
+        "output_npz": {"sha256": profiler.file_sha256(path)},
+    }
+    path.with_suffix(".metadata.json").write_text(
+        json.dumps(metadata),
+        encoding="utf-8",
+    )
+
+    arrays, loaded_metadata = profiler.read_paper_v7_processed_npz(
+        path,
+        expected_dataset_id="fixture",
+        required_arrays=("timestamps", "values"),
+    )
+
+    assert arrays["values"].shape == (2, 1)
+    assert not arrays["values"].dtype.hasobject
+    assert loaded_metadata["_processed_npz_sha256"] == profiler.file_sha256(
+        path
+    )
+
+
+def test_paper_v7_gefcom_reader_enforces_hourly_segments(tmp_path):
+    profiler = load_profiler_module()
+    path = tmp_path / "gefcom2012_load.npz"
+    timestamps = np.asarray(
+        [
+            "2026-01-01T00:00:00",
+            "2026-01-01T01:00:00",
+            "2026-01-03T00:00:00",
+            "2026-01-03T01:00:00",
+        ],
+        dtype="datetime64[ns]",
+    )
+    zones = np.arange(80, dtype=float).reshape(4, 20)
+
+    def write_fixture(segment_ids: np.ndarray) -> None:
+        np.savez_compressed(
+            path,
+            timestamps=timestamps,
+            segment_ids=segment_ids,
+            zones=zones,
+            total=zones.sum(axis=1),
+            canonical_hierarchy=np.column_stack(
+                [
+                    zones.sum(axis=1),
+                    zones[:, :10].sum(axis=1),
+                    zones[:, 10:].sum(axis=1),
+                ]
+            ),
+            calendar_covariates=np.zeros((4, 6)),
+        )
+        metadata = {
+            "dataset_id": "gefcom2012_load",
+            "calendar_covariate_columns": list(
+                profiler.PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS
+            ),
+            "output_npz": {"sha256": profiler.file_sha256(path)},
+        }
+        path.with_suffix(".metadata.json").write_text(
+            json.dumps(metadata),
+            encoding="utf-8",
+        )
+
+    write_fixture(np.asarray([0, 0, 1, 1], dtype=np.int32))
+    arrays, _metadata = profiler.read_paper_v7_gefcom2012_processed(path)
+    assert arrays["segment_ids"].tolist() == [0, 0, 1, 1]
+
+    write_fixture(np.asarray([0, 0, 0, 0], dtype=np.int32))
+    with pytest.raises(ValueError, match="hourly within each segment"):
+        profiler.read_paper_v7_gefcom2012_processed(path)

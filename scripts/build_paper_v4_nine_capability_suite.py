@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build dataset-local paper-v4 profiles and qualify supported generators.
+"""Build dataset-local Paper v7 profiles and qualify supported generators.
 
 The central invariant is pairing: a synthetic task is generated once at L=504,
 H=48 and the L={96,168,336,504} benchmark views are suffixes of that same
@@ -72,9 +72,19 @@ from run_synthetic_v2_near_distance_calibration import (  # noqa: E402
     standardize_target,
     thresholds_from_split,
 )
+from synthetic_feature_profile import (  # noqa: E402
+    GEFCOM2014_WIND_COVARIATE_PROVENANCE,
+    GEFCOM2014_WIND_NWP_COLUMNS,
+    M5_COVARIATE_PROVENANCE,
+    M5_KNOWN_FUTURE_COVARIATES,
+    PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS,
+    PAPER_V7_GEFCOM2012_COVARIATE_PROVENANCE,
+    PAPER_V7_SWISS_COVARIATE_PROVENANCE,
+    PAPER_V7_SWISS_NWP_COLUMNS,
+)
 
 
-SCHEMA_VERSION = "paper_v4_nine_capability_suite.v3"
+SCHEMA_VERSION = "paper_v7_nine_capability_suite.v1"
 TASK_VIEW_ID_SEPARATOR = "::"
 CONTEXT_LENGTHS = (96, 168, 336, 504)
 MAX_CONTEXT_LENGTH = max(CONTEXT_LENGTHS)
@@ -83,10 +93,10 @@ VALIDATION_EMBARGO = 48
 MASTER_LOADER_HORIZON = HORIZON + VALIDATION_EMBARGO
 DEFAULT_DATA_DIR = REPO_ROOT / "runtime/research"
 DEFAULT_GIFT_EVAL_DIR = Path.home() / "xmy/gift-eval"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp/v4/01_nine_capability_suite"
+DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp/v7/01_nine_capability_suite"
 PROTOCOL_PATH = (
     REPO_ROOT
-    / "docs/superpowers/specs/2026-07-18-paper-v4-nine-capability-profile-and-generation-protocol.md"
+    / "docs/superpowers/specs/2026-07-21-paper-v7-structured-dataset-expansion-protocol.md"
 )
 DEFAULT_MAX_WINDOWS_PER_DATASET = 120
 DEFAULT_CALIBRATION_SAMPLES = 16
@@ -100,6 +110,37 @@ REAL_TOLERANCE_UPPER_MULTIPLIER = 1.20
 REAL_DIAGNOSTIC_QUANTILE_LEVELS = (0.05, 0.10, 0.30, 0.50, 0.70, 0.90, 0.95)
 MIN_TARGET_SPAN_RELATIVE_TO_MAGNITUDE = 1e-6
 MIN_ADJACENT_GAP_FRACTION_OF_SPAN = 0.02
+SOURCE_ROW_AUDIT_FIELDS = (
+    "native_target_dim",
+    "canonical_target_dim",
+    "sensitivity_target_dims",
+    "target_selection_policy",
+    "target_channel_indices",
+    "leaf_item_ids",
+    "panel_semantics",
+    "zone_ids",
+    "known_future_covariates",
+    "covariate_provenance",
+    "forecast_release_id",
+    "forecast_release_valid_start",
+    "forecast_release_valid_end",
+    "forecast_window_valid_start",
+    "forecast_available_future_steps",
+    "forecast_stitching",
+    "issue_time",
+    "issue_time_semantics",
+    "source_segment_id",
+    "source_tail_excluded_steps",
+    "target_column_names",
+    "covariate_column_names",
+    "source_frequency",
+    "processed_npz_sha256",
+    "processed_metadata_sha256",
+    "source_provenance",
+    "hierarchy_provenance",
+    "benchmark_covariate_vintage_count",
+    "embargo_covariate_policy",
+)
 
 STRUCTURED_CAPABILITY_IDS = (
     "common_factor",
@@ -134,6 +175,14 @@ class RealSource:
     covariate_dim: int = 0
     hierarchy: str | None = None
     task: int = 1
+    native_target_dim: int | None = None
+    sensitivity_target_dims: tuple[int, ...] = ()
+    target_selection_policy: str | None = None
+    known_future_covariates: tuple[str, ...] = ()
+    covariate_provenance: str | None = None
+    target_column_names: tuple[str, ...] = ()
+    covariate_column_names: tuple[str, ...] = ()
+    hierarchy_provenance: str | None = None
 
 
 TaskViewKey = tuple[str, str]
@@ -250,6 +299,136 @@ UNIVARIATE_CALIBRATION_SOURCES = tuple(
 
 STRUCTURED_SOURCES = (
     RealSource(
+        "swiss_hierarchical_demand",
+        "Swiss Hierarchical Demand",
+        "Energy",
+        "common_factor",
+        "paper_v7_swiss",
+        "v7-p0-data/processed/swiss_hierarchical_demand.npz",
+        48,
+        "30min",
+        target_dim=3,
+        native_target_dim=24,
+        target_selection_policy=(
+            "three native meter leaves at canonical indices 0,6,12; aggregate "
+            "nodes are excluded from the common-factor target"
+        ),
+    ),
+    RealSource(
+        "swiss_hierarchical_demand",
+        "Swiss Hierarchical Demand",
+        "Energy",
+        "hierarchy",
+        "paper_v7_swiss",
+        "v7-p0-data/processed/swiss_hierarchical_demand.npz",
+        48,
+        "30min",
+        target_dim=3,
+        hierarchy="additive_first",
+        native_target_dim=24,
+        target_selection_policy="native all,S1,S2 strict hierarchy",
+        target_column_names=("all", "S1", "S2"),
+        hierarchy_provenance=(
+            "official native Swiss hierarchy, validated before and after "
+            "complete-bin 30-minute aggregation"
+        ),
+    ),
+    RealSource(
+        "swiss_hierarchical_demand",
+        "Swiss Hierarchical Demand",
+        "Energy",
+        "covariate",
+        "paper_v7_swiss",
+        "v7-p0-data/processed/swiss_hierarchical_demand.npz",
+        48,
+        "30min",
+        target_dim=1,
+        covariate_dim=6,
+        native_target_dim=24,
+        target_selection_policy="native all aggregate as the scalar load target",
+        target_column_names=("all",),
+        covariate_column_names=PAPER_V7_SWISS_NWP_COLUMNS,
+        known_future_covariates=PAPER_V7_SWISS_NWP_COLUMNS,
+        covariate_provenance=PAPER_V7_SWISS_COVARIATE_PROVENANCE,
+    ),
+    RealSource(
+        "gefcom2012_load",
+        "GEFCom2012 Load",
+        "Energy",
+        "common_factor",
+        "paper_v7_gefcom2012",
+        "v7-p0-data/processed/gefcom2012_load.npz",
+        24,
+        "h",
+        target_dim=3,
+        native_target_dim=20,
+        target_selection_policy=(
+            "three synchronized native load zones at canonical indices "
+            "0,9,19; total and subtotals are excluded"
+        ),
+        target_column_names=("zone_1", "zone_10", "zone_20"),
+    ),
+    RealSource(
+        "gefcom2012_load",
+        "GEFCom2012 Load",
+        "Energy",
+        "hierarchy",
+        "paper_v7_gefcom2012",
+        "v7-p0-data/processed/gefcom2012_load.npz",
+        24,
+        "h",
+        target_dim=3,
+        hierarchy="additive_first",
+        native_target_dim=20,
+        target_selection_policy=(
+            "canonical total,sum_zones_1_10,sum_zones_11_20 projection"
+        ),
+        target_column_names=(
+            "total",
+            "sum_zones_1_10",
+            "sum_zones_11_20",
+        ),
+        hierarchy_provenance=(
+            "derived two-subtotal projection; official solution Zone21 "
+            "validates the 20-zone total with zero residual"
+        ),
+    ),
+    RealSource(
+        "gefcom2012_load",
+        "GEFCom2012 Load",
+        "Energy",
+        "covariate",
+        "paper_v7_gefcom2012",
+        "v7-p0-data/processed/gefcom2012_load.npz",
+        24,
+        "h",
+        target_dim=1,
+        covariate_dim=6,
+        native_target_dim=20,
+        target_selection_policy="derived total as the scalar load target",
+        target_column_names=("total",),
+        covariate_column_names=PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS,
+        known_future_covariates=PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS,
+        covariate_provenance=PAPER_V7_GEFCOM2012_COVARIATE_PROVENANCE,
+    ),
+    RealSource(
+        "gift_ett1_h",
+        "ETT1/H",
+        "Energy",
+        "common_factor",
+        "gift_panel",
+        "ett1/H",
+        24,
+        "h",
+        target_dim=3,
+        native_target_dim=7,
+        sensitivity_target_dims=(7,),
+        target_selection_policy=(
+            "canonical first 3 channels in native Arrow order; all 7 channels "
+            "are reserved for a dimension-sensitivity view"
+        ),
+    ),
+    RealSource(
         "electricity_hourly_panel",
         "Electricity Hourly",
         "Energy",
@@ -294,7 +473,22 @@ STRUCTURED_SOURCES = (
         target_dim=3,
     ),
     RealSource(
-        "m5_daily_hierarchy",
+        "m5_daily",
+        "M5 Daily",
+        "Retail",
+        "common_factor",
+        "m5_sibling_panel",
+        "m5-forecasting-accuracy.zip",
+        7,
+        "D",
+        target_dim=3,
+        target_selection_policy=(
+            "three disjoint item leaves sharing store_id and dept_id; "
+            "aggregate rows are excluded"
+        ),
+    ),
+    RealSource(
+        "m5_daily",
         "M5 Daily",
         "Retail",
         "hierarchy",
@@ -306,6 +500,61 @@ STRUCTURED_SOURCES = (
         hierarchy="additive_first",
     ),
     RealSource(
+        "m5_daily",
+        "M5 Daily",
+        "Retail",
+        "covariate",
+        "m5_covariate",
+        "m5-forecasting-accuracy.zip",
+        7,
+        "D",
+        covariate_dim=4,
+        known_future_covariates=M5_KNOWN_FUTURE_COVARIATES,
+        covariate_provenance=M5_COVARIATE_PROVENANCE,
+    ),
+    RealSource(
+        "gefcom2014_wind",
+        "GEFCom2014 Wind",
+        "Energy",
+        "common_factor",
+        "gefcom2014_wind_panel",
+        "GEFCom2014.zip",
+        24,
+        "h",
+        target_dim=3,
+        task=15,
+        native_target_dim=10,
+        sensitivity_target_dims=(10,),
+        target_selection_policy=(
+            "disjoint canonical groups of 3 synchronized wind-farm zones; "
+            "all 10 zones are reserved for a dimension-sensitivity view"
+        ),
+    ),
+    RealSource(
+        "gefcom2014_wind",
+        "GEFCom2014 Wind",
+        "Energy",
+        "covariate",
+        "gefcom2014_wind_covariate",
+        "GEFCom2014.zip",
+        24,
+        "h",
+        target_dim=3,
+        covariate_dim=12,
+        task=0,
+        native_target_dim=10,
+        sensitivity_target_dims=(10,),
+        target_selection_policy=(
+            "same disjoint canonical 3-zone panels as common_factor"
+        ),
+        known_future_covariates=tuple(
+            f"target_{target_index}_{column}"
+            for target_index in range(3)
+            for column in GEFCOM2014_WIND_NWP_COLUMNS
+        ),
+        covariate_provenance=GEFCOM2014_WIND_COVARIATE_PROVENANCE,
+    ),
+    RealSource(
         "gefcom2014_load",
         "GEFCom2014 Load",
         "Energy",
@@ -315,6 +564,9 @@ STRUCTURED_SOURCES = (
         24,
         "h",
         covariate_dim=25,
+        covariate_provenance=(
+            "GEFCom2014 Load training weather columns; retained existing v6 view"
+        ),
     ),
     RealSource(
         "gefcom2014_solar",
@@ -326,13 +578,19 @@ STRUCTURED_SOURCES = (
         24,
         "h",
         covariate_dim=12,
+        covariate_provenance=(
+            "official GEFCom2014 Solar predictor file joined by zone/timestamp"
+        ),
     ),
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build and qualify the paper-v4 nine-capability four-lookback suite."
+        description=(
+            "Build and qualify the Paper v7 nine-capability four-lookback suite "
+            "(legacy builder filename retained for compatibility)."
+        )
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
@@ -388,6 +646,15 @@ def master_bucket_spec(source: RealSource, *, max_windows: int) -> BucketSpec:
         max_groups=20,
         task=source.task,
         synthetic_capabilities=TASK_DESIGNS[source.task_id].capabilities,
+        native_target_dim=source.native_target_dim,
+        sensitivity_target_dims=source.sensitivity_target_dims,
+        target_selection_policy=source.target_selection_policy,
+        known_future_covariates=source.known_future_covariates,
+        covariate_provenance=source.covariate_provenance,
+        frequency=source.frequency,
+        target_column_names=source.target_column_names,
+        covariate_column_names=source.covariate_column_names,
+        hierarchy_provenance=source.hierarchy_provenance,
     )
 
 
@@ -409,6 +676,15 @@ def dataset_bucket_spec(source: RealSource, context_length: int) -> BucketSpec:
         covariate_dim=source.covariate_dim,
         hierarchy=source.hierarchy,
         synthetic_capabilities=task.capabilities,
+        native_target_dim=source.native_target_dim,
+        sensitivity_target_dims=source.sensitivity_target_dims,
+        target_selection_policy=source.target_selection_policy,
+        known_future_covariates=source.known_future_covariates,
+        covariate_provenance=source.covariate_provenance,
+        frequency=source.frequency,
+        target_column_names=source.target_column_names,
+        covariate_column_names=source.covariate_column_names,
+        hierarchy_provenance=source.hierarchy_provenance,
     )
 
 
@@ -558,6 +834,13 @@ def load_source_views(
                     "master_row_index": row_index,
                 }
             )
+            view.update(
+                {
+                    field: row[field]
+                    for field in SOURCE_ROW_AUDIT_FIELDS
+                    if field in row
+                }
+            )
             views[context_length].append(view)
     return views, {
         "task_view_id": source_task_view_id(source),
@@ -566,6 +849,15 @@ def load_source_views(
             "task_view_id": source_task_view_id(source),
         },
         "asset_path": relative_or_absolute(path),
+        "source_audit": (
+            {
+                field: master_rows[0][field]
+                for field in SOURCE_ROW_AUDIT_FIELDS
+                if field in master_rows[0]
+            }
+            if master_rows
+            else {}
+        ),
         "master_window_count": len(master_rows),
         "master_shape": {
             "context_length": MAX_CONTEXT_LENGTH,
@@ -676,6 +968,7 @@ def source_profile(
     context_length: int,
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    first_row = rows[0] if rows else {}
     return {
         "profile_id": gate_profile_id(
             source.dataset_id,
@@ -690,8 +983,29 @@ def source_profile(
         "context_length": context_length,
         "horizon": HORIZON,
         "target_dim": source.target_dim,
+        "native_target_dim": source.native_target_dim or source.target_dim,
+        "sensitivity_target_dims": list(source.sensitivity_target_dims),
+        "target_selection_policy": source.target_selection_policy,
+        "target_column_names": list(
+            first_row.get("target_column_names")
+            or source.target_column_names
+        ),
         "covariate_dim": source.covariate_dim,
+        "covariate_column_names": list(
+            first_row.get("covariate_column_names")
+            or source.covariate_column_names
+        ),
+        "known_future_covariates": list(source.known_future_covariates),
+        "covariate_provenance": source.covariate_provenance,
         "hierarchy": source.hierarchy,
+        "hierarchy_provenance": (
+            first_row.get("hierarchy_provenance")
+            or source.hierarchy_provenance
+        ),
+        "processed_npz_sha256": first_row.get("processed_npz_sha256"),
+        "processed_metadata_sha256": first_row.get(
+            "processed_metadata_sha256"
+        ),
         "season_length": source.season_length,
         "frequency": source.frequency,
         "window_count": len(rows),
@@ -819,6 +1133,8 @@ def structural_support_audit(
         "reason_code": reason,
         "target_dim": source.target_dim,
         "covariate_dim": source.covariate_dim,
+        "known_future_covariates": list(source.known_future_covariates),
+        "covariate_provenance": source.covariate_provenance,
         "hierarchy": source.hierarchy,
     }
 
@@ -868,7 +1184,10 @@ def task_view_support_audit(
         "required_structure": required_structure,
         "available_structure": {
             "target_dim": source.target_dim,
+            "native_target_dim": source.native_target_dim or source.target_dim,
             "covariate_dim": source.covariate_dim,
+            "known_future_covariates": list(source.known_future_covariates),
+            "covariate_provenance": source.covariate_provenance,
             "hierarchy": source.hierarchy,
         },
         "variable_structure_audit": variable_structure,
@@ -1099,6 +1418,10 @@ def build_suite(
                 "season_length": source.season_length,
                 "target_dim": source.target_dim,
                 "covariate_dim": source.covariate_dim,
+                "known_future_covariates": list(
+                    source.known_future_covariates
+                ),
+                "covariate_provenance": source.covariate_provenance,
                 "split": split_summary,
                 "capabilities": capability_gates,
             }
@@ -1440,13 +1763,18 @@ def build_suite(
             "profile_id": master_spec.profile_id,
             "dataset_id": source.dataset_id,
             "task_view_id": source_task_view_id(source),
-            "conditioning_role": "paper_v4_dataset_local_train_only_master_task",
+            "conditioning_role": "paper_v7_dataset_local_train_only_master_task",
             "dataset_name": source.dataset_name,
             "task_id": source.task_id,
             "context_length": MAX_CONTEXT_LENGTH,
             "horizon": HORIZON,
             "target_dim": source.target_dim,
+            "native_target_dim": source.native_target_dim or source.target_dim,
+            "sensitivity_target_dims": list(source.sensitivity_target_dims),
+            "target_selection_policy": source.target_selection_policy,
             "covariate_dim": source.covariate_dim,
+            "known_future_covariates": list(source.known_future_covariates),
+            "covariate_provenance": source.covariate_provenance,
             "hierarchy": source.hierarchy,
             "season_length": source.season_length,
             "feature_measurement_horizon": HORIZON,
@@ -1542,7 +1870,7 @@ def build_suite(
         {
             # Additive task-view identity fields remain readable by existing
             # v1 consumers, including the frozen Paper E1 runner.
-            "schema_version": "paper_v4_dataset_capability_support_matrix.v1",
+            "schema_version": "paper_v7_dataset_capability_support_matrix.v1",
             "created_at": created_at,
             "intensity_policy": intensity_policy(),
             "cells": support_matrix,
@@ -1819,7 +2147,7 @@ def qualify_suite(
         for capability_id in ALL_CAPABILITY_IDS
     }
     result = {
-        "schema_version": "paper_v4_nine_capability_qualification.v3",
+        "schema_version": "paper_v7_nine_capability_qualification.v1",
         "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
@@ -1864,7 +2192,7 @@ def qualify_suite(
 
 def render_report(profile_suite: dict[str, Any], qualification: dict[str, Any]) -> str:
     lines = [
-        "# Paper v4 dataset-local 九能力四档 lookback profile 与生成验收",
+        "# Paper v7 dataset-local 九能力四档 lookback profile 与生成验收",
         "",
         f"- Lookback：`{CONTEXT_LENGTHS}`",
         f"- Prediction length：`H={HORIZON}`",
@@ -1993,7 +2321,7 @@ def write_manifest(output_dir: Path) -> None:
     write_json(
         output_dir / "manifest.json",
         {
-            "schema_version": "paper_v4_nine_capability_manifest.v3",
+            "schema_version": "paper_v7_nine_capability_manifest.v1",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "builder_path": str(Path(__file__).resolve().relative_to(REPO_ROOT)),
             "builder_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -2092,7 +2420,7 @@ def main() -> int:
                 "qualification failed for "
                 f"{qualification['failed_sample_count']} supported-cell samples"
             )
-    print(f"paper-v4 nine-capability suite: {output_dir}", flush=True)
+    print(f"paper-v7 nine-capability suite: {output_dir}", flush=True)
     return 0
 
 

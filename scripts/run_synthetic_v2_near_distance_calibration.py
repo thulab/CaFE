@@ -29,17 +29,31 @@ from app.services.synthetic_generation_service import (  # noqa: E402
 from app.services.synthetic_generator_conditioning import resolve_generator_conditioning  # noqa: E402
 from synthetic_feature_profile import (  # noqa: E402
     DEFAULT_FEATURES,
+    GEFCOM2014_WIND_COVARIATE_PROVENANCE,
+    GEFCOM2014_WIND_NWP_COLUMNS,
+    M5_COVARIATE_PROVENANCE,
+    M5_KNOWN_FUTURE_COVARIATES,
+    PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS,
+    PAPER_V7_GEFCOM2012_COVARIATE_PROVENANCE,
+    PAPER_V7_GEFCOM2012_FACTOR_ZONE_INDICES,
+    PAPER_V7_SWISS_COVARIATE_PROVENANCE,
+    PAPER_V7_SWISS_FACTOR_METER_INDICES,
+    PAPER_V7_SWISS_NWP_COLUMNS,
     WindowSpec,
     truncate_gift_eval_official_test_tail,
     limit_candidates,
     m5_covariate_matrix,
     m5_hierarchy_values,
+    m5_sibling_leaf_panels,
     read_gift_arrow_targets,
     read_gefcom2014_load_frame,
     read_gefcom2014_solar_frames,
+    read_gefcom2014_wind_forecast_releases,
+    read_gefcom2014_wind_training_frames,
     read_m5_calendar_and_sales,
-    read_m5_prices,
     read_nixtla_binary_hierarchies,
+    read_paper_v7_gefcom2012_processed,
+    read_paper_v7_swiss_processed,
     read_skchange_hvac_series,
     read_tsf_series,
     read_uci_hydraulic_sensor_cycles,
@@ -81,6 +95,15 @@ class BucketSpec:
     max_groups: int = 20
     task: int = 1
     synthetic_capabilities: tuple[str, ...] = ("trend",)
+    native_target_dim: int | None = None
+    sensitivity_target_dims: tuple[int, ...] = ()
+    target_selection_policy: str | None = None
+    known_future_covariates: tuple[str, ...] = ()
+    covariate_provenance: str | None = None
+    frequency: str | None = None
+    target_column_names: tuple[str, ...] = ()
+    covariate_column_names: tuple[str, ...] = ()
+    hierarchy_provenance: str | None = None
 
 
 BUCKET_SPECS: tuple[BucketSpec, ...] = (
@@ -301,13 +324,69 @@ def online_artifact_bucket(
     feature_center = np.nanmedian(feature_values, axis=0)
     feature_scale = robust_feature_scale(feature_values)
     reference_features_z = (feature_values - feature_center) / feature_scale
+    reference_covariate_values = [
+        row.get("covariates") for row in reference_rows
+    ]
+    if all(value is None for value in reference_covariate_values):
+        reference_covariates: list[Any] | None = None
+    elif any(value is None for value in reference_covariate_values):
+        raise ValueError("reference rows mix missing and present covariates")
+    else:
+        reference_covariates = round_nested(
+            np.stack(
+                [
+                    np.asarray(value, dtype=float)
+                    for value in reference_covariate_values
+                ]
+            )
+        )
+    first_row = reference_rows[0]
+    target_column_names = list(
+        first_row.get("target_column_names")
+        or spec.target_column_names
+        or tuple(f"target_{index}" for index in range(spec.target_dim))
+    )
+    covariate_column_names = list(
+        first_row.get("covariate_column_names")
+        or spec.covariate_column_names
+        or tuple(
+            f"covariate_{index}" for index in range(spec.covariate_dim)
+        )
+    )
     return {
         "profile_id": spec.profile_id,
         "context_length": spec.context_length,
         "horizon": spec.horizon,
         "season_length": spec.season_length,
         "target_dim": spec.target_dim,
+        "native_target_dim": spec.native_target_dim or spec.target_dim,
+        "sensitivity_target_dims": list(spec.sensitivity_target_dims),
+        "target_selection_policy": spec.target_selection_policy,
         "covariate_dim": spec.covariate_dim,
+        "known_future_covariates": list(spec.known_future_covariates),
+        "covariate_provenance": spec.covariate_provenance,
+        "target_column_names": target_column_names,
+        "covariate_column_names": covariate_column_names,
+        "frequency": first_row.get("source_frequency") or spec.frequency,
+        "provenance": {
+            "kind": spec.kind,
+            "asset_name": spec.asset_name,
+            "covariate": (
+                first_row.get("covariate_provenance")
+                or spec.covariate_provenance
+            ),
+            "hierarchy": (
+                first_row.get("hierarchy_provenance")
+                or spec.hierarchy_provenance
+            ),
+            "processed_npz_sha256": first_row.get(
+                "processed_npz_sha256"
+            ),
+            "processed_metadata_sha256": first_row.get(
+                "processed_metadata_sha256"
+            ),
+            "source": first_row.get("source_provenance"),
+        },
         "reference_count": len(reference_rows),
         "split": split_summary or {},
         "feature_names": list(feature_names),
@@ -318,6 +397,47 @@ def online_artifact_bucket(
         "feature_scale": round_nested(feature_scale, digits=12),
         "reference_raw": round_nested(np.vstack([row["raw"] for row in reference_rows])),
         "reference_context_raw": round_nested(np.vstack([row["context_raw"] for row in reference_rows])),
+        "reference_covariates": reference_covariates,
+        "reference_group_ids": [
+            row.get("group_id") for row in reference_rows
+        ],
+        "reference_window_starts": [
+            (
+                int(row["window_start"])
+                if row.get("window_start") is not None
+                else None
+            )
+            for row in reference_rows
+        ],
+        "reference_segment_ids": [
+            (
+                int(row["source_segment_id"])
+                if row.get("source_segment_id") is not None
+                else None
+            )
+            for row in reference_rows
+        ],
+        "reference_forecast_release_ids": [
+            row.get("forecast_release_id") for row in reference_rows
+        ],
+        "reference_forecast_release_valid_starts": [
+            row.get("forecast_release_valid_start") for row in reference_rows
+        ],
+        "reference_forecast_release_valid_ends": [
+            row.get("forecast_release_valid_end") for row in reference_rows
+        ],
+        "reference_forecast_window_valid_starts": [
+            row.get("forecast_window_valid_start") for row in reference_rows
+        ],
+        "reference_forecast_stitching": [
+            row.get("forecast_stitching") for row in reference_rows
+        ],
+        "reference_issue_time_semantics": [
+            row.get("issue_time_semantics") for row in reference_rows
+        ],
+        "reference_issue_times": [
+            row.get("issue_time") for row in reference_rows
+        ],
         "reference_features_z": round_nested(reference_features_z),
         "thresholds": {
             key: float(thresholds[key])
@@ -397,8 +517,18 @@ def load_real_bucket(spec: BucketSpec, path: Path, *, max_windows: int) -> list[
         ]
     if spec.kind == "m5_covariate":
         return load_m5_covariate_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "m5_sibling_panel":
+        return load_m5_sibling_panel_rows(spec, path, max_windows=max_windows)
     if spec.kind == "m5_hierarchy":
         return load_m5_hierarchy_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "paper_v7_swiss":
+        return load_paper_v7_swiss_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "paper_v7_gefcom2012":
+        return load_paper_v7_gefcom2012_rows(
+            spec,
+            path,
+            max_windows=max_windows,
+        )
     if spec.kind == "gefcom2014_load":
         return load_gefcom_rows(spec, path, max_windows=max_windows)
     if spec.kind == "gift_univariate":
@@ -409,11 +539,348 @@ def load_real_bucket(spec: BucketSpec, path: Path, *, max_windows: int) -> list[
         return load_nixtla_hierarchy_rows(spec, path, max_windows=max_windows)
     if spec.kind == "gefcom2014_solar":
         return load_gefcom_solar_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "gefcom2014_wind_panel":
+        return load_gefcom_wind_panel_rows(spec, path, max_windows=max_windows)
+    if spec.kind == "gefcom2014_wind_covariate":
+        return load_gefcom_wind_covariate_rows(
+            spec,
+            path,
+            max_windows=max_windows,
+        )
     if spec.kind == "uci_hydraulic_cycle":
         return load_uci_hydraulic_rows(spec, path, max_windows=max_windows)
     if spec.kind == "skchange_hvac":
         return load_skchange_hvac_rows(spec, path, max_windows=max_windows)
     raise ValueError(f"unsupported bucket kind: {spec.kind}")
+
+
+def paper_v7_processed_row_metadata(
+    metadata: dict[str, Any],
+    *,
+    target_column_names: list[str],
+    covariate_column_names: list[str],
+    hierarchy_provenance: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "target_column_names": target_column_names,
+        "covariate_column_names": covariate_column_names,
+        "source_frequency": str(metadata["frequency"]),
+        "processed_npz_sha256": metadata["_processed_npz_sha256"],
+        "processed_metadata_sha256": metadata["_processed_metadata_sha256"],
+        "source_provenance": {
+            "source_record_url": metadata.get("source_record_url"),
+            "source_files": metadata.get("source_files", []),
+            "license": metadata.get("license"),
+            "usage_status": metadata.get("usage_status"),
+        },
+        "hierarchy_provenance": hierarchy_provenance,
+    }
+
+
+def timestamp_iso_utc(value: np.datetime64) -> str:
+    timestamp = pd.Timestamp(value)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.tz_localize("UTC")
+    else:
+        timestamp = timestamp.tz_convert("UTC")
+    return timestamp.isoformat()
+
+
+def paper_v7_swiss_strict_covariate_window(
+    arrays: dict[str, np.ndarray],
+    *,
+    start: int,
+    spec: BucketSpec,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Build H48 from one origin vintage; later releases may fill only embargo."""
+
+    origin = start + spec.context_length - 1
+    stop = start + spec.context_length + spec.horizon
+    cube = np.asarray(arrays["nwp_forecasts"], dtype=float)
+    timestamps = np.asarray(arrays["timestamps"])
+    asof = np.asarray(arrays["nwp_asof_timestamps"])
+    valid = np.asarray(arrays["nwp_valid_timestamps"])
+    if stop > len(cube):
+        raise ValueError("Swiss covariate window extends beyond processed rows")
+    release_row = origin + 1
+    forecast_origin = timestamps[release_row]
+    if valid.shape != (len(cube), 24):
+        raise ValueError("Swiss NWP valid-time grid is malformed")
+    if not np.all(np.diff(valid[release_row]) == np.timedelta64(1, "h")):
+        raise ValueError("Swiss NWP release valid times are not strictly hourly")
+    if valid[release_row, 0] != forecast_origin:
+        raise ValueError(
+            "Swiss NWP lead 0 must equal the first post-history forecast origin"
+        )
+
+    context = cube[start : origin + 1, :, 0]
+    benchmark_steps = min(48, spec.horizon)
+    origin_forecast = np.repeat(cube[release_row].T, 2, axis=0)
+    if origin_forecast.shape != (48, 6):
+        raise ValueError("Swiss origin NWP does not expand to H48 x 6")
+    valid_half_hour_slots = (
+        valid[release_row, :, None]
+        + np.asarray([0, 30], dtype="timedelta64[m]")[None, :]
+    ).reshape(-1)
+    if not np.array_equal(
+        valid_half_hour_slots[:benchmark_steps],
+        timestamps[release_row : release_row + benchmark_steps],
+    ):
+        raise ValueError("Swiss hourly NWP leads do not align to half-hour targets")
+    benchmark = origin_forecast[:benchmark_steps]
+    embargo_steps = spec.horizon - benchmark_steps
+    embargo_start = origin + 1 + benchmark_steps
+    embargo = (
+        cube[embargo_start : embargo_start + embargo_steps, :, 0]
+        if embargo_steps
+        else np.empty((0, 6), dtype=float)
+    )
+    covariates = np.vstack([context, benchmark, embargo])
+    expected = spec.context_length + spec.horizon
+    if covariates.shape != (expected, 6) or not np.isfinite(covariates).all():
+        raise ValueError("Swiss strict-vintage covariate window is malformed")
+
+    future_start = origin + 1
+    benchmark_end = origin + benchmark_steps
+    return covariates, {
+        "forecast_release_id": (
+            "swiss-nwp-asof:" + timestamp_iso_utc(asof[release_row])
+        ),
+        "forecast_release_valid_start": timestamp_iso_utc(
+            timestamps[future_start]
+        ),
+        "forecast_release_valid_end": timestamp_iso_utc(
+            timestamps[benchmark_end]
+        ),
+        "forecast_window_valid_start": timestamp_iso_utc(
+            timestamps[future_start]
+        ),
+        "forecast_available_future_steps": 48,
+        "forecast_stitching": (
+            "forbidden_for_benchmark_H48; later as-of rows fill validation "
+            "embargo only"
+        ),
+        "issue_time_semantics": (
+            "processed HDF row at the first post-history bin start; lead 0 "
+            "is valid at forecast origin, then hourly leads repeat over two "
+            "half-hour target bins"
+        ),
+        "benchmark_covariate_vintage_count": 1,
+        "embargo_covariate_policy": (
+            "latest per-row as-of first horizon; never exposed in benchmark H48"
+        ),
+    }
+
+
+def load_paper_v7_swiss_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    arrays, metadata = read_paper_v7_swiss_processed(path)
+    meter_columns = list(metadata["meter_columns"])
+    aggregate_columns = list(metadata["aggregate_columns"])
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    starts = limit_candidates(
+        window_starts(len(arrays["timestamps"]), window_spec),
+        max_windows,
+    )
+
+    view: str
+    target_values: np.ndarray
+    target_names: list[str]
+    covariate_names: list[str] = []
+    hierarchy_provenance: str | None = None
+    if spec.hierarchy == "additive_first":
+        view = "strict_hierarchy"
+        target_values = np.asarray(arrays["aggregates"][:, :3], dtype=float)
+        target_names = aggregate_columns[:3]
+        hierarchy_provenance = (
+            "native Swiss all=S1+S2 hierarchy; processed raw and 30-minute "
+            "aggregation residual audits both pass"
+        )
+    elif spec.covariate_dim:
+        view = "known_future_covariates"
+        target_values = np.asarray(arrays["aggregates"][:, 0:1], dtype=float)
+        target_names = [aggregate_columns[0]]
+        covariate_names = list(PAPER_V7_SWISS_NWP_COLUMNS)
+    else:
+        view = "common_factor"
+        indices = list(PAPER_V7_SWISS_FACTOR_METER_INDICES)
+        target_values = np.asarray(arrays["meters"][:, indices], dtype=float)
+        target_names = [meter_columns[index] for index in indices]
+
+    if target_values.shape[1] != spec.target_dim:
+        raise ValueError(
+            f"Swiss {view} target_dim mismatch: "
+            f"{target_values.shape[1]} != {spec.target_dim}"
+        )
+    common_metadata = paper_v7_processed_row_metadata(
+        metadata,
+        target_column_names=target_names,
+        covariate_column_names=covariate_names,
+        hierarchy_provenance=hierarchy_provenance,
+    )
+    rows: list[dict[str, Any]] = []
+    for start in starts:
+        stop = start + window_spec.length
+        target = target_values[start:stop]
+        covariates: np.ndarray | None = None
+        release_audit: dict[str, Any] = {}
+        if spec.covariate_dim:
+            covariates, release_audit = paper_v7_swiss_strict_covariate_window(
+                arrays,
+                start=start,
+                spec=spec,
+            )
+        if (
+            target.shape != (window_spec.length, spec.target_dim)
+            or not np.isfinite(target).all()
+            or not is_informative_target(target, spec.context_length)
+        ):
+            continue
+        row = make_real_row(
+            target,
+            spec,
+            covariates=covariates,
+            group_id=f"swiss-hierarchical-demand:{view}",
+            window_start=start,
+        )
+        row.update(common_metadata)
+        row.update(release_audit)
+        row["canonical_target_dim"] = spec.target_dim
+        row["native_target_dim"] = 24
+        row["target_selection_policy"] = spec.target_selection_policy
+        if spec.covariate_dim:
+            row["known_future_covariates"] = list(
+                spec.known_future_covariates
+                or PAPER_V7_SWISS_NWP_COLUMNS
+            )
+            row["covariate_provenance"] = (
+                spec.covariate_provenance
+                or PAPER_V7_SWISS_COVARIATE_PROVENANCE
+            )
+        rows.append(row)
+    return rows
+
+
+def load_paper_v7_gefcom2012_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    arrays, metadata = read_paper_v7_gefcom2012_processed(path)
+    zone_columns = list(metadata["zone_columns"])
+    hierarchy_columns = list(metadata["canonical_hierarchy_columns"])
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    segment_ids = np.asarray(arrays["segment_ids"])
+    candidates: list[tuple[int, int]] = []
+    for segment_id in np.unique(segment_ids):
+        positions = np.flatnonzero(segment_ids == segment_id)
+        if positions.size == 0 or not np.array_equal(
+            positions,
+            np.arange(positions[0], positions[-1] + 1),
+        ):
+            raise ValueError("GEFCom2012 segment rows are not contiguous")
+        candidates.extend(
+            (int(segment_id), int(positions[0] + local_start))
+            for local_start in window_starts(len(positions), window_spec)
+        )
+    starts = limit_candidates(candidates, max_windows)
+
+    view: str
+    target_values: np.ndarray
+    target_names: list[str]
+    covariates: np.ndarray | None = None
+    covariate_names: list[str] = []
+    hierarchy_provenance: str | None = None
+    if spec.hierarchy == "additive_first":
+        view = "strict_hierarchy"
+        target_values = np.asarray(arrays["canonical_hierarchy"], dtype=float)
+        target_names = hierarchy_columns
+        hierarchy_provenance = (
+            "derived canonical total/two-subtotal projection; official "
+            "solution Zone21 validates sum(zones1..20) with zero residual"
+        )
+    elif spec.covariate_dim:
+        view = "known_future_covariates"
+        target_values = np.asarray(arrays["total"], dtype=float)[:, None]
+        target_names = [str(metadata["derived_total_column"])]
+        covariates = np.asarray(arrays["calendar_covariates"], dtype=float)
+        covariate_names = list(PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS)
+    else:
+        view = "common_factor"
+        indices = list(PAPER_V7_GEFCOM2012_FACTOR_ZONE_INDICES)
+        target_values = np.asarray(arrays["zones"][:, indices], dtype=float)
+        target_names = [zone_columns[index] for index in indices]
+
+    if target_values.shape[1] != spec.target_dim:
+        raise ValueError(
+            f"GEFCom2012 {view} target_dim mismatch: "
+            f"{target_values.shape[1]} != {spec.target_dim}"
+        )
+    common_metadata = paper_v7_processed_row_metadata(
+        metadata,
+        target_column_names=target_names,
+        covariate_column_names=covariate_names,
+        hierarchy_provenance=hierarchy_provenance,
+    )
+    rows: list[dict[str, Any]] = []
+    for segment_id, start in starts:
+        stop = start + window_spec.length
+        if not np.all(segment_ids[start:stop] == segment_id):
+            raise ValueError("GEFCom2012 window crosses a missing-target gap")
+        target = target_values[start:stop]
+        covariate_window = covariates[start:stop] if covariates is not None else None
+        if (
+            target.shape != (window_spec.length, spec.target_dim)
+            or not np.isfinite(target).all()
+            or (
+                covariate_window is not None
+                and (
+                    covariate_window.shape
+                    != (window_spec.length, spec.covariate_dim)
+                    or not np.isfinite(covariate_window).all()
+                )
+            )
+            or not is_informative_target(target, spec.context_length)
+        ):
+            continue
+        row = make_real_row(
+            target,
+            spec,
+            covariates=covariate_window,
+            group_id=f"gefcom2012-load:{view}",
+            window_start=start,
+        )
+        row.update(common_metadata)
+        row["canonical_target_dim"] = spec.target_dim
+        row["native_target_dim"] = 20
+        row["target_selection_policy"] = spec.target_selection_policy
+        row["source_segment_id"] = segment_id
+        if spec.covariate_dim:
+            row["known_future_covariates"] = list(
+                spec.known_future_covariates
+                or PAPER_V7_GEFCOM2012_CALENDAR_COLUMNS
+            )
+            row["covariate_provenance"] = (
+                spec.covariate_provenance
+                or PAPER_V7_GEFCOM2012_COVARIATE_PROVENANCE
+            )
+            row.update(
+                {
+                    "forecast_release_id": "deterministic-calendar",
+                    "forecast_available_future_steps": spec.horizon,
+                    "forecast_stitching": "not_applicable_deterministic_calendar",
+                    "issue_time_semantics": (
+                        "deterministic calendar values are known for all horizons"
+                    ),
+                }
+            )
+        rows.append(row)
+    return rows
 
 
 def load_uci_hydraulic_rows(
@@ -552,6 +1019,15 @@ def load_gift_panel_rows(
             )
     for row in rows:
         row["source_tail_excluded_steps"] = _holdout_steps
+        row["native_target_dim"] = (
+            spec.native_target_dim
+            if spec.native_target_dim is not None
+            else spec.target_dim
+        )
+        row["canonical_target_dim"] = spec.target_dim
+        row["target_channel_indices"] = list(range(spec.target_dim))
+        row["sensitivity_target_dims"] = list(spec.sensitivity_target_dims)
+        row["target_selection_policy"] = spec.target_selection_policy
     return rows
 
 
@@ -629,15 +1105,217 @@ def load_gefcom_solar_rows(
     return rows
 
 
+def gefcom_wind_zone_groups(
+    zone_ids: list[int],
+    *,
+    target_dim: int,
+    max_groups: int,
+) -> list[tuple[int, ...]]:
+    """Use disjoint canonical zone groups so split roles cannot share targets."""
+
+    groups = [
+        tuple(zone_ids[start : start + target_dim])
+        for start in range(0, len(zone_ids) - target_dim + 1, target_dim)
+    ]
+    return groups[:max_groups] if max_groups > 0 else groups
+
+
+def load_gefcom_wind_panel_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    frames = read_gefcom2014_wind_training_frames(path, task=spec.task)
+    zone_groups = gefcom_wind_zone_groups(
+        sorted(frames),
+        target_dim=spec.target_dim,
+        max_groups=spec.max_groups,
+    )
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    candidates: list[tuple[tuple[int, ...], int, np.ndarray]] = []
+    for zones in zone_groups:
+        timestamps = frames[zones[0]]["TIMESTAMP"]
+        if any(
+            not frames[zone]["TIMESTAMP"].equals(timestamps)
+            for zone in zones[1:]
+        ):
+            raise ValueError(
+                f"GEFCom2014 Wind task {spec.task} zones {zones} are not synchronized"
+            )
+        panel = np.column_stack(
+            [frames[zone]["TARGETVAR"].to_numpy(dtype=float) for zone in zones]
+        )
+        candidates.extend(
+            (zones, start, panel)
+            for start in window_starts(panel.shape[0], window_spec)
+        )
+    rows: list[dict[str, Any]] = []
+    for zones, start, panel in limit_candidates(candidates, max_windows):
+        window = panel[start : start + window_spec.length]
+        if (
+            window.shape == (window_spec.length, spec.target_dim)
+            and np.isfinite(window).all()
+            and is_informative_target(window, spec.context_length)
+        ):
+            row = make_real_row(
+                window,
+                spec,
+                group_id="gefcom-wind-zones:" + ",".join(map(str, zones)),
+                window_start=start,
+            )
+            row["zone_ids"] = list(zones)
+            row["native_target_dim"] = spec.native_target_dim or len(frames)
+            row["canonical_target_dim"] = spec.target_dim
+            row["sensitivity_target_dims"] = list(spec.sensitivity_target_dims)
+            row["target_selection_policy"] = spec.target_selection_policy
+            rows.append(row)
+    return rows
+
+
+def load_gefcom_wind_covariate_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    releases = read_gefcom2014_wind_forecast_releases(
+        path,
+        minimum_future_steps=spec.horizon,
+    )
+    candidates: list[
+        tuple[dict[str, Any], tuple[int, ...], int]
+    ] = []
+    for release in releases:
+        zone_groups = gefcom_wind_zone_groups(
+            sorted(release["future"]),
+            target_dim=spec.target_dim,
+            max_groups=spec.max_groups,
+        )
+        available_steps = int(release["available_future_steps"])
+        for zones in zone_groups:
+            candidates.extend(
+                (release, zones, offset)
+                for offset in range(
+                    0,
+                    available_steps - spec.horizon + 1,
+                    spec.stride,
+                )
+            )
+
+    rows: list[dict[str, Any]] = []
+    for release, zones, offset in limit_candidates(candidates, max_windows):
+        history_length = min(len(release["history"][zone]) for zone in zones)
+        if history_length < spec.context_length:
+            continue
+        target_columns: list[np.ndarray] = []
+        covariate_columns: list[np.ndarray] = []
+        synchronized_timestamps: pd.Series | None = None
+        for zone in zones:
+            history = release["history"][zone]
+            future = release["future"][zone]
+            history_slice = history.iloc[-spec.context_length :]
+            future_slice = future.iloc[: offset + spec.horizon]
+            timestamps = pd.concat(
+                [history_slice["TIMESTAMP"], future_slice["TIMESTAMP"]],
+                ignore_index=True,
+            )
+            if synchronized_timestamps is None:
+                synchronized_timestamps = timestamps
+            elif not timestamps.equals(synchronized_timestamps):
+                raise ValueError(
+                    f"GEFCom2014 Wind release {release['release_id']} "
+                    f"zones {zones} are not synchronized"
+                )
+            target_columns.append(
+                np.concatenate(
+                    [
+                        history_slice["TARGETVAR"].to_numpy(dtype=float),
+                        future_slice["TARGETVAR"].to_numpy(dtype=float),
+                    ]
+                )
+            )
+            covariate_columns.extend(
+                np.concatenate(
+                    [
+                        history_slice[column].to_numpy(dtype=float),
+                        future_slice[column].to_numpy(dtype=float),
+                    ]
+                )
+                for column in GEFCOM2014_WIND_NWP_COLUMNS
+            )
+        start = offset
+        stop = offset + spec.context_length + spec.horizon
+        target = np.column_stack(target_columns)[start:stop]
+        covariates = np.column_stack(covariate_columns)[start:stop]
+        if (
+            target.shape != (spec.context_length + spec.horizon, spec.target_dim)
+            or covariates.shape
+            != (spec.context_length + spec.horizon, spec.covariate_dim)
+            or not np.isfinite(target).all()
+            or not np.isfinite(covariates).all()
+            or not is_informative_target(target, spec.context_length)
+        ):
+            continue
+        window_valid_start = release["future"][zones[0]]["TIMESTAMP"].iloc[offset]
+        assert synchronized_timestamps is not None
+        context_valid_start = synchronized_timestamps.iloc[offset]
+        row = make_real_row(
+            target,
+            spec,
+            covariates=covariates,
+            group_id="gefcom-wind-release-zones:" + ",".join(map(str, zones)),
+            window_start=int(
+                pd.Timestamp(context_valid_start).value // 3_600_000_000_000
+            ),
+        )
+        row.update(
+            {
+                "zone_ids": list(zones),
+                "native_target_dim": spec.native_target_dim or 10,
+                "canonical_target_dim": spec.target_dim,
+                "sensitivity_target_dims": list(spec.sensitivity_target_dims),
+                "target_selection_policy": spec.target_selection_policy,
+                "known_future_covariates": list(spec.known_future_covariates),
+                "covariate_provenance": (
+                    spec.covariate_provenance
+                    or GEFCOM2014_WIND_COVARIATE_PROVENANCE
+                ),
+                "forecast_release_id": release["release_id"],
+                "forecast_release_valid_start": pd.Timestamp(
+                    release["valid_start"]
+                ).isoformat(),
+                "forecast_release_valid_end": pd.Timestamp(
+                    release["valid_end"]
+                ).isoformat(),
+                "forecast_window_valid_start": pd.Timestamp(
+                    window_valid_start
+                ).isoformat(),
+                "context_window_valid_start": pd.Timestamp(
+                    context_valid_start
+                ).isoformat(),
+                "forecast_available_future_steps": int(
+                    release["available_future_steps"] - offset
+                ),
+                "forecast_window_future_steps": int(spec.horizon),
+                "forecast_stitching": "forbidden",
+                "issue_time": (
+                    f"official-task-release:{release['release_id']}"
+                ),
+                "issue_time_semantics": (
+                    "official GEFCom2014 competition task release boundary; "
+                    "the archive does not publish a wall-clock issue timestamp"
+                ),
+            }
+        )
+        rows.append(row)
+    return rows
+
+
 def load_m5_covariate_rows(spec: BucketSpec, path: Path, *, max_windows: int) -> list[dict[str, Any]]:
     calendar, sales, day_columns = read_m5_calendar_and_sales(path)
     active_sales = sales.loc[sales[day_columns].sum(axis=1) > 0].reset_index(drop=True)
     selected_sales = sample_frame_evenly(active_sales if not active_sales.empty else sales, spec.max_series)
-    prices = read_m5_prices(path, selected_sales[["store_id", "item_id"]].drop_duplicates())
-    price_lookup = {
-        (store_id, item_id): group.set_index("wm_yr_wk")["sell_price"].astype(float)
-        for (store_id, item_id), group in prices.groupby(["store_id", "item_id"])
-    }
     window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
     candidates = [
         (series_index, start)
@@ -651,7 +1329,6 @@ def load_m5_covariate_rows(spec: BucketSpec, path: Path, *, max_windows: int) ->
         covariates = m5_covariate_matrix(
             calendar,
             state_id=str(row["state_id"]),
-            price_series=price_lookup.get((row["store_id"], row["item_id"])),
         )[start : start + window_spec.length]
         if (
             target.shape[0] == window_spec.length
@@ -659,15 +1336,65 @@ def load_m5_covariate_rows(spec: BucketSpec, path: Path, *, max_windows: int) ->
             and np.isfinite(covariates).all()
             and is_informative_target(target, spec.context_length)
         ):
-            rows.append(
-                make_real_row(
-                    target,
-                    spec,
-                    covariates=covariates,
-                    group_id=f"m5-series:{series_index}",
-                    window_start=start,
-                )
+            real_row = make_real_row(
+                target,
+                spec,
+                covariates=covariates,
+                group_id=f"m5-series:{row['id']}",
+                window_start=start,
             )
+            real_row["known_future_covariates"] = list(
+                spec.known_future_covariates
+                or M5_KNOWN_FUTURE_COVARIATES
+            )
+            real_row["covariate_provenance"] = (
+                spec.covariate_provenance or M5_COVARIATE_PROVENANCE
+            )
+            rows.append(real_row)
+    return rows
+
+
+def load_m5_sibling_panel_rows(
+    spec: BucketSpec,
+    path: Path,
+    *,
+    max_windows: int,
+) -> list[dict[str, Any]]:
+    _calendar, sales, day_columns = read_m5_calendar_and_sales(path)
+    panels = sample_sequence_evenly(
+        m5_sibling_leaf_panels(
+            sales,
+            day_columns,
+            target_dim=spec.target_dim,
+        ),
+        spec.max_groups,
+    )
+    window_spec = WindowSpec(spec.context_length, spec.horizon, spec.stride)
+    candidates = [
+        (group_index, start)
+        for group_index, (_group_id, _item_ids, values) in enumerate(panels)
+        for start in window_starts(values.shape[0], window_spec)
+    ]
+    rows: list[dict[str, Any]] = []
+    for group_index, start in limit_candidates(candidates, max_windows):
+        group_id, item_ids, values = panels[group_index]
+        window = values[start : start + window_spec.length]
+        if (
+            window.shape == (window_spec.length, spec.target_dim)
+            and np.isfinite(window).all()
+            and is_informative_target(window, spec.context_length)
+        ):
+            real_row = make_real_row(
+                window,
+                spec,
+                group_id=f"m5-sibling-leaves:{group_id}",
+                window_start=start,
+            )
+            real_row["leaf_item_ids"] = list(item_ids)
+            real_row["panel_semantics"] = (
+                "disjoint item leaves sharing one store_id and dept_id"
+            )
+            rows.append(real_row)
     return rows
 
 

@@ -40,6 +40,42 @@ def test_all_tasks_use_four_lookbacks_and_h48(module) -> None:
     )
 
 
+def test_legacy_builder_defaults_and_report_identity_are_paper_v7(module) -> None:
+    assert module.SCHEMA_VERSION.startswith("paper_v7_")
+    assert "paper_exp/v7" in module.DEFAULT_OUTPUT_DIR.as_posix()
+    assert "paper-v7" in module.PROTOCOL_PATH.name
+    assert "structured-dataset-expansion" in module.PROTOCOL_PATH.name
+
+
+def test_p0_datasets_each_register_three_collision_safe_task_views(module) -> None:
+    for dataset_id in (
+        "swiss_hierarchical_demand",
+        "gefcom2012_load",
+    ):
+        sources = [
+            source
+            for source in module.STRUCTURED_SOURCES
+            if source.dataset_id == dataset_id
+        ]
+        assert {source.task_id for source in sources} == {
+            "common_factor",
+            "hierarchy",
+            "covariate",
+        }
+        indexed = module.index_sources_by_task_view(tuple(sources))
+        assert len(indexed) == 3
+        assert all(
+            source.target_dim == 3
+            for source in sources
+            if source.task_id in {"common_factor", "hierarchy"}
+        )
+        covariate = next(
+            source for source in sources if source.task_id == "covariate"
+        )
+        assert covariate.target_dim == 1
+        assert covariate.covariate_dim == 6
+
+
 def test_real_paired_views_share_exact_future(module) -> None:
     length = module.MAX_CONTEXT_LENGTH + module.MASTER_LOADER_HORIZON
     target = np.column_stack(
@@ -115,6 +151,44 @@ def test_mapping_assigns_all_nine_capabilities(module) -> None:
         module.task_id_for_capability(capability_id)
         for capability_id in module.ALL_CAPABILITY_IDS
     } == {"univariate", "common_factor", "hierarchy", "covariate"}
+
+
+def test_p0_existing_assets_register_canonical_task_views(module) -> None:
+    sources = {
+        (source.dataset_id, source.task_id): source
+        for source in module.STRUCTURED_SOURCES
+    }
+
+    ett = sources[("gift_ett1_h", "common_factor")]
+    assert ett.target_dim == 3
+    assert ett.native_target_dim == 7
+    assert ett.sensitivity_target_dims == (7,)
+
+    assert {
+        task_id
+        for dataset_id, task_id in sources
+        if dataset_id == "m5_daily"
+    } == {"common_factor", "hierarchy", "covariate"}
+    m5_covariate = sources[("m5_daily", "covariate")]
+    assert m5_covariate.known_future_covariates == (
+        "day_of_week_sin",
+        "day_of_week_cos",
+        "event_count",
+        "snap",
+    )
+    assert "sell_price" not in m5_covariate.known_future_covariates
+
+    assert {
+        task_id
+        for dataset_id, task_id in sources
+        if dataset_id == "gefcom2014_wind"
+    } == {"common_factor", "covariate"}
+    wind_covariate = sources[("gefcom2014_wind", "covariate")]
+    assert wind_covariate.target_dim == 3
+    assert wind_covariate.native_target_dim == 10
+    assert wind_covariate.covariate_dim == 12
+    assert len(wind_covariate.known_future_covariates) == 12
+    assert "TaskExpVars" in wind_covariate.covariate_provenance
 
 
 def test_dataset_local_profile_ids_never_use_global_pool(module) -> None:
