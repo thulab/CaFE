@@ -16,6 +16,7 @@ import hashlib
 import json
 import math
 import sys
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -617,6 +618,16 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_QUALIFICATION_SAMPLES_PER_CELL,
     )
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS)
+    parser.add_argument(
+        "--demote-failed-cells",
+        action="store_true",
+        help=(
+            "After a completed qualification run, mark every supported cell "
+            "with at least one exhausted sample as unsupported. This preserves "
+            "the failed qualification as an audit artifact; rerun qualify "
+            "without this flag to verify the remaining frozen support set."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--stage", choices=("all", "build", "qualify"), default="all")
     return parser.parse_args()
@@ -2307,6 +2318,134 @@ def write_support_matrix_csv(
             )
 
 
+QUALIFICATION_FAILURE_REASON = "qualification_failed_at_formal_attempt_budget"
+
+
+def demote_support_rows_after_qualification(
+    rows: list[dict[str, Any]],
+    qualification: dict[str, Any],
+) -> list[dict[str, Any]]:
+    failed_by_key = {
+        (str(summary["task_view_id"]), str(summary["capability_id"])): summary
+        for summary in qualification["by_cell"].values()
+        if int(summary["failed"]) > 0
+    }
+    if not failed_by_key:
+        return []
+
+    failure_intensities: dict[tuple[str, str], Counter[int]] = defaultdict(Counter)
+    for failure in qualification["failures"]:
+        key = (
+            str(failure["task_view_id"]),
+            str(failure["capability_id"]),
+        )
+        if key in failed_by_key:
+            failure_intensities[key][int(failure["intensity"])] += 1
+
+    demoted: list[dict[str, Any]] = []
+    for row in rows:
+        key = (record_task_view_id(row), str(row["capability_id"]))
+        summary = failed_by_key.get(key)
+        if summary is None:
+            continue
+        if not bool(row.get("supported")) or row.get("status") != "supported":
+            raise ValueError(
+                "qualification demotion target is not currently supported: "
+                f"{key[0]}::{key[1]}"
+            )
+        reason_codes = list(row.get("reason_codes") or [])
+        if QUALIFICATION_FAILURE_REASON not in reason_codes:
+            reason_codes.append(QUALIFICATION_FAILURE_REASON)
+        row["supported"] = False
+        row["status"] = "unsupported"
+        row["reason_codes"] = reason_codes
+        row["qualification_failure"] = {
+            "reason_code": QUALIFICATION_FAILURE_REASON,
+            "samples_per_cell": int(
+                qualification["config"]["samples_per_cell"]
+            ),
+            "max_attempts": int(qualification["config"]["max_attempts"]),
+            "expected_sample_count": int(summary["expected"]),
+            "accepted_sample_count": int(summary["accepted"]),
+            "failed_sample_count": int(summary["failed"]),
+            "failed_by_intensity": {
+                str(intensity): count
+                for intensity, count in sorted(
+                    failure_intensities[key].items()
+                )
+            },
+        }
+        demoted.append(
+            {
+                "dataset_id": str(row["dataset_id"]),
+                "task_view_id": key[0],
+                "capability_id": key[1],
+                **row["qualification_failure"],
+            }
+        )
+    if len(demoted) != len(failed_by_key):
+        found = {
+            (row["task_view_id"], row["capability_id"]) for row in demoted
+        }
+        missing = sorted(set(failed_by_key) - found)
+        raise ValueError(
+            "qualification demotion could not find support rows: "
+            + ", ".join(f"{view}::{capability}" for view, capability in missing)
+        )
+    return demoted
+
+
+def demote_failed_qualification_cells(
+    output_dir: Path,
+    qualification: dict[str, Any],
+) -> dict[str, Any]:
+    support_path = output_dir / "dataset_capability_support_matrix.json"
+    profile_path = output_dir / "profile_suite.json"
+    support_artifact = read_json(support_path)
+    profile_suite = read_json(profile_path)
+    demoted = demote_support_rows_after_qualification(
+        support_artifact["cells"],
+        qualification,
+    )
+    profile_demoted = demote_support_rows_after_qualification(
+        profile_suite["support_matrix"],
+        qualification,
+    )
+    if [
+        (row["task_view_id"], row["capability_id"]) for row in profile_demoted
+    ] != [
+        (row["task_view_id"], row["capability_id"]) for row in demoted
+    ]:
+        raise ValueError("profile/support qualification demotions differ")
+    audit = {
+        "schema_version": "paper_v7_qualification_demotion.v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "policy": (
+            "fail closed at the frozen formal attempt budget; no gate, "
+            "conditioning, seed, or sample threshold is relaxed"
+        ),
+        "source_qualification": {
+            "schema_version": qualification["schema_version"],
+            "samples_per_cell": qualification["config"]["samples_per_cell"],
+            "max_attempts": qualification["config"]["max_attempts"],
+            "expected_sample_count": qualification["expected_sample_count"],
+            "accepted_sample_count": qualification["accepted_sample_count"],
+            "failed_sample_count": qualification["failed_sample_count"],
+        },
+        "demoted_cell_count": len(demoted),
+        "demoted_cells": demoted,
+    }
+    write_json(support_path, support_artifact)
+    write_support_matrix_csv(
+        output_dir / "dataset_capability_support_matrix.csv",
+        support_artifact["cells"],
+    )
+    write_json(profile_path, profile_suite)
+    write_json(output_dir / "qualification_demotion.json", audit)
+    write_manifest(output_dir)
+    return audit
+
+
 def write_manifest(output_dir: Path) -> None:
     files = []
     for path in sorted(output_dir.iterdir()):
@@ -2416,10 +2555,24 @@ def main() -> int:
             seed=int(args.seed),
         )
         if not qualification["all_supported_cells_qualified"]:
-            raise RuntimeError(
-                "qualification failed for "
-                f"{qualification['failed_sample_count']} supported-cell samples"
-            )
+            if args.demote_failed_cells:
+                demotion = demote_failed_qualification_cells(
+                    output_dir,
+                    qualification,
+                )
+                print(
+                    "demoted "
+                    f"{demotion['demoted_cell_count']} cells after "
+                    f"{qualification['failed_sample_count']} exhausted "
+                    "qualification samples; rerun --stage qualify without "
+                    "--demote-failed-cells",
+                    flush=True,
+                )
+            else:
+                raise RuntimeError(
+                    "qualification failed for "
+                    f"{qualification['failed_sample_count']} supported-cell samples"
+                )
     print(f"paper-v7 nine-capability suite: {output_dir}", flush=True)
     return 0
 

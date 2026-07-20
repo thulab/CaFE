@@ -771,3 +771,103 @@ def test_qualification_only_runs_supported_dataset_cells(
         row["task_view_id"] for row in result["accepted_samples"]
     } == {"dataset_a::univariate"}
     assert result["all_supported_cells_qualified"] is True
+
+
+def test_qualification_failure_demotes_whole_cell_fail_closed(module) -> None:
+    rows = [
+        {
+            "dataset_id": "dataset_a",
+            "task_view_id": "dataset_a::covariate",
+            "task_id": "covariate",
+            "capability_id": "covariate_response",
+            "status": "supported",
+            "supported": True,
+            "reason_codes": [],
+        },
+        {
+            "dataset_id": "dataset_b",
+            "task_view_id": "dataset_b::common_factor",
+            "task_id": "common_factor",
+            "capability_id": "common_factor",
+            "status": "supported",
+            "supported": True,
+            "reason_codes": [],
+        },
+    ]
+    qualification = {
+        "config": {"samples_per_cell": 8, "max_attempts": 512},
+        "by_cell": {
+            "a": {
+                "task_view_id": "dataset_a::covariate",
+                "capability_id": "covariate_response",
+                "expected": 40,
+                "accepted": 39,
+                "failed": 1,
+            },
+            "b": {
+                "task_view_id": "dataset_b::common_factor",
+                "capability_id": "common_factor",
+                "expected": 40,
+                "accepted": 40,
+                "failed": 0,
+            },
+        },
+        "failures": [
+            {
+                "task_view_id": "dataset_a::covariate",
+                "capability_id": "covariate_response",
+                "intensity": 3,
+            }
+        ],
+    }
+
+    demoted = module.demote_support_rows_after_qualification(
+        rows,
+        qualification,
+    )
+
+    assert len(demoted) == 1
+    assert rows[0]["supported"] is False
+    assert rows[0]["status"] == "unsupported"
+    assert rows[0]["reason_codes"] == [
+        "qualification_failed_at_formal_attempt_budget"
+    ]
+    assert rows[0]["qualification_failure"] == {
+        "reason_code": "qualification_failed_at_formal_attempt_budget",
+        "samples_per_cell": 8,
+        "max_attempts": 512,
+        "expected_sample_count": 40,
+        "accepted_sample_count": 39,
+        "failed_sample_count": 1,
+        "failed_by_intensity": {"3": 1},
+    }
+    assert rows[1]["supported"] is True
+    assert rows[1]["status"] == "supported"
+
+
+def test_qualification_demotion_rejects_missing_support_row(module) -> None:
+    qualification = {
+        "config": {"samples_per_cell": 8, "max_attempts": 512},
+        "by_cell": {
+            "missing": {
+                "task_view_id": "missing::covariate",
+                "capability_id": "covariate_response",
+                "expected": 40,
+                "accepted": 39,
+                "failed": 1,
+            }
+        },
+        "failures": [
+            {
+                "task_view_id": "missing::covariate",
+                "capability_id": "covariate_response",
+                "intensity": 2,
+            }
+        ],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="could not find support rows",
+    ):
+        module.demote_support_rows_after_qualification([], qualification)
