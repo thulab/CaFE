@@ -26,15 +26,19 @@ import analyze_paper_v5_e2_seed_bank_reliability as reliability  # noqa: E402
 import run_paper_e2_dynamic_stability as stats  # noqa: E402
 
 
-SCHEMA_VERSION = "paper_e2_split_bank_reliability.v1"
-DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v6/E2_dynamic_stability"
-DEFAULT_BANK_SIZES = (32, 48, 64, 80)
+SCHEMA_VERSION = "paper_e2_split_bank_reliability.v2"
+DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v7/E2_dynamic_stability"
+DEFAULT_BANK_SIZES = (160,)
 DEFAULT_SPLIT_SEED = 20260720
 DEFAULT_MINIMUM_AGREEMENT = 0.80
 DEFAULT_EQUIVALENCE_MARGINS = (0.01, 0.02, 0.05)
 DEFAULT_PRIMARY_EQUIVALENCE_MARGIN = 0.02
 DEFAULT_PAIR_BOOTSTRAP_REPLICATES = 2_000
 DEFAULT_PAIR_CI_LEVEL = 0.95
+FORMAL_V7_ROUND_COUNT = 5
+FORMAL_V7_SAMPLES_PER_ROUND = 64
+FORMAL_V7_POOL_SIZE = 320
+FORMAL_V7_BANK_SIZE = 160
 NORMAL_95 = 1.959963984540054
 PROFILE_KEYS = ["dataset_id", "task_id", "capability_id"]
 CELL_KEYS = [*PROFILE_KEYS, "intensity"]
@@ -205,13 +209,21 @@ def load_oracle_pool(
         "oracle_mase",
         "fixed_l504_mase",
     ]
+    optional_identity_columns = ("round_index", "sample_index")
     rows: list[dict[str, Any]] = []
     for path in paths:
         for row in e2.iter_jsonl(path):
             dataset_id = str(row["dataset_id"])
             if datasets is not None and dataset_id not in datasets:
                 continue
-            rows.append({column: row[column] for column in columns})
+            record = {column: row[column] for column in columns}
+            record.update(
+                {
+                    column: row.get(column)
+                    for column in optional_identity_columns
+                }
+            )
+            rows.append(record)
     if not rows:
         raise ValueError("no synthetic oracle scores matched the selection")
     frame = pd.DataFrame(rows)
@@ -221,17 +233,57 @@ def load_oracle_pool(
         if not np.isfinite(frame[column]).all():
             raise ValueError(f"non-finite score in {column}")
 
-    group_order = (
-        frame[[*PROFILE_KEYS, "paired_group_id"]]
-        .drop_duplicates()
-        .sort_values([*PROFILE_KEYS, "paired_group_id"], kind="stable")
-    )
+    has_round_identity = frame[
+        list(optional_identity_columns)
+    ].notna().all(axis=1)
+    if bool(has_round_identity.any()) and not bool(has_round_identity.all()):
+        raise ValueError("round/sample identity is only partially populated")
+    if bool(has_round_identity.all()):
+        frame["round_index"] = frame["round_index"].astype(int)
+        frame["sample_index"] = frame["sample_index"].astype(int)
+        group_order = frame[
+            [
+                *PROFILE_KEYS,
+                "paired_group_id",
+                "round_index",
+                "sample_index",
+            ]
+        ].drop_duplicates()
+        identity_counts = group_order.groupby(
+            [*PROFILE_KEYS, "paired_group_id"],
+            sort=False,
+        ).size()
+        if (identity_counts != 1).any():
+            raise ValueError(
+                "paired group maps to multiple round/sample identities"
+            )
+        if group_order.duplicated(
+            [*PROFILE_KEYS, "round_index", "sample_index"]
+        ).any():
+            raise ValueError(
+                "multiple paired groups share one round/sample identity"
+            )
+        group_order = group_order.sort_values(
+            [*PROFILE_KEYS, "round_index", "sample_index"],
+            kind="stable",
+        )
+    else:
+        group_order = (
+            frame[[*PROFILE_KEYS, "paired_group_id"]]
+            .drop_duplicates()
+            .sort_values(
+                [*PROFILE_KEYS, "paired_group_id"],
+                kind="stable",
+            )
+        )
     group_order["pool_index"] = group_order.groupby(
         PROFILE_KEYS,
         sort=False,
     ).cumcount()
     frame = frame.merge(
-        group_order,
+        group_order[
+            [*PROFILE_KEYS, "paired_group_id", "pool_index"]
+        ],
         on=[*PROFILE_KEYS, "paired_group_id"],
         how="left",
         validate="many_to_one",
@@ -278,12 +330,93 @@ def validate_oracle_pool(frame: pd.DataFrame) -> None:
 
 
 def pool_catalog(frame: pd.DataFrame) -> pd.DataFrame:
+    identity_columns = [
+        column
+        for column in ("round_index", "sample_index")
+        if column in frame.columns and frame[column].notna().all()
+    ]
     return (
-        frame[[*PROFILE_KEYS, "paired_group_id", "pool_index"]]
+        frame[
+            [
+                *PROFILE_KEYS,
+                "paired_group_id",
+                "pool_index",
+                *identity_columns,
+            ]
+        ]
         .drop_duplicates()
         .sort_values([*PROFILE_KEYS, "pool_index"], kind="stable")
         .reset_index(drop=True)
     )
+
+
+def validate_formal_v7_pool(catalog: pd.DataFrame) -> dict[str, Any]:
+    required = {"round_index", "sample_index", "pool_index"}
+    missing = sorted(required - set(catalog.columns))
+    if missing:
+        raise ValueError(
+            "formal v7 320-pool requires round/sample identity columns: "
+            + ", ".join(missing)
+        )
+    expected_identity = {
+        (round_index, sample_index)
+        for round_index in range(1, FORMAL_V7_ROUND_COUNT + 1)
+        for sample_index in range(FORMAL_V7_SAMPLES_PER_ROUND)
+    }
+    profile_count = 0
+    for profile, group in catalog.groupby(PROFILE_KEYS, sort=True):
+        profile_count += 1
+        if len(group) != FORMAL_V7_POOL_SIZE:
+            raise ValueError(
+                f"formal v7 profile {profile} must contain exactly "
+                f"{FORMAL_V7_POOL_SIZE} groups, got {len(group)}"
+            )
+        observed_identity = set(
+            zip(
+                group["round_index"].astype(int),
+                group["sample_index"].astype(int),
+                strict=True,
+            )
+        )
+        if observed_identity != expected_identity:
+            raise ValueError(
+                f"formal v7 profile {profile} has incomplete "
+                "round/sample identities"
+            )
+        if set(group["pool_index"].astype(int)) != set(
+            range(FORMAL_V7_POOL_SIZE)
+        ):
+            raise ValueError(
+                f"formal v7 profile {profile} has invalid pool indexes"
+            )
+    assignments = split_assignments(
+        catalog,
+        bank_size=FORMAL_V7_BANK_SIZE,
+        split_kind="ordered",
+        repeat_index=0,
+        split_seed=0,
+    )
+    block_counts = (
+        assignments.groupby([*PROFILE_KEYS, "bank_id"], sort=True)[
+            "paired_group_id"
+        ]
+        .nunique()
+    )
+    if not bool((block_counts == FORMAL_V7_BANK_SIZE).all()):
+        raise AssertionError("formal v7 analysis blocks are incomplete")
+    if assignments.duplicated(
+        [*PROFILE_KEYS, "paired_group_id"]
+    ).any():
+        raise AssertionError("formal v7 analysis blocks overlap")
+    return {
+        "ordering": ["round_index", "sample_index"],
+        "total_per_intensity": FORMAL_V7_POOL_SIZE,
+        "block_size": FORMAL_V7_BANK_SIZE,
+        "block_ids": ["A", "B"],
+        "profile_count": profile_count,
+        "mutually_exclusive": True,
+        "complete_partition": True,
+    }
 
 
 def stable_profile_seed(
@@ -314,27 +447,38 @@ def split_assignments(
     rows: list[dict[str, Any]] = []
     for profile, group in catalog.groupby(PROFILE_KEYS, sort=True):
         ordered = group.sort_values("pool_index", kind="stable")
-        group_ids = ordered["paired_group_id"].to_numpy(dtype=object)
-        if 2 * bank_size > len(group_ids):
+        if 2 * bank_size > len(ordered):
             raise ValueError(
                 f"bank size {bank_size} requires {2 * bank_size} groups, "
-                f"but profile {profile} contains {len(group_ids)}"
+                f"but profile {profile} contains {len(ordered)}"
             )
         if split_kind == "random":
             rng = np.random.default_rng(
                 stable_profile_seed(split_seed, repeat_index, profile)
             )
-            group_ids = group_ids[rng.permutation(len(group_ids))]
-        left = group_ids[:bank_size]
-        right = group_ids[-bank_size:]
+            ordered = ordered.iloc[
+                rng.permutation(len(ordered))
+            ].reset_index(drop=True)
+        left = ordered.iloc[:bank_size]
+        right = ordered.iloc[-bank_size:]
         for bank_id, selected in (("A", left), ("B", right)):
             rows.extend(
                 {
                     **dict(zip(PROFILE_KEYS, profile, strict=True)),
-                    "paired_group_id": str(group_id),
+                    "paired_group_id": str(record["paired_group_id"]),
                     "bank_id": bank_id,
+                    "analysis_block_index": block_index,
+                    "pool_index": int(record["pool_index"]),
+                    **{
+                        column: int(record[column])
+                        for column in ("round_index", "sample_index")
+                        if column in record
+                        and pd.notna(record[column])
+                    },
                 }
-                for group_id in selected
+                for block_index, record in enumerate(
+                    selected.to_dict(orient="records")
+                )
             )
     assignments = pd.DataFrame(rows)
     if assignments.duplicated(
@@ -1560,6 +1704,11 @@ def analyze(
     catalog = pool_catalog(oracle)
     profile_sizes = catalog.groupby(PROFILE_KEYS, sort=False).size()
     minimum_pool_size = int(profile_sizes.min())
+    formal_v7_partition = (
+        validate_formal_v7_pool(catalog)
+        if FORMAL_V7_BANK_SIZE in sizes
+        else None
+    )
     if 2 * max(sizes) > minimum_pool_size:
         raise ValueError(
             f"largest bank size {max(sizes)} exceeds half the minimum "
@@ -1692,6 +1841,7 @@ def analyze(
             "unique": sorted(int(value) for value in profile_sizes.unique()),
         },
         "bank_sizes": sizes,
+        "formal_v7_partition": formal_v7_partition,
         "random_repeats": random_repeats,
         "split_seed": split_seed,
         "minimum_pairwise_agreement": minimum_agreement,
@@ -1731,7 +1881,7 @@ def analyze(
     write_json(
         output_dir / "manifest.json",
         {
-            "schema_version": "paper_e2_split_bank_manifest.v1",
+            "schema_version": "paper_e2_split_bank_manifest.v2",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "analysis_path": str(Path(__file__).relative_to(REPO_ROOT)),
             "analysis_sha256": file_sha256(Path(__file__)),

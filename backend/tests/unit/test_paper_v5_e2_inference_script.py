@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -81,6 +82,24 @@ def test_master_expands_to_four_independently_standardized_views():
         assert abs(float(target[:context].std()) - 1.0) < 1e-10
 
 
+def test_master_view_slices_explicit_timestamps_with_the_target_suffix():
+    module = load_module(RUNNER_PATH, "paper_v5_e2_inference_timestamps")
+    master = synthetic_master(module)
+    master["timestamps"] = [
+        f"2026-01-{1 + index // 48:02d}T{(index % 48) // 2:02d}:"
+        f"{30 * (index % 2):02d}:00+00:00"
+        for index in range(module.MAX_CONTEXT_LENGTH + module.HORIZON)
+    ]
+
+    view = module.master_view(master, 168)
+
+    assert len(view["timestamps"]) == 168 + module.HORIZON
+    assert view["timestamps"][0] == master["timestamps"][
+        module.MAX_CONTEXT_LENGTH - 168
+    ]
+    assert view["timestamps"][-1] == master["timestamps"][-1]
+
+
 def test_prediction_row_retains_view_and_master_identity():
     module = load_module(RUNNER_PATH, "paper_v5_e2_inference_prediction")
     view = module.master_view(synthetic_master(module), 168)
@@ -102,6 +121,43 @@ def test_prediction_row_retains_view_and_master_identity():
     assert row["capability_id"] == "multi_seasonal"
     assert row["round_index"] == 1
     assert len(row["target_future"]) == module.HORIZON
+
+
+def test_inference_config_freezes_v7_input_adaptation_policy(tmp_path):
+    module = load_module(RUNNER_PATH, "paper_v5_e2_inference_adaptation_config")
+    args = type(
+        "Args",
+        (),
+        {
+            "models": ["Timer-3.5"],
+            "capabilities": None,
+            "devices": "0,1",
+            "request_max_attempts": 3,
+            "forecast_timeout_seconds": 1200,
+            "model_load_timeout_seconds": 1800,
+            "base_url": "http://127.0.0.1:10810",
+            "api_prefix": "/ai/api/v1",
+            "input_adaptation_policy": (
+                module.engine.INPUT_ADAPTATION_POLICY_ID
+            ),
+        },
+    )()
+
+    config = module.inference_config(
+        args,
+        synthetic={"path": "samples.jsonl", "sha256": "sample"},
+        real_source=None,
+    )
+
+    assert config["input_adaptation_policy"]["policy_id"] == (
+        module.engine.INPUT_ADAPTATION_POLICY_ID
+    )
+    assert config["input_adaptation_policy"]["target_fallback"] == (
+        "independent_univariate_then_column_order_reassembly"
+    )
+    assert config["input_adaptation_policy"]["covariate_fallback"] == (
+        "omit_all_covariates_when_model_contract_is_insufficient"
+    )
 
 
 def test_tabpfn_execution_configuration_is_frozen():
@@ -269,6 +325,105 @@ def test_cell_rank_stability_is_evaluated_without_cross_cell_pooling():
     assert bool(
         stability.iloc[0]["passed_min_pairwise_agreement"]
     )
+
+
+def test_v7_analysis_protocol_reads_64_by_5_generation_config():
+    module = load_module(ANALYSIS_PATH, "paper_v7_e2_analysis_protocol")
+    config = {
+        "generation_mode": "formal_v7_round_pool",
+        "round_seeds": list(module.FORMAL_ROUND_SEEDS),
+        "samples_per_round_per_cell": 64,
+        "total_per_intensity": 320,
+        "analysis_block_contract": {
+            "ordering": ["round_index", "sample_index"],
+            "total_per_intensity": 320,
+            "block_size": 160,
+            "mutually_exclusive": True,
+            "complete_partition": True,
+            "blocks": [
+                {"analysis_block_id": "A"},
+                {"analysis_block_id": "B"},
+            ],
+        },
+    }
+
+    protocol = module.validate_formal_generation_config(config)
+
+    assert protocol["round_count"] == 5
+    assert protocol["samples_per_round"] == 64
+    assert protocol["total_per_intensity"] == 320
+    assert protocol["analysis_block_size"] == 160
+    stale = dict(config, samples_per_round_per_cell=32)
+    with pytest.raises(ValueError, match="64 samples"):
+        module.validate_formal_generation_config(stale)
+
+
+def test_v7_full_pool_and_two_block_scores_validate_identity():
+    module = load_module(ANALYSIS_PATH, "paper_v7_e2_analysis_blocks")
+    protocol = {
+        "round_seeds": list(module.FORMAL_ROUND_SEEDS),
+        "round_count": 5,
+        "samples_per_round": 64,
+        "total_per_intensity": 320,
+        "analysis_block_size": 160,
+        "analysis_block_ids": ["A", "B"],
+        "analysis_blocks_mutually_exclusive": True,
+    }
+    rows = []
+    for model_index, model_id in enumerate(("a", "b")):
+        for round_index, round_seed in enumerate(
+            module.FORMAL_ROUND_SEEDS,
+            start=1,
+        ):
+            for sample_index in range(64):
+                pool_index = (round_index - 1) * 64 + sample_index
+                rows.append(
+                    {
+                        "model_id": model_id,
+                        "master_sample_id": f"master-{pool_index}",
+                        "paired_group_id": f"group-{pool_index}",
+                        "dataset_id": "dataset",
+                        "task_id": "univariate",
+                        "capability_id": "trend",
+                        "intensity": 1,
+                        "round_index": round_index,
+                        "round_seed": round_seed,
+                        "sample_index": sample_index,
+                        "oracle_mase": (
+                            1.0 + model_index + pool_index / 10_000
+                        ),
+                    }
+                )
+    oracle = module.validate_formal_oracle_identity(
+        module.pd.DataFrame(rows),
+        protocol=protocol,
+    )
+
+    full = module.cell_full_pool_scores(
+        oracle,
+        score_column="oracle_mase",
+        score_policy="oracle_context",
+        expected_samples_per_cell=320,
+    )
+    blocks = module.cell_analysis_block_scores(
+        oracle,
+        score_column="oracle_mase",
+        score_policy="oracle_context",
+        expected_block_size=160,
+    )
+    stability = module.analysis_block_stability_rows(blocks)
+
+    assert set(full["master_sample_count"]) == {320}
+    assert set(blocks["master_sample_count"]) == {160}
+    assert set(blocks["analysis_block_id"]) == {"A", "B"}
+    assert stability.iloc[0]["pairwise_ordering_agreement"] == 1.0
+    assert bool(stability.iloc[0]["exact_rank_vector"])
+    incomplete = oracle.iloc[:-1].copy()
+    with pytest.raises(ValueError, match="incomplete"):
+        module.validate_formal_oracle_identity(
+            incomplete,
+            protocol=protocol,
+        )
 
 
 def test_oracle_compaction_selects_minimum_mase_and_shorter_tie(tmp_path):

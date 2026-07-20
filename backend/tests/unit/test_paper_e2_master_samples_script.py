@@ -99,6 +99,68 @@ def test_joint_generation_retries_all_five_intensities_together(monkeypatch):
         assert len({item[1] for item in batch}) == 1
 
 
+def test_v7_defaults_freeze_five_by_sixty_four_and_two_blocks():
+    module = load_module()
+
+    assert module.DEFAULT_SUITE_DIR.parts[-2:] == (
+        "v7",
+        "01_nine_capability_suite",
+    )
+    assert module.DEFAULT_OUTPUT_DIR.parts[-2:] == (
+        "v7",
+        "E2_dynamic_stability",
+    )
+    assert len(module.DEFAULT_ROUND_SEEDS) == 5
+    assert len(set(module.DEFAULT_ROUND_SEEDS)) == 5
+    assert module.DEFAULT_SAMPLES_PER_ROUND == 64
+    assert module.FORMAL_TOTAL_PER_INTENSITY == 320
+    contract = module.formal_analysis_block_contract()
+    assert contract["total_per_intensity"] == 320
+    assert contract["block_size"] == 160
+    assert contract["mutually_exclusive"] is True
+    assert module.formal_pool_identity(3, 31) == {
+        "pool_index": 159,
+        "analysis_block_id": "A",
+        "analysis_block_index": 159,
+    }
+    assert module.formal_pool_identity(3, 32) == {
+        "pool_index": 160,
+        "analysis_block_id": "B",
+        "analysis_block_index": 0,
+    }
+
+
+def test_v7_formal_sampling_protocol_fails_closed():
+    module = load_module()
+
+    module.validate_sampling_protocol(
+        round_seeds=module.DEFAULT_ROUND_SEEDS,
+        samples_per_round=64,
+        flat_batch_id=None,
+        flat_batch_seed=None,
+    )
+    with pytest.raises(ValueError, match="five fixed round seeds"):
+        module.validate_sampling_protocol(
+            round_seeds=tuple(range(5)),
+            samples_per_round=64,
+            flat_batch_id=None,
+            flat_batch_seed=None,
+        )
+    with pytest.raises(ValueError, match="64 samples"):
+        module.validate_sampling_protocol(
+            round_seeds=module.DEFAULT_ROUND_SEEDS,
+            samples_per_round=32,
+            flat_batch_id=None,
+            flat_batch_seed=None,
+        )
+    module.validate_sampling_protocol(
+        round_seeds=(17,),
+        samples_per_round=160,
+        flat_batch_id="legacy-B",
+        flat_batch_seed=17,
+    )
+
+
 def test_master_rows_share_paired_identity_and_attempt_seed():
     module = load_module()
     cell = {
@@ -132,6 +194,9 @@ def test_master_rows_share_paired_identity_and_attempt_seed():
     assert len({row["paired_group_id"] for row in rows}) == 1
     assert len({row["paired_attempt_seed"] for row in rows}) == 1
     assert {row["intensity"] for row in rows} == set(module.INTENSITIES)
+    assert {row["task_view_id"] for row in rows} == {
+        "dataset::univariate"
+    }
     assert all(
         row["context_lengths"] == list(module.CONTEXT_LENGTHS)
         for row in rows
@@ -196,6 +261,83 @@ def test_completed_shard_requires_all_intensities_and_four_views(tmp_path):
             incomplete_views,
             cell=cell,
             expected=5,
+        )
+
+
+def test_formal_shard_resume_validates_complete_disjoint_blocks(
+    tmp_path,
+    monkeypatch,
+):
+    module = load_module()
+    monkeypatch.setattr(module, "FORMAL_ROUND_COUNT", 2)
+    monkeypatch.setattr(module, "DEFAULT_SAMPLES_PER_ROUND", 2)
+    monkeypatch.setattr(module, "FORMAL_TOTAL_PER_INTENSITY", 4)
+    monkeypatch.setattr(module, "FORMAL_ANALYSIS_BLOCK_SIZE", 2)
+    cell = {
+        "profile_id": "dataset__univariate__L504_H48",
+        "dataset_id": "dataset",
+        "task_id": "univariate",
+        "capability_id": "trend",
+    }
+    profile = {
+        "season_length": 24,
+        "frequency": "h",
+        "target_dim": 1,
+        "hierarchy": None,
+    }
+    round_seeds = (101, 202)
+    path = tmp_path / "formal.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        for round_index, round_seed in enumerate(round_seeds, start=1):
+            for sample_index in range(2):
+                for intensity in module.INTENSITIES:
+                    row = module.master_sample_row(
+                        cell=cell,
+                        profile=profile,
+                        intensity=intensity,
+                        round_index=round_index,
+                        round_seed=round_seed,
+                        sample_index=sample_index,
+                        sample_seed=17,
+                        attempt=0,
+                        attempt_seed=19,
+                        candidate=candidate(
+                            module,
+                            intensity,
+                            accepted=True,
+                        ),
+                    )
+                    handle.write(json.dumps(row) + "\n")
+
+    audit = module.validate_complete_shard(
+        path,
+        cell=cell,
+        expected=20,
+        round_seeds=round_seeds,
+        samples_per_round=2,
+    )
+
+    assert audit["paired_group_count"] == 4
+    assert audit["analysis_block_group_counts"] == {"A": 2, "B": 2}
+    assert audit["analysis_blocks_mutually_exclusive"] is True
+
+    rows = [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    rows[-1]["analysis_block_id"] = "A"
+    tampered = tmp_path / "tampered.jsonl"
+    tampered.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="analysis block identity mismatch"):
+        module.validate_complete_shard(
+            tampered,
+            cell=cell,
+            expected=20,
+            round_seeds=round_seeds,
+            samples_per_round=2,
         )
 
 

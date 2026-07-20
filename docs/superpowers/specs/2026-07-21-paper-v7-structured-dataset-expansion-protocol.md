@@ -10,7 +10,7 @@ v7 不再以增加单变量数据集数量为目标。现有单变量覆盖已�
 真正缺少的是：
 
 1. 同一结构化能力跨数据集复现；
-2. 结构化真实窗口上的模型外部效度检验；
+2. 结构化真实窗口上的同构任务对齐检验；
 3. 比当前固定三目标、单层两子节点、两条合成协变量更丰富的变量结构；
 4. 对 known-future covariate 的 issue-time 证据，而不是事后可见的天气、库存或促销字段。
 
@@ -22,7 +22,7 @@ v7 不再以增加单变量数据集数量为目标。现有单变量覆盖已�
 | P0a | 现有 ETT1/H 使用原生同步 7 通道，ETT2/H 作 sensitivity | common factor | 先做；替代“连续取三条独立序列”的弱语义 panel |
 | P0a | 审计现有 GEFCom2014 Wind 资产 | common factor、NWP covariate | 先做小试；须恢复 forecast issue/release 语义 |
 | P0b | Swiss Hierarchical Demand | common factor、严格层级、NWP covariate | 首个应新增的外部数据集 |
-| P0c | GEFCom2012 Load | common factor、严格层级、日历 covariate | 技术上优先；许可证确认后才进入正式集 |
+| P0c | GEFCom2012 Load | common factor、严格层级、日历 covariate | 已由用户确认本轮研究使用；原始包不再分发 |
 | P1 | FreshRetailNet-50K | common factor、多层聚合、日历 covariate | 强候选；先处理缺货删失和抽样层级 |
 | P1 | UCI Hierarchical Sales | 严格层级、小型跨域复现 | 适合低成本 PoC；促销默认不算 known-future |
 | P2 | SDWPF、NYC TLC、Low Carbon London | 风电、交通、需求响应扩域 | 条件候选；ETL、权利或 forecast-vintage 成本较高 |
@@ -107,6 +107,8 @@ v7 分两个维度轨：
   错配；只在共同兼容模型集合内比较。
 
 `canonical-d3` 与 `native-d` 是不同实验轴，不把模型因输入维度不兼容记为预测失败。
+本轮正式 v7 先冻结并运行 `canonical-d3`；`native-d` 只登记原生维度和选择策略，
+留作后续 sensitivity，不在本轮结果中声称已经完成。
 
 ### 3.3 Hierarchy
 
@@ -160,7 +162,7 @@ known_future_reason
 | 数据集 | 同步 common factor | 严格 hierarchy | known-future | H/L 与规模 | 结论 |
 | --- | --- | --- | --- | --- | --- |
 | Swiss Hierarchical Demand | ✓ 24 meters | ✓ 7 aggregates，publisher-native | ✓ NWP forecast vintage；仅覆盖 24h | 10min target；可聚合至 30min，使 H48=24h | **P0，综合最强** |
-| GEFCom2012 Load | ✓ 20 zones | ✓ Zone 21 = 前 20 区之和 | ✓ 日历/假日；△ temperature | 约 4.5 年 hourly | **P0，许可证 gate** |
+| GEFCom2012 Load | ✓ 20 zones | ✓ Zone 21 = 前 20 区之和 | ✓ 日历/假日；△ temperature | 约 4.5 年 hourly | **P0，本轮使用已确认** |
 | M5 | ✓ 同店/品类 siblings | ✓ 42,840 series、12 levels | ✓ calendar/event/SNAP；△ price | daily，现有资产 | **P0，先补 view** |
 | GEFCom2014 Wind | ✓ 10 farms | △ 可构造总功率，不是原生层级 | △ u/v NWP，须恢复 release vintage | hourly，现有 zip | **P0 小试，先审计 48 步可用性** |
 | FreshRetailNet-50K | ✓ store-product groups | △ 从元数据精确聚合 | ✓ calendar/holiday；△ discount/activity | 50K series、hourly、约 97 天 | **P1，强候选** |
@@ -181,8 +183,8 @@ S1/S2/S11/S12/S21/S22/all 七个严格 aggregates；NWP 每 12 小时更新，�
 **GEFCom2012 Load** 的 Zone 21 明确定义为 Zone 1--20 之和，因此同时适合 factor 和
 native hierarchy。其未来温度是否以 forecast vintage 提供不能仅凭 competition 文件有
 未来 temperature 列推定；第一版只允许日历和假日 covariates。数据使用权未像 UCI 或
-Zenodo 数据那样给出清晰开放许可证，正式下载、再分发和 artifact 发布前必须完成人工
-license gate。
+Zenodo 数据那样给出清晰开放许可证；用户已在 2026-07-21 确认本轮研究使用，但这一
+确认不授予重新分发原始压缩包的权利。
 
 **M5** 不应再只承担一个三节点 hierarchy view。它可以从同店、同州、同品类的
 bottom series 建立 leaf-only factor panels，也能用 calendar、event 和 SNAP 建立
@@ -277,12 +279,15 @@ FreshRetailNet-50K 在缺货规则、权限和 ETL pilot 通过后替换或补�
 每个正式结构化 dataset 还必须生成真实源任务：
 
 - 使用同一 `task_view_id`、targets、covariates 和 \(S\)；
-- 使用未参与 profile/gate 的 official tail 或 time/group holdout；
+- 当前 v7 从正式 calibration artifact 的 `reference_raw` 重建同构窗口；
 - 同样产生四 lookback、同一 future；
 - 只在共同兼容模型集合中计算 structured synthetic-real alignment。
 
-没有 structured real-source evaluation 的新增 dataset，只能算 generator calibration
-扩展，不能算外部效度扩展。
+当前 reference split 与 parameter/calibration split 隔离，但同一原始数据集的不同
+task views 仍按 task 独立分割，尚无共享的 asset-level holdout registry。因此该分析
+只解释为 **in-sample construct alignment**，不能表述为 held-out external validity。
+未来若建立跨 task-view 的共享时间/组边界并使用未参与 profile/gate 的 official tail
+或 holdout，才升级为外部效度检验。
 
 ### 6.1 v7 模型比较与降级推理
 
@@ -330,18 +335,19 @@ v7 不再因模型原生不支持多目标或 known-future covariates 而跳过�
 4. M5 covariate view，只启用 calendar/event/SNAP；
 5. GEFCom2014 Wind common-factor view，并审计 NWP release。
 
-目标是验证多 view identity、structured real-source、native dimension、hierarchy
-metadata 和 covariate provenance 全链路，不追求模型结论。
+目标是验证多 view identity、structured real-source、原生维度 metadata、hierarchy
+metadata 和 covariate provenance 全链路，不追求模型结论；实际生成仍为
+`canonical-d3`。
 
 ### Phase 2：首批外部扩展
 
 1. Swiss Hierarchical Demand；
-2. GEFCom2012 Load（通过 license gate 后）；
-3. UCI Hierarchical Sales；
-4. FreshRetailNet-50K。
+2. GEFCom2012 Load（本轮研究使用已确认）。
 
 每个数据集先只跑 `max_windows` 小试、五档校准和每 cell 少量 qualification；全部
 admission checks 通过后再冻结 support matrix 和正式 sample budget。
+UCI Hierarchical Sales 与 FreshRetailNet-50K 保持 P1，待其日期、缺货、字段可用性
+和权利审计完成后另行接入，不混入本轮 P0 冻结集。
 
 ### Phase 3：预算与复现
 
@@ -354,6 +360,76 @@ admission checks 通过后再冻结 support matrix 和正式 sample budget。
 5. 先跑 structured real-source，再跑正式 synthetic inference；
 6. E2/E3 分别报告全 320 主估计与两个 160-block 的稳定性；
 7. dataset-level cluster bootstrap，不把同一原始数据集的多个 views 当独立样本。
+
+#### 3.1 正式生成身份
+
+正式 v7 只接受以下冻结参数：
+
+```text
+generation_mode = formal_v7_round_pool
+round_seeds = [2026072121, 2026072122, 2026072123, 2026072124, 2026072125]
+samples_per_round_per_cell = 64
+total_per_intensity = 5 × 64 = 320
+```
+
+对每个 `dataset × task_view × capability × intensity`，按
+`pool_index = (round_index - 1) × 64 + sample_index` 排序，其中
+`round_index ∈ [1,5]`、`sample_index ∈ [0,63]`。两个正式 analysis block 固定为：
+
+- A：`pool_index=0..159`，即 round 1、2 和 round 3 的 sample 0..31；
+- B：`pool_index=160..319`，即 round 3 的 sample 32..63 和 round 4、5。
+
+两块各 160 条、并集恰为完整 320 条、交集为空。样本行、shard audit、
+`generation_config.json` 和 `sample_manifest.json` 必须同时保存
+`pool_index`、`analysis_block_id` 和 block 内索引；finalize 对完整 round/sample
+笛卡尔积、seed 映射、块大小和互斥性 fail closed。旧的 flat 160 batch 只能通过显式
+compatibility 参数运行，不得标作正式 v7，也不得与上述 320 pool 合并。
+
+#### 3.2 可恢复执行契约
+
+在仓库根目录执行（默认目录均为 `runtime/paper_exp/v7`）：
+
+```bash
+uv run --project backend python scripts/generate_paper_e2_master_samples.py \
+  --stage prepare \
+  --round-seeds 2026072121 2026072122 2026072123 2026072124 2026072125 \
+  --samples-per-round 64
+
+uv run --project backend python scripts/generate_paper_e2_master_samples.py \
+  --stage shards \
+  --round-seeds 2026072121 2026072122 2026072123 2026072124 2026072125 \
+  --samples-per-round 64
+
+uv run --project backend python scripts/generate_paper_e2_master_samples.py \
+  --stage finalize \
+  --round-seeds 2026072121 2026072122 2026072123 2026072124 2026072125 \
+  --samples-per-round 64
+```
+
+`shards` 可按互不重叠的 `--datasets` 分给不同 worker；每个 shard 以稳定 cell 身份命名。
+重复执行只可复用通过行数、round seed、round/sample 网格、sample id 和内容 checksum
+校验的完整 shard，截断、重复或配置不一致的 shard 必须拒绝。`finalize` 只读取已经通过
+同一校验的全部 supported-cell shards，缺一不可；最终 `samples.jsonl` 及其 manifest
+哈希随后成为推理输入身份。
+
+#### 3.3 E2 正式汇总与稳定性
+
+推理结束后，E2 主表直接对每个 model/cell 的全部 320 条样本求估计；五个 64-sample
+round 的结果只作为生成 round 诊断，不再把旧的 32 条或五轮常量写死在分析代码中。
+基础双块摘要和详细 split-half 分析分别执行：
+
+```bash
+uv run --project backend python scripts/analyze_paper_v5_e2.py
+uv run --project backend python \
+  scripts/analyze_paper_e2_split_bank_reliability.py --bank-sizes 160
+```
+
+分析器必须读取并校验 `generation_config.json`、`sample_manifest.json`、
+`inference_config.json` 和各模型 oracle 中的 round/sample 身份；任何模型少一条、
+seed 不符、跨模型 sample id 不一致或 A/B 重叠都停止分析。基础报告同时输出完整 320
+cell scores、A/B 各 160 cell scores 及其排序一致性；split-bank 脚本负责 tie-aware、
+partial-order 和 practical-equivalence 的详细稳定性。E3 使用相同的 320 主样本和
+A/B 身份，不能重新随机切块。
 
 ## 8. Pilot 验收与停止规则
 
@@ -387,11 +463,13 @@ criterion。候选一旦在看模型结果之前通过并冻结，就不能因�
 
 按上述扩展，v7 才能把以下因素拆开：
 
-- rank-1 合成 factor 结论在 3、7、16、24 通道真实 panel 上是否稳定；
+- rank-1 合成 factor 结论能否在多个 canonical-d3 真实 panel 上复现；原生
+  7/10/20/24 通道维度稳定性留待后续 sensitivity；
 - hierarchy 模型表现来自加总恒等式、child heterogeneity，还是多层 topology；
 - 日历型 covariate 与 NWP forecast、公告型干预的能力排序是否相同；
 - 同一个 M5 原始资产的 factor、hierarchy、covariate 三种 view 是否给出一致的模型画像；
-- 结构化 synthetic rank 是否能对齐同 dataset、同 view 的真实 holdout rank；
+- 结构化 synthetic rank 是否能对齐同 dataset、同 view 的 reference-window rank
+  （构念对齐，不是 held-out external validity）；
 - 结构化结论在能源、零售、交通三个领域是否复现。
 
 这比继续把单变量数据从 10 个扩到 15 个更可能形成可解释的论文结论。

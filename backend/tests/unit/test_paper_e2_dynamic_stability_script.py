@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
 import json
 import sys
@@ -300,6 +301,54 @@ def test_real_builder_sample_is_normalized_for_existing_forecast_pipeline(
     assert module.forecast_request_body("model_a", sample)["output_length"] == [2]
 
 
+def test_real_sample_normalization_combines_covariates_and_timestamps(tmp_path):
+    module = load_module()
+    path = tmp_path / "real_samples.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "sample_id": "real-cov",
+                "dataset_id": "dataset_a",
+                "lookback": 2,
+                "horizon": 1,
+                "season_length": 2,
+                "frequency": "30min",
+                "target_dim": 1,
+                "covariate_dim": 2,
+                "target_history": [1.0, 2.0],
+                "target_future": [3.0],
+                "target_column_names": ["load"],
+                "covariate_column_names": ["holiday", "temperature"],
+                "history_cov": [[0.0, 20.0], [0.0, 21.0]],
+                "future_cov": [[1.0, 22.0]],
+                "history_timestamps": [
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:30:00+00:00",
+                ],
+                "future_timestamps": ["2026-01-01T01:00:00+00:00"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    sample = next(module.iter_forecast_samples(path))
+    body = module.forecast_request_body("model_a", sample)
+
+    assert sample["covariates"] == [
+        [0.0, 20.0],
+        [0.0, 21.0],
+        [1.0, 22.0],
+    ]
+    assert sample["timestamps"][-1] == "2026-01-01T01:00:00+00:00"
+    assert body["targets"][0]["columns"] == ["time", "load"]
+    assert body["future_covs"][0]["columns"] == [
+        "time",
+        "holiday",
+        "temperature",
+    ]
+
+
 def test_real_baselines_use_separate_prediction_directory(tmp_path):
     module = load_module()
     path = tmp_path / "real_samples.jsonl"
@@ -524,6 +573,322 @@ def test_model_compatibility_uses_target_and_future_covariate_limits():
     )
     assert module.model_supports_sample(structured, {**base, "target_dim": 3})
     assert module.model_supports_sample(structured, {**base, "covariate_dim": 2})
+
+
+def test_v7_input_adaptation_plans_split_and_covariate_drop_independently():
+    module = load_module()
+    sample = {
+        "context_length": 168,
+        "horizon": 24,
+        "target_dim": 3,
+        "covariate_dim": 2,
+    }
+    single_no_cov = {
+        "forecast_limits": {
+            "min_input_length": 16,
+            "max_input_length": 2048,
+            "max_output_length": 96,
+            "max_target_count": 1,
+            "max_covariate_count": 0,
+            "max_future_covs_length": None,
+        }
+    }
+    single_with_cov = {
+        "forecast_limits": {
+            **single_no_cov["forecast_limits"],
+            "max_covariate_count": 50,
+            "max_future_covs_length": 96,
+        }
+    }
+    multi_no_cov = {
+        "forecast_limits": {
+            **single_no_cov["forecast_limits"],
+            "max_target_count": None,
+        }
+    }
+
+    both = module.input_adaptation_plan(
+        single_no_cov,
+        sample,
+        policy_id=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    assert both["target_mode"] == "independent_univariate"
+    assert both["covariate_mode"] == "omitted_unsupported"
+    assert both["target_request_count"] == 3
+    assert both["request_target_dim"] == 1
+    assert both["request_covariate_dim"] == 0
+
+    split_only = module.input_adaptation_plan(
+        single_with_cov,
+        sample,
+        policy_id=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    assert split_only["target_mode"] == "independent_univariate"
+    assert split_only["covariate_mode"] == "native"
+    assert split_only["request_covariate_dim"] == 2
+
+    drop_only = module.input_adaptation_plan(
+        multi_no_cov,
+        sample,
+        policy_id=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    assert drop_only["target_mode"] == "native_multivariate"
+    assert drop_only["covariate_mode"] == "omitted_unsupported"
+    assert drop_only["target_request_count"] == 1
+
+
+def test_v7_missing_target_limit_means_single_target_but_explicit_null_is_unbounded():
+    module = load_module()
+    sample = {
+        "context_length": 168,
+        "horizon": 24,
+        "target_dim": 3,
+        "covariate_dim": 0,
+    }
+
+    missing = module.input_adaptation_plan(
+        {"forecast_limits": {"max_output_length": 96}},
+        sample,
+        policy_id=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    unbounded = module.input_adaptation_plan(
+        {
+            "forecast_limits": {
+                "max_output_length": 96,
+                "max_target_count": None,
+            }
+        },
+        sample,
+        policy_id=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+
+    assert missing["target_mode"] == "independent_univariate"
+    assert unbounded["target_mode"] == "native_multivariate"
+
+
+def test_v7_split_requests_reassemble_in_original_target_order(monkeypatch):
+    module = load_module()
+    sample = {
+        "sample_id": "sample",
+        "context_length": 3,
+        "horizon": 2,
+        "target_dim": 3,
+        "covariate_dim": 2,
+        "target_column_names": ["north", "south", "west"],
+        "covariate_column_names": ["holiday", "temperature"],
+        "frequency": "30min",
+        "target": [
+            [1.0, 10.0, 100.0],
+            [2.0, 20.0, 200.0],
+            [3.0, 30.0, 300.0],
+            [4.0, 40.0, 400.0],
+            [5.0, 50.0, 500.0],
+        ],
+        "covariates": [[0.0, 20.0]] * 5,
+    }
+    model = {
+        "forecast_limits": {
+            "max_target_count": 1,
+            "max_covariate_count": 50,
+            "max_future_covs_length": 2,
+        }
+    }
+    seen = []
+
+    async def fake_forecast(_client, **kwargs):
+        child = kwargs["sample"]
+        seen.append(child)
+        target_index = int(child["_adaptation_target_index"])
+        return {
+            "forecast": [
+                [float(target_index + 1)],
+                [float((target_index + 1) * 10)],
+            ],
+            "attempts": 1,
+            "elapsed_seconds": 0.01,
+            "error": None,
+        }
+
+    monkeypatch.setattr(module, "forecast_one_with_retry", fake_forecast)
+    result = asyncio.run(
+        module.forecast_adapted_sample_with_retry(
+            object(),
+            forecast_url="http://service/forecast",
+            model_id="single",
+            model=model,
+            sample=sample,
+            max_attempts=2,
+            input_adaptation_policy=module.INPUT_ADAPTATION_POLICY_ID,
+        )
+    )
+
+    assert result["forecast"] == [[1.0, 2.0, 3.0], [10.0, 20.0, 30.0]]
+    assert result["successful_http_request_count"] == 3
+    assert result["input_adaptation"]["target_request_count"] == 3
+    assert [row["target_column_names"] for row in seen] == [
+        ["north"],
+        ["south"],
+        ["west"],
+    ]
+    assert all(row["covariate_dim"] == 2 for row in seen)
+
+
+def test_v7_child_failure_is_atomic_and_reports_target_index(monkeypatch):
+    module = load_module()
+    sample = {
+        "sample_id": "sample",
+        "context_length": 2,
+        "horizon": 1,
+        "target_dim": 3,
+        "covariate_dim": 0,
+        "frequency": "h",
+        "target": [[1.0, 2.0, 3.0], [2.0, 3.0, 4.0], [3.0, 4.0, 5.0]],
+        "covariates": None,
+    }
+    model = {"forecast_limits": {"max_target_count": 1}}
+
+    async def fake_forecast(_client, **kwargs):
+        index = int(kwargs["sample"]["_adaptation_target_index"])
+        if index == 1:
+            return {
+                "forecast": None,
+                "attempts": 2,
+                "elapsed_seconds": 0.02,
+                "error": "target failed",
+            }
+        return {
+            "forecast": [[float(index)]],
+            "attempts": 1,
+            "elapsed_seconds": 0.01,
+            "error": None,
+        }
+
+    monkeypatch.setattr(module, "forecast_one_with_retry", fake_forecast)
+    result = asyncio.run(
+        module.forecast_adapted_sample_with_retry(
+            object(),
+            forecast_url="http://service/forecast",
+            model_id="single",
+            model=model,
+            sample=sample,
+            max_attempts=2,
+            input_adaptation_policy=module.INPUT_ADAPTATION_POLICY_ID,
+        )
+    )
+
+    assert result["forecast"] is None
+    assert result["failed_target_index"] == 1
+    assert result["successful_http_request_count"] == 1
+    assert result["attempted_http_request_count"] == 3
+    assert "target failed" in result["error"]
+
+
+def test_v7_covariate_drop_and_half_hour_timestamps_use_request_copy():
+    module = load_module()
+    sample = {
+        "context_length": 2,
+        "horizon": 2,
+        "target_dim": 1,
+        "covariate_dim": 2,
+        "covariate_column_names": ["snap", "event"],
+        "frequency": "30min",
+        "target": [[1.0], [2.0], [3.0], [4.0]],
+        "covariates": [[0.0, 1.0]] * 4,
+    }
+    plan = module.input_adaptation_plan(
+        {
+            "forecast_limits": {
+                "max_target_count": 1,
+                "max_covariate_count": 0,
+            }
+        },
+        sample,
+        policy_id=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    child = module.adapted_request_samples(sample, plan)[0]
+    body = module.forecast_request_body("model", child)
+    timestamps = module.sample_timestamps(child)
+
+    assert child["covariates"] is None
+    assert child["covariate_dim"] == 0
+    assert "history_covs" not in body
+    assert timestamps[1] == "2026-01-01T00:30:00+00:00"
+    assert timestamps[2] == "2026-01-01T01:00:00+00:00"
+    assert sample["covariate_dim"] == 2
+
+
+def test_forecast_covariates_prefers_sample_column_names():
+    module = load_module()
+    sample = {
+        "context_length": 2,
+        "horizon": 1,
+        "target_dim": 1,
+        "covariate_dim": 3,
+        "covariate_column_names": ["calendar", "snap", "temperature"],
+        "frequency": "h",
+        "capability_id": "covariate_response",
+        "target": [[1.0], [2.0], [3.0]],
+        "covariates": [[1.0, 0.0, 20.0]] * 3,
+    }
+
+    future = module.forecast_covariates(sample, history=False)
+
+    assert future["columns"] == [
+        "time",
+        "calendar",
+        "snap",
+        "temperature",
+    ]
+
+
+def test_v7_status_summary_counts_original_views_and_child_requests(tmp_path):
+    module = load_module()
+    sample_path = tmp_path / "samples.jsonl"
+    rows = [
+        {
+            "sample_id": "structured",
+            "context_length": 2,
+            "horizon": 1,
+            "target_dim": 3,
+            "covariate_dim": 2,
+            "frequency": "h",
+        },
+        {
+            "sample_id": "plain",
+            "context_length": 2,
+            "horizon": 1,
+            "target_dim": 1,
+            "covariate_dim": 0,
+            "frequency": "h",
+        },
+    ]
+    sample_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    model = {
+        "forecast_limits": {
+            "max_target_count": 1,
+            "max_covariate_count": 0,
+        }
+    }
+
+    summary = module.summarize_model_input_adaptation(
+        sample_path,
+        model=model,
+        input_adaptation_policy=module.INPUT_ADAPTATION_POLICY_ID,
+    )
+
+    assert summary == {
+        "expected_original_view_count": 2,
+        "compatible_sample_count": 2,
+        "unsupported_window_view_count": 0,
+        "native_view_count": 1,
+        "adapted_view_count": 1,
+        "split_target_view_count": 1,
+        "covariates_omitted_view_count": 1,
+        "expected_http_request_count": 4,
+    }
 
 
 def test_model_load_uses_and_verifies_frozen_replica_topology(monkeypatch):

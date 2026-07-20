@@ -56,27 +56,33 @@ from build_paper_v4_nine_capability_suite import (  # noqa: E402
     PRIMARY_TARGET_FEATURE,
     array_sha256,
     gate_profile_id,
+    record_task_view_id,
     synthetic_paired_view,
     synthetic_view_features,
 )
 
 
-SCHEMA_VERSION = "paper_v5_e2_master_sample_collection.v1"
-SAMPLE_SCHEMA_VERSION = "paper_v5_e2_master_sample.v1"
+SCHEMA_VERSION = "paper_v7_e2_master_sample_collection.v1"
+SAMPLE_SCHEMA_VERSION = "paper_v7_e2_master_sample.v1"
 DEFAULT_SUITE_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v5/01_nine_capability_suite"
+    REPO_ROOT / "runtime/paper_exp/v7/01_nine_capability_suite"
 )
 DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v5/E2_dynamic_stability"
+    REPO_ROOT / "runtime/paper_exp/v7/E2_dynamic_stability"
 )
 DEFAULT_ROUND_SEEDS = (
-    2026071621,
-    2026071622,
-    2026071623,
-    2026071624,
-    2026071625,
+    2026072121,
+    2026072122,
+    2026072123,
+    2026072124,
+    2026072125,
 )
-DEFAULT_SAMPLES_PER_ROUND = 32
+FORMAL_ROUND_COUNT = 5
+DEFAULT_SAMPLES_PER_ROUND = 64
+FORMAL_TOTAL_PER_INTENSITY = 320
+FORMAL_ANALYSIS_BLOCK_SIZE = 160
+FORMAL_ANALYSIS_BLOCK_IDS = ("A", "B")
+LEGACY_FLAT_BATCH_SAMPLES = 160
 DEFAULT_MAX_ATTEMPTS = 512
 INTENSITIES = (1, 2, 3, 4, 5)
 
@@ -111,8 +117,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Generate one flat N=160 seed bank per cell with no round "
-            "fields, using this batch seed."
+            "Explicit legacy compatibility mode: generate one flat N=160 "
+            "seed bank per cell with no round fields, using this batch seed."
         ),
     )
     parser.add_argument(
@@ -139,6 +145,83 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return parser.parse_args()
+
+
+def formal_pool_identity(
+    round_index: int,
+    sample_index: int,
+) -> dict[str, Any]:
+    if not 1 <= round_index <= FORMAL_ROUND_COUNT:
+        raise ValueError(f"formal round_index out of range: {round_index}")
+    if not 0 <= sample_index < DEFAULT_SAMPLES_PER_ROUND:
+        raise ValueError(f"formal sample_index out of range: {sample_index}")
+    pool_index = (
+        (round_index - 1) * DEFAULT_SAMPLES_PER_ROUND + sample_index
+    )
+    block_index = pool_index // FORMAL_ANALYSIS_BLOCK_SIZE
+    if block_index >= len(FORMAL_ANALYSIS_BLOCK_IDS):
+        raise AssertionError("formal analysis block partition overflow")
+    block_id = FORMAL_ANALYSIS_BLOCK_IDS[block_index]
+    return {
+        "pool_index": pool_index,
+        "analysis_block_id": block_id,
+        "analysis_block_index": (
+            pool_index % FORMAL_ANALYSIS_BLOCK_SIZE
+        ),
+    }
+
+
+def formal_analysis_block_contract() -> dict[str, Any]:
+    return {
+        "ordering": ["round_index", "sample_index"],
+        "total_per_intensity": FORMAL_TOTAL_PER_INTENSITY,
+        "block_size": FORMAL_ANALYSIS_BLOCK_SIZE,
+        "mutually_exclusive": True,
+        "complete_partition": True,
+        "blocks": [
+            {
+                "analysis_block_id": block_id,
+                "pool_index_start": index * FORMAL_ANALYSIS_BLOCK_SIZE,
+                "pool_index_stop_exclusive": (
+                    (index + 1) * FORMAL_ANALYSIS_BLOCK_SIZE
+                ),
+                "group_count_per_intensity": FORMAL_ANALYSIS_BLOCK_SIZE,
+            }
+            for index, block_id in enumerate(FORMAL_ANALYSIS_BLOCK_IDS)
+        ],
+    }
+
+
+def validate_sampling_protocol(
+    *,
+    round_seeds: tuple[int, ...],
+    samples_per_round: int,
+    flat_batch_id: str | None,
+    flat_batch_seed: int | None,
+) -> None:
+    if flat_batch_id is None:
+        if flat_batch_seed is not None:
+            raise ValueError("flat_batch_seed requires explicit flat_batch_id")
+        if round_seeds != DEFAULT_ROUND_SEEDS:
+            raise ValueError(
+                "formal v7 generation requires the five fixed round seeds: "
+                + ", ".join(map(str, DEFAULT_ROUND_SEEDS))
+            )
+        if samples_per_round != DEFAULT_SAMPLES_PER_ROUND:
+            raise ValueError(
+                "formal v7 generation requires 64 samples per round"
+            )
+        if len(round_seeds) * samples_per_round != FORMAL_TOTAL_PER_INTENSITY:
+            raise AssertionError("formal v7 total_per_intensity mismatch")
+        return
+    if not str(flat_batch_id).strip():
+        raise ValueError("flat_batch_id must not be empty")
+    if flat_batch_seed is None:
+        raise ValueError("flat_batch_id requires flat_batch_seed")
+    if round_seeds != (int(flat_batch_seed),):
+        raise ValueError("legacy flat mode requires its batch seed as sole seed")
+    if samples_per_round != LEGACY_FLAT_BATCH_SAMPLES:
+        raise ValueError("legacy flat mode requires exactly 160 samples")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -222,6 +305,7 @@ def supported_cells(
             {
                 "dataset_id": str(cell["dataset_id"]),
                 "task_id": str(cell["task_id"]),
+                "task_view_id": record_task_view_id(cell),
                 "profile_id": profile_id,
                 "capability_id": capability_id,
             }
@@ -481,6 +565,10 @@ def master_sample_row(
         sampling_identity = {
             "round_index": int(round_index),
             "round_seed": int(round_seed),
+            **formal_pool_identity(
+                int(round_index),
+                int(sample_index),
+            ),
         }
     else:
         if batch_seed is None:
@@ -507,6 +595,12 @@ def master_sample_row(
         "profile_id": cell["profile_id"],
         "dataset_id": cell["dataset_id"],
         "task_id": cell["task_id"],
+        "task_view_id": str(
+            cell.get(
+                "task_view_id",
+                f"{cell['dataset_id']}::{cell['task_id']}",
+            )
+        ),
         "capability_id": cell["capability_id"],
         "intensity": int(intensity),
         **sampling_identity,
@@ -561,8 +655,14 @@ def master_sample_row(
 
 
 def shard_path(output_dir: Path, cell: dict[str, Any]) -> Path:
+    task_view_id = str(
+        cell.get(
+            "task_view_id",
+            f"{cell['dataset_id']}::{cell['task_id']}",
+        )
+    )
     name = safe_filename(
-        f"{cell['dataset_id']}__{cell['task_id']}__{cell['capability_id']}"
+        f"{task_view_id}__{cell['capability_id']}"
     )
     return output_dir / "sample_shards" / f"{name}.jsonl"
 
@@ -575,11 +675,17 @@ def validate_complete_shard(
     flat_batch_id: str | None = None,
     flat_batch_seed: int | None = None,
     samples_per_cell: int | None = None,
+    round_seeds: tuple[int, ...] | None = None,
+    samples_per_round: int | None = None,
 ) -> dict[str, Any]:
     count = 0
     paired: dict[str, list[dict[str, Any]]] = {}
     sample_ids: set[str] = set()
     observed_indices: set[int] = set()
+    observed_round_samples: set[tuple[int, int]] = set()
+    block_group_ids: dict[str, set[str]] = {
+        block_id: set() for block_id in FORMAL_ANALYSIS_BLOCK_IDS
+    }
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
@@ -588,6 +694,13 @@ def validate_complete_shard(
             if (
                 row["dataset_id"] != cell["dataset_id"]
                 or row["task_id"] != cell["task_id"]
+                or row.get("task_view_id")
+                != str(
+                    cell.get(
+                        "task_view_id",
+                        f"{cell['dataset_id']}::{cell['task_id']}",
+                    )
+                )
                 or row["capability_id"] != cell["capability_id"]
             ):
                 raise ValueError(f"cell mismatch in {path}")
@@ -604,6 +717,36 @@ def validate_complete_shard(
                     or row.get("sampling_axis") != "flat_sample_index"
                 ):
                     raise ValueError(f"flat batch identity mismatch in {path}")
+            elif round_seeds is not None:
+                if samples_per_round is None:
+                    raise ValueError(
+                        "samples_per_round is required in formal round mode"
+                    )
+                round_index = int(row.get("round_index", 0))
+                sample_index = int(row.get("sample_index", -1))
+                if not 1 <= round_index <= len(round_seeds):
+                    raise ValueError(f"round index mismatch in {path}")
+                if int(row.get("round_seed", -1)) != round_seeds[
+                    round_index - 1
+                ]:
+                    raise ValueError(f"round seed mismatch in {path}")
+                if not 0 <= sample_index < samples_per_round:
+                    raise ValueError(f"sample index mismatch in {path}")
+                expected_identity = formal_pool_identity(
+                    round_index,
+                    sample_index,
+                )
+                if any(
+                    row.get(key) != value
+                    for key, value in expected_identity.items()
+                ):
+                    raise ValueError(
+                        f"analysis block identity mismatch in {path}"
+                    )
+                observed_round_samples.add((round_index, sample_index))
+                block_group_ids[
+                    str(expected_identity["analysis_block_id"])
+                ].add(str(row["paired_group_id"]))
             if not bool(row.get("construction_validated")):
                 raise ValueError(f"unvalidated construction in {path}")
             view_qualification = row.get("view_qualification", [])
@@ -641,6 +784,31 @@ def validate_complete_shard(
             raise ValueError(f"flat sample indexes are incomplete in {path}")
         if len(paired) != samples_per_cell:
             raise ValueError(f"paired group count mismatch in {path}")
+    elif round_seeds is not None:
+        if samples_per_round is None:
+            raise ValueError(
+                "samples_per_round is required in formal round mode"
+            )
+        expected_round_samples = {
+            (round_index, sample_index)
+            for round_index in range(1, len(round_seeds) + 1)
+            for sample_index in range(samples_per_round)
+        }
+        if observed_round_samples != expected_round_samples:
+            raise ValueError(f"formal round/sample identities are incomplete in {path}")
+        if len(paired) != len(expected_round_samples):
+            raise ValueError(f"paired group count mismatch in {path}")
+        observed_blocks = {
+            block_id: len(group_ids)
+            for block_id, group_ids in block_group_ids.items()
+        }
+        if observed_blocks != {
+            block_id: FORMAL_ANALYSIS_BLOCK_SIZE
+            for block_id in FORMAL_ANALYSIS_BLOCK_IDS
+        }:
+            raise ValueError(f"formal analysis blocks are incomplete in {path}")
+        if block_group_ids["A"] & block_group_ids["B"]:
+            raise ValueError(f"formal analysis blocks overlap in {path}")
     for group_id, rows in paired.items():
         if len(rows) != len(INTENSITIES):
             raise ValueError(f"paired group row count mismatch: {group_id}")
@@ -648,13 +816,22 @@ def validate_complete_shard(
             raise ValueError(f"paired intensities incomplete: {group_id}")
         if len({int(row["paired_attempt_seed"]) for row in rows}) != 1:
             raise ValueError(f"paired attempt seed mismatch: {group_id}")
-    return {
+    result = {
         "path": str(path),
         "row_count": count,
         "paired_group_count": len(paired),
         "sha256": file_sha256(path),
         "size_bytes": path.stat().st_size,
     }
+    if round_seeds is not None:
+        result["analysis_block_group_counts"] = {
+            block_id: len(group_ids)
+            for block_id, group_ids in block_group_ids.items()
+        }
+        result["analysis_blocks_mutually_exclusive"] = not bool(
+            block_group_ids["A"] & block_group_ids["B"]
+        )
+    return result
 
 
 def generate_cell_shard(
@@ -684,6 +861,12 @@ def generate_cell_shard(
             flat_batch_seed=flat_batch_seed,
             samples_per_cell=(
                 samples_per_round if flat_batch_id is not None else None
+            ),
+            round_seeds=(
+                round_seeds if flat_batch_id is None else None
+            ),
+            samples_per_round=(
+                samples_per_round if flat_batch_id is None else None
             ),
         )
     temporary = path.with_suffix(path.suffix + ".in_progress")
@@ -768,6 +951,12 @@ def generate_cell_shard(
         samples_per_cell=(
             samples_per_round if flat_batch_id is not None else None
         ),
+        round_seeds=(
+            round_seeds if flat_batch_id is None else None
+        ),
+        samples_per_round=(
+            samples_per_round if flat_batch_id is None else None
+        ),
     )
     result["attempt_summary"] = {
         "minimum": min(attempts),
@@ -805,6 +994,12 @@ def generate_collection(
     flat_batch_id: str | None = None,
     flat_batch_seed: int | None = None,
 ) -> dict[str, Any]:
+    validate_sampling_protocol(
+        round_seeds=round_seeds,
+        samples_per_round=samples_per_round,
+        flat_batch_id=flat_batch_id,
+        flat_batch_seed=flat_batch_seed,
+    )
     suite_dir = suite_dir.resolve()
     output_dir = output_dir.resolve()
     required = {
@@ -859,6 +1054,16 @@ def generate_collection(
             "horizon": HORIZON,
         },
         "intensities": list(INTENSITIES),
+        "generation_mode": (
+            "formal_v7_round_pool"
+            if flat_batch_id is None
+            else "legacy_flat_batch_compatibility"
+        ),
+        "total_per_intensity": (
+            FORMAL_TOTAL_PER_INTENSITY
+            if flat_batch_id is None
+            else LEGACY_FLAT_BATCH_SAMPLES
+        ),
         "generation_max_attempts": max_attempts,
         "supported_cell_count": len(cells),
         "expected_paired_group_count": (
@@ -892,6 +1097,9 @@ def generate_collection(
             {
                 "round_seeds": list(round_seeds),
                 "samples_per_round_per_cell": samples_per_round,
+                "analysis_block_contract": (
+                    formal_analysis_block_contract()
+                ),
             }
         )
     else:
@@ -959,6 +1167,16 @@ def generate_collection(
                         if flat_batch_id is not None
                         else None
                     ),
+                    round_seeds=(
+                        round_seeds
+                        if flat_batch_id is None
+                        else None
+                    ),
+                    samples_per_round=(
+                        samples_per_round
+                        if flat_batch_id is None
+                        else None
+                    ),
                 )
             )
     else:
@@ -1011,7 +1229,7 @@ def generate_collection(
                     row = json.loads(line)
                     attempt_histogram[int(row["paired_attempt"]) + 1] += 1
     result = {
-        "schema_version": "paper_v5_e2_master_sample_manifest.v1",
+        "schema_version": "paper_v7_e2_master_sample_manifest.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "generator_version": PAPER_GENERATOR_VERSION,
         "supported_cell_count": len(cells),
@@ -1019,6 +1237,8 @@ def generate_collection(
             config["expected_paired_group_count"]
         ),
         "master_sample_count": observed,
+        "generation_mode": config["generation_mode"],
+        "total_per_intensity": config["total_per_intensity"],
         "all_rows_have_four_qualified_views": True,
         "all_groups_have_paired_intensity_attempt_seed": True,
         "attempt_count_histogram": {
@@ -1041,7 +1261,30 @@ def generate_collection(
         ),
         "generator_sha256": file_sha256(Path(__file__)),
     }
-    if flat_batch_id is not None:
+    if flat_batch_id is None:
+        result.update(
+            {
+                "round_seeds": list(round_seeds),
+                "samples_per_round_per_cell": samples_per_round,
+                "analysis_block_contract": (
+                    formal_analysis_block_contract()
+                ),
+                "analysis_block_group_counts": {
+                    block_id: sum(
+                        int(record["analysis_block_group_counts"][
+                            block_id
+                        ])
+                        for record in shard_records
+                    )
+                    for block_id in FORMAL_ANALYSIS_BLOCK_IDS
+                },
+                "analysis_blocks_mutually_exclusive": all(
+                    bool(record["analysis_blocks_mutually_exclusive"])
+                    for record in shard_records
+                ),
+            }
+        )
+    else:
         result.update(
             {
                 "batch_id": flat_batch_id,
@@ -1063,21 +1306,13 @@ def main() -> int:
         samples_per_round = int(args.samples_per_round)
         flat_batch_id = None
         flat_batch_seed = None
-        if len(round_seeds) != 5 or len(set(round_seeds)) != 5:
-            raise ValueError(
-                "formal E2 generation requires five unique round seeds"
-            )
-        if samples_per_round != 32:
-            raise ValueError(
-                "formal E2 generation requires 32 samples per round"
-            )
     else:
         flat_batch_id = str(args.flat_batch_id).strip()
         if not flat_batch_id:
             raise ValueError("flat-batch-id must not be empty")
         flat_batch_seed = int(args.flat_batch_seed)
         round_seeds = (flat_batch_seed,)
-        samples_per_round = 160
+        samples_per_round = LEGACY_FLAT_BATCH_SAMPLES
     if args.max_attempts < 1:
         raise ValueError("max-attempts must be positive")
     result = generate_collection(

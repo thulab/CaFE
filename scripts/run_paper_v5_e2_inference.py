@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run resumable four-context inference for the formal Paper v5 E2 inputs."""
+"""Run resumable four-context inference for the formal Paper v7 E2 inputs."""
 from __future__ import annotations
 
 import argparse
@@ -36,15 +36,15 @@ from build_paper_v4_nine_capability_suite import (  # noqa: E402
 import run_paper_e2_dynamic_stability as engine  # noqa: E402
 
 
-SCHEMA_VERSION = "paper_v5_e2_inference.v1"
-PREDICTION_SCHEMA_VERSION = "paper_v5_e2_view_prediction.v1"
+SCHEMA_VERSION = "paper_v7_e2_inference.v1"
+PREDICTION_SCHEMA_VERSION = "paper_v7_e2_view_prediction.v1"
 DEFAULT_OUTPUT_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v5/E2_dynamic_stability"
+    REPO_ROOT / "runtime/paper_exp/v7/E2_dynamic_stability"
 )
 DEFAULT_SYNTHETIC_MASTER_PATH = DEFAULT_OUTPUT_DIR / "samples.jsonl"
 DEFAULT_SYNTHETIC_MANIFEST_PATH = DEFAULT_OUTPUT_DIR / "sample_manifest.json"
 DEFAULT_REAL_SOURCE_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v5/02_real_source_window_suite"
+    REPO_ROOT / "runtime/paper_exp/v7/02_real_source_window_suite"
 )
 DEFAULT_REAL_SOURCE_PATH = (
     DEFAULT_REAL_SOURCE_DIR / "real_source_samples.jsonl"
@@ -53,7 +53,7 @@ DEFAULT_REAL_SOURCE_MANIFEST_PATH = DEFAULT_REAL_SOURCE_DIR / "manifest.json"
 PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/"
-    "2026-07-19-paper-v5-e2-inference-and-analysis-plan.md"
+    "2026-07-21-paper-v7-structured-dataset-expansion-protocol.md"
 )
 DEFAULT_MODELS = (
     "Timer-3.5",
@@ -81,7 +81,7 @@ MODEL_EXECUTION_CONFIG = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Run formal Paper v5 E2 inference over four suffix contexts."
+            "Run formal Paper v7 E2 inference over four suffix contexts."
         )
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -129,6 +129,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--skip-real-source", action="store_true")
+    parser.add_argument(
+        "--input-adaptation-policy",
+        choices=("native-only", engine.INPUT_ADAPTATION_POLICY_ID),
+        default=engine.INPUT_ADAPTATION_POLICY_ID,
+        help=(
+            "Paper v7 adapts unsupported multivariate targets into independent "
+            "single-target requests and omits unsupported covariates. Use "
+            "native-only only to reproduce the legacy support-matrix behavior."
+        ),
+    )
     parser.add_argument(
         "--preflight-one-per-cell",
         action="store_true",
@@ -270,6 +280,13 @@ def validate_master(master: dict[str, Any]) -> None:
         raise ValueError(
             f"unexpected context contract: {master.get('sample_id')}"
         )
+    timestamps = master_timestamps(master)
+    if timestamps is not None and len(timestamps) != (
+        MAX_CONTEXT_LENGTH + HORIZON
+    ):
+        raise ValueError(
+            f"master timestamp length mismatch: {master.get('sample_id')}"
+        )
     covariates = master.get("covariates")
     if covariates is None:
         if int(master.get("covariate_dim", 0)) != 0:
@@ -291,6 +308,24 @@ def validate_master(master: dict[str, Any]) -> None:
         raise ValueError(
             f"non-finite master covariates: {master.get('sample_id')}"
         )
+
+
+def master_timestamps(master: dict[str, Any]) -> list[str] | None:
+    configured = master.get("timestamps")
+    if configured is not None:
+        return [str(value) for value in configured]
+    history = master.get("history_timestamps")
+    future = master.get("future_timestamps")
+    if history is None and future is None:
+        return None
+    if history is None or future is None:
+        raise ValueError(
+            "master must provide both history_timestamps and future_timestamps"
+        )
+    return [
+        *[str(value) for value in history],
+        *[str(value) for value in future],
+    ]
 
 
 def master_view(
@@ -317,7 +352,8 @@ def master_view(
     prediction_kind = (
         "synthetic" if "capability_id" in master else "real_source"
     )
-    return {
+    timestamps = master_timestamps(master)
+    view = {
         **master,
         "schema_version": "paper_v5_e2_forecast_view.v1",
         "sample_id": view_id,
@@ -335,6 +371,12 @@ def master_view(
         "future_sha256": array_sha256(view_target[context_length:]),
         "master_future_sha256": master["future_sha256"],
     }
+    if timestamps is not None:
+        start = MAX_CONTEXT_LENGTH - context_length
+        view["timestamps"] = timestamps[start:]
+        view.pop("history_timestamps", None)
+        view.pop("future_timestamps", None)
+    return view
 
 
 def iter_forecast_views(path: Path) -> Iterator[dict[str, Any]]:
@@ -534,6 +576,26 @@ def inference_config(
             else sorted(args.capabilities)
         ),
         "baseline_models": list(BASELINE_MODELS),
+        "input_adaptation_policy": {
+            "policy_id": str(args.input_adaptation_policy),
+            "enabled": (
+                args.input_adaptation_policy
+                == engine.INPUT_ADAPTATION_POLICY_ID
+            ),
+            "target_fallback": (
+                "independent_univariate_then_column_order_reassembly"
+            ),
+            "covariate_fallback": (
+                "omit_all_covariates_when_model_contract_is_insufficient"
+            ),
+            "output_atomicity": (
+                "persist one original view only after every target child "
+                "request succeeds"
+            ),
+            "comparison_unit": (
+                "forecasting model plus preregistered input adaptation"
+            ),
+        },
         "model_execution": {
             model_id: dict(MODEL_EXECUTION_CONFIG[model_id])
             for model_id in args.models
@@ -553,6 +615,20 @@ def inference_config(
             "deterministic view_id; failures are retained separately"
         ),
     }
+
+
+def configured_input_adaptation_policy(
+    config: dict[str, Any],
+) -> str | None:
+    record = config.get("input_adaptation_policy")
+    if not isinstance(record, dict):
+        return None
+    policy_id = str(record.get("policy_id") or "native-only")
+    if policy_id == "native-only":
+        return None
+    if policy_id != engine.INPUT_ADAPTATION_POLICY_ID:
+        raise ValueError(f"unknown input adaptation policy: {policy_id}")
+    return policy_id
 
 
 def prepare_output(
@@ -677,6 +753,7 @@ def status_on_error(
     prediction_kind: str,
     error: Exception,
     started: float,
+    input_adaptation_policy: str | None,
 ) -> dict[str, Any]:
     path = prediction_path_for(
         output_dir,
@@ -684,16 +761,21 @@ def status_on_error(
         prediction_kind=prediction_kind,
     )
     observed = count_jsonl(path) if path.exists() else 0
-    expected = sum(
-        engine.model_supports_sample(model, sample)
-        for sample in iter_forecast_views(master_path)
+    summary = engine.summarize_model_input_adaptation(
+        master_path,
+        model=model,
+        input_adaptation_policy=input_adaptation_policy,
     )
     return {
         "model_id": model_id,
         "prediction_kind": prediction_kind,
         "status": "failed",
-        "compatible_sample_count": expected,
+        **summary,
         "succeeded_count": observed,
+        "succeeded_original_view_count": observed,
+        "successful_http_request_count": (
+            engine.persisted_http_request_count(path)
+        ),
         "error": f"{type(error).__name__}: {error}",
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "prediction_path": str(path.relative_to(REPO_ROOT)),
@@ -708,6 +790,7 @@ def run_models(
     real_source_path: Path | None,
     args: argparse.Namespace,
 ) -> None:
+    input_adaptation_policy = configured_input_adaptation_policy(config)
     client = engine.TimerServiceClient(
         config["service"]["base_url"],
         config["service"]["api_prefix"],
@@ -762,6 +845,7 @@ def run_models(
                     sample_path=synthetic_master_path,
                     prediction_kind="synthetic",
                     status_filename="model_status.json",
+                    input_adaptation_policy=input_adaptation_policy,
                 )
             except Exception as error:  # noqa: BLE001
                 synthetic_status = status_on_error(
@@ -772,6 +856,7 @@ def run_models(
                     prediction_kind="synthetic",
                     error=error,
                     started=synthetic_started,
+                    input_adaptation_policy=input_adaptation_policy,
                 )
             synthetic_statuses["models"][model_id] = synthetic_status
             write_json(
@@ -807,6 +892,7 @@ def run_models(
                         sample_path=real_source_path,
                         prediction_kind="real",
                         status_filename="real_source_model_status.json",
+                        input_adaptation_policy=input_adaptation_policy,
                     )
                 except Exception as error:  # noqa: BLE001
                     real_status = status_on_error(
@@ -817,6 +903,7 @@ def run_models(
                         prediction_kind="real",
                         error=error,
                         started=real_started,
+                        input_adaptation_policy=input_adaptation_policy,
                     )
                 real_statuses["models"][model_id] = real_status
                 write_json(
@@ -944,7 +1031,7 @@ def main() -> int:
             real_source_path=real_source_path,
             args=args,
         )
-    print(f"Paper v5 E2 inference output: {output_dir}", flush=True)
+    print(f"Paper v7 E2 inference output: {output_dir}", flush=True)
     return 0
 
 

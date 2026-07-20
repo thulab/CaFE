@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze formal Paper v5 E2 view predictions after inference completes."""
+"""Analyze formal Paper v7 E2 view predictions after inference completes."""
 from __future__ import annotations
 
 import argparse
@@ -26,21 +26,32 @@ if str(SCRIPT_DIR) not in sys.path:
 import run_paper_e2_dynamic_stability as stats  # noqa: E402
 
 
-DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v5/E2_dynamic_stability"
+DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v7/E2_dynamic_stability"
 DEFAULT_REAL_SOURCE_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v5/02_real_source_window_suite"
+    REPO_ROOT / "runtime/paper_exp/v7/02_real_source_window_suite"
 )
 CONTEXT_LENGTHS = (96, 168, 336, 504)
 MIN_PAIRWISE_AGREEMENT = 0.95
 BOOTSTRAP_REPLICATES = 10_000
-SCHEMA_VERSION = "paper_v5_e2_analysis.v1"
+SCHEMA_VERSION = "paper_v7_e2_analysis.v1"
 BASELINE_MODELS = ("naive", "seasonal_naive")
+FORMAL_ROUND_SEEDS = (
+    2026072121,
+    2026072122,
+    2026072123,
+    2026072124,
+    2026072125,
+)
+FORMAL_SAMPLES_PER_ROUND = 64
+FORMAL_TOTAL_PER_INTENSITY = 320
+FORMAL_ANALYSIS_BLOCK_SIZE = 160
+FORMAL_ANALYSIS_BLOCK_IDS = ("A", "B")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Collapse four contexts and analyze Paper v5 E2 cell stability "
+            "Collapse four contexts and analyze Paper v7 E2 cell stability "
             "plus synthetic-real source-window rank alignment."
         )
     )
@@ -175,7 +186,7 @@ def compact_prediction_file(
         record = masters.setdefault(
             master_id,
             {
-                "schema_version": "paper_v5_e2_oracle_sample_score.v1",
+                "schema_version": "paper_v7_e2_oracle_sample_score.v1",
                 "prediction_kind": prediction_kind,
                 "model_id": model_id,
                 "model_group": row["model_group"],
@@ -206,14 +217,48 @@ def compact_prediction_file(
             context_row["request_attempts"] = int(row["request_attempts"])
         record["contexts"][str(context)] = context_row
         if prediction_kind == "synthetic":
+            round_index = int(row["round_index"])
+            sample_index = int(row["sample_index"])
+            pool_index = (
+                (round_index - 1) * FORMAL_SAMPLES_PER_ROUND
+                + sample_index
+            )
+            analysis_block_index = (
+                pool_index // FORMAL_ANALYSIS_BLOCK_SIZE
+            )
+            if analysis_block_index >= len(FORMAL_ANALYSIS_BLOCK_IDS):
+                raise ValueError(
+                    f"formal pool index is out of range: {pool_index}"
+                )
+            analysis_block_id = FORMAL_ANALYSIS_BLOCK_IDS[
+                analysis_block_index
+            ]
+            for field, expected in (
+                ("pool_index", pool_index),
+                ("analysis_block_id", analysis_block_id),
+                (
+                    "analysis_block_index",
+                    pool_index % FORMAL_ANALYSIS_BLOCK_SIZE,
+                ),
+            ):
+                if field in row and row[field] != expected:
+                    raise ValueError(
+                        f"{field} mismatch for {model_id}/{master_id}: "
+                        f"{row[field]} != {expected}"
+                    )
             record.update(
                 {
                     "capability_id": row["capability_id"],
                     "intensity": int(row["intensity"]),
-                    "round_index": int(row["round_index"]),
+                    "round_index": round_index,
                     "round_seed": int(row["round_seed"]),
-                    "sample_index": int(row["sample_index"]),
+                    "sample_index": sample_index,
                     "paired_group_id": row["paired_group_id"],
+                    "pool_index": pool_index,
+                    "analysis_block_id": analysis_block_id,
+                    "analysis_block_index": (
+                        pool_index % FORMAL_ANALYSIS_BLOCK_SIZE
+                    ),
                 }
             )
         else:
@@ -333,6 +378,12 @@ def load_oracle_rows(
                 "capability_id",
                 "intensity",
                 "round_index",
+                "round_seed",
+                "sample_index",
+                "paired_group_id",
+                "pool_index",
+                "analysis_block_id",
+                "analysis_block_index",
             ]
         )
     rows: list[dict[str, Any]] = []
@@ -355,11 +406,184 @@ CELL_KEYS = [
 ROUND_KEYS = [*CELL_KEYS, "round_index"]
 
 
+def validate_formal_generation_config(
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    round_seeds = tuple(int(value) for value in config.get("round_seeds", []))
+    samples_per_round = int(
+        config.get("samples_per_round_per_cell", -1)
+    )
+    total_per_intensity = int(config.get("total_per_intensity", -1))
+    if config.get("generation_mode") != "formal_v7_round_pool":
+        raise ValueError("E2 analysis requires formal_v7_round_pool generation")
+    if round_seeds != FORMAL_ROUND_SEEDS:
+        raise ValueError(
+            "formal v7 generation_config has unexpected round seeds"
+        )
+    if samples_per_round != FORMAL_SAMPLES_PER_ROUND:
+        raise ValueError(
+            "formal v7 generation_config must use 64 samples per round"
+        )
+    if total_per_intensity != FORMAL_TOTAL_PER_INTENSITY:
+        raise ValueError(
+            "formal v7 generation_config must declare 320 per intensity"
+        )
+    contract = config.get("analysis_block_contract")
+    expected_contract = {
+        "ordering": ["round_index", "sample_index"],
+        "total_per_intensity": FORMAL_TOTAL_PER_INTENSITY,
+        "block_size": FORMAL_ANALYSIS_BLOCK_SIZE,
+        "mutually_exclusive": True,
+        "complete_partition": True,
+    }
+    if not isinstance(contract, dict) or any(
+        contract.get(key) != value
+        for key, value in expected_contract.items()
+    ):
+        raise ValueError(
+            "formal v7 generation_config has an invalid analysis block contract"
+        )
+    blocks = contract.get("blocks")
+    if not isinstance(blocks, list) or [
+        str(block.get("analysis_block_id")) for block in blocks
+    ] != list(FORMAL_ANALYSIS_BLOCK_IDS):
+        raise ValueError(
+            "formal v7 generation_config must declare analysis blocks A and B"
+        )
+    return {
+        "round_seeds": list(round_seeds),
+        "round_count": len(round_seeds),
+        "samples_per_round": samples_per_round,
+        "total_per_intensity": total_per_intensity,
+        "analysis_block_size": FORMAL_ANALYSIS_BLOCK_SIZE,
+        "analysis_block_ids": list(FORMAL_ANALYSIS_BLOCK_IDS),
+        "analysis_blocks_mutually_exclusive": True,
+    }
+
+
+def validate_formal_oracle_identity(
+    oracle: pd.DataFrame,
+    *,
+    protocol: dict[str, Any],
+) -> pd.DataFrame:
+    required = {
+        "model_id",
+        "master_sample_id",
+        "paired_group_id",
+        "round_index",
+        "round_seed",
+        "sample_index",
+        *CELL_KEYS,
+    }
+    missing = sorted(required - set(oracle.columns))
+    if missing:
+        raise ValueError(
+            "synthetic oracle is missing formal identity columns: "
+            + ", ".join(missing)
+        )
+    result = oracle.copy()
+    expected_seeds = {
+        round_index: int(seed)
+        for round_index, seed in enumerate(
+            protocol["round_seeds"],
+            start=1,
+        )
+    }
+    result["round_index"] = result["round_index"].astype(int)
+    result["round_seed"] = result["round_seed"].astype(int)
+    result["sample_index"] = result["sample_index"].astype(int)
+    result["pool_index"] = (
+        (result["round_index"] - 1) * protocol["samples_per_round"]
+        + result["sample_index"]
+    )
+    result["analysis_block_id"] = np.where(
+        result["pool_index"] < protocol["analysis_block_size"],
+        FORMAL_ANALYSIS_BLOCK_IDS[0],
+        FORMAL_ANALYSIS_BLOCK_IDS[1],
+    )
+    result["analysis_block_index"] = (
+        result["pool_index"] % protocol["analysis_block_size"]
+    )
+    if not result["round_index"].isin(expected_seeds).all():
+        raise ValueError("synthetic oracle contains an unexpected round_index")
+    observed_seed = result["round_index"].map(expected_seeds)
+    if not (result["round_seed"] == observed_seed).all():
+        raise ValueError("synthetic oracle round_seed identity mismatch")
+    if not result["sample_index"].between(
+        0,
+        protocol["samples_per_round"] - 1,
+    ).all():
+        raise ValueError("synthetic oracle sample_index is out of range")
+    if not result["pool_index"].between(
+        0,
+        protocol["total_per_intensity"] - 1,
+    ).all():
+        raise ValueError("synthetic oracle pool_index is out of range")
+
+    identity_keys = ["model_id", *CELL_KEYS, "round_index", "sample_index"]
+    if result.duplicated(identity_keys).any():
+        raise ValueError("synthetic oracle contains duplicate pool identities")
+    expected_grid = {
+        (round_index, sample_index)
+        for round_index in expected_seeds
+        for sample_index in range(protocol["samples_per_round"])
+    }
+    for key, group in result.groupby(["model_id", *CELL_KEYS], sort=True):
+        observed_grid = set(
+            zip(
+                group["round_index"].astype(int),
+                group["sample_index"].astype(int),
+                strict=True,
+            )
+        )
+        if observed_grid != expected_grid:
+            raise ValueError(
+                f"formal synthetic oracle pool is incomplete for {key}"
+            )
+        if group["master_sample_id"].nunique() != protocol[
+            "total_per_intensity"
+        ]:
+            raise ValueError(
+                f"formal synthetic oracle master ids are not unique for {key}"
+            )
+        block_counts = group.groupby("analysis_block_id")[
+            "pool_index"
+        ].nunique()
+        if {
+            str(block_id): int(count)
+            for block_id, count in block_counts.items()
+        } != {
+            block_id: protocol["analysis_block_size"]
+            for block_id in FORMAL_ANALYSIS_BLOCK_IDS
+        }:
+            raise ValueError(
+                f"formal analysis blocks are incomplete for {key}"
+            )
+
+    cross_model_keys = [*CELL_KEYS, "round_index", "sample_index"]
+    cross_model_identity = result.groupby(
+        cross_model_keys,
+        sort=False,
+    ).agg(
+        master_id_count=("master_sample_id", "nunique"),
+        paired_group_id_count=("paired_group_id", "nunique"),
+    )
+    if not (
+        (cross_model_identity["master_id_count"] == 1)
+        & (cross_model_identity["paired_group_id_count"] == 1)
+    ).all():
+        raise ValueError(
+            "model oracle files do not share the same formal sample identity"
+        )
+    return result
+
+
 def cell_round_scores(
     oracle: pd.DataFrame,
     *,
     score_column: str,
     score_policy: str,
+    expected_samples_per_round: int | None = None,
 ) -> pd.DataFrame:
     grouped = (
         oracle.groupby(["model_id", *ROUND_KEYS], sort=True)[score_column]
@@ -373,10 +597,15 @@ def cell_round_scores(
             }
         )
     )
-    if not (grouped["master_sample_count"] == 32).all():
-        bad = grouped[grouped["master_sample_count"] != 32]
+    expected = (
+        int(expected_samples_per_round)
+        if expected_samples_per_round is not None
+        else int(grouped["master_sample_count"].iloc[0])
+    )
+    if not (grouped["master_sample_count"] == expected).all():
+        bad = grouped[grouped["master_sample_count"] != expected]
         raise ValueError(
-            f"round score sample counts are not 32: "
+            f"round score sample counts are not {expected}: "
             f"{bad.head().to_dict(orient='records')}"
         )
     grouped["score_policy"] = score_policy
@@ -397,7 +626,11 @@ def ordering_agreement(left: np.ndarray, right: np.ndarray) -> float:
     return float(agreement) if agreement is not None else 1.0
 
 
-def rank_stability_rows(round_scores: pd.DataFrame) -> pd.DataFrame:
+def rank_stability_rows(
+    round_scores: pd.DataFrame,
+    *,
+    expected_round_count: int | None = None,
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for key, group in round_scores.groupby(CELL_KEYS, sort=True):
         score_matrix = group.pivot(
@@ -408,8 +641,13 @@ def rank_stability_rows(round_scores: pd.DataFrame) -> pd.DataFrame:
         if score_matrix.isna().any().any():
             raise ValueError(f"incomplete round score matrix for {key}")
         rounds = list(score_matrix.columns)
-        if len(rounds) != 5:
-            raise ValueError(f"cell {key} does not contain five rounds")
+        if (
+            expected_round_count is not None
+            and len(rounds) != expected_round_count
+        ):
+            raise ValueError(
+                f"cell {key} does not contain {expected_round_count} rounds"
+            )
         rank_matrix = score_matrix.rank(
             axis=0,
             method="average",
@@ -505,15 +743,25 @@ def rank_stability_rows(round_scores: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def score_stability_rows(round_scores: pd.DataFrame) -> pd.DataFrame:
+def score_stability_rows(
+    round_scores: pd.DataFrame,
+    *,
+    expected_round_count: int | None = None,
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     keys = ["model_id", *CELL_KEYS]
     for key, group in round_scores.groupby(keys, sort=True):
         values = group.sort_values("round_index")["mase_mean"].to_numpy(
             dtype=float
         )
-        if len(values) != 5:
-            raise ValueError(f"score stability group lacks five rounds: {key}")
+        if (
+            expected_round_count is not None
+            and len(values) != expected_round_count
+        ):
+            raise ValueError(
+                "score stability group has an unexpected round count: "
+                f"{key}"
+            )
         mean = float(values.mean())
         rows.append(
             {
@@ -581,25 +829,198 @@ def difficulty_stability_rows(round_scores: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def cell_full_pool_scores(
+    oracle: pd.DataFrame,
+    *,
+    score_column: str,
+    score_policy: str,
+    expected_samples_per_cell: int,
+) -> pd.DataFrame:
+    result = (
+        oracle.groupby(["model_id", *CELL_KEYS], sort=True)[score_column]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+        .rename(
+            columns={
+                "mean": "mase_mean",
+                "std": "mase_std",
+                "count": "master_sample_count",
+            }
+        )
+    )
+    if not (
+        result["master_sample_count"] == expected_samples_per_cell
+    ).all():
+        bad = result[
+            result["master_sample_count"] != expected_samples_per_cell
+        ]
+        raise ValueError(
+            f"full-pool score sample counts are not "
+            f"{expected_samples_per_cell}: "
+            f"{bad.head().to_dict(orient='records')}"
+        )
+    result["score_policy"] = score_policy
+    result["model_rank"] = result.groupby(
+        CELL_KEYS,
+        sort=False,
+    )["mase_mean"].rank(method="average", ascending=True)
+    result["compatible_model_count"] = result.groupby(
+        CELL_KEYS,
+        sort=False,
+    )["model_id"].transform("count")
+    return result
+
+
+def cell_analysis_block_scores(
+    oracle: pd.DataFrame,
+    *,
+    score_column: str,
+    score_policy: str,
+    expected_block_size: int,
+) -> pd.DataFrame:
+    keys = ["analysis_block_id", "model_id", *CELL_KEYS]
+    result = (
+        oracle.groupby(keys, sort=True)[score_column]
+        .agg(["mean", "std", "count"])
+        .reset_index()
+        .rename(
+            columns={
+                "mean": "mase_mean",
+                "std": "mase_std",
+                "count": "master_sample_count",
+            }
+        )
+    )
+    if not (result["master_sample_count"] == expected_block_size).all():
+        bad = result[
+            result["master_sample_count"] != expected_block_size
+        ]
+        raise ValueError(
+            f"analysis-block score sample counts are not "
+            f"{expected_block_size}: "
+            f"{bad.head().to_dict(orient='records')}"
+        )
+    result["score_policy"] = score_policy
+    result["model_rank"] = result.groupby(
+        ["analysis_block_id", *CELL_KEYS],
+        sort=False,
+    )["mase_mean"].rank(method="average", ascending=True)
+    result["compatible_model_count"] = result.groupby(
+        ["analysis_block_id", *CELL_KEYS],
+        sort=False,
+    )["model_id"].transform("count")
+    return result
+
+
+def analysis_block_stability_rows(
+    block_scores: pd.DataFrame,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for key, group in block_scores.groupby(CELL_KEYS, sort=True):
+        matrix = group.pivot(
+            index="model_id",
+            columns="analysis_block_id",
+            values="mase_mean",
+        ).sort_index()
+        if matrix.isna().any().any():
+            raise ValueError(f"incomplete analysis-block matrix for {key}")
+        if list(matrix.columns) != list(FORMAL_ANALYSIS_BLOCK_IDS):
+            raise ValueError(
+                f"cell {key} does not contain formal blocks A and B"
+            )
+        left = matrix[FORMAL_ANALYSIS_BLOCK_IDS[0]]
+        right = matrix[FORMAL_ANALYSIS_BLOCK_IDS[1]]
+        left_rank = left.rank(method="average", ascending=True)
+        right_rank = right.rank(method="average", ascending=True)
+        top_k = min(3, len(matrix))
+        left_top = set(left.sort_values(kind="stable").index[:top_k])
+        right_top = set(right.sort_values(kind="stable").index[:top_k])
+        agreement = ordering_agreement(
+            left.to_numpy(dtype=float),
+            right.to_numpy(dtype=float),
+        )
+        rows.append(
+            {
+                **dict(zip(CELL_KEYS, key, strict=True)),
+                "score_policy": group["score_policy"].iloc[0],
+                "model_count": len(matrix),
+                "models": ";".join(matrix.index),
+                "analysis_block_size": int(
+                    group["master_sample_count"].iloc[0]
+                ),
+                "kendall_tau_b": float(
+                    stats.kendall_tau_b(
+                        left_rank.to_numpy(dtype=float),
+                        right_rank.to_numpy(dtype=float),
+                    )
+                ),
+                "pairwise_ordering_agreement": agreement,
+                "exact_rank_vector": bool(
+                    np.array_equal(
+                        left_rank.to_numpy(dtype=float),
+                        right_rank.to_numpy(dtype=float),
+                    )
+                ),
+                "top1_agreement": bool(left.idxmin() == right.idxmin()),
+                "top3_overlap_rate": float(
+                    len(left_top & right_top) / max(top_k, 1)
+                ),
+                "passed_min_pairwise_agreement": bool(
+                    agreement >= MIN_PAIRWISE_AGREEMENT
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def summarize_analysis_block_stability(
+    frame: pd.DataFrame,
+) -> dict[str, Any]:
+    passed = frame["passed_min_pairwise_agreement"].astype(bool)
+    return {
+        "cell_count": len(frame),
+        "block_size": FORMAL_ANALYSIS_BLOCK_SIZE,
+        "block_ids": list(FORMAL_ANALYSIS_BLOCK_IDS),
+        "passed_cell_count": int(passed.sum()),
+        "passed_cell_rate": float(passed.mean()),
+        "pairwise_agreement_mean": float(
+            frame["pairwise_ordering_agreement"].mean()
+        ),
+        "pairwise_agreement_minimum": float(
+            frame["pairwise_ordering_agreement"].min()
+        ),
+        "kendall_tau_b_mean": float(frame["kendall_tau_b"].mean()),
+        "exact_rank_vector_rate": float(
+            frame["exact_rank_vector"].mean()
+        ),
+        "top1_agreement_rate": float(frame["top1_agreement"].mean()),
+        "top3_overlap_mean": float(frame["top3_overlap_rate"].mean()),
+    }
+
+
 def synthetic_model_ranks(
-    round_scores: pd.DataFrame,
+    cell_scores: pd.DataFrame,
     *,
     real_dataset_ids: set[str],
 ) -> pd.DataFrame:
-    eligible = round_scores[
-        round_scores["dataset_id"].isin(real_dataset_ids)
+    eligible = cell_scores[
+        cell_scores["dataset_id"].isin(real_dataset_ids)
     ].copy()
-    result = (
-        eligible.groupby(["dataset_id", "model_id"], sort=True)
-        .agg(
-            synthetic_average_rank=("model_rank", "mean"),
-            effective_capability_count=("capability_id", "nunique"),
-            effective_intensity_count=("intensity", "nunique"),
-            effective_round_count=("round_index", "nunique"),
-            effective_rank_cell_count=("model_rank", "count"),
+    aggregations: dict[str, tuple[str, str]] = {
+        "synthetic_average_rank": ("model_rank", "mean"),
+        "effective_capability_count": ("capability_id", "nunique"),
+        "effective_intensity_count": ("intensity", "nunique"),
+        "effective_rank_cell_count": ("model_rank", "count"),
+    }
+    if "round_index" in eligible.columns:
+        aggregations["effective_round_count"] = (
+            "round_index",
+            "nunique",
         )
-        .reset_index()
-    )
+    result = eligible.groupby(
+        ["dataset_id", "model_id"],
+        sort=True,
+    ).agg(**aggregations).reset_index()
     result["score_policy"] = eligible["score_policy"].iloc[0]
     return result
 
@@ -877,15 +1298,39 @@ def rank_breakdown(
 
 def render_report(summary: dict[str, Any]) -> str:
     oracle = summary["rank_stability"]["oracle_context"]
+    full_pool = summary["full_pool_summary"]["oracle_context"]
+    blocks = summary["analysis_block_stability"]["oracle_context"]
     score = summary["score_stability"]["oracle_context"]
     difficulty = summary["difficulty_stability"]["oracle_context"]
     alignment = summary["source_alignment"]["oracle_context"]
     metrics = alignment["metrics"]
     return "\n".join(
         [
-            "# Paper v5 E2 inference analysis",
+            "# Paper v7 E2 inference analysis",
             "",
-            "## E2-A cell-level dynamic stability",
+            "## E2-A formal 320-sample estimate",
+            "",
+            (
+                f"- Main cell estimates use exactly "
+                f"{full_pool['samples_per_cell_model']} samples per "
+                f"model/cell across {full_pool['cell_count']} cells."
+            ),
+            "",
+            "## E2-B two mutually exclusive 160-sample blocks",
+            "",
+            (
+                f"- Block A/B cell ordering agreement mean/minimum: "
+                f"{blocks['pairwise_agreement_mean']:.4f} / "
+                f"{blocks['pairwise_agreement_minimum']:.4f}."
+            ),
+            (
+                f"- Exact-rank / top-1 / top-3 agreement: "
+                f"{blocks['exact_rank_vector_rate']:.4f} / "
+                f"{blocks['top1_agreement_rate']:.4f} / "
+                f"{blocks['top3_overlap_mean']:.4f}."
+            ),
+            "",
+            "## E2-C five-round diagnostic stability",
             "",
             (
                 f"- Oracle-context cells passing minimum pairwise agreement "
@@ -920,7 +1365,7 @@ def render_report(summary: dict[str, Any]) -> str:
                 f"{difficulty['p90']:.4f}."
             ),
             "",
-            "## E2-B synthetic–real source-window alignment",
+            "## E2-D synthetic–real source-window alignment",
             "",
             (
                 f"- Aligned datasets: {alignment['dataset_count']}."
@@ -963,10 +1408,47 @@ def analyze(
     real_source_dir = real_source_dir.resolve()
     config_path = e2_dir / "inference_config.json"
     catalog_path = e2_dir / "inference_model_catalog.json"
-    for path in (config_path, catalog_path):
+    generation_config_path = e2_dir / "generation_config.json"
+    sample_manifest_path = e2_dir / "sample_manifest.json"
+    for path in (
+        config_path,
+        catalog_path,
+        generation_config_path,
+        sample_manifest_path,
+    ):
         if not path.is_file():
             raise FileNotFoundError(f"missing inference input: {path}")
     config = read_json(config_path)
+    generation_config = read_json(generation_config_path)
+    protocol = validate_formal_generation_config(generation_config)
+    sample_manifest = read_json(sample_manifest_path)
+    generation_record = sample_manifest.get("files", {}).get(
+        "generation_config.json"
+    )
+    if (
+        not isinstance(generation_record, dict)
+        or generation_record.get("sha256")
+        != file_sha256(generation_config_path)
+    ):
+        raise ValueError(
+            "sample_manifest generation_config identity mismatch"
+        )
+    synthetic_input = config.get("synthetic_input")
+    if not isinstance(synthetic_input, dict):
+        raise ValueError("inference_config is missing synthetic_input identity")
+    if (
+        synthetic_input.get("manifest_sha256")
+        != file_sha256(sample_manifest_path)
+    ):
+        raise ValueError(
+            "inference_config sample_manifest identity mismatch"
+        )
+    sample_record = sample_manifest.get("files", {}).get("samples.jsonl")
+    if (
+        not isinstance(sample_record, dict)
+        or sample_record.get("sha256") != synthetic_input.get("sha256")
+    ):
+        raise ValueError("inference_config synthetic sample identity mismatch")
     models = [str(model) for model in config["requested_models"]]
     all_models = [*BASELINE_MODELS, *models]
     model_status = read_json(e2_dir / "model_status.json")["models"]
@@ -1024,6 +1506,10 @@ def analyze(
         synthetic_paths,
         prediction_kind="synthetic",
     )
+    synthetic_oracle = validate_formal_oracle_identity(
+        synthetic_oracle,
+        protocol=protocol,
+    )
     real_oracle = load_oracle_rows(
         real_paths,
         prediction_kind="real_source",
@@ -1033,6 +1519,8 @@ def analyze(
     score_summaries: dict[str, Any] = {}
     difficulty_summaries: dict[str, Any] = {}
     alignment_summaries: dict[str, Any] = {}
+    full_pool_summaries: dict[str, Any] = {}
+    analysis_block_summaries: dict[str, Any] = {}
     real_dataset_ids = set(real_oracle["dataset_id"].unique())
     for score_policy, score_column in (
         ("oracle_context", "oracle_mase"),
@@ -1043,12 +1531,34 @@ def analyze(
             synthetic_oracle,
             score_column=score_column,
             score_policy=score_policy,
+            expected_samples_per_round=protocol["samples_per_round"],
         )
-        rank_stability = rank_stability_rows(round_scores)
-        score_stability = score_stability_rows(round_scores)
+        full_pool_scores = cell_full_pool_scores(
+            synthetic_oracle,
+            score_column=score_column,
+            score_policy=score_policy,
+            expected_samples_per_cell=protocol["total_per_intensity"],
+        )
+        block_scores = cell_analysis_block_scores(
+            synthetic_oracle,
+            score_column=score_column,
+            score_policy=score_policy,
+            expected_block_size=protocol["analysis_block_size"],
+        )
+        block_stability = analysis_block_stability_rows(
+            block_scores
+        )
+        rank_stability = rank_stability_rows(
+            round_scores,
+            expected_round_count=protocol["round_count"],
+        )
+        score_stability = score_stability_rows(
+            round_scores,
+            expected_round_count=protocol["round_count"],
+        )
         difficulty_stability = difficulty_stability_rows(round_scores)
         synthetic_ranks = synthetic_model_ranks(
-            round_scores,
+            full_pool_scores,
             real_dataset_ids=real_dataset_ids,
         )
         real_ranks = real_model_ranks(
@@ -1063,6 +1573,11 @@ def analyze(
         output_frames.update(
             {
                 f"cell_round_scores{suffix}.csv": round_scores,
+                f"cell_full_pool_scores{suffix}.csv": full_pool_scores,
+                f"cell_analysis_block_scores{suffix}.csv": block_scores,
+                f"cell_analysis_block_stability{suffix}.csv": (
+                    block_stability
+                ),
                 f"cell_rank_stability{suffix}.csv": rank_stability,
                 f"cell_score_stability{suffix}.csv": score_stability,
                 f"cell_difficulty_stability{suffix}.csv": (
@@ -1108,6 +1623,17 @@ def analyze(
             difficulty_stability,
             column="difficulty_multiplier_cv",
         )
+        full_pool_summaries[score_policy] = {
+            "cell_model_row_count": len(full_pool_scores),
+            "samples_per_cell_model": protocol["total_per_intensity"],
+            "cell_count": int(
+                full_pool_scores[CELL_KEYS].drop_duplicates().shape[0]
+            ),
+            "model_count": int(full_pool_scores["model_id"].nunique()),
+        }
+        analysis_block_summaries[score_policy] = (
+            summarize_analysis_block_stability(block_stability)
+        )
         alignment_summaries[score_policy] = alignment_summary(
             alignment,
             replicates=bootstrap_replicates,
@@ -1123,6 +1649,9 @@ def analyze(
         "models": models,
         "baseline_models": list(BASELINE_MODELS),
         "oracle_score_files": oracle_records,
+        "formal_generation_protocol": protocol,
+        "full_pool_summary": full_pool_summaries,
+        "analysis_block_stability": analysis_block_summaries,
         "rank_stability": summaries,
         "score_stability": score_summaries,
         "difficulty_stability": difficulty_summaries,
@@ -1138,6 +1667,33 @@ def analyze(
             for filename, frame in output_frames.items()
         },
     }
+    detailed_split_path = e2_dir / "split_bank_reliability/summary.json"
+    summary["detailed_split_bank_analysis"] = {
+        "path": display_path(detailed_split_path),
+        "status": "complete" if detailed_split_path.is_file() else "pending",
+        "required_command": (
+            "python scripts/analyze_paper_e2_split_bank_reliability.py "
+            "--bank-sizes 160"
+        ),
+    }
+    if detailed_split_path.is_file():
+        detailed_split = read_json(detailed_split_path)
+        partition = detailed_split.get("formal_v7_partition")
+        if not isinstance(partition, dict) or any(
+            partition.get(key) != value
+            for key, value in {
+                "total_per_intensity": FORMAL_TOTAL_PER_INTENSITY,
+                "block_size": FORMAL_ANALYSIS_BLOCK_SIZE,
+                "mutually_exclusive": True,
+                "complete_partition": True,
+            }.items()
+        ):
+            raise ValueError(
+                "existing detailed split-bank analysis has stale identity"
+            )
+        summary["detailed_split_bank_analysis"]["sha256"] = file_sha256(
+            detailed_split_path
+        )
     inference_shards_path = e2_dir / "inference_shards.json"
     if inference_shards_path.is_file():
         shard_payload = read_json(inference_shards_path)
@@ -1154,6 +1710,8 @@ def analyze(
     manifest_files = [
         "inference_config.json",
         "inference_model_catalog.json",
+        "generation_config.json",
+        "sample_manifest.json",
         "model_status.json",
         "real_source_model_status.json",
         "baseline_status.json",
@@ -1165,7 +1723,7 @@ def analyze(
     if inference_shards_path.is_file():
         manifest_files.append("inference_shards.json")
     manifest = {
-        "schema_version": "paper_v5_e2_inference_manifest.v1",
+        "schema_version": "paper_v7_e2_inference_manifest.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "analysis_path": str(Path(__file__).relative_to(REPO_ROOT)),
         "analysis_sha256": file_sha256(Path(__file__)),

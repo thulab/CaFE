@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -98,6 +99,7 @@ DEFAULT_SAMPLES_PER_ROUND = 32
 DEFAULT_BOOTSTRAP_REPLICATES = 1000
 INTENSITIES = (1, 2, 3, 4, 5)
 TIME_COLUMN = "time"
+INPUT_ADAPTATION_POLICY_ID = "paper-v7-input-adaptation-v1"
 
 # Preregistered operational stability criteria.
 MAX_MEDIAN_SCORE_CV = 0.10
@@ -967,6 +969,61 @@ def run_baselines(
         print(f"{prediction_kind} baseline complete: {model_id}", flush=True)
 
 
+def summarize_model_input_adaptation(
+    sample_path: Path,
+    *,
+    model: dict[str, Any],
+    input_adaptation_policy: str | None,
+) -> dict[str, int]:
+    summary = {
+        "expected_original_view_count": 0,
+        "compatible_sample_count": 0,
+        "unsupported_window_view_count": 0,
+        "native_view_count": 0,
+        "adapted_view_count": 0,
+        "split_target_view_count": 0,
+        "covariates_omitted_view_count": 0,
+        "expected_http_request_count": 0,
+    }
+    for sample in iter_forecast_samples(sample_path):
+        summary["expected_original_view_count"] += 1
+        plan = input_adaptation_plan(
+            model,
+            sample,
+            policy_id=input_adaptation_policy,
+        )
+        if plan is None:
+            summary["unsupported_window_view_count"] += 1
+            continue
+        summary["compatible_sample_count"] += 1
+        summary["expected_http_request_count"] += int(
+            plan["target_request_count"]
+        )
+        if plan["adapted"]:
+            summary["adapted_view_count"] += 1
+        else:
+            summary["native_view_count"] += 1
+        if plan["target_mode"] == "independent_univariate":
+            summary["split_target_view_count"] += 1
+        if plan["covariate_mode"] == "omitted_unsupported":
+            summary["covariates_omitted_view_count"] += 1
+    return summary
+
+
+def persisted_http_request_count(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    total = 0
+    for row in iter_jsonl(path):
+        adaptation = row.get("input_adaptation")
+        total += int(
+            adaptation.get("target_request_count", 1)
+            if isinstance(adaptation, dict)
+            else 1
+        )
+    return total
+
+
 def run_one_model(
     client: TimerServiceClient,
     model: dict[str, Any],
@@ -981,6 +1038,7 @@ def run_one_model(
     sample_path: Path | None = None,
     prediction_kind: str = "synthetic",
     status_filename: str = "model_status.json",
+    input_adaptation_policy: str | None = None,
 ) -> dict[str, Any]:
     sample_path = sample_path or output_dir / "samples.jsonl"
     model_id = str(model["model_id"])
@@ -990,10 +1048,12 @@ def run_one_model(
         prediction_kind=prediction_kind,
     )
     done = successful_sample_ids(prediction_path)
-    compatible_count = sum(
-        model_supports_sample(model, sample)
-        for sample in iter_forecast_samples(sample_path)
+    adaptation_summary = summarize_model_input_adaptation(
+        sample_path,
+        model=model,
+        input_adaptation_policy=input_adaptation_policy,
     )
+    compatible_count = adaptation_summary["compatible_sample_count"]
     if len(done) > compatible_count:
         raise ValueError(f"prediction file for {model_id} has too many unique samples")
     if len(done) == compatible_count:
@@ -1010,8 +1070,12 @@ def run_one_model(
         return {
             "model_id": model_id,
             "status": "complete",
-            "compatible_sample_count": compatible_count,
+            **adaptation_summary,
             "succeeded_count": compatible_count,
+            "succeeded_original_view_count": compatible_count,
+            "successful_http_request_count": persisted_http_request_count(
+                prediction_path
+            ),
             "already_complete_on_entry": True,
             "prediction_path": relative_path(prediction_path),
             "elapsed_seconds": 0.0,
@@ -1025,6 +1089,7 @@ def run_one_model(
         sample_path,
         model=model,
         done=done,
+        input_adaptation_policy=input_adaptation_policy,
     )
     try:
         if len(done) < compatible_count:
@@ -1060,6 +1125,7 @@ def run_one_model(
                             failure_handle=failure_handle,
                             compatible_count=compatible_count,
                             initial_persisted=len(done),
+                            input_adaptation_policy=input_adaptation_policy,
                         )
                     )
                     failures = sum(row["failed_count"] for row in bucket_stats)
@@ -1074,9 +1140,17 @@ def run_one_model(
         "model_id": model_id,
         "prediction_kind": prediction_kind,
         "status": "complete" if succeeded == compatible_count else "incomplete",
-        "compatible_sample_count": compatible_count,
+        **adaptation_summary,
         "succeeded_count": succeeded,
+        "succeeded_original_view_count": succeeded,
         "failed_request_count_this_attempt": failures,
+        "successful_http_request_count": persisted_http_request_count(
+            prediction_path
+        ),
+        "attempted_http_request_count_this_attempt": sum(
+            int(row.get("attempted_http_request_count", 0))
+            for row in bucket_stats
+        ),
         "execution": {
             "devices": devices,
             "replicas_per_device": int(execution["replicas_per_device"]),
@@ -1096,12 +1170,18 @@ def pending_request_group_counts(
     *,
     model: dict[str, Any],
     done: set[str],
+    input_adaptation_policy: str | None = None,
 ) -> dict[tuple[Any, ...], int]:
     counts: dict[tuple[Any, ...], int] = defaultdict(int)
     for sample in iter_forecast_samples(sample_path):
-        if sample["sample_id"] in done or not model_supports_sample(model, sample):
+        plan = input_adaptation_plan(
+            model,
+            sample,
+            policy_id=input_adaptation_policy,
+        )
+        if sample["sample_id"] in done or plan is None:
             continue
-        counts[request_group_key(sample)] += 1
+        counts[request_group_key(sample, plan=plan)] += 1
     return dict(counts)
 
 
@@ -1120,6 +1200,7 @@ async def run_model_requests(
     failure_handle: Any,
     compatible_count: int,
     initial_persisted: int,
+    input_adaptation_policy: str | None = None,
 ) -> list[dict[str, Any]]:
     limits = httpx.Limits(
         max_connections=http_concurrency,
@@ -1143,23 +1224,32 @@ async def run_model_requests(
                 f"{label}, pending={pending_count}, concurrency={http_concurrency}",
                 flush=True,
             )
-            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue(
+            queue: asyncio.Queue[
+                tuple[dict[str, Any], dict[str, Any]] | None
+            ] = asyncio.Queue(
                 maxsize=max(2 * http_concurrency, 1)
             )
             bucket_started = time.monotonic()
             succeeded_count = 0
             failed_count = 0
+            successful_http_request_count = 0
+            attempted_http_request_count = 0
 
             async def producer() -> None:
                 produced = 0
                 for sample in iter_forecast_samples(sample_path):
+                    plan = input_adaptation_plan(
+                        model,
+                        sample,
+                        policy_id=input_adaptation_policy,
+                    )
                     if (
                         sample["sample_id"] in done
-                        or not model_supports_sample(model, sample)
-                        or request_group_key(sample) != group_key
+                        or plan is None
+                        or request_group_key(sample, plan=plan) != group_key
                     ):
                         continue
-                    await queue.put(sample)
+                    await queue.put((sample, plan))
                     produced += 1
                 if produced != pending_count:
                     raise RuntimeError(
@@ -1170,17 +1260,28 @@ async def run_model_requests(
 
             async def worker() -> None:
                 nonlocal succeeded_count, failed_count, persisted
+                nonlocal successful_http_request_count
+                nonlocal attempted_http_request_count
                 while True:
-                    sample = await queue.get()
+                    item = await queue.get()
                     try:
-                        if sample is None:
+                        if item is None:
                             return
-                        result = await forecast_one_with_retry(
+                        sample, plan = item
+                        result = await forecast_adapted_sample_with_retry(
                             async_client,
                             forecast_url=forecast_url,
                             model_id=model_id,
+                            model=model,
                             sample=sample,
                             max_attempts=max_attempts,
+                            input_adaptation_policy=input_adaptation_policy,
+                        )
+                        successful_http_request_count += int(
+                            result["successful_http_request_count"]
+                        )
+                        attempted_http_request_count += int(
+                            result["attempted_http_request_count"]
                         )
                         if result["forecast"] is not None:
                             row = prediction_row(
@@ -1192,6 +1293,13 @@ async def run_model_requests(
                             row["request_seconds"] = result["elapsed_seconds"]
                             row["request_attempts"] = result["attempts"]
                             row["request_group"] = label
+                            row["input_adaptation"] = plan
+                            row["successful_http_request_count"] = int(
+                                result["successful_http_request_count"]
+                            )
+                            row["attempted_http_request_count"] = int(
+                                result["attempted_http_request_count"]
+                            )
                             output_handle.write(
                                 json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
                             )
@@ -1213,6 +1321,20 @@ async def run_model_requests(
                                         "attempts": result["attempts"],
                                         "request_seconds": result["elapsed_seconds"],
                                         "error": result["error"],
+                                        "input_adaptation": plan,
+                                        "failed_target_index": result[
+                                            "failed_target_index"
+                                        ],
+                                        "successful_http_request_count": int(
+                                            result[
+                                                "successful_http_request_count"
+                                            ]
+                                        ),
+                                        "attempted_http_request_count": int(
+                                            result[
+                                                "attempted_http_request_count"
+                                            ]
+                                        ),
                                         "created_at": datetime.now(timezone.utc).isoformat(),
                                     },
                                     ensure_ascii=False,
@@ -1248,9 +1370,33 @@ async def run_model_requests(
                     "pending_count": pending_count,
                     "succeeded_count": succeeded_count,
                     "failed_count": failed_count,
+                    "expected_http_request_count": (
+                        pending_count * int(group_key[5])
+                        if len(group_key) > 5
+                        else pending_count
+                    ),
+                    "successful_http_request_count": (
+                        successful_http_request_count
+                    ),
+                    "attempted_http_request_count": (
+                        attempted_http_request_count
+                    ),
                     "elapsed_seconds": round(elapsed, 3),
                     "successful_tasks_per_second": round(
                         succeeded_count / max(elapsed, 1e-12), 3
+                    ),
+                    **(
+                        {
+                            "target_request_count_per_view": int(
+                                group_key[5]
+                            ),
+                            "target_mode": str(group_key[6]),
+                            "covariate_mode": str(group_key[7]),
+                            "request_target_dim": int(group_key[8]),
+                            "request_covariate_dim": int(group_key[9]),
+                        }
+                        if len(group_key) > 5
+                        else {}
                     ),
                 }
             )
@@ -1309,6 +1455,97 @@ async def forecast_one_with_retry(
     }
 
 
+async def forecast_adapted_sample_with_retry(
+    client: httpx.AsyncClient,
+    *,
+    forecast_url: str,
+    model_id: str,
+    model: dict[str, Any],
+    sample: dict[str, Any],
+    max_attempts: int,
+    input_adaptation_policy: str | None,
+) -> dict[str, Any]:
+    """Forecast one original view, atomically adapting its model inputs.
+
+    A split-target view may issue several single-target HTTP requests, but it
+    yields only one reassembled forecast.  If any child request fails, no
+    partial forecast is returned for the original view.
+    """
+
+    started = time.monotonic()
+    plan = input_adaptation_plan(
+        model,
+        sample,
+        policy_id=input_adaptation_policy,
+    )
+    if plan is None:
+        return {
+            "forecast": None,
+            "attempts": 0,
+            "attempted_http_request_count": 0,
+            "successful_http_request_count": 0,
+            "elapsed_seconds": 0.0,
+            "error": "model_window_contract_unsupported",
+            "input_adaptation": None,
+            "failed_target_index": None,
+        }
+
+    child_forecasts: list[np.ndarray] = []
+    total_attempts = 0
+    successful_requests = 0
+    for child in adapted_request_samples(sample, plan):
+        result = await forecast_one_with_retry(
+            client,
+            forecast_url=forecast_url,
+            model_id=model_id,
+            sample=child,
+            max_attempts=max_attempts,
+        )
+        total_attempts += int(result["attempts"])
+        target_index = child.get("_adaptation_target_index")
+        if result["forecast"] is None:
+            target_label = (
+                "native"
+                if target_index is None
+                else f"target_index={int(target_index)}"
+            )
+            return {
+                "forecast": None,
+                "attempts": total_attempts,
+                "attempted_http_request_count": total_attempts,
+                "successful_http_request_count": successful_requests,
+                "elapsed_seconds": time.monotonic() - started,
+                "error": f"{target_label}: {result['error']}",
+                "input_adaptation": plan,
+                "failed_target_index": (
+                    None if target_index is None else int(target_index)
+                ),
+            }
+        child_forecasts.append(np.asarray(result["forecast"], dtype=float))
+        successful_requests += 1
+
+    if plan["target_mode"] == "independent_univariate":
+        forecast = np.concatenate(child_forecasts, axis=1)
+    else:
+        forecast = child_forecasts[0]
+    expected_shape = (int(sample["horizon"]), int(sample["target_dim"]))
+    if forecast.shape != expected_shape:
+        raise ValueError(
+            f"adapted forecast shape {forecast.shape} does not match "
+            f"{expected_shape}"
+        )
+    return {
+        "forecast": forecast.tolist(),
+        "attempts": total_attempts,
+        "attempted_http_request_count": total_attempts,
+        "successful_http_request_count": successful_requests,
+        "elapsed_seconds": time.monotonic() - started,
+        "error": None,
+        "input_adaptation": plan,
+        "failed_target_index": None,
+    }
+
+
 def forecast_request_body(model_id: str, sample: dict[str, Any]) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model_id": model_id,
@@ -1322,12 +1559,13 @@ def forecast_request_body(model_id: str, sample: dict[str, Any]) -> dict[str, An
     return body
 
 
-def model_supports_sample(model: dict[str, Any], sample: dict[str, Any]) -> bool:
+def model_supports_window(
+    model: dict[str, Any],
+    sample: dict[str, Any],
+) -> bool:
     limits = model.get("forecast_limits") or {}
     context = int(sample["context_length"])
     horizon = int(sample["horizon"])
-    target_dim = int(sample["target_dim"])
-    covariate_dim = int(sample["covariate_dim"])
     if context < int(limits.get("min_input_length") or 0):
         return False
     maximum_input = limits.get("max_input_length")
@@ -1336,6 +1574,174 @@ def model_supports_sample(model: dict[str, Any], sample: dict[str, Any]) -> bool
     maximum_output = limits.get("max_output_length")
     if maximum_output is not None and horizon > int(maximum_output):
         return False
+    return True
+
+
+def _supports_native_targets(
+    limits: dict[str, Any],
+    target_dim: int,
+) -> bool:
+    if target_dim <= 1:
+        return True
+    if "max_target_count" not in limits:
+        return False
+    maximum_targets = limits["max_target_count"]
+    return (
+        maximum_targets is None
+        or target_dim <= int(maximum_targets)
+    )
+
+
+def _supports_native_covariates(
+    limits: dict[str, Any],
+    *,
+    covariate_dim: int,
+    horizon: int,
+) -> bool:
+    if covariate_dim <= 0:
+        return True
+    maximum_covariates = int(limits.get("max_covariate_count") or 0)
+    if covariate_dim > maximum_covariates:
+        return False
+    maximum_future = limits.get("max_future_covs_length")
+    return (
+        maximum_future is not None
+        and horizon <= int(maximum_future)
+    )
+
+
+def input_adaptation_plan(
+    model: dict[str, Any],
+    sample: dict[str, Any],
+    *,
+    policy_id: str | None,
+) -> dict[str, Any] | None:
+    """Resolve a deterministic request plan for one original forecast view."""
+
+    if not model_supports_window(model, sample):
+        return None
+    if policy_id not in {None, INPUT_ADAPTATION_POLICY_ID}:
+        raise ValueError(f"unknown input adaptation policy: {policy_id}")
+    if policy_id is None and not model_supports_sample(model, sample):
+        return None
+
+    limits = model.get("forecast_limits") or {}
+    target_dim = int(sample["target_dim"])
+    covariate_dim = int(sample["covariate_dim"])
+    horizon = int(sample["horizon"])
+    target_native = (
+        True
+        if policy_id is None
+        else _supports_native_targets(limits, target_dim)
+    )
+    covariates_native = (
+        True
+        if policy_id is None
+        else _supports_native_covariates(
+            limits,
+            covariate_dim=covariate_dim,
+            horizon=horizon,
+        )
+    )
+    if target_native:
+        target_mode = (
+            "native_univariate"
+            if target_dim == 1
+            else "native_multivariate"
+        )
+    else:
+        target_mode = "independent_univariate"
+    if covariate_dim == 0:
+        covariate_mode = "none"
+    elif covariates_native:
+        covariate_mode = "native"
+    else:
+        covariate_mode = "omitted_unsupported"
+    target_request_count = (
+        target_dim
+        if target_mode == "independent_univariate"
+        else 1
+    )
+    adapted = (
+        target_mode == "independent_univariate"
+        or covariate_mode == "omitted_unsupported"
+    )
+    return {
+        "policy_id": (
+            INPUT_ADAPTATION_POLICY_ID
+            if policy_id is not None
+            else "native-only"
+        ),
+        "target_mode": target_mode,
+        "covariate_mode": covariate_mode,
+        "adapted": adapted,
+        "original_target_dim": target_dim,
+        "request_target_dim": (
+            1 if target_mode == "independent_univariate" else target_dim
+        ),
+        "target_request_count": target_request_count,
+        "original_covariate_dim": covariate_dim,
+        "request_covariate_dim": (
+            covariate_dim if covariate_mode == "native" else 0
+        ),
+    }
+
+
+def _target_column_names(sample: dict[str, Any]) -> list[str]:
+    target_dim = int(sample["target_dim"])
+    configured = sample.get("target_column_names")
+    if configured is None:
+        configured = sample.get("target_columns")
+    if configured is None:
+        return [f"target_{index}" for index in range(target_dim)]
+    names = [str(value) for value in configured]
+    if len(names) != target_dim or len(set(names)) != len(names):
+        raise ValueError(
+            "target_column_names must be unique and match target_dim"
+        )
+    return names
+
+
+def adapted_request_samples(
+    sample: dict[str, Any],
+    plan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Materialize request-only copies without mutating the original view."""
+
+    target = np.asarray(sample["target"], dtype=float)
+    target_names = _target_column_names(sample)
+    if plan["target_mode"] == "independent_univariate":
+        target_indexes: list[int | None] = list(
+            range(int(sample["target_dim"]))
+        )
+    else:
+        target_indexes = [None]
+    requests: list[dict[str, Any]] = []
+    for target_index in target_indexes:
+        child = dict(sample)
+        if target_index is not None:
+            child["target"] = target[:, target_index : target_index + 1].tolist()
+            child["target_dim"] = 1
+            child["target_column_names"] = [target_names[target_index]]
+            child["_adaptation_target_index"] = int(target_index)
+        else:
+            child["target_column_names"] = target_names
+            child["_adaptation_target_index"] = None
+        if plan["covariate_mode"] == "omitted_unsupported":
+            child["covariates"] = None
+            child["covariate_dim"] = 0
+            child["covariate_column_names"] = []
+        requests.append(child)
+    return requests
+
+
+def model_supports_sample(model: dict[str, Any], sample: dict[str, Any]) -> bool:
+    limits = model.get("forecast_limits") or {}
+    if not model_supports_window(model, sample):
+        return False
+    horizon = int(sample["horizon"])
+    target_dim = int(sample["target_dim"])
+    covariate_dim = int(sample["covariate_dim"])
     maximum_targets = limits.get("max_target_count")
     if maximum_targets is not None and target_dim > int(maximum_targets):
         return False
@@ -1350,20 +1756,37 @@ def model_supports_sample(model: dict[str, Any], sample: dict[str, Any]) -> bool
     return True
 
 
-def request_group_key(sample: dict[str, Any]) -> tuple[Any, ...]:
-    return (
+def request_group_key(
+    sample: dict[str, Any],
+    *,
+    plan: dict[str, Any] | None = None,
+) -> tuple[Any, ...]:
+    base = (
         sample["context_length"],
         sample["horizon"],
         sample["target_dim"],
         sample["covariate_dim"],
         sample["frequency"],
     )
+    if plan is None or plan["policy_id"] == "native-only":
+        return base
+    return (
+        *base,
+        plan["target_request_count"],
+        plan["target_mode"],
+        plan["covariate_mode"],
+        plan["request_target_dim"],
+        plan["request_covariate_dim"],
+    )
 
 
 def request_group_sort_key(group: tuple[Any, ...]) -> tuple[Any, ...]:
-    context, horizon, target_dim, covariate_dim, frequency = group
+    context, horizon, target_dim, covariate_dim, frequency = group[:5]
+    request_covariate_dim = (
+        int(group[9]) if len(group) > 5 else int(covariate_dim)
+    )
     return (
-        int(int(covariate_dim) > 0),
+        int(request_covariate_dim > 0),
         int(context),
         int(target_dim),
         int(horizon),
@@ -1372,9 +1795,23 @@ def request_group_sort_key(group: tuple[Any, ...]) -> tuple[Any, ...]:
 
 
 def request_group_label(group: tuple[Any, ...]) -> str:
-    context, horizon, target_dim, covariate_dim, frequency = group
-    return (
+    context, horizon, target_dim, covariate_dim, frequency = group[:5]
+    base = (
         f"ctx{context}_h{horizon}_t{target_dim}_c{covariate_dim}_{frequency}"
+    )
+    if len(group) == 5:
+        return base
+    (
+        target_request_count,
+        target_mode,
+        covariate_mode,
+        request_target_dim,
+        request_covariate_dim,
+    ) = group[5:]
+    return (
+        f"{base}__{target_mode}__{covariate_mode}__"
+        f"requests{target_request_count}_t{request_target_dim}_"
+        f"c{request_covariate_dim}"
     )
 
 
@@ -1382,11 +1819,40 @@ def forecast_target(sample: dict[str, Any]) -> dict[str, Any]:
     context = int(sample["context_length"])
     timestamps = sample_timestamps(sample)[:context]
     target = sample["target"][:context]
-    columns = [TIME_COLUMN, *[f"target_{index}" for index in range(sample["target_dim"])]]
+    columns = [TIME_COLUMN, *_target_column_names(sample)]
     return {
         "columns": columns,
         "data": [[timestamp, *row] for timestamp, row in zip(timestamps, target, strict=True)],
     }
+
+
+def _covariate_column_names(sample: dict[str, Any]) -> list[str]:
+    covariate_dim = int(sample["covariate_dim"])
+    configured = sample.get("covariate_column_names")
+    if configured is None:
+        configured = sample.get("covariate_columns")
+    if configured is not None:
+        names = [str(value) for value in configured]
+    else:
+        capability = CAPABILITIES_BY_ID.get(str(sample.get("capability_id", "")))
+        catalog_names = (
+            list(capability.covariate_columns)
+            if capability is not None
+            else []
+        )
+        names = (
+            [str(value) for value in catalog_names]
+            if len(catalog_names) == covariate_dim
+            else [
+                f"covariate_{index}"
+                for index in range(covariate_dim)
+            ]
+        )
+    if len(names) != covariate_dim or len(set(names)) != len(names):
+        raise ValueError(
+            "covariate_column_names must be unique and match covariate_dim"
+        )
+    return names
 
 
 def forecast_covariates(sample: dict[str, Any], *, history: bool) -> dict[str, Any]:
@@ -1399,7 +1865,7 @@ def forecast_covariates(sample: dict[str, Any], *, history: bool) -> dict[str, A
     else:
         timestamps = timestamps[context:]
         covariates = covariates[context:]
-    names = list(CAPABILITIES_BY_ID[sample["capability_id"]].covariate_columns)
+    names = _covariate_column_names(sample)
     return {
         "columns": [TIME_COLUMN, *names],
         "data": [
@@ -1410,11 +1876,64 @@ def forecast_covariates(sample: dict[str, Any], *, history: bool) -> dict[str, A
 
 
 def sample_timestamps(sample: dict[str, Any]) -> list[str]:
-    frequency = str(sample["frequency"]).lower()
-    delta = timedelta(days=1) if frequency == "d" else timedelta(hours=1)
+    context = int(sample["context_length"])
+    horizon = int(sample["horizon"])
+    expected = context + horizon
+    explicit = [str(value) for value in sample.get("timestamps") or []]
+    if explicit:
+        if len(explicit) not in {context, expected}:
+            raise ValueError(
+                f"{sample.get('sample_id')} has {len(explicit)} timestamps; "
+                f"expected {context} or {expected}"
+            )
+        if int(sample.get("covariate_dim", 0)) and len(explicit) != expected:
+            raise ValueError(
+                "covariate forecasts require history and future timestamps"
+            )
+        return explicit
+    frequency = str(sample["frequency"]).strip().lower()
+    aliases = {
+        "hour": "1h",
+        "hourly": "1h",
+        "day": "1d",
+        "daily": "1d",
+        "week": "1w",
+        "weekly": "1w",
+    }
+    frequency = aliases.get(frequency, frequency)
+    match = re.fullmatch(
+        r"(\d+)?\s*(s|sec|second|seconds|m|min|minute|minutes|t|h|hour|hours|d|day|days|w|week|weeks)",
+        frequency,
+    )
+    if match is None:
+        raise ValueError(f"unsupported sample frequency: {sample['frequency']}")
+    magnitude = int(match.group(1) or 1)
+    if magnitude <= 0:
+        raise ValueError("sample frequency magnitude must be positive")
+    unit = match.group(2)
+    unit_seconds = {
+        "s": 1,
+        "sec": 1,
+        "second": 1,
+        "seconds": 1,
+        "m": 60,
+        "min": 60,
+        "minute": 60,
+        "minutes": 60,
+        "t": 60,
+        "h": 3600,
+        "hour": 3600,
+        "hours": 3600,
+        "d": 86400,
+        "day": 86400,
+        "days": 86400,
+        "w": 604800,
+        "week": 604800,
+        "weeks": 604800,
+    }
+    delta = timedelta(seconds=magnitude * unit_seconds[unit])
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    length = int(sample["context_length"]) + int(sample["horizon"])
-    return [(base + index * delta).isoformat() for index in range(length)]
+    return [(base + index * delta).isoformat() for index in range(expected)]
 
 
 def parse_forecast_result(result: dict[str, Any], *, horizon: int) -> list[list[float]]:
@@ -2789,13 +3308,38 @@ def iter_forecast_samples(path: Path) -> Iterator[dict[str, Any]]:
             raise ValueError(
                 f"real sample {row.get('sample_id')} shape does not match lookback/horizon"
             )
+        covariates = row.get("covariates")
+        if (
+            covariates is None
+            and row.get("history_cov") is not None
+            and row.get("future_cov") is not None
+        ):
+            covariates = [
+                *list(row["history_cov"]),
+                *list(row["future_cov"]),
+            ]
+        timestamps = row.get("timestamps")
+        if (
+            timestamps is None
+            and row.get("history_timestamps") is not None
+            and row.get("future_timestamps") is not None
+        ):
+            timestamps = [
+                *list(row["history_timestamps"]),
+                *list(row["future_timestamps"]),
+            ]
         yield {
             **row,
             "context_length": lookback,
             "target_dim": int(row.get("target_dim", history.shape[1])),
             "covariate_dim": int(row.get("covariate_dim", 0)),
             "target": np.vstack([history, future]).tolist(),
-            "covariates": row.get("covariates"),
+            "covariates": covariates,
+            **(
+                {"timestamps": timestamps}
+                if timestamps is not None
+                else {}
+            ),
         }
 
 

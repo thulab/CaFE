@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build formal Paper v6 E3 mechanism-aware profiles from sealed E2 output."""
+"""Build formal Paper v7 E3 mechanism-aware profiles from sealed E2 output."""
 from __future__ import annotations
 
 import argparse
@@ -30,17 +30,17 @@ from app.services.synthetic_mechanism_fidelity import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v6_e3_mechanism_fidelity.v2"
+SCHEMA_VERSION = "paper_v7_e3_mechanism_fidelity.v1"
 EXPERIMENT_ID = "E3_mechanism_fidelity"
-DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v6/E2_dynamic_stability"
+DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v7/E2_dynamic_stability"
 DEFAULT_OUTPUT_DIR = (
     REPO_ROOT
-    / "runtime/paper_exp/v6/E3_mechanism_fidelity/formal_analysis"
+    / "runtime/paper_exp/v7/E3_mechanism_fidelity/formal_analysis"
 )
 DEFAULT_PROTOCOL_PATH = (
     REPO_ROOT
     / "docs/superpowers/specs/"
-    "2026-07-20-paper-v6-e3-formal-mechanism-fidelity-protocol.md"
+    "2026-07-21-paper-v7-structured-dataset-expansion-protocol.md"
 )
 DEFAULT_MODELS = (
     "Timer-3.5",
@@ -60,7 +60,8 @@ DEFAULT_BOOTSTRAP_SEED = 20260720
 DEFAULT_CI_LEVEL = 0.95
 DEFAULT_EQUIVALENCE_MARGINS = (0.01, 0.02, 0.05)
 DEFAULT_PRIMARY_EQUIVALENCE_MARGIN = 0.02
-DEFAULT_SPLIT_SIZE = 80
+DEFAULT_SPLIT_SIZE = 160
+V7_INPUT_ADAPTATION_POLICY_ID = "paper-v7-input-adaptation-v1"
 PROFILE_KEYS = ["dataset_id", "task_id", "capability_id"]
 METRIC_SPECS = {
     "mase": {
@@ -79,19 +80,6 @@ METRIC_SPECS = {
         "effect_scale": "absolute",
     },
 }
-DEFAULT_DATASET_CAPABILITIES = {
-    "gift_ett1_h": (
-        "trend",
-        "multi_seasonal",
-        "time_varying_seasonality",
-        "regime_switching",
-        "nonlinear_persistence",
-        "predictable_intermittency",
-    ),
-    "electricity_hourly_panel": ("common_factor",),
-    "m5_daily_hierarchy": ("hierarchical_coherence",),
-    "gefcom2014_load": ("covariate_response",),
-}
 SAMPLE_COLUMNS = (
     "model_id",
     "dataset_id",
@@ -102,6 +90,8 @@ SAMPLE_COLUMNS = (
     "master_sample_id",
     "round_index",
     "sample_index",
+    "analysis_pool_index",
+    "analysis_block_id",
     "context_length",
     "oracle_mase",
     "formal_score_eligible",
@@ -114,6 +104,13 @@ SAMPLE_COLUMNS = (
     "truth_mechanism_strength",
     "forecast_mechanism_strength",
     "point_mae",
+    "input_execution_mode",
+    "target_input_mode",
+    "covariate_input_mode",
+    "input_adaptation_policy_id",
+    "counterfactual_mode",
+    "counterfactual_effect_mae",
+    "counterfactual_http_request_count",
     "component_scores_json",
     "diagnostics_json",
 )
@@ -122,7 +119,7 @@ SAMPLE_COLUMNS = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate mechanism-aligned forecast behavior for Paper v5 E3 "
+            "Evaluate mechanism-aligned forecast behavior for Paper v7 E3 "
             "without regenerating samples or rerunning ordinary predictions."
         )
     )
@@ -145,7 +142,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--datasets",
         nargs="+",
-        default=list(DEFAULT_DATASET_CAPABILITIES),
+        default=None,
+        help=(
+            "Optional dataset filter. By default every supported "
+            "dataset/task/capability cell present in the sealed generation "
+            "shards is analyzed."
+        ),
     )
     parser.add_argument(
         "--covariate-ablation-predictions-dir",
@@ -189,7 +191,9 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_SPLIT_SIZE,
         help=(
             "Number of paired groups in each deterministic reliability half. "
-            "Use 0 to skip the split-half audit."
+            "Every selected cell must contain exactly twice this count; the "
+            "v7 default therefore validates and splits all 320 groups into "
+            "two mutually exclusive blocks of 160. Use 0 to skip the audit."
         ),
     )
     parser.add_argument("--overwrite", action="store_true")
@@ -220,69 +224,174 @@ def oracle_path(e2_dir: Path, model_id: str) -> Path:
     return path
 
 
-def selected_dataset_capabilities(
-    dataset_ids: list[str],
-) -> dict[str, tuple[str, ...]]:
-    unknown = sorted(set(dataset_ids) - set(DEFAULT_DATASET_CAPABILITIES))
-    if unknown:
-        raise ValueError(
-            "datasets do not have a frozen E3 pilot capability mapping: "
-            + ", ".join(unknown)
+def _resolve_frozen_path(path_value: str, *, relative_to: Path) -> Path:
+    path = Path(path_value)
+    if path.is_absolute():
+        return path
+    repository_path = REPO_ROOT / path
+    if repository_path.is_file():
+        return repository_path
+    return relative_to / path
+
+
+def support_artifact_path(e2_dir: Path) -> Path:
+    config_path = e2_dir / "generation_config.json"
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"missing generation config for E3 cell discovery: {config_path}"
         )
-    return {
-        dataset_id: DEFAULT_DATASET_CAPABILITIES[dataset_id]
-        for dataset_id in dataset_ids
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    support_record = (config.get("suite_files") or {}).get("support")
+    if not isinstance(support_record, dict) or not support_record.get("path"):
+        raise ValueError(
+            "generation_config.json does not freeze a support artifact"
+        )
+    path = _resolve_frozen_path(
+        str(support_record["path"]),
+        relative_to=e2_dir,
+    )
+    if not path.is_file():
+        raise FileNotFoundError(f"missing frozen support artifact: {path}")
+    expected_sha256 = support_record.get("sha256")
+    if expected_sha256 and sha256_file(path) != str(expected_sha256):
+        raise ValueError("frozen support artifact checksum mismatch")
+    return path
+
+
+def sample_shards_by_cell(
+    e2_dir: Path,
+) -> dict[tuple[str, str, str], Path]:
+    shard_dir = e2_dir / "sample_shards"
+    if not shard_dir.is_dir():
+        raise FileNotFoundError(f"missing generation shards: {shard_dir}")
+    result: dict[tuple[str, str, str], Path] = {}
+    for path in sorted(shard_dir.glob("*.jsonl")):
+        first_row: dict[str, Any] | None = None
+        with path.open(encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    first_row = json.loads(line)
+                    break
+        if first_row is None:
+            raise ValueError(f"generation shard is empty: {path}")
+        key = (
+            str(first_row["dataset_id"]),
+            str(first_row["task_id"]),
+            str(first_row["capability_id"]),
+        )
+        if key in result:
+            raise ValueError(f"duplicate generation shards for cell {key}")
+        result[key] = path
+    if not result:
+        raise ValueError("generation shard set is empty")
+    return result
+
+
+def discover_supported_cells(
+    e2_dir: Path,
+    *,
+    dataset_ids: list[str] | None = None,
+) -> tuple[tuple[str, str, str], ...]:
+    """Discover the sealed E3 cell universe without a hand-written mapping."""
+
+    support_path = support_artifact_path(e2_dir)
+    support = json.loads(support_path.read_text(encoding="utf-8"))
+    supported = {
+        (
+            str(cell["dataset_id"]),
+            str(cell["task_id"]),
+            str(cell["capability_id"]),
+        )
+        for cell in support.get("cells", [])
+        if cell.get("status") == "supported"
+        or cell.get("supported") is True
     }
+    if not supported:
+        raise ValueError("frozen support artifact has no supported cells")
+    shard_cells = set(sample_shards_by_cell(e2_dir))
+    if shard_cells != supported:
+        missing_shards = sorted(supported - shard_cells)
+        unsupported_shards = sorted(shard_cells - supported)
+        raise ValueError(
+            "generation shards and frozen supported cells disagree: "
+            f"missing_shards={missing_shards}, "
+            f"unsupported_shards={unsupported_shards}"
+        )
+    if dataset_ids is not None:
+        requested = {str(value) for value in dataset_ids}
+        available = {cell[0] for cell in supported}
+        unknown = sorted(requested - available)
+        if unknown:
+            raise ValueError(
+                "datasets are absent from the sealed supported cells: "
+                + ", ".join(unknown)
+            )
+        supported = {cell for cell in supported if cell[0] in requested}
+    if not supported:
+        raise ValueError("supported cell selection is empty")
+    return tuple(sorted(supported))
 
 
 def load_selected_samples(
     e2_dir: Path,
     *,
-    dataset_capabilities: dict[str, tuple[str, ...]],
+    supported_cells: tuple[tuple[str, str, str], ...],
     max_paired_groups_per_cell: int,
 ) -> dict[str, dict[str, Any]]:
     if max_paired_groups_per_cell < 0:
         raise ValueError("max_paired_groups_per_cell cannot be negative")
+    shard_paths = sample_shards_by_cell(e2_dir)
     selected: dict[str, dict[str, Any]] = {}
-    for dataset_id, capabilities in dataset_capabilities.items():
-        for capability_id in capabilities:
-            matches = sorted(
-                (e2_dir / "sample_shards").glob(
-                    f"{dataset_id}__*__{capability_id}.jsonl"
-                )
+    for cell_key in supported_cells:
+        if cell_key not in shard_paths:
+            raise FileNotFoundError(
+                f"missing sample shard for supported cell {cell_key}"
             )
-            if len(matches) != 1:
-                raise FileNotFoundError(
-                    "expected one sample shard for "
-                    f"{dataset_id}/{capability_id}, found {len(matches)}"
-                )
-            rows = [json.loads(line) for line in matches[0].open(encoding="utf-8")]
-            group_order = sorted(
-                {
-                    (
-                        int(row["round_index"]),
-                        int(row["sample_index"]),
-                        str(row["paired_group_id"]),
-                    )
-                    for row in rows
-                }
+        rows = [
+            json.loads(line)
+            for line in shard_paths[cell_key].open(encoding="utf-8")
+            if line.strip()
+        ]
+        observed_cells = {
+            (
+                str(row["dataset_id"]),
+                str(row["task_id"]),
+                str(row["capability_id"]),
             )
-            if max_paired_groups_per_cell:
-                group_order = group_order[:max_paired_groups_per_cell]
-            group_ids = {item[2] for item in group_order}
-            cell_rows = [
-                row for row in rows if str(row["paired_group_id"]) in group_ids
-            ]
-            counts = pd.Series(
-                [str(row["paired_group_id"]) for row in cell_rows]
-            ).value_counts()
-            if counts.empty or not (counts == 5).all():
-                raise ValueError(
-                    f"{dataset_id}/{capability_id} does not retain five "
-                    "paired intensity levels"
+            for row in rows
+        }
+        if observed_cells != {cell_key}:
+            raise ValueError(
+                f"generation shard mixes cells: {observed_cells}"
+            )
+        group_order = sorted(
+            {
+                (
+                    int(row.get("round_index", 0)),
+                    int(row["sample_index"]),
+                    str(row["paired_group_id"]),
                 )
-            for row in cell_rows:
-                selected[str(row["master_sample_id"])] = row
+                for row in rows
+            }
+        )
+        if max_paired_groups_per_cell:
+            group_order = group_order[:max_paired_groups_per_cell]
+        group_ids = {item[2] for item in group_order}
+        cell_rows = [
+            row for row in rows if str(row["paired_group_id"]) in group_ids
+        ]
+        counts = pd.Series(
+            [str(row["paired_group_id"]) for row in cell_rows]
+        ).value_counts()
+        if counts.empty or not (counts == 5).all():
+            raise ValueError(
+                f"{cell_key} does not retain five paired intensity levels"
+            )
+        for row in cell_rows:
+            master_id = str(row["master_sample_id"])
+            if master_id in selected:
+                raise ValueError(f"duplicate master sample id: {master_id}")
+            selected[master_id] = row
     if not selected:
         raise ValueError("sample selection is empty")
     return selected
@@ -354,6 +463,7 @@ def load_selected_predictions(
     *,
     model_id: str,
     oracle_selection: dict[str, dict[str, Any]],
+    require_input_adaptation: bool = False,
 ) -> dict[str, dict[str, Any]]:
     view_to_master = {
         str(row["oracle_view_id"]): master_id
@@ -366,6 +476,20 @@ def load_selected_predictions(
             master_id = view_to_master.get(str(row["view_id"]))
             if master_id is None:
                 continue
+            if require_input_adaptation:
+                plan = row.get("input_adaptation")
+                if not isinstance(plan, dict):
+                    raise ValueError(
+                        f"{model_id}/{row.get('view_id')} lacks v7 "
+                        "input_adaptation provenance"
+                    )
+                if str(plan.get("policy_id")) != (
+                    V7_INPUT_ADAPTATION_POLICY_ID
+                ):
+                    raise ValueError(
+                        f"{model_id}/{row.get('view_id')} has an unexpected "
+                        "input adaptation policy"
+                    )
             selected[master_id] = row
             if len(selected) == len(view_to_master):
                 break
@@ -375,12 +499,50 @@ def load_selected_predictions(
     return selected
 
 
+def input_adaptation_provenance(
+    prediction: dict[str, Any],
+) -> dict[str, Any]:
+    plan = prediction.get("input_adaptation")
+    if not isinstance(plan, dict):
+        return {
+            "input_execution_mode": "legacy_native",
+            "target_input_mode": "legacy_native",
+            "covariate_input_mode": "legacy_native",
+            "input_adaptation_policy_id": "legacy_native_only",
+            "adapted": False,
+        }
+    adapted = bool(plan.get("adapted"))
+    return {
+        "input_execution_mode": "adapted" if adapted else "native",
+        "target_input_mode": str(plan.get("target_mode", "unknown")),
+        "covariate_input_mode": str(
+            plan.get("covariate_mode", "unknown")
+        ),
+        "input_adaptation_policy_id": str(
+            plan.get("policy_id", "unknown")
+        ),
+        "adapted": adapted,
+    }
+
+
+def expected_counterfactual_mode(
+    intact_prediction: dict[str, Any],
+) -> str:
+    provenance = input_adaptation_provenance(intact_prediction)
+    if provenance["covariate_input_mode"] == "omitted_unsupported":
+        return "reuse_intact_forecast_covariates_omitted"
+    return "native_future_covariate_ablation_http"
+
+
 def load_covariate_ablation_predictions(
     directory: Path | None,
     *,
     model_ids: list[str],
     samples: dict[str, dict[str, Any]],
     oracle_selections: dict[str, dict[str, dict[str, Any]]],
+    intact_predictions: (
+        dict[str, dict[str, dict[str, Any]]] | None
+    ) = None,
 ) -> dict[str, dict[str, dict[str, Any]]]:
     if directory is None:
         return {}
@@ -418,6 +580,34 @@ def load_covariate_ablation_predictions(
                 )
                 if int(row.get("context_length", -1)) != expected_context:
                     continue
+                if intact_predictions is not None:
+                    intact = intact_predictions[model_id][master_id]
+                    expected_mode = expected_counterfactual_mode(intact)
+                    if str(row.get("counterfactual_mode")) != expected_mode:
+                        raise ValueError(
+                            f"{model_id}/{master_id} has counterfactual mode "
+                            f"{row.get('counterfactual_mode')!r}, expected "
+                            f"{expected_mode!r}"
+                        )
+                    if expected_mode.startswith("reuse_"):
+                        if int(
+                            row.get(
+                                "counterfactual_http_request_count",
+                                -1,
+                            )
+                        ) != 0:
+                            raise ValueError(
+                                "a reused counterfactual cannot issue HTTP "
+                                "requests"
+                            )
+                        if not np.array_equal(
+                            np.asarray(row["forecast"], dtype=float),
+                            np.asarray(intact["forecast"], dtype=float),
+                        ):
+                            raise ValueError(
+                                "covariate-omitted counterfactual must reuse "
+                                "the intact forecast exactly"
+                            )
                 model_rows[master_id] = row
         if set(model_rows) != model_desired_ids:
             missing = len(model_desired_ids - set(model_rows))
@@ -548,6 +738,7 @@ def evaluate_selected_predictions(
         for master_id, prediction in model_predictions.items():
             sample = samples[master_id]
             oracle = oracle_selections[model_id][master_id]
+            provenance = input_adaptation_provenance(prediction)
             context_length = int(oracle["oracle_context"])
             target_view, covariate_view = context_view(
                 sample,
@@ -564,6 +755,20 @@ def evaluate_selected_predictions(
                 raise ValueError(
                     f"{master_id} prediction target does not match rebuilt view"
                 )
+            counterfactual_row = (
+                counterfactual_predictions[model_id][master_id]
+                if (
+                    counterfactual_predictions
+                    and model_id in counterfactual_predictions
+                    and master_id in counterfactual_predictions[model_id]
+                )
+                else None
+            )
+            counterfactual_forecast = (
+                np.asarray(counterfactual_row["forecast"], dtype=float)
+                if counterfactual_row is not None
+                else None
+            )
             result = evaluate_mechanism_fidelity(
                 capability_id=str(sample["capability_id"]),
                 history=history,
@@ -574,21 +779,7 @@ def evaluate_selected_predictions(
                 intensity=int(sample["intensity"]),
                 forecast_start_index=MAX_CONTEXT_LENGTH,
                 covariates=covariate_view,
-                counterfactual_forecast=(
-                    np.asarray(
-                        counterfactual_predictions[model_id][master_id][
-                            "forecast"
-                        ],
-                        dtype=float,
-                    )
-                    if (
-                        counterfactual_predictions
-                        and model_id in counterfactual_predictions
-                        and master_id
-                        in counterfactual_predictions[model_id]
-                    )
-                    else None
-                ),
+                counterfactual_forecast=counterfactual_forecast,
             )
             rows.append(
                 {
@@ -601,6 +792,12 @@ def evaluate_selected_predictions(
                     "master_sample_id": master_id,
                     "round_index": int(sample["round_index"]),
                     "sample_index": int(sample["sample_index"]),
+                    "analysis_pool_index": int(
+                        sample.get("analysis_pool_index", -1)
+                    ),
+                    "analysis_block_id": str(
+                        sample.get("analysis_block_id", "")
+                    ),
                     "context_length": context_length,
                     "oracle_mase": float(oracle["oracle_mase"]),
                     "formal_score_eligible": bool(
@@ -621,6 +818,45 @@ def evaluate_selected_predictions(
                         result["forecast_mechanism_strength"]
                     ),
                     "point_mae": float(result["point_mae"]),
+                    **{
+                        key: provenance[key]
+                        for key in (
+                            "input_execution_mode",
+                            "target_input_mode",
+                            "covariate_input_mode",
+                            "input_adaptation_policy_id",
+                        )
+                    },
+                    "counterfactual_mode": (
+                        str(counterfactual_row["counterfactual_mode"])
+                        if counterfactual_row is not None
+                        else "not_applicable"
+                    ),
+                    "counterfactual_effect_mae": (
+                        float(
+                            np.mean(
+                                np.abs(
+                                    np.asarray(
+                                        prediction["forecast"],
+                                        dtype=float,
+                                    )
+                                    - counterfactual_forecast
+                                )
+                            )
+                        )
+                        if counterfactual_forecast is not None
+                        else math.nan
+                    ),
+                    "counterfactual_http_request_count": (
+                        int(
+                            counterfactual_row.get(
+                                "counterfactual_http_request_count",
+                                0,
+                            )
+                        )
+                        if counterfactual_row is not None
+                        else 0
+                    ),
                     "component_scores_json": json.dumps(
                         result["component_scores"],
                         ensure_ascii=False,
@@ -639,10 +875,30 @@ def evaluate_selected_predictions(
     return frame
 
 
+def _single_value(values: pd.Series) -> Any:
+    unique = values.drop_duplicates().tolist()
+    if len(unique) != 1:
+        raise ValueError(f"expected one provenance value, found {unique}")
+    return unique[0]
+
+
 def intensity_cell_scores(
     sample_scores: pd.DataFrame,
     oracle_scores: pd.DataFrame,
 ) -> pd.DataFrame:
+    sample_scores = sample_scores.copy()
+    provenance_defaults = {
+        "input_execution_mode": "legacy_native",
+        "target_input_mode": "legacy_native",
+        "covariate_input_mode": "legacy_native",
+        "input_adaptation_policy_id": "legacy_native_only",
+        "counterfactual_mode": "not_applicable",
+        "counterfactual_effect_mae": math.nan,
+        "counterfactual_http_request_count": 0,
+    }
+    for column, default in provenance_defaults.items():
+        if column not in sample_scores:
+            sample_scores[column] = default
     keys = [
         "model_id",
         "dataset_id",
@@ -662,6 +918,31 @@ def intensity_cell_scores(
             magnitude_mean=("magnitude_score", "mean"),
             selectivity_mean=("selectivity_score", "mean"),
             formal_score_eligible=("formal_score_eligible", "all"),
+            input_execution_mode=(
+                "input_execution_mode",
+                _single_value,
+            ),
+            target_input_mode=("target_input_mode", _single_value),
+            covariate_input_mode=(
+                "covariate_input_mode",
+                _single_value,
+            ),
+            input_adaptation_policy_id=(
+                "input_adaptation_policy_id",
+                _single_value,
+            ),
+            counterfactual_mode=(
+                "counterfactual_mode",
+                _single_value,
+            ),
+            counterfactual_effect_mae=(
+                "counterfactual_effect_mae",
+                "mean",
+            ),
+            counterfactual_http_request_count=(
+                "counterfactual_http_request_count",
+                "sum",
+            ),
         )
         .reset_index()
     )
@@ -782,6 +1063,31 @@ def capability_profiles(
             magnitude_mean=("magnitude_mean", "mean"),
             selectivity_mean=("selectivity_mean", "mean"),
             formal_score_eligible=("formal_score_eligible", "all"),
+            input_execution_mode=(
+                "input_execution_mode",
+                _single_value,
+            ),
+            target_input_mode=("target_input_mode", _single_value),
+            covariate_input_mode=(
+                "covariate_input_mode",
+                _single_value,
+            ),
+            input_adaptation_policy_id=(
+                "input_adaptation_policy_id",
+                _single_value,
+            ),
+            counterfactual_mode=(
+                "counterfactual_mode",
+                _single_value,
+            ),
+            counterfactual_effect_mae=(
+                "counterfactual_effect_mae",
+                "mean",
+            ),
+            counterfactual_http_request_count=(
+                "counterfactual_http_request_count",
+                "sum",
+            ),
         )
         .reset_index()
     )
@@ -834,6 +1140,7 @@ def model_capability_coverage(
     samples: dict[str, dict[str, Any]],
     oracle_selections: dict[str, dict[str, dict[str, Any]]],
     model_ids: list[str],
+    predictions: dict[str, dict[str, dict[str, Any]]] | None = None,
 ) -> pd.DataFrame:
     cells = sorted(
         {
@@ -860,7 +1167,21 @@ def model_capability_coverage(
     rows: list[dict[str, Any]] = []
     for model_id in model_ids:
         selected = oracle_selections[model_id]
+        model_predictions = (
+            predictions.get(model_id, {}) if predictions is not None else {}
+        )
         for dataset_id, task_id, capability_id in cells:
+            cell_key = (dataset_id, task_id, capability_id)
+            desired_ids = {
+                master_id
+                for master_id, sample in samples.items()
+                if (
+                    str(sample["dataset_id"]),
+                    str(sample["task_id"]),
+                    str(sample["capability_id"]),
+                )
+                == cell_key
+            }
             observed = sum(
                 str(row["dataset_id"]) == dataset_id
                 and str(row["task_id"]) == task_id
@@ -868,21 +1189,79 @@ def model_capability_coverage(
                 for row in selected.values()
             )
             expected = desired_counts[
-                (dataset_id, task_id, capability_id)
+                cell_key
             ]
+            prediction_rows = [
+                model_predictions[master_id]
+                for master_id in sorted(desired_ids & set(model_predictions))
+            ]
+            provenance = [
+                input_adaptation_provenance(row)
+                for row in prediction_rows
+            ]
+            native_count = sum(
+                item["input_execution_mode"] in {"native", "legacy_native"}
+                for item in provenance
+            )
+            adapted_count = sum(item["adapted"] for item in provenance)
+            prediction_count = (
+                len(prediction_rows)
+                if predictions is not None
+                else observed
+            )
+            if prediction_count == expected:
+                execution_modes = {
+                    str(item["input_execution_mode"])
+                    for item in provenance
+                }
+                execution_mode = (
+                    next(iter(execution_modes))
+                    if len(execution_modes) == 1
+                    else ("mixed" if execution_modes else "legacy_native")
+                )
+            else:
+                execution_mode = "unsupported"
+            target_modes = sorted(
+                {str(item["target_input_mode"]) for item in provenance}
+            )
+            covariate_modes = sorted(
+                {str(item["covariate_input_mode"]) for item in provenance}
+            )
+            policy_ids = sorted(
+                {
+                    str(item["input_adaptation_policy_id"])
+                    for item in provenance
+                }
+            )
             rows.append(
                 {
                     "model_id": model_id,
                     "dataset_id": dataset_id,
                     "task_id": task_id,
                     "capability_id": capability_id,
-                    "supported": observed == expected,
+                    "supported": prediction_count == expected,
                     "selected_sample_count": observed,
+                    "prediction_sample_count": prediction_count,
                     "expected_sample_count": expected,
+                    "input_execution_mode": execution_mode,
+                    "native_view_count": native_count,
+                    "adapted_view_count": adapted_count,
+                    "target_input_modes": ",".join(target_modes),
+                    "covariate_input_modes": ",".join(covariate_modes),
+                    "input_adaptation_policy_ids": ",".join(policy_ids),
+                    "covariates_omitted_view_count": sum(
+                        item["covariate_input_mode"]
+                        == "omitted_unsupported"
+                        for item in provenance
+                    ),
                     "unsupported_reason": (
                         None
-                        if observed == expected
-                        else "model_input_contract_unsupported"
+                        if prediction_count == expected
+                        else (
+                            "original_view_prediction_missing"
+                            if predictions is not None
+                            else "model_input_contract_unsupported"
+                        )
                     ),
                 }
             )
@@ -900,6 +1279,8 @@ def profile_group_components(
         .agg(
             round_index=("round_index", "min"),
             sample_index=("sample_index", "min"),
+            analysis_pool_index=("analysis_pool_index", "min"),
+            analysis_block_id=("analysis_block_id", _single_value),
             intensity_count=("intensity", "nunique"),
             mase_group_mean=("oracle_mase", "mean"),
             level_mechanism_group_mean=(
@@ -907,6 +1288,31 @@ def profile_group_components(
                 "mean",
             ),
             formal_score_eligible=("formal_score_eligible", "all"),
+            input_execution_mode=(
+                "input_execution_mode",
+                _single_value,
+            ),
+            target_input_mode=("target_input_mode", _single_value),
+            covariate_input_mode=(
+                "covariate_input_mode",
+                _single_value,
+            ),
+            input_adaptation_policy_id=(
+                "input_adaptation_policy_id",
+                _single_value,
+            ),
+            counterfactual_mode=(
+                "counterfactual_mode",
+                _single_value,
+            ),
+            counterfactual_effect_mae=(
+                "counterfactual_effect_mae",
+                "mean",
+            ),
+            counterfactual_http_request_count=(
+                "counterfactual_http_request_count",
+                "sum",
+            ),
         )
         .reset_index()
     )
@@ -975,6 +1381,31 @@ def aggregate_profile_components(
             ),
             dose_response_score=("dose_response_score", "mean"),
             formal_score_eligible=("formal_score_eligible", "all"),
+            input_execution_mode=(
+                "input_execution_mode",
+                _single_value,
+            ),
+            target_input_mode=("target_input_mode", _single_value),
+            covariate_input_mode=(
+                "covariate_input_mode",
+                _single_value,
+            ),
+            input_adaptation_policy_id=(
+                "input_adaptation_policy_id",
+                _single_value,
+            ),
+            counterfactual_mode=(
+                "counterfactual_mode",
+                _single_value,
+            ),
+            counterfactual_effect_mae=(
+                "counterfactual_effect_mae",
+                "mean",
+            ),
+            counterfactual_http_request_count=(
+                "counterfactual_http_request_count",
+                "sum",
+            ),
         )
         .reset_index()
     )
@@ -1248,13 +1679,19 @@ def deterministic_split_components(
         [*PROFILE_KEYS, "paired_group_id"]
     )
     for profile_key, cell in reference.groupby(PROFILE_KEYS, sort=True):
-        ordered = cell.sort_values(
-            ["round_index", "sample_index", "paired_group_id"]
+        order_columns = (
+            ["analysis_pool_index", "paired_group_id"]
+            if (
+                "analysis_pool_index" in cell
+                and (cell["analysis_pool_index"] >= 0).all()
+            )
+            else ["round_index", "sample_index", "paired_group_id"]
         )
-        if len(ordered) < 2 * split_size:
+        ordered = cell.sort_values(order_columns)
+        if len(ordered) != 2 * split_size:
             raise ValueError(
                 f"{profile_key} has {len(ordered)} groups, "
-                f"needs {2 * split_size}"
+                f"must equal two complete blocks of {split_size}"
             )
         for bank_id, selected in (
             ("first", ordered.iloc[:split_size]),
@@ -1282,6 +1719,107 @@ def deterministic_split_components(
         validate="many_to_one",
     )
     return split
+
+
+def split_assignment_audit(
+    components: pd.DataFrame,
+    split_components: pd.DataFrame,
+    *,
+    split_size: int,
+) -> dict[str, Any]:
+    reference = components.drop_duplicates(
+        [*PROFILE_KEYS, "paired_group_id"]
+    )
+    split_reference = split_components.drop_duplicates(
+        [*PROFILE_KEYS, "paired_group_id", "bank_id"]
+    )
+    cell_records: list[dict[str, Any]] = []
+    for profile_key, all_cell in reference.groupby(PROFILE_KEYS, sort=True):
+        selector = np.logical_and.reduce(
+            [
+                split_reference[key] == value
+                for key, value in zip(
+                    PROFILE_KEYS,
+                    profile_key,
+                    strict=True,
+                )
+            ]
+        )
+        split_cell = split_reference[selector]
+        first = set(
+            split_cell.loc[
+                split_cell["bank_id"] == "first",
+                "paired_group_id",
+            ].astype(str)
+        )
+        second = set(
+            split_cell.loc[
+                split_cell["bank_id"] == "second",
+                "paired_group_id",
+            ].astype(str)
+        )
+        all_groups = set(all_cell["paired_group_id"].astype(str))
+        source_block_alignment: bool | None = None
+        source_first_blocks: list[str] = []
+        source_second_blocks: list[str] = []
+        if "analysis_block_id" in split_cell:
+            nonempty = split_cell[
+                split_cell["analysis_block_id"].astype(str) != ""
+            ]
+            if not nonempty.empty:
+                source_first_blocks = sorted(
+                    set(
+                        nonempty.loc[
+                            nonempty["bank_id"] == "first",
+                            "analysis_block_id",
+                        ].astype(str)
+                    )
+                )
+                source_second_blocks = sorted(
+                    set(
+                        nonempty.loc[
+                            nonempty["bank_id"] == "second",
+                            "analysis_block_id",
+                        ].astype(str)
+                    )
+                )
+                source_block_alignment = (
+                    len(source_first_blocks) == 1
+                    and len(source_second_blocks) == 1
+                    and source_first_blocks != source_second_blocks
+                )
+        record = {
+            **dict(zip(PROFILE_KEYS, profile_key, strict=True)),
+            "all_group_count": len(all_groups),
+            "first_group_count": len(first),
+            "second_group_count": len(second),
+            "mutually_exclusive": first.isdisjoint(second),
+            "covers_all_selected_groups": first | second == all_groups,
+            "source_first_analysis_block_ids": source_first_blocks,
+            "source_second_analysis_block_ids": source_second_blocks,
+            "source_analysis_block_alignment": source_block_alignment,
+        }
+        if (
+            record["first_group_count"] != split_size
+            or record["second_group_count"] != split_size
+            or not record["mutually_exclusive"]
+            or not record["covers_all_selected_groups"]
+            or source_block_alignment is False
+        ):
+            raise ValueError(f"invalid split assignment: {record}")
+        cell_records.append(record)
+    return {
+        "split_size": split_size,
+        "cell_count": len(cell_records),
+        "all_cells_have_two_complete_blocks": True,
+        "all_blocks_mutually_exclusive": True,
+        "all_blocks_cover_all_selected_groups": True,
+        "all_source_analysis_blocks_aligned": all(
+            record["source_analysis_block_alignment"] is not False
+            for record in cell_records
+        ),
+        "cells": cell_records,
+    }
 
 
 def split_half_reliability(
@@ -1502,17 +2040,18 @@ def write_report(
     max_groups: int,
     covariate_ablation_available: bool,
     split_summary: dict[str, Any] | None,
+    split_size: int,
     primary_margin: float,
 ) -> None:
     lines = [
-        "# Paper v6 E3：正式机制保真能力画像",
+        "# Paper v7 E3：正式机制保真能力画像",
         "",
         "本结果同时保留点预测误差、机制保真度与能力总分。机制分只说明输出行为",
         "与合成机制一致，不表示模型内部识别了因果生成机制。",
         "",
         f"- 模型：{', '.join(models)}",
         f"- 逐模型样本评分总行数：{sample_count}",
-        f"- 每个 dataset × capability 的 paired groups 上限：{max_groups or '全部'}",
+        f"- 每个 dataset × task × capability 的 paired groups 上限：{max_groups or '全部'}",
         "- 不支持的模型 × 能力组合记为 N/A，不补成最差名次。",
         "- 单档机制分与 I1–I5 剂量响应按 0.7/0.3 合成。",
         "- 能力总分使用 naive MASE 安全门：MFS × min(1, naive MASE/model MASE)。",
@@ -1528,21 +2067,39 @@ def write_report(
         "",
         "## 输入兼容范围",
         "",
-        "| Capability | Supported models | Unsupported models |",
-        "|---|---|---|",
+        "| Dataset | Task | Capability | Native models | Adapted models | Unsupported models |",
+        "|---|---|---|---|---|---|",
     ]
-    for capability_id, cell in coverage.groupby(
-        "capability_id",
+    for profile_key, cell in coverage.groupby(
+        PROFILE_KEYS,
         sort=True,
     ):
-        supported = sorted(cell.loc[cell["supported"], "model_id"])
+        native = sorted(
+            cell.loc[
+                cell["supported"]
+                & cell["input_execution_mode"].isin(
+                    ["native", "legacy_native"]
+                ),
+                "model_id",
+            ]
+        )
+        adapted = sorted(
+            cell.loc[
+                cell["supported"]
+                & ~cell["input_execution_mode"].isin(
+                    ["native", "legacy_native"]
+                ),
+                "model_id",
+            ]
+        )
         unsupported = sorted(cell.loc[~cell["supported"], "model_id"])
         lines.append(
             "| "
             + " | ".join(
                 [
-                    str(capability_id),
-                    ", ".join(supported),
+                    *[str(value) for value in profile_key],
+                    ", ".join(native) or "—",
+                    ", ".join(adapted) or "—",
                     ", ".join(unsupported) or "—",
                 ]
             )
@@ -1553,8 +2110,8 @@ def write_report(
             "",
             "## 能力画像",
             "",
-            "| Dataset | Capability | Model | MASE [95% CI] | Level MFS | Dose | MFS [95% CI] | Ability [95% CI] | MASE rank | Mechanism rank | Ability rank | Formal |",
-            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| Dataset | Capability | Model | Input | Counterfactual | MASE [95% CI] | Level MFS | Dose | MFS [95% CI] | Ability [95% CI] | MASE rank | Mechanism rank | Ability rank | Formal |",
+            "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         ]
     )
     for row in profiles.itertuples(index=False):
@@ -1565,6 +2122,8 @@ def write_report(
                     str(row.dataset_id),
                     str(row.capability_id),
                     str(row.model_id),
+                    str(row.input_execution_mode),
+                    str(row.counterfactual_mode),
                     _format_interval(
                         row.mase_mean,
                         row.mase_ci_low,
@@ -1636,7 +2195,7 @@ def write_report(
         lines.extend(
             [
                 "",
-                "## 前 80 / 后 80 paired groups 可靠性",
+                f"## 前 {split_size} / 后 {split_size} paired groups 可靠性",
                 "",
                 f"- 平均 rank Spearman：{split_summary['rank_spearman_mean']:.4f}",
                 f"- point pair 方向一致率：{split_summary['point_pair_direction_agreement_mean']:.4f}",
@@ -1715,7 +2274,14 @@ def main() -> None:
         )
     if int(args.split_size) < 0:
         raise ValueError("split-size cannot be negative")
-    dataset_capabilities = selected_dataset_capabilities(list(args.datasets))
+    supported_cells = discover_supported_cells(
+        args.e2_dir,
+        dataset_ids=(
+            [str(value) for value in args.datasets]
+            if args.datasets is not None
+            else None
+        ),
+    )
     output_dir = args.output_dir.resolve()
     if output_dir.exists():
         if not args.overwrite:
@@ -1727,18 +2293,13 @@ def main() -> None:
 
     samples = load_selected_samples(
         args.e2_dir,
-        dataset_capabilities=dataset_capabilities,
+        supported_cells=supported_cells,
         max_paired_groups_per_cell=int(args.max_paired_groups_per_cell),
     )
     oracle_selections, oracle_scores = load_oracle_selection(
         args.e2_dir,
         model_ids=model_ids,
         samples=samples,
-    )
-    coverage = model_capability_coverage(
-        samples,
-        oracle_selections,
-        model_ids,
     )
     predictions: dict[str, dict[str, dict[str, Any]]] = {}
     for model_id in model_ids:
@@ -1747,12 +2308,20 @@ def main() -> None:
             args.e2_dir,
             model_id=model_id,
             oracle_selection=oracle_selections[model_id],
+            require_input_adaptation=True,
         )
+    coverage = model_capability_coverage(
+        samples,
+        oracle_selections,
+        model_ids,
+        predictions,
+    )
     counterfactual_predictions = load_covariate_ablation_predictions(
         args.covariate_ablation_predictions_dir,
         model_ids=model_ids,
         samples=samples,
         oracle_selections=oracle_selections,
+        intact_predictions=predictions,
     )
     ablation_input = covariate_ablation_input_record(
         args.covariate_ablation_predictions_dir,
@@ -1809,9 +2378,15 @@ def main() -> None:
     split_reliability = pd.DataFrame()
     split_pair_comparison = pd.DataFrame()
     split_summary: dict[str, Any] | None = None
+    split_audit: dict[str, Any] | None = None
     if int(args.split_size):
         split_components = deterministic_split_components(
             components,
+            split_size=int(args.split_size),
+        )
+        split_audit = split_assignment_audit(
+            components,
+            split_components,
             split_size=int(args.split_size),
         )
         profile_parts: list[pd.DataFrame] = []
@@ -1846,6 +2421,7 @@ def main() -> None:
             split_pairs,
             primary_margin=primary_margin,
         )
+        split_summary["assignment"] = split_audit
 
     sample_scores.to_csv(output_dir / "sample_mechanism_scores.csv", index=False)
     cells.to_csv(output_dir / "intensity_cell_scores.csv", index=False)
@@ -1896,6 +2472,7 @@ def main() -> None:
         max_groups=int(args.max_paired_groups_per_cell),
         covariate_ablation_available=bool(counterfactual_predictions),
         split_summary=split_summary,
+        split_size=int(args.split_size),
         primary_margin=primary_margin,
     )
     summary = {
@@ -1904,9 +2481,14 @@ def main() -> None:
         "metric_schema_version": METRIC_SCHEMA_VERSION,
         "models": model_ids,
         "blind_reference_model": BLIND_REFERENCE_MODEL,
-        "dataset_capabilities": {
-            key: list(value) for key, value in dataset_capabilities.items()
-        },
+        "supported_cells": [
+            {
+                "dataset_id": dataset_id,
+                "task_id": task_id,
+                "capability_id": capability_id,
+            }
+            for dataset_id, task_id, capability_id in supported_cells
+        ],
         "max_paired_groups_per_cell": int(
             args.max_paired_groups_per_cell
         ),
@@ -1937,8 +2519,10 @@ def main() -> None:
             {
                 "split_size": int(args.split_size),
                 "ordering": (
-                    "round_index_then_sample_index_then_paired_group_id"
+                    "analysis_pool_index_then_paired_group_id_with_"
+                    "round_index_sample_index_fallback"
                 ),
+                "assignment": split_audit,
                 "summary": split_summary,
             }
             if split_summary is not None
@@ -1948,13 +2532,31 @@ def main() -> None:
             "supported_profile_count": int(coverage["supported"].sum()),
             "unsupported_profile_count": int((~coverage["supported"]).sum()),
             "unsupported_policy": "N/A_not_worst_rank",
+            "native_profile_count": int(
+                (
+                    coverage["supported"]
+                    & coverage["input_execution_mode"].isin(
+                        ["native", "legacy_native"]
+                    )
+                ).sum()
+            ),
+            "adapted_profile_count": int(
+                (
+                    coverage["supported"]
+                    & ~coverage["input_execution_mode"].isin(
+                        ["native", "legacy_native"]
+                    )
+                ).sum()
+            ),
+            "coverage_unit": "original_forecast_view",
         },
         "ability_score": (
             "mechanism_fidelity_score * "
             "min(1, naive_mase / model_mase)"
         ),
         "covariate_response_status": (
-            "formal_paired_future_covariate_ablation"
+            "formal_paired_future_covariate_ablation_with_native_or_reused_"
+            "counterfactual_by_input_provenance"
             if counterfactual_predictions
             else "diagnostic_only_until_paired_future_covariate_ablation"
         ),
@@ -1970,6 +2572,12 @@ def main() -> None:
                 ),
                 "sha256": sha256_file(
                     args.e2_dir / "sample_manifest.json"
+                ),
+            },
+            "generation_support_artifact": {
+                "path": str(support_artifact_path(args.e2_dir).resolve()),
+                "sha256": sha256_file(
+                    support_artifact_path(args.e2_dir)
                 ),
             },
             "e2_inference_manifest": {

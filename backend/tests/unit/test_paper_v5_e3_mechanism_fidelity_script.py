@@ -296,3 +296,312 @@ def test_split_half_keeps_whole_paired_groups():
         split.loc[split["bank_id"] == "second", "paired_group_id"]
     )
     assert first.isdisjoint(second)
+
+
+def test_discovers_all_supported_cells_from_shards_and_frozen_artifact(
+    tmp_path,
+):
+    e2_dir = tmp_path / "e2"
+    shard_dir = e2_dir / "sample_shards"
+    shard_dir.mkdir(parents=True)
+    cells = [
+        ("gefcom2012_load", "covariate", "covariate_response"),
+        ("m5", "hierarchical", "hierarchical_coherence"),
+    ]
+    for index, (dataset_id, task_id, capability_id) in enumerate(cells):
+        row = {
+            "dataset_id": dataset_id,
+            "task_id": task_id,
+            "capability_id": capability_id,
+            "master_sample_id": f"m{index}",
+        }
+        (shard_dir / f"shard-{index}.jsonl").write_text(
+            json.dumps(row) + "\n",
+            encoding="utf-8",
+        )
+    support_path = tmp_path / "support.json"
+    support_path.write_text(
+        json.dumps(
+            {
+                "cells": [
+                    {
+                        "dataset_id": dataset_id,
+                        "task_id": task_id,
+                        "capability_id": capability_id,
+                        "status": "supported",
+                    }
+                    for dataset_id, task_id, capability_id in cells
+                ]
+                + [
+                    {
+                        "dataset_id": "ignored",
+                        "task_id": "univariate",
+                        "capability_id": "trend",
+                        "status": "unsupported",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (e2_dir / "generation_config.json").write_text(
+        json.dumps(
+            {
+                "suite_files": {
+                    "support": {"path": str(support_path)}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    discovered = e3.discover_supported_cells(e2_dir)
+
+    assert discovered == tuple(sorted(cells))
+    assert e3.discover_supported_cells(
+        e2_dir,
+        dataset_ids=["m5"],
+    ) == (cells[1],)
+
+
+def test_v7_320_group_split_is_complete_mutually_exclusive_and_audited():
+    rows = []
+    for model_id in ("native", "adapted"):
+        for group_index in range(320):
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "dataset_id": "dataset",
+                    "task_id": "common_factor",
+                    "capability_id": "common_factor",
+                    "paired_group_id": f"g{group_index:03d}",
+                    "round_index": group_index // 64 + 1,
+                    "sample_index": group_index % 64,
+                    "analysis_pool_index": group_index,
+                    "analysis_block_id": (
+                        "A" if group_index < 160 else "B"
+                    ),
+                }
+            )
+    components = pd.DataFrame(rows)
+
+    split = e3.deterministic_split_components(
+        components,
+        split_size=160,
+    )
+    audit = e3.split_assignment_audit(
+        components,
+        split,
+        split_size=160,
+    )
+
+    counts = split.groupby(["bank_id", "model_id"])[
+        "paired_group_id"
+    ].nunique()
+    assert (counts == 160).all()
+    assert audit["all_cells_have_two_complete_blocks"]
+    assert audit["all_blocks_mutually_exclusive"]
+    assert audit["all_blocks_cover_all_selected_groups"]
+    assert audit["all_source_analysis_blocks_aligned"]
+
+
+def test_v7_coverage_uses_original_view_adaptation_provenance():
+    samples = {
+        "m1": {
+            "dataset_id": "panel",
+            "task_id": "common_factor",
+            "capability_id": "common_factor",
+        },
+        "m2": {
+            "dataset_id": "panel",
+            "task_id": "common_factor",
+            "capability_id": "common_factor",
+        },
+    }
+    selections = {
+        "model": {
+            master_id: {
+                **sample,
+                "master_sample_id": master_id,
+            }
+            for master_id, sample in samples.items()
+        }
+    }
+    predictions = {
+        "model": {
+            master_id: {
+                "input_adaptation": {
+                    "policy_id": "paper-v7-input-adaptation-v1",
+                    "adapted": True,
+                    "target_mode": "independent_univariate",
+                    "covariate_mode": "omitted_unsupported",
+                }
+            }
+            for master_id in samples
+        }
+    }
+
+    coverage = e3.model_capability_coverage(
+        samples,
+        selections,
+        ["model"],
+        predictions,
+    ).iloc[0]
+
+    assert bool(coverage["supported"])
+    assert coverage["input_execution_mode"] == "adapted"
+    assert coverage["prediction_sample_count"] == 2
+    assert coverage["adapted_view_count"] == 2
+    assert coverage["covariates_omitted_view_count"] == 2
+
+
+def test_v7_prediction_loader_rejects_missing_adaptation_provenance(
+    tmp_path,
+):
+    prediction_dir = tmp_path / "predictions"
+    prediction_dir.mkdir()
+    (prediction_dir / "model.jsonl").write_text(
+        json.dumps(
+            {
+                "view_id": "view",
+                "forecast": [[0.0]],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="lacks v7"):
+        e3.load_selected_predictions(
+            tmp_path,
+            model_id="model",
+            oracle_selection={
+                "master": {"oracle_view_id": "view"}
+            },
+            require_input_adaptation=True,
+        )
+
+
+def test_covariate_omitted_counterfactual_must_reuse_intact_with_zero_http(
+    tmp_path,
+):
+    forecast = [[1.0], [2.0]]
+    (tmp_path / "model.jsonl").write_text(
+        json.dumps(
+            {
+                "master_sample_id": "sample",
+                "context_length": 168,
+                "forecast": forecast,
+                "ablation": "future_covariates_zero",
+                "counterfactual_mode": (
+                    "reuse_intact_forecast_covariates_omitted"
+                ),
+                "counterfactual_http_request_count": 0,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    samples = {
+        "sample": {"capability_id": "covariate_response"}
+    }
+    oracle = {
+        "model": {"sample": {"oracle_context": 168}}
+    }
+    intact = {
+        "model": {
+            "sample": {
+                "forecast": forecast,
+                "input_adaptation": {
+                    "policy_id": "paper-v7-input-adaptation-v1",
+                    "adapted": True,
+                    "target_mode": "native_univariate",
+                    "covariate_mode": "omitted_unsupported",
+                },
+            }
+        }
+    }
+
+    result = e3.load_covariate_ablation_predictions(
+        tmp_path,
+        model_ids=["model"],
+        samples=samples,
+        oracle_selections=oracle,
+        intact_predictions=intact,
+    )
+
+    assert result["model"]["sample"]["forecast"] == forecast
+
+
+def test_covariate_omitted_reuse_scores_zero_effect_as_formal():
+    length = e3.MAX_CONTEXT_LENGTH + e3.HORIZON
+    covariates = np.linspace(-1.0, 1.0, length)[:, None]
+    target = (2.0 * covariates + 0.1)[:, 0, None]
+    sample = {
+        "dataset_id": "dataset",
+        "task_id": "covariate",
+        "capability_id": "covariate_response",
+        "intensity": 3,
+        "paired_group_id": "group",
+        "master_sample_id": "sample",
+        "round_index": 1,
+        "sample_index": 0,
+        "analysis_pool_index": 0,
+        "analysis_block_id": "A",
+        "target": target.tolist(),
+        "covariates": covariates.tolist(),
+        "horizon": e3.HORIZON,
+        "season_length": 24,
+        "generation_metadata": {},
+    }
+    target_view, _ = e3.context_view(sample, context_length=168)
+    forecast = np.zeros((e3.HORIZON, 1)).tolist()
+    predictions = {
+        "model": {
+            "sample": {
+                "forecast": forecast,
+                "target_future": target_view[168:].tolist(),
+                "input_adaptation": {
+                    "policy_id": "paper-v7-input-adaptation-v1",
+                    "adapted": True,
+                    "target_mode": "native_univariate",
+                    "covariate_mode": "omitted_unsupported",
+                },
+            }
+        }
+    }
+    counterfactual = {
+        "model": {
+            "sample": {
+                "forecast": forecast,
+                "counterfactual_mode": (
+                    "reuse_intact_forecast_covariates_omitted"
+                ),
+                "counterfactual_http_request_count": 0,
+            }
+        }
+    }
+
+    scores = e3.evaluate_selected_predictions(
+        {"sample": sample},
+        {
+            "model": {
+                "sample": {
+                    "oracle_context": 168,
+                    "oracle_mase": 1.0,
+                }
+            }
+        },
+        predictions,
+        counterfactual,
+    )
+
+    row = scores.iloc[0]
+    assert bool(row["formal_score_eligible"])
+    assert row["input_execution_mode"] == "adapted"
+    assert row["counterfactual_effect_mae"] == 0.0
+    assert row["counterfactual_http_request_count"] == 0
+    diagnostics = json.loads(row["diagnostics_json"])
+    assert diagnostics["evaluation_mode"] == (
+        "paired_future_covariate_ablation"
+    )

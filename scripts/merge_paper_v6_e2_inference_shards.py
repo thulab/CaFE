@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge disjoint model-level Paper v6 E2 inference shards.
+"""Merge disjoint model-level Paper v7 E2 inference shards.
 
 Each shard is produced by ``run_paper_v5_e2_inference.py`` with the same
 frozen inputs and a disjoint ``--models`` list.  Prediction files are linked
@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Merge disjoint Paper v6 E2 model inference shards."
+        description="Merge disjoint Paper v7 E2 model inference shards."
     )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("shard_dirs", nargs="+", type=Path)
@@ -87,6 +87,9 @@ def input_identity(config: dict[str, Any]) -> dict[str, Any]:
         "real_source": config.get("real_source_input"),
         "context_lengths": config.get("context_lengths"),
         "horizon": config.get("horizon"),
+        "input_adaptation_policy": config.get(
+            "input_adaptation_policy"
+        ),
     }
 
 
@@ -118,6 +121,30 @@ def validate_status(
         raise ValueError(
             f"inference count mismatch for {model_id}: "
             f"{succeeded}/{compatible}"
+        )
+    expected_views = status.get("expected_original_view_count")
+    unsupported_windows = int(
+        status.get("unsupported_window_view_count", 0)
+    )
+    if (
+        expected_views is not None
+        and unsupported_windows == 0
+        and succeeded != int(expected_views)
+    ):
+        raise ValueError(
+            f"original view coverage mismatch for {model_id}: "
+            f"{succeeded}/{expected_views}"
+        )
+    expected_requests = status.get("expected_http_request_count")
+    successful_requests = status.get("successful_http_request_count")
+    if (
+        expected_requests is not None
+        and successful_requests is not None
+        and int(expected_requests) != int(successful_requests)
+    ):
+        raise ValueError(
+            f"adapted HTTP request coverage mismatch for {model_id}: "
+            f"{successful_requests}/{expected_requests}"
         )
     if not prediction_path.is_file():
         raise FileNotFoundError(prediction_path)
@@ -355,7 +382,7 @@ def merge_shards(output_dir: Path, shard_dirs: list[Path]) -> dict[str, Any]:
         },
     )
     result = {
-        "schema_version": "paper_v6_e2_distributed_inference.v1",
+        "schema_version": "paper_v7_e2_distributed_inference.v1",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "primary_output_dir": display_path(output_dir),
         "input_identity": expected_identity,

@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import sys
 
+import pytest
+
 
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[3]
@@ -124,3 +126,50 @@ def test_merge_shards_requires_complete_disjoint_model_coverage(tmp_path):
         ]
         == 0
     )
+
+
+def test_merge_identity_includes_input_adaptation_policy():
+    module = load_module()
+    base = {
+        "synthetic_input": {"sha256": "synthetic"},
+        "real_source_input": None,
+        "context_lengths": [96, 168, 336, 504],
+        "horizon": 48,
+    }
+
+    legacy = module.input_identity(base)
+    adapted = module.input_identity(
+        {
+            **base,
+            "input_adaptation_policy": {
+                "policy_id": "paper-v7-input-adaptation-v1"
+            },
+        }
+    )
+
+    assert legacy != adapted
+    assert adapted["input_adaptation_policy"]["policy_id"] == (
+        "paper-v7-input-adaptation-v1"
+    )
+
+
+def test_merge_rejects_incomplete_adapted_child_request_coverage(tmp_path):
+    module = load_module()
+    predictions = tmp_path / "model.jsonl"
+    predictions.write_text('{"sample_id":"sample"}\n', encoding="utf-8")
+    status = {
+        "status": "complete",
+        "compatible_sample_count": 1,
+        "succeeded_count": 1,
+        "expected_original_view_count": 1,
+        "unsupported_window_view_count": 0,
+        "expected_http_request_count": 3,
+        "successful_http_request_count": 2,
+    }
+
+    with pytest.raises(ValueError, match="HTTP request coverage"):
+        module.validate_status(
+            status,
+            model_id="model",
+            prediction_path=predictions,
+        )

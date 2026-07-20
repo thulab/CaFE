@@ -92,6 +92,106 @@ def test_ordered_split_uses_front_and_back_paired_groups() -> None:
     }
 
 
+def test_formal_v7_pool_yields_two_disjoint_round_index_blocks() -> None:
+    module = load_module()
+    rows = []
+    for round_index in range(1, 6):
+        for sample_index in range(64):
+            pool_index = (round_index - 1) * 64 + sample_index
+            rows.append(
+                {
+                    "dataset_id": "dataset",
+                    "task_id": "task",
+                    "capability_id": "capability",
+                    "paired_group_id": (
+                        f"r{round_index}-s{sample_index:03d}"
+                    ),
+                    "round_index": round_index,
+                    "sample_index": sample_index,
+                    "pool_index": pool_index,
+                }
+            )
+    catalog = pd.DataFrame(rows)
+
+    contract = module.validate_formal_v7_pool(catalog)
+    assignments = module.split_assignments(
+        catalog,
+        bank_size=160,
+        split_kind="ordered",
+        repeat_index=0,
+        split_seed=7,
+    )
+    left = assignments[assignments["bank_id"] == "A"]
+    right = assignments[assignments["bank_id"] == "B"]
+
+    assert contract["total_per_intensity"] == 320
+    assert contract["block_size"] == 160
+    assert len(left) == len(right) == 160
+    assert set(left["paired_group_id"]).isdisjoint(
+        set(right["paired_group_id"])
+    )
+    assert set(left["pool_index"]) == set(range(160))
+    assert set(right["pool_index"]) == set(range(160, 320))
+    assert {
+        (int(row.round_index), int(row.sample_index))
+        for row in left.itertuples()
+    } == {
+        (round_index, sample_index)
+        for round_index in (1, 2)
+        for sample_index in range(64)
+    } | {(3, sample_index) for sample_index in range(32)}
+    assert {
+        (int(row.round_index), int(row.sample_index))
+        for row in right.itertuples()
+    } == {
+        (3, sample_index) for sample_index in range(32, 64)
+    } | {
+        (round_index, sample_index)
+        for round_index in (4, 5)
+        for sample_index in range(64)
+    }
+
+
+def test_formal_v7_oracle_loader_preserves_round_identity(tmp_path) -> None:
+    module = load_module()
+    paths = []
+    for model_id in ("m1", "m2"):
+        path = tmp_path / f"{model_id}.jsonl"
+        paths.append(path)
+        with path.open("w", encoding="utf-8") as handle:
+            for round_index in range(1, 6):
+                for sample_index in range(64):
+                    pool_index = (round_index - 1) * 64 + sample_index
+                    handle.write(
+                        json.dumps(
+                            {
+                                "model_id": model_id,
+                                "master_sample_id": f"master-{pool_index}",
+                                "dataset_id": "dataset",
+                                "task_id": "task",
+                                "capability_id": "capability",
+                                "intensity": 1,
+                                "paired_group_id": f"group-{pool_index}",
+                                "round_index": round_index,
+                                "sample_index": sample_index,
+                                "oracle_mase": 1.0,
+                                "fixed_l504_mase": 1.1,
+                            }
+                        )
+                        + "\n"
+                    )
+
+    oracle = module.load_oracle_pool(paths, datasets=None)
+    catalog = module.pool_catalog(oracle)
+    contract = module.validate_formal_v7_pool(catalog)
+
+    assert {"round_index", "sample_index", "pool_index"} <= set(
+        oracle.columns
+    )
+    assert contract["complete_partition"] is True
+    assert contract["block_size"] == 160
+
+
 def test_random_splits_are_deterministic_disjoint_and_nested() -> None:
     module = load_module()
     catalog = module.pool_catalog(fake_oracle())
