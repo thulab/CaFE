@@ -119,6 +119,7 @@ def test_mapping_assigns_all_nine_capabilities(module) -> None:
 
 def test_dataset_local_profile_ids_never_use_global_pool(module) -> None:
     source = module.UNIVARIATE_CALIBRATION_SOURCES[0]
+    assert module.source_task_view_id(source) == "m4_hourly::univariate"
     assert module.generator_profile_id(source.dataset_id, source.task_id) == (
         "m4_hourly__univariate__L504_H48"
     )
@@ -129,6 +130,54 @@ def test_dataset_local_profile_ids_never_use_global_pool(module) -> None:
     assert spec.profile_id == "m4_hourly__univariate__L168_H48"
     assert "global" not in spec.profile_id
     assert "pooled" not in spec.profile_id
+
+
+def test_task_view_identity_is_composite_and_backwards_compatible(module) -> None:
+    common_factor = module.RealSource(
+        "shared_dataset",
+        "Shared Dataset",
+        "Domain",
+        "common_factor",
+        "fake",
+        "shared",
+        24,
+        "h",
+        target_dim=3,
+    )
+    hierarchy = module.RealSource(
+        "shared_dataset",
+        "Shared Dataset",
+        "Domain",
+        "hierarchy",
+        "fake",
+        "shared",
+        7,
+        "D",
+        target_dim=3,
+        hierarchy="additive_first",
+    )
+
+    indexed = module.index_sources_by_task_view((common_factor, hierarchy))
+
+    assert set(indexed) == {
+        ("shared_dataset", "common_factor"),
+        ("shared_dataset", "hierarchy"),
+    }
+    assert module.record_task_view_id(
+        {
+            "dataset_id": "shared_dataset",
+            "task_id": "hierarchy",
+        }
+    ) == "shared_dataset::hierarchy"
+    assert module.record_task_view_id(
+        {
+            "dataset_id": "shared_dataset",
+            "task_id": "hierarchy",
+            "available_task_id": "common_factor",
+        }
+    ) == "shared_dataset::common_factor"
+    with pytest.raises(ValueError, match="duplicate dataset/task view"):
+        module.index_sources_by_task_view((common_factor, common_factor))
 
 
 def test_relative_intensity_policy_is_dataset_local(module) -> None:
@@ -229,9 +278,122 @@ def test_support_matrix_row_records_unsupported_reason(module) -> None:
         target_spacing={"supported": False},
     )
     assert row["dataset_id"] == source.dataset_id
+    assert row["task_view_id"] == "m4_hourly::univariate"
+    assert row["required_task_view_id"] == "m4_hourly::univariate"
     assert row["supported"] is False
     assert row["reason_codes"] == ["insufficient_local_intensity_spacing"]
     assert len(row["gate_profile_ids"]) == 4
+
+
+def test_build_suite_keeps_same_dataset_task_views_disjoint(
+    module,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    common_factor = module.RealSource(
+        "shared_dataset",
+        "Shared Dataset",
+        "Domain",
+        "common_factor",
+        "fake",
+        "shared",
+        24,
+        "h",
+        target_dim=3,
+    )
+    hierarchy = module.RealSource(
+        "shared_dataset",
+        "Shared Dataset",
+        "Domain",
+        "hierarchy",
+        "fake",
+        "shared",
+        7,
+        "D",
+        target_dim=3,
+        hierarchy="additive_first",
+    )
+    captured: dict[tuple[str, int], set[str]] = {}
+
+    def fake_load_source_views(source, **_kwargs):
+        task_view_id = module.source_task_view_id(source)
+        rows = [
+            {
+                "dataset_id": source.dataset_id,
+                "task_id": source.task_id,
+                "task_view_id": task_view_id,
+                "marker": task_view_id,
+            }
+            for _ in range(60)
+        ]
+        return (
+            {
+                context_length: list(rows)
+                for context_length in module.CONTEXT_LENGTHS
+            },
+            {
+                "task_view_id": task_view_id,
+                "dataset": {
+                    "dataset_id": source.dataset_id,
+                    "task_id": source.task_id,
+                    "task_view_id": task_view_id,
+                },
+            },
+        )
+
+    def fail_after_capture(rows, spec, **_kwargs):
+        task_id = str(rows[0]["task_id"])
+        captured[(task_id, spec.context_length)] = {
+            str(row["marker"]) for row in rows
+        }
+        raise ValueError("stop after source-view lookup")
+
+    monkeypatch.setattr(module, "UNIVARIATE_CALIBRATION_SOURCES", ())
+    monkeypatch.setattr(
+        module,
+        "STRUCTURED_SOURCES",
+        (common_factor, hierarchy),
+    )
+    monkeypatch.setattr(module, "load_source_views", fake_load_source_views)
+    monkeypatch.setattr(module, "summarize_real_features", lambda _rows: {})
+    monkeypatch.setattr(module, "dataset_three_way_split", fail_after_capture)
+
+    module.build_suite(
+        tmp_path,
+        data_dir=tmp_path,
+        gift_eval_dir=tmp_path,
+        max_windows=60,
+        calibration_samples=4,
+        seed=11,
+    )
+
+    assert len(captured) == 2 * len(module.CONTEXT_LENGTHS)
+    for task_id in ("common_factor", "hierarchy"):
+        for context_length in module.CONTEXT_LENGTHS:
+            assert captured[(task_id, context_length)] == {
+                f"shared_dataset::{task_id}"
+            }
+    suite = json.loads(
+        (tmp_path / "profile_suite.json").read_text(encoding="utf-8")
+    )
+    assert {
+        row["task_view_id"] for row in suite["dataset_inventory"]
+    } == {
+        "shared_dataset::common_factor",
+        "shared_dataset::hierarchy",
+    }
+    assert len(
+        {
+            row["profile_id"]
+            for row in suite["calibration_dataset_profiles"]
+        }
+    ) == 2 * len(module.CONTEXT_LENGTHS)
+    assert {
+        row["task_view_id"] for row in suite["support_matrix"]
+    } == {
+        "shared_dataset::common_factor",
+        "shared_dataset::hierarchy",
+    }
 
 
 def test_standardized_control_vectors_freeze_dataset_local_reference(module) -> None:
@@ -531,4 +693,7 @@ def test_qualification_only_runs_supported_dataset_cells(
     assert {
         row["dataset_id"] for row in result["accepted_samples"]
     } == {"dataset_a"}
+    assert {
+        row["task_view_id"] for row in result["accepted_samples"]
+    } == {"dataset_a::univariate"}
     assert result["all_supported_cells_qualified"] is True

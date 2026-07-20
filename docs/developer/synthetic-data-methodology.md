@@ -1,8 +1,8 @@
 # CapTS-Bench Dataset-local Synthetic v2 方法
 
-更新日期：2026-07-19
+更新日期：2026-07-21
 
-本文描述当前 `capts-paper-v3` 生成器和 Paper v4 实验协议。当前原则只有一个：
+本文描述当前 `capts-paper-v4` 生成器和 dataset-local 实验协议。当前原则只有一个：
 
 > 每个真实 dataset 独立定义 profile、五档相对强度、feature-support gate 和
 > near-distance gate；不同 dataset 的真实窗口和统计量不合并。
@@ -155,7 +155,7 @@ dataset-local target range 归一化，容差为 0.20。校准失败的 cell 同
 
 ## 5. 生成公式与可预测性边界
 
-`capts-paper-v3` 将机制强度、识别复杂度和未来随机性分开。对同一 candidate seed，
+`capts-paper-v4` 将机制强度、识别复杂度和未来随机性分开。对同一 candidate seed，
 五档共享相同的周期、motif、lag、变换族、载荷、协变量路径、背景和噪声；intensity
 只缩放当前能力的机制贡献。主要公式约束如下：
 
@@ -298,7 +298,7 @@ synthetic_v2_generator_conditioning_artifact.v4
 顶层必须声明：
 
 ```text
-generator_version = capts-paper-v3
+generator_version = capts-paper-v4
 policy_id = dataset-local-real-bounded-generator-feasible-v1
 relative_dose_levels = [0.00, 0.25, 0.50, 0.75, 1.00]
 real_tolerance = {lower_quantile = 0.05, upper_quantile = 0.95,
@@ -315,3 +315,19 @@ reason 与 detail，且不能被在线选择。
 扩展一个新 dataset 时，必须为它单独完成 profile、五档、feature-support 和
 near-distance 校准。不能通过放宽已有 dataset 的阈值或重新引入跨数据集合并来获得
 支持。
+
+## 10. v7 数据集扩展
+
+新增数据集，特别是 common-factor panel、严格层级和 known-future covariate
+数据集，还必须通过以下附加审计：
+
+- panel 是同频同步、具有共同语义的 leaf targets，不用 aggregate 制造 PCA 共线性；
+- hierarchy 保存完整 summing matrix，并逐时点验证精确加总；
+- known-future covariate 保存 issue time、valid time 和 revision policy，实际天气或
+  reanalysis 不能冒充 forecast vintage；
+- 同一个原始 dataset 的不同 task view 使用独立 `task_view_id` 和 profile，但统计
+  推断仍以原始 dataset 为 cluster；
+- 新增 structured synthetic view 时同步建立同 view 的 real-source holdout。
+
+候选优先级、单变量收缩方案、pilot 验收和分阶段实施见
+[`Paper v7 结构化数据集扩展与预注册协议`](../superpowers/specs/2026-07-21-paper-v7-structured-dataset-expansion-protocol.md)。

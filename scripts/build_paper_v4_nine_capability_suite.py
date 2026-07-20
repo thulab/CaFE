@@ -74,7 +74,8 @@ from run_synthetic_v2_near_distance_calibration import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v4_nine_capability_suite.v2"
+SCHEMA_VERSION = "paper_v4_nine_capability_suite.v3"
+TASK_VIEW_ID_SEPARATOR = "::"
 CONTEXT_LENGTHS = (96, 168, 336, 504)
 MAX_CONTEXT_LENGTH = max(CONTEXT_LENGTHS)
 HORIZON = 48
@@ -133,6 +134,53 @@ class RealSource:
     covariate_dim: int = 0
     hierarchy: str | None = None
     task: int = 1
+
+
+TaskViewKey = tuple[str, str]
+
+
+def task_view_id(dataset_id: str, task_id: str) -> str:
+    """Return the stable public identity of one dataset/task view."""
+
+    return f"{dataset_id}{TASK_VIEW_ID_SEPARATOR}{task_id}"
+
+
+def source_task_view_id(source: RealSource) -> str:
+    return task_view_id(source.dataset_id, source.task_id)
+
+
+def source_task_view_key(source: RealSource) -> TaskViewKey:
+    """Return the collision-safe in-memory key for one source view."""
+
+    return source.dataset_id, source.task_id
+
+
+def record_task_view_id(record: dict[str, Any]) -> str:
+    """Read new artifacts while remaining compatible with old artifacts."""
+
+    stored = record.get("task_view_id")
+    if stored:
+        return str(stored)
+    available_task_id = record.get("available_task_id", record["task_id"])
+    return task_view_id(
+        str(record["dataset_id"]),
+        str(available_task_id),
+    )
+
+
+def index_sources_by_task_view(
+    sources: tuple[RealSource, ...],
+) -> dict[TaskViewKey, RealSource]:
+    indexed: dict[TaskViewKey, RealSource] = {}
+    for source in sources:
+        key = source_task_view_key(source)
+        if key in indexed:
+            raise ValueError(
+                "duplicate dataset/task view: "
+                f"{source_task_view_id(source)}"
+            )
+        indexed[key] = source
+    return indexed
 
 
 @dataclass(frozen=True)
@@ -324,7 +372,9 @@ def source_asset_path(source: RealSource, *, data_dir: Path, gift_eval_dir: Path
 
 def master_bucket_spec(source: RealSource, *, max_windows: int) -> BucketSpec:
     return BucketSpec(
-        profile_id=f"{source.dataset_id}__master_L504_H48_E48",
+        profile_id=(
+            f"{source.dataset_id}__{source.task_id}__master_L504_H48_E48"
+        ),
         kind=source.kind,
         asset_name=source.asset_name,
         context_length=MAX_CONTEXT_LENGTH,
@@ -478,7 +528,7 @@ def load_source_views(
     }
     for row_index, row in enumerate(master_rows):
         original_group = str(row.get("group_id") or "single-series")
-        source_group = f"{source.dataset_id}:{original_group}"
+        source_group = f"{source_task_view_id(source)}:{original_group}"
         source_start = int(row.get("window_start") or 0)
         for context_length in CONTEXT_LENGTHS:
             target, covariates = paired_view(
@@ -489,7 +539,11 @@ def load_source_views(
             )
             spec = replace(
                 loader_spec,
-                profile_id=f"{source.dataset_id}__L{context_length}_H48",
+                profile_id=gate_profile_id(
+                    source.dataset_id,
+                    source.task_id,
+                    context_length,
+                ),
                 context_length=context_length,
                 horizon=HORIZON,
             )
@@ -499,12 +553,18 @@ def load_source_views(
                     "group_id": source_group,
                     "window_start": source_start + MAX_CONTEXT_LENGTH - context_length,
                     "dataset_id": source.dataset_id,
+                    "task_id": source.task_id,
+                    "task_view_id": source_task_view_id(source),
                     "master_row_index": row_index,
                 }
             )
             views[context_length].append(view)
     return views, {
-        "dataset": asdict(source),
+        "task_view_id": source_task_view_id(source),
+        "dataset": {
+            **asdict(source),
+            "task_view_id": source_task_view_id(source),
+        },
         "asset_path": relative_or_absolute(path),
         "master_window_count": len(master_rows),
         "master_shape": {
@@ -548,6 +608,8 @@ def dataset_three_way_split(
             **split_summary,
             "policy": "dataset_local_three_way_no_pooling",
             "dataset_id": rows[0].get("dataset_id"),
+            "task_id": rows[0].get("task_id"),
+            "task_view_id": rows[0].get("task_view_id"),
         },
     )
 
@@ -615,8 +677,13 @@ def source_profile(
     rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "profile_id": f"{source.dataset_id}__L{context_length}_H48",
+        "profile_id": gate_profile_id(
+            source.dataset_id,
+            source.task_id,
+            context_length,
+        ),
         "dataset_id": source.dataset_id,
+        "task_view_id": source_task_view_id(source),
         "dataset_name": source.dataset_name,
         "domain": source.domain,
         "task_id": source.task_id,
@@ -829,6 +896,11 @@ def support_matrix_row(
     )
     return {
         "dataset_id": source.dataset_id,
+        "task_view_id": source_task_view_id(source),
+        "required_task_view_id": task_view_id(
+            source.dataset_id,
+            required_task_id,
+        ),
         "dataset_name": source.dataset_name,
         "domain": source.domain,
         "task_id": required_task_id,
@@ -910,6 +982,7 @@ def build_suite(
 ) -> None:
     created_at = datetime.now(timezone.utc).isoformat()
     all_sources = (*UNIVARIATE_CALIBRATION_SOURCES, *STRUCTURED_SOURCES)
+    index_sources_by_task_view(all_sources)
     available_ids = {source.dataset_id for source in all_sources}
     unknown_ids = sorted(set(dataset_ids or ()) - available_ids)
     if unknown_ids:
@@ -921,12 +994,13 @@ def build_suite(
     )
     if not sources:
         raise ValueError("no datasets selected")
-    source_views: dict[str, dict[int, list[dict[str, Any]]]] = {}
+    source_views: dict[TaskViewKey, dict[int, list[dict[str, Any]]]] = {}
     inventories: list[dict[str, Any]] = []
     profiles: list[dict[str, Any]] = []
     for source_index, source in enumerate(sources):
         print(
-            f"[dataset {source_index + 1}/{len(sources)}] {source.dataset_id}",
+            f"[task view {source_index + 1}/{len(sources)}] "
+            f"{source_task_view_id(source)}",
             flush=True,
         )
         views, inventory = load_source_views(
@@ -935,7 +1009,7 @@ def build_suite(
             gift_eval_dir=gift_eval_dir,
             max_windows=max_windows,
         )
-        source_views[source.dataset_id] = views
+        source_views[source_task_view_key(source)] = views
         inventories.append(inventory)
         profiles.extend(
             source_profile(source, context_length, views[context_length])
@@ -978,9 +1052,9 @@ def build_suite(
             try:
                 parameter, reference, calibration, split_summary = (
                     dataset_three_way_split(
-                        source_views[source.dataset_id][context_length],
+                        source_views[source_task_view_key(source)][context_length],
                         spec,
-                        seed=_seed_for(seed, source.dataset_id, 0),
+                        seed=_seed_for(seed, source_task_view_id(source), 0),
                     )
                 )
             except ValueError as error:
@@ -1019,6 +1093,7 @@ def build_suite(
                 "profile_id": spec.profile_id,
                 "dataset_id": source.dataset_id,
                 "task_id": source.task_id,
+                "task_view_id": source_task_view_id(source),
                 "context_length": context_length,
                 "horizon": HORIZON,
                 "season_length": source.season_length,
@@ -1364,6 +1439,7 @@ def build_suite(
         generator_profiles[master_spec.profile_id] = {
             "profile_id": master_spec.profile_id,
             "dataset_id": source.dataset_id,
+            "task_view_id": source_task_view_id(source),
             "conditioning_role": "paper_v4_dataset_local_train_only_master_task",
             "dataset_name": source.dataset_name,
             "task_id": source.task_id,
@@ -1386,6 +1462,7 @@ def build_suite(
     support_matrix.sort(
         key=lambda row: (
             str(row["dataset_id"]),
+            str(row["task_view_id"]),
             ALL_CAPABILITY_IDS.index(str(row["capability_id"])),
         )
     )
@@ -1405,6 +1482,7 @@ def build_suite(
             "dataset-local real-window empirical calibration; no cross-dataset pooling"
         ),
         "dataset_is_independent_unit": True,
+        "task_view_is_calibration_unit": True,
         "max_windows_per_dataset": max_windows,
         "calibration_samples_per_grid_cell": calibration_samples,
         "seed": seed,
@@ -1462,6 +1540,8 @@ def build_suite(
     write_json(
         output_dir / "dataset_capability_support_matrix.json",
         {
+            # Additive task-view identity fields remain readable by existing
+            # v1 consumers, including the frozen Paper E1 runner.
             "schema_version": "paper_v4_dataset_capability_support_matrix.v1",
             "created_at": created_at,
             "intensity_policy": intensity_policy(),
@@ -1503,6 +1583,7 @@ def qualify_suite(
         capability_id = str(cell["capability_id"])
         dataset_id = str(cell["dataset_id"])
         task_id = str(cell["task_id"])
+        cell_task_view_id = record_task_view_id(cell)
         profile_id = str(cell["generator_profile_id"])
         profile = generator_artifact["profiles"][profile_id]
         target_dim = int(profile["target_dim"])
@@ -1615,6 +1696,7 @@ def qualify_suite(
                         )
                     candidate = {
                         "dataset_id": dataset_id,
+                        "task_view_id": cell_task_view_id,
                         "capability_id": capability_id,
                         "task_id": task_id,
                         "generator_profile_id": profile_id,
@@ -1643,6 +1725,7 @@ def qualify_suite(
                 if accepted is None:
                     failures.append(last_rejection or {
                         "dataset_id": dataset_id,
+                        "task_view_id": cell_task_view_id,
                         "capability_id": capability_id,
                         "task_id": task_id,
                         "intensity": intensity,
@@ -1658,8 +1741,9 @@ def qualify_suite(
             )
     expected = len(supported_cells) * 5 * samples_per_cell
     by_cell = {
-        f"{cell['dataset_id']}::{cell['task_id']}::{cell['capability_id']}": {
+        f"{record_task_view_id(cell)}::{cell['capability_id']}": {
             "dataset_id": cell["dataset_id"],
+            "task_view_id": record_task_view_id(cell),
             "task_id": cell["task_id"],
             "capability_id": cell["capability_id"],
             "expected": 5 * samples_per_cell,
@@ -1735,7 +1819,7 @@ def qualify_suite(
         for capability_id in ALL_CAPABILITY_IDS
     }
     result = {
-        "schema_version": "paper_v4_nine_capability_qualification.v2",
+        "schema_version": "paper_v4_nine_capability_qualification.v3",
         "generator_version": PAPER_GENERATOR_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "config": {
@@ -1833,6 +1917,8 @@ def write_support_matrix_csv(
             handle,
             fieldnames=(
                 "dataset_id",
+                "task_view_id",
+                "required_task_view_id",
                 "dataset_name",
                 "domain",
                 "task_id",
@@ -1856,6 +1942,14 @@ def write_support_matrix_csv(
             writer.writerow(
                 {
                     "dataset_id": row["dataset_id"],
+                    "task_view_id": record_task_view_id(row),
+                    "required_task_view_id": row.get(
+                        "required_task_view_id",
+                        task_view_id(
+                            str(row["dataset_id"]),
+                            str(row["task_id"]),
+                        ),
+                    ),
                     "dataset_name": row["dataset_name"],
                     "domain": row["domain"],
                     "task_id": row["task_id"],
@@ -1899,7 +1993,7 @@ def write_manifest(output_dir: Path) -> None:
     write_json(
         output_dir / "manifest.json",
         {
-            "schema_version": "paper_v4_nine_capability_manifest.v2",
+            "schema_version": "paper_v4_nine_capability_manifest.v3",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "builder_path": str(Path(__file__).resolve().relative_to(REPO_ROOT)),
             "builder_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

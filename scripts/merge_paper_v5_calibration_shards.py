@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Merge dataset-disjoint Paper v5 calibration build shards.
+"""Merge task-view-disjoint Paper v5 calibration build shards.
 
 The upstream builder calibrates every dataset independently.  This utility
-only unions disjoint dataset artifacts; it never combines real windows,
-profile statistics, intensity targets, or gate thresholds across datasets.
-Qualification must run once on the merged output after this command.
+only unions disjoint dataset/task-view artifacts; it never combines real
+windows, profile statistics, intensity targets, or gate thresholds across
+task views. Qualification must run once on the merged output after this
+command.
 """
 from __future__ import annotations
 
@@ -25,6 +26,8 @@ for import_path in (BACKEND_DIR, SCRIPT_DIR):
 
 from build_paper_v4_nine_capability_suite import (  # noqa: E402
     ALL_CAPABILITY_IDS,
+    record_task_view_id,
+    task_view_id,
     write_json,
     write_support_matrix_csv,
 )
@@ -61,6 +64,20 @@ def merge_unique_mapping(
     return merged
 
 
+def inventory_task_view_id(row: dict[str, Any]) -> str:
+    stored = row.get("task_view_id")
+    if stored:
+        return str(stored)
+    dataset = row["dataset"]
+    stored = dataset.get("task_view_id")
+    if stored:
+        return str(stored)
+    return task_view_id(
+        str(dataset["dataset_id"]),
+        str(dataset["task_id"]),
+    )
+
+
 def merge_shards(output_dir: Path, shard_dirs: list[Path]) -> None:
     if len(shard_dirs) < 2:
         raise ValueError("at least two calibration shards are required")
@@ -93,6 +110,7 @@ def merge_shards(output_dir: Path, shard_dirs: list[Path]) -> None:
         "pairing_policy",
         "profile_role",
         "dataset_is_independent_unit",
+        "task_view_is_calibration_unit",
         "max_windows_per_dataset",
         "calibration_samples_per_grid_cell",
         "seed",
@@ -137,25 +155,32 @@ def merge_shards(output_dir: Path, shard_dirs: list[Path]) -> None:
             raise ValueError("intensity policy differs across shards")
 
     created_at = datetime.now(timezone.utc).isoformat()
+    inventory_rows = [
+        row
+        for profile in profiles
+        for row in profile["dataset_inventory"]
+    ]
+    task_view_ids = [inventory_task_view_id(row) for row in inventory_rows]
+    if len(set(task_view_ids)) != len(task_view_ids):
+        raise ValueError("dataset/task view appears in more than one shard")
     dataset_ids = sorted(
         {
             str(row["dataset"]["dataset_id"])
-            for profile in profiles
-            for row in profile["dataset_inventory"]
+            for row in inventory_rows
         }
     )
-    if len(dataset_ids) != sum(
-        len(profile["dataset_inventory"]) for profile in profiles
-    ):
-        raise ValueError("dataset_id appears in more than one shard")
+    task_view_ids = sorted(task_view_ids)
     config = {
         **reference,
         "created_at": created_at,
         "dataset_ids": dataset_ids,
+        "task_view_ids": task_view_ids,
         "build_shards": [
             str(path.relative_to(REPO_ROOT)) for path in resolved
         ],
-        "shard_merge_policy": "dataset-disjoint union; no statistic pooling",
+        "shard_merge_policy": (
+            "dataset/task-view-disjoint union; no statistic pooling"
+        ),
     }
 
     generator_profiles = merge_unique_mapping(generators, "profiles")
@@ -168,6 +193,7 @@ def merge_shards(output_dir: Path, shard_dirs: list[Path]) -> None:
     support_matrix.sort(
         key=lambda row: (
             str(row["dataset_id"]),
+            record_task_view_id(row),
             ALL_CAPABILITY_IDS.index(str(row["capability_id"])),
         )
     )
@@ -257,6 +283,7 @@ def merge_shards(output_dir: Path, shard_dirs: list[Path]) -> None:
     )
     print(
         f"merged {len(resolved)} shards, {len(dataset_ids)} datasets, "
+        f"{len(task_view_ids)} task views, "
         f"{len(generator_profiles)} generator profiles, "
         f"{sum(bool(row['supported']) for row in support_matrix)} supported cells "
         f"into {output_dir}",
