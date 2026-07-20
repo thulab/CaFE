@@ -165,23 +165,105 @@ def test_split_analysis_reports_score_rank_and_tie_reliability() -> None:
         score_column="oracle_mase",
         bank_size=4,
         minimum_agreement=0.8,
+        equivalence_margins=(0.01, 0.02, 0.05),
+        primary_equivalence_margin=0.02,
+        pair_bootstrap_replicates=200,
+        pair_ci_level=0.95,
+        bootstrap_seed=17,
     )
 
     rank = summary["formal_rank_reliability"]
     assert rank["cell_count"] == 4
     assert rank["pairwise_ordering_agreement"]["mean"] == pytest.approx(1.0)
     assert rank["top1_agreement_rate"] == pytest.approx(1.0)
-    assert summary["tie_aware_model_contrasts"]["state_match_rate"] == (
-        pytest.approx(1.0)
-    )
+    pair_summary = summary["tie_aware_model_contrasts"]
+    assert pair_summary["primary"]["state_match_rate"] == pytest.approx(1.0)
+    assert set(pair_summary["by_margin"]) == {"0.01", "0.02", "0.05"}
+    assert summary["partial_order_rank_reliability"][
+        "rank_interval_overlap_rate"
+    ] == pytest.approx(1.0)
+    assert summary["practical_tie_rank_reliability"]["primary"][
+        "tie_pair_state_agreement"
+    ]["mean"] == pytest.approx(1.0)
     assert set(frames) == {
         "cell_model_scores",
         "cell_model_reliability",
         "capability_profiles",
         "capability_profile_reliability",
+        "tie_aware_pair_states",
         "tie_aware_model_contrasts",
+        "partial_order_ranks",
+        "partial_order_rank_reliability",
+        "partial_order_top_tier_reliability",
+        "practical_tie_ranks",
+        "practical_tie_rank_reliability",
+        "practical_tie_top_tier_reliability",
         "rank_reliability",
     }
+
+
+def test_practical_equivalence_distinguishes_ties_from_uncertainty() -> None:
+    module = load_module()
+
+    assert module.practical_equivalence_state(
+        ci_low=-0.01,
+        ci_high=0.015,
+        margin=0.02,
+    ) == "equivalent"
+    assert module.practical_equivalence_state(
+        ci_low=-0.04,
+        ci_high=0.01,
+        margin=0.02,
+    ) == "unresolved"
+    assert module.practical_equivalence_state(
+        ci_low=-0.08,
+        ci_high=-0.03,
+        margin=0.02,
+    ) == "left_better"
+
+
+def test_practical_tie_rank_absorbs_small_point_estimate_reversal() -> None:
+    module = load_module()
+    rows = []
+    for bank_id, values in (
+        ("A", {"m1": 1.00, "m2": 1.01, "m3": 1.20}),
+        ("B", {"m1": 1.01, "m2": 1.00, "m3": 1.20}),
+    ):
+        for point_rank, (model_id, score) in enumerate(
+            sorted(values.items(), key=lambda item: item[1]),
+            start=1,
+        ):
+            rows.append(
+                {
+                    "bank_id": bank_id,
+                    "model_id": model_id,
+                    "dataset_id": "dataset",
+                    "task_id": "task",
+                    "capability_id": "capability",
+                    "intensity": 1,
+                    "mase_mean": score,
+                    "model_rank": point_rank,
+                }
+            )
+    ranks = module.practical_tie_ranks(
+        pd.DataFrame(rows),
+        equivalence_margins=(0.02,),
+    )
+
+    _, _, summaries = module.compare_practical_tie_ranks(ranks)
+
+    assert summaries["0.02"]["tie_pair_state_agreement"]["mean"] == (
+        pytest.approx(1.0)
+    )
+    assert summaries["0.02"]["exact_tie_rank_vector_rate"] == (
+        pytest.approx(1.0)
+    )
+    assert summaries["0.02"]["conclusion_compatibility_rate"] == (
+        pytest.approx(1.0)
+    )
+    assert summaries["0.02"]["top_tier_size_mean"] == pytest.approx(2.0)
+    top = ranks[ranks["practical_tie_tier"] == 1]
+    assert set(top["model_id"]) == {"m1", "m2"}
 
 
 def test_pool_validation_rejects_incomplete_model_cell() -> None:
@@ -230,6 +312,10 @@ def test_end_to_end_writes_flexible_bank_size_outputs(tmp_path) -> None:
         random_repeats=2,
         split_seed=11,
         minimum_agreement=0.8,
+        equivalence_margins=[0.01, 0.02, 0.05],
+        primary_equivalence_margin=0.02,
+        pair_bootstrap_replicates=100,
+        pair_ci_level=0.95,
     )
 
     assert summary["bank_sizes"] == [2, 4]
@@ -242,7 +328,17 @@ def test_end_to_end_writes_flexible_bank_size_outputs(tmp_path) -> None:
     comparison = pd.read_csv(output_dir / "split_comparison_summary.csv")
     assert len(comparison) == 12
     assert set(comparison["split_kind"]) == {"ordered", "random"}
-    assert (output_dir / "ordered_rank_reliability_oracle_context.csv").is_file()
+    assert (
+        output_dir / "ordered_rank_reliability_oracle_context.csv"
+    ).is_file()
+    assert (
+        output_dir
+        / "ordered_partial_order_ranks_oracle_context.csv"
+    ).is_file()
+    assert (
+        output_dir
+        / "ordered_practical_tie_ranks_oracle_context.csv"
+    ).is_file()
     assert (
         output_dir
         / "ordered_rank_reliability_by_capability_oracle_context.csv"

@@ -25,12 +25,12 @@ master samples。160 并非理论预设的必要样本数，而是此前发现 N
 
 Ordered split：
 
-| N per bank | Rank agreement | Cells ≥0.80 | Top-1 | Profile CCC | Tie-state match |
-|---:|---:|---:|---:|---:|---:|
-| 32 | 0.7973 | 58.1% | 56.9% | 0.9809 | 0.8057 |
-| 48 | 0.8289 | 66.6% | 64.1% | 0.9871 | 0.8146 |
-| 64 | 0.8443 | 71.9% | 68.1% | 0.9903 | 0.8128 |
-| 80 | 0.8525 | 72.5% | 73.1% | 0.9908 | 0.8135 |
+| N per bank | Rank agreement | Cells ≥0.80 | Top-1 | Profile CCC |
+|---:|---:|---:|---:|---:|
+| 32 | 0.7973 | 58.1% | 56.9% | 0.9809 |
+| 48 | 0.8289 | 66.6% | 64.1% | 0.9871 |
+| 64 | 0.8443 | 71.9% | 68.1% | 0.9903 |
+| 80 | 0.8525 | 72.5% | 73.1% | 0.9908 |
 
 10 次 random split 的 rank agreement：
 
@@ -66,7 +66,61 @@ Ordered oracle-context split：
 样本误差方差较大。后续应同时检查这些维度的机制评价与模型 pair margin，不宜只靠
 继续增加所有能力的统一样本数解决。
 
-## 4. 解释与建议
+## 4. Tie-aware 排名试验
+
+进一步对 N=80 ordered split 实施 practical-equivalence 分析。对模型 A/B 定义
+聚合 MASE 的对称相对差异：
+
+```text
+g = 2 * (mean(MASE_A) - mean(MASE_B))
+    / (abs(mean(MASE_A)) + abs(mean(MASE_B)))
+```
+
+在相同 paired groups 上执行 2,000 次 paired bootstrap，取得 95% CI，并按每个
+equivalence margin 分成：
+
+- `left_better`；
+- `right_better`；
+- `equivalent`：完整 CI 位于 margin 内；
+- `unresolved`：其余无法稳定区分的情况。
+
+Oracle-context 结果：
+
+| Margin | Bootstrap state match | Decisive direction conflicts | Both equivalent | Both unresolved |
+|---:|---:|---:|---:|---:|
+| 1% | 0.8725 | 0 | 231 | 3,908 |
+| 2% | 0.8471 | 0 | 832 | 3,511 |
+| 5% | 0.8534 | 0 | 3,974 | 1,178 |
+
+在 2% 主界下，两个 bank 都能明确判断方向的 2,688 个 model-pair/cells 中方向冲突
+为 0。说明点估计排名交换大多不是有统计支持的能力方向反转。
+
+同时试验了直接按点估计 margin 合并 practical tie tiers：
+
+| Margin | Exact pair state | No contradiction | Exact tie vector | Mean top-tier size |
+|---:|---:|---:|---:|---:|
+| 1% | 0.7642 | 0.9671 | 0.1187 | 2.27 |
+| 2% | 0.7875 | 0.9907 | 0.1719 | 3.32 |
+| 5% | 0.9020 | 0.9980 | 0.5750 | 4.83 |
+
+硬 tie threshold 并不会自动提高严格稳定性：1.9%/2.1% 的差异会在 tie 边界两侧
+跳变。5% 虽使 exact pair state 达到 0.9020，却让 top tier 平均包含 4.83 个模型，
+属于通过过度合并换取稳定性。
+
+仅使用 bootstrap 明确优劣边构造的 conservative rank interval 跨 bank 覆盖率为
+100%，但平均跨度达到 4.36 个名次、top tier 平均包含 4.49 个模型，同样过宽，不宜
+作为 headline 排名。
+
+因此推荐：
+
+1. 保留连续能力分数、置信区间和 point-estimate rank；
+2. 正式增加四状态 model-pair table，重点报告 decisive direction conflicts、
+   state match、equivalent 和 unresolved 数量；
+3. 将 1%/2%/5% practical tie tiers 作为敏感性展示，不选取能让稳定性最好看的
+   margin 作为唯一正式排名；
+4. partial-order rank interval 仅作保守不确定性上界。
+
+## 5. 解释与建议
 
 当前证据支持：
 
@@ -80,7 +134,7 @@ Ordered oracle-context split：
 论文中建议把连续能力分数和 capability profile 作为主要可靠性对象，把完整排名、
 top-1、top-3 和 tie-aware pair states 作为直观但更敏感的正式结果共同报告。
 
-## 5. 产物
+## 6. 产物
 
 分析脚本：
 
@@ -109,3 +163,14 @@ uv run --project backend python \
   tie-aware contrast 和 rank reliability 明细；
 - 按 capability、dataset、intensity 汇总的 ordered rank tables；
 - `manifest.json`。
+
+Tie-aware N=80 试验目录：
+
+`runtime/paper_exp/v6/E2_dynamic_stability/split_bank_tie_aware_n80/`
+
+其中额外包含：
+
+- paired-bootstrap 四状态 model-pair 明细；
+- practical tie tiers 和跨 bank 对比；
+- partial-order tiers、rank intervals 和 top-tier 对比；
+- 1%/2%/5% margin sensitivity summary。

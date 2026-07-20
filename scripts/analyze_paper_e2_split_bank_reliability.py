@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import sys
 from datetime import datetime, timezone
@@ -32,6 +31,10 @@ DEFAULT_E2_DIR = REPO_ROOT / "runtime/paper_exp/v6/E2_dynamic_stability"
 DEFAULT_BANK_SIZES = (32, 48, 64, 80)
 DEFAULT_SPLIT_SEED = 20260720
 DEFAULT_MINIMUM_AGREEMENT = 0.80
+DEFAULT_EQUIVALENCE_MARGINS = (0.01, 0.02, 0.05)
+DEFAULT_PRIMARY_EQUIVALENCE_MARGIN = 0.02
+DEFAULT_PAIR_BOOTSTRAP_REPLICATES = 2_000
+DEFAULT_PAIR_CI_LEVEL = 0.95
 NORMAL_95 = 1.959963984540054
 PROFILE_KEYS = ["dataset_id", "task_id", "capability_id"]
 CELL_KEYS = [*PROFILE_KEYS, "intensity"]
@@ -93,6 +96,31 @@ def parse_args() -> argparse.Namespace:
         "--minimum-agreement",
         type=float,
         default=DEFAULT_MINIMUM_AGREEMENT,
+    )
+    parser.add_argument(
+        "--equivalence-margins",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_EQUIVALENCE_MARGINS),
+        help=(
+            "Relative MASE margins used for practical-equivalence "
+            "classification."
+        ),
+    )
+    parser.add_argument(
+        "--primary-equivalence-margin",
+        type=float,
+        default=DEFAULT_PRIMARY_EQUIVALENCE_MARGIN,
+    )
+    parser.add_argument(
+        "--pair-bootstrap-replicates",
+        type=int,
+        default=DEFAULT_PAIR_BOOTSTRAP_REPLICATES,
+    )
+    parser.add_argument(
+        "--pair-ci-level",
+        type=float,
+        default=DEFAULT_PAIR_CI_LEVEL,
     )
     return parser.parse_args()
 
@@ -361,13 +389,42 @@ def cell_model_scores(
     return result
 
 
+def stable_bootstrap_seed(
+    base_seed: int,
+    values: tuple[Any, ...],
+) -> int:
+    payload = "|".join([str(base_seed), *(str(value) for value in values)])
+    digest = hashlib.sha256(payload.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big", signed=False)
+
+
+def practical_equivalence_state(
+    *,
+    ci_low: float,
+    ci_high: float,
+    margin: float,
+) -> str:
+    if ci_high < -margin:
+        return "left_better"
+    if ci_low > margin:
+        return "right_better"
+    if ci_low >= -margin and ci_high <= margin:
+        return "equivalent"
+    return "unresolved"
+
+
 def tie_aware_pair_states(
     split_frame: pd.DataFrame,
     *,
     score_column: str,
     bank_size: int,
+    equivalence_margins: tuple[float, ...],
+    bootstrap_replicates: int,
+    ci_level: float,
+    bootstrap_seed: int,
 ) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
+    alpha = (1.0 - ci_level) / 2.0
     for key, group in split_frame.groupby(
         ["bank_id", *CELL_KEYS],
         sort=True,
@@ -380,40 +437,605 @@ def tie_aware_pair_states(
         )
         if len(matrix) != bank_size or matrix.isna().any().any():
             raise ValueError(f"incomplete paired model matrix for {key}")
-        for left_model, right_model in combinations(
-            sorted(matrix.columns),
+        matrix = matrix.reindex(sorted(matrix.columns), axis=1)
+        values = matrix.to_numpy(dtype=float)
+        rng = np.random.default_rng(
+            stable_bootstrap_seed(bootstrap_seed, tuple(key))
+        )
+        draws = rng.integers(
+            0,
+            bank_size,
+            size=(bootstrap_replicates, bank_size),
+        )
+        bootstrap_means = values[draws].mean(axis=1)
+        point_means = values.mean(axis=0)
+        for left_index, right_index in combinations(
+            range(len(matrix.columns)),
             2,
         ):
-            difference = (
-                matrix[left_model].to_numpy(dtype=float)
-                - matrix[right_model].to_numpy(dtype=float)
+            left_model = str(matrix.columns[left_index])
+            right_model = str(matrix.columns[right_index])
+            point_denominator = max(
+                abs(point_means[left_index])
+                + abs(point_means[right_index]),
+                1e-12,
             )
-            mean = float(np.mean(difference))
-            se = float(np.std(difference, ddof=1) / math.sqrt(bank_size))
-            low = mean - NORMAL_95 * se
-            high = mean + NORMAL_95 * se
-            if high < 0:
-                state = "left_better"
-            elif low > 0:
-                state = "right_better"
+            relative_gap = float(
+                2.0
+                * (
+                    point_means[left_index]
+                    - point_means[right_index]
+                )
+                / point_denominator
+            )
+            bootstrap_denominator = np.maximum(
+                np.abs(bootstrap_means[:, left_index])
+                + np.abs(bootstrap_means[:, right_index]),
+                1e-12,
+            )
+            bootstrap_gap = (
+                2.0
+                * (
+                    bootstrap_means[:, left_index]
+                    - bootstrap_means[:, right_index]
+                )
+                / bootstrap_denominator
+            )
+            low, high = np.quantile(
+                bootstrap_gap,
+                [alpha, 1.0 - alpha],
+            )
+            for margin in equivalence_margins:
+                rows.append(
+                    {
+                        **dict(
+                            zip(CELL_KEYS, cell_values, strict=True)
+                        ),
+                        "left_model": left_model,
+                        "right_model": right_model,
+                        "bank_id": bank_id,
+                        "left_mase_mean": float(
+                            point_means[left_index]
+                        ),
+                        "right_mase_mean": float(
+                            point_means[right_index]
+                        ),
+                        "relative_mase_gap": relative_gap,
+                        "bootstrap_ci_low": float(low),
+                        "bootstrap_ci_high": float(high),
+                        "bootstrap_replicates": bootstrap_replicates,
+                        "ci_level": ci_level,
+                        "equivalence_margin": margin,
+                        "state": practical_equivalence_state(
+                            ci_low=float(low),
+                            ci_high=float(high),
+                            margin=margin,
+                        ),
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def compare_pair_states(
+    pair_a: pd.DataFrame,
+    pair_b: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    keys = [
+        *CELL_KEYS,
+        "left_model",
+        "right_model",
+        "equivalence_margin",
+    ]
+    compared = pair_a.merge(
+        pair_b,
+        on=keys,
+        suffixes=("_a", "_b"),
+        validate="one_to_one",
+    )
+    decisive = {"left_better", "right_better"}
+    compared["state_match"] = compared["state_a"] == compared["state_b"]
+    compared["both_decisive"] = compared["state_a"].isin(
+        decisive
+    ) & compared["state_b"].isin(decisive)
+    compared["direction_conflict"] = (
+        compared["both_decisive"]
+        & (compared["state_a"] != compared["state_b"])
+    )
+    compared["both_equivalent"] = (
+        (compared["state_a"] == "equivalent")
+        & (compared["state_b"] == "equivalent")
+    )
+    compared["both_unresolved"] = (
+        (compared["state_a"] == "unresolved")
+        & (compared["state_b"] == "unresolved")
+    )
+    compared["one_decisive_one_equivalent"] = (
+        compared["state_a"].isin(decisive)
+        ^ compared["state_b"].isin(decisive)
+    ) & (
+        (compared["state_a"] == "equivalent")
+        | (compared["state_b"] == "equivalent")
+    )
+    compared["one_decisive_one_unresolved"] = (
+        compared["state_a"].isin(decisive)
+        ^ compared["state_b"].isin(decisive)
+    ) & (
+        (compared["state_a"] == "unresolved")
+        | (compared["state_b"] == "unresolved")
+    )
+    compared["equivalent_vs_unresolved"] = [
+        frozenset((left, right))
+        == frozenset(("equivalent", "unresolved"))
+        for left, right in zip(
+            compared["state_a"],
+            compared["state_b"],
+            strict=True,
+        )
+    ]
+
+    summaries: dict[str, Any] = {}
+    for margin, group in compared.groupby("equivalence_margin", sort=True):
+        both_decisive = group[group["both_decisive"]]
+        directional_agreement = (
+            float(
+                (
+                    both_decisive["state_a"]
+                    == both_decisive["state_b"]
+                ).mean()
+            )
+            if len(both_decisive)
+            else 1.0
+        )
+        summaries[f"{float(margin):g}"] = {
+            "equivalence_margin": float(margin),
+            "model_pair_cell_count": len(group),
+            "state_match_rate": float(group["state_match"].mean()),
+            "both_decisive_count": int(group["both_decisive"].sum()),
+            "both_decisive_directional_agreement": (
+                directional_agreement
+            ),
+            "direction_conflict_count": int(
+                group["direction_conflict"].sum()
+            ),
+            "conclusion_compatibility_rate": float(
+                1.0 - group["direction_conflict"].mean()
+            ),
+            "both_equivalent_count": int(
+                group["both_equivalent"].sum()
+            ),
+            "both_unresolved_count": int(
+                group["both_unresolved"].sum()
+            ),
+            "one_decisive_one_equivalent_count": int(
+                group["one_decisive_one_equivalent"].sum()
+            ),
+            "one_decisive_one_unresolved_count": int(
+                group["one_decisive_one_unresolved"].sum()
+            ),
+            "equivalent_vs_unresolved_count": int(
+                group["equivalent_vs_unresolved"].sum()
+            ),
+        }
+    return compared, summaries
+
+
+def partial_order_ranks(
+    pair_states: pd.DataFrame,
+    scores: pd.DataFrame,
+    *,
+    primary_margin: float,
+) -> pd.DataFrame:
+    selected = pair_states[
+        np.isclose(
+            pair_states["equivalence_margin"],
+            primary_margin,
+        )
+    ]
+    rows: list[dict[str, Any]] = []
+    for key, group in selected.groupby(
+        ["bank_id", *CELL_KEYS],
+        sort=True,
+    ):
+        bank_id, *cell_values = key
+        models = sorted(
+            set(group["left_model"]) | set(group["right_model"])
+        )
+        outgoing = {model: set() for model in models}
+        incoming = {model: set() for model in models}
+        equivalent_count = {model: 0 for model in models}
+        unresolved_count = {model: 0 for model in models}
+        for record in group.to_dict(orient="records"):
+            left = str(record["left_model"])
+            right = str(record["right_model"])
+            state = str(record["state"])
+            if state == "left_better":
+                outgoing[left].add(right)
+                incoming[right].add(left)
+            elif state == "right_better":
+                outgoing[right].add(left)
+                incoming[left].add(right)
+            elif state == "equivalent":
+                equivalent_count[left] += 1
+                equivalent_count[right] += 1
             else:
-                state = "indistinguishable"
+                unresolved_count[left] += 1
+                unresolved_count[right] += 1
+
+        remaining = set(models)
+        tiers: dict[str, int] = {}
+        tier_index = 1
+        while remaining:
+            current = sorted(
+                model
+                for model in remaining
+                if not (incoming[model] & remaining)
+            )
+            if not current:
+                raise ValueError(f"decisive comparison cycle for {key}")
+            for model in current:
+                tiers[model] = tier_index
+            remaining.difference_update(current)
+            tier_index += 1
+
+        cell_scores = scores
+        for column, value in zip(CELL_KEYS, cell_values, strict=True):
+            cell_scores = cell_scores[cell_scores[column] == value]
+        cell_scores = cell_scores[cell_scores["bank_id"] == bank_id]
+        score_by_model = cell_scores.set_index("model_id")
+        for model in models:
+            best_rank = 1 + len(incoming[model])
+            worst_rank = len(models) - len(outgoing[model])
             rows.append(
                 {
-                    **dict(
-                        zip(CELL_KEYS, cell_values, strict=True)
-                    ),
-                    "left_model": left_model,
-                    "right_model": right_model,
+                    **dict(zip(CELL_KEYS, cell_values, strict=True)),
                     "bank_id": bank_id,
-                    "mean_mase_difference": mean,
-                    "difference_se": se,
-                    "ci_low": low,
-                    "ci_high": high,
-                    "state": state,
+                    "model_id": model,
+                    "model_count": len(models),
+                    "mase_mean": float(
+                        score_by_model.loc[model, "mase_mean"]
+                    ),
+                    "point_estimate_rank": float(
+                        score_by_model.loc[model, "model_rank"]
+                    ),
+                    "partial_order_tier": tiers[model],
+                    "best_rank": best_rank,
+                    "worst_rank": worst_rank,
+                    "rank_interval": (
+                        str(best_rank)
+                        if best_rank == worst_rank
+                        else f"{best_rank}-{worst_rank}"
+                    ),
+                    "decisively_better_count": len(outgoing[model]),
+                    "decisively_worse_count": len(incoming[model]),
+                    "equivalent_pair_count": equivalent_count[model],
+                    "unresolved_pair_count": unresolved_count[model],
+                    "primary_equivalence_margin": primary_margin,
                 }
             )
     return pd.DataFrame(rows)
+
+
+def compare_partial_order_ranks(
+    ranks: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    keys = [*CELL_KEYS, "model_id"]
+    columns = [
+        *keys,
+        "partial_order_tier",
+        "best_rank",
+        "worst_rank",
+        "rank_interval",
+        "point_estimate_rank",
+    ]
+    left = ranks[ranks["bank_id"] == "A"][columns]
+    right = ranks[ranks["bank_id"] == "B"][columns]
+    compared = left.merge(
+        right,
+        on=keys,
+        suffixes=("_a", "_b"),
+        validate="one_to_one",
+    )
+    compared["tier_match"] = (
+        compared["partial_order_tier_a"]
+        == compared["partial_order_tier_b"]
+    )
+    compared["rank_interval_overlap"] = (
+        np.maximum(compared["best_rank_a"], compared["best_rank_b"])
+        <= np.minimum(
+            compared["worst_rank_a"],
+            compared["worst_rank_b"],
+        )
+    )
+
+    cell_rows: list[dict[str, Any]] = []
+    for cell, group in ranks.groupby(CELL_KEYS, sort=True):
+        left_top = set(
+            group[
+                (group["bank_id"] == "A")
+                & (group["partial_order_tier"] == 1)
+            ]["model_id"]
+        )
+        right_top = set(
+            group[
+                (group["bank_id"] == "B")
+                & (group["partial_order_tier"] == 1)
+            ]["model_id"]
+        )
+        union = left_top | right_top
+        cell_rows.append(
+            {
+                **dict(zip(CELL_KEYS, cell, strict=True)),
+                "top_tier_a": ";".join(sorted(left_top)),
+                "top_tier_b": ";".join(sorted(right_top)),
+                "top_tier_exact_match": left_top == right_top,
+                "top_tier_jaccard": (
+                    len(left_top & right_top) / len(union)
+                    if union
+                    else 1.0
+                ),
+            }
+        )
+    cells = pd.DataFrame(cell_rows)
+    return compared, cells, {
+        "cell_model_count": len(compared),
+        "tier_match_rate": float(compared["tier_match"].mean()),
+        "rank_interval_overlap_rate": float(
+            compared["rank_interval_overlap"].mean()
+        ),
+        "cell_count": len(cells),
+        "top_tier_exact_match_rate": float(
+            cells["top_tier_exact_match"].mean()
+        ),
+        "top_tier_jaccard_mean": float(cells["top_tier_jaccard"].mean()),
+    }
+
+
+def practical_tie_ranks(
+    scores: pd.DataFrame,
+    *,
+    equivalence_margins: tuple[float, ...],
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for key, group in scores.groupby(["bank_id", *CELL_KEYS], sort=True):
+        bank_id, *cell_values = key
+        ordered = group.sort_values(
+            ["mase_mean", "model_id"],
+            kind="stable",
+        )
+        for margin in equivalence_margins:
+            tier = 0
+            tier_anchor = 0.0
+            competition_rank = 0
+            tier_members: list[dict[str, Any]] = []
+            assigned: list[dict[str, Any]] = []
+            for position, record in enumerate(
+                ordered.to_dict(orient="records"),
+                start=1,
+            ):
+                score = float(record["mase_mean"])
+                relative_to_anchor = (
+                    0.0
+                    if not tier_members
+                    else 2.0
+                    * (score - tier_anchor)
+                    / max(abs(score) + abs(tier_anchor), 1e-12)
+                )
+                if not tier_members or relative_to_anchor > margin:
+                    if tier_members:
+                        for member in tier_members:
+                            member["tie_tier_size"] = len(tier_members)
+                        assigned.extend(tier_members)
+                    tier += 1
+                    competition_rank = position
+                    tier_anchor = score
+                    tier_members = []
+                    relative_to_anchor = 0.0
+                tier_members.append(
+                    {
+                        **dict(
+                            zip(CELL_KEYS, cell_values, strict=True)
+                        ),
+                        "bank_id": bank_id,
+                        "model_id": str(record["model_id"]),
+                        "mase_mean": score,
+                        "point_estimate_rank": float(
+                            record["model_rank"]
+                        ),
+                        "equivalence_margin": margin,
+                        "practical_tie_tier": tier,
+                        "practical_tie_rank": competition_rank,
+                        "tier_anchor_mase": tier_anchor,
+                        "relative_gap_to_tier_anchor": (
+                            relative_to_anchor
+                        ),
+                    }
+                )
+            for member in tier_members:
+                member["tie_tier_size"] = len(tier_members)
+            assigned.extend(tier_members)
+            rows.extend(assigned)
+    return pd.DataFrame(rows)
+
+
+def compare_practical_tie_ranks(
+    ranks: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    keys = [*CELL_KEYS, "model_id", "equivalence_margin"]
+    columns = [
+        *keys,
+        "practical_tie_tier",
+        "practical_tie_rank",
+        "tie_tier_size",
+    ]
+    compared = ranks[ranks["bank_id"] == "A"][columns].merge(
+        ranks[ranks["bank_id"] == "B"][columns],
+        on=keys,
+        suffixes=("_a", "_b"),
+        validate="one_to_one",
+    )
+    compared["tie_tier_match"] = (
+        compared["practical_tie_tier_a"]
+        == compared["practical_tie_tier_b"]
+    )
+    compared["tie_rank_match"] = (
+        compared["practical_tie_rank_a"]
+        == compared["practical_tie_rank_b"]
+    )
+
+    cell_rows: list[dict[str, Any]] = []
+    for key, group in ranks.groupby(
+        ["equivalence_margin", *CELL_KEYS],
+        sort=True,
+    ):
+        margin, *cell_values = key
+        left = (
+            group[group["bank_id"] == "A"]
+            .set_index("model_id")
+            .sort_index()
+        )
+        right = (
+            group[group["bank_id"] == "B"]
+            .set_index("model_id")
+            .sort_index()
+        )
+        if list(left.index) != list(right.index):
+            raise ValueError(f"practical tie model mismatch for {key}")
+        pair_matches: list[bool] = []
+        direction_conflicts = 0
+        for left_model, right_model in combinations(left.index, 2):
+            states = []
+            for frame in (left, right):
+                left_tier = int(
+                    frame.loc[left_model, "practical_tie_tier"]
+                )
+                right_tier = int(
+                    frame.loc[right_model, "practical_tie_tier"]
+                )
+                if left_tier == right_tier:
+                    state = "tie"
+                elif left_tier < right_tier:
+                    state = "left_better"
+                else:
+                    state = "right_better"
+                states.append(state)
+            pair_matches.append(states[0] == states[1])
+            if {
+                states[0],
+                states[1],
+            } == {"left_better", "right_better"}:
+                direction_conflicts += 1
+        left_top = set(
+            left[left["practical_tie_tier"] == 1].index
+        )
+        right_top = set(
+            right[right["practical_tie_tier"] == 1].index
+        )
+        union = left_top | right_top
+        cell_rows.append(
+            {
+                **dict(zip(CELL_KEYS, cell_values, strict=True)),
+                "equivalence_margin": float(margin),
+                "model_count": len(left),
+                "pair_count": len(pair_matches),
+                "tie_pair_state_agreement": float(
+                    np.mean(pair_matches)
+                ),
+                "direction_conflict_count": direction_conflicts,
+                "conclusion_compatibility_rate": (
+                    1.0
+                    - direction_conflicts / max(len(pair_matches), 1)
+                ),
+                "exact_tie_rank_vector": bool(
+                    np.array_equal(
+                        left["practical_tie_rank"].to_numpy(dtype=int),
+                        right["practical_tie_rank"].to_numpy(dtype=int),
+                    )
+                ),
+                "top_tier_a": ";".join(sorted(left_top)),
+                "top_tier_b": ";".join(sorted(right_top)),
+                "top_tier_exact_match": left_top == right_top,
+                "top_tier_jaccard": (
+                    len(left_top & right_top) / len(union)
+                    if union
+                    else 1.0
+                ),
+                "top_tier_size_a": len(left_top),
+                "top_tier_size_b": len(right_top),
+                "tier_count_a": int(
+                    left["practical_tie_tier"].max()
+                ),
+                "tier_count_b": int(
+                    right["practical_tie_tier"].max()
+                ),
+            }
+        )
+    cells = pd.DataFrame(cell_rows)
+    summaries: dict[str, Any] = {}
+    for margin, group in cells.groupby("equivalence_margin", sort=True):
+        model_group = compared[
+            np.isclose(compared["equivalence_margin"], margin)
+        ]
+        summaries[f"{float(margin):g}"] = {
+            "equivalence_margin": float(margin),
+            "cell_count": len(group),
+            "cell_model_count": len(model_group),
+            "tie_pair_state_agreement": {
+                "mean": float(group["tie_pair_state_agreement"].mean()),
+                "median": float(
+                    group["tie_pair_state_agreement"].median()
+                ),
+                "minimum": float(group["tie_pair_state_agreement"].min()),
+            },
+            "direction_conflict_count": int(
+                group["direction_conflict_count"].sum()
+            ),
+            "conclusion_compatibility_rate": float(
+                group["conclusion_compatibility_rate"].mean()
+            ),
+            "exact_tie_rank_vector_rate": float(
+                group["exact_tie_rank_vector"].mean()
+            ),
+            "tie_tier_match_rate": float(
+                model_group["tie_tier_match"].mean()
+            ),
+            "tie_rank_match_rate": float(
+                model_group["tie_rank_match"].mean()
+            ),
+            "top_tier_exact_match_rate": float(
+                group["top_tier_exact_match"].mean()
+            ),
+            "top_tier_jaccard_mean": float(
+                group["top_tier_jaccard"].mean()
+            ),
+            "top_tier_size_mean": float(
+                pd.concat(
+                    [
+                        group["top_tier_size_a"],
+                        group["top_tier_size_b"],
+                    ],
+                    ignore_index=True,
+                ).mean()
+            ),
+            "top_tier_single_model_rate": float(
+                pd.concat(
+                    [
+                        group["top_tier_size_a"],
+                        group["top_tier_size_b"],
+                    ],
+                    ignore_index=True,
+                ).eq(1).mean()
+            ),
+            "tier_count_mean": float(
+                pd.concat(
+                    [
+                        group["tier_count_a"],
+                        group["tier_count_b"],
+                    ],
+                    ignore_index=True,
+                ).mean()
+            ),
+        }
+    return compared, cells, summaries
 
 
 def rank_reliability(
@@ -505,6 +1127,11 @@ def analyze_split(
     score_column: str,
     bank_size: int,
     minimum_agreement: float,
+    equivalence_margins: tuple[float, ...],
+    primary_equivalence_margin: float,
+    pair_bootstrap_replicates: int,
+    pair_ci_level: float,
+    bootstrap_seed: int,
 ) -> tuple[dict[str, Any], dict[str, pd.DataFrame]]:
     split_frame = oracle.merge(
         assignments,
@@ -532,13 +1159,38 @@ def analyze_split(
         split_frame,
         score_column=score_column,
         bank_size=bank_size,
+        equivalence_margins=equivalence_margins,
+        bootstrap_replicates=pair_bootstrap_replicates,
+        ci_level=pair_ci_level,
+        bootstrap_seed=bootstrap_seed,
     )
     pair_a = pair_states[pair_states["bank_id"] == "A"].copy()
     pair_b = pair_states[pair_states["bank_id"] == "B"].copy()
-    pair_comparison, pair_summary = reliability.compare_pair_states(
+    pair_comparison, pair_summaries = compare_pair_states(
         pair_a,
         pair_b,
     )
+    primary_margin_key = f"{primary_equivalence_margin:g}"
+    primary_pair_summary = pair_summaries[primary_margin_key]
+    partial_ranks = partial_order_ranks(
+        pair_states,
+        scores,
+        primary_margin=primary_equivalence_margin,
+    )
+    (
+        partial_rank_comparison,
+        partial_rank_cells,
+        partial_rank_summary,
+    ) = compare_partial_order_ranks(partial_ranks)
+    practical_ranks = practical_tie_ranks(
+        scores,
+        equivalence_margins=equivalence_margins,
+    )
+    (
+        practical_rank_comparison,
+        practical_rank_cells,
+        practical_rank_summaries,
+    ) = compare_practical_tie_ranks(practical_ranks)
     rank_comparison, rank_summary = rank_reliability(
         scores_a,
         scores_b,
@@ -547,15 +1199,33 @@ def analyze_split(
     summary = reliability.summarize_continuous(
         compared,
         profile_summary,
-        pair_summary,
+        primary_pair_summary,
     )
+    summary["tie_aware_model_contrasts"] = {
+        "primary_equivalence_margin": primary_equivalence_margin,
+        "primary": primary_pair_summary,
+        "by_margin": pair_summaries,
+    }
+    summary["partial_order_rank_reliability"] = partial_rank_summary
+    summary["practical_tie_rank_reliability"] = {
+        "primary_equivalence_margin": primary_equivalence_margin,
+        "primary": practical_rank_summaries[primary_margin_key],
+        "by_margin": practical_rank_summaries,
+    }
     summary["formal_rank_reliability"] = rank_summary
     return summary, {
         "cell_model_scores": scores,
         "cell_model_reliability": compared,
         "capability_profiles": profiles,
         "capability_profile_reliability": profile_comparison,
+        "tie_aware_pair_states": pair_states,
         "tie_aware_model_contrasts": pair_comparison,
+        "partial_order_ranks": partial_ranks,
+        "partial_order_rank_reliability": partial_rank_comparison,
+        "partial_order_top_tier_reliability": partial_rank_cells,
+        "practical_tie_ranks": practical_ranks,
+        "practical_tie_rank_reliability": practical_rank_comparison,
+        "practical_tie_top_tier_reliability": practical_rank_cells,
         "rank_reliability": rank_comparison,
     }
 
@@ -572,7 +1242,9 @@ def flat_summary_row(
     normalized = summary["cell_normalized_score_reliability"]
     profile = summary["capability_profile_reliability"]["overall"]
     relative = summary["symmetric_relative_difference"]
-    pairs = summary["tie_aware_model_contrasts"]
+    pairs = summary["tie_aware_model_contrasts"]["primary"]
+    partial = summary["partial_order_rank_reliability"]
+    practical = summary["practical_tie_rank_reliability"]["primary"]
     rank = summary["formal_rank_reliability"]
     return {
         "bank_size": bank_size,
@@ -610,6 +1282,41 @@ def flat_summary_row(
         "tie_direction_conflict_count": pairs[
             "direction_conflict_count"
         ],
+        "tie_conclusion_compatibility_rate": pairs[
+            "conclusion_compatibility_rate"
+        ],
+        "tie_both_equivalent_count": pairs["both_equivalent_count"],
+        "tie_both_unresolved_count": pairs["both_unresolved_count"],
+        "partial_tier_match_rate": partial["tier_match_rate"],
+        "rank_interval_overlap_rate": partial[
+            "rank_interval_overlap_rate"
+        ],
+        "top_tier_exact_match_rate": partial[
+            "top_tier_exact_match_rate"
+        ],
+        "top_tier_jaccard_mean": partial["top_tier_jaccard_mean"],
+        "practical_tie_pair_agreement_mean": practical[
+            "tie_pair_state_agreement"
+        ]["mean"],
+        "practical_exact_tie_rank_vector_rate": practical[
+            "exact_tie_rank_vector_rate"
+        ],
+        "practical_tie_tier_match_rate": practical[
+            "tie_tier_match_rate"
+        ],
+        "practical_top_tier_exact_match_rate": practical[
+            "top_tier_exact_match_rate"
+        ],
+        "practical_top_tier_jaccard_mean": practical[
+            "top_tier_jaccard_mean"
+        ],
+        "practical_conclusion_compatibility_rate": practical[
+            "conclusion_compatibility_rate"
+        ],
+        "practical_top_tier_size_mean": practical[
+            "top_tier_size_mean"
+        ],
+        "practical_tier_count_mean": practical["tier_count_mean"],
     }
 
 
@@ -639,6 +1346,15 @@ def random_repeat_summary(frame: pd.DataFrame) -> dict[str, Any]:
         "capability_profile_lin_ccc",
         "symmetric_relative_difference_median",
         "tie_state_match_rate",
+        "partial_tier_match_rate",
+        "rank_interval_overlap_rate",
+        "top_tier_jaccard_mean",
+        "practical_tie_pair_agreement_mean",
+        "practical_exact_tie_rank_vector_rate",
+        "practical_top_tier_jaccard_mean",
+        "practical_conclusion_compatibility_rate",
+        "practical_top_tier_size_mean",
+        "practical_tier_count_mean",
     ]
     result: dict[str, Any] = {}
     random_frame = frame[frame["split_kind"] == "random"]
@@ -715,6 +1431,10 @@ def render_report(summary: dict[str, Any], flat: pd.DataFrame) -> str:
         "确定性排序后取前 N 与后 N。",
         "",
         f"排名 cell 通过阈值：`{summary['minimum_pairwise_agreement']:.2f}`。",
+        f"Practical-equivalence 主界值：相对 MASE "
+        f"`±{summary['primary_equivalence_margin']:.1%}`；"
+        f"paired bootstrap {summary['pair_bootstrap_replicates']} 次，"
+        f"CI={summary['pair_ci_level']:.0%}。",
         "",
     ]
     ordered = flat[flat["split_kind"] == "ordered"]
@@ -726,8 +1446,8 @@ def render_report(summary: dict[str, Any], flat: pd.DataFrame) -> str:
             [
                 f"## {title}",
                 "",
-                "| N per bank | Rank agreement | Cells passed | Top-1 | "
-                "Profile CCC | Tie-state match |",
+                "| N | Point rank | Tie-state exact | No contradiction | "
+                "Top-tier Jaccard | Mean top-tier size |",
                 "|---:|---:|---:|---:|---:|---:|",
             ]
         )
@@ -738,12 +1458,35 @@ def render_report(summary: dict[str, Any], flat: pd.DataFrame) -> str:
             lines.append(
                 f"| {int(row['bank_size'])} | "
                 f"{row['rank_pairwise_agreement_mean']:.4f} | "
-                f"{row['rank_passed_cell_rate']:.4f} | "
-                f"{row['top1_agreement_rate']:.4f} | "
-                f"{row['capability_profile_lin_ccc']:.4f} | "
-                f"{row['tie_state_match_rate']:.4f} |"
+                f"{row['practical_tie_pair_agreement_mean']:.4f} | "
+                f"{row['practical_conclusion_compatibility_rate']:.4f} | "
+                f"{row['practical_top_tier_jaccard_mean']:.4f} | "
+                f"{row['practical_top_tier_size_mean']:.2f} |"
             )
         lines.append("")
+        if policy == "oracle_context":
+            result = summary["ordered_split"][policy][
+                str(int(selected["bank_size"].max()))
+            ]["practical_tie_rank_reliability"]["by_margin"]
+            lines.extend(
+                [
+                    "| Margin | Exact pair state | No contradiction | "
+                    "Exact tie vector | Mean top-tier size |",
+                    "|---:|---:|---:|---:|---:|",
+                ]
+            )
+            for margin, margin_result in sorted(
+                result.items(),
+                key=lambda item: float(item[0]),
+            ):
+                lines.append(
+                    f"| {float(margin):.1%} | "
+                    f"{margin_result['tie_pair_state_agreement']['mean']:.4f} | "
+                    f"{margin_result['conclusion_compatibility_rate']:.4f} | "
+                    f"{margin_result['exact_tie_rank_vector_rate']:.4f} | "
+                    f"{margin_result['top_tier_size_mean']:.2f} |"
+                )
+            lines.append("")
     if summary["random_repeats"] > 0:
         lines.extend(
             [
@@ -778,6 +1521,10 @@ def analyze(
     random_repeats: int,
     split_seed: int,
     minimum_agreement: float,
+    equivalence_margins: list[float],
+    primary_equivalence_margin: float,
+    pair_bootstrap_replicates: int,
+    pair_ci_level: float,
 ) -> dict[str, Any]:
     e2_dir = e2_dir.resolve()
     output_dir = output_dir.resolve()
@@ -785,6 +1532,18 @@ def analyze(
         raise ValueError("random repeats cannot be negative")
     if not 0.0 <= minimum_agreement <= 1.0:
         raise ValueError("minimum agreement must be between zero and one")
+    margins = tuple(sorted(set(float(value) for value in equivalence_margins)))
+    if not margins or any(value <= 0.0 or value >= 1.0 for value in margins):
+        raise ValueError("equivalence margins must be between zero and one")
+    if not any(
+        np.isclose(primary_equivalence_margin, value)
+        for value in margins
+    ):
+        raise ValueError("primary equivalence margin must be in margins")
+    if pair_bootstrap_replicates < 100:
+        raise ValueError("pair bootstrap requires at least 100 replicates")
+    if not 0.50 < pair_ci_level < 1.0:
+        raise ValueError("pair CI level must be between 0.50 and 1.0")
     sizes = sorted(set(int(value) for value in bank_sizes))
     if not sizes:
         raise ValueError("at least one bank size is required")
@@ -835,6 +1594,23 @@ def analyze(
                     score_column=score_column,
                     bank_size=bank_size,
                     minimum_agreement=minimum_agreement,
+                    equivalence_margins=margins,
+                    primary_equivalence_margin=(
+                        primary_equivalence_margin
+                    ),
+                    pair_bootstrap_replicates=(
+                        pair_bootstrap_replicates
+                    ),
+                    pair_ci_level=pair_ci_level,
+                    bootstrap_seed=stable_bootstrap_seed(
+                        split_seed,
+                        (
+                            split_kind,
+                            repeat_index,
+                            bank_size,
+                            score_policy,
+                        ),
+                    ),
                 )
                 flat_rows.append(
                     flat_summary_row(
@@ -919,6 +1695,10 @@ def analyze(
         "random_repeats": random_repeats,
         "split_seed": split_seed,
         "minimum_pairwise_agreement": minimum_agreement,
+        "equivalence_margins": list(margins),
+        "primary_equivalence_margin": primary_equivalence_margin,
+        "pair_bootstrap_replicates": pair_bootstrap_replicates,
+        "pair_ci_level": pair_ci_level,
         "ordered_split": ordered_summaries,
         "random_split": random_repeat_summary(flat),
         "interpretation": (
@@ -993,6 +1773,16 @@ def main() -> int:
         random_repeats=int(args.random_repeats),
         split_seed=int(args.split_seed),
         minimum_agreement=float(args.minimum_agreement),
+        equivalence_margins=[
+            float(value) for value in args.equivalence_margins
+        ],
+        primary_equivalence_margin=float(
+            args.primary_equivalence_margin
+        ),
+        pair_bootstrap_replicates=int(
+            args.pair_bootstrap_replicates
+        ),
+        pair_ci_level=float(args.pair_ci_level),
     )
     oracle_80 = summary["ordered_split"]["oracle_context"].get("80")
     if oracle_80 is None:
