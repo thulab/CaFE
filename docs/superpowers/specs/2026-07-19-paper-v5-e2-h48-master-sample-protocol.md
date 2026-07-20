@@ -129,7 +129,7 @@ context 指标不得删除，因此后续可以在不重新推理的情况下改
 
 ```bash
 cd backend
-uv run python ../scripts/generate_paper_v5_e2_master_samples.py
+uv run python ../scripts/generate_paper_e2_master_samples.py
 ```
 
 生成前必须满足：

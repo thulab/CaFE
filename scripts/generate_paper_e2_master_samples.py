@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the formal Paper v5 E2 H=48 master sample collection.
+"""Generate a formal paper E2 H=48 master sample collection.
 
 Each accepted paired group contains all five intensities generated from the
 same attempt seed.  A group is accepted only when every intensity passes
@@ -84,7 +84,7 @@ INTENSITIES = (1, 2, 3, 4, 5)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Generate formal Paper v5 E2 H=48 master samples with paired "
+            "Generate formal paper E2 H=48 master samples with paired "
             "five-intensity and four-context acceptance."
         )
     )
@@ -105,6 +105,20 @@ def parse_args() -> argparse.Namespace:
         "--max-attempts",
         type=int,
         default=DEFAULT_MAX_ATTEMPTS,
+    )
+    parser.add_argument(
+        "--flat-batch-seed",
+        type=int,
+        default=None,
+        help=(
+            "Generate one flat N=160 seed bank per cell with no round "
+            "fields, using this batch seed."
+        ),
+    )
+    parser.add_argument(
+        "--flat-batch-id",
+        default="B",
+        help="Identity stored on rows generated with --flat-batch-seed.",
     )
     parser.add_argument(
         "--datasets",
@@ -447,18 +461,39 @@ def master_sample_row(
     cell: dict[str, Any],
     profile: dict[str, Any],
     intensity: int,
-    round_index: int,
-    round_seed: int,
+    round_index: int | None,
+    round_seed: int | None,
     sample_index: int,
     sample_seed: int,
     attempt: int,
     attempt_seed: int,
     candidate: dict[str, Any],
+    batch_id: str | None = None,
+    batch_seed: int | None = None,
 ) -> dict[str, Any]:
-    paired_group_id = (
-        f"{cell['profile_id']}__{cell['capability_id']}__"
-        f"r{round_index}__s{sample_index:03d}"
-    )
+    if batch_id is None:
+        if round_index is None or round_seed is None:
+            raise ValueError("round identity is required outside flat mode")
+        paired_group_id = (
+            f"{cell['profile_id']}__{cell['capability_id']}__"
+            f"r{round_index}__s{sample_index:03d}"
+        )
+        sampling_identity = {
+            "round_index": int(round_index),
+            "round_seed": int(round_seed),
+        }
+    else:
+        if batch_seed is None:
+            raise ValueError("batch_seed is required in flat mode")
+        paired_group_id = (
+            f"batch-{batch_id}__{cell['profile_id']}__"
+            f"{cell['capability_id']}__s{sample_index:03d}"
+        )
+        sampling_identity = {
+            "batch_id": batch_id,
+            "batch_seed": int(batch_seed),
+            "sampling_axis": "flat_sample_index",
+        }
     sample_id = f"{paired_group_id}__i{intensity}"
     metadata = candidate["metadata"]
     conditioning = metadata["generator_conditioning"]
@@ -474,8 +509,7 @@ def master_sample_row(
         "task_id": cell["task_id"],
         "capability_id": cell["capability_id"],
         "intensity": int(intensity),
-        "round_index": int(round_index),
-        "round_seed": int(round_seed),
+        **sampling_identity,
         "sample_index": int(sample_index),
         "sample_seed": int(sample_seed),
         "paired_attempt": int(attempt),
@@ -538,10 +572,14 @@ def validate_complete_shard(
     *,
     cell: dict[str, Any],
     expected: int,
+    flat_batch_id: str | None = None,
+    flat_batch_seed: int | None = None,
+    samples_per_cell: int | None = None,
 ) -> dict[str, Any]:
     count = 0
     paired: dict[str, list[dict[str, Any]]] = {}
     sample_ids: set[str] = set()
+    observed_indices: set[int] = set()
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
             if not line.strip():
@@ -557,6 +595,15 @@ def validate_complete_shard(
                 raise ValueError(f"context contract mismatch in {path}")
             if int(row["horizon"]) != HORIZON:
                 raise ValueError(f"horizon contract mismatch in {path}")
+            if flat_batch_id is not None:
+                if "round_index" in row or "round_seed" in row:
+                    raise ValueError(f"round field is forbidden in {path}")
+                if (
+                    row.get("batch_id") != flat_batch_id
+                    or int(row.get("batch_seed")) != flat_batch_seed
+                    or row.get("sampling_axis") != "flat_sample_index"
+                ):
+                    raise ValueError(f"flat batch identity mismatch in {path}")
             if not bool(row.get("construction_validated")):
                 raise ValueError(f"unvalidated construction in {path}")
             view_qualification = row.get("view_qualification", [])
@@ -580,12 +627,20 @@ def validate_complete_shard(
             if sample_id in sample_ids:
                 raise ValueError(f"duplicate sample_id in {path}: {sample_id}")
             sample_ids.add(sample_id)
+            observed_indices.add(int(row["sample_index"]))
             paired.setdefault(row["paired_group_id"], []).append(row)
             count += 1
     if count != expected:
         raise ValueError(
             f"incomplete shard {path}: observed={count}, expected={expected}"
         )
+    if flat_batch_id is not None:
+        if samples_per_cell is None:
+            raise ValueError("samples_per_cell is required in flat mode")
+        if observed_indices != set(range(samples_per_cell)):
+            raise ValueError(f"flat sample indexes are incomplete in {path}")
+        if len(paired) != samples_per_cell:
+            raise ValueError(f"paired group count mismatch in {path}")
     for group_id, rows in paired.items():
         if len(rows) != len(INTENSITIES):
             raise ValueError(f"paired group row count mismatch: {group_id}")
@@ -612,6 +667,8 @@ def generate_cell_shard(
     round_seeds: tuple[int, ...],
     samples_per_round: int,
     max_attempts: int,
+    flat_batch_id: str | None = None,
+    flat_batch_seed: int | None = None,
 ) -> dict[str, Any]:
     path = shard_path(output_dir, cell)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -623,6 +680,11 @@ def generate_cell_shard(
             path,
             cell=cell,
             expected=expected,
+            flat_batch_id=flat_batch_id,
+            flat_batch_seed=flat_batch_seed,
+            samples_per_cell=(
+                samples_per_round if flat_batch_id is not None else None
+            ),
         )
     temporary = path.with_suffix(path.suffix + ".in_progress")
     if temporary.exists():
@@ -644,7 +706,12 @@ def generate_cell_shard(
             for sample_index in range(samples_per_round):
                 sample_seed = _seed_for(
                     round_seed,
-                    f"{cell['profile_id']}:{cell['capability_id']}",
+                    (
+                        f"flat-batch:{flat_batch_id}:"
+                        if flat_batch_id is not None
+                        else ""
+                    )
+                    + f"{cell['profile_id']}:{cell['capability_id']}",
                     sample_index,
                 )
                 attempt, attempt_seed, candidates = generate_paired_group(
@@ -669,6 +736,8 @@ def generate_cell_shard(
                         attempt=attempt,
                         attempt_seed=attempt_seed,
                         candidate=candidates[intensity],
+                        batch_id=flat_batch_id,
+                        batch_seed=flat_batch_seed,
                     )
                     handle.write(
                         json.dumps(
@@ -679,9 +748,14 @@ def generate_cell_shard(
                         )
                         + "\n"
                     )
+            progress = (
+                f"flat batch {flat_batch_id}: {samples_per_round} samples"
+                if flat_batch_id is not None
+                else f"round {round_index}/{len(round_seeds)}"
+            )
             print(
                 f"[generate] {cell['dataset_id']}/{cell['capability_id']} "
-                f"round {round_index}/{len(round_seeds)}",
+                f"{progress}",
                 flush=True,
             )
     os.replace(temporary, path)
@@ -689,6 +763,11 @@ def generate_cell_shard(
         path,
         cell=cell,
         expected=expected,
+        flat_batch_id=flat_batch_id,
+        flat_batch_seed=flat_batch_seed,
+        samples_per_cell=(
+            samples_per_round if flat_batch_id is not None else None
+        ),
     )
     result["attempt_summary"] = {
         "minimum": min(attempts),
@@ -723,6 +802,8 @@ def generate_collection(
     max_attempts: int,
     dataset_ids: tuple[str, ...] | None = None,
     stage: str = "all",
+    flat_batch_id: str | None = None,
+    flat_batch_seed: int | None = None,
 ) -> dict[str, Any]:
     suite_dir = suite_dir.resolve()
     output_dir = output_dir.resolve()
@@ -778,8 +859,6 @@ def generate_collection(
             "horizon": HORIZON,
         },
         "intensities": list(INTENSITIES),
-        "round_seeds": list(round_seeds),
-        "samples_per_round_per_cell": samples_per_round,
         "generation_max_attempts": max_attempts,
         "supported_cell_count": len(cells),
         "expected_paired_group_count": (
@@ -808,6 +887,23 @@ def generate_collection(
         ),
         "cells": cells,
     }
+    if flat_batch_id is None:
+        config.update(
+            {
+                "round_seeds": list(round_seeds),
+                "samples_per_round_per_cell": samples_per_round,
+            }
+        )
+    else:
+        config.update(
+            {
+                "batch_id": flat_batch_id,
+                "batch_seed": int(flat_batch_seed),
+                "sampling_axis": "flat_sample_index",
+                "round_policy": "none",
+                "samples_per_cell": samples_per_round,
+            }
+        )
     config_path = output_dir / "generation_config.json"
     if config_path.exists():
         existing = read_json(config_path)
@@ -856,6 +952,13 @@ def generate_collection(
                     path,
                     cell=cell,
                     expected=expected_per_cell,
+                    flat_batch_id=flat_batch_id,
+                    flat_batch_seed=flat_batch_seed,
+                    samples_per_cell=(
+                        samples_per_round
+                        if flat_batch_id is not None
+                        else None
+                    ),
                 )
             )
     else:
@@ -876,6 +979,8 @@ def generate_collection(
                     round_seeds=round_seeds,
                     samples_per_round=samples_per_round,
                     max_attempts=max_attempts,
+                    flat_batch_id=flat_batch_id,
+                    flat_batch_seed=flat_batch_seed,
                 )
             )
     if stage == "shards":
@@ -931,27 +1036,55 @@ def generate_collection(
             },
         },
         "sample_shards": shard_records,
-        "generator_path": str(Path(__file__).relative_to(REPO_ROOT)),
+        "generator_path": str(
+            Path(__file__).resolve().relative_to(REPO_ROOT)
+        ),
         "generator_sha256": file_sha256(Path(__file__)),
     }
+    if flat_batch_id is not None:
+        result.update(
+            {
+                "batch_id": flat_batch_id,
+                "batch_seed": int(flat_batch_seed),
+                "sampling_axis": "flat_sample_index",
+                "round_policy": "none",
+                "samples_per_cell": samples_per_round,
+                "all_rows_have_no_round_fields": True,
+            }
+        )
     write_json(output_dir / "sample_manifest.json", result)
     return result
 
 
 def main() -> int:
     args = parse_args()
-    round_seeds = tuple(int(seed) for seed in args.round_seeds)
-    if len(round_seeds) != 5 or len(set(round_seeds)) != 5:
-        raise ValueError("formal E2 generation requires five unique round seeds")
-    if args.samples_per_round != 32:
-        raise ValueError("formal E2 generation requires 32 samples per round")
+    if args.flat_batch_seed is None:
+        round_seeds = tuple(int(seed) for seed in args.round_seeds)
+        samples_per_round = int(args.samples_per_round)
+        flat_batch_id = None
+        flat_batch_seed = None
+        if len(round_seeds) != 5 or len(set(round_seeds)) != 5:
+            raise ValueError(
+                "formal E2 generation requires five unique round seeds"
+            )
+        if samples_per_round != 32:
+            raise ValueError(
+                "formal E2 generation requires 32 samples per round"
+            )
+    else:
+        flat_batch_id = str(args.flat_batch_id).strip()
+        if not flat_batch_id:
+            raise ValueError("flat-batch-id must not be empty")
+        flat_batch_seed = int(args.flat_batch_seed)
+        round_seeds = (flat_batch_seed,)
+        samples_per_round = 160
     if args.max_attempts < 1:
         raise ValueError("max-attempts must be positive")
     result = generate_collection(
         suite_dir=args.suite_dir,
         output_dir=args.output_dir,
         round_seeds=round_seeds,
-        samples_per_round=int(args.samples_per_round),
+        samples_per_round=samples_per_round,
         max_attempts=int(args.max_attempts),
         dataset_ids=(
             None
@@ -959,6 +1092,8 @@ def main() -> int:
             else tuple(str(value) for value in args.datasets)
         ),
         stage=str(args.stage),
+        flat_batch_id=flat_batch_id,
+        flat_batch_seed=flat_batch_seed,
     )
     print(
         f"formal E2 {result.get('status', 'complete')}: "

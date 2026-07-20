@@ -12,13 +12,13 @@ import pytest
 SCRIPT_PATH = (
     Path(__file__).resolve().parents[3]
     / "scripts"
-    / "generate_paper_v5_e2_master_samples.py"
+    / "generate_paper_e2_master_samples.py"
 )
 
 
 def load_module():
     spec = importlib.util.spec_from_file_location(
-        "generate_paper_v5_e2_master_samples",
+        "generate_paper_e2_master_samples",
         SCRIPT_PATH,
     )
     assert spec and spec.loader
@@ -219,3 +219,49 @@ def test_select_cells_keeps_dataset_disjoint_generation_shards():
     assert selected == [cells[2]]
     with pytest.raises(ValueError, match="no supported cells"):
         module.select_cells(cells, ("missing_dataset",))
+
+
+def test_flat_batch_rows_have_no_round_identity(tmp_path):
+    module = load_module()
+    cell = {
+        "profile_id": "dataset__univariate__L504_H48",
+        "dataset_id": "dataset",
+        "task_id": "univariate",
+        "capability_id": "trend",
+    }
+    profile = {
+        "season_length": 24,
+        "frequency": "h",
+        "target_dim": 1,
+        "hierarchy": None,
+    }
+    path = tmp_path / "flat.jsonl"
+    with path.open("w", encoding="utf-8") as handle:
+        for intensity in module.INTENSITIES:
+            row = module.master_sample_row(
+                cell=cell,
+                profile=profile,
+                intensity=intensity,
+                round_index=None,
+                round_seed=None,
+                sample_index=0,
+                sample_seed=17,
+                attempt=0,
+                attempt_seed=19,
+                candidate=candidate(module, intensity, accepted=True),
+                batch_id="B",
+                batch_seed=2026072021,
+            )
+            assert "round_index" not in row
+            assert "round_seed" not in row
+            handle.write(json.dumps(row) + "\n")
+
+    audit = module.validate_complete_shard(
+        path,
+        cell=cell,
+        expected=5,
+        flat_batch_id="B",
+        flat_batch_seed=2026072021,
+        samples_per_cell=1,
+    )
+    assert audit["paired_group_count"] == 1
