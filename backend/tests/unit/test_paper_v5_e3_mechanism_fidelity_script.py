@@ -546,7 +546,8 @@ def test_covariate_omitted_reuse_scores_zero_effect_as_formal():
         "master_sample_id": "sample",
         "round_index": 1,
         "sample_index": 0,
-        "analysis_pool_index": 0,
+        "analysis_pool_index": "7",
+        "pool_index": "11",
         "analysis_block_id": "A",
         "target": target.tolist(),
         "covariates": covariates.tolist(),
@@ -597,6 +598,7 @@ def test_covariate_omitted_reuse_scores_zero_effect_as_formal():
     )
 
     row = scores.iloc[0]
+    assert row["analysis_pool_index"] == 7
     assert bool(row["formal_score_eligible"])
     assert row["input_execution_mode"] == "adapted"
     assert row["counterfactual_effect_mae"] == 0.0
@@ -605,3 +607,35 @@ def test_covariate_omitted_reuse_scores_zero_effect_as_formal():
     assert diagnostics["evaluation_mode"] == (
         "paired_future_covariate_ablation"
     )
+
+    sample.pop("analysis_pool_index")
+    scores = e3.evaluate_selected_predictions(
+        {"sample": sample},
+        {
+            "model": {
+                "sample": {
+                    "oracle_context": 168,
+                    "oracle_mase": 1.0,
+                }
+            }
+        },
+        predictions,
+        counterfactual,
+    )
+    assert scores.iloc[0]["analysis_pool_index"] == 11
+
+    sample.pop("pool_index")
+    scores = e3.evaluate_selected_predictions(
+        {"sample": sample},
+        {
+            "model": {
+                "sample": {
+                    "oracle_context": 168,
+                    "oracle_mase": 1.0,
+                }
+            }
+        },
+        predictions,
+        counterfactual,
+    )
+    assert scores.iloc[0]["analysis_pool_index"] == -1

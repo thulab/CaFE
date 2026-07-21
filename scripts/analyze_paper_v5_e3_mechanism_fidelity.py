@@ -793,7 +793,10 @@ def evaluate_selected_predictions(
                     "round_index": int(sample["round_index"]),
                     "sample_index": int(sample["sample_index"]),
                     "analysis_pool_index": int(
-                        sample.get("analysis_pool_index", -1)
+                        sample.get(
+                            "analysis_pool_index",
+                            sample.get("pool_index", -1),
+                        )
                     ),
                     "analysis_block_id": str(
                         sample.get("analysis_block_id", "")

@@ -1,8 +1,11 @@
 # Paper v7 结构化数据集扩展与预注册协议
 
-- 状态：已批准，实施中
+- 状态：已完成
 - 更新日期：2026-07-21
 - 适用范围：CapTS-Bench dataset-local 合成生成、E1/E2/E3；不涉及平台前后端
+
+正式生成、八模型推理、160-group 稳定性与能力画像结果见
+[`2026-07-21-paper-v7-formal-generation-inference-analysis.md`](../baselines/2026-07-21-paper-v7-formal-generation-inference-analysis.md)。
 
 ## 1. 决策摘要
 
