@@ -11,6 +11,7 @@
 | [架构与关键流程](./key-flows.md) | 系统分层架构、错误信封、关键流程（数据集接入与样本物化 / 合成测试用例生成 / 赛道与能力块 / **评测运行执行** / 模型推理接入 / 榜单计算 / 样本预测视图）、本地桩服务行为、API 端点速查表、扩展指引 |
 | [数据模型](./data-model.md) | 全部 25 个 SQLModel 实体设计（字段表 + 状态枚举 + ER 图）、3 类落盘产物（sample.v1 / forecast.v1 / report JSON）、传输层 DTO、关键不变量与生命周期 |
 | [真实锚点与合成数据方法](./synthetic-data-methodology.md) | 逐 dataset profile、dataset-local 五档相对强度、九能力 support matrix、三路真实拆分、construction / feature-support / DCR-NNDR 门控与合成—真实排名比较 |
+| [Paper v7 样本曲线浏览器](./paper-sample-explorer.md) | 启动独立只读网页，按 dataset / capability / sample 切换，并排观察五档 intensity 与多模型推理曲线 |
 | [能力生成图谱](../capabilities/index.html) | 9 类能力的清晰公式、符号与统计特征表，以及 intensity 1/3/5 的配对样本图 |
 | [Docker 部署与环境变量](./deployment.md) | Docker Compose 部署、外部推理服务地址配置、runtime volume、镜像发布，以及完整 `TSBENCHMARK_*` 环境变量表 |
 

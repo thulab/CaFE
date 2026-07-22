@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <meta name="description" content="Paper v7 合成时序样本与多模型推理结果浏览器">
+    <title>TS Lens · Synthetic Sample Explorer</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#charts">跳到样本曲线</a>
+    <div class="page-shell">
+      <header class="app-header">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" role="img">
+              <path d="M3 18h4l2-8 4 14 4-18 4 12h8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div>
+            <p class="eyebrow">PAPER EXP · V7</p>
+            <h1>TS Lens</h1>
+          </div>
+        </div>
+        <div class="header-copy">
+          <p class="header-title">合成样本推理观察台</p>
+          <p class="header-subtitle">同一随机种子的五档能力强度，叠加全部模型预测。</p>
+        </div>
+        <div class="index-status" id="index-status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span>正在读取索引</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="control-panel" aria-labelledby="selection-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">01 / SELECT</p>
+              <h2 id="selection-title">定位实验切片</h2>
+            </div>
+            <div class="chart-heading-side">
+              <div class="best-model-callout" id="best-model-callout" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8v3a4 4 0 0 1-8 0V3Zm-3 1h3v2a4 4 0 0 1-3-2Zm14 0h-3v2a4 4 0 0 0 3-2ZM12 10v4m-3 4h6m-5-4h4l1 4H9l1-4Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div>
+                  <span class="best-model-label">Oracle-context · 1,600 samples mean MASE</span>
+                  <p><strong id="best-model-name">—</strong><span id="best-model-score">—</span></p>
+                </div>
+              </div>
+              <p class="selection-summary" id="selection-summary">等待数据</p>
+            </div>
+          </div>
+
+          <div class="primary-controls">
+            <label class="field">
+              <span class="field-label">Dataset</span>
+              <span class="select-wrap">
+                <select id="dataset-select" disabled></select>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Capability</span>
+              <span class="select-wrap">
+                <select id="capability-select" disabled></select>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+            </label>
+            <div class="field sample-field">
+              <span class="field-label" id="sample-label">Sample</span>
+              <div class="sample-stepper">
+                <button class="icon-button" id="previous-sample" type="button" aria-label="上一个样本" disabled>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 5-5 5 5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <span class="select-wrap">
+                  <select id="sample-select" aria-labelledby="sample-label" disabled></select>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+                <button class="icon-button" id="next-sample" type="button" aria-label="下一个样本" disabled>
+                  <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m8 5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="field context-field">
+              <span class="field-label" id="context-label">Context</span>
+              <div class="segmented" id="context-control" role="group" aria-labelledby="context-label"></div>
+            </div>
+          </div>
+
+          <div class="secondary-controls">
+            <label class="compact-field" id="channel-field" hidden>
+              <span>Target</span>
+              <span class="select-wrap compact-select">
+                <select id="channel-select"></select>
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6 8 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+            </label>
+            <label class="switch-field">
+              <input type="checkbox" id="shared-scale" checked>
+              <span class="switch" aria-hidden="true"></span>
+              <span>五图共享纵轴</span>
+            </label>
+            <p class="keyboard-hint">
+              <kbd>←</kbd><kbd>→</kbd>
+              <span>切换样本</span>
+            </p>
+          </div>
+        </section>
+
+        <section class="legend-panel" aria-labelledby="legend-title">
+          <div class="legend-heading">
+            <div>
+              <p class="section-index">02 / MODELS</p>
+              <h2 id="legend-title">叠加模型</h2>
+            </div>
+            <div class="legend-actions">
+              <button class="text-button" id="select-all-models" type="button">全选</button>
+              <span class="action-divider" aria-hidden="true"></span>
+              <button class="text-button" id="select-no-models" type="button">清空</button>
+            </div>
+          </div>
+          <div class="model-legend" id="model-legend" aria-label="模型图例"></div>
+          <div class="reference-legend" aria-label="真实序列图例">
+            <span class="reference-item"><span class="line-key history-key"></span>历史</span>
+            <span class="reference-item"><span class="line-key actual-key"></span>真实未来</span>
+            <span class="reference-note">模型虚线始于预测边界；图例数值为当前样本、当前 context 的五档平均 MASE。</span>
+          </div>
+        </section>
+
+        <section class="chart-section" id="charts" aria-labelledby="charts-title" tabindex="-1">
+          <div class="section-heading chart-heading">
+            <div>
+              <p class="section-index">03 / INTENSITY</p>
+              <h2 id="charts-title">强度响应曲线</h2>
+            </div>
+            <div class="chart-heading-side">
+              <div class="best-model-callout context-best-callout" id="context-best-callout" hidden>
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8v3a4 4 0 0 1-8 0V3Zm-3 1h3v2a4 4 0 0 1-3-2Zm14 0h-3v2a4 4 0 0 0 3-2ZM12 10v4m-3 4h6m-5-4h4l1 4H9l1-4Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <div>
+                  <span class="best-model-label" id="context-best-label">Current sample · L504 · Intensity 5</span>
+                  <p><strong id="context-best-name">—</strong><span id="context-best-score">—</span></p>
+                </div>
+              </div>
+              <p class="chart-meta" id="chart-meta">—</p>
+            </div>
+          </div>
+          <div class="message-panel" id="loading-panel" role="status">
+            <span class="loader" aria-hidden="true"></span>
+            <div>
+              <strong>正在读取曲线</strong>
+              <p>仅从大文件中定位当前样本，不会载入全部结果。</p>
+            </div>
+          </div>
+          <div class="message-panel error-panel" id="error-panel" role="alert" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v5m0 3.5v.01M10.3 3.8 2.4 18a2 2 0 0 0 1.75 3h15.7a2 2 0 0 0 1.75-3L13.7 3.8a2 2 0 0 0-3.4 0Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            <div>
+              <strong>曲线读取失败</strong>
+              <p id="error-message"></p>
+              <button class="retry-button" id="retry-button" type="button">重新读取</button>
+            </div>
+          </div>
+          <div class="chart-grid" id="chart-grid" hidden></div>
+        </section>
+      </main>
+
+      <footer>
+        <p>Read-only local viewer · 原始 JSONL 不会被修改</p>
+        <p id="index-detail"></p>
+      </footer>
+    </div>
+
+    <div class="chart-modal" id="chart-modal" role="dialog" aria-modal="true" aria-labelledby="chart-modal-title" hidden>
+      <button class="modal-backdrop" id="modal-backdrop" type="button" aria-label="关闭放大图"></button>
+      <div class="modal-dialog" tabindex="-1">
+        <header class="modal-header">
+          <div>
+            <p class="section-index">EXPANDED VIEW</p>
+            <h2 id="chart-modal-title">放大曲线</h2>
+          </div>
+          <button class="modal-close-button" id="modal-close" type="button" aria-label="关闭放大图">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+        <div class="modal-chart-host" id="modal-chart-host"></div>
+        <footer class="modal-footer">
+          <p id="modal-chart-meta">—</p>
+          <p><kbd>Esc</kbd> 关闭</p>
+        </footer>
+      </div>
+    </div>
+
+    <div class="chart-tooltip" id="chart-tooltip" role="status" hidden></div>
+    <div class="sr-only" id="live-region" aria-live="polite"></div>
+    <script src="/app.js"></script>
+  </body>
+</html>
