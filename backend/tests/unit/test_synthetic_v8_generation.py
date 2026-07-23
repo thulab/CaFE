@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import numpy as np
 import pytest
 
@@ -108,13 +110,94 @@ def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
     assert metadata["responder_indices"] == [1, 2]
     assert delay in metadata["cross_lag_candidate_steps"]
     assert delay >= 48
-    assert delay <= 504 // 3
-    assert delay % 32 == 0
+    assert delay <= int(0.40 * 504)
+    assert (delay - 48) % metadata["cross_lag_step"] == 0
+    assert metadata["cross_lag_sampling_policy"] == (
+        "uniform_master_suffix_view_compatible_lag_at_least_horizon"
+    )
     assert metadata["history_covered_forecast_steps"] == 48
     assert metadata["counterfactual_responder_history_invariant"] is True
     assert metadata["counterfactual_future_is_driver_determined"] is True
     assert metadata["future_only_shock_count"] == 0
     assert np.std(target[504:, 1:]) > 1e-4
+
+
+def test_v8_cross_series_master_pair_remains_well_formed_in_all_suffix_views(
+) -> None:
+    arguments = (
+        "cross_series_dependence",
+        552,
+        504,
+        3,
+        24,
+        5,
+    )
+    first, first_metadata, _ = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(59),
+        counterfactual_variant=0,
+    )
+    second, second_metadata, _ = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(59),
+        counterfactual_variant=1,
+    )
+    first, _ = standardize_cross_series_counterfactual_member(
+        first,
+        context_length=504,
+        metadata=first_metadata,
+    )
+    second, _ = standardize_cross_series_counterfactual_member(
+        second,
+        context_length=504,
+        metadata=second_metadata,
+    )
+    delay = int(first_metadata["cross_lag_steps"])
+
+    for context_length in (96, 168, 336, 504):
+        start = 504 - context_length
+        first_view_metadata = deepcopy(first_metadata)
+        second_view_metadata = deepcopy(second_metadata)
+        first_view_metadata["counterfactual_driver_slice"] = [
+            context_length - delay,
+            context_length,
+        ]
+        second_view_metadata["counterfactual_driver_slice"] = [
+            context_length - delay,
+            context_length,
+        ]
+        first_view, first_normalization = (
+            standardize_cross_series_counterfactual_member(
+                first[start:],
+                context_length=context_length,
+                metadata=first_view_metadata,
+            )
+        )
+        second_view, second_normalization = (
+            standardize_cross_series_counterfactual_member(
+                second[start:],
+                context_length=context_length,
+                metadata=second_view_metadata,
+            )
+        )
+
+        invariant_stop = context_length - delay
+        assert invariant_stop >= 16
+        assert first_normalization == second_normalization
+        assert np.array_equal(
+            first_view[:invariant_stop, 0],
+            second_view[:invariant_stop, 0],
+        )
+        assert np.array_equal(
+            first_view[:context_length, 1:],
+            second_view[:context_length, 1:],
+        )
+        assert not np.array_equal(
+            first_view[context_length:, 1:],
+            second_view[context_length:, 1:],
+        )
+        assert context_length - delay >= 0
+        assert context_length - delay + 48 <= context_length
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
@@ -167,12 +250,14 @@ def test_v8_cross_series_primary_uses_signed_responder_edges() -> None:
     assert metadata["responder_signs"] == [1.0, -1.0, 1.0, -1.0]
 
 
+@pytest.mark.parametrize("context_length", (96, 168, 336))
 def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
+    context_length: int,
 ) -> None:
     arguments = (
         "cross_series_dependence",
-        552,
-        504,
+        context_length + 48,
+        context_length,
         3,
         24,
         5,
@@ -191,14 +276,14 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     first, first_normalization = (
         standardize_cross_series_counterfactual_member(
             first,
-            context_length=504,
+            context_length=context_length,
             metadata=first_metadata,
         )
     )
     second, second_normalization = (
         standardize_cross_series_counterfactual_member(
             second,
-            context_length=504,
+            context_length=context_length,
             metadata=second_metadata,
         )
     )
@@ -206,7 +291,7 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     gate = cross_series_identifiability_gate(
         first,
         second,
-        context_length=504,
+        context_length=context_length,
         metadata=first_metadata,
         enforced=True,
     )
@@ -216,8 +301,19 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
         first[:invariant_stop, 0],
         second[:invariant_stop, 0],
     )
-    assert np.array_equal(first[504:, 0], second[504:, 0])
-    assert np.array_equal(first[:504, 1:], second[:504, 1:])
+    assert np.array_equal(
+        first[context_length:, 0],
+        second[context_length:, 0],
+    )
+    assert np.array_equal(
+        first[:context_length, 1:],
+        second[:context_length, 1:],
+    )
+    assert len(first_metadata["historical_event_centers"]) >= 3
+    assert (
+        first_metadata["historical_event_min_center_spacing"]
+        > first_metadata["counterfactual_event_width"]
+    )
     assert gate["accepted"] is True
     assert gate["blind_best_driver"] == first_metadata["driver_index"]
     assert gate["blind_best_lag"] == first_metadata["cross_lag_steps"]

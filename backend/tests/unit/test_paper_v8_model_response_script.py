@@ -254,6 +254,148 @@ def test_cross_lag_linear_probe_recovers_history_identifiable_effect():
     assert forecast[:, 1:] == pytest.approx(target[context:, 1:])
 
 
+def test_master_expansion_creates_four_views_of_one_cross_series_dgp():
+    response = load_response_module()
+    target, metadata, _ = response.v8_pilot.generate_deterministic_sample(
+        "cross_series_dependence",
+        552,
+        504,
+        3,
+        24,
+        5,
+        np.random.default_rng(71),
+        counterfactual_variant=0,
+    )
+    target, _ = (
+        response.v8_pilot.standardize_cross_series_counterfactual_member(
+            target,
+            context_length=504,
+            metadata=metadata,
+        )
+    )
+    master = {
+        "sample_id": "master",
+        "master_sample_id": "master",
+        "paired_group_id": "group",
+        "counterfactual_pair_id": "pair",
+        "capability_id": "cross_series_dependence",
+        "context_length": 504,
+        "horizon": 48,
+        "target_dim": 3,
+        "target_feature": "cross_series_incremental_r2",
+        "target": target.tolist(),
+        "covariates": None,
+        "generation_metadata": metadata,
+    }
+
+    views = response.expand_master_samples(
+        [master],
+        context_lengths=(96, 168, 336, 504),
+    )
+
+    assert [row["context_length"] for row in views] == [
+        96,
+        168,
+        336,
+        504,
+    ]
+    assert all(
+        np.asarray(row["target"]).shape
+        == (row["context_length"] + 48, 3)
+        for row in views
+    )
+    assert all(row["source_master_sample_id"] == "master" for row in views)
+    delay = int(metadata["cross_lag_steps"])
+    assert all(
+        row["generation_metadata"]["counterfactual_driver_slice"]
+        == [row["context_length"] - delay, row["context_length"]]
+        for row in views
+    )
+
+
+def test_context_profile_reports_diagnostic_best_without_pooling_views():
+    response = load_response_module()
+    predictions = []
+    for context_length, mase in ((96, 0.8), (168, 0.6), (336, 0.7)):
+        predictions.append(
+            {
+                "model_id": "model",
+                "variant": "native",
+                "evaluation_table": "main",
+                "capability_id": "trend",
+                "context_length": context_length,
+                "metrics": {
+                    "mase": mase,
+                    "future_curve_correlation": 0.5,
+                    "flat_forecast": 0.0,
+                },
+            }
+        )
+
+    profile = response.context_performance_profiles(predictions)
+
+    assert profile["diagnostic_preferred_context_by_model"]["model"][
+        "context_length"
+    ] == 168
+    assert {
+        row["context_length"]
+        for row in profile["profiles"]
+        if row["capability_id"] == "__overall__"
+    } == {96, 168, 336}
+
+
+def test_master_context_audit_does_not_count_suffix_views_as_samples():
+    response = load_response_module()
+    predictions = []
+    samples = []
+    for context_length in (96, 504):
+        sample_id = f"master::L{context_length}"
+        samples.append(
+            {
+                "sample_id": sample_id,
+                "evaluation_table": "main",
+                "capability_id": "trend",
+                "generator_family_role": "primary",
+                "counterfactual_pair_id": None,
+            }
+        )
+        for model_id, mase in (
+            ("seasonal_naive", 1.0),
+            ("Chronos-2", 0.5),
+        ):
+            predictions.append(
+                {
+                    "model_id": model_id,
+                    "variant": "native",
+                    "sample_id": sample_id,
+                    "master_sample_id": "master",
+                    "evaluation_table": "main",
+                    "capability_id": "trend",
+                    "generator_family_role": "primary",
+                    "intensity": 5,
+                    "context_length": context_length,
+                    "metrics": {
+                        "mae": mase,
+                        "mase": mase,
+                        "future_curve_correlation": 1.0,
+                        "flat_forecast": 0.0,
+                    },
+                }
+            )
+
+    audit = response.master_context_audit(predictions, samples)
+
+    assert audit["context_length"] == 504
+    assert audit["distinct_master_sample_count"] == 1
+    aggregate = next(
+        row
+        for row in audit["aggregates"]
+        if row["model_id"] == "Chronos-2"
+    )
+    assert aggregate["sample_count"] == 1
+    assert aggregate["metrics"]["mase"] == pytest.approx(0.5)
+
+
 def cross_prediction(
     *,
     variant: str,

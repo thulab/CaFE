@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import math
+import os
 import sys
 import time
 from collections import defaultdict
@@ -26,6 +28,8 @@ for path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
         sys.path.insert(0, str(path))
 
 import run_paper_e2_dynamic_stability as inference  # noqa: E402
+import run_paper_v5_e2_inference as v7_inference  # noqa: E402
+import run_paper_v8_deterministic_pilot as v8_pilot  # noqa: E402
 from app.services.metric_service import compute_sample_metrics  # noqa: E402
 
 
@@ -59,12 +63,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://127.0.0.1:10810")
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
-    parser.add_argument("--devices", default="0")
-    parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--load-timeout-seconds", type=int, default=1200)
+    parser.add_argument(
+        "--context-lengths",
+        nargs="+",
+        type=int,
+        choices=v8_pilot.VIEW_CONTEXT_LENGTHS,
+        default=list(v8_pilot.VIEW_CONTEXT_LENGTHS),
+        help="Suffix views expanded from each L504 master.",
+    )
+    parser.add_argument("--devices", default="0,1")
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=None,
+        help=(
+            "Optional global HTTP concurrency override; by default reuse "
+            "the preregistered v7 per-model execution config."
+        ),
+    )
+    parser.add_argument("--load-timeout-seconds", type=int, default=1800)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
-    parser.add_argument("--max-attempts", type=int, default=2)
+    parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--keep-loaded", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume atomically checkpointed model/variant predictions.",
+    )
     parser.add_argument(
         "--analyze-only",
         action="store_true",
@@ -107,6 +132,127 @@ def write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for row in rows:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def write_jsonl_atomic(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(
+                json.dumps(
+                    row,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    os.replace(temporary, path)
+
+
+def checkpoint_predictions(
+    data_dir: Path,
+    predictions: list[dict[str, Any]],
+    failures: list[dict[str, Any]],
+) -> None:
+    write_jsonl_atomic(
+        data_dir / "model_predictions.checkpoint.jsonl",
+        predictions,
+    )
+    write_jsonl_atomic(
+        data_dir / "model_failures.checkpoint.jsonl",
+        failures,
+    )
+
+
+def array_sha256(values: np.ndarray) -> str:
+    return hashlib.sha256(
+        np.ascontiguousarray(values).tobytes()
+    ).hexdigest()
+
+
+def expand_master_samples(
+    masters: list[dict[str, Any]],
+    *,
+    context_lengths: tuple[int, ...],
+) -> list[dict[str, Any]]:
+    """Expand one L504 DGP draw into standardized suffix forecast views."""
+
+    contexts = tuple(dict.fromkeys(int(value) for value in context_lengths))
+    if not contexts or any(
+        value not in v8_pilot.VIEW_CONTEXT_LENGTHS
+        for value in contexts
+    ):
+        raise ValueError("invalid context-length view request")
+    output: list[dict[str, Any]] = []
+    for master in masters:
+        if int(master["context_length"]) != v8_pilot.CONTEXT_LENGTH:
+            raise ValueError(
+                "v8 inference input must contain L504 master samples"
+            )
+        clean_parent_id = str(
+            master.get("master_sample_id", master["sample_id"])
+        )
+        for context_length in contexts:
+            target, covariates, metadata = v8_pilot.suffix_view(
+                master,
+                context_length,
+            )
+            result = deepcopy(master)
+            result["schema_version"] = "paper_v8_forecast_suffix_view.v1"
+            result["source_master_sample_id"] = str(master["sample_id"])
+            result["root_clean_master_sample_id"] = clean_parent_id
+            result["sample_id"] = (
+                f"{master['sample_id']}__L{context_length}"
+            )
+            result["master_sample_id"] = (
+                f"{clean_parent_id}__L{context_length}"
+            )
+            result["view_id"] = result["sample_id"]
+            result["context_length"] = context_length
+            result["target"] = target.tolist()
+            result["covariates"] = (
+                None if covariates is None else covariates.tolist()
+            )
+            result["generation_metadata"] = metadata
+            result["target_sha256"] = array_sha256(target)
+            result["future_sha256"] = array_sha256(
+                target[context_length:]
+            )
+            result["context_view_policy"] = (
+                "suffix_of_single_L504_master_with_shared_latent_future"
+            )
+            if result.get("counterfactual_pair_id") is not None:
+                result["counterfactual_pair_id"] = (
+                    f"{result['counterfactual_pair_id']}__L{context_length}"
+                )
+            if result.get("paired_group_id") is not None:
+                result["paired_group_id"] = (
+                    f"{result['paired_group_id']}__L{context_length}"
+                )
+            audits = master.get("view_qualification", [])
+            matching_audits = [
+                deepcopy(audit)
+                for audit in audits
+                if int(audit["context_length"]) == context_length
+            ]
+            if matching_audits:
+                result["view_qualification"] = matching_audits
+            features_by_context = master.get(
+                "realized_features_by_context",
+                {},
+            )
+            if str(context_length) in features_by_context:
+                result["realized_features"] = deepcopy(
+                    features_by_context[str(context_length)]
+                )
+                target_feature = str(result["target_feature"])
+                if target_feature in result["realized_features"]:
+                    result["target_feature_value"] = float(
+                        result["realized_features"][target_feature]
+                    )
+            output.append(result)
+    return output
 
 
 def baseline_forecast(sample: dict[str, Any], kind: str) -> np.ndarray:
@@ -860,6 +1006,12 @@ def prediction_row(
         "schema_version": "paper_v8_model_response_prediction.v1",
         "sample_id": sample["sample_id"],
         "master_sample_id": sample.get("master_sample_id", sample["sample_id"]),
+        "source_master_sample_id": sample.get(
+            "source_master_sample_id",
+            sample["sample_id"],
+        ),
+        "context_length": int(sample["context_length"]),
+        "horizon": int(sample["horizon"]),
         "evaluation_table": sample.get("evaluation_table", "main"),
         "model_id": model_id,
         "variant": variant,
@@ -1075,6 +1227,89 @@ def aggregate_predictions(
             }
         )
     return output
+
+
+def context_performance_profiles(
+    predictions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    native = [
+        row
+        for row in predictions
+        if row["variant"] == "native"
+        and row.get("evaluation_table", "main") == "main"
+    ]
+    rows: list[dict[str, Any]] = []
+    for model_id in sorted({row["model_id"] for row in native}):
+        model_rows = [row for row in native if row["model_id"] == model_id]
+        capabilities: list[str | None] = [None] + sorted(
+            {row["capability_id"] for row in model_rows}
+        )
+        for capability_id in capabilities:
+            selected = [
+                row
+                for row in model_rows
+                if capability_id is None
+                or row["capability_id"] == capability_id
+            ]
+            for context_length in sorted(
+                {int(row["context_length"]) for row in selected}
+            ):
+                context_rows = [
+                    row
+                    for row in selected
+                    if int(row["context_length"]) == context_length
+                ]
+                rows.append(
+                    {
+                        "model_id": model_id,
+                        "capability_id": (
+                            capability_id or "__overall__"
+                        ),
+                        "context_length": context_length,
+                        "sample_count": len(context_rows),
+                        "mean_mase": mean_metric(
+                            context_rows,
+                            "mase",
+                        ),
+                        "mean_future_curve_correlation": mean_metric(
+                            context_rows,
+                            "future_curve_correlation",
+                        ),
+                        "flat_forecast_rate": mean_metric(
+                            context_rows,
+                            "flat_forecast",
+                        ),
+                    }
+                )
+    preferred: dict[str, dict[str, Any]] = {}
+    for model_id in sorted({row["model_id"] for row in native}):
+        candidates = [
+            row
+            for row in rows
+            if row["model_id"] == model_id
+            and row["capability_id"] == "__overall__"
+            and row["mean_mase"] is not None
+        ]
+        if not candidates:
+            continue
+        best = min(candidates, key=lambda row: row["mean_mase"])
+        preferred[model_id] = {
+            "context_length": int(best["context_length"]),
+            "mean_mase": float(best["mean_mase"]),
+            "selection_semantics": (
+                "diagnostic_best_on_same_pilot; formal experiments must "
+                "preselect on an independent calibration split"
+            ),
+        }
+    return {
+        "schema_version": "paper_v8_context_performance_profiles.v1",
+        "single_master_dgp": True,
+        "context_lengths": sorted(
+            {int(row["context_length"]) for row in native}
+        ),
+        "profiles": rows,
+        "diagnostic_preferred_context_by_model": preferred,
+    }
 
 
 def paired_variant_audits(
@@ -2024,6 +2259,80 @@ def observation_noise_robustness_audits(
     return output
 
 
+def master_context_audit(
+    predictions: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Recompute result tables on the full L504 suffix only.
+
+    The four context views share one generated master and are not independent
+    samples.  Keeping this audit separate prevents a pooled suffix-view
+    diagnostic from being mislabeled as an L504 benchmark result.
+    """
+
+    context_lengths = sorted(
+        {
+            int(row["context_length"])
+            for row in predictions
+            if row.get("evaluation_table", "main") == "main"
+            and row.get("context_length") is not None
+        }
+    )
+    if not context_lengths:
+        return {
+            "schema_version": "paper_v8_master_context_audit.v1",
+            "context_length": None,
+            "distinct_master_sample_count": 0,
+            "aggregates": [],
+            "family_model_sensitivity": [],
+            "cross_series_counterfactual_audits": [],
+            "covariate_counterfactual_audits": [],
+            "structure_recovery_audits": [],
+        }
+    context_length = max(context_lengths)
+    scoped_predictions = [
+        row
+        for row in predictions
+        if int(row.get("context_length", -1)) == context_length
+    ]
+    scoped_sample_ids = {row["sample_id"] for row in scoped_predictions}
+    scoped_samples = [
+        sample for sample in samples if sample["sample_id"] in scoped_sample_ids
+    ]
+    return {
+        "schema_version": "paper_v8_master_context_audit.v1",
+        "context_length": context_length,
+        "distinct_master_sample_count": len(
+            {
+                str(row.get("master_sample_id") or row["sample_id"])
+                for row in scoped_predictions
+                if row["variant"] == "native"
+                and row.get("evaluation_table", "main") == "main"
+                and row["model_id"] == "seasonal_naive"
+            }
+        ),
+        "aggregates": aggregate_predictions(scoped_predictions),
+        "family_model_sensitivity": family_model_sensitivity(
+            scoped_predictions
+        ),
+        "cross_series_counterfactual_audits": (
+            cross_series_counterfactual_audits(
+                scoped_predictions,
+                scoped_samples,
+            )
+        ),
+        "covariate_counterfactual_audits": (
+            covariate_counterfactual_audits(
+                scoped_predictions,
+                scoped_samples,
+            )
+        ),
+        "structure_recovery_audits": structure_recovery_audits(
+            scoped_predictions
+        ),
+    }
+
+
 def response_summary(
     predictions: list[dict[str, Any]],
     failures: list[dict[str, Any]],
@@ -2142,6 +2451,9 @@ def response_summary(
         "failure_count": len(failures),
         "models": by_model,
         "aggregates": aggregates,
+        "context_performance": context_performance_profiles(
+            predictions
+        ),
         "mechanism_response": mechanism_response,
         "family_model_sensitivity": family_model_sensitivity(predictions),
         "paired_variant_audits": paired_variant_audits(predictions),
@@ -2164,6 +2476,10 @@ def response_summary(
         "observation_noise_robustness": observation_noise_robustness_audits(
             predictions
         ),
+        "master_context_audit": master_context_audit(
+            predictions,
+            samples,
+        ),
     }
 
 
@@ -2172,6 +2488,10 @@ def render_report(summary: dict[str, Any]) -> str:
         "# Paper v8 model-response audit",
         "",
         "## Overall curve behavior",
+        "",
+        "The counts and means in this section pool the four suffix views "
+        "(L96/L168/L336/L504) for descriptive diagnostics; they are not "
+        "independent generated samples and are not the formal L504 result.",
         "",
         "| model | native n | MASE | curve corr | forecast/truth std | flat rate | multivariate semantics |",
         "|---|---:|---:|---:|---:|---:|---|",
@@ -2184,6 +2504,42 @@ def render_report(summary: dict[str, Any]) -> str:
             f"{row['mean_mase']:.3f} | {row['mean_future_curve_correlation']:.3f} | "
             f"{row['median_forecast_to_truth_std_ratio']:.3f} | "
             f"{row['flat_forecast_rate']:.1%} | {row['multivariate_semantics']} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Context-view diagnostic",
+            "",
+            "Every context is a suffix of the same L504 master. The best context "
+            "below is descriptive on this pilot; a formal model-specific choice "
+            "must be fixed using an independent calibration split.",
+            "",
+            "| model | L96 MASE | L168 MASE | L336 MASE | L504 MASE | diagnostic best |",
+            "|---|---:|---:|---:|---:|---:|",
+        ]
+    )
+    context_rows = {
+        (row["model_id"], int(row["context_length"])): row
+        for row in summary["context_performance"]["profiles"]
+        if row["capability_id"] == "__overall__"
+    }
+    for model_id in summary["models"]:
+        if model_id in DIAGNOSTIC_PROBE_MODELS:
+            continue
+        values = []
+        for context_length in v8_pilot.VIEW_CONTEXT_LENGTHS:
+            row = context_rows.get((model_id, context_length))
+            values.append(
+                "—"
+                if row is None or row["mean_mase"] is None
+                else f"{row['mean_mase']:.3f}"
+            )
+        preferred = summary["context_performance"][
+            "diagnostic_preferred_context_by_model"
+        ].get(model_id)
+        lines.append(
+            f"| {model_id} | {' | '.join(values)} | "
+            f"{'—' if preferred is None else preferred['context_length']} |"
         )
     lines.extend(
         [
@@ -2538,12 +2894,15 @@ def render_chinese_report(
             "多季节随机连续周期比、幅度和相位；时变季节随机载波/调制周期和相位；状态切换"
             "随机 3–6 段 duration motif 与 anchor；非线性随机 lag、初态和 forcing；间歇性"
             "随机 3–6 段 interval motif 与 clock phase；共同因子随机模态和载荷；层级随机"
-            "aggregate child share、contrast 方向和周期。跨序列依赖从 64/96/128/160 "
-            "等 patch-aligned lag 中抽取并随机历史/反事实事件位置；协变量 A/B 对随机选择"
+            "aggregate child share、contrast 方向和周期。跨序列依赖从 H 到 H+32 的"
+            "8 步网格抽取 lag，并随机历史/反事实事件位置；协变量 A/B 对随机选择"
             "future reflection、smooth offset 或 amplitude expansion，并随机事件时刻。"
             "这些变化都属于机制内 nuisance，不引入 future-only randomness。",
             "",
             "## 实际模型曲线行为",
+            "",
+            "本节汇总 L96/L168/L336/L504 四个同母本 suffix view，只用于视野诊断；"
+            "四个 view 不是四个独立生成样本，也不作为 L504 正式结果计数。",
             "",
             "| 模型 | n | MASE | 曲线相关 | 预测/真值 std | 平坦率 | 多变量语义 |",
             "|---|---:|---:|---:|---:|---:|---|",
@@ -2899,9 +3258,27 @@ def render_benchmark_final_audit(
             "future-covariate 反事实 effect NRMSE↓",
         ),
     }
+    master_audit = summary.get("master_context_audit") or {}
+    master_context_length = int(
+        master_audit.get("context_length")
+        or generation_summary.get("context_length", 504)
+    )
+    scoped_aggregates = master_audit.get("aggregates") or summary["aggregates"]
+    scoped_family_sensitivity = (
+        master_audit.get("family_model_sensitivity")
+        or summary.get("family_model_sensitivity", [])
+    )
+    scoped_cross_counterfactual = (
+        master_audit.get("cross_series_counterfactual_audits")
+        or summary.get("cross_series_counterfactual_audits", [])
+    )
+    scoped_covariate_counterfactual = (
+        master_audit.get("covariate_counterfactual_audits")
+        or summary.get("covariate_counterfactual_audits", [])
+    )
     family_i5 = {
         row["capability_id"]: float(row["kendall_tau"])
-        for row in summary.get("family_model_sensitivity", [])
+        for row in scoped_family_sensitivity
         if int(row["intensity"]) == 5
     }
     multi_family_tau = family_i5.get("multi_seasonal")
@@ -2965,7 +3342,7 @@ def render_benchmark_final_audit(
             row["model_id"],
             row["capability_id"],
         ): row
-        for row in summary["aggregates"]
+        for row in scoped_aggregates
         if row.get("evaluation_table", "main") == "main"
         and row["generator_family_role"] == "primary"
         and int(row["intensity"]) == 5
@@ -2973,12 +3350,12 @@ def render_benchmark_final_audit(
     }
     cross_index = {
         row["model_id"]: row
-        for row in summary.get("cross_series_counterfactual_audits", [])
+        for row in scoped_cross_counterfactual
         if int(row["intensity"]) == 5 and row["variant"] == "native"
     }
     covariate_index = {
         row["model_id"]: row
-        for row in summary.get("covariate_counterfactual_audits", [])
+        for row in scoped_covariate_counterfactual
         if int(row["intensity"]) == 5 and row["variant"] == "native"
     }
 
@@ -2999,7 +3376,7 @@ def render_benchmark_final_audit(
     i5_sample_count = next(
         (
             int(row["sample_count"])
-            for row in summary["aggregates"]
+            for row in scoped_aggregates
             if row["model_id"] in models
             and row["generator_family_role"] == "primary"
             and int(row["intensity"]) == 5
@@ -3013,11 +3390,14 @@ def render_benchmark_final_audit(
         "",
         "## 审计范围",
         "",
-        f"- 协议：L={generation_summary.get('context_length', 504)}，"
+        f"- 主审计协议：L={master_context_length}，"
         f"H={generation_summary.get('horizon', 48)}，primary family，I5。",
         f"- 真实模型：{', '.join(models)}，共 {len(models)} 个；每能力 "
-        f"{i5_sample_count} 个样本。跨序列与协变量能力为 "
-        f"{i5_sample_count // 2} 个严格反事实 pair。",
+        f"{i5_sample_count} 个独立母本。跨序列与协变量能力为 "
+        f"{i5_sample_count // 2} 个严格反事实母本 pair。",
+        "- L96/L168/L336 都是同一 L504 母本的 suffix view；它们只用于视野敏感性"
+        "诊断，不与 L504 混合计作独立样本。正式视野必须在独立 calibration split "
+        "上预选。",
         "- 多变量语义：Chronos-2/Toto2/TiRex2 使用原生多目标路径；TabPFN 在服务内部"
         "逐目标拆分；TimesFM2.5/Timer-3.5 由统一适配器逐目标调用。Toto2/Timer-3.5 "
         "不支持协变量，future covariates 会按契约省略。",
@@ -3032,7 +3412,7 @@ def render_benchmark_final_audit(
         "保留各特征的联合分位秩，再映射到各自 p25-p75 支持。",
         "- nuisance 动态化包括：趋势系数符号/比例、多季节连续周期比、时变调制相位、"
         "随机 regime/event motif、非线性 lag/初态/forcing、factor 模态和载荷、"
-        "hierarchy child share/contrast、cross-series patch-aligned lag 和事件位置、"
+        "hierarchy child share/contrast、cross-series 的 H..H+32 lag 和事件位置、"
         "future-covariate 反事实变换与事件时刻。",
         "",
         "| 能力 | I5 唯一参数组合/独立抽取 | nuisance 路径/独立抽取 | dose | "
@@ -3734,11 +4114,29 @@ def main() -> int:
             "--analyze-only, --robustness-only, --secondary-only, and "
             "--capability-only are exclusive"
         )
+    if args.resume and (
+        args.analyze_only
+        or args.robustness_only
+        or args.secondary_only
+        or args.capability_only
+    ):
+        raise ValueError(
+            "--resume is only supported for a full model-response run"
+        )
     data_dir = args.data_dir.resolve()
-    main_samples = read_jsonl(data_dir / "inference_samples.jsonl")
+    requested_contexts = tuple(int(value) for value in args.context_lengths)
+    main_samples = expand_master_samples(
+        read_jsonl(data_dir / "inference_samples.jsonl"),
+        context_lengths=requested_contexts,
+    )
     robustness_path = data_dir / "robustness_samples.jsonl"
     robustness_samples = (
-        read_jsonl(robustness_path) if robustness_path.exists() else []
+        expand_master_samples(
+            read_jsonl(robustness_path),
+            context_lengths=requested_contexts,
+        )
+        if robustness_path.exists()
+        else []
     )
     samples = main_samples + robustness_samples
     if args.analyze_only:
@@ -3835,8 +4233,31 @@ def main() -> int:
         else:
             failures = []
     else:
-        predictions = []
-        failures = []
+        checkpoint_predictions_path = (
+            data_dir / "model_predictions.checkpoint.jsonl"
+        )
+        checkpoint_failures_path = (
+            data_dir / "model_failures.checkpoint.jsonl"
+        )
+        valid_sample_ids = {row["sample_id"] for row in samples}
+        predictions = (
+            [
+                row
+                for row in read_jsonl(checkpoint_predictions_path)
+                if row.get("sample_id") in valid_sample_ids
+            ]
+            if args.resume and checkpoint_predictions_path.exists()
+            else []
+        )
+        failures = (
+            [
+                row
+                for row in read_jsonl(checkpoint_failures_path)
+                if row.get("sample_id") in valid_sample_ids
+            ]
+            if args.resume and checkpoint_failures_path.exists()
+            else []
+        )
         run_samples = samples
     existing_prediction_keys = {
         (row["sample_id"], row["model_id"], row["variant"])
@@ -3865,6 +4286,7 @@ def main() -> int:
                     request_seconds=0.0,
                 )
             )
+    checkpoint_predictions(data_dir, predictions, failures)
 
     client = inference.TimerServiceClient(
         args.base_url,
@@ -3878,16 +4300,38 @@ def main() -> int:
                 failures.append(
                     {"model_id": model_id, "error": "model_not_found"}
                 )
+                checkpoint_predictions(data_dir, predictions, failures)
                 continue
             model = catalog[model_id]
+            execution = v7_inference.MODEL_EXECUTION_CONFIG.get(
+                model_id,
+                {
+                    "replicas_per_device": 1,
+                    "http_concurrency": 8,
+                },
+            )
+            replicas_per_device = int(
+                execution["replicas_per_device"]
+            )
+            http_concurrency = int(
+                args.concurrency
+                if args.concurrency is not None
+                else execution["http_concurrency"]
+            )
             started = time.monotonic()
             if not args.keep_loaded:
                 client.unload_all_loaded()
             client.ensure_loaded(
                 model_id,
                 devices=args.devices,
-                replicas_per_device=1,
+                replicas_per_device=replicas_per_device,
                 timeout_seconds=args.load_timeout_seconds,
+            )
+            print(
+                f"{model_id} execution: devices={args.devices}, "
+                f"replicas/device={replicas_per_device}, "
+                f"http_concurrency={http_concurrency}",
+                flush=True,
             )
             variants: list[tuple[str, list[dict[str, Any]]]] = [
                 ("native", run_samples)
@@ -3918,24 +4362,55 @@ def main() -> int:
                 )
             )
             for variant, variant_samples in variants:
-                if not variant_samples:
+                pending_samples = [
+                    sample
+                    for sample in variant_samples
+                    if (
+                        sample["sample_id"],
+                        model_id,
+                        variant,
+                    )
+                    not in existing_prediction_keys
+                ]
+                if not pending_samples:
+                    if variant_samples:
+                        print(
+                            f"{model_id}/{variant}: resumed "
+                            f"{len(variant_samples)}/{len(variant_samples)}",
+                            flush=True,
+                        )
                     continue
                 rows, variant_failures = asyncio.run(
                     forecast_variant(
                         forecast_url=client.base + "/forecast",
                         model_id=model_id,
                         model=model,
-                        samples=variant_samples,
+                        samples=pending_samples,
                         variant=variant,
-                        concurrency=args.concurrency,
+                        concurrency=http_concurrency,
                         timeout_seconds=args.forecast_timeout_seconds,
                         max_attempts=args.max_attempts,
                     )
                 )
                 predictions.extend(rows)
                 failures.extend(variant_failures)
+                existing_prediction_keys.update(
+                    (
+                        row["sample_id"],
+                        row["model_id"],
+                        row["variant"],
+                    )
+                    for row in rows
+                )
+                checkpoint_predictions(
+                    data_dir,
+                    predictions,
+                    failures,
+                )
                 print(
-                    f"{model_id}/{variant}: {len(rows)}/{len(variant_samples)}",
+                    f"{model_id}/{variant}: "
+                    f"{len(rows)}/{len(pending_samples)} pending "
+                    f"({len(variant_samples)} total)",
                     flush=True,
                 )
             print(

@@ -75,6 +75,7 @@ V7_REAL_SAMPLES = (
 )
 CONTEXT_LENGTH = 504
 HORIZON = 48
+VIEW_CONTEXT_LENGTHS = (96, 168, 336, 504)
 INTENSITIES = (1, 2, 3, 4, 5)
 PRIMARY_TARGET_FEATURE = {
     "trend": "curvature_abs",
@@ -426,11 +427,401 @@ def attach_cross_series_identifiability_gates(
             )
 
 
+def _view_profile_id(profile_id: str, context_length: int) -> str:
+    prefix, separator, suffix = str(profile_id).rpartition("__L")
+    if separator and "_H" in suffix:
+        return f"{prefix}__L{context_length}_H{HORIZON}"
+    return str(profile_id)
+
+
+def _compact_feature_gate(gate: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        name: deepcopy(gate[name])
+        for name in (
+            "status",
+            "accepted",
+            "enforced",
+            "normalized_score",
+            "bucket_results",
+        )
+        if name in gate
+    }
+    requires_recalibration = any(
+        bucket.get("threshold_calibration")
+        == "projected_from_standard_support_requires_v8_recalibration"
+        for bucket in gate.get("bucket_results", [])
+    )
+    result["projection_requires_recalibration"] = (
+        requires_recalibration
+    )
+    result["formal_enforced"] = bool(
+        gate.get("enforced", False) and not requires_recalibration
+    )
+    return result
+
+
+def suffix_view(
+    row: dict[str, Any],
+    context_length: int,
+) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any]]:
+    """Slice one master sample and standardize from that suffix history."""
+
+    if context_length not in VIEW_CONTEXT_LENGTHS:
+        raise ValueError(f"unsupported suffix context: {context_length}")
+    start = CONTEXT_LENGTH - context_length
+    target = np.asarray(row["target"], dtype=float)[start:]
+    covariates = (
+        None
+        if row.get("covariates") is None
+        else np.asarray(row["covariates"], dtype=float)[start:]
+    )
+    metadata = deepcopy(row["generation_metadata"])
+    if row["capability_id"] == "cross_series_dependence":
+        delay = int(metadata["cross_lag_steps"])
+        metadata["counterfactual_driver_slice"] = [
+            context_length - delay,
+            context_length,
+        ]
+    target, covariates = standardize_sample(
+        str(row["capability_id"]),
+        target,
+        covariates,
+        metadata=metadata,
+        context_length=context_length,
+    )
+    return target, covariates, metadata
+
+
+def attach_suffix_view_audits(
+    rows: list[dict[str, Any]],
+    *,
+    feature_gate_artifact: dict[str, Any],
+) -> dict[str, Any]:
+    """Audit four suffix views without treating them as four new DGP draws."""
+
+    cached_views: dict[
+        tuple[str, int],
+        tuple[np.ndarray, np.ndarray | None, dict[str, Any]],
+    ] = {}
+    for row in rows:
+        realized_by_context: dict[str, dict[str, float]] = {}
+        audits: list[dict[str, Any]] = []
+        for context_length in VIEW_CONTEXT_LENGTHS:
+            target, covariates, metadata = suffix_view(
+                row,
+                context_length,
+            )
+            cached_views[(str(row["sample_id"]), context_length)] = (
+                target,
+                covariates,
+                metadata,
+            )
+            features = measured_features(
+                str(row["capability_id"]),
+                target,
+                covariates,
+                int(row["season_length"]),
+                context_length=context_length,
+            )
+            finite_features = {
+                str(name): float(value)
+                for name, value in features.items()
+                if math.isfinite(value)
+            }
+            profile_id = _view_profile_id(
+                str(row["profile_id"]),
+                context_length,
+            )
+            gate_arguments = {
+                "capability_id": str(row["capability_id"]),
+                "features": features,
+                "profile_ids": (profile_id,),
+                "context_length": context_length,
+                "horizon": HORIZON,
+                "target_dim": int(row["target_dim"]),
+                "artifact": feature_gate_artifact,
+            }
+            clean_gate = evaluate_feature_support_gate(
+                **gate_arguments,
+                evaluation_mode="clean_deterministic",
+            )
+            standard_gate = evaluate_feature_support_gate(
+                **gate_arguments,
+                evaluation_mode="standard",
+            )
+            expected_shape = (
+                context_length + HORIZON,
+                int(row["target_dim"]),
+            )
+            structural_checks: dict[str, Any] = {
+                "expected_shape": list(expected_shape),
+                "shape_valid": target.shape == expected_shape,
+                "all_finite": bool(np.isfinite(target).all()),
+                "same_master_future_boundary": True,
+                "self_identification_required": (
+                    context_length == CONTEXT_LENGTH
+                ),
+            }
+            if row["capability_id"] == "hierarchical_coherence":
+                residual = float(
+                    np.max(
+                        np.abs(
+                            target[:, 0]
+                            - np.sum(target[:, 1:], axis=1)
+                        )
+                    )
+                )
+                structural_checks["hierarchy_max_residual"] = residual
+                structural_checks["hierarchy_exact"] = residual < 1e-10
+            if row["capability_id"] == "cross_series_dependence":
+                delay = int(metadata["cross_lag_steps"])
+                driver_start = context_length - delay
+                driver_stop = driver_start + HORIZON
+                structural_checks.update(
+                    {
+                        "declared_lag": delay,
+                        "driver_forecast_source_slice": [
+                            driver_start,
+                            driver_stop,
+                        ],
+                        "driver_forecast_source_fully_observed": (
+                            0 <= driver_start
+                            and driver_stop <= context_length
+                        ),
+                        "invariant_driver_prefix_length": driver_start,
+                        "invariant_driver_prefix_sufficient": (
+                            driver_start >= 8
+                        ),
+                    }
+                )
+            passed = bool(
+                structural_checks["shape_valid"]
+                and structural_checks["all_finite"]
+                and structural_checks.get("hierarchy_exact", True)
+                and structural_checks.get(
+                    "driver_forecast_source_fully_observed",
+                    True,
+                )
+                and structural_checks.get(
+                    "invariant_driver_prefix_sufficient",
+                    True,
+                )
+            )
+            audits.append(
+                {
+                    "schema_version": "paper_v8_suffix_view_audit.v1",
+                    "context_length": context_length,
+                    "profile_id": profile_id,
+                    "structural_checks": structural_checks,
+                    "structural_passed": passed,
+                    "clean_feature_gate": _compact_feature_gate(clean_gate),
+                    "standard_feature_gate": _compact_feature_gate(
+                        standard_gate
+                    ),
+                    "future_to_history_std_ratio": float(
+                        np.mean(
+                            np.std(target[context_length:], axis=0)
+                        )
+                        / max(
+                            float(
+                                np.mean(
+                                    np.std(
+                                        target[:context_length],
+                                        axis=0,
+                                    )
+                                )
+                            ),
+                            1e-12,
+                        )
+                    ),
+                    "future_sha256": sha256_array(
+                        target[context_length:]
+                    ),
+                }
+            )
+            realized_by_context[str(context_length)] = finite_features
+        row["context_lengths"] = list(VIEW_CONTEXT_LENGTHS)
+        row["future_view_policy"] = (
+            "all suffix contexts share one L504 latent future"
+        )
+        row["view_standardization_policy"] = (
+            "each suffix is standardized using only its own history"
+        )
+        row["view_qualification"] = audits
+        row["realized_features_by_context"] = realized_by_context
+
+    pairs: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for row in rows:
+        pair_id = row.get("counterfactual_pair_id")
+        member = row.get("counterfactual_member")
+        if pair_id is not None and member is not None:
+            pairs[str(pair_id)][int(member)] = row
+    for pair_id, members in pairs.items():
+        if set(members) != {0, 1}:
+            raise ValueError(f"incomplete suffix-view pair: {pair_id}")
+        first, second = members[0], members[1]
+        capability_id = str(first["capability_id"])
+        for context_length in VIEW_CONTEXT_LENGTHS:
+            first_target, first_covariates, first_metadata = cached_views[
+                (str(first["sample_id"]), context_length)
+            ]
+            second_target, second_covariates, second_metadata = cached_views[
+                (str(second["sample_id"]), context_length)
+            ]
+            pair_checks: dict[str, Any]
+            if capability_id == "cross_series_dependence":
+                driver = int(first_metadata["driver_index"])
+                responders = [
+                    int(value)
+                    for value in first_metadata["responder_indices"]
+                ]
+                invariant_stop = (
+                    context_length
+                    - int(first_metadata["cross_lag_steps"])
+                )
+                pair_checks = {
+                    "shared_standardization": (
+                        first_metadata["counterfactual_standardization"]
+                        == second_metadata[
+                            "counterfactual_standardization"
+                        ]
+                    ),
+                    "driver_invariant_prefix": bool(
+                        np.array_equal(
+                            first_target[:invariant_stop, driver],
+                            second_target[:invariant_stop, driver],
+                        )
+                    ),
+                    "responder_history_invariant": bool(
+                        np.array_equal(
+                            first_target[:context_length, responders],
+                            second_target[:context_length, responders],
+                        )
+                    ),
+                    "responder_future_changes": bool(
+                        not np.array_equal(
+                            first_target[context_length:, responders],
+                            second_target[context_length:, responders],
+                        )
+                    ),
+                }
+            elif capability_id == "covariate_response":
+                pair_checks = {
+                    "target_history_invariant": bool(
+                        np.array_equal(
+                            first_target[:context_length],
+                            second_target[:context_length],
+                        )
+                    ),
+                    "covariate_history_invariant": bool(
+                        first_covariates is not None
+                        and second_covariates is not None
+                        and np.array_equal(
+                            first_covariates[:context_length],
+                            second_covariates[:context_length],
+                        )
+                    ),
+                    "known_future_covariate_changes": bool(
+                        first_covariates is not None
+                        and second_covariates is not None
+                        and not np.array_equal(
+                            first_covariates[context_length:],
+                            second_covariates[context_length:],
+                        )
+                    ),
+                    "target_future_changes": bool(
+                        not np.array_equal(
+                            first_target[context_length:],
+                            second_target[context_length:],
+                        )
+                    ),
+                }
+            else:
+                continue
+            pair_passed = all(pair_checks.values())
+            for row in (first, second):
+                audit = next(
+                    audit
+                    for audit in row["view_qualification"]
+                    if int(audit["context_length"]) == context_length
+                )
+                audit["counterfactual_pair_checks"] = deepcopy(
+                    pair_checks
+                )
+                audit["counterfactual_pair_passed"] = pair_passed
+                audit["structural_passed"] = bool(
+                    audit["structural_passed"] and pair_passed
+                )
+
+    contexts: dict[str, Any] = {}
+    for context_length in VIEW_CONTEXT_LENGTHS:
+        audits = [
+            audit
+            for row in rows
+            for audit in row["view_qualification"]
+            if int(audit["context_length"]) == context_length
+        ]
+        contexts[str(context_length)] = {
+            "sample_count": len(audits),
+            "structural_acceptance_rate": float(
+                np.mean(
+                    [audit["structural_passed"] for audit in audits]
+                )
+            ),
+            "clean_feature_gate_acceptance_rate": float(
+                np.mean(
+                    [
+                        audit["clean_feature_gate"]["accepted"]
+                        for audit in audits
+                    ]
+                )
+            ),
+            "clean_feature_gate_enforced": all(
+                audit["clean_feature_gate"]["formal_enforced"]
+                for audit in audits
+            ),
+            "clean_feature_gate_projection_requires_recalibration": any(
+                audit["clean_feature_gate"][
+                    "projection_requires_recalibration"
+                ]
+                for audit in audits
+            ),
+            "standard_feature_gate_acceptance_rate": float(
+                np.mean(
+                    [
+                        audit["standard_feature_gate"]["accepted"]
+                        for audit in audits
+                    ]
+                )
+            ),
+            "minimum_future_to_history_std_ratio": float(
+                np.min(
+                    [
+                        audit["future_to_history_std_ratio"]
+                        for audit in audits
+                    ]
+                )
+            ),
+            "self_identification_required": (
+                context_length == CONTEXT_LENGTH
+            ),
+        }
+    return {
+        "schema_version": "paper_v8_suffix_view_summary.v1",
+        "master_context_length": CONTEXT_LENGTH,
+        "context_lengths": list(VIEW_CONTEXT_LENGTHS),
+        "single_master_dgp": True,
+        "contexts": contexts,
+    }
+
+
 def measured_features(
     capability_id: str,
     target: np.ndarray,
     covariates: np.ndarray | None,
     season_length: int,
+    *,
+    context_length: int = CONTEXT_LENGTH,
 ) -> dict[str, float]:
     hierarchy = (
         "additive_first"
@@ -441,14 +832,14 @@ def measured_features(
         target,
         covariates,
         season_length,
-        CONTEXT_LENGTH,
+        context_length,
     )
     result.update(
         feature_vector(
             target,
             season_length,
             covariates=covariates,
-            context_length=CONTEXT_LENGTH,
+            context_length=context_length,
             hierarchy=hierarchy,
             include_cross_series_predictability=(
                 capability_id == "cross_series_dependence"
@@ -908,6 +1299,15 @@ def robustness_sample_row(clean_row: dict[str, Any]) -> dict[str, Any]:
     result["clean_latent_is_scoring_future"] = True
     result["observation_noise_scale"] = ROBUSTNESS_NOISE_RATIO
     result["observation_noise_metadata"] = noise_metadata
+    result["clean_latent_view_qualification"] = result.pop(
+        "view_qualification",
+        [],
+    )
+    result["clean_latent_realized_features_by_context"] = result.pop(
+        "realized_features_by_context",
+        {},
+    )
+    result["robustness_view_requalification_required"] = True
     result["clean_latent_sha256"] = sha256_array(clean_target)
     result["target_sha256"] = sha256_array(observed_target)
     result["future_sha256"] = sha256_array(
@@ -987,7 +1387,9 @@ def report_markdown(summary: dict[str, Any]) -> str:
         "# Paper v8 clean-deterministic pilot",
         "",
         f"- Generator: `{summary['generator_version']}`",
-        f"- Protocol: L={CONTEXT_LENGTH}, H={HORIZON}; main table has no process or observation noise.",
+        f"- Protocol: one L={CONTEXT_LENGTH}, H={HORIZON} master; suffix views "
+        f"L={list(VIEW_CONTEXT_LENGTHS)} share its future and are standardized "
+        "from their own history. The main table has no process or observation noise.",
         "- Scope: one available calibration dataset per capability; v8 test only.",
         "",
         "## Capability audit",
@@ -1045,6 +1447,30 @@ def report_markdown(summary: dict[str, Any]) -> str:
             "its joint feature ranks into the central p25-p75 support. `nuisance "
             "paths` independently fingerprints the mechanism-specific motif, phase, "
             "lag, loading or counterfactual branch selected before path generation.",
+            "",
+            "## Suffix-view audit",
+            "",
+            "The four context lengths are views of the same generated master, not "
+            "independently calibrated or generated samples. Full mechanism "
+            "self-identification is required at L=504. Shorter views are checked "
+            "for structural integrity, observed forecast inputs, paired "
+            "counterfactual invariance, and their context-specific feature gate.",
+            "",
+            "| capability | L96 structural | L168 structural | L336 structural | L504 structural |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for capability_id, row in summary["capabilities"].items():
+        contexts = row["suffix_view_audit"]["contexts"]
+        lines.append(
+            f"| {capability_id} | "
+            f"{contexts['96']['structural_acceptance_rate']:.1%} | "
+            f"{contexts['168']['structural_acceptance_rate']:.1%} | "
+            f"{contexts['336']['structural_acceptance_rate']:.1%} | "
+            f"{contexts['504']['structural_acceptance_rate']:.1%} |"
+        )
+    lines.extend(
+        [
             "",
             "## Gate audit",
             "",
@@ -1320,6 +1746,10 @@ def main() -> int:
 
         if capability_id == "cross_series_dependence":
             attach_cross_series_identifiability_gates(capability_samples)
+        suffix_view_summary = attach_suffix_view_audits(
+            capability_samples,
+            feature_gate_artifact=feature_gate_artifact,
+        )
 
         primary_means = []
         for intensity in INTENSITIES:
@@ -1494,6 +1924,7 @@ def main() -> int:
             "max_hierarchy_residual": hierarchy_residual,
             "parameter_combination_audit": parameter_audit,
             "nuisance_combination_audit": nuisance_audit,
+            "suffix_view_audit": suffix_view_summary,
             "standard_gate_acceptance_rate": float(
                 np.mean([row["accepted"] for row in standard_gates])
             ),

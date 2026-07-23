@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-cross-series-identifiability-gate"
+GENERATOR_VERSION = "capts-paper-v8-master-suffix-compatible-mechanisms"
 FamilyRole = Literal["primary", "secondary"]
 
 CROSS_SERIES_MIN_HOLDOUT_R2 = 0.80
@@ -155,6 +155,7 @@ REQUIRED_REAL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
         "covariate_incremental_r2",
         "future_abs_covariate_target_corr",
         "event_lift_abs",
+        "covariate_residual_acf_abs_mean",
         "acf1",
     ),
 }
@@ -475,6 +476,25 @@ def derive_deterministic_parameters(
             0.8,
             0.3,
             2.0,
+        )
+        add(
+            "covariate_residual_memory_target",
+            "covariate_residual_acf_abs_mean",
+            0.42,
+            0.40,
+            0.44,
+            "compress_to_all_suffix_real_support_intersection",
+            lambda value: (
+                0.40
+                + 0.04
+                * float(
+                    np.clip(
+                        (value - 0.25) / (0.78 - 0.25),
+                        0.0,
+                        1.0,
+                    )
+                )
+            ),
         )
 
     return parameters, [mapping.as_dict() for mapping in mappings]
@@ -1639,26 +1659,62 @@ def _counterfactual_realistic_driver(
     length = len(background)
     time = np.arange(length, dtype=float)
     driver = 0.8 * np.asarray(background, dtype=float).copy()
-    width = float(rng.uniform(4.0, 7.0))
     support_multiplier = 3.0 if family == "primary" else 2.0
-    observable_stop = context - delay - int(
-        math.ceil(support_multiplier * width)
+    teaching_span = context - delay
+    if teaching_span < 12:
+        raise ValueError(
+            "cross-series lag leaves too little history for teaching events"
+        )
+    if teaching_span < 72:
+        historical_event_count = 3
+    elif teaching_span < 144:
+        historical_event_count = 4
+    else:
+        historical_event_count = int(rng.integers(3, 6))
+
+    # Fit several fully observed cause/response examples inside the available
+    # teaching span.  Widths therefore shrink for L=96 instead of allowing
+    # broad event supports to collide or spill across the context boundary.
+    width_upper = min(
+        7.0,
+        teaching_span
+        / (
+            2.0
+            * support_multiplier
+            * (historical_event_count + 0.75)
+        ),
     )
-    historical_event_count = int(rng.integers(3, 6))
-    historical_fractions = np.linspace(
-        0.15,
-        0.85,
+    width_upper = max(1.35, width_upper)
+    width_lower = max(1.15, min(4.0, 0.72 * width_upper))
+    width = float(
+        rng.uniform(width_lower, width_upper)
+        if width_upper > width_lower + 1e-9
+        else width_upper
+    )
+    event_margin = support_multiplier * width
+    center_lower = event_margin
+    center_upper = teaching_span - event_margin
+    historical_center_values = np.linspace(
+        center_lower,
+        center_upper,
         historical_event_count,
     )
-    historical_fractions += rng.uniform(
-        -0.055,
-        0.055,
-        size=historical_event_count,
-    )
-    historical_fractions = np.clip(historical_fractions, 0.08, 0.92)
-    historical_centers = sorted(
-        int(round(observable_stop * fraction))
-        for fraction in historical_fractions
+    if historical_event_count > 1:
+        center_spacing = float(
+            (center_upper - center_lower) / (historical_event_count - 1)
+        )
+        jitter = rng.uniform(
+            -0.08 * center_spacing,
+            0.08 * center_spacing,
+            size=historical_event_count,
+        )
+        jitter[[0, -1]] = 0.0
+        historical_center_values += jitter
+    historical_centers = [
+        int(round(value)) for value in historical_center_values
+    ]
+    historical_fractions = (
+        historical_center_values / max(teaching_span, 1)
     )
     historical_amplitudes = (
         rng.uniform(0.55, 1.05, size=len(historical_centers))
@@ -1725,6 +1781,17 @@ def _counterfactual_realistic_driver(
         "historical_event_centers": historical_centers,
         "historical_event_fractions": historical_fractions.tolist(),
         "historical_event_amplitudes": historical_amplitudes.tolist(),
+        "historical_teaching_span": teaching_span,
+        "historical_event_count_policy": (
+            "three_if_span_lt_72_four_if_lt_144_else_uniform_three_to_five"
+        ),
+        "historical_event_support_multiplier": support_multiplier,
+        "historical_event_width_bounds": [width_lower, width_upper],
+        "historical_event_min_center_spacing": (
+            float(np.min(np.diff(historical_center_values)))
+            if len(historical_center_values) > 1
+            else float(teaching_span)
+        ),
         "counterfactual_event_center": intervention_center,
         "counterfactual_response_center_offset": response_center_offset,
         "counterfactual_event_width": width,
@@ -1762,16 +1829,34 @@ def _cross_series_dependence(
     requested_delay = int(
         round(_parameter(cond, "cross_lag_steps", float(season)))
     )
-    # Candidate lags are >= the fixed H=48 protocol and aligned to the 32-step
-    # tokenization used by Toto 2.0 and TiRex2. The real-data lag extraction is
-    # retained as a calibrated requested value, while sample-level nuisance
-    # variation avoids a single public lag template and sub-patch confounding.
-    lag_candidates = np.arange(64, context // 3 + 1, 32, dtype=int)
+    # v8 currently has a fixed H=48 protocol.  Capping the design horizon also
+    # preserves prefix invariance when a caller generates a longer audit path.
+    horizon = min(48, max(1, length - context))
+    # A lag at least as long as H makes the responder future depend only on
+    # driver values already visible in history.  Formal samples are generated
+    # once at L=504 and exposed as suffix views down to L=96, so the lag must
+    # also leave a stable driver prefix inside that shortest view.  Eight-step
+    # variation is a property of the DGP, not a model patch accommodation.
+    minimum_delay = min(horizon, context // 2)
+    shortest_view = min(context, 96)
+    minimum_invariant_driver_prefix = min(16, shortest_view // 4)
+    maximum_delay = min(
+        context // 2,
+        max(minimum_delay, int(0.40 * context)),
+        max(
+            minimum_delay,
+            shortest_view - minimum_invariant_driver_prefix,
+        ),
+    )
+    lag_step = max(4, int(round(horizon / 6)))
+    lag_candidates = np.arange(
+        minimum_delay,
+        maximum_delay + 1,
+        lag_step,
+        dtype=int,
+    )
     if lag_candidates.size == 0:
-        lag_candidates = np.asarray(
-            [max(48, min(context // 3, context - 1))],
-            dtype=int,
-        )
+        lag_candidates = np.asarray([minimum_delay], dtype=int)
     delay = int(driver_rng.choice(lag_candidates))
     driver_background, background_meta = _calibrated_signal(
         length,
@@ -1856,7 +1941,14 @@ def _cross_series_dependence(
         "requested_cross_lag_steps": requested_delay,
         "cross_lag_steps": delay,
         "cross_lag_candidate_steps": lag_candidates.tolist(),
-        "cross_lag_sampling_policy": "uniform_patch_aligned_lag_at_least_horizon",
+        "cross_lag_sampling_policy": (
+            "uniform_master_suffix_view_compatible_lag_at_least_horizon"
+        ),
+        "cross_lag_step": lag_step,
+        "minimum_supported_context_length": shortest_view,
+        "minimum_invariant_driver_prefix": (
+            minimum_invariant_driver_prefix
+        ),
         "history_covered_forecast_steps": min(delay, length - context),
         "response_law": response_law,
         "dependence_gain": float(gain),
@@ -1876,6 +1968,121 @@ def _cross_series_dependence(
         _metadata("cross_series_dependence", family, target, detail),
         None,
     )
+
+
+def _mean_abs_acf(values: np.ndarray, max_lag: int = 10) -> float:
+    centered = np.asarray(values, dtype=float) - float(np.mean(values))
+    denominator = float(np.dot(centered, centered))
+    if denominator <= 1e-12:
+        return 0.0
+    scores = [
+        abs(
+            float(
+                np.dot(centered[:-lag], centered[lag:])
+                / denominator
+            )
+        )
+        for lag in range(1, min(max_lag, len(centered) - 1) + 1)
+    ]
+    return float(np.mean(scores)) if scores else 0.0
+
+
+def _covariate_residual_motif(
+    length: int,
+    context: int,
+    season: int,
+    rng: np.random.Generator,
+    conditioning: GeneratorConditioning | None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Build a sample-specific, forecastable nuisance residual.
+
+    The target ACF is calibrated into the support shared by all formal suffix
+    views.  Candidate motifs are drawn before generation and the closest one
+    is selected using history-only periodic statistics; no future values are
+    inspected and no stochastic innovation is added.
+    """
+
+    period = int(
+        np.clip(
+            round(
+                _parameter(
+                    conditioning,
+                    "profile_dominant_period",
+                    float(season),
+                )
+            ),
+            12,
+            max(12, min(48, context // 4)),
+        )
+    )
+    target_memory = float(
+        np.clip(
+            _parameter(
+                conditioning,
+                "covariate_residual_memory_target",
+                0.42,
+            ),
+            0.40,
+            0.44,
+        )
+    )
+    candidates: list[
+        tuple[float, np.ndarray, int, int, float]
+    ] = []
+    for _ in range(32):
+        motif = rng.normal(0.0, 1.0, size=period)
+        smoothing_passes = int(rng.integers(3, 13))
+        for _ in range(smoothing_passes):
+            motif = (
+                np.roll(motif, 1)
+                + 2.0 * motif
+                + np.roll(motif, -1)
+            ) / 4.0
+        motif -= float(np.mean(motif))
+        motif_scale = float(np.std(motif))
+        if motif_scale <= 1e-9:
+            continue
+        motif /= motif_scale
+        phase = int(rng.integers(0, period))
+        history = motif[
+            (np.arange(context, dtype=int) + phase) % period
+        ]
+        realized_memory = _mean_abs_acf(history)
+        candidates.append(
+            (
+                abs(realized_memory - target_memory),
+                motif,
+                phase,
+                smoothing_passes,
+                realized_memory,
+            )
+        )
+    if not candidates:
+        raise ValueError("failed to construct covariate residual motif")
+    (
+        selection_error,
+        selected_motif,
+        selected_phase,
+        selected_smoothing_passes,
+        selected_memory,
+    ) = min(candidates, key=lambda row: row[0])
+    values = selected_motif[
+        (np.arange(length, dtype=int) + selected_phase) % period
+    ]
+    return values, {
+        "law": "sample_specific_circular_filtered_periodic_motif",
+        "period": period,
+        "phase": selected_phase,
+        "smoothing_passes": selected_smoothing_passes,
+        "candidate_count": len(candidates),
+        "target_residual_acf_abs_mean": target_memory,
+        "realized_history_residual_acf_abs_mean": selected_memory,
+        "selection_absolute_error": selection_error,
+        "motif_sha256": hashlib.sha256(
+            np.ascontiguousarray(selected_motif).tobytes()
+        ).hexdigest(),
+        "future_process_noise_scale": 0.0,
+    }
 
 
 def _covariate(
@@ -1967,13 +2174,12 @@ def _covariate(
     for start in starts:
         event[start : min(length, start + width)] = 1.0
     covariates = np.column_stack([weather, event])
-    baseline, baseline_meta = _calibrated_signal(
+    baseline, baseline_meta = _covariate_residual_motif(
         length,
         context,
+        season,
         rng,
         cond,
-        family,
-        period_multiplier=1.8,
     )
     effect = (
         _parameter(cond, "covariate_effect_scale", 0.55)
