@@ -31,13 +31,21 @@ import run_paper_e2_dynamic_stability as inference  # noqa: E402
 import run_paper_v5_e2_inference as v7_inference  # noqa: E402
 import run_paper_v8_deterministic_pilot as v8_pilot  # noqa: E402
 from app.services.metric_service import compute_sample_metrics  # noqa: E402
+from app.services.synthetic_v8_generation import (  # noqa: E402
+    common_factor_joint_positive_control,
+)
 
 
 DEFAULT_DATA_DIR = REPO_ROOT / "runtime" / "paper_exp" / "v8_test"
 DEFAULT_MODELS = ("Chronos-2", "toto2.0", "tirex2", "tabpfn-ts3")
 FORCED_SPLIT_MODELS = frozenset({"Chronos-2", "toto2.0", "tirex2"})
 TABPFN_INTERNAL_SPLIT_MODELS = frozenset({"tabpfn-ts3"})
-DIAGNOSTIC_PROBE_MODELS = frozenset({"cross_lag_linear_probe"})
+DIAGNOSTIC_PROBE_MODELS = frozenset(
+    {
+        "common_factor_joint_probe",
+        "cross_lag_linear_probe",
+    }
+)
 CATALOG_UNIVARIATE_MODELS = frozenset(
     {
         "Timer-3.5",
@@ -267,6 +275,17 @@ def baseline_forecast(sample: dict[str, Any], kind: str) -> np.ndarray:
         usable_period = min(period, context)
         indexes = context - usable_period + np.arange(horizon) % usable_period
         return history[indexes]
+    if kind == "common_factor_joint_probe":
+        forecast = np.repeat(history[-1:], horizon, axis=0)
+        common = common_factor_joint_positive_control(
+            target,
+            metadata=sample["generation_metadata"],
+        )
+        if common.shape != forecast.shape:
+            raise ValueError(
+                "common-factor positive control shape mismatch"
+            )
+        return forecast + common
     if kind == "cross_lag_linear_probe":
         metadata = sample["generation_metadata"]
         delay = int(metadata["cross_lag_steps"])
@@ -304,6 +323,19 @@ def baseline_forecast(sample: dict[str, Any], kind: str) -> np.ndarray:
 
 def local_baseline_kinds(sample: dict[str, Any]) -> tuple[str, ...]:
     kinds = ["last_value", "seasonal_naive"]
+    if (
+        sample["capability_id"] == "common_factor"
+        and sample.get("evaluation_table", "main") == "main"
+        and sample["generator_family_role"] == "primary"
+        and len(
+            sample["generation_metadata"].get(
+                "historical_episodes",
+                [],
+            )
+        )
+        >= 5
+    ):
+        kinds.append("common_factor_joint_probe")
     if (
         sample["capability_id"] == "cross_series_dependence"
         and sample.get("evaluation_table", "main") == "main"
@@ -967,6 +999,25 @@ def prediction_metrics(
         output.update(
             common_factor_recovery_metrics(truth, forecast)
         )
+        protected = int(
+            sample["generation_metadata"]["protected_target_index"]
+        )
+        protected_mae = float(
+            np.mean(
+                np.abs(
+                    truth[:, protected] - forecast[:, protected]
+                )
+            )
+        )
+        protected_scale = float(np.std(history[:, protected]))
+        output.update(
+            {
+                "protected_target_mae": protected_mae,
+                "protected_target_nmae": (
+                    protected_mae / max(protected_scale, 1e-12)
+                ),
+            }
+        )
     elif capability_id == "hierarchical_coherence":
         output.update(
             hierarchy_recovery_metrics(truth, forecast)
@@ -1181,6 +1232,8 @@ def aggregate_predictions(
         "factor_trajectory_correlation",
         "factor_score_nrmse",
         "common_component_nmae",
+        "protected_target_mae",
+        "protected_target_nmae",
         "child_heterogeneity_abs_error",
         "child_contrast_correlation",
         "child_contrast_nmae",
@@ -1355,7 +1408,11 @@ def paired_variant_audits(
             loss_metric = (
                 "driver_covered_responder_mae"
                 if capability_id == "cross_series_dependence"
-                else "mae"
+                else (
+                    "protected_target_mae"
+                    if capability_id == "common_factor"
+                    else "mae"
+                )
             )
             native_mae = np.asarray(
                 [pair[0]["metrics"][loss_metric] for pair in pairs],
@@ -1398,7 +1455,7 @@ def paired_variant_audits(
                     ),
                 }
             diagnostic_by_capability = {
-                "common_factor": "factor_score_nrmse",
+                "common_factor": "protected_target_nmae",
                 "hierarchical_coherence": "coherence_nmae",
                 "cross_series_dependence": "driver_covered_responder_mae",
                 "covariate_response": "future_covariate_corr_abs_error",
@@ -1544,6 +1601,161 @@ def cross_series_dependence_audits(
                     ),
                 }
             )
+    return output
+
+
+def common_factor_counterfactual_audits(
+    predictions: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Measure recovery of a future hidden from one protected channel.
+
+    The protected channel has exactly the same complete history in both pair
+    members.  Only the other channels' final code equations reveal which
+    member is present, so a non-zero forecast effect is direct evidence that
+    the prediction changed in response to joint observations.
+    """
+
+    selected_samples = {
+        sample["sample_id"]: sample
+        for sample in samples
+        if sample.get("evaluation_table", "main") == "main"
+        and sample["capability_id"] == "common_factor"
+        and sample["generator_family_role"] == "primary"
+        and sample.get("counterfactual_pair_id") is not None
+    }
+    sample_pairs: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for sample in selected_samples.values():
+        sample_pairs[str(sample["counterfactual_pair_id"])][
+            int(sample["counterfactual_member"])
+        ] = sample
+    prediction_index = {
+        (row["model_id"], row["variant"], row["sample_id"]): row
+        for row in predictions
+        if row["sample_id"] in selected_samples
+    }
+    grouped: dict[
+        tuple[str, str, int],
+        list[dict[str, float]],
+    ] = defaultdict(list)
+    model_variants = sorted(
+        {
+            (row["model_id"], row["variant"])
+            for row in predictions
+            if row["sample_id"] in selected_samples
+        }
+    )
+    for model_id, variant in model_variants:
+        for members in sample_pairs.values():
+            if set(members) != {0, 1}:
+                continue
+            first_sample = members[0]
+            second_sample = members[1]
+            first_prediction = prediction_index.get(
+                (model_id, variant, first_sample["sample_id"])
+            )
+            second_prediction = prediction_index.get(
+                (model_id, variant, second_sample["sample_id"])
+            )
+            if first_prediction is None or second_prediction is None:
+                continue
+            context = int(first_sample["context_length"])
+            protected = int(
+                first_sample["generation_metadata"][
+                    "protected_target_index"
+                ]
+            )
+            first_target = np.asarray(first_sample["target"], dtype=float)
+            second_target = np.asarray(second_sample["target"], dtype=float)
+            truth_effect = (
+                second_target[context:, protected]
+                - first_target[context:, protected]
+            )
+            forecast_effect = (
+                np.asarray(second_prediction["forecast"], dtype=float)[
+                    :, protected
+                ]
+                - np.asarray(first_prediction["forecast"], dtype=float)[
+                    :, protected
+                ]
+            )
+            truth_rms = float(np.sqrt(np.mean(truth_effect * truth_effect)))
+            forecast_rms = float(
+                np.sqrt(np.mean(forecast_effect * forecast_effect))
+            )
+            projection_denominator = float(
+                np.sum(truth_effect * truth_effect)
+            )
+            grouped[
+                (model_id, variant, int(first_sample["intensity"]))
+            ].append(
+                {
+                    "effect_nrmse": float(
+                        np.sqrt(
+                            np.mean(
+                                (forecast_effect - truth_effect) ** 2
+                            )
+                        )
+                        / max(truth_rms, 1e-12)
+                    ),
+                    "effect_correlation": safe_corr(
+                        truth_effect,
+                        forecast_effect,
+                    ),
+                    "effect_amplitude_ratio": (
+                        forecast_rms / max(truth_rms, 1e-12)
+                    ),
+                    "effect_signed_projection": (
+                        float(np.sum(forecast_effect * truth_effect))
+                        / max(projection_denominator, 1e-12)
+                    ),
+                    "truth_effect_rms": truth_rms,
+                    "forecast_effect_rms": forecast_rms,
+                    "protected_history_max_abs_difference": float(
+                        np.max(
+                            np.abs(
+                                second_target[:context, protected]
+                                - first_target[:context, protected]
+                            )
+                        )
+                    ),
+                    "joint_history_max_abs_difference": float(
+                        np.max(
+                            np.abs(
+                                second_target[:context]
+                                - first_target[:context]
+                            )
+                        )
+                    ),
+                    "mean_factual_protected_target_mae": float(
+                        0.5
+                        * (
+                            first_prediction["metrics"][
+                                "protected_target_mae"
+                            ]
+                            + second_prediction["metrics"][
+                                "protected_target_mae"
+                            ]
+                        )
+                    ),
+                }
+            )
+    output: list[dict[str, Any]] = []
+    for (model_id, variant, intensity), rows in sorted(grouped.items()):
+        output.append(
+            {
+                "model_id": model_id,
+                "variant": variant,
+                "intensity": intensity,
+                "pair_count": len(rows),
+                **{
+                    f"mean_{name}": float(
+                        np.mean([row[name] for row in rows])
+                    )
+                    for name in rows[0]
+                },
+            }
+        )
     return output
 
 
@@ -2285,6 +2497,7 @@ def master_context_audit(
             "distinct_master_sample_count": 0,
             "aggregates": [],
             "family_model_sensitivity": [],
+            "common_factor_counterfactual_audits": [],
             "cross_series_counterfactual_audits": [],
             "covariate_counterfactual_audits": [],
             "structure_recovery_audits": [],
@@ -2314,6 +2527,12 @@ def master_context_audit(
         "aggregates": aggregate_predictions(scoped_predictions),
         "family_model_sensitivity": family_model_sensitivity(
             scoped_predictions
+        ),
+        "common_factor_counterfactual_audits": (
+            common_factor_counterfactual_audits(
+                scoped_predictions,
+                scoped_samples,
+            )
         ),
         "cross_series_counterfactual_audits": (
             cross_series_counterfactual_audits(
@@ -2457,6 +2676,9 @@ def response_summary(
         "mechanism_response": mechanism_response,
         "family_model_sensitivity": family_model_sensitivity(predictions),
         "paired_variant_audits": paired_variant_audits(predictions),
+        "common_factor_counterfactual_audits": (
+            common_factor_counterfactual_audits(predictions, samples)
+        ),
         "cross_series_dependence_audits": cross_series_dependence_audits(
             predictions
         ),
@@ -2566,6 +2788,30 @@ def render_report(summary: dict[str, Any]) -> str:
             "Positive native MAE gain means the native multivariate/covariate request "
             "beat its paired ablation. TabPFN is explicitly treated as an internally "
             "split univariate model, so no cross-target gain is expected from it.",
+            "",
+            "## Jointly observable common-factor counterfactual",
+            "",
+            "The protected target has exactly the same full history in both pair "
+            "members, while other channels reveal a different rank-two latent code. "
+            "Its future rank-one factor response changes. A univariate forecast must "
+            "therefore be invariant; low effect NRMSE directly demonstrates use of "
+            "joint observations.",
+            "",
+            "| model | variant | intensity | pairs | effect NRMSE | effect corr | amplitude ratio | signed projection | protected-history max diff |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in summary.get("common_factor_counterfactual_audits", []):
+        lines.append(
+            f"| {row['model_id']} | {row['variant']} | I{row['intensity']} | "
+            f"{row['pair_count']} | {row['mean_effect_nrmse']:.3f} | "
+            f"{row['mean_effect_correlation']:.3f} | "
+            f"{row['mean_effect_amplitude_ratio']:.3f} | "
+            f"{row['mean_effect_signed_projection']:.3f} | "
+            f"{row['mean_protected_history_max_abs_difference']:.1e} |"
+        )
+    lines.extend(
+        [
             "",
             "## Cross-series dependence by intensity",
             "",
@@ -2893,7 +3139,8 @@ def render_chinese_report(
             "parent=sum(children)，最大数值残差仅为浮点误差。趋势随机斜率比例和曲率符号；"
             "多季节随机连续周期比、幅度和相位；时变季节随机载波/调制周期和相位；状态切换"
             "随机 3–6 段 duration motif 与 anchor；非线性随机 lag、初态和 forcing；间歇性"
-            "随机 3–6 段 interval motif 与 clock phase；共同因子随机模态和载荷；层级随机"
+            "随机 3–6 段 interval motif 与 clock phase；共同因子随机秩二 code matrix、"
+            "响应基和混合符号载荷，并用多段 code→response episode 教示映射；层级随机"
             "aggregate child share、contrast 方向和周期。跨序列依赖从 H 到 H+32 的"
             "8 步网格抽取 lag，并随机历史/反事实事件位置；协变量 A/B 对随机选择"
             "future reflection、smooth offset 或 amplitude expansion，并随机事件时刻。"
@@ -2950,6 +3197,29 @@ def render_chinese_report(
             "层级 coherence 不能脱离预测精度单独打分：last-value/seasonal-naive 这类逐变量"
             "线性操作也可能机械地保持 parent=sum(children)。正式指标应联合精度、coherence "
             "和 child heterogeneity。",
+            "",
+            "## 共同因子：联合可观测配对反事实",
+            "",
+            "每对样本的 protected target 全部 history 严格相同；其他通道在 history 末端"
+            "给出不同的秩二潜状态方程，protected target 的未来秩一共同因子响应随之改变。"
+            "因此逐变量模型在该 target 上必须给出相同预测；只有读取联合观测才可能恢复"
+            "非零反事实效应。",
+            "",
+            "| 模型 | 变体 | 强度 | 对数 | effect NRMSE | effect 相关 | 幅度比 | 有符号投影 | protected history 最大差 |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in summary.get("common_factor_counterfactual_audits", []):
+        lines.append(
+            f"| {row['model_id']} | {row['variant']} | I{row['intensity']} | "
+            f"{row['pair_count']} | {row['mean_effect_nrmse']:.3f} | "
+            f"{row['mean_effect_correlation']:.3f} | "
+            f"{row['mean_effect_amplitude_ratio']:.3f} | "
+            f"{row['mean_effect_signed_projection']:.3f} | "
+            f"{row['mean_protected_history_max_abs_difference']:.1e} |"
+        )
+    lines.extend(
+        [
             "",
             "## 跨序列预测依赖：按强度的 native/split 对照",
             "",
@@ -3129,10 +3399,10 @@ def render_chinese_report(
                 "",
                 "；".join(structure_parts)
                 + "。原生多变量模型只是具备恢复结构的机会，并没有理论保证一定优于"
-                "逐变量调用；结果取决于模型是否在推理中真正使用联合信息。当前共同因子"
-                "增益很小且方向混合；层级 coherence 上 Chronos-2 与 Toto 2.0 有改善，"
-                "TiRex2 略退化，但 child contrast 仍可能相反。应按各结构坐标如实报告，"
-                "而不把“原生多变量”本身当成结构能力标签。",
+                "逐变量调用；结果取决于模型是否在推理中真正使用联合信息。共同因子是否"
+                "使用联合输入以上面的 protected-target 反事实 effect 为主；本表中的载荷/"
+                "共同分量指标只说明最终预测结构。层级仍应按各结构坐标如实报告，而不把"
+                "“原生多变量”本身当成结构能力标签。",
             ]
         )
     lines.extend(
@@ -3244,7 +3514,10 @@ def render_benchmark_final_audit(
             "event_window_nmae",
             "事件窗口 NMAE↓",
         ),
-        "common_factor": ("common_component_nmae", "共同分量 NMAE↓"),
+        "common_factor": (
+            "counterfactual_effect_nrmse",
+            "joint-code 反事实 effect NRMSE↓",
+        ),
         "hierarchical_coherence": (
             "child_contrast_nmae",
             "子序列 contrast NMAE↓",
@@ -3267,6 +3540,10 @@ def render_benchmark_final_audit(
     scoped_family_sensitivity = (
         master_audit.get("family_model_sensitivity")
         or summary.get("family_model_sensitivity", [])
+    )
+    scoped_common_counterfactual = (
+        master_audit.get("common_factor_counterfactual_audits")
+        or summary.get("common_factor_counterfactual_audits", [])
     )
     scoped_cross_counterfactual = (
         master_audit.get("cross_series_counterfactual_audits")
@@ -3317,9 +3594,10 @@ def render_benchmark_final_audit(
             "峰值时序、幅度和背景误差均能区分模型，且事件由 history 中的 clock 决定。",
         ),
         "common_factor": (
-            "保留为结构恢复题",
-            "共同分量/载荷指标有效，但各列单独也可预测；不能把高分解释为模型使用了"
-            "跨序列信息，需同时给 native-vs-split。",
+            "强保留（联合可观测题）",
+            "protected target 的完整 history 在配对成员间相同，future 只由其他通道"
+            "揭示的秩二 code 决定；反事实 effect 可直接检验模型是否使用联合信息。"
+            "共同分量/载荷恢复仍作为辅助结构指标。",
         ),
         "hierarchical_coherence": (
             "保留为结构恢复题",
@@ -3348,6 +3626,11 @@ def render_benchmark_final_audit(
         and int(row["intensity"]) == 5
         and row["variant"] == "native"
     }
+    common_index = {
+        row["model_id"]: row
+        for row in scoped_common_counterfactual
+        if int(row["intensity"]) == 5 and row["variant"] == "native"
+    }
     cross_index = {
         row["model_id"]: row
         for row in scoped_cross_counterfactual
@@ -3360,6 +3643,9 @@ def render_benchmark_final_audit(
     }
 
     def mechanism_value(capability_id: str, model_id: str) -> float | None:
+        if capability_id == "common_factor":
+            row = common_index.get(model_id)
+            return None if row is None else float(row["mean_effect_nrmse"])
         if capability_id == "cross_series_dependence":
             row = cross_index.get(model_id)
             return None if row is None else float(row["mean_effect_nrmse"])
@@ -3393,7 +3679,7 @@ def render_benchmark_final_audit(
         f"- 主审计协议：L={master_context_length}，"
         f"H={generation_summary.get('horizon', 48)}，primary family，I5。",
         f"- 真实模型：{', '.join(models)}，共 {len(models)} 个；每能力 "
-        f"{i5_sample_count} 个独立母本。跨序列与协变量能力为 "
+        f"{i5_sample_count} 个独立母本。共同因子、跨序列与协变量能力为 "
         f"{i5_sample_count // 2} 个严格反事实母本 pair。",
         "- L96/L168/L336 都是同一 L504 母本的 suffix view；它们只用于视野敏感性"
         "诊断，不与 L504 混合计作独立样本。正式视野必须在独立 calibration split "
@@ -3411,8 +3697,9 @@ def render_benchmark_final_audit(
         "- 参数不再独立按边际抽取：每个 seed 选择一个真实窗口作为经验 copula 锚点，"
         "保留各特征的联合分位秩，再映射到各自 p25-p75 支持。",
         "- nuisance 动态化包括：趋势系数符号/比例、多季节连续周期比、时变调制相位、"
-        "随机 regime/event motif、非线性 lag/初态/forcing、factor 模态和载荷、"
-        "hierarchy child share/contrast、cross-series 的 H..H+32 lag 和事件位置、"
+        "随机 regime/event motif、非线性 lag/初态/forcing、common-factor 的秩二 "
+        "code matrix/episode、响应基和混合符号载荷、hierarchy child share/contrast、"
+        "cross-series 的 H..H+32 lag 和事件位置、"
         "future-covariate 反事实变换与事件时刻。",
         "",
         "| 能力 | I5 唯一参数组合/独立抽取 | nuisance 路径/独立抽取 | dose | "
@@ -3523,16 +3810,18 @@ def render_benchmark_final_audit(
         [
             "",
             "Kendall tau 小于 1 表明机制指标不是 MASE 的改名。尤其状态切换要检查模型"
-            "是否在真实切点产生 jump；跨序列和协变量必须看反事实 effect，不能由普通"
+            "是否在真实切点产生 jump；共同因子、跨序列和协变量必须看反事实 effect，不能由普通"
             "曲线相关或 factual MASE 代替。",
             "",
             "## 论文展示建议",
             "",
             "1. 每个能力报告 MASE 和一个预先指定的主机制指标，不对量纲不同的原始指标"
             "直接求平均。",
-            "2. common factor 与 hierarchy 额外报告 native-vs-split；把它们称为"
-            "“联合结构恢复”，不要称为跨序列信息的充分证据。",
-            "3. cross-series 与 covariate-response 以 paired counterfactual effect NRMSE、"
+            "2. common factor 以 protected-target paired counterfactual effect 为主，"
+            "并把共同分量/载荷和 native-vs-split 作为辅助结构指标；hierarchy 继续联合"
+            "精度、coherence、child contrast 与 native-vs-split。",
+            "3. common-factor、cross-series 与 covariate-response 以 paired "
+            "counterfactual effect NRMSE、"
             "相关、幅度比和有符号投影为主表，factual MASE 放副表。",
             "4. 所有能力继续报告 family 敏感性；本轮 common-factor、cross-series 和"
             "covariate-response 的 family 排名变化尤其明显，不能把单一 surrogate "
@@ -3544,8 +3833,9 @@ def render_benchmark_final_audit(
             "## 最终判断",
             "",
             "十个能力均可保留，但它们不是同一种题：trend/multi-seasonal/"
-            "time-varying/nonlinear/intermittency 是单序列动力学恢复；common-factor/"
-            "hierarchy 是联合结构恢复；cross-series/covariate-response 是严格条件依赖。"
+            "time-varying/nonlinear/intermittency 是单序列动力学恢复；hierarchy 是"
+            "联合结构恢复；common-factor/cross-series/covariate-response 是严格配对"
+            "条件依赖。"
             "只要论文按这三类分别解释，并采用上述机制指标，当前生成器适合作为机制"
             "benchmark pilot。若仍只发布一张 MASE 表，则 common-factor、hierarchy、"
             "cross-series 和 covariate-response 四项都会被系统性误读。",
@@ -3573,6 +3863,11 @@ def create_plots(
     plot_dir = data_dir / "plots"
     plot_dir.mkdir(parents=True, exist_ok=True)
     capabilities = sorted({row["capability_id"] for row in samples})
+    plot_context_length = max(
+        int(row["context_length"])
+        for row in samples
+        if row.get("evaluation_table", "main") == "main"
+    )
     for capability_id in capabilities:
         candidates = [
             row
@@ -3582,6 +3877,7 @@ def create_plots(
             and row["generator_family_role"] == "primary"
             and int(row["intensity"]) == 5
             and int(row["sample_index"]) == 0
+            and int(row["context_length"]) == plot_context_length
         ]
         if not candidates:
             continue
@@ -3621,7 +3917,9 @@ def create_plots(
             axis.axvline(context - 0.5, color="#888888", linestyle="--")
             axis.set_ylabel(f"target {channel}")
             axis.grid(alpha=0.2)
-        axes[0, 0].set_title(f"{capability_id}: primary I5 seed 0")
+        axes[0, 0].set_title(
+            f"{capability_id}: primary I5 seed 0 L{context}"
+        )
         axes[-1, 0].set_xlabel("time step")
         handles, labels = axes[0, 0].get_legend_handles_labels()
         figure.legend(handles, labels, loc="upper center", ncol=max(2, len(labels)))
@@ -3631,6 +3929,106 @@ def create_plots(
 
     ablation_plot_dir = data_dir / "ablation_plots"
     ablation_plot_dir.mkdir(parents=True, exist_ok=True)
+    common_counterfactual_groups: dict[
+        str,
+        dict[int, dict[str, Any]],
+    ] = defaultdict(dict)
+    for sample in samples:
+        if (
+            sample["capability_id"] == "common_factor"
+            and sample.get("evaluation_table", "main") == "main"
+            and sample["generator_family_role"] == "primary"
+            and int(sample["intensity"]) == 5
+            and int(sample["context_length"]) == plot_context_length
+            and sample.get("counterfactual_pair_id") is not None
+        ):
+            common_counterfactual_groups[
+                str(sample["counterfactual_pair_id"])
+            ][int(sample["counterfactual_member"])] = sample
+    complete_common_pairs = [
+        members
+        for _, members in sorted(common_counterfactual_groups.items())
+        if set(members) == {0, 1}
+    ]
+    if complete_common_pairs:
+        members = complete_common_pairs[0]
+        first = members[0]
+        second = members[1]
+        context = int(first["context_length"])
+        horizon = int(first["horizon"])
+        protected = int(
+            first["generation_metadata"]["protected_target_index"]
+        )
+        first_target = np.asarray(first["target"], dtype=float)
+        second_target = np.asarray(second["target"], dtype=float)
+        figure, axis = plt.subplots(1, 1, figsize=(11, 4.8))
+        forecast_time = np.arange(horizon)
+        truth_effect = (
+            second_target[context:, protected]
+            - first_target[context:, protected]
+        )
+        axis.plot(
+            forecast_time,
+            truth_effect,
+            color="black",
+            linewidth=2.2,
+            label="truth counterfactual effect",
+        )
+        axis.axhline(
+            0.0,
+            color="#888888",
+            linewidth=1.1,
+            linestyle="--",
+            label="independent-target reference",
+        )
+        model_ids = sorted(
+            {
+                model_id
+                for sample_id, model_id, variant in variant_prediction_index
+                if sample_id == first["sample_id"]
+                and variant == "native"
+                and model_id not in {"last_value", "seasonal_naive"}
+            }
+        )
+        for color_index, model_id in enumerate(model_ids):
+            first_prediction = variant_prediction_index.get(
+                (first["sample_id"], model_id, "native")
+            )
+            second_prediction = variant_prediction_index.get(
+                (second["sample_id"], model_id, "native")
+            )
+            if first_prediction is None or second_prediction is None:
+                continue
+            forecast_effect = (
+                np.asarray(second_prediction["forecast"], dtype=float)[
+                    :, protected
+                ]
+                - np.asarray(first_prediction["forecast"], dtype=float)[
+                    :, protected
+                ]
+            )
+            axis.plot(
+                forecast_time,
+                forecast_effect,
+                color=f"C{color_index}",
+                linewidth=1.5,
+                label=model_id,
+            )
+        axis.set_title(
+            "common_factor: I5 jointly observable counterfactual effect "
+            "(protected-target histories are identical)"
+        )
+        axis.set_xlabel("forecast step")
+        axis.set_ylabel(f"protected target {protected}\neffect")
+        axis.grid(alpha=0.2)
+        axis.legend(loc="upper center", ncol=4)
+        figure.tight_layout()
+        figure.savefig(
+            ablation_plot_dir / "common_factor_counterfactual_effect.png",
+            dpi=150,
+        )
+        plt.close(figure)
+
     cross_candidates = [
         row
         for row in samples
@@ -3639,6 +4037,7 @@ def create_plots(
         and row["generator_family_role"] == "primary"
         and int(row["intensity"]) == 5
         and int(row["sample_index"]) == 0
+        and int(row["context_length"]) == plot_context_length
     ]
     if cross_candidates:
         sample = cross_candidates[0]
@@ -3739,6 +4138,7 @@ def create_plots(
             and sample.get("evaluation_table", "main") == "main"
             and sample["generator_family_role"] == "primary"
             and int(sample["intensity"]) == 5
+            and int(sample["context_length"]) == plot_context_length
             and sample.get("counterfactual_pair_id") is not None
         ):
             counterfactual_groups[str(sample["counterfactual_pair_id"])][
@@ -3850,6 +4250,7 @@ def create_plots(
             and sample.get("evaluation_table", "main") == "main"
             and sample["generator_family_role"] == "primary"
             and int(sample["intensity"]) == 5
+            and int(sample["context_length"]) == plot_context_length
             and sample.get("counterfactual_pair_id") is not None
         ):
             covariate_counterfactual_groups[
@@ -3966,6 +4367,7 @@ def create_plots(
             and row["generator_family_role"] == "primary"
             and int(row["intensity"]) == 5
             and int(row["sample_index"]) == 0
+            and int(row["context_length"]) == plot_context_length
         ]
         if not candidates:
             continue
@@ -4193,8 +4595,8 @@ def main() -> int:
                     | {
                         "last_value",
                         "seasonal_naive",
-                        "cross_lag_linear_probe",
                     }
+                    | DIAGNOSTIC_PROBE_MODELS
                 )
             ]
         else:
@@ -4279,7 +4681,7 @@ def main() -> int:
                     input_adaptation={
                         "service_semantics": (
                             "protocol_aware_history_only_positive_control"
-                            if baseline == "cross_lag_linear_probe"
+                            if baseline in DIAGNOSTIC_PROBE_MODELS
                             else "local_baseline"
                         )
                     },

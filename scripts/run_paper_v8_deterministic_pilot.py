@@ -52,9 +52,11 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
     add_observation_noise_to_history,
+    common_factor_identifiability_gate,
     cross_series_identifiability_gate,
     derive_deterministic_parameters,
     generate_deterministic_sample,
+    standardize_common_factor_counterfactual_member,
     standardize_cross_series_counterfactual_member,
 )
 from synthetic_feature_profile import (  # noqa: E402
@@ -112,7 +114,11 @@ PATH_SEED_BASE = 2026072400
 ROBUSTNESS_NOISE_RATIO = 0.15
 ROBUSTNESS_SEED_BASE = 2026072500
 COUNTERFACTUAL_CAPABILITIES = frozenset(
-    {"cross_series_dependence", "covariate_response"}
+    {
+        "common_factor",
+        "cross_series_dependence",
+        "covariate_response",
+    }
 )
 NUISANCE_FINGERPRINT_FIELDS = {
     "trend": (
@@ -141,9 +147,11 @@ NUISANCE_FINGERPRINT_FIELDS = {
         "deterministic_texture",
     ),
     "common_factor": (
-        "loadings",
-        "local_period_multipliers",
-        "shared_factor_process",
+        "code_matrix",
+        "response_basis_process",
+        "response_loadings",
+        "episode_span",
+        "protected_target_index",
     ),
     "hierarchical_coherence": (
         "aggregate_share_by_child",
@@ -371,7 +379,20 @@ def standardize_sample(
     metadata: dict[str, Any] | None = None,
     context_length: int = CONTEXT_LENGTH,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    if capability_id == "cross_series_dependence":
+    if capability_id == "common_factor":
+        if metadata is None:
+            raise ValueError(
+                "common-factor standardization requires generation metadata"
+            )
+        target, normalization = (
+            standardize_common_factor_counterfactual_member(
+                target,
+                context_length=context_length,
+                metadata=metadata,
+            )
+        )
+        metadata["counterfactual_standardization"] = normalization
+    elif capability_id == "cross_series_dependence":
         if metadata is None:
             raise ValueError(
                 "cross-series standardization requires generation metadata"
@@ -427,6 +448,40 @@ def attach_cross_series_identifiability_gates(
             )
 
 
+def attach_common_factor_identifiability_gates(
+    rows: list[dict[str, Any]],
+) -> None:
+    pairs: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for row in rows:
+        pair_id = row.get("counterfactual_pair_id")
+        member = row.get("counterfactual_member")
+        if pair_id is not None and member is not None:
+            pairs[str(pair_id)][int(member)] = row
+    for pair_id, members in pairs.items():
+        if set(members) != {0, 1}:
+            raise ValueError(f"incomplete common-factor pair: {pair_id}")
+        first = members[0]
+        second = members[1]
+        enforced = (
+            first["generator_family_role"] == "primary"
+            and int(first["intensity"]) == 5
+        )
+        gate = common_factor_identifiability_gate(
+            np.asarray(first["target"], dtype=float),
+            np.asarray(second["target"], dtype=float),
+            context_length=int(first["context_length"]),
+            metadata=first["generation_metadata"],
+            enforced=enforced,
+        )
+        first["generation_metadata"]["identifiability_gate"] = deepcopy(gate)
+        second["generation_metadata"]["identifiability_gate"] = deepcopy(gate)
+        if enforced and not gate["accepted"]:
+            raise ValueError(
+                "common-factor identifiability gate failed for "
+                f"{pair_id}: {gate}"
+            )
+
+
 def _view_profile_id(profile_id: str, context_length: int) -> str:
     prefix, separator, suffix = str(profile_id).rpartition("__L")
     if separator and "_H" in suffix:
@@ -476,7 +531,41 @@ def suffix_view(
         else np.asarray(row["covariates"], dtype=float)[start:]
     )
     metadata = deepcopy(row["generation_metadata"])
-    if row["capability_id"] == "cross_series_dependence":
+    if row["capability_id"] == "common_factor":
+        master_start = CONTEXT_LENGTH - context_length
+        code_width = len(metadata["code_shape"])
+        metadata["final_code_slice"] = [
+            context_length - code_width,
+            context_length,
+        ]
+        shifted_episodes = []
+        for episode in metadata["historical_episodes"]:
+            code_start, code_stop = (
+                int(value) - master_start
+                for value in episode["code_slice"]
+            )
+            response_start, response_stop = (
+                int(value) - master_start
+                for value in episode["response_slice"]
+            )
+            if (
+                code_start >= 0
+                and response_stop <= context_length
+            ):
+                shifted_episodes.append(
+                    {
+                        "code_slice": [code_start, code_stop],
+                        "response_slice": [
+                            response_start,
+                            response_stop,
+                        ],
+                    }
+                )
+        metadata["historical_episodes"] = shifted_episodes
+        metadata["historical_episode_count_in_view"] = len(
+            shifted_episodes
+        )
+    elif row["capability_id"] == "cross_series_dependence":
         delay = int(metadata["cross_lag_steps"])
         metadata["counterfactual_driver_slice"] = [
             context_length - delay,
@@ -669,7 +758,43 @@ def attach_suffix_view_audits(
                 (str(second["sample_id"]), context_length)
             ]
             pair_checks: dict[str, Any]
-            if capability_id == "cross_series_dependence":
+            if capability_id == "common_factor":
+                protected = int(
+                    first_metadata["protected_target_index"]
+                )
+                pair_checks = {
+                    "shared_standardization": (
+                        first_metadata["counterfactual_standardization"]
+                        == second_metadata[
+                            "counterfactual_standardization"
+                        ]
+                    ),
+                    "protected_target_history_invariant": bool(
+                        np.array_equal(
+                            first_target[:context_length, protected],
+                            second_target[:context_length, protected],
+                        )
+                    ),
+                    "protected_target_future_changes": bool(
+                        not np.array_equal(
+                            first_target[context_length:, protected],
+                            second_target[context_length:, protected],
+                        )
+                    ),
+                    "joint_code_changes": bool(
+                        not np.array_equal(
+                            first_target[
+                                first_metadata["final_code_slice"][0]
+                                : context_length
+                            ],
+                            second_target[
+                                second_metadata["final_code_slice"][0]
+                                : context_length
+                            ],
+                        )
+                    ),
+                }
+            elif capability_id == "cross_series_dependence":
                 driver = int(first_metadata["driver_index"])
                 responders = [
                     int(value)
@@ -1680,9 +1805,11 @@ def main() -> int:
                 "one deterministic empirical-copula anchor window per seed; "
                 "each feature keeps that window's marginal rank mapped into "
                 "its p25-p75 interval; paired across intensity; "
-                "cross-series and covariate-response counterfactual members "
+                "common-factor, cross-series, and covariate-response "
+                "counterfactual members "
                 "additionally share every parameter and path draw except the "
-                "designated observed driver block or known-future covariate branch"
+                "designated joint code, observed driver block, or known-future "
+                "covariate branch"
             ),
             "legacy_v7_structure_parameters_reused": False,
             "intensity_calibration": calibration,
@@ -1744,7 +1871,11 @@ def main() -> int:
                     capability_samples.append(row)
                     samples.append(row)
 
-        if capability_id == "cross_series_dependence":
+        if capability_id == "common_factor":
+            attach_common_factor_identifiability_gates(
+                capability_samples
+            )
+        elif capability_id == "cross_series_dependence":
             attach_cross_series_identifiability_gates(capability_samples)
         suffix_view_summary = attach_suffix_view_audits(
             capability_samples,
@@ -1946,7 +2077,70 @@ def main() -> int:
                 for row in clean_gates
             ),
         }
-        if capability_id == "cross_series_dependence":
+        if capability_id == "common_factor":
+            identifiability_gates = [
+                row["generation_metadata"]["identifiability_gate"]
+                for row in capability_samples
+            ]
+            enforced_identifiability_gates = [
+                gate for gate in identifiability_gates if gate["enforced"]
+            ]
+            identifiability_summary = {
+                "schema_version": (
+                    "common_factor_identifiability_summary.v1"
+                ),
+                "pair_count": len(identifiability_gates) // 2,
+                "enforced_pair_count": (
+                    len(enforced_identifiability_gates) // 2
+                ),
+                "enforced_acceptance_rate": float(
+                    np.mean(
+                        [
+                            gate["accepted"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "minimum_enforced_joint_holdout_r2": float(
+                    np.min(
+                        [
+                            gate["joint_holdout_r2"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "maximum_enforced_best_single_holdout_r2": float(
+                    np.max(
+                        [
+                            gate["best_single_channel_holdout_r2"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "minimum_enforced_joint_r2_gain": float(
+                    np.min(
+                        [
+                            gate["joint_minus_best_single_holdout_r2"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "maximum_enforced_positive_control_effect_nrmse": float(
+                    np.max(
+                        [
+                            gate["positive_control_effect_nrmse"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+            }
+            summary["capabilities"][capability_id][
+                "identifiability_gate"
+            ] = identifiability_summary
+            mapping_artifact["capabilities"][capability_id][
+                "identifiability_gate"
+            ] = identifiability_summary
+        elif capability_id == "cross_series_dependence":
             identifiability_gates = [
                 row["generation_metadata"]["identifiability_gate"]
                 for row in capability_samples

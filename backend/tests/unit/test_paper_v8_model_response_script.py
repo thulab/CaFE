@@ -47,7 +47,12 @@ def test_common_factor_and_hierarchy_metrics_are_ideal_for_exact_forecasts():
     response = load_response_module()
     time = np.linspace(-2.0, 2.0, 36)
     factor = np.column_stack([time, -1.5 * time, 0.7 * time])
-    factor_sample = sample_for("common_factor", factor, context_length=24)
+    factor_sample = sample_for(
+        "common_factor",
+        factor,
+        context_length=24,
+        generation_metadata={"protected_target_index": 0},
+    )
 
     factor_metrics = response.prediction_metrics(
         factor_sample,
@@ -58,6 +63,8 @@ def test_common_factor_and_hierarchy_metrics_are_ideal_for_exact_forecasts():
     assert factor_metrics["factor_trajectory_correlation"] == pytest.approx(1.0)
     assert factor_metrics["factor_score_nrmse"] == pytest.approx(0.0)
     assert factor_metrics["common_component_nmae"] == pytest.approx(0.0)
+    assert factor_metrics["protected_target_mae"] == pytest.approx(0.0)
+    assert factor_metrics["protected_target_nmae"] == pytest.approx(0.0)
 
     child_a = np.sin(np.arange(36) / 3)
     child_b = np.cos(np.arange(36) / 4)
@@ -528,6 +535,117 @@ def test_cross_series_counterfactual_audit_detects_driver_response() -> None:
     assert by_variant["native"]["mean_effect_signed_projection"] == pytest.approx(1.0)
     assert by_variant["native"][
         "mean_responder_history_max_abs_difference"
+    ] == pytest.approx(0.0)
+    assert by_variant["forced_independent_targets"][
+        "mean_effect_amplitude_ratio"
+    ] == pytest.approx(0.0)
+
+
+def test_common_factor_counterfactual_audit_requires_joint_response() -> None:
+    response = load_response_module()
+    generated = []
+    for member in (0, 1):
+        target, metadata, _ = (
+            response.v8_pilot.generate_deterministic_sample(
+                "common_factor",
+                552,
+                504,
+                3,
+                24,
+                5,
+                np.random.default_rng(91),
+                counterfactual_variant=member,
+            )
+        )
+        target, _ = (
+            response.v8_pilot.standardize_common_factor_counterfactual_member(
+                target,
+                context_length=504,
+                metadata=metadata,
+            )
+        )
+        generated.append((target, metadata))
+
+    samples = []
+    predictions = []
+    for member, (target, metadata) in enumerate(generated):
+        sample_id = f"common-member-{member}"
+        sample = {
+            "sample_id": sample_id,
+            "evaluation_table": "main",
+            "capability_id": "common_factor",
+            "generator_family_role": "primary",
+            "intensity": 5,
+            "context_length": 504,
+            "horizon": 48,
+            "season_length": 24,
+            "target": target.tolist(),
+            "counterfactual_pair_id": "common-pair-0",
+            "counterfactual_member": member,
+            "generation_metadata": metadata,
+        }
+        samples.append(sample)
+        probe = response.baseline_forecast(
+            sample,
+            "common_factor_joint_probe",
+        )
+        protected = int(metadata["protected_target_index"])
+        split = np.repeat(
+            target[503:504],
+            48,
+            axis=0,
+        )
+        predictions.extend(
+            [
+                {
+                    "sample_id": sample_id,
+                    "model_id": "joint-probe",
+                    "variant": "native",
+                    "forecast": probe.tolist(),
+                    "metrics": {
+                        "protected_target_mae": float(
+                            np.mean(
+                                np.abs(
+                                    probe[:, protected]
+                                    - target[504:, protected]
+                                )
+                            )
+                        )
+                    },
+                },
+                {
+                    "sample_id": sample_id,
+                    "model_id": "joint-probe",
+                    "variant": "forced_independent_targets",
+                    "forecast": split.tolist(),
+                    "metrics": {
+                        "protected_target_mae": float(
+                            np.mean(
+                                np.abs(
+                                    split[:, protected]
+                                    - target[504:, protected]
+                                )
+                            )
+                        )
+                    },
+                },
+            ]
+        )
+
+    rows = response.common_factor_counterfactual_audits(
+        predictions,
+        samples,
+    )
+    by_variant = {row["variant"]: row for row in rows}
+
+    assert by_variant["native"]["mean_effect_nrmse"] < 0.15
+    assert by_variant["native"]["mean_effect_correlation"] > 0.95
+    assert by_variant["native"]["mean_effect_amplitude_ratio"] == pytest.approx(
+        1.0,
+        abs=0.15,
+    )
+    assert by_variant["native"][
+        "mean_protected_history_max_abs_difference"
     ] == pytest.approx(0.0)
     assert by_variant["forced_independent_targets"][
         "mean_effect_amplitude_ratio"

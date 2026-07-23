@@ -10,9 +10,11 @@ from app.services.synthetic_v8_generation import (
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
     add_observation_noise_to_history,
+    common_factor_identifiability_gate,
     cross_series_identifiability_gate,
     derive_deterministic_parameters,
     generate_deterministic_sample,
+    standardize_common_factor_counterfactual_member,
     standardize_cross_series_counterfactual_member,
 )
 
@@ -88,6 +90,77 @@ def test_v8_hierarchy_is_exactly_coherent() -> None:
 
     assert np.max(np.abs(target[:, 0] - np.sum(target[:, 1:], axis=1))) < 1e-12
     assert metadata["future_only_shock_count"] == 0
+
+
+@pytest.mark.parametrize("family_role", ("primary", "secondary"))
+def test_v8_common_factor_requires_joint_code_to_recover_future(
+    family_role: str,
+) -> None:
+    arguments = (
+        "common_factor",
+        552,
+        504,
+        3,
+        24,
+        5,
+    )
+    first, first_metadata, _ = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(19),
+        family_role=family_role,
+        counterfactual_variant=0,
+    )
+    second, second_metadata, _ = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(19),
+        family_role=family_role,
+        counterfactual_variant=1,
+    )
+    first, first_normalization = (
+        standardize_common_factor_counterfactual_member(
+            first,
+            context_length=504,
+            metadata=first_metadata,
+        )
+    )
+    second, second_normalization = (
+        standardize_common_factor_counterfactual_member(
+            second,
+            context_length=504,
+            metadata=second_metadata,
+        )
+    )
+    protected = int(first_metadata["protected_target_index"])
+    gate = common_factor_identifiability_gate(
+        first,
+        second,
+        context_length=504,
+        metadata=first_metadata,
+        enforced=True,
+    )
+
+    assert first_normalization == second_normalization
+    assert np.array_equal(
+        first[:504, protected],
+        second[:504, protected],
+    )
+    assert not np.array_equal(
+        first[504:, protected],
+        second[504:, protected],
+    )
+    assert first_metadata["code_matrix_rank"] == 2
+    assert first_metadata["historical_episode_count"] >= 5
+    assert first_metadata["response_basis_process"][
+        "factor_persistence_parameter"
+    ] == pytest.approx(first_metadata["factor_persistence"])
+    assert first_metadata["local_factor_loading_orthogonalized"] is True
+    assert first_metadata["local_code_shape_orthogonalized"] is True
+    assert gate["joint_holdout_r2"] >= 0.80
+    assert gate["best_single_channel_holdout_r2"] <= 0.80
+    assert gate["joint_minus_best_single_holdout_r2"] >= 0.15
+    assert gate["positive_control_effect_nrmse"] <= 1e-6
+    assert gate["positive_control_effect_correlation"] >= 0.95
+    assert gate["accepted"] is True
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
@@ -412,8 +485,15 @@ def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:
             row["pulse_anchor_offset"],
         ),
         "common_factor": lambda row: (
-            tuple(np.round(row["loadings"], 6)),
-            tuple(np.round(row["local_period_multipliers"], 6)),
+            tuple(
+                np.round(
+                    np.asarray(row["code_matrix"]).ravel(),
+                    6,
+                )
+            ),
+            tuple(np.round(row["response_loadings"], 6)),
+            row["episode_span"],
+            row["protected_target_index"],
         ),
         "hierarchical_coherence": lambda row: (
             tuple(row["child_permutation"]),
