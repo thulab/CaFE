@@ -52,8 +52,10 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
     add_observation_noise_to_history,
+    cross_series_identifiability_gate,
     derive_deterministic_parameters,
     generate_deterministic_sample,
+    standardize_cross_series_counterfactual_member,
 )
 from synthetic_feature_profile import (  # noqa: E402
     feature_vector,
@@ -364,15 +366,64 @@ def standardize_sample(
     capability_id: str,
     target: np.ndarray,
     covariates: np.ndarray | None,
+    *,
+    metadata: dict[str, Any] | None = None,
+    context_length: int = CONTEXT_LENGTH,
 ) -> tuple[np.ndarray, np.ndarray | None]:
-    target = (
-        _standardize_hierarchy_by_context(target, CONTEXT_LENGTH)
-        if capability_id == "hierarchical_coherence"
-        else _standardize_by_context(target, CONTEXT_LENGTH)
-    )
+    if capability_id == "cross_series_dependence":
+        if metadata is None:
+            raise ValueError(
+                "cross-series standardization requires generation metadata"
+            )
+        target, normalization = (
+            standardize_cross_series_counterfactual_member(
+                target,
+                context_length=context_length,
+                metadata=metadata,
+            )
+        )
+        metadata["counterfactual_standardization"] = normalization
+    elif capability_id == "hierarchical_coherence":
+        target = _standardize_hierarchy_by_context(target, context_length)
+    else:
+        target = _standardize_by_context(target, context_length)
     if covariates is not None:
-        covariates = _normalize_covariates(covariates, CONTEXT_LENGTH)
+        covariates = _normalize_covariates(covariates, context_length)
     return target, covariates
+
+
+def attach_cross_series_identifiability_gates(
+    rows: list[dict[str, Any]],
+) -> None:
+    pairs: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for row in rows:
+        pair_id = row.get("counterfactual_pair_id")
+        member = row.get("counterfactual_member")
+        if pair_id is not None and member is not None:
+            pairs[str(pair_id)][int(member)] = row
+    for pair_id, members in pairs.items():
+        if set(members) != {0, 1}:
+            raise ValueError(f"incomplete cross-series pair: {pair_id}")
+        first = members[0]
+        second = members[1]
+        enforced = (
+            first["generator_family_role"] == "primary"
+            and int(first["intensity"]) == 5
+        )
+        gate = cross_series_identifiability_gate(
+            np.asarray(first["target"], dtype=float),
+            np.asarray(second["target"], dtype=float),
+            context_length=int(first["context_length"]),
+            metadata=first["generation_metadata"],
+            enforced=enforced,
+        )
+        first["generation_metadata"]["identifiability_gate"] = deepcopy(gate)
+        second["generation_metadata"]["identifiability_gate"] = deepcopy(gate)
+        if enforced and not gate["accepted"]:
+            raise ValueError(
+                "cross-series identifiability gate failed for "
+                f"{pair_id}: {gate}"
+            )
 
 
 def measured_features(
@@ -464,6 +515,7 @@ def generate_one(
         capability_id,
         target,
         covariates,
+        metadata=metadata,
     )
     features = measured_features(
         capability_id,
@@ -1266,6 +1318,9 @@ def main() -> int:
                     capability_samples.append(row)
                     samples.append(row)
 
+        if capability_id == "cross_series_dependence":
+            attach_cross_series_identifiability_gates(capability_samples)
+
         primary_means = []
         for intensity in INTENSITIES:
             values = [
@@ -1460,6 +1515,57 @@ def main() -> int:
                 for row in clean_gates
             ),
         }
+        if capability_id == "cross_series_dependence":
+            identifiability_gates = [
+                row["generation_metadata"]["identifiability_gate"]
+                for row in capability_samples
+            ]
+            enforced_identifiability_gates = [
+                gate for gate in identifiability_gates if gate["enforced"]
+            ]
+            identifiability_summary = {
+                "schema_version": "cross_series_identifiability_summary.v1",
+                "pair_count": len(identifiability_gates) // 2,
+                "enforced_pair_count": len(enforced_identifiability_gates) // 2,
+                "enforced_acceptance_rate": float(
+                    np.mean(
+                        [
+                            gate["accepted"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "minimum_enforced_history_holdout_r2": float(
+                    np.min(
+                        [
+                            gate["minimum_declared_holdout_r2"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "maximum_enforced_positive_control_effect_nrmse": float(
+                    np.max(
+                        [
+                            gate["positive_control_effect_nrmse"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+                "minimum_enforced_positive_control_effect_correlation": float(
+                    np.min(
+                        [
+                            gate["positive_control_effect_correlation"]
+                            for gate in enforced_identifiability_gates
+                        ]
+                    )
+                ),
+            }
+            summary["capabilities"][capability_id][
+                "identifiability_gate"
+            ] = identifiability_summary
+            mapping_artifact["capabilities"][capability_id][
+                "identifiability_gate"
+            ] = identifiability_summary
 
     inference_samples = [row for row in samples if row["inference_selected"]]
     robustness_samples = [

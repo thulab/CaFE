@@ -8,8 +8,10 @@ from app.services.synthetic_v8_generation import (
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
     add_observation_noise_to_history,
+    cross_series_identifiability_gate,
     derive_deterministic_parameters,
     generate_deterministic_sample,
+    standardize_cross_series_counterfactual_member,
 )
 
 
@@ -149,6 +151,83 @@ def test_v8_cross_series_counterfactual_pair_has_identical_responder_history(
     assert not np.array_equal(first[504:, 1:], second[504:, 1:])
     assert first_metadata["counterfactual_alternative_rms"] > 0.1
     assert second_metadata["counterfactual_alternative_rms"] > 0.1
+
+
+def test_v8_cross_series_primary_uses_signed_responder_edges() -> None:
+    _, metadata, _ = generate_deterministic_sample(
+        "cross_series_dependence",
+        552,
+        504,
+        5,
+        24,
+        5,
+        np.random.default_rng(41),
+    )
+
+    assert metadata["responder_signs"] == [1.0, -1.0, 1.0, -1.0]
+
+
+def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
+) -> None:
+    arguments = (
+        "cross_series_dependence",
+        552,
+        504,
+        3,
+        24,
+        5,
+    )
+    first, first_metadata, _ = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(43),
+        counterfactual_variant=0,
+    )
+    second, second_metadata, _ = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(43),
+        counterfactual_variant=1,
+    )
+
+    first, first_normalization = (
+        standardize_cross_series_counterfactual_member(
+            first,
+            context_length=504,
+            metadata=first_metadata,
+        )
+    )
+    second, second_normalization = (
+        standardize_cross_series_counterfactual_member(
+            second,
+            context_length=504,
+            metadata=second_metadata,
+        )
+    )
+    invariant_stop = first_metadata["counterfactual_driver_slice"][0]
+    gate = cross_series_identifiability_gate(
+        first,
+        second,
+        context_length=504,
+        metadata=first_metadata,
+        enforced=True,
+    )
+
+    assert first_normalization == second_normalization
+    assert np.array_equal(
+        first[:invariant_stop, 0],
+        second[:invariant_stop, 0],
+    )
+    assert np.array_equal(first[504:, 0], second[504:, 0])
+    assert np.array_equal(first[:504, 1:], second[:504, 1:])
+    assert gate["accepted"] is True
+    assert gate["blind_best_driver"] == first_metadata["driver_index"]
+    assert gate["blind_best_lag"] == first_metadata["cross_lag_steps"]
+    assert gate["minimum_declared_holdout_r2"] >= 0.80
+    assert gate["positive_control_effect_nrmse"] <= 0.15
+    assert gate["positive_control_effect_correlation"] >= 0.95
+    assert gate["positive_control_effect_amplitude_ratio"] == pytest.approx(
+        1.0,
+        abs=0.05,
+    )
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))

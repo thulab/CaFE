@@ -10,8 +10,13 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-dynamic-nuisance-audit"
+GENERATOR_VERSION = "capts-paper-v8-cross-series-identifiability-gate"
 FamilyRole = Literal["primary", "secondary"]
+
+CROSS_SERIES_MIN_HOLDOUT_R2 = 0.80
+CROSS_SERIES_MAX_EFFECT_NRMSE = 0.15
+CROSS_SERIES_MIN_EFFECT_CORRELATION = 0.95
+CROSS_SERIES_EFFECT_AMPLITUDE_RANGE = (0.80, 1.20)
 
 
 PRIMARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
@@ -507,6 +512,276 @@ def _standardize_history(
     scale = np.std(history, axis=0, keepdims=True)
     scale = np.where(scale > 1e-9, scale, 1.0)
     return amplitude * (matrix - center) / scale
+
+
+def standardize_cross_series_counterfactual_member(
+    values: np.ndarray,
+    *,
+    context_length: int,
+    metadata: dict[str, Any],
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Use pair-invariant statistics for a cross-series counterfactual member.
+
+    Responder histories are exactly invariant across pair members, so ordinary
+    context standardization already gives them shared statistics.  The driver
+    intervention lies in the final ``delay`` history steps; using the full
+    driver context separately for each member would turn that localized
+    intervention into a global affine difference.  Standardizing the driver
+    from its invariant prefix avoids that counterfactual confound.
+    """
+
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim != 2:
+        raise ValueError("cross-series target must be a two-dimensional array")
+    if not 1 <= context_length < matrix.shape[0]:
+        raise ValueError("context_length must split history and future")
+    driver = int(metadata["driver_index"])
+    driver_slice = metadata.get("counterfactual_driver_slice")
+    if (
+        not isinstance(driver_slice, list)
+        or len(driver_slice) != 2
+        or int(driver_slice[1]) != context_length
+    ):
+        raise ValueError(
+            "counterfactual_driver_slice must end at the context boundary"
+        )
+    invariant_stop = int(driver_slice[0])
+    if invariant_stop < 8:
+        raise ValueError(
+            "counterfactual driver invariant prefix is too short to standardize"
+        )
+
+    standardized = _standardize_history(matrix, context_length)
+    driver_reference = matrix[:invariant_stop, driver]
+    driver_center = float(np.mean(driver_reference))
+    driver_scale = float(np.std(driver_reference))
+    if driver_scale <= 1e-9:
+        driver_scale = 1.0
+    standardized[:, driver] = (
+        matrix[:, driver] - driver_center
+    ) / driver_scale
+    return standardized, {
+        "policy": "pair_shared_driver_invariant_prefix",
+        "driver_reference_slice": [0, invariant_stop],
+        "driver_center": driver_center,
+        "driver_scale": driver_scale,
+        "responder_reference_slice": [0, context_length],
+    }
+
+
+def _chronological_linear_holdout(
+    source: np.ndarray,
+    response: np.ndarray,
+) -> tuple[float, float, float]:
+    source = np.asarray(source, dtype=float).ravel()
+    response = np.asarray(response, dtype=float).ravel()
+    if source.size != response.size or source.size < 12:
+        return -math.inf, 0.0, 0.0
+    split = int(np.clip(round(0.70 * source.size), 8, source.size - 4))
+    design = np.column_stack(
+        [np.ones(split, dtype=float), source[:split]]
+    )
+    intercept, slope = np.linalg.lstsq(
+        design,
+        response[:split],
+        rcond=None,
+    )[0]
+    truth = response[split:]
+    forecast = intercept + slope * source[split:]
+    denominator = float(np.sum((truth - float(np.mean(truth))) ** 2))
+    if denominator <= 1e-12:
+        return -math.inf, float(intercept), float(slope)
+    r2 = 1.0 - float(np.sum((truth - forecast) ** 2)) / denominator
+    return float(r2), float(intercept), float(slope)
+
+
+def _safe_flat_correlation(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=float).ravel().copy()
+    right = np.asarray(right, dtype=float).ravel().copy()
+    if left.size < 3 or left.size != right.size:
+        return 0.0
+    left -= float(np.mean(left))
+    right -= float(np.mean(right))
+    denominator = float(np.linalg.norm(left) * np.linalg.norm(right))
+    return (
+        float(np.dot(left, right) / denominator)
+        if denominator > 1e-12
+        else 0.0
+    )
+
+
+def cross_series_identifiability_gate(
+    first_target: np.ndarray,
+    second_target: np.ndarray,
+    *,
+    context_length: int,
+    metadata: dict[str, Any],
+    enforced: bool,
+) -> dict[str, Any]:
+    """Audit whether a history-only learner can recover the intended SCM.
+
+    The blind search receives neither the driver identity nor the lag.  It
+    selects the source/lag pair that jointly predicts every other channel on a
+    chronological holdout.  The positive control then uses the declared
+    protocol roles only after discovery, estimates signed response coefficients
+    from history, and checks the paired future effect.
+    """
+
+    first = np.asarray(first_target, dtype=float)
+    second = np.asarray(second_target, dtype=float)
+    if first.shape != second.shape or first.ndim != 2:
+        raise ValueError("counterfactual targets must be equal-shaped matrices")
+    if not 1 <= context_length < first.shape[0]:
+        raise ValueError("context_length must split history and future")
+    driver = int(metadata["driver_index"])
+    responders = [int(value) for value in metadata["responder_indices"]]
+    delay = int(metadata["cross_lag_steps"])
+    horizon = first.shape[0] - context_length
+    max_lag = min(context_length // 2, context_length - 12)
+    if not 1 <= delay <= max_lag:
+        return {
+            "schema_version": "cross_series_identifiability_gate.v1",
+            "enforced": bool(enforced),
+            "accepted": False,
+            "reason": "declared_lag_outside_blind_search_support",
+            "declared_driver": driver,
+            "declared_lag": delay,
+            "blind_max_lag": max_lag,
+        }
+
+    history = first[:context_length]
+    blind_candidates: list[tuple[float, int, int, list[float]]] = []
+    for candidate_source in range(history.shape[1]):
+        destinations = [
+            index
+            for index in range(history.shape[1])
+            if index != candidate_source
+        ]
+        for candidate_lag in range(1, max_lag + 1):
+            holdout_scores = [
+                _chronological_linear_holdout(
+                    history[: context_length - candidate_lag, candidate_source],
+                    history[candidate_lag:context_length, destination],
+                )[0]
+                for destination in destinations
+            ]
+            finite_scores = [
+                value for value in holdout_scores if math.isfinite(value)
+            ]
+            score = (
+                float(np.mean(finite_scores))
+                if len(finite_scores) == len(holdout_scores)
+                else -math.inf
+            )
+            blind_candidates.append(
+                (
+                    score,
+                    candidate_source,
+                    candidate_lag,
+                    holdout_scores,
+                )
+            )
+    blind_candidates.sort(key=lambda row: row[0], reverse=True)
+    best_score, best_source, best_lag, best_destination_scores = (
+        blind_candidates[0]
+    )
+    blind_passed = best_source == driver and abs(best_lag - delay) <= 1
+
+    declared_holdout_r2 = [
+        _chronological_linear_holdout(
+            history[: context_length - delay, driver],
+            history[delay:context_length, responder],
+        )[0]
+        for responder in responders
+    ]
+    minimum_holdout_r2 = float(np.min(declared_holdout_r2))
+    holdout_passed = minimum_holdout_r2 >= CROSS_SERIES_MIN_HOLDOUT_R2
+
+    training_driver = history[: context_length - delay, driver]
+    design = np.column_stack(
+        [np.ones(training_driver.size, dtype=float), training_driver]
+    )
+    first_forecast = np.empty((horizon, len(responders)), dtype=float)
+    second_forecast = np.empty_like(first_forecast)
+    fitted_slopes: list[float] = []
+    for column, responder in enumerate(responders):
+        training_response = history[delay:context_length, responder]
+        intercept, slope = np.linalg.lstsq(
+            design,
+            training_response,
+            rcond=None,
+        )[0]
+        fitted_slopes.append(float(slope))
+        first_driver = first[
+            context_length - delay : context_length - delay + horizon,
+            driver,
+        ]
+        second_driver = second[
+            context_length - delay : context_length - delay + horizon,
+            driver,
+        ]
+        first_forecast[:, column] = intercept + slope * first_driver
+        second_forecast[:, column] = intercept + slope * second_driver
+
+    truth_effect = (
+        second[context_length:, responders]
+        - first[context_length:, responders]
+    )
+    forecast_effect = second_forecast - first_forecast
+    truth_rms = float(np.sqrt(np.mean(truth_effect * truth_effect)))
+    forecast_rms = float(
+        np.sqrt(np.mean(forecast_effect * forecast_effect))
+    )
+    effect_nrmse = float(
+        np.sqrt(np.mean((forecast_effect - truth_effect) ** 2))
+        / max(truth_rms, 1e-12)
+    )
+    effect_correlation = _safe_flat_correlation(
+        truth_effect,
+        forecast_effect,
+    )
+    effect_amplitude_ratio = forecast_rms / max(truth_rms, 1e-12)
+    amplitude_lower, amplitude_upper = CROSS_SERIES_EFFECT_AMPLITUDE_RANGE
+    positive_control_passed = (
+        effect_nrmse <= CROSS_SERIES_MAX_EFFECT_NRMSE
+        and effect_correlation >= CROSS_SERIES_MIN_EFFECT_CORRELATION
+        and amplitude_lower <= effect_amplitude_ratio <= amplitude_upper
+    )
+    accepted = blind_passed and holdout_passed and positive_control_passed
+    return {
+        "schema_version": "cross_series_identifiability_gate.v1",
+        "enforced": bool(enforced),
+        "accepted": bool(accepted),
+        "declared_driver": driver,
+        "declared_lag": delay,
+        "blind_max_lag": max_lag,
+        "blind_best_driver": int(best_source),
+        "blind_best_lag": int(best_lag),
+        "blind_best_mean_holdout_r2": float(best_score),
+        "blind_best_destination_holdout_r2": [
+            float(value) for value in best_destination_scores
+        ],
+        "blind_driver_lag_passed": bool(blind_passed),
+        "declared_responder_holdout_r2": [
+            float(value) for value in declared_holdout_r2
+        ],
+        "minimum_declared_holdout_r2": minimum_holdout_r2,
+        "minimum_holdout_r2_threshold": CROSS_SERIES_MIN_HOLDOUT_R2,
+        "history_holdout_passed": bool(holdout_passed),
+        "positive_control_fitted_slopes": fitted_slopes,
+        "positive_control_effect_nrmse": effect_nrmse,
+        "positive_control_effect_correlation": effect_correlation,
+        "positive_control_effect_amplitude_ratio": effect_amplitude_ratio,
+        "positive_control_max_effect_nrmse": CROSS_SERIES_MAX_EFFECT_NRMSE,
+        "positive_control_min_effect_correlation": (
+            CROSS_SERIES_MIN_EFFECT_CORRELATION
+        ),
+        "positive_control_effect_amplitude_range": [
+            amplitude_lower,
+            amplitude_upper,
+        ],
+        "positive_control_passed": bool(positive_control_passed),
+    }
 
 
 def _lds_signal(
@@ -1542,7 +1817,11 @@ def _cross_series_dependence(
     target = np.empty((length, dim), dtype=float)
     target[:, 0] = driver
     responder_signs = (
-        np.ones(dim - 1, dtype=float)
+        np.where(
+            np.arange(dim - 1, dtype=int) % 2 == 0,
+            1.0,
+            -1.0,
+        )
         if family == "primary"
         else responder_rng.choice(
             np.asarray([-1.0, 1.0]),
