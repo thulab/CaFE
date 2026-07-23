@@ -10,6 +10,17 @@ import numpy as np
 
 ARTIFACT_PATH = Path(__file__).resolve().parents[1] / "data" / "synthetic_v2_feature_gate_artifact.json"
 SCHEMA_VERSION = "synthetic_feature_support_gate.v1"
+CLEAN_DETERMINISTIC_EXCLUDED_CONTROLS = frozenset(
+    {
+        "noise_ratio",
+        "outlier_rate",
+        "spike_rate",
+        "diff_spike_rate",
+        "volatility_shift_strength",
+        "covariate_residual_outlier_rate",
+        "covariate_residual_spike_rate",
+    }
+)
 
 
 def evaluate_feature_support_gate(
@@ -21,7 +32,12 @@ def evaluate_feature_support_gate(
     horizon: int,
     target_dim: int,
     artifact: dict[str, Any] | None = None,
+    evaluation_mode: str = "standard",
 ) -> dict[str, Any]:
+    if evaluation_mode not in {"standard", "clean_deterministic"}:
+        raise ValueError(
+            "evaluation_mode must be standard or clean_deterministic"
+        )
     source = artifact if artifact is not None else load_feature_gate_artifact()
     if not source:
         return not_enforced(
@@ -51,7 +67,15 @@ def evaluate_feature_support_gate(
             target_dim,
         )
 
-    bucket_results = [evaluate_bucket(capability_id, features, bucket) for bucket in buckets]
+    bucket_results = [
+        evaluate_bucket(
+            capability_id,
+            features,
+            bucket,
+            evaluation_mode=evaluation_mode,
+        )
+        for bucket in buckets
+    ]
     accepted_results = [result for result in bucket_results if result["accepted"]]
     candidates = accepted_results or bucket_results
     matched = min(
@@ -78,6 +102,7 @@ def evaluate_feature_support_gate(
         "enforced": True,
         "status": "passed" if accepted else "outside_real_control_support",
         "capability_id": capability_id,
+        "evaluation_mode": evaluation_mode,
         "profile_ids": list(profile_ids),
         "evaluated_bucket_count": len(bucket_results),
         "matched_profile_id": matched["profile_id"],
@@ -129,10 +154,20 @@ def evaluate_bucket(
     capability_id: str,
     features: dict[str, float],
     bucket: dict[str, Any],
+    *,
+    evaluation_mode: str = "standard",
 ) -> dict[str, Any]:
     config = bucket["capabilities"][capability_id]
-    support = config["control_support"]
+    original_support = config["control_support"]
+    support = (
+        project_clean_deterministic_support(original_support)
+        if evaluation_mode == "clean_deterministic"
+        else original_support
+    )
     names = tuple(str(name) for name in support["feature_names"])
+    excluded_names = sorted(
+        set(original_support["feature_names"]) - set(names)
+    )
     missing = [
         name
         for name in names
@@ -173,6 +208,13 @@ def evaluate_bucket(
         "accepted": accepted,
         "status": "passed" if accepted else ("missing_features" if missing else "outside_support"),
         "support_method": str(support.get("method", "robust_mahalanobis")),
+        "evaluation_mode": evaluation_mode,
+        "excluded_control_features": excluded_names,
+        "threshold_calibration": (
+            "projected_from_standard_support_requires_v8_recalibration"
+            if excluded_names
+            else "artifact_native"
+        ),
         "score": round_float(score),
         "threshold": round_float(threshold),
         "normalized_score": round_float(normalized),
@@ -183,6 +225,45 @@ def evaluate_bucket(
         "calibration_count": int(support.get("calibration_count", 0)),
         "coverage": float(support.get("coverage", 0.0)),
     }
+
+
+def project_clean_deterministic_support(
+    support: dict[str, Any],
+) -> dict[str, Any]:
+    """Project a legacy real-data gate away from stochastic tail controls.
+
+    This projection is useful for a v8 pilot audit.  Its threshold remains the
+    legacy conformal threshold and must be rebuilt from the original split
+    before use as a formal acceptance gate.
+    """
+
+    original_names = [str(name) for name in support["feature_names"]]
+    keep = [
+        index
+        for index, name in enumerate(original_names)
+        if name not in CLEAN_DETERMINISTIC_EXCLUDED_CONTROLS
+    ]
+    projected = dict(support)
+    projected["feature_names"] = [original_names[index] for index in keep]
+    for key in ("feature_center", "feature_scale", "robust_location_z"):
+        values = np.asarray(support.get(key, []), dtype=float)
+        projected[key] = values[keep].tolist() if keep else []
+    if keep:
+        precision = np.asarray(support["precision"], dtype=float)
+        covariance = np.linalg.pinv(precision)
+        projected_covariance = covariance[np.ix_(keep, keep)]
+        projected["precision"] = np.linalg.pinv(
+            projected_covariance
+        ).tolist()
+    else:
+        projected["precision"] = []
+    marginal = support.get("marginal_quantiles", {})
+    projected["marginal_quantiles"] = {
+        name: marginal[name]
+        for name in projected["feature_names"]
+        if name in marginal
+    }
+    return projected
 
 
 def robust_mahalanobis_score(values: np.ndarray, support: dict[str, Any]) -> float:

@@ -164,3 +164,29 @@ def test_explicit_no_independent_controls_is_enforced_and_accepts() -> None:
     )
     assert result["score"] == 0.0
     assert result["control_features"] == {}
+
+
+def test_clean_deterministic_mode_projects_out_tail_controls() -> None:
+    artifact = artifact_with_joint_support()
+
+    result = evaluate_feature_support_gate(
+        capability_id="trend",
+        features={"trend_strength": 0.6},
+        profile_ids=("unit_bucket",),
+        context_length=168,
+        horizon=24,
+        target_dim=1,
+        artifact=artifact,
+        evaluation_mode="clean_deterministic",
+    )
+
+    assert result["accepted"] is True
+    assert result["evaluation_mode"] == "clean_deterministic"
+    assert result["control_features"] == {}
+    assert result["bucket_results"][0]["excluded_control_features"] == [
+        "noise_ratio",
+        "spike_rate"
+    ]
+    assert result["bucket_results"][0]["threshold_calibration"] == (
+        "projected_from_standard_support_requires_v8_recalibration"
+    )

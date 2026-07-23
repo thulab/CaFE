@@ -26,6 +26,9 @@ DEFAULT_FEATURES = (
     "noise_ratio",
     "acf1",
     "acf_abs_mean",
+    "seasonal_acf",
+    "dominant_period",
+    "spectral_concentration",
     "outlier_rate",
     "spike_rate",
     "multi_period_score",
@@ -35,17 +38,21 @@ DEFAULT_FEATURES = (
     "seasonal_phase_variation",
     "change_point_shift_energy",
     "level_shift_strength",
+    "regime_sparse_transition_score",
     "volatility_shift_strength",
     "nonlinear_lag1_gain",
     "nonlinear_multi_lag_gain",
     "nonlinear_conditional_gain",
     "burst_rate",
     "diff_spike_rate",
+    "intermittency_clock_incremental_r2",
     "avg_abs_target_corr",
     "pca_top1_explained",
     "pca_top2_explained",
     "effective_factor_rank",
     "lead_lag_peak_abs",
+    "lead_lag_peak_lag_abs",
+    "cross_series_incremental_r2",
     "avg_abs_covariate_target_corr",
     "future_abs_covariate_target_corr",
     "event_lift_abs",
@@ -56,6 +63,14 @@ DEFAULT_FEATURES = (
     "hierarchy_residual_mean_abs",
     "hierarchy_child_heterogeneity",
     "hierarchy_aggregation_ratio",
+    "hierarchy_aggregate_acf1",
+    "hierarchy_contrast_acf1",
+    "hierarchy_aggregate_seasonal_acf",
+    "hierarchy_contrast_seasonal_acf",
+    "hierarchy_contrast_to_aggregate_std_ratio",
+    "hierarchy_aggregate_contrast_abs_corr",
+    "factor_score_acf1",
+    "factor_residual_acf1",
 )
 DEFAULT_QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 BOUNDED_FEATURES = {
@@ -1706,6 +1721,7 @@ def feature_vector(
     covariates: np.ndarray | None = None,
     context_length: int | None = None,
     hierarchy: str | None = None,
+    include_cross_series_predictability: bool = True,
 ) -> dict[str, float]:
     if window.ndim == 1:
         window = window[:, None]
@@ -1717,16 +1733,38 @@ def feature_vector(
             out[feature] = float(np.mean(values))
     out.update(structural_univariate_features(np.mean(window, axis=1), season_length=season_length))
     if window.shape[1] > 1:
-        out.update(multitarget_features(window))
+        out.update(
+            multitarget_features(
+                window,
+                max_lag=min(
+                    48,
+                    max(12, int(season_length or 12)),
+                ),
+                include_cross_series_predictability=(
+                    include_cross_series_predictability
+                ),
+            )
+        )
     if hierarchy == "additive_first" and window.shape[1] > 2:
-        hierarchy_residual = window[:, 0] - np.sum(window[:, 1:], axis=1)
-        out["hierarchy_residual_mean_abs"] = float(np.mean(np.abs(hierarchy_residual)))
+        out.update(hierarchy_coordinate_features(window, season_length))
     if covariates is not None and covariates.size:
-        out.update(covariate_features(window, covariates, context_length or max(1, window.shape[0] // 2)))
+        out.update(
+            covariate_features(
+                window,
+                covariates,
+                context_length or max(1, window.shape[0] // 2),
+                season_length=season_length,
+            )
+        )
     return out
 
 
-def multitarget_features(window: np.ndarray) -> dict[str, float]:
+def multitarget_features(
+    window: np.ndarray,
+    *,
+    max_lag: int = 12,
+    include_cross_series_predictability: bool = True,
+) -> dict[str, float]:
     centered = window - np.mean(window, axis=0, keepdims=True)
     corr_values = [
         abs(safe_corr(window[:, left], window[:, right]))
@@ -1734,17 +1772,101 @@ def multitarget_features(window: np.ndarray) -> dict[str, float]:
         for right in range(window.shape[1])
         if left != right
     ]
-    singular = np.linalg.svd(centered, full_matrices=False, compute_uv=False)
+    try:
+        _, singular, right = np.linalg.svd(centered, full_matrices=False)
+    except np.linalg.LinAlgError:
+        singular = np.zeros(min(centered.shape), dtype=float)
+        right = np.zeros((0, centered.shape[1]), dtype=float)
     variance = singular**2
     total = float(np.sum(variance))
     explained = variance / total if total > 1e-12 else np.zeros_like(variance)
     entropy = -float(np.sum([value * np.log(value) for value in explained if value > 1e-12]))
-    return {
+    result = {
         "avg_abs_target_corr": float(np.mean(corr_values)) if corr_values else 0.0,
         "pca_top1_explained": float(explained[0]) if explained.size else 0.0,
         "pca_top2_explained": float(np.sum(explained[:2])) if explained.size else 0.0,
         "effective_factor_rank": float(np.exp(entropy)) if explained.size else 0.0,
-        "lead_lag_peak_abs": lead_lag_peak_abs(window),
+    }
+    if include_cross_series_predictability:
+        result.update(
+            {
+                "lead_lag_peak_abs": lead_lag_peak_abs(
+                    window,
+                    max_lag=max_lag,
+                ),
+                "lead_lag_peak_lag_abs": lead_lag_peak_lag_abs(
+                    window,
+                    max_lag=max_lag,
+                ),
+                "cross_series_incremental_r2": (
+                    cross_series_incremental_r2(
+                        window,
+                        max_lag=max_lag,
+                    )
+                ),
+            }
+        )
+    if right.size:
+        factor_score = centered @ right[0]
+        factor_component = factor_score[:, None] * right[0][None, :]
+        residual = centered - factor_component
+        result["factor_score_acf1"] = autocorrelation(factor_score, 1)
+        result["factor_residual_acf1"] = float(
+            np.mean(
+                [
+                    autocorrelation(residual[:, index], 1)
+                    for index in range(residual.shape[1])
+                ]
+            )
+        )
+    return result
+
+
+def hierarchy_coordinate_features(
+    window: np.ndarray,
+    season_length: int | None,
+) -> dict[str, float]:
+    """Describe a hierarchy without assuming a particular latent DGP.
+
+    The aggregate is the observed parent.  Child deviations are projected to
+    their leading contrast score, which is invariant to the arbitrary sign of
+    the singular vector.  These are descriptive calibration coordinates, not
+    claims that the real data were generated by an aggregate/contrast model.
+    """
+
+    values = np.asarray(window, dtype=float)
+    parent = values[:, 0]
+    children = values[:, 1:]
+    residual = parent - np.sum(children, axis=1)
+    deviations = children - np.mean(children, axis=1, keepdims=True)
+    try:
+        left, singular, _ = np.linalg.svd(deviations, full_matrices=False)
+        contrast = left[:, 0] * singular[0] if singular.size else np.zeros(len(values))
+    except np.linalg.LinAlgError:
+        contrast = deviations[:, 0]
+    parent_std = float(np.std(parent))
+    contrast_std = float(np.std(contrast))
+    child_heterogeneity = float(np.mean(np.std(children, axis=1)))
+    child_magnitude = float(np.mean(np.sum(np.abs(children), axis=1)))
+    period = max(1, int(season_length or 1))
+    return {
+        "hierarchy_residual_mean_abs": float(np.mean(np.abs(residual))),
+        "hierarchy_child_heterogeneity": child_heterogeneity,
+        "hierarchy_aggregation_ratio": (
+            float(np.mean(np.abs(parent))) / child_magnitude
+            if child_magnitude > 1e-12
+            else 0.0
+        ),
+        "hierarchy_aggregate_acf1": autocorrelation(parent, 1),
+        "hierarchy_contrast_acf1": autocorrelation(contrast, 1),
+        "hierarchy_aggregate_seasonal_acf": autocorrelation(parent, period),
+        "hierarchy_contrast_seasonal_acf": autocorrelation(contrast, period),
+        "hierarchy_contrast_to_aggregate_std_ratio": (
+            contrast_std / parent_std if parent_std > 1e-12 else 0.0
+        ),
+        "hierarchy_aggregate_contrast_abs_corr": abs(
+            safe_corr(parent, contrast)
+        ),
     }
 
 
@@ -1761,6 +1883,114 @@ def lead_lag_peak_abs(window: np.ndarray, max_lag: int = 12) -> float:
                 peaks.append(abs(safe_corr(window[:-lag, left], window[lag:, right])))
     finite = [value for value in peaks if math.isfinite(value)]
     return float(max(finite)) if finite else 0.0
+
+
+def lead_lag_peak_lag_abs(
+    window: np.ndarray,
+    max_lag: int = 12,
+) -> float:
+    """Absolute lag of the strongest ordered cross-channel correlation."""
+
+    if window.shape[1] < 2:
+        return 0.0
+    lag_limit = min(max_lag, max(1, window.shape[0] // 4))
+    best_correlation = -1.0
+    best_lag = 0
+    for left in range(window.shape[1]):
+        for right in range(window.shape[1]):
+            if left == right:
+                continue
+            for lag in range(1, lag_limit + 1):
+                correlation = abs(
+                    safe_corr(window[:-lag, left], window[lag:, right])
+                )
+                if math.isfinite(correlation) and correlation > best_correlation:
+                    best_correlation = correlation
+                    best_lag = lag
+    return float(best_lag)
+
+
+def cross_series_incremental_r2(
+    window: np.ndarray,
+    max_lag: int = 12,
+) -> float:
+    """Held-out error reduction from other-channel lags over own lags.
+
+    This is a descriptive Granger-style calibration coordinate, not a
+    significance test.  Ridge stabilization and a chronological holdout keep
+    the high-dimensional unrestricted regression from receiving free in-sample
+    gains.
+    """
+
+    values = np.asarray(window, dtype=float)
+    if values.ndim != 2 or values.shape[1] < 2:
+        return 0.0
+    lag_limit = min(
+        max(2, int(max_lag)),
+        48,
+        max(2, values.shape[0] // 5),
+    )
+    if values.shape[0] < 4 * lag_limit:
+        return 0.0
+    scaled = np.column_stack(
+        [robust_scale(values[:, index]) for index in range(values.shape[1])]
+    )
+    sample_count = values.shape[0] - lag_limit
+    lagged = np.stack(
+        [
+            scaled[lag_limit - lag : values.shape[0] - lag]
+            for lag in range(1, lag_limit + 1)
+        ],
+        axis=1,
+    )
+    split = max(2 * lag_limit, int(round(0.70 * sample_count)))
+    split = min(split, sample_count - lag_limit)
+    if split <= lag_limit or sample_count - split < lag_limit:
+        return 0.0
+    gains: list[float] = []
+    for target_index in range(values.shape[1]):
+        response = scaled[lag_limit:, target_index]
+        own = lagged[:, :, target_index]
+        full = lagged.reshape(sample_count, -1)
+        own_prediction = ridge_holdout_prediction(own, response, split)
+        full_prediction = ridge_holdout_prediction(full, response, split)
+        actual = response[split:]
+        own_error = float(np.sum((actual - own_prediction) ** 2))
+        full_error = float(np.sum((actual - full_prediction) ** 2))
+        if own_error > 1e-12:
+            gains.append(
+                clamp01((own_error - full_error) / own_error)
+            )
+    return float(np.mean(gains)) if gains else 0.0
+
+
+def ridge_holdout_prediction(
+    design: np.ndarray,
+    response: np.ndarray,
+    split: int,
+) -> np.ndarray:
+    train = np.asarray(design[:split], dtype=float)
+    test = np.asarray(design[split:], dtype=float)
+    center = np.mean(train, axis=0, keepdims=True)
+    scale = np.std(train, axis=0, keepdims=True)
+    scale = np.where(scale > 1e-9, scale, 1.0)
+    train = (train - center) / scale
+    test = (test - center) / scale
+    train = np.column_stack([np.ones(train.shape[0]), train])
+    test = np.column_stack([np.ones(test.shape[0]), test])
+    penalty = np.eye(train.shape[1], dtype=float)
+    penalty[0, 0] = 0.0
+    alpha = 0.05 * train.shape[0]
+    try:
+        coefficients = np.linalg.solve(
+            train.T @ train + alpha * penalty,
+            train.T @ response[:split],
+        )
+    except np.linalg.LinAlgError:
+        coefficients = np.linalg.pinv(
+            train.T @ train + alpha * penalty
+        ) @ (train.T @ response[:split])
+    return test @ coefficients
 
 
 def single_series_features(values: np.ndarray, season_length: int | None = None) -> dict[str, float]:
@@ -1781,10 +2011,39 @@ def single_series_features(values: np.ndarray, season_length: int | None = None)
         "noise_ratio": clamp01(safe_var(residual) / total_var) if total_var > 0 else 0.0,
         "acf1": autocorrelation(scaled, 1),
         "acf_abs_mean": mean_abs_autocorrelation(scaled, max_lag=min(10, max(1, y.size // 4))),
+        "seasonal_acf": autocorrelation(scaled, max(1, int(season_length or 1))),
+        **spectral_time_scale_features(scaled),
         "outlier_rate": outlier_rate(scaled),
         "spike_rate": spike_rate(scaled),
         "trend_resid_var": trend_resid_var,
         "seasonal_resid_var": seasonal_resid_var,
+    }
+
+
+def spectral_time_scale_features(values: np.ndarray) -> dict[str, float]:
+    """Return a robust dominant period and its share of detrended energy."""
+
+    y = np.asarray(values, dtype=float)
+    if y.size < 12:
+        return {"dominant_period": 0.0, "spectral_concentration": 0.0}
+    time = np.arange(y.size, dtype=float)
+    design = np.column_stack([np.ones(y.size), time])
+    try:
+        detrended = y - design @ np.linalg.lstsq(design, y, rcond=None)[0]
+    except np.linalg.LinAlgError:
+        detrended = y - float(np.mean(y))
+    power = np.abs(np.fft.rfft(detrended)) ** 2
+    frequencies = np.fft.rfftfreq(y.size)
+    if power.size:
+        power[0] = 0.0
+    valid = (frequencies >= 2.0 / y.size) & (frequencies <= 1.0 / 3.0)
+    if not np.any(valid) or float(np.sum(power)) <= 1e-12:
+        return {"dominant_period": 0.0, "spectral_concentration": 0.0}
+    valid_indices = np.flatnonzero(valid)
+    peak = int(valid_indices[np.argmax(power[valid])])
+    return {
+        "dominant_period": float(1.0 / frequencies[peak]),
+        "spectral_concentration": float(power[peak] / np.sum(power)),
     }
 
 
@@ -1807,23 +2066,142 @@ def structural_univariate_features(values: np.ndarray, season_length: int | None
     half = max(1, n // 2)
     seasonal_left = phase_profile(y[:half], season_length)
     seasonal_right = phase_profile(y[half:], season_length)
+    modulation_features = seasonal_modulation_features(y, season_length)
     diff = np.diff(y)
     return {
         "level_shift_strength": float(max(level_scores)) if level_scores else 0.0,
         "volatility_shift_strength": float(max(volatility_scores)) if volatility_scores else 0.0,
         "change_point_shift_energy": float(np.mean(sorted(level_scores, reverse=True)[:3])) if level_scores else 0.0,
+        "regime_sparse_transition_score": regime_sparse_transition_score(y),
         "burst_rate": float(np.mean(np.abs(y) > 3.0)),
         "diff_spike_rate": float(np.mean(np.abs(robust_scale(diff)) > 3.0)) if diff.size else 0.0,
+        "intermittency_clock_incremental_r2": intermittency_clock_incremental_r2(
+            y,
+            season_length,
+        ),
         "multi_period_score": multi_period_score(y, season_length),
         "seasonal_drift_score": float(np.mean(np.abs(seasonal_left - seasonal_right))) if seasonal_left.size and seasonal_right.size else 0.0,
         "seasonal_amplitude_cv": float(np.std(np.abs(seasonal_profile)) / (np.mean(np.abs(seasonal_profile)) + 1e-9)) if seasonal_profile.size else 0.0,
         "nonlinear_lag1_gain": nonlinear_lag1_gain(y),
         "nonlinear_multi_lag_gain": nonlinear_multi_lag_gain(y, season_length),
         "nonlinear_conditional_gain": nonlinear_conditional_gain(y, season_length),
+        **modulation_features,
     }
 
 
-def covariate_features(target: np.ndarray, covariates: np.ndarray, context_length: int) -> dict[str, float]:
+def seasonal_modulation_features(
+    values: np.ndarray,
+    season_length: int | None,
+) -> dict[str, float]:
+    """Measure cycle-to-cycle amplitude and phase variation of the base period."""
+
+    period = max(4, int(season_length or 4))
+    cycle_count = values.size // period
+    if cycle_count < 3:
+        return {
+            "seasonal_amplitude_modulation": 0.0,
+            "seasonal_phase_variation": 0.0,
+        }
+    phase_index = np.arange(period, dtype=float)
+    sine = np.sin(2.0 * np.pi * phase_index / period)
+    cosine = np.cos(2.0 * np.pi * phase_index / period)
+    amplitudes: list[float] = []
+    phases: list[float] = []
+    for cycle in range(cycle_count):
+        segment = values[cycle * period : (cycle + 1) * period]
+        centered = segment - float(np.mean(segment))
+        sine_coefficient = 2.0 * float(np.mean(centered * sine))
+        cosine_coefficient = 2.0 * float(np.mean(centered * cosine))
+        amplitudes.append(float(np.hypot(sine_coefficient, cosine_coefficient)))
+        phases.append(float(np.arctan2(cosine_coefficient, sine_coefficient)))
+    amplitude_array = np.asarray(amplitudes, dtype=float)
+    phase_array = np.unwrap(np.asarray(phases, dtype=float))
+    return {
+        "seasonal_amplitude_modulation": float(
+            np.std(amplitude_array) / (np.mean(amplitude_array) + 1e-9)
+        ),
+        "seasonal_phase_variation": float(np.std(phase_array) / np.pi),
+    }
+
+
+def intermittency_clock_incremental_r2(
+    values: np.ndarray,
+    season_length: int | None,
+) -> float:
+    """Extra adjusted R2 of a recurring event clock over smooth seasonality.
+
+    The clock uses three base periods so it can represent a deterministic
+    short/long/nominal interval motif without being given generator metadata.
+    Ordinary trend and two base-period Fourier harmonics are residualized.
+    """
+
+    y = np.asarray(values, dtype=float)
+    period = max(4, int(season_length or 4))
+    clock_period = 3 * period
+    if y.size < 3 * clock_period:
+        return 0.0
+    time = np.arange(y.size, dtype=float)
+    normalized_time = (time - np.mean(time)) / max(y.size - 1, 1)
+    baseline_columns = [np.ones(y.size), normalized_time]
+    for harmonic in (1, 2):
+        angle = 2.0 * np.pi * harmonic * time / period
+        baseline_columns.extend([np.sin(angle), np.cos(angle)])
+    baseline = np.column_stack(baseline_columns)
+    phase = np.arange(y.size) % clock_period
+    phase_design = np.eye(clock_period, dtype=float)[phase]
+    full = np.column_stack([baseline, phase_design[:, 1:]])
+    split = max(2 * clock_period, int(round(0.67 * y.size)))
+    split = min(split, y.size - clock_period)
+    if split <= clock_period or y.size - split < period:
+        return 0.0
+    try:
+        baseline_coefficients = np.linalg.lstsq(
+            baseline[:split],
+            y[:split],
+            rcond=None,
+        )[0]
+        full_coefficients = np.linalg.lstsq(
+            full[:split],
+            y[:split],
+            rcond=None,
+        )[0]
+    except np.linalg.LinAlgError:
+        return 0.0
+    baseline_error = float(
+        np.sum((y[split:] - baseline[split:] @ baseline_coefficients) ** 2)
+    )
+    full_error = float(
+        np.sum((y[split:] - full[split:] @ full_coefficients) ** 2)
+    )
+    if baseline_error <= 1e-12:
+        return 0.0
+    return max(0.0, min(1.0, (baseline_error - full_error) / baseline_error))
+
+
+def regime_sparse_transition_score(values: np.ndarray) -> float:
+    """Share of first-difference energy concentrated in sparse transitions."""
+
+    differences = np.diff(np.asarray(values, dtype=float))
+    energy = differences * differences
+    total = float(np.sum(energy))
+    if energy.size < 8 or total <= 1e-12:
+        return 0.0
+    count = max(2, int(math.ceil(0.05 * energy.size)))
+    top = np.partition(energy, -count)[-count:]
+    raw_share = float(np.sum(top) / total)
+    # Uniformly distributed variation has expected share close to 5%; map
+    # that baseline to zero while retaining a bounded [0, 1] score.
+    baseline = count / energy.size
+    return clamp01((raw_share - baseline) / max(1.0 - baseline, 1e-12))
+
+
+def covariate_features(
+    target: np.ndarray,
+    covariates: np.ndarray,
+    context_length: int,
+    *,
+    season_length: int | None = None,
+) -> dict[str, float]:
     if covariates.ndim == 1:
         covariates = covariates[:, None]
     scores: list[float] = []
@@ -1846,10 +2224,51 @@ def covariate_features(target: np.ndarray, covariates: np.ndarray, context_lengt
             inactive = ~active
             if active.any() and inactive.any():
                 event_lifts.append(abs(float(np.mean(target[active]) - np.mean(target[inactive]))))
+    time = np.arange(target.shape[0], dtype=float)
+    period = max(4, int(season_length or min(24, target.shape[0] // 4)))
+    baseline_design = np.column_stack(
+        [
+            np.ones(target.shape[0], dtype=float),
+            np.sin(2.0 * np.pi * time / period),
+            np.cos(2.0 * np.pi * time / period),
+        ]
+    )
+    covariate_design = np.column_stack([baseline_design, covariates])
+    incremental_scores = [
+        max(
+            0.0,
+            r2(target[:, target_idx], covariate_design)
+            - r2(target[:, target_idx], baseline_design),
+        )
+        for target_idx in range(target.shape[1])
+    ]
+    residual_acf_scores: list[float] = []
+    residual_outlier_scores: list[float] = []
+    residual_spike_scores: list[float] = []
+    for target_idx in range(target.shape[1]):
+        coefficients = np.linalg.lstsq(
+            covariate_design,
+            target[:, target_idx],
+            rcond=None,
+        )[0]
+        residual = target[:, target_idx] - covariate_design @ coefficients
+        scaled_residual = robust_scale(residual)
+        residual_acf_scores.append(
+            mean_abs_autocorrelation(
+                scaled_residual,
+                max_lag=min(10, max(1, residual.size // 4)),
+            )
+        )
+        residual_outlier_scores.append(outlier_rate(residual))
+        residual_spike_scores.append(spike_rate(residual))
     return {
         "avg_abs_covariate_target_corr": float(np.mean(scores)) if scores else 0.0,
         "future_abs_covariate_target_corr": float(np.mean(future_scores)) if future_scores else 0.0,
         "event_lift_abs": float(np.mean(event_lifts)) if event_lifts else 0.0,
+        "covariate_incremental_r2": float(np.mean(incremental_scores)) if incremental_scores else 0.0,
+        "covariate_residual_acf_abs_mean": float(np.mean(residual_acf_scores)) if residual_acf_scores else 0.0,
+        "covariate_residual_outlier_rate": float(np.mean(residual_outlier_scores)) if residual_outlier_scores else 0.0,
+        "covariate_residual_spike_rate": float(np.mean(residual_spike_scores)) if residual_spike_scores else 0.0,
     }
 
 

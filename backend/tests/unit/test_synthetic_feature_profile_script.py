@@ -75,6 +75,22 @@ def test_feature_vector_reports_multitarget_correlation():
     assert features["trend_strength"] > 0.9
 
 
+def test_feature_vector_reports_cross_series_incremental_predictability():
+    profiler = load_profiler_module()
+    rng = np.random.default_rng(17)
+    driver = rng.normal(size=480)
+    response = np.zeros_like(driver)
+    response[12:] = driver[:-12]
+    distractor = rng.normal(size=480)
+    values = np.column_stack([driver, response, distractor])
+
+    features = profiler.feature_vector(values, season_length=24)
+
+    assert features["lead_lag_peak_abs"] > 0.9
+    assert features["lead_lag_peak_lag_abs"] == 12
+    assert features["cross_series_incremental_r2"] > 0.25
+
+
 def test_feature_vector_reports_spec_univariate_structure_features():
     profiler = load_profiler_module()
     t = np.arange(120, dtype=float)
@@ -95,11 +111,49 @@ def test_feature_vector_reports_spec_univariate_structure_features():
         "volatility_shift_strength",
         "nonlinear_lag1_gain",
         "burst_rate",
+        "seasonal_amplitude_modulation",
+        "seasonal_phase_variation",
+        "dominant_period",
+        "spectral_concentration",
+        "regime_sparse_transition_score",
+        "intermittency_clock_incremental_r2",
     ):
         assert feature in features
     assert features["multi_period_score"] > 0
     assert features["level_shift_strength"] > 0
     assert features["burst_rate"] > 0
+
+
+def test_feature_vector_reports_hierarchy_coordinates_and_covariate_gain():
+    profiler = load_profiler_module()
+    time = np.arange(168, dtype=float)
+    weather = np.sin(2 * math.pi * time / 24)
+    event = (time % 48 < 4).astype(float)
+    children = np.column_stack(
+        [
+            weather + 0.6 * event,
+            0.7 * weather - 0.3 * event,
+        ]
+    )
+    parent = np.sum(children, axis=1)
+    hierarchy = np.column_stack([parent, children])
+    covariates = np.column_stack([weather, event])
+
+    features = profiler.feature_vector(
+        hierarchy,
+        season_length=24,
+        covariates=covariates,
+        context_length=120,
+        hierarchy="additive_first",
+    )
+
+    assert features["hierarchy_residual_mean_abs"] < 1e-12
+    assert features["hierarchy_child_heterogeneity"] > 0
+    assert features["hierarchy_aggregate_acf1"] > 0.8
+    assert features["hierarchy_contrast_to_aggregate_std_ratio"] > 0
+    assert features["covariate_incremental_r2"] > 0.01
+    assert "factor_score_acf1" in features
+    assert "factor_residual_acf1" in features
 
 
 def test_read_uci_hydraulic_sensor_cycles_preserves_cycle_order_and_downsamples(tmp_path):
