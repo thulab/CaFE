@@ -111,6 +111,57 @@ ROBUSTNESS_SEED_BASE = 2026072500
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {"cross_series_dependence", "covariate_response"}
 )
+NUISANCE_FINGERPRINT_FIELDS = {
+    "trend": (
+        "slope_jitter_by_target",
+        "curvature_sign_by_target",
+    ),
+    "multi_seasonal": ("periods",),
+    "time_varying_seasonality": (
+        "primary_period",
+        "modulation_period",
+        "modulation_harmonic_weight",
+        "modulation_harmonic_phase",
+    ),
+    "regime_switching": (
+        "dwell_pattern",
+        "dwell_anchor_offset",
+        "initial_regime_state",
+    ),
+    "nonlinear_persistence": (
+        "nonlinear_lag",
+        "deterministic_forcing",
+    ),
+    "predictable_intermittency": (
+        "pulse_interval_pattern",
+        "pulse_anchor_offset",
+        "deterministic_texture",
+    ),
+    "common_factor": (
+        "loadings",
+        "local_period_multipliers",
+        "shared_factor_process",
+    ),
+    "hierarchical_coherence": (
+        "aggregate_share_by_child",
+        "child_permutation",
+        "contrast_period_multipliers",
+        "local_contrast_loadings",
+    ),
+    "cross_series_dependence": (
+        "cross_lag_steps",
+        "historical_event_centers",
+        "counterfactual_response_center_offset",
+        "responder_gains",
+    ),
+    "covariate_response": (
+        "counterfactual_weather_transform_selected",
+        "counterfactual_event_start_options",
+        "event_width",
+        "weather_effect_by_target",
+        "event_effect_by_target",
+    ),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -203,34 +254,93 @@ def summarize(rows: list[dict[str, float]]) -> dict[str, dict[str, float]]:
 def sampled_summary(
     summary: dict[str, dict[str, float]],
     rng: np.random.Generator,
-) -> dict[str, dict[str, float]]:
+    *,
+    feature_rows: list[dict[str, float]],
+    anchor_index: int,
+) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
+    """Sample marginal values from one empirical-copula anchor window.
+
+    Each feature keeps the selected real window's empirical rank, then maps
+    that rank into the central p25-p75 support used by the pilot. This retains
+    cross-feature dependence without copying the real window's raw scale or
+    exposing tail outliers.
+    """
+
+    if not feature_rows:
+        raise ValueError("feature_rows must not be empty")
+    normalized_anchor = int(anchor_index) % len(feature_rows)
+    anchor = feature_rows[normalized_anchor]
+    fallback_quantile = float(rng.uniform(0.25, 0.75))
     sampled = deepcopy(summary)
-    for values in sampled.values():
+    sampled_quantiles: dict[str, float] = {}
+    fallback_features: list[str] = []
+    for feature, values in sampled.items():
         p25 = float(values.get("p25", values.get("p50", 0.0)))
         p50 = float(values.get("p50", p25))
         p75 = float(values.get("p75", p50))
-        quantile = float(rng.uniform(0.25, 0.75))
+        finite_values = np.asarray(
+            [
+                float(row[feature])
+                for row in feature_rows
+                if feature in row and math.isfinite(float(row[feature]))
+            ],
+            dtype=float,
+        )
+        anchor_value = float(anchor.get(feature, math.nan))
+        if finite_values.size and math.isfinite(anchor_value):
+            lower_count = float(np.sum(finite_values < anchor_value))
+            equal_count = float(np.sum(finite_values == anchor_value))
+            empirical_rank = (
+                lower_count + 0.5 * equal_count
+            ) / finite_values.size
+            quantile = float(0.25 + 0.5 * empirical_rank)
+        else:
+            quantile = fallback_quantile
+            fallback_features.append(feature)
         values["p50"] = float(
             np.interp(quantile, [0.25, 0.5, 0.75], [p25, p50, p75])
         )
         values["sampled_quantile"] = quantile
-    return sampled
+        sampled_quantiles[feature] = quantile
+    return sampled, {
+        "policy": "empirical_copula_anchor_rank_mapped_to_p25_p75",
+        "source_window_index": normalized_anchor,
+        "source_window_count": len(feature_rows),
+        "sampled_quantiles": sampled_quantiles,
+        "fallback_features": sorted(fallback_features),
+    }
 
 
 def sample_parameters(
     capability_id: str,
     summary: dict[str, dict[str, float]],
     *,
+    feature_rows: list[dict[str, float]],
     season_length: int,
     sample_index: int,
-) -> tuple[dict[str, float], list[dict[str, Any]]]:
+) -> tuple[dict[str, float], list[dict[str, Any]], dict[str, Any]]:
     rng = np.random.default_rng(PARAMETER_SEED_BASE + 1009 * sample_index)
-    return derive_deterministic_parameters(
+    anchor_stride = 17
+    while math.gcd(anchor_stride, len(feature_rows)) != 1:
+        anchor_stride += 2
+    anchor_index = (
+        PARAMETER_SEED_BASE % len(feature_rows)
+        + anchor_stride * sample_index
+    ) % len(feature_rows)
+    sampled, sampling_metadata = sampled_summary(
+        summary,
+        rng,
+        feature_rows=feature_rows,
+        anchor_index=anchor_index,
+    )
+    sampling_metadata["anchor_stride"] = anchor_stride
+    parameters, mappings = derive_deterministic_parameters(
         capability_id,
-        sampled_summary(summary, rng),
+        sampled,
         season_length=season_length,
         context_length=CONTEXT_LENGTH,
     )
+    return parameters, mappings, sampling_metadata
 
 
 def v8_conditioning(
@@ -305,16 +415,26 @@ def generate_one(
     sample_index: int,
     base_conditioning: GeneratorConditioning,
     parameter_summary: dict[str, dict[str, float]],
+    parameter_feature_rows: list[dict[str, float]],
     intensity_lambdas: tuple[float, ...],
-) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any], dict[str, float], dict[str, float], list[dict[str, Any]]]:
+) -> tuple[
+    np.ndarray,
+    np.ndarray | None,
+    dict[str, Any],
+    dict[str, float],
+    dict[str, float],
+    list[dict[str, Any]],
+    dict[str, Any],
+]:
     generation_index = (
         sample_index // 2
         if capability_id in COUNTERFACTUAL_CAPABILITIES
         else sample_index
     )
-    parameters, mappings = sample_parameters(
+    parameters, mappings, sampling_metadata = sample_parameters(
         capability_id,
         parameter_summary,
+        feature_rows=parameter_feature_rows,
         season_length=base_conditioning.season_length,
         sample_index=generation_index,
     )
@@ -351,7 +471,15 @@ def generate_one(
         covariates,
         base_conditioning.season_length,
     )
-    return target, covariates, metadata, features, parameters, mappings
+    return (
+        target,
+        covariates,
+        metadata,
+        features,
+        parameters,
+        mappings,
+        sampling_metadata,
+    )
 
 
 def response_curve(
@@ -360,6 +488,7 @@ def response_curve(
     family_role: str,
     base_conditioning: GeneratorConditioning,
     parameter_summary: dict[str, dict[str, float]],
+    parameter_feature_rows: list[dict[str, float]],
     seed_count: int,
 ) -> tuple[np.ndarray, np.ndarray]:
     feature = PRIMARY_TARGET_FEATURE[capability_id]
@@ -369,13 +498,14 @@ def response_curve(
         values: list[float] = []
         lambdas = (float(lambda_value),) * 5
         for sample_index in range(seed_count):
-            _, _, _, features, _, _ = generate_one(
+            _, _, _, features, _, _, _ = generate_one(
                 capability_id,
                 family_role=family_role,
                 intensity=1,
                 sample_index=sample_index,
                 base_conditioning=base_conditioning,
                 parameter_summary=parameter_summary,
+                parameter_feature_rows=parameter_feature_rows,
                 intensity_lambdas=lambdas,
             )
             values.append(float(features[feature]))
@@ -389,6 +519,7 @@ def response_at_selected_lambdas(
     family_role: str,
     base_conditioning: GeneratorConditioning,
     parameter_summary: dict[str, dict[str, float]],
+    parameter_feature_rows: list[dict[str, float]],
     intensity_lambdas: tuple[float, ...],
     seed_count: int,
 ) -> list[float]:
@@ -397,13 +528,14 @@ def response_at_selected_lambdas(
     for intensity in INTENSITIES:
         values = []
         for sample_index in range(seed_count):
-            _, _, _, features, _, _ = generate_one(
+            _, _, _, features, _, _, _ = generate_one(
                 capability_id,
                 family_role=family_role,
                 intensity=intensity,
                 sample_index=sample_index,
                 base_conditioning=base_conditioning,
                 parameter_summary=parameter_summary,
+                parameter_feature_rows=parameter_feature_rows,
                 intensity_lambdas=intensity_lambdas,
             )
             values.append(float(features[feature]))
@@ -480,6 +612,128 @@ def sha256_array(values: np.ndarray) -> str:
     return hashlib.sha256(np.ascontiguousarray(values).tobytes()).hexdigest()
 
 
+def parameter_combination_audit(
+    capability_id: str,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selected = [
+        row
+        for row in rows
+        if row["generator_family_role"] == "primary"
+        and int(row["intensity"]) == 5
+    ]
+    anchors = {
+        int(row["parameter_sampling"]["source_window_index"])
+        for row in selected
+    }
+    parameter_names = sorted(
+        {
+            name
+            for row in selected
+            for name in row["sampled_generator_parameters"]
+        }
+    )
+    vectors = {
+        tuple(
+            round(
+                float(row["sampled_generator_parameters"].get(name, math.nan)),
+                12,
+            )
+            for name in parameter_names
+        )
+        for row in selected
+    }
+    expected_independent_draws = (
+        len(selected) // 2
+        if capability_id in COUNTERFACTUAL_CAPABILITIES
+        else len(selected)
+    )
+    unique_by_parameter = {
+        name: len(
+            {
+                round(
+                    float(row["sampled_generator_parameters"][name]),
+                    12,
+                )
+                for row in selected
+                if name in row["sampled_generator_parameters"]
+            }
+        )
+        for name in parameter_names
+    }
+    fallback_features = sorted(
+        {
+            feature
+            for row in selected
+            for feature in row["parameter_sampling"]["fallback_features"]
+        }
+    )
+    return {
+        "policy": "empirical_copula_anchor_rank_mapped_to_p25_p75",
+        "source_window_count": (
+            int(selected[0]["parameter_sampling"]["source_window_count"])
+            if selected
+            else 0
+        ),
+        "expected_independent_draw_count": expected_independent_draws,
+        "distinct_anchor_count": len(anchors),
+        "unique_parameter_vector_count": len(vectors),
+        "distinct_anchor_coverage": (
+            len(anchors) / max(expected_independent_draws, 1)
+        ),
+        "unique_parameter_vector_coverage": (
+            len(vectors) / max(expected_independent_draws, 1)
+        ),
+        "unique_value_count_by_parameter": unique_by_parameter,
+        "fallback_features": fallback_features,
+    }
+
+
+def nuisance_combination_audit(
+    capability_id: str,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    selected = [
+        row
+        for row in rows
+        if row["generator_family_role"] == "primary"
+        and int(row["intensity"]) == 5
+        and (
+            capability_id not in COUNTERFACTUAL_CAPABILITIES
+            or int(row["counterfactual_member"]) == 0
+        )
+    ]
+    fields = NUISANCE_FINGERPRINT_FIELDS[capability_id]
+    missing_fields = sorted(
+        {
+            field
+            for row in selected
+            for field in fields
+            if field not in row["generation_metadata"]
+        }
+    )
+    fingerprints = {
+        json.dumps(
+            {
+                field: row["generation_metadata"].get(field)
+                for field in fields
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        for row in selected
+    }
+    return {
+        "fingerprint_fields": list(fields),
+        "expected_independent_path_count": len(selected),
+        "unique_nuisance_fingerprint_count": len(fingerprints),
+        "unique_nuisance_fingerprint_coverage": (
+            len(fingerprints) / max(len(selected), 1)
+        ),
+        "missing_fingerprint_fields": missing_fields,
+    }
+
+
 def sample_row(
     capability_id: str,
     *,
@@ -493,6 +747,7 @@ def sample_row(
     features: dict[str, float],
     parameters: dict[str, float],
     mappings: list[dict[str, Any]],
+    parameter_sampling: dict[str, Any],
     inference_selected: bool,
 ) -> dict[str, Any]:
     sample_id = (
@@ -557,6 +812,7 @@ def sample_row(
         },
         "sampled_generator_parameters": parameters,
         "parameter_mapping": mappings,
+        "parameter_sampling": parameter_sampling,
         "generation_metadata": metadata,
         "construction_validated": True,
         "evaluation_table": "main",
@@ -618,6 +874,7 @@ def validate_prefix(
     sample_index: int,
     base: GeneratorConditioning,
     parameter_summary: dict[str, dict[str, float]],
+    parameter_feature_rows: list[dict[str, float]],
     intensity_lambdas: tuple[float, ...],
 ) -> float:
     generation_index = (
@@ -625,9 +882,10 @@ def validate_prefix(
         if capability_id in COUNTERFACTUAL_CAPABILITIES
         else sample_index
     )
-    parameters, _ = sample_parameters(
+    parameters, _, _ = sample_parameters(
         capability_id,
         parameter_summary,
+        feature_rows=parameter_feature_rows,
         season_length=base.season_length,
         sample_index=generation_index,
     )
@@ -682,18 +940,32 @@ def report_markdown(summary: dict[str, Any]) -> str:
         "",
         "## Capability audit",
         "",
-        "| capability | dataset | extraction | mapping | primary / secondary | dose | future std/history std | clean gate |",
-        "|---|---|---:|---:|---|---:|---:|---:|",
+        "| capability | dataset | extraction | mapping | joint params | nuisance paths | primary / secondary | dose | future std/history std | clean gate |",
+        "|---|---|---:|---:|---:|---:|---|---:|---:|---:|",
     ]
     for capability_id, row in summary["capabilities"].items():
         lines.append(
             "| {cap} | {dataset} | {finite}/{required} | {mapped}/{required} | "
-            "`{primary}` / `{secondary}` | {dose} | {ratio:.3f} | {gate} |".format(
+            "{combos}/{expected} | {paths}/{expected_paths} | "
+            "`{primary}` / `{secondary}` | "
+            "{dose} | {ratio:.3f} | {gate} |".format(
                 cap=capability_id,
                 dataset=row["dataset_id"],
                 finite=row["required_features_fully_finite"],
                 required=row["required_feature_count"],
                 mapped=row["required_features_mapped"],
+                combos=row["parameter_combination_audit"][
+                    "unique_parameter_vector_count"
+                ],
+                expected=row["parameter_combination_audit"][
+                    "expected_independent_draw_count"
+                ],
+                paths=row["nuisance_combination_audit"][
+                    "unique_nuisance_fingerprint_count"
+                ],
+                expected_paths=row["nuisance_combination_audit"][
+                    "expected_independent_path_count"
+                ],
                 primary=row["primary_family"],
                 secondary=row["secondary_family"],
                 dose="pass" if row["primary_dose_monotone"] else "FAIL",
@@ -715,6 +987,12 @@ def report_markdown(summary: dict[str, Any]) -> str:
             "`*` clean-gate scores are projected from the v7 support artifact. "
             "The stochastic tail controls were removed, but the conformal threshold "
             "must be rebuilt before a formal v8 run.",
+            "",
+            "`joint params` counts unique I5 parameter vectors over independent "
+            "draws. Each draw uses one real-window empirical-copula anchor and maps "
+            "its joint feature ranks into the central p25-p75 support. `nuisance "
+            "paths` independently fingerprints the mechanism-specific motif, phase, "
+            "lag, loading or counterfactual branch selected before path generation.",
             "",
             "## Gate audit",
             "",
@@ -884,6 +1162,7 @@ def main() -> int:
             family_role="primary",
             base_conditioning=base,
             parameter_summary=parameter_summary,
+            parameter_feature_rows=parameter_rows,
             seed_count=args.calibration_seeds,
         )
         target_reference = target_summary[PRIMARY_TARGET_FEATURE[capability_id]]
@@ -897,6 +1176,7 @@ def main() -> int:
             family_role="primary",
             base_conditioning=base,
             parameter_summary=parameter_summary,
+            parameter_feature_rows=parameter_rows,
             intensity_lambdas=intensity_lambdas,
             seed_count=args.secondary_seeds,
         )
@@ -905,6 +1185,7 @@ def main() -> int:
             family_role="secondary",
             base_conditioning=base,
             parameter_summary=parameter_summary,
+            parameter_feature_rows=parameter_rows,
             seed_count=args.secondary_seeds,
         )
         secondary_intensity_lambdas, secondary_calibration = matched_family_lambdas(
@@ -918,8 +1199,9 @@ def main() -> int:
             "base_parameters": base_parameters,
             "base_parameter_mapping": base_mappings,
             "sample_parameter_policy": (
-                "independent deterministic draw from each feature's empirical "
-                "p25-p75 piecewise-linear quantile interval; paired across intensity; "
+                "one deterministic empirical-copula anchor window per seed; "
+                "each feature keeps that window's marginal rank mapped into "
+                "its p25-p75 interval; paired across intensity; "
                 "cross-series and covariate-response counterfactual members "
                 "additionally share every parameter and path draw except the "
                 "designated observed driver block or known-future covariate branch"
@@ -937,13 +1219,22 @@ def main() -> int:
         ):
             for intensity in intensities:
                 for sample_index in range(seed_count):
-                    target, covariates, metadata, features, parameters, mappings = generate_one(
+                    (
+                        target,
+                        covariates,
+                        metadata,
+                        features,
+                        parameters,
+                        mappings,
+                        parameter_sampling,
+                    ) = generate_one(
                         capability_id,
                         family_role=family_role,
                         intensity=intensity,
                         sample_index=sample_index,
                         base_conditioning=base,
                         parameter_summary=parameter_summary,
+                        parameter_feature_rows=parameter_rows,
                         intensity_lambdas=(
                             intensity_lambdas
                             if family_role == "primary"
@@ -969,6 +1260,7 @@ def main() -> int:
                         features=features,
                         parameters=parameters,
                         mappings=mappings,
+                        parameter_sampling=parameter_sampling,
                         inference_selected=inference_selected,
                     )
                     capability_samples.append(row)
@@ -1052,6 +1344,7 @@ def main() -> int:
                 sample_index=0,
                 base=base,
                 parameter_summary=parameter_summary,
+                parameter_feature_rows=parameter_rows,
                 intensity_lambdas=(
                     intensity_lambdas
                     if family_role == "primary"
@@ -1074,6 +1367,20 @@ def main() -> int:
             ),
             default=0.0,
         ) if capability_id == "hierarchical_coherence" else 0.0
+        parameter_audit = parameter_combination_audit(
+            capability_id,
+            capability_samples,
+        )
+        nuisance_audit = nuisance_combination_audit(
+            capability_id,
+            capability_samples,
+        )
+        mapping_artifact["capabilities"][capability_id][
+            "parameter_combination_audit"
+        ] = parameter_audit
+        mapping_artifact["capabilities"][capability_id][
+            "nuisance_combination_audit"
+        ] = nuisance_audit
         summary["capabilities"][capability_id] = {
             "dataset_id": base.dataset_id,
             "task_view_id": rows[0]["task_view_id"],
@@ -1130,6 +1437,8 @@ def main() -> int:
             "minimum_future_to_history_std_ratio": float(np.min(future_ratios)),
             "max_prefix_invariance_error": max(prefix_errors),
             "max_hierarchy_residual": hierarchy_residual,
+            "parameter_combination_audit": parameter_audit,
+            "nuisance_combination_audit": nuisance_audit,
             "standard_gate_acceptance_rate": float(
                 np.mean([row["accepted"] for row in standard_gates])
             ),

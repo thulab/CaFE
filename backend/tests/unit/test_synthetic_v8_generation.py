@@ -104,7 +104,10 @@ def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
     delay = metadata["cross_lag_steps"]
     assert metadata["driver_index"] == 0
     assert metadata["responder_indices"] == [1, 2]
-    assert delay == 64
+    assert delay in metadata["cross_lag_candidate_steps"]
+    assert delay >= 48
+    assert delay <= 504 // 3
+    assert delay % 32 == 0
     assert metadata["history_covered_forecast_steps"] == 48
     assert metadata["counterfactual_responder_history_invariant"] is True
     assert metadata["counterfactual_future_is_driver_determined"] is True
@@ -184,6 +187,83 @@ def test_v8_covariate_counterfactual_pair_has_identical_history(
     assert first_metadata["counterfactual_target_history_invariant"] is True
     assert first_metadata["counterfactual_past_covariates_invariant"] is True
     assert first_metadata["counterfactual_future_is_covariate_determined"] is True
+
+
+def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:
+    target_dims = {
+        "common_factor": 4,
+        "hierarchical_coherence": 4,
+        "cross_series_dependence": 4,
+    }
+    metadata_by_capability = {
+        capability_id: [
+            generate_deterministic_sample(
+                capability_id,
+                552,
+                504,
+                target_dims.get(capability_id, 1),
+                24,
+                5,
+                np.random.default_rng(seed),
+            )[1]
+            for seed in range(12)
+        ]
+        for capability_id in CAPABILITIES
+    }
+
+    fingerprints = {
+        "trend": lambda row: (
+            tuple(np.round(row["slope_jitter_by_target"], 6)),
+            tuple(row["curvature_sign_by_target"]),
+        ),
+        "multi_seasonal": lambda row: tuple(np.round(row["periods"], 6)),
+        "time_varying_seasonality": lambda row: (
+            round(row["primary_period"], 6),
+            round(row["modulation_period"], 6),
+        ),
+        "regime_switching": lambda row: (
+            tuple(row["dwell_pattern"]),
+            row["dwell_anchor_offset"],
+        ),
+        "nonlinear_persistence": lambda row: (
+            row["nonlinear_lag"],
+            tuple(
+                round(mode["period"], 6)
+                for mode in row["deterministic_forcing"]["modes"]
+            ),
+        ),
+        "predictable_intermittency": lambda row: (
+            tuple(row["pulse_interval_pattern"]),
+            row["pulse_anchor_offset"],
+        ),
+        "common_factor": lambda row: (
+            tuple(np.round(row["loadings"], 6)),
+            tuple(np.round(row["local_period_multipliers"], 6)),
+        ),
+        "hierarchical_coherence": lambda row: (
+            tuple(row["child_permutation"]),
+            tuple(np.round(row["aggregate_share_by_child"], 6)),
+            tuple(
+                np.round(
+                    np.asarray(row["local_contrast_loadings"]).ravel(),
+                    6,
+                )
+            ),
+        ),
+        "cross_series_dependence": lambda row: (
+            row["cross_lag_steps"],
+            tuple(row["historical_event_centers"]),
+            round(row["counterfactual_response_center_offset"], 6),
+        ),
+        "covariate_response": lambda row: (
+            row["counterfactual_weather_transform_selected"],
+            tuple(row["counterfactual_event_start_options"]),
+            row["event_width"],
+        ),
+    }
+
+    for capability_id, rows in metadata_by_capability.items():
+        assert len({fingerprints[capability_id](row) for row in rows}) >= 8
 
 
 def test_v8_robustness_noise_changes_only_history_and_keeps_clean_future() -> None:

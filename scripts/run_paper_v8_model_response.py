@@ -628,15 +628,33 @@ def nonlinear_recovery_metrics(
     lag = int(metadata.get("nonlinear_lag", 1))
     seasonal_lag = int(metadata.get("seasonal_lag", sample["season_length"]))
     transform = str(metadata.get("nonlinear_transform", "shifted_tanh"))
+    persistence = float(
+        metadata.get(
+            "persistence_weight",
+            0.58 if transform == "shifted_tanh" else 0.52,
+        )
+    )
+    seasonal_weight = float(
+        metadata.get(
+            "seasonal_weight",
+            0.10 if transform == "shifted_tanh" else 0.14,
+        )
+    )
     if transform == "shifted_tanh":
-        persistence, seasonal_weight = 0.58, 0.10
+        response_slope = float(
+            metadata.get("nonlinear_response_slope", 1.35)
+        )
+        response_shift = float(
+            metadata.get("nonlinear_response_shift", 0.55)
+        )
 
         def response(values: np.ndarray) -> np.ndarray:
-            return np.tanh(1.35 * values + 0.55) - np.tanh(0.55)
+            return (
+                np.tanh(response_slope * values + response_shift)
+                - np.tanh(response_shift)
+            )
 
     else:
-        persistence, seasonal_weight = 0.52, 0.14
-
         def response(values: np.ndarray) -> np.ndarray:
             return values / (1.0 + values * values)
 
@@ -2492,6 +2510,10 @@ def render_chinese_report(
             "噪声率、异常点率、尖峰率等与确定性主表不相容的控制项。现有 v7 conformal "
             "threshold 不能直接变成 v8 的正式阈值；当前接受率只作为开发审计，正式实验前"
             "需要基于 v8 重新校准。新增跨序列依赖能力尚无 v7 gate，明确标记为未校准。",
+            "样本参数采用经验 copula 锚点：同一 seed 从同一个真实窗口取得各特征的联合"
+            "分位秩，再分别压回 p25-p75。十个能力的 I5 唯一参数向量均覆盖全部独立抽取"
+            "（普通能力 32/32，反事实能力 16/16），机制特定 nuisance fingerprint "
+            "也达到相同覆盖，没有缺失特征或 fingerprint fallback。",
             "secondary family 使用同一批 seed 反解匹配 primary 的 I3/I5 目标剂量；"
             f"最终最大相对特征差为 {max_family_difference:.1%}。",
             "",
@@ -2510,16 +2532,16 @@ def render_chinese_report(
     lines.extend(
         [
             "",
-            "结构原则是：参数按真实窗口特征分布和 seed 随机化，但给定参数后的 history/future "
-            "完全确定；所有样本通过 prefix-invariance 检查，层级样本满足 parent=sum(children)，"
-            "最大数值残差仅为浮点误差。趋势使用样本特定多项式外推；多季节性使用样本特定"
-            "Fourier 基；时变季节性使用调制振子；状态切换使用确定性 duration motif；"
-            "非线性使用有界 tanh recurrence；间歇性使用确定性 Gaussian event clock；"
-            "共同因子、层级一致性分别使用 latent-factor 和 aggregate/contrast 线性状态空间；"
-            "跨序列依赖使用真实特征校准的连续 driver、稀疏宽事件和 64-step "
-            "延迟 SCM，并以 responder history 完全相同的 A/B 对直接测量反事实响应；"
-            "协变量能力使用已知未来协变量的确定性响应，并以 target history 与 past "
-            "covariates 完全相同的 A/B future-covariate 分支直接测量反事实响应。",
+            "结构原则是：参数和 nuisance path 在整条路径生成前按 seed 随机化，但给定后"
+            "history/future 完全确定；所有样本通过 prefix-invariance 检查，层级样本满足"
+            "parent=sum(children)，最大数值残差仅为浮点误差。趋势随机斜率比例和曲率符号；"
+            "多季节随机连续周期比、幅度和相位；时变季节随机载波/调制周期和相位；状态切换"
+            "随机 3–6 段 duration motif 与 anchor；非线性随机 lag、初态和 forcing；间歇性"
+            "随机 3–6 段 interval motif 与 clock phase；共同因子随机模态和载荷；层级随机"
+            "aggregate child share、contrast 方向和周期。跨序列依赖从 64/96/128/160 "
+            "等 patch-aligned lag 中抽取并随机历史/反事实事件位置；协变量 A/B 对随机选择"
+            "future reflection、smooth offset 或 amplitude expansion，并随机事件时刻。"
+            "这些变化都属于机制内 nuisance，不引入 future-only randomness。",
             "",
             "## 实际模型曲线行为",
             "",
@@ -2877,16 +2899,28 @@ def render_benchmark_final_audit(
             "future-covariate 反事实 effect NRMSE↓",
         ),
     }
+    family_i5 = {
+        row["capability_id"]: float(row["kendall_tau"])
+        for row in summary.get("family_model_sensitivity", [])
+        if int(row["intensity"]) == 5
+    }
+    multi_family_tau = family_i5.get("multi_seasonal")
+    multi_family_text = (
+        f"本轮 primary/secondary I5 排名 Kendall tau={multi_family_tau:.2f}；"
+        if multi_family_tau is not None
+        else "本轮缺少完整的 I5 family 排名；"
+    )
     verdicts = {
         "trend": (
             "保留（基础题）",
             "I5 对多数模型偏易，但斜率和曲率能区分“方向正确”与“外推幅度正确”。",
         ),
         "multi_seasonal": (
-            "保留（轻度 ceiling）",
-            "MASE 很低；必须报告目标频率处的幅相误差。H=48 下最长周期不足一整周期，"
-            "不要声称逐个恢复了所有长期季节分量。primary/secondary 的 I5 排名 "
-            "Kendall tau 仅约 0.07，模型排序必须同时展示 family 敏感性。",
+            "保留（中等偏易）",
+            "连续随机周期比与相位后，六模型 MASE 仍可区分；必须报告目标频率处的幅相"
+            "误差。H=48 下最长周期可能不足一整周期，不要声称逐个恢复了所有长期分量。"
+            + multi_family_text
+            + "仍应把 family 结果作为敏感性审计。",
         ),
         "time_varying_seasonality": (
             "保留（轻度 ceiling）",
@@ -2921,9 +2955,9 @@ def render_benchmark_final_audit(
             "主指标应为 effect NRMSE/投影，MASE 只作辅助。",
         ),
         "covariate_response": (
-            "修改后强保留",
-            "已改成 target history 与 past covariates 完全相同的 future-covariate A/B 对；"
-            "能把支持协变量且真正响应的模型与不支持模型分开。",
+            "动态化后强保留",
+            "target history 与 past covariates 完全相同；A/B 对随机使用未来反射、"
+            "平滑偏移或幅度扩张并随机事件时刻，仍能把真正响应与不支持模型分开。",
         ),
     }
     aggregate_index = {
@@ -2962,6 +2996,18 @@ def render_benchmark_final_audit(
         value = row["metrics"].get(metric_name)
         return None if value is None else float(value)
 
+    i5_sample_count = next(
+        (
+            int(row["sample_count"])
+            for row in summary["aggregates"]
+            if row["model_id"] in models
+            and row["generator_family_role"] == "primary"
+            and int(row["intensity"]) == 5
+            and row["variant"] == "native"
+            and row.get("evaluation_table", "main") == "main"
+        ),
+        0,
+    )
     lines = [
         "# Paper v8 机制 benchmark 终审",
         "",
@@ -2969,19 +3015,58 @@ def render_benchmark_final_audit(
         "",
         f"- 协议：L={generation_summary.get('context_length', 504)}，"
         f"H={generation_summary.get('horizon', 48)}，primary family，I5。",
-        f"- 真实模型：{', '.join(models)}，共 {len(models)} 个；每能力 4 个样本。"
-        "跨序列与协变量能力为 2 个严格反事实 pair。",
+        f"- 真实模型：{', '.join(models)}，共 {len(models)} 个；每能力 "
+        f"{i5_sample_count} 个样本。跨序列与协变量能力为 "
+        f"{i5_sample_count // 2} 个严格反事实 pair。",
         "- 多变量语义：Chronos-2/Toto2/TiRex2 使用原生多目标路径；TabPFN 在服务内部"
         "逐目标拆分；TimesFM2.5/Timer-3.5 由统一适配器逐目标调用。Toto2/Timer-3.5 "
         "不支持协变量，future covariates 会按契约省略。",
         "- 所有模型调用成功；MASE 用于总体点预测，下面的机制指标用于判断模型是否恢复"
         "指定结构。二者不合并成一个未经校准的总分。",
         "",
+        "## 动态性与防固定模板审计",
+        "",
+        "- 主表仍为 clean deterministic：随机性只在生成整条路径前抽取，future 内没有"
+        "新增不可预测创新。",
+        "- 参数不再独立按边际抽取：每个 seed 选择一个真实窗口作为经验 copula 锚点，"
+        "保留各特征的联合分位秩，再映射到各自 p25-p75 支持。",
+        "- nuisance 动态化包括：趋势系数符号/比例、多季节连续周期比、时变调制相位、"
+        "随机 regime/event motif、非线性 lag/初态/forcing、factor 模态和载荷、"
+        "hierarchy child share/contrast、cross-series patch-aligned lag 和事件位置、"
+        "future-covariate 反事实变换与事件时刻。",
+        "",
+        "| 能力 | I5 唯一参数组合/独立抽取 | nuisance 路径/独立抽取 | dose | "
+        "prefix 最大误差 | future/history std | I5 family tau |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for capability_id, row in generation_summary.get(
+        "capabilities",
+        {},
+    ).items():
+        audit = row.get("parameter_combination_audit", {})
+        nuisance = row.get("nuisance_combination_audit", {})
+        tau = family_i5.get(capability_id)
+        tau_text = "-" if tau is None else f"{tau:.3f}"
+        lines.append(
+            f"| {capability_names.get(capability_id, capability_id)} | "
+            f"{int(audit.get('unique_parameter_vector_count', 0))}/"
+            f"{int(audit.get('expected_independent_draw_count', 0))} | "
+            f"{int(nuisance.get('unique_nuisance_fingerprint_count', 0))}/"
+            f"{int(nuisance.get('expected_independent_path_count', 0))} | "
+            f"{'pass' if row.get('primary_dose_monotone') else 'FAIL'} | "
+            f"{float(row.get('max_prefix_invariance_error', math.nan)):.1e} | "
+            f"{float(row.get('median_future_to_history_std_ratio', math.nan)):.3f} | "
+            f"{tau_text} |"
+        )
+    lines.extend(
+        [
+        "",
         "## 逐能力结论",
         "",
         "| 能力 | 结论 | 推荐主机制指标 | 审计判断 |",
         "|---|---|---|---|",
-    ]
+        ]
+    )
     for capability_id in capability_names:
         status, rationale = verdicts[capability_id]
         lines.append(
@@ -3069,9 +3154,11 @@ def render_benchmark_final_audit(
             "“联合结构恢复”，不要称为跨序列信息的充分证据。",
             "3. cross-series 与 covariate-response 以 paired counterfactual effect NRMSE、"
             "相关、幅度比和有符号投影为主表，factual MASE 放副表。",
-            "4. 多季节、时变季节和 nonlinear 的 family 敏感性结果继续放审计表，避免把"
-            "单一 surrogate family 的排名解释为普适能力。",
-            "5. 当前每个 I5 只有 4 样本/2 对反事实，只足够做生成器终审；正式论文至少扩大"
+            "4. 所有能力继续报告 family 敏感性；本轮 common-factor、cross-series 和"
+            "covariate-response 的 family 排名变化尤其明显，不能把单一 surrogate "
+            "family 的次序解释为普适能力。",
+            f"5. 当前每个 I5 只有 {i5_sample_count} 样本/"
+            f"{i5_sample_count // 2} 对反事实，只足够做生成器终审；正式论文至少扩大"
             "到可估计置信区间的 seed 数，并用 v8 样本重新校准 feature gate。",
             "",
             "## 最终判断",
