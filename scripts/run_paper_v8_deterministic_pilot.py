@@ -108,6 +108,9 @@ PARAMETER_SEED_BASE = 2026072300
 PATH_SEED_BASE = 2026072400
 ROBUSTNESS_NOISE_RATIO = 0.15
 ROBUSTNESS_SEED_BASE = 2026072500
+COUNTERFACTUAL_CAPABILITIES = frozenset(
+    {"cross_series_dependence", "covariate_response"}
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -306,7 +309,7 @@ def generate_one(
 ) -> tuple[np.ndarray, np.ndarray | None, dict[str, Any], dict[str, float], dict[str, float], list[dict[str, Any]]]:
     generation_index = (
         sample_index // 2
-        if capability_id == "cross_series_dependence"
+        if capability_id in COUNTERFACTUAL_CAPABILITIES
         else sample_index
     )
     parameters, mappings = sample_parameters(
@@ -333,7 +336,7 @@ def generate_one(
         family_role=family_role,
         counterfactual_variant=(
             sample_index % 2
-            if capability_id == "cross_series_dependence"
+            if capability_id in COUNTERFACTUAL_CAPABILITIES
             else 0
         ),
     )
@@ -500,7 +503,7 @@ def sample_row(
     counterfactual_pair_id = (
         f"v8test__{capability_id}__{family_role}__i{intensity}__"
         f"pair{sample_index // 2:03d}"
-        if capability_id == "cross_series_dependence"
+        if capability_id in COUNTERFACTUAL_CAPABILITIES
         else None
     )
     return {
@@ -619,7 +622,7 @@ def validate_prefix(
 ) -> float:
     generation_index = (
         sample_index // 2
-        if capability_id == "cross_series_dependence"
+        if capability_id in COUNTERFACTUAL_CAPABILITIES
         else sample_index
     )
     parameters, _ = sample_parameters(
@@ -646,7 +649,7 @@ def validate_prefix(
         family_role=family_role,
         counterfactual_variant=(
             sample_index % 2
-            if capability_id == "cross_series_dependence"
+            if capability_id in COUNTERFACTUAL_CAPABILITIES
             else 0
         ),
     )
@@ -662,7 +665,7 @@ def validate_prefix(
         family_role=family_role,
         counterfactual_variant=(
             sample_index % 2
-            if capability_id == "cross_series_dependence"
+            if capability_id in COUNTERFACTUAL_CAPABILITIES
             else 0
         ),
     )
@@ -774,7 +777,8 @@ def main() -> int:
         )
     ):
         raise ValueError(
-            "seed counts must be even so cross-series counterfactual pairs are complete"
+            "seed counts must be even so cross-series and covariate "
+            "counterfactual pairs are complete"
         )
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -916,8 +920,9 @@ def main() -> int:
             "sample_parameter_policy": (
                 "independent deterministic draw from each feature's empirical "
                 "p25-p75 piecewise-linear quantile interval; paired across intensity; "
-                "cross-series counterfactual members additionally share every "
-                "parameter and path draw except the designated observed driver event"
+                "cross-series and covariate-response counterfactual members "
+                "additionally share every parameter and path draw except the "
+                "designated observed driver block or known-future covariate branch"
             ),
             "legacy_v7_structure_parameters_reused": False,
             "intensity_calibration": calibration,

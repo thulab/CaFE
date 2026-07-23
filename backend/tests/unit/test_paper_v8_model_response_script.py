@@ -81,6 +81,121 @@ def test_common_factor_and_hierarchy_metrics_are_ideal_for_exact_forecasts():
     assert hierarchy_metrics["child_contrast_nmae"] == pytest.approx(0.0)
 
 
+@pytest.mark.parametrize(
+    ("capability_id", "generation_metadata", "expected_metrics"),
+    [
+        (
+            "trend",
+            {},
+            {
+                "trend_slope_relative_abs_error": 0.0,
+                "trend_curvature_relative_abs_error": 0.0,
+                "trend_direction_accuracy": 1.0,
+            },
+        ),
+        (
+            "multi_seasonal",
+            {"periods": [6.0, 9.0]},
+            {
+                "seasonal_spectral_amplitude_relative_error": 0.0,
+                "seasonal_spectral_phase_amplitude_alignment": 1.0,
+            },
+        ),
+        (
+            "time_varying_seasonality",
+            {"primary_period": 8.0},
+            {
+                "modulation_envelope_nmae": 0.0,
+                "modulation_phase_alignment": 1.0,
+                "instantaneous_frequency_nmae": 0.0,
+            },
+        ),
+        (
+            "nonlinear_persistence",
+            {
+                "nonlinear_lag": 3,
+                "seasonal_lag": 8,
+                "nonlinear_transform": "shifted_tanh",
+            },
+            {
+                "nonlinear_recurrence_residual_nrmse": 0.0,
+                "nonlinear_delayed_response_nrmse": 0.0,
+                "nonlinear_delayed_response_correlation": 1.0,
+            },
+        ),
+    ],
+)
+def test_univariate_mechanism_metrics_are_ideal_for_exact_forecast(
+    capability_id,
+    generation_metadata,
+    expected_metrics,
+):
+    response = load_response_module()
+    time = np.arange(48, dtype=float)
+    target = (
+        0.002 * time * time
+        + np.sin(2.0 * np.pi * time / 8.0)
+        + 0.3 * np.sin(2.0 * np.pi * time / 13.0)
+    )[:, None]
+    sample = sample_for(
+        capability_id,
+        target,
+        context_length=32,
+        season_length=8,
+        generation_metadata=generation_metadata,
+    )
+
+    metrics = response.prediction_metrics(sample, target[32:])
+
+    for name, expected in expected_metrics.items():
+        assert metrics[name] == pytest.approx(expected, abs=1e-9)
+
+
+def test_regime_and_event_metrics_are_ideal_for_exact_forecast():
+    response = load_response_module()
+    context = 20
+    horizon = 12
+    regime = np.zeros((context + horizon, 1), dtype=float)
+    regime[23:28] = 2.0
+    regime[28:] = -1.0
+    regime_sample = sample_for(
+        "regime_switching",
+        regime,
+        context_length=context,
+        generation_metadata={"cut_points": [23, 28]},
+    )
+    regime_metrics = response.prediction_metrics(
+        regime_sample,
+        regime[context:],
+    )
+
+    assert regime_metrics["regime_jump_nmae"] == pytest.approx(0.0)
+    assert regime_metrics["regime_jump_amplitude_ratio"] == pytest.approx(1.0)
+    assert regime_metrics["regime_jump_sign_accuracy"] == pytest.approx(1.0)
+
+    event = np.sin(np.arange(context + horizon) / 5.0)[:, None] * 0.05
+    event[23, 0] += 2.0
+    event[29, 0] += 1.5
+    event_sample = sample_for(
+        "predictable_intermittency",
+        event,
+        context_length=context,
+        generation_metadata={
+            "pulse_centers": [23, 29],
+            "pulse_width": 1.0,
+        },
+    )
+    event_metrics = response.prediction_metrics(
+        event_sample,
+        event[context:],
+    )
+
+    assert event_metrics["event_peak_timing_widths"] == pytest.approx(0.0)
+    assert event_metrics["event_peak_amplitude_nmae"] == pytest.approx(0.0)
+    assert event_metrics["event_window_nmae"] == pytest.approx(0.0)
+    assert event_metrics["background_window_nmae"] == pytest.approx(0.0)
+
+
 def test_cross_series_metric_scores_only_driver_covered_responder_steps():
     response = load_response_module()
     target = np.column_stack(
@@ -273,5 +388,133 @@ def test_cross_series_counterfactual_audit_detects_driver_response() -> None:
         "mean_responder_history_max_abs_difference"
     ] == pytest.approx(0.0)
     assert by_variant["forced_independent_targets"][
+        "mean_effect_amplitude_ratio"
+    ] == pytest.approx(0.0)
+
+
+def test_covariate_effect_audit_recovers_known_future_response() -> None:
+    response = load_response_module()
+    context = 4
+    weather = np.asarray([-1.0, -0.5, 0.0, 0.5, 1.0, 0.5, -0.5, -1.0])
+    event = np.asarray([0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+    covariates = np.column_stack([weather, event])
+    weights = {"weather": [2.0], "event": [-0.5]}
+    target = (
+        weather[:, None] * np.asarray(weights["weather"])[None, :]
+        + event[:, None] * np.asarray(weights["event"])[None, :]
+    )
+    sample = {
+        "sample_id": "covariate-sample",
+        "evaluation_table": "main",
+        "capability_id": "covariate_response",
+        "generator_family_role": "primary",
+        "intensity": 5,
+        "context_length": context,
+        "horizon": 4,
+        "covariates": covariates.tolist(),
+        "generation_metadata": {
+            "response_law": "instantaneous_linear",
+            "weather_effect_by_target": weights["weather"],
+            "event_effect_by_target": weights["event"],
+        },
+    }
+    truth_effect = target[context:]
+    predictions = [
+        {
+            "sample_id": sample["sample_id"],
+            "model_id": "joint",
+            "variant": "native",
+            "forecast": truth_effect.tolist(),
+            "input_adaptation": {"covariate_mode": "native"},
+        },
+        {
+            "sample_id": sample["sample_id"],
+            "model_id": "joint",
+            "variant": "covariates_ablated",
+            "forecast": np.zeros_like(truth_effect).tolist(),
+            "input_adaptation": {"covariate_mode": "none"},
+        },
+    ]
+
+    rows = response.covariate_effect_audits(predictions, [sample])
+
+    assert len(rows) == 1
+    assert rows[0]["mean_effect_nrmse"] == pytest.approx(0.0)
+    assert rows[0]["mean_effect_correlation"] == pytest.approx(1.0)
+    assert rows[0]["mean_effect_amplitude_ratio"] == pytest.approx(1.0)
+    assert rows[0]["mean_effect_signed_projection"] == pytest.approx(1.0)
+    assert rows[0]["native_covariate_modes"] == ["native"]
+
+
+def test_covariate_counterfactual_audit_requires_future_covariate_response():
+    response = load_response_module()
+    context = 4
+    samples = []
+    predictions = []
+    for member, future_weather in enumerate(
+        (
+            np.asarray([1.0, 0.5, -0.5, -1.0]),
+            np.asarray([-1.0, -0.5, 0.5, 1.0]),
+        )
+    ):
+        weather = np.concatenate([np.zeros(context), future_weather])
+        event = np.zeros_like(weather)
+        target = (2.0 * weather)[:, None]
+        sample_id = f"covariate-member-{member}"
+        samples.append(
+            {
+                "sample_id": sample_id,
+                "evaluation_table": "main",
+                "capability_id": "covariate_response",
+                "generator_family_role": "primary",
+                "intensity": 5,
+                "context_length": context,
+                "horizon": 4,
+                "target": target.tolist(),
+                "covariates": np.column_stack([weather, event]).tolist(),
+                "counterfactual_pair_id": "covariate-pair-0",
+                "counterfactual_member": member,
+            }
+        )
+        predictions.extend(
+            [
+                {
+                    "sample_id": sample_id,
+                    "model_id": "joint",
+                    "variant": "native",
+                    "forecast": target[context:].tolist(),
+                    "input_adaptation": {"covariate_mode": "native"},
+                },
+                {
+                    "sample_id": sample_id,
+                    "model_id": "joint",
+                    "variant": "covariates_ablated",
+                    "forecast": np.zeros((4, 1)).tolist(),
+                    "input_adaptation": {"covariate_mode": "none"},
+                },
+            ]
+        )
+
+    rows = response.covariate_counterfactual_audits(
+        predictions,
+        samples,
+    )
+    by_variant = {row["variant"]: row for row in rows}
+
+    assert by_variant["native"]["mean_effect_nrmse"] == pytest.approx(0.0)
+    assert by_variant["native"]["mean_effect_correlation"] == pytest.approx(1.0)
+    assert by_variant["native"]["mean_effect_amplitude_ratio"] == pytest.approx(
+        1.0
+    )
+    assert by_variant["native"]["mean_effect_signed_projection"] == pytest.approx(
+        1.0
+    )
+    assert by_variant["native"][
+        "mean_target_history_max_abs_difference"
+    ] == pytest.approx(0.0)
+    assert by_variant["native"][
+        "mean_past_covariate_max_abs_difference"
+    ] == pytest.approx(0.0)
+    assert by_variant["covariates_ablated"][
         "mean_effect_amplitude_ratio"
     ] == pytest.approx(0.0)

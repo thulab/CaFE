@@ -148,6 +148,44 @@ def test_v8_cross_series_counterfactual_pair_has_identical_responder_history(
     assert second_metadata["counterfactual_alternative_rms"] > 0.1
 
 
+@pytest.mark.parametrize("family_role", ("primary", "secondary"))
+def test_v8_covariate_counterfactual_pair_has_identical_history(
+    family_role: str,
+) -> None:
+    arguments = (
+        "covariate_response",
+        552,
+        504,
+        1,
+        24,
+        5,
+    )
+    first, first_metadata, first_covariates = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(47),
+        family_role=family_role,
+        counterfactual_variant=0,
+    )
+    second, second_metadata, second_covariates = generate_deterministic_sample(
+        *arguments,
+        np.random.default_rng(47),
+        family_role=family_role,
+        counterfactual_variant=1,
+    )
+
+    assert first_covariates is not None
+    assert second_covariates is not None
+    assert first_metadata["counterfactual_variant"] == 0
+    assert second_metadata["counterfactual_variant"] == 1
+    assert np.array_equal(first[:504], second[:504])
+    assert np.array_equal(first_covariates[:504], second_covariates[:504])
+    assert not np.array_equal(first_covariates[504:], second_covariates[504:])
+    assert not np.array_equal(first[504:], second[504:])
+    assert first_metadata["counterfactual_target_history_invariant"] is True
+    assert first_metadata["counterfactual_past_covariates_invariant"] is True
+    assert first_metadata["counterfactual_future_is_covariate_determined"] is True
+
+
 def test_v8_robustness_noise_changes_only_history_and_keeps_clean_future() -> None:
     clean, _, _ = generate_deterministic_sample(
         "multi_seasonal",

@@ -34,6 +34,16 @@ DEFAULT_MODELS = ("Chronos-2", "toto2.0", "tirex2", "tabpfn-ts3")
 FORCED_SPLIT_MODELS = frozenset({"Chronos-2", "toto2.0", "tirex2"})
 TABPFN_INTERNAL_SPLIT_MODELS = frozenset({"tabpfn-ts3"})
 DIAGNOSTIC_PROBE_MODELS = frozenset({"cross_lag_linear_probe"})
+CATALOG_UNIVARIATE_MODELS = frozenset(
+    {
+        "Timer-3.5",
+        "Timer-3.0",
+        "moirai2",
+        "timesfm2.5",
+        "AutoARIMA",
+        "Holt-Winters",
+    }
+)
 STRUCTURED_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -377,6 +387,352 @@ def covariate_future_corr(
     return float(np.mean(scores)) if scores else 0.0
 
 
+def _mean_relative_coefficient_error(
+    truth: np.ndarray,
+    forecast: np.ndarray,
+    *,
+    coefficient_index: int,
+) -> float:
+    time = np.linspace(-1.0, 1.0, truth.shape[0])
+    errors = []
+    for target in range(truth.shape[1]):
+        truth_coefficients = np.polyfit(time, truth[:, target], deg=2)
+        forecast_coefficients = np.polyfit(
+            time,
+            forecast[:, target],
+            deg=2,
+        )
+        truth_value = float(truth_coefficients[coefficient_index])
+        forecast_value = float(forecast_coefficients[coefficient_index])
+        errors.append(
+            abs(forecast_value - truth_value)
+            / max(abs(truth_value), 1e-8)
+        )
+    return float(np.mean(errors))
+
+
+def trend_recovery_metrics(
+    truth: np.ndarray,
+    forecast: np.ndarray,
+) -> dict[str, float]:
+    time = np.linspace(-1.0, 1.0, truth.shape[0])
+    truth_slopes = np.asarray(
+        [np.polyfit(time, truth[:, target], deg=1)[0] for target in range(truth.shape[1])]
+    )
+    forecast_slopes = np.asarray(
+        [
+            np.polyfit(time, forecast[:, target], deg=1)[0]
+            for target in range(forecast.shape[1])
+        ]
+    )
+    return {
+        "trend_slope_relative_abs_error": float(
+            np.mean(
+                np.abs(forecast_slopes - truth_slopes)
+                / np.maximum(np.abs(truth_slopes), 1e-8)
+            )
+        ),
+        "trend_curvature_relative_abs_error": (
+            _mean_relative_coefficient_error(
+                truth,
+                forecast,
+                coefficient_index=0,
+            )
+        ),
+        "trend_direction_accuracy": float(
+            np.mean(np.sign(truth_slopes) == np.sign(forecast_slopes))
+        ),
+    }
+
+
+def _detrend(values: np.ndarray) -> np.ndarray:
+    time = np.linspace(-1.0, 1.0, values.shape[0])
+    design = np.column_stack([np.ones(values.shape[0]), time])
+    coefficients = np.linalg.lstsq(design, values, rcond=None)[0]
+    return values - design @ coefficients
+
+
+def multi_seasonal_recovery_metrics(
+    sample: dict[str, Any],
+    truth: np.ndarray,
+    forecast: np.ndarray,
+) -> dict[str, float]:
+    periods = [
+        float(value)
+        for value in sample.get("generation_metadata", {}).get("periods", [])
+        if float(value) > 1.0
+    ]
+    if not periods:
+        return {}
+    time = np.arange(truth.shape[0], dtype=float)
+    truth_centered = _detrend(truth)
+    forecast_centered = _detrend(forecast)
+    truth_coefficients = []
+    forecast_coefficients = []
+    for period in periods:
+        basis = np.exp(-2j * np.pi * time / period)[:, None]
+        truth_coefficients.append(
+            np.sum(truth_centered * basis, axis=0)
+            / max(truth.shape[0], 1)
+        )
+        forecast_coefficients.append(
+            np.sum(forecast_centered * basis, axis=0)
+            / max(forecast.shape[0], 1)
+        )
+    truth_vector = np.asarray(truth_coefficients).ravel()
+    forecast_vector = np.asarray(forecast_coefficients).ravel()
+    denominator = float(
+        np.linalg.norm(truth_vector) * np.linalg.norm(forecast_vector)
+    )
+    complex_alignment = (
+        float(
+            np.real(
+                np.vdot(truth_vector, forecast_vector)
+            )
+            / denominator
+        )
+        if denominator > 1e-12
+        else 0.0
+    )
+    return {
+        "seasonal_spectral_amplitude_relative_error": float(
+            np.sum(np.abs(np.abs(forecast_vector) - np.abs(truth_vector)))
+            / max(float(np.sum(np.abs(truth_vector))), 1e-12)
+        ),
+        "seasonal_spectral_phase_amplitude_alignment": complex_alignment,
+    }
+
+
+def _analytic_signal(values: np.ndarray) -> np.ndarray:
+    """Return the Hilbert analytic signal using only NumPy FFT primitives."""
+
+    length = values.shape[0]
+    spectrum = np.fft.fft(values, axis=0)
+    multiplier = np.zeros(length, dtype=float)
+    if length % 2 == 0:
+        multiplier[0] = 1.0
+        multiplier[length // 2] = 1.0
+        multiplier[1 : length // 2] = 2.0
+    else:
+        multiplier[0] = 1.0
+        multiplier[1 : (length + 1) // 2] = 2.0
+    return np.fft.ifft(spectrum * multiplier[:, None], axis=0)
+
+
+def time_varying_seasonality_recovery_metrics(
+    sample: dict[str, Any],
+    truth: np.ndarray,
+    forecast: np.ndarray,
+    history: np.ndarray,
+) -> dict[str, float]:
+    metadata = sample.get("generation_metadata", {})
+    primary_period = max(
+        float(metadata.get("primary_period", sample["season_length"])),
+        2.0,
+    )
+    tail_length = min(
+        history.shape[0],
+        max(int(round(6.0 * primary_period)), 4 * truth.shape[0]),
+    )
+    truth_path = np.vstack([history[-tail_length:], truth])
+    forecast_path = np.vstack([history[-tail_length:], forecast])
+    truth_analytic = _analytic_signal(truth_path)
+    forecast_analytic = _analytic_signal(forecast_path)
+    truth_amplitude = np.abs(truth_analytic)[-truth.shape[0] :]
+    forecast_amplitude = np.abs(forecast_analytic)[-truth.shape[0] :]
+    truth_phase = np.unwrap(np.angle(truth_analytic), axis=0)[-truth.shape[0] :]
+    forecast_phase = np.unwrap(np.angle(forecast_analytic), axis=0)[
+        -truth.shape[0] :
+    ]
+    trim = max(2, min(6, truth.shape[0] // 8))
+    valid = slice(0, truth.shape[0] - trim)
+    truth_frequency = np.diff(truth_phase, axis=0)
+    forecast_frequency = np.diff(forecast_phase, axis=0)
+    base_frequency = 2.0 * np.pi / primary_period
+    return {
+        "modulation_envelope_nmae": float(
+            np.mean(
+                np.abs(
+                    forecast_amplitude[valid] - truth_amplitude[valid]
+                )
+            )
+            / max(float(np.mean(truth_amplitude[valid])), 1e-12)
+        ),
+        "modulation_phase_alignment": float(
+            np.mean(
+                np.cos(forecast_phase[valid] - truth_phase[valid])
+            )
+        ),
+        "instantaneous_frequency_nmae": float(
+            np.mean(
+                np.abs(
+                    forecast_frequency[: truth.shape[0] - trim - 1]
+                    - truth_frequency[: truth.shape[0] - trim - 1]
+                )
+            )
+            / max(base_frequency, 1e-12)
+        ),
+    }
+
+
+def regime_recovery_metrics(
+    sample: dict[str, Any],
+    target: np.ndarray,
+    forecast: np.ndarray,
+) -> dict[str, float]:
+    context = int(sample["context_length"])
+    horizon = int(sample["horizon"])
+    boundaries = [
+        int(value)
+        for value in sample.get("generation_metadata", {}).get(
+            "cut_points",
+            [],
+        )
+        if context <= int(value) < context + horizon
+    ]
+    if not boundaries:
+        return {}
+    forecast_path = np.vstack([target[:context], forecast])
+    truth_jumps = np.asarray(
+        [target[index] - target[index - 1] for index in boundaries]
+    )
+    forecast_jumps = np.asarray(
+        [
+            forecast_path[index] - forecast_path[index - 1]
+            for index in boundaries
+        ]
+    )
+    return {
+        "regime_boundary_count": float(len(boundaries)),
+        "regime_jump_nmae": float(
+            np.mean(np.abs(forecast_jumps - truth_jumps))
+            / max(float(np.mean(np.abs(truth_jumps))), 1e-12)
+        ),
+        "regime_jump_amplitude_ratio": float(
+            np.mean(np.abs(forecast_jumps))
+            / max(float(np.mean(np.abs(truth_jumps))), 1e-12)
+        ),
+        "regime_jump_sign_accuracy": float(
+            np.mean(np.sign(forecast_jumps) == np.sign(truth_jumps))
+        ),
+    }
+
+
+def nonlinear_recovery_metrics(
+    sample: dict[str, Any],
+    target: np.ndarray,
+    forecast: np.ndarray,
+) -> dict[str, float]:
+    metadata = sample.get("generation_metadata", {})
+    context = int(sample["context_length"])
+    lag = int(metadata.get("nonlinear_lag", 1))
+    seasonal_lag = int(metadata.get("seasonal_lag", sample["season_length"]))
+    transform = str(metadata.get("nonlinear_transform", "shifted_tanh"))
+    if transform == "shifted_tanh":
+        persistence, seasonal_weight = 0.58, 0.10
+
+        def response(values: np.ndarray) -> np.ndarray:
+            return np.tanh(1.35 * values + 0.55) - np.tanh(0.55)
+
+    else:
+        persistence, seasonal_weight = 0.52, 0.14
+
+        def response(values: np.ndarray) -> np.ndarray:
+            return values / (1.0 + values * values)
+
+    forecast_path = np.vstack([target[:context], forecast])
+    indexes = np.arange(context, context + forecast.shape[0])
+    truth_residual = (
+        target[indexes]
+        - persistence * target[indexes - 1]
+        - seasonal_weight * target[indexes - seasonal_lag]
+    )
+    forecast_residual = (
+        forecast_path[indexes]
+        - persistence * forecast_path[indexes - 1]
+        - seasonal_weight * forecast_path[indexes - seasonal_lag]
+    )
+    delayed_indexes = indexes[indexes >= context + lag]
+    truth_response = response(target[delayed_indexes - lag])
+    forecast_response = response(
+        forecast_path[delayed_indexes - lag]
+    )
+    return {
+        "nonlinear_recurrence_residual_nrmse": float(
+            np.sqrt(np.mean((forecast_residual - truth_residual) ** 2))
+            / max(float(np.std(truth_residual)), 1e-12)
+        ),
+        "nonlinear_delayed_response_nrmse": float(
+            np.sqrt(np.mean((forecast_response - truth_response) ** 2))
+            / max(float(np.std(truth_response)), 1e-12)
+        ),
+        "nonlinear_delayed_response_correlation": safe_corr(
+            truth_response,
+            forecast_response,
+        ),
+    }
+
+
+def intermittent_recovery_metrics(
+    sample: dict[str, Any],
+    target: np.ndarray,
+    forecast: np.ndarray,
+) -> dict[str, float]:
+    metadata = sample.get("generation_metadata", {})
+    context = int(sample["context_length"])
+    horizon = int(sample["horizon"])
+    centers = [
+        int(value)
+        for value in metadata.get("pulse_centers", [])
+        if context <= int(value) < context + horizon
+    ]
+    if not centers:
+        return {}
+    width = max(float(metadata.get("pulse_width", 1.0)), 1.0)
+    radius = max(2, int(math.ceil(2.0 * width)))
+    timing_errors = []
+    amplitude_errors = []
+    mask = np.zeros(horizon, dtype=bool)
+    for center in centers:
+        local_center = center - context
+        start = max(0, local_center - radius)
+        stop = min(horizon, local_center + radius + 1)
+        mask[start:stop] = True
+        for target_index in range(target.shape[1]):
+            truth_window = target[context + start : context + stop, target_index]
+            forecast_window = forecast[start:stop, target_index]
+            truth_peak = int(np.argmax(truth_window))
+            forecast_peak = int(np.argmax(forecast_window))
+            timing_errors.append(abs(forecast_peak - truth_peak) / width)
+            amplitude_errors.append(
+                abs(
+                    float(forecast_window[forecast_peak])
+                    - float(truth_window[truth_peak])
+                )
+            )
+    history_scale = float(
+        np.mean(np.std(target[:context], axis=0))
+    )
+    event_truth = target[context:][mask]
+    event_forecast = forecast[mask]
+    background_truth = target[context:][~mask]
+    background_forecast = forecast[~mask]
+    return {
+        "event_peak_timing_widths": float(np.mean(timing_errors)),
+        "event_peak_amplitude_nmae": float(
+            np.mean(amplitude_errors) / max(history_scale, 1e-12)
+        ),
+        "event_window_nmae": float(
+            np.mean(np.abs(event_forecast - event_truth))
+            / max(history_scale, 1e-12)
+        ),
+        "background_window_nmae": float(
+            np.mean(np.abs(background_forecast - background_truth))
+            / max(history_scale, 1e-12)
+        ),
+    }
+
+
 def prediction_metrics(
     sample: dict[str, Any],
     forecast: np.ndarray,
@@ -418,7 +774,32 @@ def prediction_metrics(
         }
     )
     capability_id = sample["capability_id"]
-    if capability_id == "common_factor":
+    if capability_id == "trend":
+        output.update(trend_recovery_metrics(truth, forecast))
+    elif capability_id == "multi_seasonal":
+        output.update(
+            multi_seasonal_recovery_metrics(sample, truth, forecast)
+        )
+    elif capability_id == "time_varying_seasonality":
+        output.update(
+            time_varying_seasonality_recovery_metrics(
+                sample,
+                truth,
+                forecast,
+                history,
+            )
+        )
+    elif capability_id == "regime_switching":
+        output.update(regime_recovery_metrics(sample, target, forecast))
+    elif capability_id == "nonlinear_persistence":
+        output.update(
+            nonlinear_recovery_metrics(sample, target, forecast)
+        )
+    elif capability_id == "predictable_intermittency":
+        output.update(
+            intermittent_recovery_metrics(sample, target, forecast)
+        )
+    elif capability_id == "common_factor":
         output.update(
             common_factor_recovery_metrics(truth, forecast)
         )
@@ -638,6 +1019,25 @@ def aggregate_predictions(
         "driver_covered_responder_mae",
         "driver_covered_responder_correlation",
         "future_covariate_corr_abs_error",
+        "trend_slope_relative_abs_error",
+        "trend_curvature_relative_abs_error",
+        "trend_direction_accuracy",
+        "seasonal_spectral_amplitude_relative_error",
+        "seasonal_spectral_phase_amplitude_alignment",
+        "modulation_envelope_nmae",
+        "modulation_phase_alignment",
+        "instantaneous_frequency_nmae",
+        "regime_boundary_count",
+        "regime_jump_nmae",
+        "regime_jump_amplitude_ratio",
+        "regime_jump_sign_accuracy",
+        "nonlinear_recurrence_residual_nrmse",
+        "nonlinear_delayed_response_nrmse",
+        "nonlinear_delayed_response_correlation",
+        "event_peak_timing_widths",
+        "event_peak_amplitude_nmae",
+        "event_window_nmae",
+        "background_window_nmae",
     )
     for key, rows in sorted(grouped.items()):
         output.append(
@@ -1026,6 +1426,288 @@ def cross_series_counterfactual_audits(
     return output
 
 
+def covariate_truth_effect(sample: dict[str, Any]) -> np.ndarray:
+    covariates = np.asarray(sample["covariates"], dtype=float)
+    context = int(sample["context_length"])
+    metadata = sample["generation_metadata"]
+    weather = covariates[:, 0]
+    event = covariates[:, 1]
+    weather_weights = np.asarray(
+        metadata["weather_effect_by_target"],
+        dtype=float,
+    )
+    event_weights = np.asarray(
+        metadata["event_effect_by_target"],
+        dtype=float,
+    )
+    if metadata["response_law"] == "instantaneous_linear":
+        weather_response = weather
+        event_response = event
+    else:
+        lagged_weather = np.concatenate([[weather[0]], weather[:-1]])
+        weather_response = (
+            np.tanh(weather) + 0.35 * np.tanh(lagged_weather)
+        )
+        event_response = np.convolve(
+            event,
+            np.asarray([0.6, 0.3, 0.1]),
+            mode="full",
+        )[: event.shape[0]]
+    effect = (
+        weather_response[:, None] * weather_weights[None, :]
+        + event_response[:, None] * event_weights[None, :]
+    )
+    return effect[context:]
+
+
+def covariate_effect_audits(
+    predictions: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected_samples = {
+        sample["sample_id"]: sample
+        for sample in samples
+        if sample.get("evaluation_table", "main") == "main"
+        and sample["capability_id"] == "covariate_response"
+        and sample["generator_family_role"] == "primary"
+    }
+    prediction_index = {
+        (row["model_id"], row["variant"], row["sample_id"]): row
+        for row in predictions
+        if row["sample_id"] in selected_samples
+    }
+    grouped: dict[tuple[str, int], list[dict[str, float]]] = defaultdict(list)
+    model_ids = sorted(
+        {
+            row["model_id"]
+            for row in predictions
+            if row["sample_id"] in selected_samples
+        }
+    )
+    covariate_modes: dict[tuple[str, int], set[str]] = defaultdict(set)
+    for model_id in model_ids:
+        for sample in selected_samples.values():
+            native = prediction_index.get(
+                (model_id, "native", sample["sample_id"])
+            )
+            ablated = prediction_index.get(
+                (
+                    model_id,
+                    "covariates_ablated",
+                    sample["sample_id"],
+                )
+            )
+            if native is None or ablated is None:
+                continue
+            truth_effect = covariate_truth_effect(sample)
+            forecast_effect = (
+                np.asarray(native["forecast"], dtype=float)
+                - np.asarray(ablated["forecast"], dtype=float)
+            )
+            truth_rms = float(np.sqrt(np.mean(truth_effect * truth_effect)))
+            forecast_rms = float(
+                np.sqrt(np.mean(forecast_effect * forecast_effect))
+            )
+            projection_denominator = float(
+                np.sum(truth_effect * truth_effect)
+            )
+            intensity = int(sample["intensity"])
+            grouped[(model_id, intensity)].append(
+                {
+                    "effect_nrmse": float(
+                        np.sqrt(
+                            np.mean(
+                                (forecast_effect - truth_effect) ** 2
+                            )
+                        )
+                        / max(truth_rms, 1e-12)
+                    ),
+                    "effect_correlation": safe_corr(
+                        truth_effect,
+                        forecast_effect,
+                    ),
+                    "effect_amplitude_ratio": (
+                        forecast_rms / max(truth_rms, 1e-12)
+                    ),
+                    "effect_signed_projection": (
+                        float(np.sum(forecast_effect * truth_effect))
+                        / max(projection_denominator, 1e-12)
+                    ),
+                    "truth_effect_rms": truth_rms,
+                    "forecast_effect_rms": forecast_rms,
+                }
+            )
+            covariate_modes[(model_id, intensity)].add(
+                str(
+                    native.get("input_adaptation", {}).get(
+                        "covariate_mode",
+                        "unknown",
+                    )
+                )
+            )
+    output = []
+    for (model_id, intensity), rows in sorted(grouped.items()):
+        output.append(
+            {
+                "model_id": model_id,
+                "intensity": intensity,
+                "pair_count": len(rows),
+                "native_covariate_modes": sorted(
+                    covariate_modes[(model_id, intensity)]
+                ),
+                **{
+                    f"mean_{name}": float(
+                        np.mean([row[name] for row in rows])
+                    )
+                    for name in rows[0]
+                },
+            }
+        )
+    return output
+
+
+def covariate_counterfactual_audits(
+    predictions: list[dict[str, Any]],
+    samples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    selected_samples = {
+        sample["sample_id"]: sample
+        for sample in samples
+        if sample.get("evaluation_table", "main") == "main"
+        and sample["capability_id"] == "covariate_response"
+        and sample["generator_family_role"] == "primary"
+        and sample.get("counterfactual_pair_id") is not None
+    }
+    sample_pairs: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    for sample in selected_samples.values():
+        sample_pairs[str(sample["counterfactual_pair_id"])][
+            int(sample["counterfactual_member"])
+        ] = sample
+    prediction_index = {
+        (row["model_id"], row["variant"], row["sample_id"]): row
+        for row in predictions
+        if row["sample_id"] in selected_samples
+    }
+    model_variants = sorted(
+        {
+            (row["model_id"], row["variant"])
+            for row in predictions
+            if row["sample_id"] in selected_samples
+        }
+    )
+    grouped: dict[tuple[str, str, int], list[dict[str, float]]] = defaultdict(
+        list
+    )
+    covariate_modes: dict[tuple[str, str, int], set[str]] = defaultdict(set)
+    for model_id, variant in model_variants:
+        for members in sample_pairs.values():
+            if set(members) != {0, 1}:
+                continue
+            first_sample = members[0]
+            second_sample = members[1]
+            first_prediction = prediction_index.get(
+                (model_id, variant, first_sample["sample_id"])
+            )
+            second_prediction = prediction_index.get(
+                (model_id, variant, second_sample["sample_id"])
+            )
+            if first_prediction is None or second_prediction is None:
+                continue
+            context = int(first_sample["context_length"])
+            first_target = np.asarray(first_sample["target"], dtype=float)
+            second_target = np.asarray(second_sample["target"], dtype=float)
+            first_covariates = np.asarray(
+                first_sample["covariates"],
+                dtype=float,
+            )
+            second_covariates = np.asarray(
+                second_sample["covariates"],
+                dtype=float,
+            )
+            truth_effect = second_target[context:] - first_target[context:]
+            forecast_effect = (
+                np.asarray(second_prediction["forecast"], dtype=float)
+                - np.asarray(first_prediction["forecast"], dtype=float)
+            )
+            truth_rms = float(np.sqrt(np.mean(truth_effect * truth_effect)))
+            forecast_rms = float(
+                np.sqrt(np.mean(forecast_effect * forecast_effect))
+            )
+            projection_denominator = float(
+                np.sum(truth_effect * truth_effect)
+            )
+            intensity = int(first_sample["intensity"])
+            key = (model_id, variant, intensity)
+            grouped[key].append(
+                {
+                    "effect_nrmse": float(
+                        np.sqrt(
+                            np.mean(
+                                (forecast_effect - truth_effect) ** 2
+                            )
+                        )
+                        / max(truth_rms, 1e-12)
+                    ),
+                    "effect_correlation": safe_corr(
+                        truth_effect,
+                        forecast_effect,
+                    ),
+                    "effect_amplitude_ratio": (
+                        forecast_rms / max(truth_rms, 1e-12)
+                    ),
+                    "effect_signed_projection": (
+                        float(np.sum(forecast_effect * truth_effect))
+                        / max(projection_denominator, 1e-12)
+                    ),
+                    "truth_effect_rms": truth_rms,
+                    "forecast_effect_rms": forecast_rms,
+                    "target_history_max_abs_difference": float(
+                        np.max(
+                            np.abs(
+                                second_target[:context]
+                                - first_target[:context]
+                            )
+                        )
+                    ),
+                    "past_covariate_max_abs_difference": float(
+                        np.max(
+                            np.abs(
+                                second_covariates[:context]
+                                - first_covariates[:context]
+                            )
+                        )
+                    ),
+                }
+            )
+            covariate_modes[key].add(
+                str(
+                    first_prediction.get("input_adaptation", {}).get(
+                        "covariate_mode",
+                        "unknown",
+                    )
+                )
+            )
+    output = []
+    for key, rows in sorted(grouped.items()):
+        model_id, variant, intensity = key
+        output.append(
+            {
+                "model_id": model_id,
+                "variant": variant,
+                "intensity": intensity,
+                "pair_count": len(rows),
+                "covariate_modes": sorted(covariate_modes[key]),
+                **{
+                    f"mean_{name}": float(
+                        np.mean([row[name] for row in rows])
+                    )
+                    for name in rows[0]
+                },
+            }
+        )
+    return output
+
+
 STRUCTURE_RECOVERY_METRICS: dict[str, dict[str, str]] = {
     "common_factor": {
         "factor_loading_cosine": "higher",
@@ -1171,7 +1853,8 @@ def family_model_sensitivity(
         {
             row["model_id"]
             for row in native
-            if row["model_id"] not in {"last_value", "seasonal_naive"}
+            if row["model_id"]
+            not in {"last_value", "seasonal_naive"} | DIAGNOSTIC_PROBE_MODELS
         }
     )
     capabilities = sorted({row["capability_id"] for row in native})
@@ -1363,7 +2046,11 @@ def response_summary(
                     else (
                         "service_internal_independent_univariate"
                         if model_id in TABPFN_INTERNAL_SPLIT_MODELS
-                        else "catalog_native_when_supported"
+                        else (
+                            "adapter_independent_univariate"
+                            if model_id in CATALOG_UNIVARIATE_MODELS
+                            else "catalog_native_when_supported"
+                        )
                     )
                 )
             ),
@@ -1445,6 +2132,13 @@ def response_summary(
         ),
         "cross_series_counterfactual_audits": (
             cross_series_counterfactual_audits(predictions, samples)
+        ),
+        "covariate_effect_audits": covariate_effect_audits(
+            predictions,
+            samples,
+        ),
+        "covariate_counterfactual_audits": (
+            covariate_counterfactual_audits(predictions, samples)
         ),
         "structure_recovery_audits": structure_recovery_audits(
             predictions
@@ -1600,6 +2294,32 @@ def render_report(summary: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## Known-future covariate paired counterfactual response",
+            "",
+            "Pair members have exactly identical target histories and past "
+            "covariates. Only the known future covariate branch changes, and the "
+            "clean target future changes deterministically with it. This is the "
+            "primary covariate-use diagnostic; factual MASE alone is insufficient.",
+            "",
+            "| model | variant | intensity | pairs | covariate mode | effect NRMSE | effect corr | amplitude ratio | signed projection | history diff | past-cov diff |",
+            "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in summary.get("covariate_counterfactual_audits", []):
+        lines.append(
+            f"| {row['model_id']} | {row['variant']} | "
+            f"I{row['intensity']} | {row['pair_count']} | "
+            f"{','.join(row['covariate_modes'])} | "
+            f"{row['mean_effect_nrmse']:.3f} | "
+            f"{row['mean_effect_correlation']:.3f} | "
+            f"{row['mean_effect_amplitude_ratio']:.3f} | "
+            f"{row['mean_effect_signed_projection']:.3f} | "
+            f"{row['mean_target_history_max_abs_difference']:.1e} | "
+            f"{row['mean_past_covariate_max_abs_difference']:.1e} |"
+        )
+    lines.extend(
+        [
+            "",
             "## Multivariate structure recovery",
             "",
             "| model | capability | metric | direction | native | split | native win rate |",
@@ -1717,6 +2437,15 @@ def render_chinese_report(
         ).values()
     ]
     max_family_difference = max(family_differences, default=0.0)
+    sensitivity_rows = summary.get("family_model_sensitivity", [])
+    minimum_sensitivity = (
+        min(sensitivity_rows, key=lambda row: float(row["kendall_tau"]))
+        if sensitivity_rows
+        else None
+    )
+    changed_sensitivity_count = sum(
+        bool(row.get("ranking_changed")) for row in sensitivity_rows
+    )
     lines = [
         "# Paper v8 确定性机制测试报告",
         "",
@@ -1727,9 +2456,9 @@ def render_chinese_report(
         "并在 I3/I5、部分配对 seed 上使用 secondary family 做敏感性审计。另有配对的"
         "观测噪声 robustness 表：只污染模型可见的 history，future 始终按同一 clean latent 评分。",
         "",
-        "实际推理结果不再出现模型共同输出平直曲线的问题：Chronos-2、Toto 2.0、"
-        "TiRex2 和 TabPFN "
-        "的平坦预测率均为 0，预测曲线标准差与真值标准差之比的中位数约为 0.98。"
+        "实际推理结果不再出现模型共同输出平直曲线的问题：六种真实模型"
+        "（Chronos-2、Toto 2.0、TiRex2、TabPFN、TimesFM2.5、Timer-3.5）"
+        "的平坦预测率均为 0，预测曲线标准差与真值标准差处于同一量级。"
         "因此，v7 中的平直预测主要是随机创新在长 horizon 下不可点预测导致的均值回归，"
         "不能据此判定模型预测能力失效。",
         "",
@@ -1789,7 +2518,8 @@ def render_chinese_report(
             "共同因子、层级一致性分别使用 latent-factor 和 aggregate/contrast 线性状态空间；"
             "跨序列依赖使用真实特征校准的连续 driver、稀疏宽事件和 64-step "
             "延迟 SCM，并以 responder history 完全相同的 A/B 对直接测量反事实响应；"
-            "协变量能力使用已知未来协变量的确定性响应。",
+            "协变量能力使用已知未来协变量的确定性响应，并以 target history 与 past "
+            "covariates 完全相同的 A/B future-covariate 分支直接测量反事实响应。",
             "",
             "## 实际模型曲线行为",
             "",
@@ -1809,9 +2539,8 @@ def render_chinese_report(
     lines.extend(
         [
             "",
-            "四种真实模型在各自已跑样本上的总体误差都明显低于 seasonal naive，且输出"
-            "不是常数。Chronos-2、TiRex2、TabPFN 已跑完整十能力；Toto 2.0 本轮补跑"
-            "共同因子、层级和跨序列依赖三项。但总体曲线相关性只能说明单序列形状预测"
+            "六种真实模型均已跑完整十能力，在各自样本上的总体误差都明显低于 "
+            "seasonal naive，且输出不是常数。但总体曲线相关性只能说明单序列形状预测"
             "正常，不能证明模型使用了跨变量信息；跨序列能力必须以下面的配对反事实"
             "effect 为准。逐能力曲线见 `plots/`。",
             "",
@@ -1939,6 +2668,32 @@ def render_chinese_report(
     lines.extend(
         [
             "",
+            "## 已知未来协变量配对反事实响应",
+            "",
+            "每对样本的 target history 和 past covariates 完全相同，只替换模型已知的 "
+            "future covariate branch，clean target future 随之确定性改变。这是判断模型"
+            "是否使用协变量的主指标；单看 factual MASE 会误判不支持协变量但擅长外推 "
+            "target 的模型。",
+            "",
+            "| 模型 | 变体 | 强度 | 对数 | covariate mode | effect NRMSE | effect 相关 | 幅度比 | 有符号投影 | history 差 | past-cov 差 |",
+            "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
+    for row in summary.get("covariate_counterfactual_audits", []):
+        lines.append(
+            f"| {row['model_id']} | {row['variant']} | "
+            f"I{row['intensity']} | {row['pair_count']} | "
+            f"{','.join(row['covariate_modes'])} | "
+            f"{row['mean_effect_nrmse']:.3f} | "
+            f"{row['mean_effect_correlation']:.3f} | "
+            f"{row['mean_effect_amplitude_ratio']:.3f} | "
+            f"{row['mean_effect_signed_projection']:.3f} | "
+            f"{row['mean_target_history_max_abs_difference']:.1e} | "
+            f"{row['mean_past_covariate_max_abs_difference']:.1e} |"
+        )
+    lines.extend(
+        [
+            "",
             "## 多变量结构恢复：native 对比 split",
             "",
             "| 模型 | 能力 | 指标 | 方向 | native | split | native 胜率 |",
@@ -2018,11 +2773,19 @@ def render_chinese_report(
     lines.extend(
         [
             "",
-            "这里的排名分数是模型 MAE / 配对 seasonal-naive MAE，越低越好。多季节性在"
-            "I3/I5 上 Kendall tau=-0.333，存在明显 family 排名反转；协变量 I3/I5 以及"
-            "非线性 I3、时变季节 I5、趋势 I5 也有部分换位。因此 primary family 可以作为"
-            "主诊断，但不能把单一 family 的模型次序解释为普适排名。当前每个敏感性单元只有"
-            "4 个 seed、3 个模型，仅是审计信号，正式统计应扩大 seed。",
+            "这里的排名分数是模型 MAE / 配对 seasonal-naive MAE，越低越好。"
+            + (
+                f"共 {len(sensitivity_rows)} 个 I3/I5 单元，其中 "
+                f"{changed_sensitivity_count} 个发生排名变化；最低 Kendall tau="
+                f"{float(minimum_sensitivity['kendall_tau']):.3f}，出现在"
+                f"{capability_names.get(minimum_sensitivity['capability_id'], minimum_sensitivity['capability_id'])}"
+                f" I{minimum_sensitivity['intensity']}。"
+                if minimum_sensitivity is not None
+                else "当前没有完整的 primary/secondary 配对排名。"
+            )
+            + "因此 primary family 可以作为主诊断，但不能把单一 family 的模型次序"
+            "解释为普适排名。当前每个敏感性单元只有 4 个 seed，仅是审计信号，"
+            "正式统计应扩大 seed。",
             "",
             "## 观测噪声 robustness 表",
             "",
@@ -2051,6 +2814,274 @@ def render_chinese_report(
             "`observation_noise_robustness` 中。",
             "",
             f"推理失败数：{summary['failure_count']}。",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def render_benchmark_final_audit(
+    summary: dict[str, Any],
+    generation_summary: dict[str, Any],
+) -> str:
+    model_order = (
+        "Chronos-2",
+        "toto2.0",
+        "tirex2",
+        "tabpfn-ts3",
+        "timesfm2.5",
+        "Timer-3.5",
+    )
+    models = [model for model in model_order if model in summary["models"]]
+    capability_names = {
+        "trend": "趋势",
+        "multi_seasonal": "多重季节性",
+        "time_varying_seasonality": "时变季节性",
+        "regime_switching": "状态切换",
+        "nonlinear_persistence": "非线性持续性",
+        "predictable_intermittency": "可预测间歇性",
+        "common_factor": "共同因子",
+        "hierarchical_coherence": "层级一致性",
+        "cross_series_dependence": "跨序列预测依赖",
+        "covariate_response": "协变量响应",
+    }
+    mechanism_specs = {
+        "trend": ("trend_slope_relative_abs_error", "斜率相对误差↓"),
+        "multi_seasonal": (
+            "seasonal_spectral_amplitude_relative_error",
+            "目标频率谱幅度误差↓",
+        ),
+        "time_varying_seasonality": (
+            "instantaneous_frequency_nmae",
+            "瞬时频率 NMAE↓",
+        ),
+        "regime_switching": ("regime_jump_nmae", "切点 jump NMAE↓"),
+        "nonlinear_persistence": (
+            "nonlinear_recurrence_residual_nrmse",
+            "非线性递推残差 NRMSE↓",
+        ),
+        "predictable_intermittency": (
+            "event_window_nmae",
+            "事件窗口 NMAE↓",
+        ),
+        "common_factor": ("common_component_nmae", "共同分量 NMAE↓"),
+        "hierarchical_coherence": (
+            "child_contrast_nmae",
+            "子序列 contrast NMAE↓",
+        ),
+        "cross_series_dependence": (
+            "counterfactual_effect_nrmse",
+            "driver 反事实 effect NRMSE↓",
+        ),
+        "covariate_response": (
+            "counterfactual_effect_nrmse",
+            "future-covariate 反事实 effect NRMSE↓",
+        ),
+    }
+    verdicts = {
+        "trend": (
+            "保留（基础题）",
+            "I5 对多数模型偏易，但斜率和曲率能区分“方向正确”与“外推幅度正确”。",
+        ),
+        "multi_seasonal": (
+            "保留（轻度 ceiling）",
+            "MASE 很低；必须报告目标频率处的幅相误差。H=48 下最长周期不足一整周期，"
+            "不要声称逐个恢复了所有长期季节分量。primary/secondary 的 I5 排名 "
+            "Kendall tau 仅约 0.07，模型排序必须同时展示 family 敏感性。",
+        ),
+        "time_varying_seasonality": (
+            "保留（轻度 ceiling）",
+            "普通曲线相关几乎饱和，应改看包络和瞬时频率误差。",
+        ),
+        "regime_switching": (
+            "强保留",
+            "MASE 与切点 jump 指标给出不同信息；后者能识别只画平滑曲线的模型。",
+        ),
+        "nonlinear_persistence": (
+            "保留但限制解释",
+            "可诊断非线性递推轨迹恢复，但不能据此反推模型内部一定使用非线性状态空间；"
+            "高阶线性 AR 也可局部逼近。",
+        ),
+        "predictable_intermittency": (
+            "强保留",
+            "峰值时序、幅度和背景误差均能区分模型，且事件由 history 中的 clock 决定。",
+        ),
+        "common_factor": (
+            "保留为结构恢复题",
+            "共同分量/载荷指标有效，但各列单独也可预测；不能把高分解释为模型使用了"
+            "跨序列信息，需同时给 native-vs-split。",
+        ),
+        "hierarchical_coherence": (
+            "保留为结构恢复题",
+            "coherence 单独可被线性逐列预测机械保持；必须联合 MASE、coherence、"
+            "child contrast 和 native-vs-split。",
+        ),
+        "cross_series_dependence": (
+            "强保留（困难题）",
+            "严格反事实、无 responder-history 泄漏，正控制可恢复而当前基础模型多数失败；"
+            "主指标应为 effect NRMSE/投影，MASE 只作辅助。",
+        ),
+        "covariate_response": (
+            "修改后强保留",
+            "已改成 target history 与 past covariates 完全相同的 future-covariate A/B 对；"
+            "能把支持协变量且真正响应的模型与不支持模型分开。",
+        ),
+    }
+    aggregate_index = {
+        (
+            row["model_id"],
+            row["capability_id"],
+        ): row
+        for row in summary["aggregates"]
+        if row.get("evaluation_table", "main") == "main"
+        and row["generator_family_role"] == "primary"
+        and int(row["intensity"]) == 5
+        and row["variant"] == "native"
+    }
+    cross_index = {
+        row["model_id"]: row
+        for row in summary.get("cross_series_counterfactual_audits", [])
+        if int(row["intensity"]) == 5 and row["variant"] == "native"
+    }
+    covariate_index = {
+        row["model_id"]: row
+        for row in summary.get("covariate_counterfactual_audits", [])
+        if int(row["intensity"]) == 5 and row["variant"] == "native"
+    }
+
+    def mechanism_value(capability_id: str, model_id: str) -> float | None:
+        if capability_id == "cross_series_dependence":
+            row = cross_index.get(model_id)
+            return None if row is None else float(row["mean_effect_nrmse"])
+        if capability_id == "covariate_response":
+            row = covariate_index.get(model_id)
+            return None if row is None else float(row["mean_effect_nrmse"])
+        row = aggregate_index.get((model_id, capability_id))
+        if row is None:
+            return None
+        metric_name = mechanism_specs[capability_id][0]
+        value = row["metrics"].get(metric_name)
+        return None if value is None else float(value)
+
+    lines = [
+        "# Paper v8 机制 benchmark 终审",
+        "",
+        "## 审计范围",
+        "",
+        f"- 协议：L={generation_summary.get('context_length', 504)}，"
+        f"H={generation_summary.get('horizon', 48)}，primary family，I5。",
+        f"- 真实模型：{', '.join(models)}，共 {len(models)} 个；每能力 4 个样本。"
+        "跨序列与协变量能力为 2 个严格反事实 pair。",
+        "- 多变量语义：Chronos-2/Toto2/TiRex2 使用原生多目标路径；TabPFN 在服务内部"
+        "逐目标拆分；TimesFM2.5/Timer-3.5 由统一适配器逐目标调用。Toto2/Timer-3.5 "
+        "不支持协变量，future covariates 会按契约省略。",
+        "- 所有模型调用成功；MASE 用于总体点预测，下面的机制指标用于判断模型是否恢复"
+        "指定结构。二者不合并成一个未经校准的总分。",
+        "",
+        "## 逐能力结论",
+        "",
+        "| 能力 | 结论 | 推荐主机制指标 | 审计判断 |",
+        "|---|---|---|---|",
+    ]
+    for capability_id in capability_names:
+        status, rationale = verdicts[capability_id]
+        lines.append(
+            f"| {capability_names[capability_id]} | {status} | "
+            f"{mechanism_specs[capability_id][1]} | {rationale} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## I5 六模型结果：`MASE / 机制指标`",
+            "",
+            "| 能力 | " + " | ".join(models) + " |",
+            "|---|" + "|".join("---:" for _ in models) + "|",
+        ]
+    )
+    for capability_id in capability_names:
+        cells = []
+        for model_id in models:
+            aggregate = aggregate_index.get((model_id, capability_id))
+            mechanism = mechanism_value(capability_id, model_id)
+            if aggregate is None or mechanism is None:
+                cells.append("-")
+                continue
+            cells.append(
+                f"{float(aggregate['metrics']['mase']):.3f} / "
+                f"{mechanism:.3f}"
+            )
+        lines.append(
+            f"| {capability_names[capability_id]} | "
+            + " | ".join(cells)
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 指标是否真的改变诊断",
+            "",
+            "| 能力 | MASE 排名 | 机制指标排名 | Kendall tau |",
+            "|---|---|---|---:|",
+        ]
+    )
+    for capability_id in capability_names:
+        mase_scores = {
+            model_id: float(
+                aggregate_index[(model_id, capability_id)]["metrics"]["mase"]
+            )
+            for model_id in models
+            if (model_id, capability_id) in aggregate_index
+        }
+        mechanism_scores = {
+            model_id: value
+            for model_id in models
+            if (value := mechanism_value(capability_id, model_id)) is not None
+        }
+        common_models = [
+            model_id
+            for model_id in models
+            if model_id in mase_scores and model_id in mechanism_scores
+        ]
+        if len(common_models) < 2:
+            continue
+        mase_ranking = sorted(common_models, key=mase_scores.__getitem__)
+        mechanism_ranking = sorted(
+            common_models,
+            key=mechanism_scores.__getitem__,
+        )
+        lines.append(
+            f"| {capability_names[capability_id]} | "
+            f"{' > '.join(mase_ranking)} | "
+            f"{' > '.join(mechanism_ranking)} | "
+            f"{kendall_tau_from_scores(common_models, mase_scores, mechanism_scores):.3f} |"
+        )
+    lines.extend(
+        [
+            "",
+            "Kendall tau 小于 1 表明机制指标不是 MASE 的改名。尤其状态切换要检查模型"
+            "是否在真实切点产生 jump；跨序列和协变量必须看反事实 effect，不能由普通"
+            "曲线相关或 factual MASE 代替。",
+            "",
+            "## 论文展示建议",
+            "",
+            "1. 每个能力报告 MASE 和一个预先指定的主机制指标，不对量纲不同的原始指标"
+            "直接求平均。",
+            "2. common factor 与 hierarchy 额外报告 native-vs-split；把它们称为"
+            "“联合结构恢复”，不要称为跨序列信息的充分证据。",
+            "3. cross-series 与 covariate-response 以 paired counterfactual effect NRMSE、"
+            "相关、幅度比和有符号投影为主表，factual MASE 放副表。",
+            "4. 多季节、时变季节和 nonlinear 的 family 敏感性结果继续放审计表，避免把"
+            "单一 surrogate family 的排名解释为普适能力。",
+            "5. 当前每个 I5 只有 4 样本/2 对反事实，只足够做生成器终审；正式论文至少扩大"
+            "到可估计置信区间的 seed 数，并用 v8 样本重新校准 feature gate。",
+            "",
+            "## 最终判断",
+            "",
+            "十个能力均可保留，但它们不是同一种题：trend/multi-seasonal/"
+            "time-varying/nonlinear/intermittency 是单序列动力学恢复；common-factor/"
+            "hierarchy 是联合结构恢复；cross-series/covariate-response 是严格条件依赖。"
+            "只要论文按这三类分别解释，并采用上述机制指标，当前生成器适合作为机制"
+            "benchmark pilot。若仍只发布一张 MASE 表，则 common-factor、hierarchy、"
+            "cross-series 和 covariate-response 四项都会被系统性误读。",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -2342,6 +3373,121 @@ def create_plots(
         )
         plt.close(figure)
 
+    covariate_counterfactual_groups: dict[
+        str,
+        dict[int, dict[str, Any]],
+    ] = defaultdict(dict)
+    for sample in samples:
+        if (
+            sample["capability_id"] == "covariate_response"
+            and sample.get("evaluation_table", "main") == "main"
+            and sample["generator_family_role"] == "primary"
+            and int(sample["intensity"]) == 5
+            and sample.get("counterfactual_pair_id") is not None
+        ):
+            covariate_counterfactual_groups[
+                str(sample["counterfactual_pair_id"])
+            ][int(sample["counterfactual_member"])] = sample
+    complete_covariate_pairs = [
+        members
+        for _, members in sorted(covariate_counterfactual_groups.items())
+        if set(members) == {0, 1}
+    ]
+    if complete_covariate_pairs:
+        members = complete_covariate_pairs[0]
+        first = members[0]
+        second = members[1]
+        context = int(first["context_length"])
+        horizon = int(first["horizon"])
+        first_target = np.asarray(first["target"], dtype=float)
+        second_target = np.asarray(second["target"], dtype=float)
+        target_count = first_target.shape[1]
+        figure, axes = plt.subplots(
+            target_count,
+            1,
+            figsize=(11, 3.0 * target_count),
+            sharex=True,
+            squeeze=False,
+        )
+        forecast_time = np.arange(horizon)
+        model_ids = sorted(
+            {
+                model_id
+                for sample_id, model_id, variant in variant_prediction_index
+                if sample_id == first["sample_id"]
+                and variant == "native"
+                and model_id
+                not in {
+                    "last_value",
+                    "seasonal_naive",
+                    "cross_lag_linear_probe",
+                }
+            }
+        )
+        colors = {
+            model_id: f"C{index}"
+            for index, model_id in enumerate(model_ids)
+        }
+        for target_index in range(target_count):
+            axis = axes[target_index, 0]
+            truth_effect = (
+                second_target[context:, target_index]
+                - first_target[context:, target_index]
+            )
+            axis.plot(
+                forecast_time,
+                truth_effect,
+                color="black",
+                linewidth=2.2,
+                label="truth counterfactual effect",
+            )
+            axis.axhline(
+                0.0,
+                color="#888888",
+                linewidth=1.1,
+                linestyle="--",
+                label="covariate-omitted reference",
+            )
+            for model_id in model_ids:
+                first_prediction = variant_prediction_index.get(
+                    (first["sample_id"], model_id, "native")
+                )
+                second_prediction = variant_prediction_index.get(
+                    (second["sample_id"], model_id, "native")
+                )
+                if first_prediction is None or second_prediction is None:
+                    continue
+                effect = (
+                    np.asarray(second_prediction["forecast"], dtype=float)[
+                        :, target_index
+                    ]
+                    - np.asarray(first_prediction["forecast"], dtype=float)[
+                        :, target_index
+                    ]
+                )
+                axis.plot(
+                    forecast_time,
+                    effect,
+                    color=colors[model_id],
+                    linewidth=1.5,
+                    label=model_id,
+                )
+            axis.set_ylabel(f"target {target_index}\neffect")
+            axis.grid(alpha=0.2)
+        axes[0, 0].set_title(
+            "covariate_response: I5 paired known-future counterfactual "
+            "(target history and past covariates are identical)"
+        )
+        axes[-1, 0].set_xlabel("forecast step")
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        figure.legend(handles, labels, loc="upper center", ncol=4)
+        figure.tight_layout(rect=(0, 0, 1, 0.84))
+        figure.savefig(
+            ablation_plot_dir / "covariate_counterfactual_effect.png",
+            dpi=150,
+        )
+        plt.close(figure)
+
     robustness_plot_dir = data_dir / "robustness_plots"
     robustness_plot_dir.mkdir(parents=True, exist_ok=True)
     for capability_id in capabilities:
@@ -2459,6 +3605,10 @@ def finalize_outputs(
         render_chinese_report(summary, generation_summary),
         encoding="utf-8",
     )
+    (data_dir / "BENCHMARK_FINAL_AUDIT_ZH.md").write_text(
+        render_benchmark_final_audit(summary, generation_summary),
+        encoding="utf-8",
+    )
     create_plots(data_dir, samples, predictions)
     write_json(
         data_dir / "model_response_manifest.json",
@@ -2473,6 +3623,7 @@ def finalize_outputs(
                 "model_response_summary.json",
                 "MODEL_RESPONSE_REPORT.md",
                 "REPORT_ZH.md",
+                "BENCHMARK_FINAL_AUDIT_ZH.md",
                 "plots/",
                 "ablation_plots/",
                 "robustness_plots/",

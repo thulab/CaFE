@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v6-counterfactual-dependence-test"
+GENERATOR_VERSION = "capts-paper-v7-counterfactual-covariate-audit"
 FamilyRole = Literal["primary", "secondary"]
 
 
@@ -725,7 +725,17 @@ def generate_deterministic_sample(
             counterfactual_variant,
         )
     if capability_id == "covariate_response":
-        return _covariate(length, context_length, target_dim, season_length, intensity, rng, conditioning, family_role)
+        return _covariate(
+            length,
+            context_length,
+            target_dim,
+            season_length,
+            intensity,
+            rng,
+            conditioning,
+            family_role,
+            counterfactual_variant,
+        )
     raise ValueError(f"unknown capability: {capability_id}")
 
 
@@ -1416,13 +1426,37 @@ def _cross_series_dependence(
     )
 
 
-def _covariate(length, context, dim, season, intensity, rng, cond, family):
+def _covariate(
+    length,
+    context,
+    dim,
+    season,
+    intensity,
+    rng,
+    cond,
+    family,
+    counterfactual_variant,
+):
     lam = _lambda(cond, intensity)
+    variant = int(counterfactual_variant)
+    if variant not in (0, 1):
+        raise ValueError("counterfactual_variant must be 0 or 1")
     weather, weather_meta = _calibrated_signal(length, context, rng, cond, family)
+    base_weather = weather.copy()
+    if variant == 1:
+        # Reflect only the known future continuation around the last observed
+        # value. Both branches share identical past covariates and target
+        # history, but supply a smooth alternative future driver.
+        anchor = float(weather[context - 1])
+        weather[context:] = 2.0 * anchor - weather[context:]
     event = np.zeros(length, dtype=float)
     width = max(2, min(5, season // 4))
     historical = [int(0.18 * context), int(0.48 * context), int(0.76 * context)]
-    future_start = context + min(max(1, season // 3), max(1, length - context - width))
+    future_offsets = (
+        min(max(1, season // 3), max(1, length - context - width)),
+        min(max(2, 2 * season // 3), max(1, length - context - width)),
+    )
+    future_start = context + future_offsets[variant]
     starts = [*historical, future_start]
     for start in starts:
         event[start : min(length, start + width)] = 1.0
@@ -1464,5 +1498,25 @@ def _covariate(length, context, dim, season, intensity, rng, cond, family):
         "event_width": width,
         "future_event_start": future_start,
         "response_law": response_law,
+        "counterfactual_variant": variant,
+        "counterfactual_covariate_future_slice": [context, length],
+        "counterfactual_target_history_invariant": True,
+        "counterfactual_past_covariates_invariant": True,
+        "counterfactual_future_is_covariate_determined": True,
+        "counterfactual_weather_transform": (
+            "base_continuation"
+            if variant == 0
+            else "future_reflection_about_last_observed_value"
+        ),
+        "counterfactual_event_start_options": [
+            context + offset for offset in future_offsets
+        ],
+        "counterfactual_weather_future_rms": float(
+            np.sqrt(
+                np.mean(
+                    (weather[context:] - base_weather[context:]) ** 2
+                )
+            )
+        ),
     }
     return target, _metadata("covariate_response", family, target, detail), covariates
