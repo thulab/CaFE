@@ -23,14 +23,36 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-anchors", type=int, default=256)
-    parser.add_argument("--calibration-seeds", type=int, default=12)
+    parser.add_argument(
+        "--calibration-seeds",
+        type=int,
+        default=v8.DEFAULT_CALIBRATION_PATH_COUNT,
+    )
+    parser.add_argument(
+        "--max-calibration-seeds",
+        type=int,
+        default=v8.MAX_CALIBRATION_PATH_COUNT,
+        help=(
+            "Only used when the base response paths produce no usable "
+            "support or primary inverse."
+        ),
+    )
     parser.add_argument(
         "--nonlinear-calibration-seeds",
         type=int,
-        default=64,
+        default=v8.DEFAULT_NONLINEAR_CALIBRATION_PATH_COUNT,
         help=(
             "Path budget for conservative nonlinear response support; other "
             "capabilities use --calibration-seeds."
+        ),
+    )
+    parser.add_argument(
+        "--max-nonlinear-calibration-seeds",
+        type=int,
+        default=v8.MAX_NONLINEAR_CALIBRATION_PATH_COUNT,
+        help=(
+            "Only used when the base nonlinear response paths produce no "
+            "usable support or primary inverse."
         ),
     )
     parser.add_argument("--minimum-observed-fraction", type=float, default=0.5)
@@ -48,9 +70,17 @@ def main() -> int:
     if (
         args.max_anchors < 1
         or args.calibration_seeds < 1
+        or args.max_calibration_seeds < args.calibration_seeds
         or args.nonlinear_calibration_seeds < 1
+        or (
+            args.max_nonlinear_calibration_seeds
+            < args.nonlinear_calibration_seeds
+        )
     ):
-        raise ValueError("anchor and calibration seed counts must be positive")
+        raise ValueError(
+            "anchor and calibration path budgets must be positive and "
+            "maximums must not be smaller than base counts"
+        )
     if not 0.0 < args.minimum_observed_fraction <= 1.0:
         raise ValueError("minimum observed fraction must be in (0, 1]")
     dataset = v8.resolve_dataset(args.dataset_id)
@@ -67,8 +97,12 @@ def main() -> int:
         dataset,
         anchors,
         calibration_seed_count=args.calibration_seeds,
+        maximum_calibration_seed_count=args.max_calibration_seeds,
         nonlinear_calibration_seed_count=(
             args.nonlinear_calibration_seeds
+        ),
+        maximum_nonlinear_calibration_seed_count=(
+            args.max_nonlinear_calibration_seeds
         ),
         capability_ids=args.capabilities,
         progress_callback=lambda capability_id, path_count: print(
@@ -85,7 +119,7 @@ def main() -> int:
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v2",
+        "schema_version": "paper_v8_calibration_bundle.v3",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
@@ -94,10 +128,18 @@ def main() -> int:
         "anchor_count": len(anchors),
         "capabilities": list(args.capabilities),
         "response_calibration_path_budget": {
-            "default": int(args.calibration_seeds),
-            "nonlinear_persistence": int(
-                args.nonlinear_calibration_seeds
-            ),
+            "policy": "fixed_base_hard_failure_only_expansion_v1",
+            "default": {
+                "base": int(args.calibration_seeds),
+                "maximum": int(args.max_calibration_seeds),
+            },
+            "nonlinear_persistence": {
+                "base": int(args.nonlinear_calibration_seeds),
+                "maximum": int(
+                    args.max_nonlinear_calibration_seeds
+                ),
+            },
+            "split_half_diagnostic": "record_only_nonblocking",
         },
         "feature_contract": {
             "background_features": (

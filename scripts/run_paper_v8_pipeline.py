@@ -62,11 +62,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, default=64)
     parser.add_argument("--max-anchors", type=int, default=256)
-    parser.add_argument("--calibration-seeds", type=int, default=12)
+    parser.add_argument(
+        "--calibration-seeds",
+        type=int,
+        default=v8.DEFAULT_CALIBRATION_PATH_COUNT,
+    )
+    parser.add_argument(
+        "--max-calibration-seeds",
+        type=int,
+        default=v8.MAX_CALIBRATION_PATH_COUNT,
+    )
     parser.add_argument(
         "--nonlinear-calibration-seeds",
         type=int,
-        default=64,
+        default=v8.DEFAULT_NONLINEAR_CALIBRATION_PATH_COUNT,
+    )
+    parser.add_argument(
+        "--max-nonlinear-calibration-seeds",
+        type=int,
+        default=v8.MAX_NONLINEAR_CALIBRATION_PATH_COUNT,
     )
     parser.add_argument(
         "--capabilities",
@@ -142,8 +156,12 @@ def commands_for_dataset(
                 str(args.max_anchors),
                 "--calibration-seeds",
                 str(args.calibration_seeds),
+                "--max-calibration-seeds",
+                str(args.max_calibration_seeds),
                 "--nonlinear-calibration-seeds",
                 str(args.nonlinear_calibration_seeds),
+                "--max-nonlinear-calibration-seeds",
+                str(args.max_nonlinear_calibration_seeds),
                 "--capabilities",
                 *args.capabilities,
             ],
@@ -195,8 +213,15 @@ def protocol_config(
         "seed_count": int(args.seed_count),
         "max_anchors": int(args.max_anchors),
         "calibration_seeds": int(args.calibration_seeds),
+        "max_calibration_seeds": int(args.max_calibration_seeds),
         "nonlinear_calibration_seeds": int(
             args.nonlinear_calibration_seeds
+        ),
+        "max_nonlinear_calibration_seeds": int(
+            args.max_nonlinear_calibration_seeds
+        ),
+        "calibration_path_policy": (
+            "fixed_base_hard_failure_only_expansion_v1"
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
@@ -352,9 +377,17 @@ def main() -> int:
     if (
         args.max_anchors < 1
         or args.calibration_seeds < 1
+        or args.max_calibration_seeds < args.calibration_seeds
         or args.nonlinear_calibration_seeds < 1
+        or (
+            args.max_nonlinear_calibration_seeds
+            < args.nonlinear_calibration_seeds
+        )
     ):
-        raise ValueError("anchor and calibration seed counts must be positive")
+        raise ValueError(
+            "anchor and calibration path budgets must be positive and "
+            "maximums must not be smaller than base counts"
+        )
     start = STEPS.index(args.start_at)
     stop = STEPS.index(args.stop_after)
     if stop < start:

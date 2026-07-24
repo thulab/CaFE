@@ -257,7 +257,9 @@ range_expansion_factor = 1.0
 
 生成有效性另设 `nonlinear_actual_lag_gain`：只在合成样本内部使用 metadata 记录的真实因果 lag，以同一组二次/三次 family-neutral 基底计算增量，强制 primary I1–I5 和 secondary I3/I5 的总体响应单调。observable proxy 负责真实范围校准和主强度坐标，actual-lag gain 负责证明生成器真正注入的机制增强；二者不得互相替代，也不能用换 seed 重试绕过失败。
 
-response support 不再只看少量路径的均值曲线。普通能力使用 12 条 response paths；nonlinear 专用 64 条路径，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
+response support 不再只看少量路径的均值曲线。普通能力固定从 32 条 response paths 开始；nonlinear 固定从 64 条开始，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。两等分 path block 的 support 与均值响应差异写入非阻断审计，不以 `0.05` 或其他统一差异阈值触发扩展。只有 support 退化或 primary 五档反解不能形成严格递增的强度时，普通能力才依次扩到 64、96 条，nonlinear 扩到 128 条；达到上限仍无解则明确失败。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
+
+当前不引入生成 seed 重试，也不设置真实强度过低时的自动放大下限。偶发批次 gate 失败保持可见，避免在正式样本形成后按实现强度挑选 seed；这两项仅作为后续协议备选。
 
 ## 决策 12：替换退化的 covariate future correlation
 

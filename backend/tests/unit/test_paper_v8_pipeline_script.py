@@ -323,6 +323,11 @@ def test_nonlinear_response_support_uses_lower_pathwise_quantile(
     assert audit["path_support_quantile"] == pytest.approx(0.10)
     assert audit["path_support_quantile_lambda"] == pytest.approx(0.2)
     assert audit["effective_lambda_support"] == pytest.approx([0.0, 0.2])
+    assert audit["split_half_diagnostic"][
+        "triggers_path_expansion"
+    ] is False
+    assert audit["split_half_diagnostic"]["first_half_path_count"] == 10
+    assert audit["split_half_diagnostic"]["second_half_path_count"] == 10
 
 
 def test_compressed_nonlinear_secondary_match_uses_relative_grid(
@@ -374,6 +379,81 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
     assert nonlinear["secondary"]["selected_lambdas"] == pytest.approx(
         np.linspace(0.0, 0.5, 5)
     )
+
+
+def test_response_paths_expand_only_after_hard_failure(monkeypatch):
+    common = load_script("paper_v8_pipeline_common")
+    calls = []
+
+    def response_curve(
+        dataset,
+        anchors,
+        *,
+        capability_id,
+        family_role,
+        calibration_seed_count,
+    ):
+        del dataset, anchors, capability_id
+        calls.append((family_role, calibration_seed_count))
+        if calibration_seed_count == 32:
+            grid = np.asarray([0.0])
+            response = np.asarray([0.2])
+        else:
+            grid = np.asarray([0.0, 1.0])
+            response = np.asarray([0.0, 1.0])
+        return grid, response, {
+            "effective_lambda_support": [
+                float(grid[0]),
+                float(grid[-1]),
+            ]
+        }
+
+    monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    anchors = [
+        {"features": {"curvature_abs": value}}
+        for value in np.linspace(0.2, 0.8, 20)
+    ]
+
+    calibration = common.calibrate_capabilities(
+        common.resolve_dataset("gift_electricity_h"),
+        anchors,
+        calibration_seed_count=32,
+        maximum_calibration_seed_count=96,
+        nonlinear_calibration_seed_count=64,
+        maximum_nonlinear_calibration_seed_count=128,
+        capability_ids=["trend"],
+    )
+    trend = calibration["capabilities"]["trend"]
+
+    assert calls == [
+        ("primary", 32),
+        ("secondary", 32),
+        ("primary", 64),
+        ("secondary", 64),
+    ]
+    assert trend["response_calibration_seed_count"] == 64
+    assert trend["response_calibration_path_policy"] == {
+        "policy": "fixed_base_hard_failure_only_expansion_v1",
+        "initial_path_count": 32,
+        "maximum_path_count": 96,
+        "attempted_path_counts": [32, 64],
+        "selected_path_count": 64,
+        "expanded": True,
+        "hard_failure_attempts": [
+            {
+                "path_count": 32,
+                "reasons": {
+                    "primary": [
+                        "lambda_support_collapsed",
+                    ],
+                    "secondary": [
+                        "lambda_support_collapsed",
+                    ],
+                },
+            }
+        ],
+        "split_half_diagnostics_trigger_expansion": False,
+    }
 
 
 def test_intermittency_measured_dose_comes_from_generator_metadata():
