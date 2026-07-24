@@ -55,7 +55,10 @@ def baseline_forecast(sample: dict[str, Any], model_id: str) -> np.ndarray:
     horizon = int(sample["horizon"])
     if model_id == "last_value":
         return np.repeat(history[-1:], horizon, axis=0)
-    period = min(int(sample["season_length"]), context)
+    period = min(
+        int(sample.get("mase_period", sample.get("season_length", 1))),
+        context,
+    )
     pattern = history[-period:]
     return np.vstack(
         [pattern[index % period] for index in range(horizon)]
@@ -343,6 +346,8 @@ def mean_seed_group_metric(
 ) -> float | None:
     grouped: dict[tuple[int, int], list[float]] = defaultdict(list)
     for row in rows:
+        if metric_name not in row["metrics"]:
+            continue
         grouped[(int(row["seed_index"]), int(row["intensity"]))].append(
             float(row["metrics"][metric_name])
         )
@@ -418,6 +423,10 @@ def score_table(
             )
         )
         accuracy = mean_seed_group_metric(group, accuracy_metric)
+        history_std_normalized_mae = mean_seed_group_metric(
+            group,
+            "normalized_mae_history_std",
+        )
         metric_name = (
             "counterfactual_effect_nrmse"
             if (
@@ -450,6 +459,9 @@ def score_table(
                 "model_id": key[5],
                 "accuracy_score": accuracy,
                 "accuracy_metric": accuracy_metric,
+                "history_std_normalized_mae": (
+                    history_std_normalized_mae
+                ),
                 "mechanism_metric": metric_name,
                 "mechanism_score": (
                     float(np.mean(mechanism_values))
@@ -914,8 +926,8 @@ def render_report(
             [
                 f"## {policy}",
                 "",
-                "| capability | model | MASE | accuracy rank | mechanism | mechanism rank |",
-                "|---|---|---:|---:|---:|---:|",
+                "| capability | model | MASE | history-std NMAE | accuracy rank | mechanism | mechanism rank |",
+                "|---|---|---:|---:|---:|---:|---:|",
             ]
         )
         for capability in present_capabilities:
@@ -936,6 +948,7 @@ def render_report(
                 lines.append(
                     f"| {capability} | {row['model_id']} | "
                     f"{format_score(row['accuracy_score'])} | "
+                    f"{format_score(row['history_std_normalized_mae'])} | "
                     f"{row['accuracy_rank'] or '-'} | "
                     f"{format_score(row['mechanism_score'])} | "
                     f"{row['mechanism_rank'] or '-'} |"

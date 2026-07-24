@@ -107,6 +107,9 @@ def prediction_row(
         )
     mae = float(np.mean(np.abs(values - truth)))
     scale = float(sample["mase_scale"])
+    history_scale = float(
+        np.mean(np.std(target[:context], axis=0))
+    )
     return {
         "schema_version": "paper_v8_inference_prediction.v1",
         "model_id": model_id,
@@ -130,7 +133,16 @@ def prediction_row(
         "target_dim": int(sample["target_dim"]),
         "covariate_dim": int(sample["covariate_dim"]),
         "mase_scale": scale,
-        "metrics": {"mae": mae, "mase": mae / scale},
+        "mase_period": int(
+            sample.get("mase_period", sample.get("season_length", 1))
+        ),
+        "metrics": {
+            "mae": mae,
+            "mase": mae / scale,
+            "history_std_normalized_mae": (
+                mae / max(history_scale, 1e-12)
+            ),
+        },
         "forecast": values.tolist(),
         "target_future": truth.tolist(),
         "future_sha256": sample["future_sha256"],

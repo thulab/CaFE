@@ -10,8 +10,18 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-matched-covariate-secondary"
+GENERATOR_VERSION = "capts-paper-v8-observable-time-scales"
 FamilyRole = Literal["primary", "secondary"]
+
+BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
+MULTI_SEASONAL_PRIMARY_PERIOD_RANGE = (8.0, 84.0)
+MULTI_SEASONAL_COMPONENT_PERIOD_RANGE = (4.0, 168.0)
+TIME_VARYING_CARRIER_PERIOD_RANGE = (8.0, 126.0)
+INTERMITTENT_EVENT_PERIOD_RANGE = (8, 126)
+REGIME_DWELL_RANGE = (12, 84)
+NONLINEAR_SEASONAL_LAG_RANGE = (4, 48)
+NONLINEAR_LAG_RANGE = (2, 32)
+COVARIATE_EVENT_WIDTH_RANGE = (2, 6)
 
 COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2 = 0.80
 COMMON_FACTOR_MAX_SINGLE_HOLDOUT_R2 = 0.80
@@ -513,6 +523,25 @@ def _parameter(
     if conditioning is None:
         return float(default)
     return float(conditioning.parameters.get(name, default))
+
+
+def _profile_period(
+    conditioning: GeneratorConditioning | None,
+    fallback: float,
+    *,
+    lower: float,
+    upper: float,
+) -> tuple[float, float]:
+    """Resolve an observable generator time scale from a real-window peak.
+
+    ``profile_dominant_period`` is a descriptive spectral peak rather than a
+    literal calendar season.  Every mechanism therefore clips it to a range
+    that is identifiable inside the fixed L504/H48 protocol.
+    """
+
+    raw = _parameter(conditioning, "profile_dominant_period", fallback)
+    effective = float(np.clip(raw, lower, upper))
+    return float(raw), effective
 
 
 def _lambda(
@@ -1144,7 +1173,13 @@ def _lds_signal(
     envelope_depth = 0.04 + 0.16 * (1.0 - persistence)
     for index in range(mode_count):
         ratio = float(rng.uniform(0.78, 1.25) * (1.0 + 0.55 * index))
-        selected_period = float(np.clip(period * ratio, 4.0, context_length / 2.0))
+        selected_period = float(
+            np.clip(
+                period * ratio,
+                BACKGROUND_PERIOD_RANGE[0],
+                min(BACKGROUND_PERIOD_RANGE[1], context_length / 3.0),
+            )
+        )
         phase = float(rng.uniform(0.0, 2.0 * np.pi))
         secondary_scale = 1.0 if index == 0 else 1.15 - spectral_concentration
         amplitude = float(
@@ -1228,12 +1263,19 @@ def _calibrated_signal(
     seasonal_memory_name: str = "profile_seasonal_acf",
     period_multiplier: float = 1.0,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    period = _parameter(
+    raw_period, period = _profile_period(
         conditioning,
-        "profile_dominant_period",
         24.0,
-    ) * period_multiplier
-    period = float(np.clip(period, 4.0, context_length / 2.0))
+        lower=BACKGROUND_PERIOD_RANGE[0],
+        upper=min(BACKGROUND_PERIOD_RANGE[1], context_length / 3.0),
+    )
+    period = float(
+        np.clip(
+            period * period_multiplier,
+            BACKGROUND_PERIOD_RANGE[0],
+            min(BACKGROUND_PERIOD_RANGE[1], context_length / 3.0),
+        )
+    )
     persistence = _parameter(conditioning, persistence_name, 0.85)
     seasonal_memory = _parameter(conditioning, seasonal_memory_name, 0.65)
     spectral_concentration = _parameter(
@@ -1245,7 +1287,7 @@ def _calibrated_signal(
         np.clip(0.65 * persistence + 0.35 * seasonal_memory, 0.0, 0.995)
     )
     if family_role == "primary":
-        return _lds_signal(
+        values, metadata = _lds_signal(
             length,
             context_length,
             rng,
@@ -1253,16 +1295,23 @@ def _calibrated_signal(
             persistence=effective_memory,
             spectral_concentration=spectral_concentration,
         )
-    values, metadata = _spline_motif_signal(
-        length,
-        context_length,
-        rng,
-        period=period,
-        spectral_concentration=spectral_concentration,
-    )
+    else:
+        values, metadata = _spline_motif_signal(
+            length,
+            context_length,
+            rng,
+            period=period,
+            spectral_concentration=spectral_concentration,
+        )
     metadata["persistence_calibration"] = persistence
     metadata["seasonal_memory_calibration"] = seasonal_memory
     metadata["effective_memory_calibration"] = effective_memory
+    metadata["raw_profile_dominant_period"] = raw_period
+    metadata["effective_background_period"] = period
+    metadata["background_period_bounds"] = [
+        BACKGROUND_PERIOD_RANGE[0],
+        min(BACKGROUND_PERIOD_RANGE[1], context_length / 3.0),
+    ]
     return values, metadata
 
 
@@ -1415,12 +1464,11 @@ def _trend(length, context, dim, season, intensity, rng, cond, family):
 def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
     time = np.arange(length, dtype=float)
-    primary_period = float(
-        np.clip(
-            _parameter(cond, "profile_dominant_period", float(season)),
-            4.0,
-            context / 2.0,
-        )
+    raw_period, primary_period = _profile_period(
+        cond,
+        float(season),
+        lower=MULTI_SEASONAL_PRIMARY_PERIOD_RANGE[0],
+        upper=min(MULTI_SEASONAL_PRIMARY_PERIOD_RANGE[1], context / 6.0),
     )
     ratio = _parameter(cond, "secondary_component_ratio", 0.45)
     target = np.zeros((length, dim), dtype=float)
@@ -1433,7 +1481,17 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
             ],
             dtype=float,
         )
-        periods = [primary_period, *(primary_period * candidate_ratios).tolist()]
+        periods = [
+            primary_period,
+            *np.clip(
+                primary_period * candidate_ratios,
+                MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[0],
+                min(
+                    MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[1],
+                    context / 3.0,
+                ),
+            ).tolist(),
+        ]
         amplitudes = [1.0, ratio * (0.15 + 0.85 * lam), 0.6 * ratio * (0.15 + 0.85 * lam)]
         for period, amplitude in zip(periods, amplitudes, strict=True):
             phase = rng.uniform(0.0, 2.0 * np.pi, size=dim)
@@ -1465,7 +1523,16 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
             length,
             context,
             rng,
-            period=primary_period * float(rng.uniform(1.35, 2.35)),
+            period=float(
+                np.clip(
+                    primary_period * float(rng.uniform(1.35, 2.35)),
+                    MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[0],
+                    min(
+                        MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[1],
+                        context / 3.0,
+                    ),
+                )
+            ),
             spectral_concentration=concentration,
         )
         load = rng.uniform(0.85, 1.15, size=dim)
@@ -1475,14 +1542,38 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
         )
         periods = [float(motif_meta["period"]), float(second_meta["period"])]
         law = "sample_specific_periodic_spline_superposition"
-    detail = {"periods": periods, "component_ratio": ratio, "mechanism_law": law}
+    detail = {
+        "periods": periods,
+        "component_ratio": ratio,
+        "mechanism_law": law,
+        "raw_profile_dominant_period": raw_period,
+        "effective_primary_period": primary_period,
+        "primary_period_bounds": list(
+            MULTI_SEASONAL_PRIMARY_PERIOD_RANGE
+        ),
+        "component_period_bounds": list(
+            MULTI_SEASONAL_COMPONENT_PERIOD_RANGE
+        ),
+    }
     return target, _metadata("multi_seasonal", family, target, detail), None
 
 
 def _time_varying(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
     time = np.arange(length, dtype=float)
-    period = float(max(4.0, season * rng.uniform(0.85, 1.15)))
+    raw_period, base_period = _profile_period(
+        cond,
+        float(season),
+        lower=TIME_VARYING_CARRIER_PERIOD_RANGE[0],
+        upper=min(TIME_VARYING_CARRIER_PERIOD_RANGE[1], context / 4.0),
+    )
+    period = float(
+        np.clip(
+            base_period * rng.uniform(0.85, 1.15),
+            TIME_VARYING_CARRIER_PERIOD_RANGE[0],
+            min(TIME_VARYING_CARRIER_PERIOD_RANGE[1], context / 4.0),
+        )
+    )
     modulation_period = float(np.clip(period * rng.uniform(2.2, 4.0), 2 * period, context / 2))
     carrier_phase = rng.uniform(0.0, 2.0 * np.pi, size=dim)
     modulation_phase = rng.uniform(0.0, 2.0 * np.pi, size=dim)
@@ -1521,6 +1612,11 @@ def _time_varying(length, context, dim, season, intensity, rng, cond, family):
         "modulation_harmonic_weight": harmonic_weight,
         "modulation_harmonic_phase": harmonic_phase,
         "mechanism_law": law,
+        "raw_profile_dominant_period": raw_period,
+        "effective_carrier_base_period": base_period,
+        "carrier_period_bounds": list(
+            TIME_VARYING_CARRIER_PERIOD_RANGE
+        ),
     }
     return target, _metadata("time_varying_seasonality", family, target, detail), None
 
@@ -1558,28 +1654,48 @@ def _duration_schedule(
 
 
 def _sample_duration_motif(
-    season: int,
+    reference_period: float,
     scale: float,
     rng: np.random.Generator,
-) -> list[int]:
-    base = max(4, int(round(0.65 * max(4, season) * scale)))
+) -> tuple[list[int], int]:
+    base = int(
+        round(
+            np.clip(
+                0.65 * max(4.0, reference_period) * scale,
+                REGIME_DWELL_RANGE[0],
+                REGIME_DWELL_RANGE[1],
+            )
+        )
+    )
     motif_length = int(rng.integers(3, 7))
     multipliers = rng.uniform(0.65, 1.45, size=motif_length)
-    pattern = np.maximum(4, np.rint(base * multipliers).astype(int))
-    return pattern.tolist()
+    pattern = np.clip(
+        np.rint(base * multipliers).astype(int),
+        REGIME_DWELL_RANGE[0],
+        REGIME_DWELL_RANGE[1],
+    )
+    return pattern.tolist(), base
 
 
 def _regime(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
+    raw_period, reference_period = _profile_period(
+        cond,
+        float(season),
+        lower=BACKGROUND_PERIOD_RANGE[0],
+        upper=min(BACKGROUND_PERIOD_RANGE[1], context / 3.0),
+    )
     # Generate a suffix beyond the requested horizon so that smooth
     # transitions near the right boundary do not depend on requested length.
-    schedule_length = length + 8 * max(4, season)
-    pattern = _sample_duration_motif(
-        season,
+    pattern, base_dwell = _sample_duration_motif(
+        reference_period,
         _parameter(cond, "regime_dwell_scale", 1.0),
         rng,
     )
-    anchor_offset = int(rng.integers(2, max(3, min(max(4, season), 32))))
+    schedule_length = length + 8 * max(pattern)
+    anchor_offset = int(
+        rng.integers(2, max(3, min(int(round(np.median(pattern))), 32)))
+    )
     initial_state = float(rng.choice(np.asarray([-1.0, 1.0])))
     state, cuts = _duration_schedule(
         schedule_length,
@@ -1624,23 +1740,51 @@ def _regime(length, context, dim, season, intensity, rng, cond, family):
         "cut_points": [cut for cut in cuts if cut < length],
         "dwell_pattern": pattern,
         "dwell_length": int(round(np.median(pattern))),
+        "dwell_base": base_dwell,
+        "dwell_bounds": list(REGIME_DWELL_RANGE),
         "dwell_anchor_offset": anchor_offset,
         "initial_regime_state": initial_state,
         "regime_strength": strength,
         "transition": transition,
         "deterministic_texture": texture_meta,
+        "raw_profile_dominant_period": raw_period,
+        "effective_regime_reference_period": reference_period,
     }
     return target, _metadata("regime_switching", family, target, detail), None
 
 
 def _nonlinear(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
-    calibrated_lag = max(
-        2,
-        int(round(season * _parameter(cond, "nonlinear_lag_scale", 1.0 / 3.0))),
+    raw_period, reference_period = _profile_period(
+        cond,
+        float(season),
+        lower=NONLINEAR_SEASONAL_LAG_RANGE[0],
+        upper=NONLINEAR_SEASONAL_LAG_RANGE[1],
     )
-    lag = max(2, int(round(calibrated_lag * rng.uniform(0.80, 1.20))))
-    seasonal_lag = max(4, season)
+    seasonal_lag = int(round(reference_period))
+    calibrated_lag = max(
+        NONLINEAR_LAG_RANGE[0],
+        min(
+            NONLINEAR_LAG_RANGE[1],
+            int(
+                round(
+                    seasonal_lag
+                    * _parameter(
+                        cond,
+                        "nonlinear_lag_scale",
+                        1.0 / 3.0,
+                    )
+                )
+            ),
+        ),
+    )
+    lag = int(
+        np.clip(
+            round(calibrated_lag * rng.uniform(0.80, 1.20)),
+            NONLINEAR_LAG_RANGE[0],
+            NONLINEAR_LAG_RANGE[1],
+        )
+    )
     burn = max(256, 8 * seasonal_lag)
     total = burn + length
     state = np.zeros((total, dim), dtype=float)
@@ -1697,6 +1841,10 @@ def _nonlinear(length, context, dim, season, intensity, rng, cond, family):
         "nonlinear_lag": lag,
         "calibrated_nonlinear_lag": calibrated_lag,
         "seasonal_lag": seasonal_lag,
+        "seasonal_lag_bounds": list(NONLINEAR_SEASONAL_LAG_RANGE),
+        "nonlinear_lag_bounds": list(NONLINEAR_LAG_RANGE),
+        "raw_profile_dominant_period": raw_period,
+        "effective_nonlinear_reference_period": reference_period,
         "nonlinear_strength": effective_gain,
         "unscaled_nonlinear_strength": gain,
         "persistence_weight": persistence_weight,
@@ -1736,17 +1884,21 @@ def _event_clock(
 
 def _intermittent(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
-    event_period = max(
-        4,
-        int(round(_parameter(cond, "profile_dominant_period", float(season)))),
+    raw_period, effective_period = _profile_period(
+        cond,
+        float(season),
+        lower=float(INTERMITTENT_EVENT_PERIOD_RANGE[0]),
+        upper=float(INTERMITTENT_EVENT_PERIOD_RANGE[1]),
     )
+    event_period = int(round(effective_period))
     motif_length = int(rng.integers(3, 7))
-    interval_pattern = np.maximum(
-        4,
+    interval_pattern = np.clip(
         np.rint(
             event_period
             * rng.uniform(0.70, 1.35, size=motif_length)
         ).astype(int),
+        INTERMITTENT_EVENT_PERIOD_RANGE[0],
+        INTERMITTENT_EVENT_PERIOD_RANGE[1],
     ).tolist()
     anchor_offset = int(
         rng.integers(3, max(4, min(event_period, 40)))
@@ -1798,6 +1950,9 @@ def _intermittent(length, context, dim, season, intensity, rng, cond, family):
     detail = {
         "pulse_centers": [center for center in centers if center < length],
         "pulse_interval_pattern": interval_pattern,
+        "event_period": event_period,
+        "event_period_bounds": list(INTERMITTENT_EVENT_PERIOD_RANGE),
+        "raw_profile_dominant_period": raw_period,
         "pulse_anchor_offset": anchor_offset,
         "pulse_width": width,
         "pulse_shape": shape,
@@ -2790,7 +2945,12 @@ def _covariate(
             expansion = 1.55 + 0.65 * transform_scale
             weather[context:] = anchor + expansion * future_deviation
     event = np.zeros(length, dtype=float)
-    width = int(rng.integers(2, max(3, min(7, season // 3 + 1))))
+    width = int(
+        rng.integers(
+            COVARIATE_EVENT_WIDTH_RANGE[0],
+            COVARIATE_EVENT_WIDTH_RANGE[1] + 1,
+        )
+    )
     historical_fractions = np.asarray([0.18, 0.48, 0.76])
     historical_fractions += rng.uniform(-0.07, 0.07, size=3)
     historical = sorted(
@@ -2931,6 +3091,7 @@ def _covariate(
         "event_starts": starts,
         "historical_event_fractions": historical_fractions.tolist(),
         "event_width": width,
+        "event_width_bounds": list(COVARIATE_EVENT_WIDTH_RANGE),
         "future_event_start": future_start,
         "response_law": response_law,
         "raw_response_history_mean_by_target": (

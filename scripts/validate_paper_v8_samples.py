@@ -165,6 +165,53 @@ def input_ablation_checks(
     }
 
 
+def mase_scale_audit(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    by_capability: dict[str, list[float]] = {}
+    period_counts: Counter[int] = Counter()
+    ratios: list[float] = []
+    for row in rows:
+        target = np.asarray(row["target"], dtype=float)
+        context = int(row["context_length"])
+        history_scale = float(
+            np.mean(np.std(target[:context], axis=0))
+        )
+        ratio = float(row["mase_scale"]) / max(history_scale, 1e-12)
+        ratios.append(ratio)
+        by_capability.setdefault(
+            str(row["capability_id"]),
+            [],
+        ).append(ratio)
+        period_counts[int(row["mase_period"])] += 1
+
+    def summary(values: list[float]) -> dict[str, float]:
+        array = np.asarray(values, dtype=float)
+        return {
+            "minimum": float(np.min(array)),
+            "p05": float(np.quantile(array, 0.05)),
+            "p50": float(np.quantile(array, 0.50)),
+            "p95": float(np.quantile(array, 0.95)),
+            "maximum": float(np.max(array)),
+        }
+
+    return {
+        "policy": (
+            "diagnostic_only_no_denominator_floor; companion inference "
+            "metric=history_std_normalized_mae"
+        ),
+        "mase_period_counts": {
+            str(period): count
+            for period, count in sorted(period_counts.items())
+        },
+        "mase_scale_to_history_std": summary(ratios),
+        "by_capability": {
+            capability_id: summary(values)
+            for capability_id, values in sorted(by_capability.items())
+        },
+    }
+
+
 def main() -> int:
     args = parse_args()
     dataset = v8.resolve_dataset(args.dataset_id)
@@ -218,6 +265,7 @@ def main() -> int:
         "clean_validation": clean_validation,
         "robustness_validation": robust_validation,
         "input_ablation_validation": ablation_validation,
+        "mase_scale_audit": mase_scale_audit(clean_rows),
         "accepted": accepted,
     }
     report_path = generation_dir / f"validation__{shard_name}.json"

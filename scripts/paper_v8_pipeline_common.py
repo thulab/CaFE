@@ -49,7 +49,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v1"
+SCHEMA_VERSION = "paper_v8_pipeline.v2"
 CONTEXT_LENGTH = 504
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
@@ -220,6 +220,55 @@ DATASET_REGISTRY = {
             "bizitobs_l2c/H",
             "Web/CloudOps",
         ),
+        DatasetSpec(
+            "gift_bizitobs_application",
+            "BizITObs Application",
+            "bizitobs_application",
+            "bizitobs_application",
+            "Web/CloudOps",
+        ),
+        DatasetSpec(
+            "gift_bizitobs_service",
+            "BizITObs Service",
+            "bizitobs_service",
+            "bizitobs_service",
+            "Web/CloudOps",
+        ),
+        DatasetSpec(
+            "gift_hierarchical_sales_d",
+            "Hierarchical Sales",
+            "hierarchical_sales/D",
+            "hierarchical_sales/D",
+            "Business",
+        ),
+        DatasetSpec(
+            "gift_m4_hourly",
+            "M4 Hourly",
+            "m4_hourly",
+            "m4_hourly",
+            "Mixed",
+        ),
+        DatasetSpec(
+            "gift_us_births_d",
+            "US Births",
+            "us_births/D",
+            "us_births/D",
+            "Nature",
+        ),
+        DatasetSpec(
+            "gift_saugeenday_d",
+            "Saugeen River Flow",
+            "saugeenday/D",
+            "saugeenday/D",
+            "Nature",
+        ),
+        DatasetSpec(
+            "gift_temperature_rain_d",
+            "Temperature Rain",
+            "temperature_rain_with_missing",
+            "temperature_rain_with_missing",
+            "Nature",
+        ),
     )
 }
 
@@ -364,6 +413,75 @@ def standardize_history(values: np.ndarray) -> tuple[np.ndarray, float, float]:
     return (array - mean) / scale, mean, scale
 
 
+def calibration_period_policy(
+    frequency: str,
+    standardized_history: np.ndarray,
+) -> dict[str, Any]:
+    """Separate calendar, feature, generator-profile, and MASE periods.
+
+    A sub-daily calendar season may be much longer than L504.  In that case it
+    remains provenance, the real-window spectral peak supplies an observable
+    feature period, and non-seasonal MASE uses lag one.
+    """
+
+    history = np.asarray(standardized_history, dtype=float).reshape(-1)
+    calendar_period = int(seasonal_period_for_frequency(frequency))
+    provisional = feature_vector(
+        history[:, None],
+        None,
+        context_length=CONTEXT_LENGTH,
+    )
+    raw_dominant = float(provisional.get("dominant_period", 24.0))
+    if not math.isfinite(raw_dominant) or raw_dominant <= 0.0:
+        raw_dominant = 24.0
+    profile_period = int(
+        round(
+            np.clip(
+                raw_dominant,
+                8.0,
+                CONTEXT_LENGTH / 3.0,
+            )
+        )
+    )
+    calendar_feature_observable = bool(
+        calendar_period >= 2
+        and 2 * calendar_period <= CONTEXT_LENGTH
+    )
+    feature_period = (
+        calendar_period
+        if calendar_feature_observable
+        else profile_period
+    )
+    mase_period = (
+        calendar_period
+        if 1 <= calendar_period < CONTEXT_LENGTH
+        else 1
+    )
+    return {
+        "calendar_season_length": calendar_period,
+        "calendar_season_feature_observable": (
+            calendar_feature_observable
+        ),
+        "calendar_cycles_in_l504": float(
+            CONTEXT_LENGTH / max(calendar_period, 1)
+        ),
+        "raw_profile_dominant_period": raw_dominant,
+        "profile_period": profile_period,
+        "feature_period": int(feature_period),
+        "feature_period_source": (
+            "calendar_season"
+            if calendar_feature_observable
+            else "observable_profile_dominant_period"
+        ),
+        "mase_period": int(mase_period),
+        "mase_period_source": (
+            "calendar_season"
+            if mase_period == calendar_period
+            else "nonseasonal_lag1_calendar_unobservable_in_l504"
+        ),
+    }
+
+
 def summarize_feature_rows(
     rows: Iterable[dict[str, float]],
 ) -> dict[str, dict[str, float]]:
@@ -402,12 +520,6 @@ def build_calibration_anchors(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     asset_path = gift_eval_dir / dataset.asset_name
     frequency, native_records = read_gift_arrow_targets(asset_path)
-    season_length = seasonal_period_for_frequency(frequency)
-    if not 1 <= season_length < CONTEXT_LENGTH:
-        raise ValueError(
-            f"{dataset.config_id} season_length={season_length} is not usable "
-            f"inside L{CONTEXT_LENGTH}"
-        )
     series = expand_native_records(native_records)
     candidates: list[tuple[int, int, int]] = []
     for series_index, (_series_id, _item_id, _channel, values) in enumerate(series):
@@ -438,9 +550,13 @@ def build_calibration_anchors(
         except ValueError:
             rejected_uninformative += 1
             continue
+        period_policy = calibration_period_policy(
+            frequency,
+            standardized,
+        )
         features = feature_vector(
             standardized[:, None],
-            season_length,
+            int(period_policy["feature_period"]),
             context_length=CONTEXT_LENGTH,
         )
         finite_features = {
@@ -455,7 +571,7 @@ def build_calibration_anchors(
         )
         anchors.append(
             {
-                "schema_version": "paper_v8_calibration_anchor.v1",
+                "schema_version": "paper_v8_calibration_anchor.v2",
                 "anchor_id": anchor_id,
                 "dataset_id": dataset.dataset_id,
                 "config_id": dataset.config_id,
@@ -465,7 +581,13 @@ def build_calibration_anchors(
                     f"L{CONTEXT_LENGTH}"
                 ),
                 "frequency": frequency,
-                "season_length": season_length,
+                # ``season_length`` remains the literal calendar period for
+                # external provenance. V8 generation and evaluation consume
+                # the explicit fields below instead of overloading it.
+                "season_length": int(
+                    period_policy["calendar_season_length"]
+                ),
+                **period_policy,
                 "item_id": item_id,
                 "series_id": series_id,
                 "channel_id": channel_index,
@@ -490,7 +612,39 @@ def build_calibration_anchors(
         "asset_path": str(asset_path),
         "asset_files": [file_record(path) for path in arrow_files],
         "frequency": frequency,
-        "season_length": season_length,
+        "season_length": int(
+            seasonal_period_for_frequency(frequency)
+        ),
+        "period_policy": {
+            "calendar_season_length": int(
+                seasonal_period_for_frequency(frequency)
+            ),
+            "calendar_feature_observable_rule": (
+                "at_least_two_complete_calendar_cycles_in_l504"
+            ),
+            "profile_period_bounds": [8, CONTEXT_LENGTH // 3],
+            "mase_fallback": (
+                "lag1_when_calendar_period_is_not_defined_inside_l504"
+            ),
+        },
+        "accepted_feature_period_counts": {
+            str(period): sum(
+                int(anchor["feature_period"]) == period
+                for anchor in anchors
+            )
+            for period in sorted(
+                {int(anchor["feature_period"]) for anchor in anchors}
+            )
+        },
+        "accepted_mase_period_counts": {
+            str(period): sum(
+                int(anchor["mase_period"]) == period
+                for anchor in anchors
+            )
+            for period in sorted(
+                {int(anchor["mase_period"]) for anchor in anchors}
+            )
+        },
         "native_record_count": len(native_records),
         "expanded_series_count": len(series),
         "stratum_count": len(candidates),
@@ -595,6 +749,36 @@ def measured_features(
     season_length: int,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, float]:
+    metadata = metadata or {}
+    measurement_period = int(season_length)
+    if capability_id == "multi_seasonal":
+        periods = metadata.get("periods") or []
+        if periods:
+            measurement_period = int(round(float(periods[0])))
+    elif capability_id == "time_varying_seasonality":
+        measurement_period = int(
+            round(float(metadata.get("primary_period", measurement_period)))
+        )
+    elif capability_id == "regime_switching":
+        measurement_period = int(
+            round(float(metadata.get("dwell_length", measurement_period)))
+        )
+    elif capability_id == "nonlinear_persistence":
+        measurement_period = int(
+            round(float(metadata.get("seasonal_lag", measurement_period)))
+        )
+    elif capability_id == "predictable_intermittency":
+        measurement_period = int(
+            round(float(metadata.get("event_period", measurement_period)))
+        )
+    elif capability_id == "covariate_response":
+        baseline = metadata.get("baseline_process") or {}
+        measurement_period = int(
+            round(float(baseline.get("period", measurement_period)))
+        )
+    measurement_period = int(
+        np.clip(measurement_period, 1, CONTEXT_LENGTH - 1)
+    )
     hierarchy = (
         "additive_first"
         if capability_id == "hierarchical_coherence"
@@ -603,13 +787,13 @@ def measured_features(
     values = _realized_features(
         target,
         covariates,
-        season_length,
+        measurement_period,
         CONTEXT_LENGTH,
     )
     values.update(
         feature_vector(
             target,
-            season_length,
+            measurement_period,
             covariates=covariates,
             context_length=CONTEXT_LENGTH,
             hierarchy=hierarchy,
@@ -618,7 +802,7 @@ def measured_features(
             ),
         )
     )
-    if capability_id == "covariate_response" and metadata is not None:
+    if capability_id == "covariate_response":
         effect_share = float(
             metadata.get("covariate_effect_variance_share", math.nan)
         )
@@ -644,14 +828,14 @@ def generate_calibration_member(
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
         anchor_summary(anchor["features"]),
-        season_length=int(anchor["season_length"]),
+        season_length=int(anchor["feature_period"]),
         context_length=CONTEXT_LENGTH,
     )
     conditioning = build_conditioning(
         dataset,
         capability_id=capability_id,
         frequency=str(anchor["frequency"]),
-        season_length=int(anchor["season_length"]),
+        season_length=int(anchor["feature_period"]),
         intensity_lambdas=(lambda_value,) * 5,
         parameters=parameters,
     )
@@ -1025,7 +1209,7 @@ def generate_master_sample(
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
         anchor_summary(anchor["features"]),
-        season_length=int(anchor["season_length"]),
+        season_length=int(anchor["feature_period"]),
         context_length=CONTEXT_LENGTH,
     )
     family_calibration = capability_calibration[family_role]
@@ -1043,7 +1227,7 @@ def generate_master_sample(
         dataset,
         capability_id=capability_id,
         frequency=str(anchor["frequency"]),
-        season_length=int(anchor["season_length"]),
+        season_length=int(anchor["feature_period"]),
         intensity_lambdas=lambdas,
         parameters=parameters,
         target_values=targets,
@@ -1082,7 +1266,7 @@ def generate_master_sample(
     )
     mase_scale, scale_by_target = mase_scales(
         target,
-        season_length=conditioning.season_length,
+        season_length=int(anchor["mase_period"]),
     )
     dataset_token = safe_id(dataset.dataset_id)
     pair_id = (
@@ -1110,7 +1294,7 @@ def generate_master_sample(
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
-        "schema_version": "paper_v8_master_sample.v1",
+        "schema_version": "paper_v8_master_sample.v2",
         "sample_id": sample_id,
         "master_sample_id": sample_id,
         "paired_group_id": (
@@ -1155,7 +1339,18 @@ def generate_master_sample(
             else ["weather_driver", "known_event"][: covariates.shape[1]]
         ),
         "frequency": conditioning.frequency,
-        "season_length": conditioning.season_length,
+        "season_length": int(anchor["calendar_season_length"]),
+        "calendar_season_length": int(
+            anchor["calendar_season_length"]
+        ),
+        "calendar_season_feature_observable": bool(
+            anchor["calendar_season_feature_observable"]
+        ),
+        "calendar_cycles_in_l504": float(
+            anchor["calendar_cycles_in_l504"]
+        ),
+        "feature_period": int(anchor["feature_period"]),
+        "feature_period_source": str(anchor["feature_period_source"]),
         "hierarchy": (
             "additive_first"
             if capability_id == "hierarchical_coherence"
@@ -1179,7 +1374,8 @@ def generate_master_sample(
         "scoring_target_semantics": "clean_latent_future",
         "observation_noise_scale": 0.0,
         "future_process_noise_scale": 0.0,
-        "mase_period": conditioning.season_length,
+        "mase_period": int(anchor["mase_period"]),
+        "mase_period_source": str(anchor["mase_period_source"]),
         "mase_scale": mase_scale,
         "mase_scale_by_target": scale_by_target,
         "mase_scale_source": "clean_l504_history",

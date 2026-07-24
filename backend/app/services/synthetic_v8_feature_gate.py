@@ -62,6 +62,16 @@ def basic_sample_checks(sample: dict[str, Any]) -> dict[str, Any]:
             math.isfinite(float(sample.get("mase_scale", math.nan)))
             and float(sample.get("mase_scale", 0.0)) > 0.0
         ),
+        "mase_period_valid": bool(
+            1
+            <= int(
+                sample.get(
+                    "mase_period",
+                    sample.get("season_length", 0),
+                )
+            )
+            < context
+        ),
         "target_hash_matches": (
             str(sample.get("target_sha256")) == sample_content_sha256(sample)
             if sample.get("target_sha256")

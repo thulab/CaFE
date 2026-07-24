@@ -61,7 +61,7 @@ def main() -> int:
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v1",
+        "schema_version": "paper_v8_calibration_bundle.v2",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
@@ -81,6 +81,23 @@ def main() -> int:
             ),
             "structural_identifiability": "measured on generated samples only",
             "removed_features": ["future_abs_covariate_target_corr"],
+            "time_scale_semantics": {
+                "calendar_season_length": (
+                    "frequency-derived provenance"
+                ),
+                "feature_period": (
+                    "calendar season when two cycles fit L504, otherwise "
+                    "observable profile dominant period"
+                ),
+                "generator_period": (
+                    "capability-specific observable clipping of the direct "
+                    "anchor profile dominant period"
+                ),
+                "mase_period": (
+                    "calendar season when defined inside L504, otherwise "
+                    "non-seasonal lag 1"
+                ),
+            },
         },
         "files": {
             "anchors": v8.file_record(anchor_path),

@@ -271,7 +271,10 @@ def baseline_forecast(sample: dict[str, Any], kind: str) -> np.ndarray:
     if kind == "last_value":
         return np.repeat(history[-1:], horizon, axis=0)
     if kind == "seasonal_naive":
-        period = max(1, int(sample["season_length"]))
+        period = max(
+            1,
+            int(sample.get("mase_period", sample.get("season_length", 1))),
+        )
         usable_period = min(period, context)
         indexes = context - usable_period + np.arange(horizon) % usable_period
         return history[indexes]
@@ -705,7 +708,12 @@ def time_varying_seasonality_recovery_metrics(
 ) -> dict[str, float]:
     metadata = sample.get("generation_metadata", {})
     primary_period = max(
-        float(metadata.get("primary_period", sample["season_length"])),
+        float(
+            metadata.get(
+                "primary_period",
+                sample.get("feature_period", sample.get("season_length", 24)),
+            )
+        ),
         2.0,
     )
     tail_length = min(
@@ -804,7 +812,12 @@ def nonlinear_recovery_metrics(
     metadata = sample.get("generation_metadata", {})
     context = int(sample["context_length"])
     lag = int(metadata.get("nonlinear_lag", 1))
-    seasonal_lag = int(metadata.get("seasonal_lag", sample["season_length"]))
+    seasonal_lag = int(
+        metadata.get(
+            "seasonal_lag",
+            sample.get("feature_period", sample.get("season_length", 24)),
+        )
+    )
     transform = str(metadata.get("nonlinear_transform", "shifted_tanh"))
     persistence = float(
         metadata.get(
@@ -943,7 +956,9 @@ def prediction_metrics(
         truth.tolist(),
         forecast.tolist(),
         history.tolist(),
-        seasonal_period=int(sample["season_length"]),
+        seasonal_period=int(
+            sample.get("mase_period", sample.get("season_length", 1))
+        ),
     )
     history_scale = float(np.mean(np.std(history, axis=0)))
     truth_std = float(np.mean(np.std(truth, axis=0)))
@@ -3895,7 +3910,12 @@ def create_plots(
             sharex=True,
             squeeze=False,
         )
-        start = max(0, context - 2 * int(sample["season_length"]))
+        start = max(
+            0,
+            context
+            - 2
+            * int(sample.get("feature_period", sample.get("season_length", 24))),
+        )
         time_axis = np.arange(start, context + horizon)
         for channel in range(channels):
             axis = axes[channel, 0]
@@ -4058,7 +4078,12 @@ def create_plots(
             sharex=True,
             squeeze=False,
         )
-        start = max(0, context - 2 * int(sample["season_length"]))
+        start = max(
+            0,
+            context
+            - 2
+            * int(sample.get("feature_period", sample.get("season_length", 24))),
+        )
         full_time = np.arange(start, context + horizon)
         forecast_time = np.arange(context, context + horizon)
         model_ids = sorted(
@@ -4387,7 +4412,12 @@ def create_plots(
             sharex=True,
             squeeze=False,
         )
-        start = max(0, context - 2 * int(sample["season_length"]))
+        start = max(
+            0,
+            context
+            - 2
+            * int(sample.get("feature_period", sample.get("season_length", 24))),
+        )
         full_time = np.arange(start, context + horizon)
         history_time = np.arange(start, context)
         for channel in range(channels):

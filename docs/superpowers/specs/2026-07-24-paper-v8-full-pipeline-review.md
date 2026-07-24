@@ -523,7 +523,14 @@ Oracle context 比较中的 L96、L168、L336 和 L504 是同一个 552 点 mast
 
 正式 v8 对每个 master sample 使用完整 L504 history 预计算一次 MASE denominator，并将其保存到 sample/view metadata。四个 context views、counterfactual members 的各自 target channel 都复用由对应 clean L504 master history 得到的 denominator；robustness 样本也沿用 clean latent history 的 denominator，不用加噪 history 重新定标。
 
-`season_length` 由 canonical config 的原生频率确定。canonical config 必须至少提供一个在 504 点 history 内可定义且有意义的评测周期；无法满足时不进入该配置，不能在不同 context 下静默切换 MASE lag。Oracle context 仍按 MASE 选取，但 counterfactual pair 的两个 members 共用由 pair 平均 MASE 最小化得到的 context。
+日历季节由 canonical config 的原生频率确定，但不再重载为生成时间尺度和 MASE period。正式字段拆分为：
+
+- `calendar_season_length`：频率推导的日历周期，只作来源语义和可观测时的 calendar-season 特征；
+- `feature_period`：L504 内至少可观察的真实特征周期；若完整日历周期在 L504 内不足两次，则使用窗口频谱主时间尺度；
+- 生成机制时间尺度：从直接 anchor 的 `profile_dominant_period` 出发，按能力的可识别范围裁剪；
+- `mase_period`：日历周期在 L504 内可定义时沿用，否则明确使用 non-seasonal lag 1。
+
+因此 10 秒 BizITObs 保留 `calendar_season_length=8640`，但使用窗口内可观察的 feature/generator period 和 `mase_period=1`。四种 context 仍共享 clean L504 MASE denominator，不能按 suffix 静默改变 lag。Oracle context 仍按 MASE 选取，但 counterfactual pair 的两个 members 共用由 pair 平均 MASE 最小化得到的 context。
 
 ## 决策 19：common-factor 与 cross-series 使用稠密事实机制，配对反事实降为审计
 
@@ -548,7 +555,7 @@ Oracle context 比较中的 L96、L168、L336 和 L504 是同一个 552 点 mast
 
 ## 当前审计：GIFT-Eval 接入和窗口上限
 
-状态：**现状已核清，v8 核心方案已确认；canonical config 清单待冻结**
+状态：**现状已核清，v8 核心方案与 canonical config 清单已冻结**
 
 ### GIFT-Eval 的“23 个数据集”与本地配置
 
@@ -622,7 +629,13 @@ GIFT-Eval 论文中的 23 个数据集是逻辑数据集口径。官方数据包
 
 v8 不再为了覆盖完整 23 个逻辑数据集而引入自适应真实校准长度。真实 anchor 必须具有完整 504 点 history；不满足的数据集或配置暂不测试。
 
-按当前数据长度，Restaurant、Hospital、COVID Deaths 和 Car Parts 没有任何 504 点原生序列，因此暂不进入正式 v8。M4 Yearly 也不能形成 504 点 anchor；M4 是否进入实验由最终冻结的可用内部 stratum/canonical config 决定。正式报告必须写明实际纳入的数据集清单，不能把可用子集表述为完整 23 数据集结果。
+按当前数据长度，Restaurant、Hospital、COVID Deaths 和 Car Parts 没有任何 504 点原生序列，因此暂不进入正式 v8。M4 Yearly 也不能形成 504 点 anchor，正式 canonical config 固定采用 M4 Hourly。正式报告必须写明实际纳入的数据集清单，不能把可用子集表述为完整 23 数据集结果。
+
+正式纳入的19个 canonical config 为：
+
+- 小时频率、`calendar_season_length=24`：Jena Weather H、BizITObs L2C H、Bitbrains Fast H、Bitbrains RND H、ETT1 H、ETT2 H、Loop Seattle H、SZ-Taxi H、M_DENSE H、Solar H、M4 Hourly、KDD Cup 2018 H、Electricity H；
+- 日频、`calendar_season_length=7`：Hierarchical Sales D、US Births D、Saugeen D、Temperature Rain D；
+- 10秒频率、`calendar_season_length=8640`：BizITObs Application、BizITObs Service。
 
 ### 已确认的 v8 接入方案
 
@@ -645,7 +658,7 @@ v8 不再为了覆盖完整 23 个逻辑数据集而引入自适应真实校准�
    这种抽样等价于按可覆盖观测长度加权，但不会让大量高度重叠的窗口伪装成大量独立 anchor。大数据集的有效步长会自动变长，不需要人为设置统一 stride。
 6. 256 是上限而不是最低配额。候选不足的数据集保留全部有效窗口并记录实际数量，不复制窗口凑数。
 7. 缺失值配置使用一个统一、可审计的轻量插补策略，不再因单个缺失点整窗拒绝，也不把插补后的窗口伪装成完全观测；产物记录 `observed_fraction`。
-8. `season_length` 从原生频率解析并随 anchor 保存，不再全局硬编码为 24。
+8. 日历季节从原生频率解析并随 anchor 保存，不再全局硬编码为 24；同时显式保存 `feature_period` 和 `mase_period`，避免将日历周期、生成周期与评价周期混为一个字段。
 9. 同一逻辑数据集的 calibration pool 由十个能力共享，不再为每个 capability 重复切一套真实窗口。
 10. 对没有真实多变量、层级或 known-future covariate 语义的数据集，真实 anchor 只校准边际背景和 nuisance；共同因子、层级、cross-series 和 covariate 的识别结构由合成机制定义，不要求真实数据先具备相同结构。
 11. 每个 clean、robustness 和 inference sample 都必须直接携带数据集来源字段，不能只在汇总文件中保存。最低字段为 `dataset_id`、`config_id`、`task_view_id` 和 `profile_id`；正式 v8 另保存 `anchor_id`，并能回查 `item_id/channel_id/window_start`。正式多数据集 `sample_id` 也必须包含 `dataset_id` 或其稳定短标识，避免不同数据集的同能力、同强度、同 seed 发生 ID 冲突。
@@ -705,3 +718,4 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 - 2026-07-24：修复 covariate secondary 的强度与背景混杂：移除额外 `1.7` 放大，保持 primary response 数值路径不变，将 secondary response 的 history 均值和标准差仿射匹配到同 seed 的 primary reference，并用生成器已知的 `covariate_effect_variance_share` 标定 I1–I5。matched seed 的两族严格共享 weather driver、事件、baseline 和符号，只将即时线性响应替换为半线性饱和、一期 lag 与 distributed-event 响应，避免原 spline driver 改变 seasonal MASE denominator。`covariate_incremental_r2` 保留为可解释的线性审计特征，不再作为跨 family 的剂量坐标。
 - 2026-07-24：结构能力 I1–I5 改为在生成器实际 realized-strength 支持内等距，再反解 lambda；cross 的强度轴与正确边/lag gate 解耦。
 - 2026-07-24：修正非 resume 推理会静默复用同 ID 旧预测的问题；非 resume 精确重建当前 inference seed shard，resume 才执行 hash 校验与增量续跑。
+- 2026-07-24：冻结19个满足 L504 的 GIFT-Eval canonical 配置：13个小时频率、4个日频和2个10秒频率；Restaurant、Hospital、COVID Deaths、Car Parts 因无504点原生序列暂不纳入。拆分 calendar season、feature period、能力专属生成时间尺度和 MASE period；10秒配置明确使用 `calendar_season_length=8640`、窗口内可观察生成尺度与 `mase_period=1`。生成时间尺度按 L504/H48 的可识别次数裁剪，MASE 不加隐藏 floor，并并列保存 history-std-normalized MAE 与 denominator 分布审计。

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -46,6 +47,95 @@ def test_direct_anchor_summary_does_not_compress_feature_values():
     }
 
 
+def test_v8_registry_freezes_nineteen_l504_eligible_datasets():
+    common = load_script("paper_v8_pipeline_common")
+
+    assert len(common.DATASET_REGISTRY) == 19
+    assert {
+        "gift_bizitobs_application",
+        "gift_bizitobs_service",
+        "gift_hierarchical_sales_d",
+        "gift_m4_hourly",
+        "gift_us_births_d",
+        "gift_saugeenday_d",
+        "gift_temperature_rain_d",
+    }.issubset(common.DATASET_REGISTRY)
+
+
+def test_10s_period_policy_separates_calendar_feature_and_mase_periods():
+    common = load_script("paper_v8_pipeline_common")
+    time = np.arange(common.CONTEXT_LENGTH, dtype=float)
+    history = np.sin(2.0 * np.pi * time / 120.0)
+
+    policy = common.calibration_period_policy("10S", history)
+
+    assert policy["calendar_season_length"] == 8640
+    assert policy["calendar_season_feature_observable"] is False
+    assert 110 <= policy["raw_profile_dominant_period"] <= 130
+    assert policy["feature_period"] == round(
+        policy["raw_profile_dominant_period"]
+    )
+    assert policy["mase_period"] == 1
+
+
+def test_hourly_period_policy_keeps_calendar_period_for_features_and_mase():
+    common = load_script("paper_v8_pipeline_common")
+    time = np.arange(common.CONTEXT_LENGTH, dtype=float)
+    history = np.sin(2.0 * np.pi * time / 24.0)
+
+    policy = common.calibration_period_policy("H", history)
+
+    assert policy["calendar_season_length"] == 24
+    assert policy["calendar_season_feature_observable"] is True
+    assert policy["feature_period"] == 24
+    assert policy["mase_period"] == 24
+
+
+def test_slow_profile_period_is_clipped_per_mechanism_not_to_lag_one():
+    common = load_script("paper_v8_pipeline_common")
+    dataset = common.resolve_dataset("gift_bizitobs_application")
+    parameters = {"profile_dominant_period": 252.0}
+
+    def metadata(capability_id: str, seed: int = 41):
+        conditioning = common.build_conditioning(
+            dataset,
+            capability_id=capability_id,
+            frequency="10S",
+            season_length=168,
+            parameters=parameters,
+        )
+        return common.generate_deterministic_sample(
+            capability_id,
+            common.MASTER_LENGTH,
+            common.CONTEXT_LENGTH,
+            common.TARGET_DIM_BY_CAPABILITY[capability_id],
+            conditioning.season_length,
+            5,
+            np.random.default_rng(seed),
+            conditioning=conditioning,
+        )[1]
+
+    multi = metadata("multi_seasonal")
+    time_varying = metadata("time_varying_seasonality")
+    regime = metadata("regime_switching")
+    nonlinear = metadata("nonlinear_persistence")
+    intermittent = metadata("predictable_intermittency")
+    covariate = metadata("covariate_response")
+
+    assert multi["effective_primary_period"] == 84
+    assert max(multi["periods"]) <= 168
+    assert 8 <= time_varying["primary_period"] <= 126
+    assert all(12 <= value <= 84 for value in regime["dwell_pattern"])
+    assert 4 <= nonlinear["seasonal_lag"] <= 48
+    assert 2 <= nonlinear["nonlinear_lag"] <= 32
+    assert 8 <= intermittent["event_period"] <= 126
+    assert all(
+        8 <= value <= 126
+        for value in intermittent["pulse_interval_pattern"]
+    )
+    assert 2 <= covariate["event_width"] <= 6
+
+
 def test_sensitivity_seed_selection_is_prefix_stable():
     generation = load_script("generate_paper_v8_samples")
 
@@ -62,6 +152,22 @@ def test_sensitivity_seed_selection_is_prefix_stable():
 
     assert first == expanded.intersection(range(1))
     assert first == set()
+
+
+def test_multi_dataset_pipeline_accepts_explicit_dataset_list():
+    pipeline = load_script("run_paper_v8_pipeline")
+    args = SimpleNamespace(
+        dataset_id=None,
+        dataset_ids=[
+            "gift_electricity_h",
+            "gift_bizitobs_application",
+        ],
+    )
+
+    assert pipeline.requested_dataset_ids(args) == [
+        "gift_electricity_h",
+        "gift_bizitobs_application",
+    ]
 
 
 def test_response_support_detects_sustained_foldback_without_magic_bound():
