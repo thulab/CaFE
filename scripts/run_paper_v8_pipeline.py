@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -62,6 +63,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, default=64)
     parser.add_argument("--max-anchors", type=int, default=256)
+    parser.add_argument(
+        "--preparation-workers",
+        type=int,
+        default=min(8, os.cpu_count() or 1),
+        help="Capability-level processes used by calibration and generation.",
+    )
     parser.add_argument(
         "--calibration-seeds",
         type=int,
@@ -162,13 +169,22 @@ def commands_for_dataset(
                 str(args.nonlinear_calibration_seeds),
                 "--max-nonlinear-calibration-seeds",
                 str(args.max_nonlinear_calibration_seeds),
+                "--workers",
+                str(args.preparation_workers),
                 "--capabilities",
                 *args.capabilities,
             ],
         ),
         "generation": (
             "generate_paper_v8_samples.py",
-            [*common, *seed, "--capabilities", *args.capabilities],
+            [
+                *common,
+                *seed,
+                "--workers",
+                str(args.preparation_workers),
+                "--capabilities",
+                *args.capabilities,
+            ],
         ),
         "validation": (
             "validate_paper_v8_samples.py",
@@ -221,7 +237,8 @@ def protocol_config(
             args.max_nonlinear_calibration_seeds
         ),
         "calibration_path_policy": (
-            "fixed_base_hard_failure_only_expansion_v1"
+            "formal_generation_seed_bank_"
+            "fixed_base_hard_failure_only_expansion_v2"
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
@@ -374,6 +391,8 @@ def main() -> int:
         raise ValueError("inference endpoints must be unique")
     if args.seed_start < 0 or args.seed_count < 1:
         raise ValueError("seed_start must be non-negative and seed_count positive")
+    if args.preparation_workers < 1:
+        raise ValueError("preparation_workers must be positive")
     if (
         args.max_anchors < 1
         or args.calibration_seeds < 1

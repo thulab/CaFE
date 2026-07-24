@@ -433,7 +433,15 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
     ]
     assert trend["response_calibration_seed_count"] == 64
     assert trend["response_calibration_path_policy"] == {
-        "policy": "fixed_base_hard_failure_only_expansion_v1",
+        "policy": (
+            "formal_generation_seed_bank_"
+            "fixed_base_hard_failure_only_expansion_v2"
+        ),
+        "path_sampling": {
+            "anchor": "formal_logical_seed_hash_v1",
+            "rng": "formal_generation_path_v1",
+            "seed_start": 0,
+        },
         "initial_path_count": 32,
         "maximum_path_count": 96,
         "attempted_path_counts": [32, 64],

@@ -51,7 +51,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v5"
+SCHEMA_VERSION = "paper_v8_pipeline.v6"
 CONTEXT_LENGTH = 504
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
@@ -59,7 +59,6 @@ VIEW_CONTEXT_LENGTHS = (96, 168, 336, 504)
 INTENSITIES = (1, 2, 3, 4, 5)
 QUANTILE_LEVELS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 CALIBRATION_SAMPLE_SEED = 2026072401
-CALIBRATION_PATH_SEED = 2026072402
 GENERATION_PATH_SEED = 2026072403
 ROBUSTNESS_SEED = 2026072404
 ROBUSTNESS_NOISE_RATIO = 0.15
@@ -1052,8 +1051,8 @@ def generate_calibration_member(
             dataset.dataset_id,
             capability_id,
             calibration_seed_index,
-            "response-path",
-            base=CALIBRATION_PATH_SEED,
+            "generation-path",
+            base=GENERATION_PATH_SEED,
         )
     )
     target, metadata, covariates = generate_deterministic_sample(
@@ -1160,7 +1159,12 @@ def monotone_response_curve(
         dtype=float,
     )
     for seed_index in range(calibration_seed_count):
-        anchor = anchors[seed_index % len(anchors)]
+        anchor = anchor_for_seed(
+            anchors,
+            dataset_id=dataset.dataset_id,
+            capability_id=capability_id,
+            seed_index=seed_index,
+        )
         for lambda_index, lambda_value in enumerate(full_grid):
             features, _metadata = generate_calibration_member(
                 dataset,
@@ -1228,6 +1232,9 @@ def monotone_response_curve(
     )
     support.update(
         {
+            "path_anchor_policy": "formal_logical_seed_hash_v1",
+            "path_rng_policy": "formal_generation_path_v1",
+            "path_seed_start": 0,
             "raw_lambda_grid": full_grid.tolist(),
             "raw_response_curve": raw_response.tolist(),
         }
@@ -1561,8 +1568,14 @@ def calibrate_capabilities(
             "response_calibration_seed_count": response_seed_count,
             "response_calibration_path_policy": {
                 "policy": (
-                    "fixed_base_hard_failure_only_expansion_v1"
+                    "formal_generation_seed_bank_"
+                    "fixed_base_hard_failure_only_expansion_v2"
                 ),
+                "path_sampling": {
+                    "anchor": "formal_logical_seed_hash_v1",
+                    "rng": "formal_generation_path_v1",
+                    "seed_start": 0,
+                },
                 "initial_path_count": initial_response_seed_count,
                 "maximum_path_count": maximum_response_seed_count,
                 "attempted_path_counts": attempted_path_counts,
@@ -1614,8 +1627,13 @@ def calibrate_capabilities(
             },
         }
     return {
-        "schema_version": "paper_v8_capability_calibration.v2",
+        "schema_version": "paper_v8_capability_calibration.v3",
         "generator_version": GENERATOR_VERSION,
+        "response_path_sampling_policy": {
+            "anchor": "formal_logical_seed_hash_v1",
+            "rng": "formal_generation_path_v1",
+            "seed_start": 0,
+        },
         "calibration_seed_count": calibration_seed_count,
         "maximum_calibration_seed_count": (
             int(maximum_calibration_seed_count)

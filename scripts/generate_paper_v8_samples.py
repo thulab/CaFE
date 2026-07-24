@@ -2,13 +2,22 @@
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
+import tempfile
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator
+
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 import paper_v8_pipeline_common as v8
 
 
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
+DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,6 +28,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, required=True)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=(
+            "Independent capability generation processes. Use 1 for the "
+            "serial reference implementation."
+        ),
+    )
     parser.add_argument(
         "--capabilities",
         nargs="+",
@@ -117,7 +135,7 @@ def iter_clean_samples(
 
 
 def iter_input_ablations(
-    clean_rows: list[dict[str, Any]],
+    clean_rows: Iterable[dict[str, Any]],
 ) -> Iterator[dict[str, Any]]:
     groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for row in clean_rows:
@@ -138,10 +156,119 @@ def iter_input_ablations(
             yield v8.multivariate_input_ablation_sample(clean, donor)
 
 
+def generate_capability_shard(
+    dataset: v8.DatasetSpec,
+    anchors: list[dict[str, Any]],
+    calibration: dict[str, Any],
+    *,
+    capability_id: str,
+    seed_indexes: list[int],
+    sensitivity_seeds: set[int],
+    output_path: Path,
+) -> tuple[str, int]:
+    count = v8.write_jsonl(
+        output_path,
+        iter_clean_samples(
+            dataset,
+            anchors,
+            calibration,
+            capability_ids=(capability_id,),
+            seed_indexes=seed_indexes,
+            sensitivity_seeds=sensitivity_seeds,
+        ),
+    )
+    return capability_id, count
+
+
+def merge_jsonl_shards(
+    output_path: Path,
+    shard_paths: Iterable[Path],
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output_path.with_suffix(output_path.suffix + ".tmp")
+    with temporary.open("wb") as output:
+        for shard_path in shard_paths:
+            with shard_path.open("rb") as source:
+                shutil.copyfileobj(source, output)
+    os.replace(temporary, output_path)
+
+
+def generate_clean_samples(
+    dataset: v8.DatasetSpec,
+    anchors: list[dict[str, Any]],
+    calibration: dict[str, Any],
+    *,
+    capability_ids: tuple[str, ...],
+    seed_indexes: list[int],
+    sensitivity_seeds: set[int],
+    output_path: Path,
+    workers: int,
+) -> int:
+    if workers == 1 or len(capability_ids) == 1:
+        return v8.write_jsonl(
+            output_path,
+            iter_clean_samples(
+                dataset,
+                anchors,
+                calibration,
+                capability_ids=capability_ids,
+                seed_indexes=seed_indexes,
+                sensitivity_seeds=sensitivity_seeds,
+            ),
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    counts: dict[str, int] = {}
+    maximum_workers = min(workers, len(capability_ids))
+    with tempfile.TemporaryDirectory(
+        prefix=".v8_capability_shards_",
+        dir=output_path.parent,
+    ) as temporary_directory:
+        temporary_root = Path(temporary_directory)
+        shard_paths = {
+            capability_id: temporary_root / f"{capability_id}.jsonl"
+            for capability_id in capability_ids
+        }
+        with ProcessPoolExecutor(max_workers=maximum_workers) as executor:
+            future_capabilities = {
+                executor.submit(
+                    generate_capability_shard,
+                    dataset,
+                    anchors,
+                    calibration,
+                    capability_id=capability_id,
+                    seed_indexes=seed_indexes,
+                    sensitivity_seeds=sensitivity_seeds,
+                    output_path=shard_paths[capability_id],
+                ): capability_id
+                for capability_id in capability_ids
+            }
+            for future in as_completed(future_capabilities):
+                capability_id, count = future.result()
+                counts[capability_id] = count
+                print(
+                    v8.canonical_json(
+                        {
+                            "dataset_id": dataset.dataset_id,
+                            "generated_capability": capability_id,
+                            "sample_count": count,
+                        }
+                    ),
+                    flush=True,
+                )
+        merge_jsonl_shards(
+            output_path,
+            (shard_paths[capability_id] for capability_id in capability_ids),
+        )
+    return sum(counts.values())
+
+
 def main() -> int:
     args = parse_args()
     if args.seed_start < 0 or args.seed_count < 1:
         raise ValueError("seed_start must be non-negative and seed_count positive")
+    if args.workers < 1:
+        raise ValueError("workers must be positive")
     if args.secondary_modulus < 1:
         raise ValueError("secondary modulus must be positive")
     dataset = v8.resolve_dataset(args.dataset_id)
@@ -169,22 +296,22 @@ def main() -> int:
         f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     )
     clean_path = shard_dir / f"{shard_name}.jsonl"
-    clean_rows = list(
-        iter_clean_samples(
-            dataset,
-            anchors,
-            calibration,
-            capability_ids=tuple(args.capabilities),
-            seed_indexes=seed_indexes,
-            sensitivity_seeds=sensitivity_seeds,
-        )
+    capability_ids = tuple(args.capabilities)
+    clean_count = generate_clean_samples(
+        dataset,
+        anchors,
+        calibration,
+        capability_ids=capability_ids,
+        seed_indexes=seed_indexes,
+        sensitivity_seeds=sensitivity_seeds,
+        output_path=clean_path,
+        workers=args.workers,
     )
-    clean_count = v8.write_jsonl(clean_path, clean_rows)
 
     ablation_path = shard_dir / f"{shard_name}__input_ablation.jsonl"
     ablation_count = v8.write_jsonl(
         ablation_path,
-        iter_input_ablations(clean_rows),
+        iter_input_ablations(v8.iter_jsonl(clean_path)),
     )
 
     robustness_path = shard_dir / f"{shard_name}__robustness.jsonl"
@@ -237,6 +364,10 @@ def main() -> int:
     manifest = {
         "schema_version": "paper_v8_generation_manifest.v1",
         "created_at": v8.utc_now(),
+        "execution": {
+            "capability_workers": min(args.workers, len(capability_ids)),
+            "blas_threads_per_process": 1,
+        },
         "config": config,
         "config_sha256": v8.json_sha256(config),
         "files": {

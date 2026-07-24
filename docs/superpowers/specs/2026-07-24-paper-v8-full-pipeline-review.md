@@ -257,7 +257,7 @@ range_expansion_factor = 1.0
 
 nonlinear 的生成有效性拆为三层：`nonlinear_conditional_gain` 继续作为真实窗口和合成窗口共用的 observable proxy，并强制 primary I1–I5、secondary I3/I5 总体响应单调；metadata 中的 `nonlinear_strength` 作为 construction gate，要求总体和每个配对 seed 都严格递增；`nonlinear_actual_lag_gain` 仍使用生成器记录的真实因果 lag 计算并完整报告，但只要求有限、非缺失且非退化，不再要求随强度单调。原因是递归反馈会把非线性依赖传播到多个相关 lag，单个 exact lag 在控制其他项后的 adjusted-R² 贡献可能下降，不能替代对整体 observable signature 和实际注入系数的检查。三者不得互相替代，也不能用换 seed 重试绕过失败。
 
-response support 不再只看少量路径的均值曲线。普通能力固定从 32 条 response paths 开始；nonlinear 固定从 64 条开始，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。两等分 path block 的 support 与均值响应差异写入非阻断审计，不以 `0.05` 或其他统一差异阈值触发扩展。只有 support 退化或 primary 五档反解不能形成严格递增的强度时，普通能力才依次扩到 64、96 条，nonlinear 扩到 128 条；达到上限仍无解则明确失败。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
+response support 不再只看少量路径的均值曲线。数值反解与正式生成共享冻结的 logical-seed anchor hash 和 generation-path RNG，使校准曲线直接对应它要构造的正式批次，而不是用另一批随机路径外推；这不按结果重试或替换 seed。普通能力固定从 formal bank 的前 32 条 response paths 开始；nonlinear 使用完整 64 条，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。两等分 path block 的 support 与均值响应差异写入非阻断审计，不以 `0.05` 或其他统一差异阈值触发扩展。只有 support 退化或 primary 五档反解不能形成严格递增的强度时，普通能力才依次扩到 64、96 条，nonlinear 扩到 128 条；达到上限仍无解则明确失败。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
 
 当前不引入生成 seed 重试，也不设置真实强度过低时的自动放大下限。偶发批次 gate 失败保持可见，避免在正式样本形成后按实现强度挑选 seed；这两项仅作为后续协议备选。
 
@@ -378,6 +378,8 @@ seed_start=32, seed_count=32
 - lookback views。
 
 这些切分只改变任务组织和索引，不重新生成样本。为了断点恢复允许物理文件分 chunk 写出，但 chunk 只是执行细节，不具有统计 round 语义。
+
+校准和生成的十个 capability 在给定 dataset、anchor、logical seed 和 family 后彼此独立，因此准备阶段默认按 capability 使用 8 个进程并行。每个进程固定使用 1 个 BLAS 线程，避免 8 个进程再次各自展开线性代数线程而过度争抢 16 核 CPU。主进程按冻结的 capability 顺序合并结果和 JSONL shard；worker 完成顺序不影响样本顺序、sample ID 或科学协议。`--preparation-workers` 只属于 execution provenance，不进入 experiment protocol hash，可设为 1 获得串行参考实现。KDD Cup H 的 256-anchor 完整校准由 731.49 秒降至 157.36 秒，64-seed 完整生成由 240.76 秒降至 48.52 秒；校准产物严格一致，串并行小样本的 clean、ablation、robustness 文件哈希一致，完整新链路回验通过。
 
 ## 决策 15：三机模型级并行推理
 
