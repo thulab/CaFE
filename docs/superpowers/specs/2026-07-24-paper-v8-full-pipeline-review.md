@@ -41,7 +41,7 @@ v8 的主测试采用以下原则：
   → 汇总能力结果并分析
 ```
 
-当前正在梳理第一阶段：真实数据窗口构造和特征范围提取。
+当前已按本文档完成单数据集、64-seed 的首轮全链路实现和 pilot。
 
 ## 决策 1：真实数据校准不做三路切分
 
@@ -221,6 +221,8 @@ range_expansion_factor = 1.0
 
 真实区间很窄时，默认保留这种温和校准结果，不额外要求数据集通过复杂的能力支持审计。是否需要将 `range_expansion_factor` 调大，由后续合成样本和模型响应 pilot 决定。
 
+生成器的数学 `lambda` 坐标固定定义在 `[0, 1]`，但实际生成参数可以按各自含义超过 1。正式校准不能用累计最大包络掩盖原始 response curve 的回落：每个 `capability × family` 保存完整原始曲线，并自动识别从 `lambda=0` 开始的最大稳定单调分支，只在该有效支持域内反解 I1–I5。检测到的上界、foldback 容差和原始曲线都写入 calibration bundle，不为某个 family 硬编码一个跨数据集通用截断常数。
+
 ## 决策 10：真实范围和强度标定统一使用 history
 
 状态：**已决定**
@@ -248,6 +250,8 @@ range_expansion_factor = 1.0
 4. 能力核心约束：每个能力只选择一到两个最能说明机制成立的检查，例如层级加和、cross-series 正确边/lag、covariate counterfactual response。
 
 参数 clip 比例、唯一值数量和更完整的分布差异可以作为诊断输出，但不默认升级为硬门槛。
+
+`predictable_intermittency` 的能力结构仍由确定性 event clock 保证，`intermittency_clock_incremental_r2` 保留为时钟可识别性诊断；但该 R² 在有限 L504 窗口上高度零膨胀，不适合作为五档强度坐标。正式主强度特征改为 realized `spike_rate`，表示事件在背景中的可见剂量；模型机制评分继续使用 event-window 预测误差，而不是 spike-rate 拟合误差。
 
 ## 决策 12：替换退化的 covariate future correlation
 
@@ -322,6 +326,8 @@ seed_count = N
 
 response-curve 使用的内部 seeds 属于校准阶段，随 calibration bundle 冻结，不作为正式生成命令参数。secondary-family 在 I3/I5 和部分 seeds 上的敏感性策略也由冻结配置确定，不增加 generation round。
 
+secondary/robustness seed 子集只由每个 seed 自身的 stable hash 决定。小 seed pool 若没有命中允许审计子集为空，不能为了凑样本临时选择第一个 seed；否则扩展 seed pool 时会破坏前缀稳定性。
+
 v8 删除以下统计轮次身份：
 
 - `round_index`；
@@ -393,7 +399,15 @@ http://192.168.99.18:10810
 | tirex2 | 1 | 32 |
 | tabpfn-ts3 | 8 | 24 |
 
-三台服务都可用时，以历史耗时做模型级 longest-processing-time 分配；服务数量减少时重新平衡模型队列。不将同一个模型同时拆到多台服务，避免重复加载和复杂合并。
+三台服务都可用时，先以历史耗时做模型级 longest-processing-time 分配；服务数量减少时重新平衡模型队列。若某个模型排在一台服务的队尾、其他兼容服务会提前空闲，则默认启用尾部协作：
+
+- 按 `model_id × sample_id` 的 stable hash 将该尾部模型任务确定性分片；
+- 各服务完成自己的前序模型后处理一个 tail part；
+- 每个 part 使用独立任务文件、预测文件和状态文件，禁止并发写同一文件；
+- 汇总时验证 part hash、样本 ID 唯一性和完整覆盖，再生成模型 canonical prediction；
+- resume 从所有 part 的已完成 ID 继续，服务可用性减少时允许一台服务顺序接多个 part。
+
+已有 canonical prediction 的模型不在 resume 时重新分片，避免为已经完成或部分完成的旧式 shard 重复推理。可用 `--disable-tail-sharding` 显式关闭该优化。
 
 每台服务写入独立 inference shard，任务使用确定性 ID：
 
@@ -613,13 +627,15 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 
 ## 第一阶段实施时必须处理的问题
 
-状态：**已识别，待进入实现**
+状态：**已处理**
 
 ### v8 不应继续读取 v7 gate-reference 子集
 
 当前 pilot 直接读取 v7 `real_source_samples.jsonl`，该文件来源于旧 near-distance artifact 的 `reference_raw`，只覆盖旧三路切分中的 gate-reference 子集。
 
 正式 v8 应从原始数据集重新构造统一 calibration window pool，或者冻结一份包含全部合格窗口的新 v8 校准产物。
+
+当前实现已从 `/root/xmy/gift-eval/electricity/H` 原始 Arrow 数据重建 504 点统一 calibration pool，不读取 v7 gate-reference 子集。
 
 ## 正式实现清单
 
@@ -646,3 +662,8 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 - 2026-07-24：放弃自适应真实校准长度；真实 anchor 固定为 504 点 history，不足 504 点的数据集/配置暂不测试。真实 anchor 数按 `min(sum floor(T_s/504), 256)` 随有效数据规模变化；正式结果按数据集分别报告，跨数据集总分和排名仅作为预实验。确认每个生成、robustness 和 inference sample 必须直接保存数据集来源和可回查的 anchor provenance。
 - 2026-07-24：确认真实校准分成背景/nuisance 与主能力强度两层；六个单变量能力使用数据集内真实范围标定，四个结构能力使用跨数据集冻结的合成 response curve 标定，普通真实数据不再被要求具备结构语义。
 - 2026-07-24：确认同一 master sample 的 L96/L168/L336/L504 共用 clean L504 history 计算的 MASE denominator；Oracle context 只比较预测误差，不允许分母随 context 改变。
+- 2026-07-24：确认生成器数学 `lambda` 保持 `[0,1]`，实际机制参数不受统一上界 1 限制；校准从完整原始 response curve 自动识别最大稳定单调支持域，不能用单调包络掩盖 foldback，也不能把单数据集观测到的截断点硬编码为普遍常数。
+- 2026-07-24：将 `predictable_intermittency` 的强度坐标改为稳定响应的 realized `spike_rate`；零膨胀的 event-clock incremental R² 仅保留为结构可识别性诊断。
+- 2026-07-24：首轮全链路 pilot 发现并修正三类执行/分析边界：secondary seed fallback 会破坏前缀稳定性；短 context view 的 regime/intermittent 索引 metadata 必须随裁窗平移；event window 覆盖完整 future 时不能对空 background 求均值。
+- 2026-07-24：推理调度从纯模型级 LPT 扩展为“模型级 LPT + 队尾同模型确定性多机分片”，每个 endpoint part 独立落盘并在严格覆盖校验后合并。
+- 2026-07-24：split-bank 只在至少两个 batch 时报告稳定性，并补充 batch 间相对得分差和 Top-3 overlap；secondary family 与 observation-noise robustness 必须和相同 seed/intensity 的 clean primary 做 matched-control 比较。

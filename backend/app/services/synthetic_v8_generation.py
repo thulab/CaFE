@@ -159,7 +159,6 @@ REQUIRED_REAL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     ),
     "covariate_response": (
         "covariate_incremental_r2",
-        "future_abs_covariate_target_corr",
         "event_lift_abs",
         "covariate_residual_acf_abs_mean",
         "acf1",
@@ -460,8 +459,8 @@ def derive_deterministic_parameters(
     elif capability_id == "covariate_response":
         add(
             "covariate_effect_scale",
-            "future_abs_covariate_target_corr",
-            0.3,
+            "covariate_incremental_r2",
+            0.1,
             0.15,
             1.5,
             "sqrt_then_clip",

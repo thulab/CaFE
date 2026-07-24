@@ -913,7 +913,7 @@ def intermittent_recovery_metrics(
     event_forecast = forecast[mask]
     background_truth = target[context:][~mask]
     background_forecast = forecast[~mask]
-    return {
+    metrics = {
         "event_peak_timing_widths": float(np.mean(timing_errors)),
         "event_peak_amplitude_nmae": float(
             np.mean(amplitude_errors) / max(history_scale, 1e-12)
@@ -922,11 +922,13 @@ def intermittent_recovery_metrics(
             np.mean(np.abs(event_forecast - event_truth))
             / max(history_scale, 1e-12)
         ),
-        "background_window_nmae": float(
+    }
+    if background_truth.size:
+        metrics["background_window_nmae"] = float(
             np.mean(np.abs(background_forecast - background_truth))
             / max(history_scale, 1e-12)
-        ),
-    }
+        )
+    return metrics
 
 
 def prediction_metrics(

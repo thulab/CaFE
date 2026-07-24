@@ -19,6 +19,12 @@ from app.services.synthetic_v8_generation import (
 )
 
 
+def test_covariate_real_feature_contract_is_history_only():
+    assert "future_abs_covariate_target_corr" not in (
+        REQUIRED_REAL_FEATURES_BY_CAPABILITY["covariate_response"]
+    )
+
+
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
 
 

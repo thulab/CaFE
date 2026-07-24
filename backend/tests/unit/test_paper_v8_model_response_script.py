@@ -203,6 +203,27 @@ def test_regime_and_event_metrics_are_ideal_for_exact_forecast():
     assert event_metrics["background_window_nmae"] == pytest.approx(0.0)
 
 
+def test_event_metrics_omit_background_when_event_windows_cover_future():
+    response = load_response_module()
+    context = 20
+    horizon = 4
+    event = np.sin(np.arange(context + horizon) / 5.0)[:, None]
+    sample = sample_for(
+        "predictable_intermittency",
+        event,
+        context_length=context,
+        generation_metadata={
+            "pulse_centers": [21, 23],
+            "pulse_width": 1.0,
+        },
+    )
+
+    metrics = response.prediction_metrics(sample, event[context:])
+
+    assert metrics["event_window_nmae"] == pytest.approx(0.0)
+    assert "background_window_nmae" not in metrics
+
+
 def test_cross_series_metric_scores_only_driver_covered_responder_steps():
     response = load_response_module()
     target = np.column_stack(

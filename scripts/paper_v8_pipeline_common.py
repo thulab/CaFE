@@ -1,0 +1,1312 @@
+from __future__ import annotations
+
+import dataclasses
+import hashlib
+import json
+import math
+import os
+import re
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable, Iterator
+
+import numpy as np
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+BACKEND_ROOT = REPO_ROOT / "backend"
+for import_path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
+    if str(import_path) not in os.sys.path:
+        os.sys.path.insert(0, str(import_path))
+
+from app.services.metric_service import seasonal_period_for_frequency  # noqa: E402
+from app.services.synthetic_generation_service import (  # noqa: E402
+    _normalize_covariates,
+    _realized_features,
+    _standardize_by_context,
+    _standardize_hierarchy_by_context,
+)
+from app.services.synthetic_generator_conditioning import (  # noqa: E402
+    GeneratorConditioning,
+    REAL_BOUNDED_INTENSITY_POLICY_ID,
+)
+from app.services.synthetic_v8_generation import (  # noqa: E402
+    GENERATOR_VERSION,
+    PRIMARY_FAMILY_BY_CAPABILITY,
+    SECONDARY_FAMILY_BY_CAPABILITY,
+    add_observation_noise_to_history,
+    derive_deterministic_parameters,
+    generate_deterministic_sample,
+    standardize_common_factor_counterfactual_member,
+    standardize_cross_series_counterfactual_member,
+)
+from paper_v2_transfer_common import impute_observed_window  # noqa: E402
+from synthetic_feature_profile import (  # noqa: E402
+    feature_vector,
+    file_sha256,
+    read_gift_arrow_targets,
+)
+
+
+SCHEMA_VERSION = "paper_v8_pipeline.v1"
+CONTEXT_LENGTH = 504
+HORIZON = 48
+MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
+VIEW_CONTEXT_LENGTHS = (96, 168, 336, 504)
+INTENSITIES = (1, 2, 3, 4, 5)
+QUANTILE_LEVELS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
+CALIBRATION_SAMPLE_SEED = 2026072401
+CALIBRATION_PATH_SEED = 2026072402
+GENERATION_PATH_SEED = 2026072403
+ROBUSTNESS_SEED = 2026072404
+ROBUSTNESS_NOISE_RATIO = 0.15
+COUNTERFACTUAL_CAPABILITIES = frozenset(
+    {
+        "common_factor",
+        "cross_series_dependence",
+        "covariate_response",
+    }
+)
+STRUCTURAL_CAPABILITIES = frozenset(
+    {
+        "common_factor",
+        "hierarchical_coherence",
+        "cross_series_dependence",
+        "covariate_response",
+    }
+)
+CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
+PRIMARY_TARGET_FEATURE = {
+    "trend": "curvature_abs",
+    "multi_seasonal": "multi_period_score",
+    "time_varying_seasonality": "seasonal_amplitude_modulation",
+    "regime_switching": "regime_sparse_transition_score",
+    "nonlinear_persistence": "nonlinear_conditional_gain",
+    # Event-clock R² is retained as an identifiability diagnostic, but it is
+    # zero-inflated on finite L504 windows.  Spike rate is the stable realized
+    # visibility/dose coordinate while the generator keeps event timing fully
+    # deterministic and forecastable.
+    "predictable_intermittency": "spike_rate",
+    "common_factor": "pca_top1_explained",
+    "hierarchical_coherence": "hierarchy_child_heterogeneity",
+    "cross_series_dependence": "cross_series_incremental_r2",
+    "covariate_response": "covariate_incremental_r2",
+}
+TARGET_DIM_BY_CAPABILITY = {
+    capability: (
+        3
+        if capability
+        in {
+            "common_factor",
+            "hierarchical_coherence",
+            "cross_series_dependence",
+        }
+        else 1
+    )
+    for capability in CAPABILITIES
+}
+
+
+@dataclass(frozen=True)
+class DatasetSpec:
+    dataset_id: str
+    logical_name: str
+    config_id: str
+    asset_name: str
+    domain: str
+    task_view_id: str = "univariate_background"
+
+
+DATASET_REGISTRY = {
+    spec.dataset_id: spec
+    for spec in (
+        DatasetSpec(
+            "gift_electricity_h",
+            "Electricity",
+            "electricity/H",
+            "electricity/H",
+            "Energy",
+        ),
+        DatasetSpec(
+            "gift_solar_h",
+            "Solar",
+            "solar/H",
+            "solar/H",
+            "Energy",
+        ),
+        DatasetSpec(
+            "gift_ett1_h",
+            "ETT1",
+            "ett1/H",
+            "ett1/H",
+            "Energy",
+        ),
+        DatasetSpec(
+            "gift_ett2_h",
+            "ETT2",
+            "ett2/H",
+            "ett2/H",
+            "Energy",
+        ),
+        DatasetSpec(
+            "gift_jena_weather_h",
+            "Jena Weather",
+            "jena_weather/H",
+            "jena_weather/H",
+            "Nature",
+        ),
+        DatasetSpec(
+            "gift_kdd_cup_h",
+            "KDD Cup 2018",
+            "kdd_cup_2018_with_missing/H",
+            "kdd_cup_2018_with_missing/H",
+            "Nature",
+        ),
+        DatasetSpec(
+            "gift_loop_seattle_h",
+            "Loop Seattle",
+            "LOOP_SEATTLE/H",
+            "LOOP_SEATTLE/H",
+            "Transport",
+        ),
+        DatasetSpec(
+            "gift_sz_taxi_h",
+            "SZ-Taxi",
+            "SZ_TAXI/H",
+            "SZ_TAXI/H",
+            "Transport",
+        ),
+        DatasetSpec(
+            "gift_m_dense_h",
+            "M_DENSE",
+            "M_DENSE/H",
+            "M_DENSE/H",
+            "Transport",
+        ),
+        DatasetSpec(
+            "gift_bitbrains_fast_h",
+            "Bitbrains Fast Storage",
+            "bitbrains_fast_storage/H",
+            "bitbrains_fast_storage/H",
+            "Web/CloudOps",
+        ),
+        DatasetSpec(
+            "gift_bitbrains_rnd_h",
+            "Bitbrains RND",
+            "bitbrains_rnd/H",
+            "bitbrains_rnd/H",
+            "Web/CloudOps",
+        ),
+        DatasetSpec(
+            "gift_bizitobs_l2c_h",
+            "BizITObs L2C",
+            "bizitobs_l2c/H",
+            "bizitobs_l2c/H",
+            "Web/CloudOps",
+        ),
+    )
+}
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def json_sha256(value: Any) -> str:
+    return hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def stable_seed(*parts: Any, base: int = 0) -> int:
+    payload = "\x1f".join(str(part) for part in parts)
+    digest = hashlib.sha256(payload.encode("utf-8")).digest()
+    return int((base + int.from_bytes(digest[:8], "big")) % (2**32 - 1))
+
+
+def safe_id(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
+
+
+def write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    count = 0
+    with temporary.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(canonical_json(row) + "\n")
+            count += 1
+    os.replace(temporary, path)
+    return count
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                yield json.loads(line)
+
+
+def file_record(path: Path) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "sha256": file_sha256(path),
+        "bytes": path.stat().st_size,
+    }
+
+
+def resolve_dataset(dataset_id: str) -> DatasetSpec:
+    try:
+        return DATASET_REGISTRY[dataset_id]
+    except KeyError as error:
+        raise ValueError(
+            f"unknown v8 dataset {dataset_id!r}; registered="
+            f"{sorted(DATASET_REGISTRY)}"
+        ) from error
+
+
+def expand_native_records(
+    records: Iterable[tuple[str, np.ndarray]],
+) -> list[tuple[str, str, int, np.ndarray]]:
+    output: list[tuple[str, str, int, np.ndarray]] = []
+    for item_id, values in records:
+        array = np.asarray(values, dtype=float)
+        channels = array if array.ndim == 2 else array.reshape(1, -1)
+        for channel_index, channel in enumerate(channels):
+            series_id = (
+                str(item_id)
+                if array.ndim == 1
+                else f"{item_id}:dim:{channel_index}"
+            )
+            output.append(
+                (
+                    series_id,
+                    str(item_id),
+                    int(channel_index),
+                    np.asarray(channel, dtype=float),
+                )
+            )
+    return output
+
+
+def nonoverlapping_strata(
+    series_length: int,
+    *,
+    window_length: int = CONTEXT_LENGTH,
+) -> list[tuple[int, int]]:
+    capacity = int(series_length) // int(window_length)
+    if capacity <= 0:
+        return []
+    boundaries = np.floor(
+        np.linspace(0, int(series_length), capacity + 1)
+    ).astype(int)
+    strata: list[tuple[int, int]] = []
+    for index in range(capacity):
+        segment_start = int(boundaries[index])
+        latest_start = int(boundaries[index + 1] - window_length)
+        if latest_start < segment_start:
+            raise ValueError("invalid v8 calibration stratum")
+        strata.append((segment_start, latest_start))
+    return strata
+
+
+def standardize_history(values: np.ndarray) -> tuple[np.ndarray, float, float]:
+    array = np.asarray(values, dtype=float).reshape(-1)
+    mean = float(np.mean(array))
+    scale = float(np.std(array))
+    if not math.isfinite(scale) or scale <= 1e-10:
+        raise ValueError("uninformative calibration window")
+    return (array - mean) / scale, mean, scale
+
+
+def summarize_feature_rows(
+    rows: Iterable[dict[str, float]],
+) -> dict[str, dict[str, float]]:
+    materialized = list(rows)
+    names = sorted({name for row in materialized for name in row})
+    summary: dict[str, dict[str, float]] = {}
+    for name in names:
+        values = np.asarray(
+            [
+                float(row[name])
+                for row in materialized
+                if name in row and math.isfinite(float(row[name]))
+            ],
+            dtype=float,
+        )
+        if not values.size:
+            continue
+        quantiles = np.quantile(values, QUANTILE_LEVELS)
+        summary[name] = {
+            f"p{int(round(level * 100)):02d}": float(value)
+            for level, value in zip(QUANTILE_LEVELS, quantiles, strict=True)
+        }
+        summary[name]["finite_count"] = int(values.size)
+        summary[name]["minimum"] = float(np.min(values))
+        summary[name]["maximum"] = float(np.max(values))
+    return summary
+
+
+def build_calibration_anchors(
+    dataset: DatasetSpec,
+    *,
+    gift_eval_dir: Path,
+    maximum_anchors: int,
+    sample_seed: int = CALIBRATION_SAMPLE_SEED,
+    minimum_observed_fraction: float = 0.5,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    asset_path = gift_eval_dir / dataset.asset_name
+    frequency, native_records = read_gift_arrow_targets(asset_path)
+    season_length = seasonal_period_for_frequency(frequency)
+    if not 1 <= season_length < CONTEXT_LENGTH:
+        raise ValueError(
+            f"{dataset.config_id} season_length={season_length} is not usable "
+            f"inside L{CONTEXT_LENGTH}"
+        )
+    series = expand_native_records(native_records)
+    candidates: list[tuple[int, int, int]] = []
+    for series_index, (_series_id, _item_id, _channel, values) in enumerate(series):
+        for lower, upper in nonoverlapping_strata(len(values)):
+            candidates.append((series_index, lower, upper))
+    target_count = min(len(candidates), int(maximum_anchors))
+    rng = np.random.default_rng(
+        stable_seed(dataset.dataset_id, sample_seed, base=sample_seed)
+    )
+    order = rng.permutation(len(candidates)) if candidates else np.asarray([], dtype=int)
+    anchors: list[dict[str, Any]] = []
+    rejected_missing = 0
+    rejected_uninformative = 0
+    for candidate_index in order:
+        series_index, lower, upper = candidates[int(candidate_index)]
+        series_id, item_id, channel_index, values = series[series_index]
+        start = int(rng.integers(lower, upper + 1)) if upper > lower else int(lower)
+        raw = np.asarray(values[start : start + CONTEXT_LENGTH], dtype=float)
+        imputed, observed_fraction = impute_observed_window(
+            raw,
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if imputed is None:
+            rejected_missing += 1
+            continue
+        try:
+            standardized, location, scale = standardize_history(imputed)
+        except ValueError:
+            rejected_uninformative += 1
+            continue
+        features = feature_vector(
+            standardized[:, None],
+            season_length,
+            context_length=CONTEXT_LENGTH,
+        )
+        finite_features = {
+            str(name): float(value)
+            for name, value in features.items()
+            if math.isfinite(float(value))
+            and name != "future_abs_covariate_target_corr"
+        }
+        anchor_id = (
+            f"{safe_id(dataset.dataset_id)}__{safe_id(item_id)}__"
+            f"c{channel_index}__t{start}"
+        )
+        anchors.append(
+            {
+                "schema_version": "paper_v8_calibration_anchor.v1",
+                "anchor_id": anchor_id,
+                "dataset_id": dataset.dataset_id,
+                "config_id": dataset.config_id,
+                "task_view_id": dataset.task_view_id,
+                "profile_id": (
+                    f"{dataset.dataset_id}__{dataset.task_view_id}__"
+                    f"L{CONTEXT_LENGTH}"
+                ),
+                "frequency": frequency,
+                "season_length": season_length,
+                "item_id": item_id,
+                "series_id": series_id,
+                "channel_id": channel_index,
+                "window_start": start,
+                "context_length": CONTEXT_LENGTH,
+                "observed_fraction": observed_fraction,
+                "history_location": location,
+                "history_scale": scale,
+                "history_sha256": hashlib.sha256(
+                    np.asarray(imputed, dtype="<f8").tobytes()
+                ).hexdigest(),
+                "features": finite_features,
+            }
+        )
+        if len(anchors) >= target_count:
+            break
+    if not anchors:
+        raise ValueError(f"{dataset.dataset_id} produced no valid v8 anchors")
+    arrow_files = sorted(asset_path.glob("data-*.arrow"))
+    metadata = {
+        "dataset": asdict(dataset),
+        "asset_path": str(asset_path),
+        "asset_files": [file_record(path) for path in arrow_files],
+        "frequency": frequency,
+        "season_length": season_length,
+        "native_record_count": len(native_records),
+        "expanded_series_count": len(series),
+        "stratum_count": len(candidates),
+        "requested_anchor_limit": int(maximum_anchors),
+        "accepted_anchor_count": len(anchors),
+        "rejected_missing_count": rejected_missing,
+        "rejected_uninformative_count": rejected_uninformative,
+        "minimum_observed_fraction": minimum_observed_fraction,
+        "sample_seed": sample_seed,
+        "window_policy": (
+            "full-series non-overlapping capacity strata with deterministic "
+            "without-replacement selection and within-stratum jitter"
+        ),
+    }
+    return anchors, metadata
+
+
+def anchor_summary(features: dict[str, float]) -> dict[str, dict[str, float]]:
+    return {
+        name: {"p50": float(value)}
+        for name, value in features.items()
+        if math.isfinite(float(value))
+    }
+
+
+def build_conditioning(
+    dataset: DatasetSpec,
+    *,
+    capability_id: str,
+    frequency: str,
+    season_length: int,
+    intensity_lambdas: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0),
+    parameters: dict[str, float] | None = None,
+    target_values: tuple[float, ...] | None = None,
+) -> GeneratorConditioning:
+    levels = (0.0, 0.25, 0.5, 0.75, 1.0)
+    targets = target_values or levels
+    return GeneratorConditioning(
+        profile_id=(
+            f"{dataset.dataset_id}__{dataset.task_view_id}__"
+            f"{capability_id}__L{CONTEXT_LENGTH}_H{HORIZON}"
+        ),
+        dataset_id=dataset.dataset_id,
+        capability_id=capability_id,
+        context_length=CONTEXT_LENGTH,
+        horizon=HORIZON,
+        target_dim=TARGET_DIM_BY_CAPABILITY[capability_id],
+        season_length=season_length,
+        frequency=frequency,
+        parameters=dict(parameters or {}),
+        intensity_lambdas=tuple(float(value) for value in intensity_lambdas),
+        target_percentile_levels=levels,
+        target_feature=PRIMARY_TARGET_FEATURE[capability_id],
+        target_values=tuple(float(value) for value in targets),
+        calibrated_realized_strengths=tuple(float(value) for value in targets),
+        calibration_max_normalized_error=0.0,
+        intensity_policy_id=REAL_BOUNDED_INTENSITY_POLICY_ID,
+        artifact_schema_version="paper_v8_calibration_bundle.v1",
+        artifact_created_at=None,
+        calibration_method="paper_v8_response_curve",
+        artifact_generator_version=GENERATOR_VERSION,
+    )
+
+
+def standardize_generated_sample(
+    capability_id: str,
+    target: np.ndarray,
+    covariates: np.ndarray | None,
+    *,
+    metadata: dict[str, Any],
+) -> tuple[np.ndarray, np.ndarray | None]:
+    if capability_id == "common_factor":
+        target, normalization = standardize_common_factor_counterfactual_member(
+            target,
+            context_length=CONTEXT_LENGTH,
+            metadata=metadata,
+        )
+        metadata["counterfactual_standardization"] = normalization
+    elif capability_id == "cross_series_dependence":
+        target, normalization = standardize_cross_series_counterfactual_member(
+            target,
+            context_length=CONTEXT_LENGTH,
+            metadata=metadata,
+        )
+        metadata["counterfactual_standardization"] = normalization
+    elif capability_id == "hierarchical_coherence":
+        target = _standardize_hierarchy_by_context(target, CONTEXT_LENGTH)
+    else:
+        target = _standardize_by_context(target, CONTEXT_LENGTH)
+    if covariates is not None:
+        covariates = _normalize_covariates(covariates, CONTEXT_LENGTH)
+    return np.asarray(target, dtype=float), (
+        None if covariates is None else np.asarray(covariates, dtype=float)
+    )
+
+
+def measured_features(
+    capability_id: str,
+    target: np.ndarray,
+    covariates: np.ndarray | None,
+    *,
+    season_length: int,
+) -> dict[str, float]:
+    hierarchy = (
+        "additive_first"
+        if capability_id == "hierarchical_coherence"
+        else None
+    )
+    values = _realized_features(
+        target,
+        covariates,
+        season_length,
+        CONTEXT_LENGTH,
+    )
+    values.update(
+        feature_vector(
+            target,
+            season_length,
+            covariates=covariates,
+            context_length=CONTEXT_LENGTH,
+            hierarchy=hierarchy,
+            include_cross_series_predictability=(
+                capability_id == "cross_series_dependence"
+            ),
+        )
+    )
+    return {
+        str(name): float(value)
+        for name, value in values.items()
+        if math.isfinite(float(value))
+        and name != "future_abs_covariate_target_corr"
+    }
+
+
+def generate_calibration_member(
+    dataset: DatasetSpec,
+    anchor: dict[str, Any],
+    *,
+    capability_id: str,
+    family_role: str,
+    lambda_value: float,
+    calibration_seed_index: int,
+) -> tuple[dict[str, float], dict[str, Any]]:
+    parameters, mappings = derive_deterministic_parameters(
+        capability_id,
+        anchor_summary(anchor["features"]),
+        season_length=int(anchor["season_length"]),
+        context_length=CONTEXT_LENGTH,
+    )
+    conditioning = build_conditioning(
+        dataset,
+        capability_id=capability_id,
+        frequency=str(anchor["frequency"]),
+        season_length=int(anchor["season_length"]),
+        intensity_lambdas=(lambda_value,) * 5,
+        parameters=parameters,
+    )
+    rng = np.random.default_rng(
+        stable_seed(
+            dataset.dataset_id,
+            capability_id,
+            calibration_seed_index,
+            "response-path",
+            base=CALIBRATION_PATH_SEED,
+        )
+    )
+    target, metadata, covariates = generate_deterministic_sample(
+        capability_id,
+        MASTER_LENGTH,
+        CONTEXT_LENGTH,
+        conditioning.target_dim,
+        conditioning.season_length,
+        1,
+        rng,
+        conditioning=conditioning,
+        family_role=family_role,
+        counterfactual_variant=0,
+    )
+    target, covariates = standardize_generated_sample(
+        capability_id,
+        target,
+        covariates,
+        metadata=metadata,
+    )
+    return (
+        measured_features(
+            capability_id,
+            target,
+            covariates,
+            season_length=conditioning.season_length,
+        ),
+        {
+            "parameters": parameters,
+            "parameter_mapping": mappings,
+        },
+    )
+
+
+def stable_monotone_support(
+    grid: np.ndarray,
+    raw_response: np.ndarray,
+) -> tuple[int, dict[str, Any]]:
+    """Find the largest stable increasing prefix without hiding foldback.
+
+    Small Monte-Carlo wiggles are tolerated.  A family is truncated only after
+    two consecutive grid points fall more than 10% of the full response range
+    below the best value already reached.  The detected boundary and raw curve
+    are persisted so the choice is auditable rather than a family magic number.
+    """
+
+    if grid.shape != raw_response.shape or grid.ndim != 1:
+        raise ValueError("response grid and values must be aligned vectors")
+    if grid.size < 2 or not np.isfinite(raw_response).all():
+        raise ValueError("response curve must contain finite grid values")
+    response_range = float(np.max(raw_response) - np.min(raw_response))
+    tolerance = max(0.10 * response_range, 1e-12)
+    best_index = 0
+    best_value = float(raw_response[0])
+    below_run = 0
+    fold_index: int | None = None
+    support_index = len(grid) - 1
+    for index in range(1, len(grid)):
+        value = float(raw_response[index])
+        if value >= best_value:
+            best_value = value
+            best_index = index
+            below_run = 0
+            continue
+        if value < best_value - tolerance:
+            below_run += 1
+        else:
+            below_run = 0
+        if below_run >= 2 and best_index >= 2:
+            fold_index = index - 1
+            support_index = best_index
+            break
+    return support_index, {
+        "policy": "largest_stable_monotone_prefix_v1",
+        "mathematical_lambda_support": [
+            float(grid[0]),
+            float(grid[-1]),
+        ],
+        "effective_lambda_support": [
+            float(grid[0]),
+            float(grid[support_index]),
+        ],
+        "response_range": response_range,
+        "foldback_tolerance": tolerance,
+        "foldback_detected": fold_index is not None,
+        "first_sustained_foldback_index": fold_index,
+        "selected_peak_index": int(support_index),
+    }
+
+
+def monotone_response_curve(
+    dataset: DatasetSpec,
+    anchors: list[dict[str, Any]],
+    *,
+    capability_id: str,
+    family_role: str,
+    calibration_seed_count: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    full_grid = np.linspace(0.0, 1.0, 21)
+    means: list[float] = []
+    target_feature = PRIMARY_TARGET_FEATURE[capability_id]
+    for lambda_value in full_grid:
+        realized: list[float] = []
+        for seed_index in range(calibration_seed_count):
+            anchor = anchors[seed_index % len(anchors)]
+            features, _metadata = generate_calibration_member(
+                dataset,
+                anchor,
+                capability_id=capability_id,
+                family_role=family_role,
+                lambda_value=float(lambda_value),
+                calibration_seed_index=seed_index,
+            )
+            realized.append(float(features[target_feature]))
+        means.append(float(np.mean(realized)))
+    raw_response = np.asarray(means, dtype=float)
+    support_index, support = stable_monotone_support(
+        full_grid,
+        raw_response,
+    )
+    grid = full_grid[: support_index + 1]
+    response = np.maximum.accumulate(
+        raw_response[: support_index + 1]
+    )
+    support.update(
+        {
+            "raw_lambda_grid": full_grid.tolist(),
+            "raw_response_curve": raw_response.tolist(),
+        }
+    )
+    return grid, response, support
+
+
+def inverse_response_lambdas(
+    grid: np.ndarray,
+    response: np.ndarray,
+    targets: np.ndarray,
+) -> tuple[float, ...]:
+    unique_values, unique_indexes = np.unique(response, return_index=True)
+    if unique_values.size <= 1:
+        return tuple(float(value) for value in np.linspace(0.0, 1.0, 5))
+    selected = np.interp(
+        targets,
+        unique_values,
+        grid[unique_indexes],
+    )
+    return tuple(float(value) for value in selected)
+
+
+def calibrate_capabilities(
+    dataset: DatasetSpec,
+    anchors: list[dict[str, Any]],
+    *,
+    calibration_seed_count: int,
+) -> dict[str, Any]:
+    feature_summary = summarize_feature_rows(
+        anchor["features"] for anchor in anchors
+    )
+    capabilities: dict[str, Any] = {}
+    for capability_id in CAPABILITIES:
+        (
+            primary_grid,
+            primary_response,
+            primary_support,
+        ) = monotone_response_curve(
+            dataset,
+            anchors,
+            capability_id=capability_id,
+            family_role="primary",
+            calibration_seed_count=calibration_seed_count,
+        )
+        target_feature = PRIMARY_TARGET_FEATURE[capability_id]
+        if capability_id in STRUCTURAL_CAPABILITIES:
+            primary_lambdas = tuple(
+                float(value)
+                for value in np.linspace(
+                    float(primary_grid[0]),
+                    float(primary_grid[-1]),
+                    5,
+                )
+            )
+            primary_targets = np.interp(
+                primary_lambdas,
+                primary_grid,
+                primary_response,
+            )
+            calibration_status = (
+                "fixed_cross_dataset_structural_relative_grid"
+            )
+            real_interval = None
+        else:
+            reference = feature_summary.get(target_feature)
+            if reference is None:
+                raise ValueError(
+                    f"real feature {target_feature} unavailable for "
+                    f"{dataset.dataset_id}/{capability_id}"
+                )
+            real_lower = float(reference["p10"])
+            real_upper = float(reference["p90"])
+            lower = max(real_lower, float(primary_response[0]))
+            upper = min(real_upper, float(primary_response[-1]))
+            if upper <= lower + 1e-10:
+                lower, upper = (
+                    float(primary_response[0]),
+                    float(primary_response[-1]),
+                )
+                calibration_status = (
+                    "no_real_generator_intersection_generator_support_used"
+                )
+            else:
+                calibration_status = "real_q10_q90_generator_intersection"
+            primary_targets = np.linspace(lower, upper, 5)
+            primary_lambdas = inverse_response_lambdas(
+                primary_grid,
+                primary_response,
+                primary_targets,
+            )
+            real_interval = [real_lower, real_upper]
+
+        (
+            secondary_grid,
+            secondary_response,
+            secondary_support,
+        ) = monotone_response_curve(
+            dataset,
+            anchors,
+            capability_id=capability_id,
+            family_role="secondary",
+            calibration_seed_count=calibration_seed_count,
+        )
+        secondary_lambdas = inverse_response_lambdas(
+            secondary_grid,
+            secondary_response,
+            np.asarray(primary_targets, dtype=float),
+        )
+        secondary_status = "matched_primary_target_values"
+        if any(
+            right <= left + 1e-8
+            for left, right in zip(
+                secondary_lambdas,
+                secondary_lambdas[1:],
+            )
+        ):
+            secondary_lambdas = tuple(
+                float(value)
+                for value in np.linspace(
+                    float(secondary_grid[0]),
+                    float(secondary_grid[-1]),
+                    5,
+                )
+            )
+            secondary_status = (
+                "primary_targets_outside_secondary_support_"
+                "fixed_relative_grid_used"
+            )
+        capabilities[capability_id] = {
+            "target_feature": target_feature,
+            "target_dim": TARGET_DIM_BY_CAPABILITY[capability_id],
+            "primary_family": PRIMARY_FAMILY_BY_CAPABILITY[capability_id],
+            "secondary_family": SECONDARY_FAMILY_BY_CAPABILITY[capability_id],
+            "intensity_calibration_scope": (
+                "generator_structural_relative_grid"
+                if capability_id in STRUCTURAL_CAPABILITIES
+                else "dataset_real_feature_range"
+            ),
+            "calibration_status": calibration_status,
+            "real_interval_q10_q90": real_interval,
+            "primary": {
+                "lambda_support": primary_support[
+                    "effective_lambda_support"
+                ],
+                "support_detection": primary_support,
+                "lambda_grid": primary_grid.tolist(),
+                "response_curve": primary_response.tolist(),
+                "selected_lambdas": list(primary_lambdas),
+                "selected_target_values": np.asarray(
+                    primary_targets, dtype=float
+                ).tolist(),
+            },
+            "secondary": {
+                "calibration_status": secondary_status,
+                "lambda_support": secondary_support[
+                    "effective_lambda_support"
+                ],
+                "support_detection": secondary_support,
+                "lambda_grid": secondary_grid.tolist(),
+                "response_curve": secondary_response.tolist(),
+                "selected_lambdas": list(secondary_lambdas),
+                "matched_primary_target_values": np.asarray(
+                    primary_targets, dtype=float
+                ).tolist(),
+            },
+        }
+    return {
+        "schema_version": "paper_v8_capability_calibration.v1",
+        "generator_version": GENERATOR_VERSION,
+        "calibration_seed_count": calibration_seed_count,
+        "feature_summary": feature_summary,
+        "capabilities": capabilities,
+    }
+
+
+def mase_scales(
+    target: np.ndarray,
+    *,
+    season_length: int,
+) -> tuple[float, list[float]]:
+    history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
+    period = int(season_length)
+    if not 1 <= period < len(history):
+        raise ValueError("v8 MASE period must be defined inside L504")
+    differences = np.abs(history[period:] - history[:-period])
+    by_target = np.mean(differences, axis=0)
+    if not np.isfinite(by_target).all() or np.any(by_target <= 1e-12):
+        raise ValueError("v8 MASE denominator is zero or non-finite")
+    return float(np.mean(by_target)), [float(value) for value in by_target]
+
+
+def target_and_covariate_sha256(
+    target: np.ndarray,
+    covariates: np.ndarray | None,
+) -> str:
+    digest = hashlib.sha256(
+        np.asarray(target, dtype="<f8").tobytes()
+    )
+    if covariates is not None:
+        digest.update(np.asarray(covariates, dtype="<f8").tobytes())
+    return digest.hexdigest()
+
+
+def anchor_for_seed(
+    anchors: list[dict[str, Any]],
+    *,
+    dataset_id: str,
+    capability_id: str,
+    seed_index: int,
+) -> dict[str, Any]:
+    index = stable_seed(
+        dataset_id,
+        capability_id,
+        seed_index,
+        "anchor",
+        base=CALIBRATION_SAMPLE_SEED,
+    ) % len(anchors)
+    return anchors[index]
+
+
+def generate_master_sample(
+    dataset: DatasetSpec,
+    anchor: dict[str, Any],
+    capability_calibration: dict[str, Any],
+    *,
+    capability_id: str,
+    family_role: str,
+    intensity: int,
+    seed_index: int,
+    counterfactual_member: int | None,
+) -> dict[str, Any]:
+    parameters, mappings = derive_deterministic_parameters(
+        capability_id,
+        anchor_summary(anchor["features"]),
+        season_length=int(anchor["season_length"]),
+        context_length=CONTEXT_LENGTH,
+    )
+    family_calibration = capability_calibration[family_role]
+    lambdas = tuple(
+        float(value) for value in family_calibration["selected_lambdas"]
+    )
+    targets = tuple(
+        float(value)
+        for value in (
+            family_calibration.get("selected_target_values")
+            or family_calibration.get("matched_primary_target_values")
+        )
+    )
+    conditioning = build_conditioning(
+        dataset,
+        capability_id=capability_id,
+        frequency=str(anchor["frequency"]),
+        season_length=int(anchor["season_length"]),
+        intensity_lambdas=lambdas,
+        parameters=parameters,
+        target_values=targets,
+    )
+    path_seed = stable_seed(
+        dataset.dataset_id,
+        capability_id,
+        seed_index,
+        "generation-path",
+        base=GENERATION_PATH_SEED,
+    )
+    target, metadata, covariates = generate_deterministic_sample(
+        capability_id,
+        MASTER_LENGTH,
+        CONTEXT_LENGTH,
+        conditioning.target_dim,
+        conditioning.season_length,
+        intensity,
+        np.random.default_rng(path_seed),
+        conditioning=conditioning,
+        family_role=family_role,
+        counterfactual_variant=int(counterfactual_member or 0),
+    )
+    target, covariates = standardize_generated_sample(
+        capability_id,
+        target,
+        covariates,
+        metadata=metadata,
+    )
+    features = measured_features(
+        capability_id,
+        target,
+        covariates,
+        season_length=conditioning.season_length,
+    )
+    mase_scale, scale_by_target = mase_scales(
+        target,
+        season_length=conditioning.season_length,
+    )
+    dataset_token = safe_id(dataset.dataset_id)
+    pair_id = (
+        f"v8__{dataset_token}__{capability_id}__{family_role}__"
+        f"i{intensity}__seed{seed_index:06d}"
+        if capability_id in COUNTERFACTUAL_CAPABILITIES
+        else None
+    )
+    member_suffix = (
+        f"__m{int(counterfactual_member)}"
+        if counterfactual_member is not None
+        else ""
+    )
+    sample_id = (
+        f"v8__{dataset_token}__{capability_id}__{family_role}__"
+        f"i{intensity}__seed{seed_index:06d}{member_suffix}"
+    )
+    target_hash = target_and_covariate_sha256(target, covariates)
+    return {
+        "schema_version": "paper_v8_master_sample.v1",
+        "sample_id": sample_id,
+        "master_sample_id": sample_id,
+        "paired_group_id": (
+            f"v8__{dataset_token}__{capability_id}__{family_role}__"
+            f"seed{seed_index:06d}"
+        ),
+        "counterfactual_pair_id": pair_id,
+        "counterfactual_member": counterfactual_member,
+        "dataset_id": dataset.dataset_id,
+        "config_id": dataset.config_id,
+        "task_id": dataset.task_view_id,
+        "task_view_id": dataset.task_view_id,
+        "profile_id": conditioning.profile_id,
+        "anchor_id": anchor["anchor_id"],
+        "anchor_provenance": {
+            key: anchor[key]
+            for key in (
+                "item_id",
+                "series_id",
+                "channel_id",
+                "window_start",
+                "observed_fraction",
+                "history_sha256",
+            )
+        },
+        "generator_version": GENERATOR_VERSION,
+        "generator_family_role": family_role,
+        "generator_family_id": metadata["generator_family_id"],
+        "capability_id": capability_id,
+        "intensity": int(intensity),
+        "seed_index": int(seed_index),
+        "sample_index": int(seed_index),
+        "context_length": CONTEXT_LENGTH,
+        "horizon": HORIZON,
+        "target_dim": int(target.shape[1]),
+        "covariate_dim": (
+            0 if covariates is None else int(covariates.shape[1])
+        ),
+        "covariate_column_names": (
+            []
+            if covariates is None
+            else ["weather_driver", "known_event"][: covariates.shape[1]]
+        ),
+        "frequency": conditioning.frequency,
+        "season_length": conditioning.season_length,
+        "hierarchy": (
+            "additive_first"
+            if capability_id == "hierarchical_coherence"
+            else None
+        ),
+        "target_feature": PRIMARY_TARGET_FEATURE[capability_id],
+        "target_feature_value": float(
+            features[PRIMARY_TARGET_FEATURE[capability_id]]
+        ),
+        "realized_features": features,
+        "sampled_generator_parameters": parameters,
+        "parameter_mapping": mappings,
+        "parameter_sampling": {
+            "policy": "direct_real_anchor_feature_row",
+            "anchor_id": anchor["anchor_id"],
+            "path_seed": path_seed,
+        },
+        "generation_metadata": metadata,
+        "evaluation_table": "main",
+        "input_history_semantics": "clean_latent",
+        "scoring_target_semantics": "clean_latent_future",
+        "observation_noise_scale": 0.0,
+        "future_process_noise_scale": 0.0,
+        "mase_period": conditioning.season_length,
+        "mase_scale": mase_scale,
+        "mase_scale_by_target": scale_by_target,
+        "mase_scale_source": "clean_l504_history",
+        "target_sha256": target_hash,
+        "future_sha256": hashlib.sha256(
+            np.asarray(target[CONTEXT_LENGTH:], dtype="<f8").tobytes()
+        ).hexdigest(),
+        "target": target.tolist(),
+        "covariates": (
+            None if covariates is None else covariates.tolist()
+        ),
+    }
+
+
+def robustness_sample(clean: dict[str, Any]) -> dict[str, Any]:
+    target = np.asarray(clean["target"], dtype=float)
+    observed, noise_metadata = add_observation_noise_to_history(
+        target,
+        context_length=CONTEXT_LENGTH,
+        noise_ratio=ROBUSTNESS_NOISE_RATIO,
+        rng=np.random.default_rng(
+            stable_seed(
+                clean["sample_id"],
+                "observation-noise",
+                base=ROBUSTNESS_SEED,
+            )
+        ),
+        preserve_additive_hierarchy=(
+            clean["capability_id"] == "hierarchical_coherence"
+        ),
+    )
+    result = json.loads(json.dumps(clean))
+    result["schema_version"] = "paper_v8_robustness_master_sample.v1"
+    result["sample_id"] = clean["sample_id"] + "__robust15"
+    result["master_sample_id"] = result["sample_id"]
+    result["clean_master_sample_id"] = clean["sample_id"]
+    result["paired_group_id"] = str(clean["paired_group_id"]) + "__robust15"
+    if clean.get("counterfactual_pair_id") is not None:
+        result["counterfactual_pair_id"] = (
+            str(clean["counterfactual_pair_id"]) + "__robust15"
+        )
+    result["evaluation_table"] = "observation_noise_robustness"
+    result["input_history_semantics"] = "noisy_observation"
+    result["scoring_target_semantics"] = "clean_latent_future"
+    result["observation_noise_scale"] = ROBUSTNESS_NOISE_RATIO
+    result["observation_noise_metadata"] = noise_metadata
+    result["target"] = observed.tolist()
+    result["target_sha256"] = target_and_covariate_sha256(
+        observed,
+        (
+            None
+            if result["covariates"] is None
+            else np.asarray(result["covariates"], dtype=float)
+        ),
+    )
+    return result
+
+
+def _shift_generation_metadata(
+    metadata: dict[str, Any],
+    *,
+    capability_id: str,
+    context_length: int,
+) -> dict[str, Any]:
+    result = json.loads(json.dumps(metadata))
+    offset = CONTEXT_LENGTH - context_length
+    if capability_id == "common_factor":
+        if "final_code_slice" in result:
+            result["final_code_slice"] = [
+                int(value) - offset for value in result["final_code_slice"]
+            ]
+        episodes = []
+        for episode in result.get("historical_episodes", []):
+            code = [int(value) - offset for value in episode["code_slice"]]
+            response = [
+                int(value) - offset for value in episode["response_slice"]
+            ]
+            if code[0] >= 0 and response[1] <= context_length:
+                episodes.append(
+                    {"code_slice": code, "response_slice": response}
+                )
+        result["historical_episodes"] = episodes
+        result["historical_episode_count_in_view"] = len(episodes)
+    elif capability_id == "cross_series_dependence":
+        delay = int(result["cross_lag_steps"])
+        result["counterfactual_driver_slice"] = [
+            context_length - delay,
+            context_length,
+        ]
+    elif capability_id == "regime_switching":
+        result["cut_points"] = [
+            int(value) - offset for value in result.get("cut_points", [])
+        ]
+    elif capability_id == "predictable_intermittency":
+        result["pulse_centers"] = [
+            int(value) - offset
+            for value in result.get("pulse_centers", [])
+        ]
+    return result
+
+
+def master_view(
+    master: dict[str, Any],
+    context_length: int,
+) -> dict[str, Any]:
+    if context_length not in VIEW_CONTEXT_LENGTHS:
+        raise ValueError(f"unsupported v8 context view {context_length}")
+    if int(master["context_length"]) != CONTEXT_LENGTH:
+        raise ValueError("v8 inference views require an L504 master")
+    start = CONTEXT_LENGTH - context_length
+    target = np.asarray(master["target"], dtype=float)[start:]
+    covariates = (
+        None
+        if master.get("covariates") is None
+        else np.asarray(master["covariates"], dtype=float)[start:]
+    )
+    result = json.loads(json.dumps(master))
+    result["schema_version"] = "paper_v8_forecast_view.v1"
+    result["source_master_sample_id"] = master["sample_id"]
+    result["master_sample_id"] = master["sample_id"]
+    result["sample_id"] = f"{master['sample_id']}__L{context_length}"
+    result["view_id"] = result["sample_id"]
+    result["context_length"] = context_length
+    result["context_policy_candidates"] = list(VIEW_CONTEXT_LENGTHS)
+    result["view_standardization_policy"] = (
+        "slice_exact_l504_standardized_master_without_restandardization"
+    )
+    result["target"] = target.tolist()
+    result["covariates"] = (
+        None if covariates is None else covariates.tolist()
+    )
+    result["generation_metadata"] = _shift_generation_metadata(
+        master["generation_metadata"],
+        capability_id=str(master["capability_id"]),
+        context_length=context_length,
+    )
+    if master.get("counterfactual_pair_id") is not None:
+        result["master_counterfactual_pair_id"] = master[
+            "counterfactual_pair_id"
+        ]
+        result["counterfactual_pair_id"] = (
+            f"{master['counterfactual_pair_id']}__L{context_length}"
+        )
+    result["target_sha256"] = target_and_covariate_sha256(
+        target,
+        covariates,
+    )
+    result["future_sha256"] = hashlib.sha256(
+        np.asarray(target[context_length:], dtype="<f8").tobytes()
+    ).hexdigest()
+    result["master_future_sha256"] = master["future_sha256"]
+    return result
+
+
+def iter_master_views(
+    masters: Iterable[dict[str, Any]],
+    *,
+    context_lengths: Iterable[int] = VIEW_CONTEXT_LENGTHS,
+) -> Iterator[dict[str, Any]]:
+    contexts = tuple(int(value) for value in context_lengths)
+    for master in masters:
+        for context_length in contexts:
+            yield master_view(master, context_length)
