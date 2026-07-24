@@ -7,9 +7,7 @@ from pathlib import Path
 import paper_v8_pipeline_common as v8
 
 
-DEFAULT_OUTPUT_ROOT = (
-    v8.REPO_ROOT / "runtime" / "paper_exp" / "v8_test" / "full_pipeline"
-)
+DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 DEFAULT_GIFT_EVAL_DIR = Path("/root/xmy/gift-eval")
 
 

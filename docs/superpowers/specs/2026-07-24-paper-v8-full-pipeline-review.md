@@ -403,6 +403,8 @@ http://192.168.99.18:10810
 
 三台服务都可用时，先以历史耗时做模型级 longest-processing-time 分配；服务数量减少时重新平衡模型队列。若某个模型排在一台服务的队尾、其他兼容服务会提前空闲，则默认启用尾部协作：
 
+- 正式七模型实验先将 `timesfm2.5`、`tabpfn-ts3`、`toto2.0` 分散到三台可用服务，并作为各服务的首个任务；
+- 其余模型再依据冻结的模型 cost 做 LPT 分配；不足三台服务或某服务缺少模型时，只在兼容服务间重新平衡；
 - 按 `model_id × sample_id` 的 stable hash 将该尾部模型任务确定性分片；
 - 各服务完成自己的前序模型后处理一个 tail part；
 - 每个 part 使用独立任务文件、预测文件和状态文件，禁止并发写同一文件；
@@ -683,6 +685,36 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 
 当前实现已从 `/root/xmy/gift-eval/electricity/H` 原始 Arrow 数据重建 504 点统一 calibration pool，不读取 v7 gate-reference 子集。
 
+## 正式实验存储协议
+
+状态：**已决定**
+
+正式产物统一写入 `runtime/paper_exp/v8`，每次完整协议运行创建一个不可变实验目录：
+
+```text
+runtime/paper_exp/v8/
+  <experiment_id>/
+    experiment_manifest.json
+    pipeline_status.json
+    <dataset_id>/
+      01_calibration/
+      02_generation/
+      03_inference/
+      04_analysis/
+```
+
+默认实验标识为：
+
+```text
+v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
+```
+
+`experiment_manifest.json` 在运行任何数据集前写入，只保存不可变身份、完整科学协议、协议 SHA-256、代码版本和存储约定；同名目录已经存在时必须逐字段验证协议一致，禁止覆盖成另一套实验。执行端点仅作为运行环境 provenance，不进入科学协议哈希。
+
+`pipeline_status.json` 是唯一允许原地更新的根状态文件，记录当前数据集、当前步骤、已完成数据集和失败原因。各数据集继续独立保存校准、生成、回验、推理和分析产物，不默认生成跨数据集平均或排名。
+
+本阶段不实现跨 seed shard 的组合分析。生成 shard 仍按 `[seed_start, seed_end)` 命名；将来由独立的 suite/analysis manifest 引用多个已存在 shard，不修改本次实验身份和已有产物。
+
 ## 正式实现清单
 
 - 新建 v8 GIFT registry，冻结每个可用逻辑数据集的 canonical config、频率、season length 和数据源 hash。
@@ -719,3 +751,5 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 - 2026-07-24：结构能力 I1–I5 改为在生成器实际 realized-strength 支持内等距，再反解 lambda；cross 的强度轴与正确边/lag gate 解耦。
 - 2026-07-24：修正非 resume 推理会静默复用同 ID 旧预测的问题；非 resume 精确重建当前 inference seed shard，resume 才执行 hash 校验与增量续跑。
 - 2026-07-24：冻结19个满足 L504 的 GIFT-Eval canonical 配置：13个小时频率、4个日频和2个10秒频率；Restaurant、Hospital、COVID Deaths、Car Parts 因无504点原生序列暂不纳入。拆分 calendar season、feature period、能力专属生成时间尺度和 MASE period；10秒配置明确使用 `calendar_season_length=8640`、窗口内可观察生成尺度与 `mase_period=1`。生成时间尺度按 L504/H48 的可识别次数裁剪，MASE 不加隐藏 floor，并并列保存 history-std-normalized MAE 与 denominator 分布审计。
+- 2026-07-24：正式存储根目录固定为 `runtime/paper_exp/v8/<experiment_id>`；根 experiment manifest 以完整协议哈希为不可变身份，运行进度单独写入可更新的 pipeline status。本阶段暂不实现多个 seed shard 的组合分析。
+- 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；三服务可用时强制将 TimesFM、TabPFN、Toto 分散并作为三条队列的首个任务，其余模型再做 LPT 平衡。

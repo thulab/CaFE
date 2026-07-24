@@ -16,9 +16,7 @@ from app.services.synthetic_v8_feature_gate import (
 )
 
 
-DEFAULT_OUTPUT_ROOT = (
-    v8.REPO_ROOT / "runtime" / "paper_exp" / "v8_test" / "full_pipeline"
-)
+DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 
 
 def parse_args() -> argparse.Namespace:

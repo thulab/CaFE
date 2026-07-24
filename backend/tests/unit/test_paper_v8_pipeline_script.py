@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -168,6 +169,51 @@ def test_multi_dataset_pipeline_accepts_explicit_dataset_list():
         "gift_electricity_h",
         "gift_bizitobs_application",
     ]
+
+
+def test_experiment_manifest_is_identity_scoped_and_immutable(tmp_path):
+    pipeline = load_script("run_paper_v8_pipeline")
+    protocol = {
+        "schema_version": "paper_v8_experiment_protocol.v1",
+        "dataset_ids": ["gift_electricity_h"],
+        "seed_start": 0,
+        "seed_count": 64,
+    }
+    protocol_sha256 = pipeline.v8.json_sha256(protocol)
+    experiment_id = pipeline.default_experiment_id(
+        protocol_sha256,
+        now=datetime(2026, 7, 24, 12, 30, tzinfo=timezone.utc),
+    )
+
+    experiment_root, manifest = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id=experiment_id,
+        protocol=protocol,
+        endpoints=["http://service-a"],
+    )
+    second_root, second_manifest = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id=experiment_id,
+        protocol=protocol,
+        endpoints=["http://different-runtime-service"],
+    )
+
+    assert experiment_id.startswith("v8_")
+    assert experiment_id.endswith("_20260724T123000Z")
+    assert experiment_root == second_root
+    assert manifest == second_manifest
+    assert manifest["protocol_sha256"] == protocol_sha256
+    assert (
+        experiment_root / "experiment_manifest.json"
+    ).is_file()
+
+    with pytest.raises(ValueError, match="does not match"):
+        pipeline.initialize_experiment(
+            storage_root=tmp_path,
+            experiment_id=experiment_id,
+            protocol={**protocol, "seed_count": 32},
+            endpoints=["http://service-a"],
+        )
 
 
 def test_response_support_detects_sustained_foldback_without_magic_bound():
@@ -655,24 +701,62 @@ def test_tail_model_is_partitioned_across_idle_services(tmp_path):
     )
 
     assert manifest is not None
-    assert manifest["model_id"] == "timesfm2.5"
+    tail_model = manifest["model_id"]
+    assert tail_model in model_ids
     assert manifest["part_count"] == 3
     assert sum(part["row_count"] for part in manifest["parts"]) == 30
     assert sorted(
         item.tail_part_index
         for items in work.values()
         for item in items
-        if item.model_id == "timesfm2.5"
+        if item.model_id == tail_model
     ) == [0, 1, 2]
     assert all(
-        any(item.model_id == "timesfm2.5" for item in items)
+        any(item.model_id == tail_model for item in items)
         for items in work.values()
     )
     assert sum(
-        model_id == "timesfm2.5"
+        model_id == tail_model
         for model_ids_for_endpoint in assignments.values()
         for model_id in model_ids_for_endpoint
     ) == 1
+
+
+def test_slow_models_start_on_distinct_services():
+    inference = load_script("run_paper_v8_inference")
+    model_ids = [
+        "Chronos-2",
+        "toto2.0",
+        "timesfm2.5",
+        "tabpfn-ts3",
+        "tirex2",
+        "moirai2",
+        "Timer-3.5",
+    ]
+    services = [
+        (
+            endpoint,
+            {model_id: {"model_id": model_id} for model_id in model_ids},
+        )
+        for endpoint in (
+            "http://127.0.0.1:10810",
+            "http://192.168.99.17:10811",
+            "http://192.168.99.18:10810",
+        )
+    ]
+
+    assignments = inference.assign_models(model_ids, services)
+
+    slow_locations = {
+        model_id: endpoint
+        for endpoint, queue in assignments.items()
+        for model_id in inference.SLOW_MODEL_SPREAD_ORDER
+        if model_id in queue
+    }
+    assert len(set(slow_locations.values())) == 3
+    assert {
+        queue[0] for queue in assignments.values()
+    } == set(inference.SLOW_MODEL_SPREAD_ORDER)
 
 
 def test_tail_shards_refresh_when_source_task_changes(tmp_path):

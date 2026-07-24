@@ -18,15 +18,21 @@ import run_paper_e2_dynamic_stability as engine
 import run_paper_v5_e2_inference as v7_inference
 
 
-DEFAULT_OUTPUT_ROOT = (
-    v8.REPO_ROOT / "runtime" / "paper_exp" / "v8_test" / "full_pipeline"
-)
+DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
     "http://192.168.99.17:10811",
     "http://192.168.99.18:10810",
 )
-DEFAULT_MODELS = ("Chronos-2", "toto2.0", "tirex2", "timesfm2.5")
+DEFAULT_MODELS = (
+    "Chronos-2",
+    "toto2.0",
+    "timesfm2.5",
+    "tabpfn-ts3",
+    "tirex2",
+    "moirai2",
+    "Timer-3.5",
+)
 MODEL_COST = {
     "tirex2": 5.0,
     "toto2.0": 4.0,
@@ -37,6 +43,11 @@ MODEL_COST = {
     "moirai2": 3.0,
     "tabpfn-ts3": 2.0,
 }
+SLOW_MODEL_SPREAD_ORDER = (
+    "timesfm2.5",
+    "tabpfn-ts3",
+    "toto2.0",
+)
 _PRINT_LOCK = threading.Lock()
 
 
@@ -214,11 +225,37 @@ def assign_models(
     models: list[str],
     services: list[tuple[str, dict[str, dict[str, Any]]]],
 ) -> dict[str, list[str]]:
-    loads = {endpoint: 0.0 for endpoint, _catalog in services}
-    assignments = {endpoint: [] for endpoint, _catalog in services}
+    ordered_services = sorted(services, key=lambda item: item[0])
+    loads = {endpoint: 0.0 for endpoint, _catalog in ordered_services}
+    assignments = {
+        endpoint: [] for endpoint, _catalog in ordered_services
+    }
     catalogs = {endpoint: catalog for endpoint, catalog in services}
+    assigned: set[str] = set()
+    unused_endpoints = set(assignments)
+    for model_id in SLOW_MODEL_SPREAD_ORDER:
+        if model_id not in models:
+            continue
+        eligible = [
+            endpoint
+            for endpoint in assignments
+            if model_id in catalogs[endpoint]
+        ]
+        if not eligible:
+            raise ValueError(f"model {model_id!r} unavailable on all services")
+        unused_eligible = [
+            endpoint for endpoint in eligible if endpoint in unused_endpoints
+        ]
+        candidates = unused_eligible or eligible
+        endpoint = min(candidates, key=lambda name: (loads[name], name))
+        assignments[endpoint].append(model_id)
+        loads[endpoint] += MODEL_COST.get(model_id, 1.0)
+        assigned.add(model_id)
+        unused_endpoints.discard(endpoint)
+
+    remaining = [model_id for model_id in models if model_id not in assigned]
     for model_id in sorted(
-        models,
+        remaining,
         key=lambda name: (-MODEL_COST.get(name, 1.0), name),
     ):
         eligible = [

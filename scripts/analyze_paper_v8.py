@@ -14,9 +14,7 @@ import run_paper_e2_dynamic_stability as engine
 import run_paper_v8_model_response as response
 
 
-DEFAULT_OUTPUT_ROOT = (
-    v8.REPO_ROOT / "runtime" / "paper_exp" / "v8_test" / "full_pipeline"
-)
+DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 PRIMARY_MECHANISM_METRIC = {
     "trend": "trend_slope_relative_abs_error",
     "multi_seasonal": "seasonal_spectral_amplitude_relative_error",
@@ -43,7 +41,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         nargs="+",
-        default=["Chronos-2", "toto2.0", "tirex2", "timesfm2.5"],
+        default=[
+            "Chronos-2",
+            "toto2.0",
+            "timesfm2.5",
+            "tabpfn-ts3",
+            "tirex2",
+            "moirai2",
+            "Timer-3.5",
+        ],
     )
     return parser.parse_args()
 
