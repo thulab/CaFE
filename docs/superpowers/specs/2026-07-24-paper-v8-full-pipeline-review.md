@@ -255,7 +255,7 @@ range_expansion_factor = 1.0
 
 `nonlinear_persistence` 继续以可观察的 `nonlinear_conditional_gain` 作为主强度特征，但不再固定假设 nonlinear lag 等于 `season_length/2`、也不再只增加一个 sine-square 基底。v8 在冻结的少量季节相对候选 lag（`1/6, 1/5, 1/4, 1/3, 1/2`，最大 32）上分别计算加入二次和三次项后的 adjusted-R² 增益，取最佳 lag 的增益作为真实窗口和合成窗口共用的 observable proxy。这组低阶基底同时覆盖 shifted-tanh 和 rational 两个平滑有界 family，不读取生成器真值。
 
-生成有效性另设 `nonlinear_actual_lag_gain`：只在合成样本内部使用 metadata 记录的真实因果 lag，以同一组二次/三次 family-neutral 基底计算增量，强制 primary I1–I5 和 secondary I3/I5 的总体响应单调。observable proxy 负责真实范围校准和主强度坐标，actual-lag gain 负责证明生成器真正注入的机制增强；二者不得互相替代，也不能用换 seed 重试绕过失败。
+nonlinear 的生成有效性拆为三层：`nonlinear_conditional_gain` 继续作为真实窗口和合成窗口共用的 observable proxy，并强制 primary I1–I5、secondary I3/I5 总体响应单调；metadata 中的 `nonlinear_strength` 作为 construction gate，要求总体和每个配对 seed 都严格递增；`nonlinear_actual_lag_gain` 仍使用生成器记录的真实因果 lag 计算并完整报告，但只要求有限、非缺失且非退化，不再要求随强度单调。原因是递归反馈会把非线性依赖传播到多个相关 lag，单个 exact lag 在控制其他项后的 adjusted-R² 贡献可能下降，不能替代对整体 observable signature 和实际注入系数的检查。三者不得互相替代，也不能用换 seed 重试绕过失败。
 
 response support 不再只看少量路径的均值曲线。普通能力固定从 32 条 response paths 开始；nonlinear 固定从 64 条开始，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。两等分 path block 的 support 与均值响应差异写入非阻断审计，不以 `0.05` 或其他统一差异阈值触发扩展。只有 support 退化或 primary 五档反解不能形成严格递增的强度时，普通能力才依次扩到 64、96 条，nonlinear 扩到 128 条；达到上限仍无解则明确失败。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
 

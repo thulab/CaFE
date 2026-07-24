@@ -13,7 +13,7 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v2"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v3"
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -193,15 +193,23 @@ def covariate_family_match_checks(
 def nonlinear_mechanism_response_checks(
     samples: Iterable[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Validate nonlinear dose at the generator-recorded causal lag.
+    """Validate injected nonlinear dose without misusing exact-lag R².
 
     ``nonlinear_conditional_gain`` is an observable lag-search proxy shared
-    with real calibration windows.  This construction gate separately uses
-    the generated sample's known causal lag, preventing a correlated proxy lag
-    from making a valid I3/I5 mechanism look reversed.
+    with real calibration windows and is already enforced by the ordinary dose
+    gate.  This construction gate separately requires the generator-recorded
+    nonlinear coefficient to increase, both in aggregate and within every
+    paired seed.  The adjusted-R² gain at the exact causal lag remains a
+    required diagnostic, but is not assumed monotone: recursive feedback
+    distributes the dependence over correlated lags, so the conditional
+    contribution of one exact lag can fall while the injected mechanism and
+    the observable best-lag signature both grow.
     """
 
-    groups: dict[
+    strength_groups: dict[
+        tuple[str, str], dict[int, list[tuple[int, float]]]
+    ] = defaultdict(lambda: defaultdict(list))
+    actual_lag_groups: dict[
         tuple[str, str], dict[int, list[tuple[int, float]]]
     ] = defaultdict(lambda: defaultdict(list))
     expected_counts: dict[
@@ -220,80 +228,165 @@ def nonlinear_mechanism_response_checks(
         )
         expected_groups.add(key)
         expected_counts[key][int(row["intensity"])] += 1
-        value = float(
+        strength = float(
+            row.get("generation_metadata", {}).get(
+                "nonlinear_strength",
+                math.nan,
+            )
+        )
+        if math.isfinite(strength):
+            strength_groups[key][int(row["intensity"])].append(
+                (int(row["seed_index"]), strength)
+            )
+        actual_lag_gain = float(
             row.get("realized_features", {}).get(
                 "nonlinear_actual_lag_gain",
                 math.nan,
             )
         )
-        if math.isfinite(value):
-            groups[key][int(row["intensity"])].append(
-                (int(row["seed_index"]), value)
+        if math.isfinite(actual_lag_gain):
+            actual_lag_groups[key][int(row["intensity"])].append(
+                (int(row["seed_index"]), actual_lag_gain)
             )
 
     results: list[dict[str, Any]] = []
     for key in sorted(expected_groups):
-        values_by_intensity = groups[key]
-        means = {
+        strengths_by_intensity = strength_groups[key]
+        strength_means = {
             intensity: float(
                 np.mean([value for _seed, value in values])
             )
-            for intensity, values in sorted(values_by_intensity.items())
+            for intensity, values in sorted(
+                strengths_by_intensity.items()
+            )
             if values
         }
-        ordered = [means[index] for index in sorted(means)]
-        missing_feature_count = sum(
+        ordered_strengths = [
+            strength_means[index] for index in sorted(strength_means)
+        ]
+        missing_strength_count = sum(
             expected_count
-            - len(values_by_intensity.get(intensity, ()))
+            - len(strengths_by_intensity.get(intensity, ()))
             for intensity, expected_count
             in expected_counts[key].items()
         )
-        seed_values = {
+        strength_seed_values = {
             intensity: {seed: value for seed, value in values}
-            for intensity, values in values_by_intensity.items()
+            for intensity, values in strengths_by_intensity.items()
         }
-        paired_deltas: list[float] = []
-        if len(seed_values) >= 2:
-            lower_intensity = min(seed_values)
-            upper_intensity = max(seed_values)
+        strength_paired_deltas: list[float] = []
+        if len(strength_seed_values) >= 2:
+            lower_intensity = min(strength_seed_values)
+            upper_intensity = max(strength_seed_values)
             shared_seeds = sorted(
-                set(seed_values[lower_intensity])
-                & set(seed_values[upper_intensity])
+                set(strength_seed_values[lower_intensity])
+                & set(strength_seed_values[upper_intensity])
             )
-            paired_deltas = [
-                seed_values[upper_intensity][seed]
-                - seed_values[lower_intensity][seed]
+            strength_paired_deltas = [
+                strength_seed_values[upper_intensity][seed]
+                - strength_seed_values[lower_intensity][seed]
+                for seed in shared_seeds
+            ]
+
+        actual_by_intensity = actual_lag_groups[key]
+        actual_means = {
+            intensity: float(
+                np.mean([value for _seed, value in values])
+            )
+            for intensity, values in sorted(actual_by_intensity.items())
+            if values
+        }
+        missing_actual_lag_gain_count = sum(
+            expected_count
+            - len(actual_by_intensity.get(intensity, ()))
+            for intensity, expected_count
+            in expected_counts[key].items()
+        )
+        actual_seed_values = {
+            intensity: {seed: value for seed, value in values}
+            for intensity, values in actual_by_intensity.items()
+        }
+        actual_paired_deltas: list[float] = []
+        if len(actual_seed_values) >= 2:
+            lower_intensity = min(actual_seed_values)
+            upper_intensity = max(actual_seed_values)
+            shared_seeds = sorted(
+                set(actual_seed_values[lower_intensity])
+                & set(actual_seed_values[upper_intensity])
+            )
+            actual_paired_deltas = [
+                actual_seed_values[upper_intensity][seed]
+                - actual_seed_values[lower_intensity][seed]
                 for seed in shared_seeds
             ]
         accepted = bool(
-            missing_feature_count == 0
-            and len(ordered) >= 2
-            and max(ordered) - min(ordered) > 1e-9
+            missing_strength_count == 0
+            and len(ordered_strengths) >= 2
+            and max(ordered_strengths) - min(ordered_strengths) > 1e-9
             and all(
                 right >= left - 1e-8
-                for left, right in zip(ordered, ordered[1:])
+                for left, right in zip(
+                    ordered_strengths,
+                    ordered_strengths[1:],
+                )
             )
+            and bool(strength_paired_deltas)
+            and all(delta > 1e-12 for delta in strength_paired_deltas)
+            and missing_actual_lag_gain_count == 0
+            and bool(actual_means)
+            and max(actual_means.values()) > 1e-9
         )
         results.append(
             {
                 "dataset_id": key[0],
                 "family_role": key[1],
-                "feature": "nonlinear_actual_lag_gain",
-                "missing_feature_count": missing_feature_count,
+                "feature": "nonlinear_strength",
+                "missing_feature_count": missing_strength_count,
                 "mean_feature_by_intensity": {
-                    str(name): value for name, value in means.items()
+                    str(name): value
+                    for name, value in strength_means.items()
                 },
-                "paired_low_high_count": len(paired_deltas),
+                "paired_low_high_count": len(strength_paired_deltas),
                 "paired_low_high_positive_fraction": (
-                    float(np.mean(np.asarray(paired_deltas) > 0.0))
-                    if paired_deltas
+                    float(
+                        np.mean(
+                            np.asarray(strength_paired_deltas) > 0.0
+                        )
+                    )
+                    if strength_paired_deltas
                     else None
                 ),
                 "paired_low_high_median_delta": (
-                    float(np.median(paired_deltas))
-                    if paired_deltas
+                    float(np.median(strength_paired_deltas))
+                    if strength_paired_deltas
                     else None
                 ),
+                "actual_lag_gain_diagnostic": {
+                    "feature": "nonlinear_actual_lag_gain",
+                    "monotonicity_enforced": False,
+                    "missing_feature_count": (
+                        missing_actual_lag_gain_count
+                    ),
+                    "mean_feature_by_intensity": {
+                        str(name): value
+                        for name, value in actual_means.items()
+                    },
+                    "paired_low_high_count": len(actual_paired_deltas),
+                    "paired_low_high_positive_fraction": (
+                        float(
+                            np.mean(
+                                np.asarray(actual_paired_deltas) > 0.0
+                            )
+                        )
+                        if actual_paired_deltas
+                        else None
+                    ),
+                    "paired_low_high_median_delta": (
+                        float(np.median(actual_paired_deltas))
+                        if actual_paired_deltas
+                        else None
+                    ),
+                },
                 "accepted": accepted,
             }
         )

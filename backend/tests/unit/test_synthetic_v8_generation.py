@@ -29,7 +29,7 @@ def test_covariate_real_feature_contract_is_history_only():
     )
 
 
-def test_nonlinear_mechanism_gate_uses_actual_lag_gain():
+def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
     rows = [
         {
             "dataset_id": "demo",
@@ -38,9 +38,14 @@ def test_nonlinear_mechanism_gate_uses_actual_lag_gain():
             "evaluation_table": "main",
             "seed_index": seed,
             "intensity": intensity,
+            "generation_metadata": {
+                "nonlinear_strength": (
+                    0.1 * intensity + 0.001 * seed
+                )
+            },
             "realized_features": {
                 "nonlinear_actual_lag_gain": (
-                    0.001 * intensity + 0.00001 * seed
+                    0.001 * (6 - intensity) + 0.00001 * seed
                 )
             },
         }
@@ -60,6 +65,20 @@ def test_nonlinear_mechanism_gate_uses_actual_lag_gain():
         result["paired_low_high_positive_fraction"] == pytest.approx(1.0)
         for result in results
     )
+    assert all(
+        result["actual_lag_gain_diagnostic"][
+            "monotonicity_enforced"
+        ]
+        is False
+        for result in results
+    )
+    assert all(
+        result["actual_lag_gain_diagnostic"][
+            "paired_low_high_positive_fraction"
+        ]
+        == pytest.approx(0.0)
+        for result in results
+    )
 
     for row in rows:
         if (
@@ -72,6 +91,23 @@ def test_nonlinear_mechanism_gate_uses_actual_lag_gain():
     secondary = next(
         result
         for result in missing
+        if result["family_role"] == "secondary"
+    )
+    assert secondary["accepted"] is False
+
+    for row in rows:
+        if (
+            row["generator_family_role"] == "secondary"
+            and row["intensity"] == 5
+        ):
+            row["realized_features"] = {
+                "nonlinear_actual_lag_gain": 0.001
+            }
+            row["generation_metadata"]["nonlinear_strength"] = 0.0
+    reversed_strength = nonlinear_mechanism_response_checks(rows)
+    secondary = next(
+        result
+        for result in reversed_strength
         if result["family_role"] == "secondary"
     )
     assert secondary["accepted"] is False
