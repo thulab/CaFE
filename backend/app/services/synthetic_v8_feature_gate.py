@@ -130,6 +130,56 @@ def covariate_pair_checks(
     return values
 
 
+def covariate_family_match_checks(
+    primary: dict[str, Any],
+    secondary: dict[str, Any],
+    *,
+    dose_atol: float = 1e-8,
+    mase_scale_relative_tolerance: float = 0.10,
+) -> dict[str, Any]:
+    """Check that covariate secondary changes the response law in isolation."""
+
+    primary_covariates = np.asarray(primary["covariates"], dtype=float)
+    secondary_covariates = np.asarray(secondary["covariates"], dtype=float)
+    primary_metadata = primary["generation_metadata"]
+    secondary_metadata = secondary["generation_metadata"]
+    primary_scale = float(primary["mase_scale"])
+    scale_relative_difference = abs(
+        float(secondary["mase_scale"]) - primary_scale
+    ) / max(abs(primary_scale), 1e-12)
+    values = {
+        "primary_sample_id": str(primary["sample_id"]),
+        "secondary_sample_id": str(secondary["sample_id"]),
+        "covariate_max_abs_difference": float(
+            np.max(np.abs(primary_covariates - secondary_covariates))
+        ),
+        "dose_absolute_difference": abs(
+            float(primary["target_feature_value"])
+            - float(secondary["target_feature_value"])
+        ),
+        "effect_strength_absolute_difference": abs(
+            float(primary_metadata["effect_strength"])
+            - float(secondary_metadata["effect_strength"])
+        ),
+        "baseline_motif_matches": bool(
+            primary_metadata["baseline_process"]["motif_sha256"]
+            == secondary_metadata["baseline_process"]["motif_sha256"]
+        ),
+        "mase_scale_relative_difference": scale_relative_difference,
+        "mase_scale_relative_tolerance": (
+            mase_scale_relative_tolerance
+        ),
+    }
+    values["accepted"] = bool(
+        values["covariate_max_abs_difference"] <= dose_atol
+        and values["dose_absolute_difference"] <= dose_atol
+        and values["effect_strength_absolute_difference"] <= dose_atol
+        and values["baseline_motif_matches"]
+        and scale_relative_difference <= mase_scale_relative_tolerance
+    )
+    return values
+
+
 def validate_sample_collection(
     samples: Iterable[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -263,6 +313,46 @@ def validate_sample_collection(
             }
         )
 
+    covariate_primary_by_match = {
+        (
+            str(row["dataset_id"]),
+            int(row["seed_index"]),
+            int(row["intensity"]),
+            row.get("counterfactual_member"),
+        ): row
+        for row in rows
+        if row["capability_id"] == "covariate_response"
+        and row["generator_family_role"] == "primary"
+        and row.get("evaluation_table", "main") == "main"
+    }
+    matched_family_results: list[dict[str, Any]] = []
+    for secondary in rows:
+        if (
+            secondary["capability_id"] != "covariate_response"
+            or secondary["generator_family_role"] != "secondary"
+            or secondary.get("evaluation_table", "main") != "main"
+        ):
+            continue
+        key = (
+            str(secondary["dataset_id"]),
+            int(secondary["seed_index"]),
+            int(secondary["intensity"]),
+            secondary.get("counterfactual_member"),
+        )
+        primary = covariate_primary_by_match.get(key)
+        if primary is None:
+            matched_family_results.append(
+                {
+                    "secondary_sample_id": secondary["sample_id"],
+                    "accepted": False,
+                    "error": "matched_primary_sample_missing",
+                }
+            )
+            continue
+        matched_family_results.append(
+            covariate_family_match_checks(primary, secondary)
+        )
+
     accepted = bool(
         all(result["accepted"] for result in basic_results.values())
         and not duplicate_groups
@@ -271,6 +361,9 @@ def validate_sample_collection(
             result.get("accepted", False)
             for result in structural_results
             if result.get("enforced", True)
+        )
+        and all(
+            result["accepted"] for result in matched_family_results
         )
     )
     return {
@@ -283,4 +376,5 @@ def validate_sample_collection(
         "duplicate_groups": duplicate_groups,
         "dose_response": dose_results,
         "structural_results": structural_results,
+        "matched_family_results": matched_family_results,
     }

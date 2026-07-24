@@ -100,7 +100,10 @@ PRIMARY_TARGET_FEATURE = {
     # generated-sample gates; folding them into the dose coordinate made the
     # five levels depend on a high-dimensional ridge design.
     "cross_series_dependence": "lead_lag_peak_abs",
-    "covariate_response": "covariate_incremental_r2",
+    # A current-linear incremental R² is not family-neutral for nonlinear or
+    # distributed-lag responses.  The generator-known history effect share is
+    # the matched dose; incremental R² remains a descriptive audit feature.
+    "covariate_response": "covariate_effect_variance_share",
 }
 TARGET_DIM_BY_CAPABILITY = {
     capability: (
@@ -590,6 +593,7 @@ def measured_features(
     covariates: np.ndarray | None,
     *,
     season_length: int,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     hierarchy = (
         "additive_first"
@@ -614,6 +618,12 @@ def measured_features(
             ),
         )
     )
+    if capability_id == "covariate_response" and metadata is not None:
+        effect_share = float(
+            metadata.get("covariate_effect_variance_share", math.nan)
+        )
+        if math.isfinite(effect_share):
+            values["covariate_effect_variance_share"] = effect_share
     return {
         str(name): float(value)
         for name, value in values.items()
@@ -678,6 +688,7 @@ def generate_calibration_member(
             target,
             covariates,
             season_length=conditioning.season_length,
+            metadata=metadata,
         ),
         {
             "parameters": parameters,
@@ -806,12 +817,15 @@ def calibrate_capabilities(
     anchors: list[dict[str, Any]],
     *,
     calibration_seed_count: int,
+    capability_ids: Iterable[str] = CAPABILITIES,
 ) -> dict[str, Any]:
     feature_summary = summarize_feature_rows(
         anchor["features"] for anchor in anchors
     )
     capabilities: dict[str, Any] = {}
-    for capability_id in CAPABILITIES:
+    for capability_id in capability_ids:
+        if capability_id not in CAPABILITIES:
+            raise ValueError(f"unsupported capability: {capability_id}")
         (
             primary_grid,
             primary_response,
@@ -1064,6 +1078,7 @@ def generate_master_sample(
         target,
         covariates,
         season_length=conditioning.season_length,
+        metadata=metadata,
     )
     mase_scale, scale_by_target = mase_scales(
         target,

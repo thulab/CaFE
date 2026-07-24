@@ -701,6 +701,7 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 - 2026-07-24：推理调度从纯模型级 LPT 扩展为“模型级 LPT + 队尾同模型确定性多机分片”，每个 endpoint part 独立落盘并在严格覆盖校验后合并。
 - 2026-07-24：split-bank 只在至少两个 batch 时报告稳定性，并补充 batch 间相对得分差和 Top-3 overlap；secondary family 与 observation-noise robustness 必须和相同 seed/intensity 的 clean primary 做 matched-control 比较。
 - 2026-07-24：common-factor 主机制改为五变量稠密动态因子和长块 joint-state relay；cross-series 改为稠密连续 driver、混合符号 responders 和 horizon-aligned lag。主事实样本不再全量成对，严格反事实只在抽样 seed 的 I5 审计。
-- 2026-07-24：为 common/cross 新增 affine-matched donor input ablation；common 只评分 protected target，cross 只评分 responders，Oracle control/ablation 强制共用 context。确认当前 covariate secondary 混合了非线性、distributed lag 和额外尺度放大，暂不应解释成 matched-difficulty sensitivity。
+- 2026-07-24：为 common/cross 新增 affine-matched donor input ablation；common 只评分 protected target，cross 只评分 responders，Oracle control/ablation 强制共用 context。
+- 2026-07-24：修复 covariate secondary 的强度与背景混杂：移除额外 `1.7` 放大，保持 primary response 数值路径不变，将 secondary response 的 history 均值和标准差仿射匹配到同 seed 的 primary reference，并用生成器已知的 `covariate_effect_variance_share` 标定 I1–I5。matched seed 的两族严格共享 weather driver、事件、baseline 和符号，只将即时线性响应替换为半线性饱和、一期 lag 与 distributed-event 响应，避免原 spline driver 改变 seasonal MASE denominator。`covariate_incremental_r2` 保留为可解释的线性审计特征，不再作为跨 family 的剂量坐标。
 - 2026-07-24：结构能力 I1–I5 改为在生成器实际 realized-strength 支持内等距，再反解 lambda；cross 的强度轴与正确边/lag gate 解耦。
 - 2026-07-24：修正非 resume 推理会静默复用同 ID 旧预测的问题；非 resume 精确重建当前 inference seed shard，resume 才执行 hash 校验与增量续跑。

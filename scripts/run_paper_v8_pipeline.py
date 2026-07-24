@@ -87,6 +87,8 @@ def main() -> int:
                 str(args.max_anchors),
                 "--calibration-seeds",
                 str(args.calibration_seeds),
+                "--capabilities",
+                *args.capabilities,
             ],
         ),
         "generation": (

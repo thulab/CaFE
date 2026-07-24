@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-dense-multivariate-mechanisms"
+GENERATOR_VERSION = "capts-paper-v8-matched-covariate-secondary"
 FamilyRole = Literal["primary", "secondary"]
 
 COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2 = 0.80
@@ -2734,7 +2734,17 @@ def _covariate(
     variant = int(counterfactual_variant)
     if variant not in (0, 1):
         raise ValueError("counterfactual_variant must be 0 or 1")
-    weather, weather_meta = _calibrated_signal(length, context, rng, cond, family)
+    # Family sensitivity must isolate the response law.  Reusing the primary
+    # driver process makes weather, events, nuisance baseline and random signs
+    # identical for a matched primary/secondary seed; otherwise the secondary
+    # spline driver also changes the MASE denominator and confounds the audit.
+    weather, weather_meta = _calibrated_signal(
+        length,
+        context,
+        rng,
+        cond,
+        "primary",
+    )
     base_weather = weather.copy()
     weather_transform = str(
         rng.choice(
@@ -2823,19 +2833,97 @@ def _covariate(
     event_ratio = _parameter(cond, "event_effect_ratio", 0.9)
     weather_sign = rng.choice(np.asarray([-1.0, 1.0]), size=dim)
     event_sign = rng.choice(np.asarray([-1.0, 1.0]), size=dim)
+    primary_reference_response = (
+        weather[:, None] * weather_sign[None, :]
+        + event_ratio * event[:, None] * event_sign[None, :]
+    )
     if family == "primary":
-        response = weather[:, None] * weather_sign[None, :] + event_ratio * event[:, None] * event_sign[None, :]
+        response = primary_reference_response
         response_law = "instantaneous_linear"
+        raw_response_history_mean = np.mean(response[:context], axis=0)
+        raw_response_history_std = np.std(response[:context], axis=0)
+        response_normalization = "primary_reference_unchanged"
     else:
-        effect *= 1.7
-        lagged = np.concatenate([[weather[0]], weather[:-1]])
-        weather_response = np.tanh(weather) + 0.35 * np.tanh(lagged)
-        event_response = np.convolve(event, np.asarray([0.6, 0.3, 0.1]), mode="full")[:length]
-        response = weather_response[:, None] * weather_sign[None, :] + event_ratio * event_response[:, None] * event_sign[None, :]
-        response_law = "distributed_lag_saturating"
-    target = 0.18 * baseline[:, None] + effect * response
+        weather_center = float(np.mean(weather[:context]))
+        weather_scale = max(float(np.std(weather[:context])), 1e-6)
+        standardized_weather = (weather - weather_center) / weather_scale
+        lagged = np.concatenate(
+            [[standardized_weather[0]], standardized_weather[:-1]]
+        )
+        weather_response = (
+            0.60 * standardized_weather
+            + 0.25 * np.tanh(standardized_weather)
+            + 0.15 * np.tanh(lagged)
+        )
+        event_response = np.convolve(
+            event,
+            np.asarray([0.50, 0.30, 0.20]),
+            mode="full",
+        )[:length]
+        raw_response = (
+            weather_response[:, None] * weather_sign[None, :]
+            + event_ratio
+            * event_response[:, None]
+            * event_sign[None, :]
+        )
+        raw_response_history_mean = np.mean(
+            raw_response[:context],
+            axis=0,
+        )
+        raw_response_history_std = np.std(
+            raw_response[:context],
+            axis=0,
+        )
+        raw_response_history_std = np.where(
+            raw_response_history_std > 1e-9,
+            raw_response_history_std,
+            1.0,
+        )
+        reference_mean = np.mean(
+            primary_reference_response[:context],
+            axis=0,
+        )
+        reference_std = np.std(
+            primary_reference_response[:context],
+            axis=0,
+        )
+        response = (
+            (raw_response - raw_response_history_mean[None, :])
+            / raw_response_history_std[None, :]
+            * reference_std[None, :]
+            + reference_mean[None, :]
+        )
+        response_law = "semilinear_saturating_distributed_lag"
+        response_normalization = (
+            "affine_match_primary_reference_history_mean_and_std"
+        )
+
+    # Family identity changes the response law, not the calibrated dose.
+    # Primary remains numerically unchanged; secondary is affine matched to
+    # the same-seed primary history response.  Counterfactual members share
+    # history, so they use exactly the same matching statistics.
+    response_history_mean = np.mean(response[:context], axis=0)
+    response_history_std = np.std(response[:context], axis=0)
+    nuisance_component = 0.18 * baseline[:, None]
+    covariate_component = effect * response
+    target = nuisance_component + covariate_component
+    nuisance_variance = float(np.var(nuisance_component[:context, 0]))
+    covariate_variance_by_target = np.var(
+        covariate_component[:context],
+        axis=0,
+    )
+    effect_variance_share_by_target = (
+        covariate_variance_by_target
+        / np.maximum(
+            covariate_variance_by_target + nuisance_variance,
+            1e-12,
+        )
+    )
     detail = {
         "weather_process": weather_meta,
+        "driver_process_matching": (
+            "identical_across_primary_secondary_for_matched_seed"
+        ),
         "baseline_process": baseline_meta,
         "effect_strength": effect,
         "weather_effect_by_target": (effect * weather_sign).tolist(),
@@ -2845,6 +2933,25 @@ def _covariate(
         "event_width": width,
         "future_event_start": future_start,
         "response_law": response_law,
+        "raw_response_history_mean_by_target": (
+            raw_response_history_mean.tolist()
+        ),
+        "raw_response_history_std_by_target": (
+            raw_response_history_std.tolist()
+        ),
+        "response_history_mean_by_target": response_history_mean.tolist(),
+        "response_history_std_by_target": response_history_std.tolist(),
+        "response_normalization": response_normalization,
+        "nuisance_history_variance": nuisance_variance,
+        "covariate_effect_history_variance_by_target": (
+            covariate_variance_by_target.tolist()
+        ),
+        "covariate_effect_variance_share_by_target": (
+            effect_variance_share_by_target.tolist()
+        ),
+        "covariate_effect_variance_share": float(
+            np.mean(effect_variance_share_by_target)
+        ),
         "counterfactual_variant": variant,
         "counterfactual_covariate_future_slice": [context, length],
         "counterfactual_target_history_invariant": True,

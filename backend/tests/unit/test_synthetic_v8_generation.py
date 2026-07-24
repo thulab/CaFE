@@ -17,6 +17,9 @@ from app.services.synthetic_v8_generation import (
     standardize_common_factor_counterfactual_member,
     standardize_cross_series_counterfactual_member,
 )
+from app.services.synthetic_v8_feature_gate import (
+    covariate_family_match_checks,
+)
 
 
 def test_covariate_real_feature_contract_is_history_only():
@@ -461,6 +464,107 @@ def test_v8_covariate_counterfactual_pair_has_identical_history(
     assert first_metadata["counterfactual_target_history_invariant"] is True
     assert first_metadata["counterfactual_past_covariates_invariant"] is True
     assert first_metadata["counterfactual_future_is_covariate_determined"] is True
+
+
+@pytest.mark.parametrize("intensity", (1, 2, 3, 4, 5))
+def test_v8_covariate_secondary_matches_primary_history_effect_dose(
+    intensity: int,
+) -> None:
+    arguments = (
+        "covariate_response",
+        552,
+        504,
+        1,
+        24,
+        intensity,
+    )
+    primary, primary_metadata, primary_covariates = (
+        generate_deterministic_sample(
+            *arguments,
+            np.random.default_rng(59),
+            family_role="primary",
+            counterfactual_variant=0,
+        )
+    )
+    secondary, secondary_metadata, secondary_covariates = (
+        generate_deterministic_sample(
+            *arguments,
+            np.random.default_rng(59),
+            family_role="secondary",
+            counterfactual_variant=0,
+        )
+    )
+
+    assert primary_covariates is not None
+    assert secondary_covariates is not None
+    assert np.array_equal(primary_covariates, secondary_covariates)
+    assert not np.array_equal(primary, secondary)
+    assert primary_metadata["response_law"] == "instantaneous_linear"
+    assert (
+        secondary_metadata["response_law"]
+        == "semilinear_saturating_distributed_lag"
+    )
+    assert secondary_metadata["effect_strength"] == pytest.approx(
+        primary_metadata["effect_strength"]
+    )
+    assert secondary_metadata[
+        "covariate_effect_variance_share"
+    ] == pytest.approx(
+        primary_metadata["covariate_effect_variance_share"],
+        abs=1e-12,
+    )
+    assert primary_metadata["response_normalization"] == (
+        "primary_reference_unchanged"
+    )
+    assert secondary_metadata["response_normalization"] == (
+        "affine_match_primary_reference_history_mean_and_std"
+    )
+    assert secondary_metadata[
+        "response_history_mean_by_target"
+    ] == pytest.approx(
+        primary_metadata["response_history_mean_by_target"],
+        abs=1e-12,
+    )
+    assert secondary_metadata[
+        "response_history_std_by_target"
+    ] == pytest.approx(
+        primary_metadata["response_history_std_by_target"],
+        abs=1e-12,
+    )
+    assert secondary_metadata["baseline_process"] == (
+        primary_metadata["baseline_process"]
+    )
+    assert secondary_metadata["weather_effect_by_target"] == pytest.approx(
+        primary_metadata["weather_effect_by_target"]
+    )
+    assert secondary_metadata["event_effect_by_target"] == pytest.approx(
+        primary_metadata["event_effect_by_target"]
+    )
+
+
+def test_v8_covariate_family_gate_rejects_scale_confounding() -> None:
+    metadata = {
+        "effect_strength": 0.4,
+        "baseline_process": {"motif_sha256": "same"},
+    }
+    primary = {
+        "sample_id": "primary",
+        "target_feature_value": 0.5,
+        "mase_scale": 0.8,
+        "covariates": [[0.0, 1.0], [1.0, 0.0]],
+        "generation_metadata": metadata,
+    }
+    secondary = {
+        **deepcopy(primary),
+        "sample_id": "secondary",
+        "mase_scale": 0.78,
+    }
+
+    assert covariate_family_match_checks(primary, secondary)["accepted"]
+    secondary["mase_scale"] = 0.08
+    rejected = covariate_family_match_checks(primary, secondary)
+    assert rejected["accepted"] is False
+    assert rejected["mase_scale_relative_difference"] == pytest.approx(0.9)
 
 
 def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:

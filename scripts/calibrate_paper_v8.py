@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-anchors", type=int, default=256)
     parser.add_argument("--calibration-seeds", type=int, default=12)
     parser.add_argument("--minimum-observed-fraction", type=float, default=0.5)
+    parser.add_argument(
+        "--capabilities",
+        nargs="+",
+        choices=v8.CAPABILITIES,
+        default=list(v8.CAPABILITIES),
+    )
     return parser.parse_args()
 
 
@@ -50,6 +56,7 @@ def main() -> int:
         dataset,
         anchors,
         calibration_seed_count=args.calibration_seeds,
+        capability_ids=args.capabilities,
     )
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
@@ -61,6 +68,7 @@ def main() -> int:
         "dataset": source_metadata["dataset"],
         "source": source_metadata,
         "anchor_count": len(anchors),
+        "capabilities": list(args.capabilities),
         "feature_contract": {
             "background_features": (
                 "direct finite feature row from one real L504 anchor"
