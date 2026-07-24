@@ -45,24 +45,6 @@ def parse_args() -> argparse.Namespace:
             "support or primary inverse."
         ),
     )
-    parser.add_argument(
-        "--nonlinear-calibration-seeds",
-        type=int,
-        default=v8.DEFAULT_NONLINEAR_CALIBRATION_PATH_COUNT,
-        help=(
-            "Path budget for conservative nonlinear response support; other "
-            "capabilities use --calibration-seeds."
-        ),
-    )
-    parser.add_argument(
-        "--max-nonlinear-calibration-seeds",
-        type=int,
-        default=v8.MAX_NONLINEAR_CALIBRATION_PATH_COUNT,
-        help=(
-            "Only used when the base nonlinear response paths produce no "
-            "usable support or primary inverse."
-        ),
-    )
     parser.add_argument("--minimum-observed-fraction", type=float, default=0.5)
     parser.add_argument(
         "--workers",
@@ -89,18 +71,12 @@ def calibrate_one_capability(
     capability_id: str,
     calibration_seed_count: int,
     maximum_calibration_seed_count: int,
-    nonlinear_calibration_seed_count: int,
-    maximum_nonlinear_calibration_seed_count: int,
 ) -> dict[str, Any]:
     return v8.calibrate_capabilities(
         dataset,
         anchors,
         calibration_seed_count=calibration_seed_count,
         maximum_calibration_seed_count=maximum_calibration_seed_count,
-        nonlinear_calibration_seed_count=nonlinear_calibration_seed_count,
-        maximum_nonlinear_calibration_seed_count=(
-            maximum_nonlinear_calibration_seed_count
-        ),
         capability_ids=(capability_id,),
     )
 
@@ -130,16 +106,10 @@ def calibrate_capabilities(
     workers: int,
     calibration_seed_count: int,
     maximum_calibration_seed_count: int,
-    nonlinear_calibration_seed_count: int,
-    maximum_nonlinear_calibration_seed_count: int,
 ) -> dict[str, Any]:
     keyword_arguments = {
         "calibration_seed_count": calibration_seed_count,
         "maximum_calibration_seed_count": maximum_calibration_seed_count,
-        "nonlinear_calibration_seed_count": nonlinear_calibration_seed_count,
-        "maximum_nonlinear_calibration_seed_count": (
-            maximum_nonlinear_calibration_seed_count
-        ),
     }
     if workers == 1 or len(capability_ids) == 1:
         return v8.calibrate_capabilities(
@@ -198,11 +168,6 @@ def main() -> int:
         args.max_anchors < 1
         or args.calibration_seeds < 1
         or args.max_calibration_seeds < args.calibration_seeds
-        or args.nonlinear_calibration_seeds < 1
-        or (
-            args.max_nonlinear_calibration_seeds
-            < args.nonlinear_calibration_seeds
-        )
         or args.workers < 1
     ):
         raise ValueError(
@@ -229,15 +194,11 @@ def main() -> int:
         workers=args.workers,
         calibration_seed_count=args.calibration_seeds,
         maximum_calibration_seed_count=args.max_calibration_seeds,
-        nonlinear_calibration_seed_count=args.nonlinear_calibration_seeds,
-        maximum_nonlinear_calibration_seed_count=(
-            args.max_nonlinear_calibration_seeds
-        ),
     )
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v4",
+        "schema_version": "paper_v8_calibration_bundle.v6",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
@@ -263,12 +224,6 @@ def main() -> int:
                 "base": int(args.calibration_seeds),
                 "maximum": int(args.max_calibration_seeds),
             },
-            "nonlinear_persistence": {
-                "base": int(args.nonlinear_calibration_seeds),
-                "maximum": int(
-                    args.max_nonlinear_calibration_seeds
-                ),
-            },
             "split_half_diagnostic": "record_only_nonblocking",
         },
         "feature_contract": {
@@ -277,14 +232,18 @@ def main() -> int:
             ),
             "univariate_primary_strength": (
                 "dataset q10-q90 intersected with generator response support; "
-                "predictable intermittency uses continuous generator-known "
-                "event energy dose because thresholded real spike counts are "
-                "zero-inflated"
+                "nonlinear persistence and predictable intermittency use "
+                "generator-known mechanism doses because their observable "
+                "proxies are not reliable inverse coordinates"
             ),
             "structural_primary_strength": (
                 "fixed cross-dataset evenly spaced realized-strength grid"
             ),
             "structural_identifiability": "measured on generated samples only",
+            "response_inverse": (
+                "longest contiguous strictly increasing raw branch; "
+                "selected lambdas replayed on the formal seed bank"
+            ),
             "removed_features": ["future_abs_covariate_target_corr"],
             "time_scale_semantics": {
                 "calendar_season_length": (

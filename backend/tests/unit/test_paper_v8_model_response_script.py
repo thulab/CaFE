@@ -122,7 +122,7 @@ def test_common_factor_and_hierarchy_metrics_are_ideal_for_exact_forecasts():
             {
                 "nonlinear_lag": 3,
                 "seasonal_lag": 8,
-                "nonlinear_transform": "shifted_tanh",
+                "nonlinear_transform": "signed_rational_quadratic",
             },
             {
                 "nonlinear_recurrence_residual_nrmse": 0.0,

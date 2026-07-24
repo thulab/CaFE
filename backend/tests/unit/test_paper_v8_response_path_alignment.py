@@ -162,3 +162,42 @@ def test_calibration_member_reuses_formal_generation_path_rng(monkeypatch):
         )
     )
     assert observed["first_random"] == float(expected_rng.random())
+
+
+def test_inverse_branch_excludes_raw_foldbacks_instead_of_enveloping_them():
+    common = load_common()
+    grid = np.arange(7, dtype=float) * 0.05
+    response = np.asarray(
+        [
+            0.00042867889306655305,
+            0.000426572021469826,
+            0.00042796865025135356,
+            0.000433542821524335,
+            0.0004361920429278368,
+            0.0004241030018258315,
+            0.00043587856418443247,
+        ]
+    )
+
+    start, end, audit = common.raw_increasing_response_branch(
+        grid,
+        response,
+        support_index=6,
+    )
+
+    assert (start, end) == (1, 4)
+    assert audit["selected_point_count"] == 4
+    selected = response[start : end + 1]
+    assert np.all(np.diff(selected) > 0.0)
+    assert selected.tolist() != np.maximum.accumulate(response).tolist()
+
+
+def test_selected_response_gate_rejects_hidden_inverse_reversal():
+    common = load_common()
+
+    assert common.selected_response_hard_failure_reasons(
+        [0.0004287, 0.0004267, 0.0004297, 0.0004348, 0.0004362]
+    ) == ["selected_response_not_monotone"]
+    assert common.selected_response_hard_failure_reasons(
+        [0.0004266, 0.0004289, 0.0004315, 0.0004340, 0.0004362]
+    ) == []

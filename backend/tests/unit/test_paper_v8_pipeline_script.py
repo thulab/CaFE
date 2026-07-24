@@ -445,7 +445,7 @@ def test_v8_nonlinear_gain_searches_relative_lags_and_tracks_strength():
     assert actual_upper > actual_lower > 0.0
 
 
-def test_nonlinear_response_support_uses_lower_pathwise_quantile(
+def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
     monkeypatch,
 ):
     common = load_script("paper_v8_pipeline_common")
@@ -460,11 +460,16 @@ def test_nonlinear_response_support_uses_lower_pathwise_quantile(
         calibration_seed_index,
     ):
         del dataset, anchor, capability_id, family_role
-        if calibration_seed_index < 2 and lambda_value > 0.2:
-            value = 0.2 - 2.0 * (lambda_value - 0.2)
-        else:
-            value = lambda_value
-        return {"nonlinear_conditional_gain": value}, {}
+        return {
+            "nonlinear_strength": lambda_value,
+            # Deliberately folded: this observable diagnostic must not
+            # truncate or reverse the construction-dose support.
+            "nonlinear_conditional_gain": (
+                lambda_value
+                if calibration_seed_index >= 2 or lambda_value <= 0.2
+                else 0.2 - 2.0 * (lambda_value - 0.2)
+            ),
+        }, {}
 
     monkeypatch.setattr(
         common,
@@ -480,11 +485,10 @@ def test_nonlinear_response_support_uses_lower_pathwise_quantile(
         calibration_seed_count=20,
     )
 
-    assert grid[-1] == pytest.approx(0.2)
-    assert response[-1] > response[0]
-    assert audit["path_support_quantile"] == pytest.approx(0.10)
-    assert audit["path_support_quantile_lambda"] == pytest.approx(0.2)
-    assert audit["effective_lambda_support"] == pytest.approx([0.0, 0.2])
+    assert grid == pytest.approx(np.linspace(0.0, 1.0, 21))
+    assert response == pytest.approx(grid)
+    assert audit["effective_lambda_support"] == pytest.approx([0.0, 1.0])
+    assert "path_support_quantile" not in audit
     assert audit["split_half_diagnostic"][
         "triggers_path_expansion"
     ] is False
@@ -520,6 +524,11 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
         }
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    monkeypatch.setattr(
+        common,
+        "selected_lambda_mean_response",
+        lambda *args, selected_lambdas, **kwargs: tuple(selected_lambdas),
+    )
     anchors = [
         {"features": {"nonlinear_conditional_gain": value}}
         for value in np.linspace(0.0, 1.0, 20)
@@ -528,13 +537,12 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
     calibration = common.calibrate_capabilities(
         common.resolve_dataset("gift_electricity_h"),
         anchors,
-        calibration_seed_count=12,
-        nonlinear_calibration_seed_count=64,
+        calibration_seed_count=32,
         capability_ids=["nonlinear_persistence"],
     )
     nonlinear = calibration["capabilities"]["nonlinear_persistence"]
 
-    assert nonlinear["response_calibration_seed_count"] == 64
+    assert nonlinear["response_calibration_seed_count"] == 32
     assert nonlinear["secondary"]["calibration_status"] == (
         "nonlinear_secondary_compressed_match_fixed_relative_grid_used"
     )
@@ -571,6 +579,11 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         }
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    monkeypatch.setattr(
+        common,
+        "selected_lambda_mean_response",
+        lambda *args, selected_lambdas, **kwargs: tuple(selected_lambdas),
+    )
     anchors = [
         {"features": {"curvature_abs": value}}
         for value in np.linspace(0.2, 0.8, 20)
@@ -581,8 +594,6 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         anchors,
         calibration_seed_count=32,
         maximum_calibration_seed_count=96,
-        nonlinear_calibration_seed_count=64,
-        maximum_nonlinear_calibration_seed_count=128,
         capability_ids=["trend"],
     )
     trend = calibration["capabilities"]["trend"]

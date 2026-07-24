@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-nonlinear-lag-search"
+GENERATOR_VERSION = "capts-paper-v8-nonlinear-quadratic-dose"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -40,7 +40,7 @@ PRIMARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "multi_seasonal": "sample_specific_fourier_basis",
     "time_varying_seasonality": "modulated_oscillator",
     "regime_switching": "deterministic_duration_motif",
-    "nonlinear_persistence": "bounded_tanh_recurrence",
+    "nonlinear_persistence": "signed_rational_quadratic_recurrence",
     "predictable_intermittency": "deterministic_gaussian_event_clock",
     "common_factor": "dense_dynamic_factor_with_joint_state_relay",
     "hierarchical_coherence": "aggregate_contrast_linear_state_space",
@@ -53,7 +53,7 @@ SECONDARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "multi_seasonal": "periodic_spline_motif",
     "time_varying_seasonality": "chirped_triangular_modulation",
     "regime_switching": "thresholded_quasiperiodic_oscillator_regime",
-    "nonlinear_persistence": "rational_delay_recurrence",
+    "nonlinear_persistence": "signed_softsign_quadratic_recurrence",
     "predictable_intermittency": "deterministic_raised_cosine_event_clock",
     "common_factor": "dense_spline_factor_with_joint_state_relay",
     "hierarchical_coherence": "aggregate_contrast_periodic_spline",
@@ -137,9 +137,9 @@ REQUIRED_REAL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
         "acf1",
     ),
     "nonlinear_persistence": (
-        "nonlinear_conditional_gain",
-        "nonlinear_multi_lag_gain",
         "acf1",
+        "dominant_period",
+        "spectral_concentration",
     ),
     "predictable_intermittency": (
         "spike_rate",
@@ -327,23 +327,28 @@ def derive_deterministic_parameters(
             1.0,
         )
     elif capability_id == "nonlinear_persistence":
-        add(
-            "nonlinear_gain_scale",
-            "nonlinear_conditional_gain",
-            0.01,
-            0.35,
-            1.0,
-            "log_compression_then_clip",
-            lambda value: 0.35 + 0.65 * min(1.0, max(value, 0.0) / 0.03),
+        # Nonlinear strength is a controlled synthetic mechanism dose.  The
+        # observable adjusted-R2 proxy is retained for diagnostics, but must
+        # not feed back into the coefficient it is supposed to measure.
+        parameters["nonlinear_gain_scale"] = 0.7
+        mappings.append(
+            ParameterMapping(
+                "nonlinear_gain_scale",
+                "synthetic_protocol_constant",
+                0.7,
+                0.7,
+                "fixed_mechanism_dose_scale",
+            )
         )
-        add(
-            "nonlinear_lag_scale",
-            "nonlinear_multi_lag_gain",
-            0.08,
-            0.22,
-            0.70,
-            "linear_compression_then_clip",
-            lambda value: 0.22 + 2.4 * max(value, 0.0),
+        parameters["nonlinear_lag_scale"] = 1.0 / 3.0
+        mappings.append(
+            ParameterMapping(
+                "nonlinear_lag_scale",
+                "synthetic_protocol_constant",
+                1.0 / 3.0,
+                1.0 / 3.0,
+                "fixed_fraction_of_profile_period",
+            )
         )
     elif capability_id == "predictable_intermittency":
         add(
@@ -1798,43 +1803,75 @@ def _nonlinear(length, context, dim, season, intensity, rng, cond, family):
         period_multiplier=1.25,
     )
     gain = _parameter(cond, "nonlinear_gain_scale", 0.7) * (0.08 + 0.72 * lam)
-    effective_gain = gain if family == "primary" else 3.0 * gain
+    effective_gain = gain
     if family == "primary":
         persistence_weight = 0.58
         seasonal_weight = 0.10
         forcing_weight = 0.18
-        response_slope = 1.35
-        response_shift = 0.55
+        transform = "signed_rational_quadratic"
+
+        def nonlinear_response(values):
+            return values * np.abs(values) / (1.0 + values * values)
+
     else:
         persistence_weight = 0.52
         seasonal_weight = 0.14
         forcing_weight = 0.18
-        response_slope = 1.0
-        response_shift = 0.0
+        transform = "signed_softsign_quadratic"
+
+        def nonlinear_response(values):
+            return values * np.abs(values) / (1.0 + np.abs(values))
+
+    clipped_state_value_count = 0
+    generated_state_value_count = 0
     for index in range(seasonal_lag, total):
         delayed = state[index - lag]
-        if family == "primary":
-            response = (
-                np.tanh(response_slope * delayed + response_shift)
-                - np.tanh(response_shift)
-            )
-            next_value = (
-                persistence_weight * state[index - 1]
-                + seasonal_weight * state[index - seasonal_lag]
-                + effective_gain * response
-                + forcing_weight * forcing[index]
-            )
-            transform = "shifted_tanh"
-        else:
-            response = delayed / (1.0 + delayed * delayed)
-            next_value = (
-                persistence_weight * state[index - 1]
-                + seasonal_weight * state[index - seasonal_lag]
-                + effective_gain * response
-                + forcing_weight * forcing[index]
-            )
-            transform = "rational_delay"
+        response = nonlinear_response(delayed)
+        next_value = (
+            persistence_weight * state[index - 1]
+            + seasonal_weight * state[index - seasonal_lag]
+            + effective_gain * response
+            + forcing_weight * forcing[index]
+        )
+        clipped_state_value_count += int(
+            np.count_nonzero(np.abs(next_value) > 5.0)
+        )
+        generated_state_value_count += int(np.size(next_value))
         state[index] = np.clip(next_value, -5.0, 5.0)
+
+    audit_start = max(burn, seasonal_lag, lag)
+    audit_stop = burn + context
+    delayed_history = state[
+        audit_start - lag : audit_stop - lag
+    ].reshape(-1)
+    response_history = nonlinear_response(delayed_history)
+    response_design = np.column_stack(
+        [np.ones_like(delayed_history), delayed_history]
+    )
+    response_linear_fit = response_design @ np.linalg.lstsq(
+        response_design,
+        response_history,
+        rcond=None,
+    )[0]
+    response_variance = float(np.var(response_history))
+    response_curvature_fraction = float(
+        np.mean((response_history - response_linear_fit) ** 2)
+        / max(response_variance, 1e-12)
+    )
+    raw_recurrence_residual = (
+        state[audit_start:audit_stop]
+        - persistence_weight * state[audit_start - 1 : audit_stop - 1]
+        - seasonal_weight
+        * state[
+            audit_start - seasonal_lag : audit_stop - seasonal_lag
+        ]
+    )
+    nonlinear_effect = effective_gain * response_history
+    effect_to_residual_std_ratio = float(
+        np.std(nonlinear_effect)
+        / max(float(np.std(raw_recurrence_residual)), 1e-12)
+    )
+
     target = _standardize_history(state[burn:], context)
     detail = {
         "nonlinear_transform": transform,
@@ -1850,8 +1887,18 @@ def _nonlinear(length, context, dim, season, intensity, rng, cond, family):
         "persistence_weight": persistence_weight,
         "seasonal_weight": seasonal_weight,
         "forcing_weight": forcing_weight,
-        "nonlinear_response_slope": response_slope,
-        "nonlinear_response_shift": response_shift,
+        "nonlinear_response_order": 2,
+        "nonlinear_response_curvature_fraction": (
+            response_curvature_fraction
+        ),
+        "nonlinear_effect_to_recurrence_residual_std_ratio": (
+            effect_to_residual_std_ratio
+        ),
+        "state_clip_fraction": float(
+            clipped_state_value_count
+            / max(generated_state_value_count, 1)
+        ),
+        "state_clip_value_count": clipped_state_value_count,
         "burn_in_steps": burn,
         "recurrence_amplitude": 1.0,
         "deterministic_forcing": forcing_meta,

@@ -818,20 +818,39 @@ def nonlinear_recovery_metrics(
             sample.get("feature_period", sample.get("season_length", 24)),
         )
     )
-    transform = str(metadata.get("nonlinear_transform", "shifted_tanh"))
+    transform = str(
+        metadata.get(
+            "nonlinear_transform",
+            "signed_rational_quadratic",
+        )
+    )
     persistence = float(
         metadata.get(
             "persistence_weight",
-            0.58 if transform == "shifted_tanh" else 0.52,
+            0.58
+            if transform
+            in {"shifted_tanh", "signed_rational_quadratic"}
+            else 0.52,
         )
     )
     seasonal_weight = float(
         metadata.get(
             "seasonal_weight",
-            0.10 if transform == "shifted_tanh" else 0.14,
+            0.10
+            if transform
+            in {"shifted_tanh", "signed_rational_quadratic"}
+            else 0.14,
         )
     )
-    if transform == "shifted_tanh":
+    if transform == "signed_rational_quadratic":
+        def response(values: np.ndarray) -> np.ndarray:
+            return values * np.abs(values) / (1.0 + values * values)
+
+    elif transform == "signed_softsign_quadratic":
+        def response(values: np.ndarray) -> np.ndarray:
+            return values * np.abs(values) / (1.0 + np.abs(values))
+
+    elif transform == "shifted_tanh":
         response_slope = float(
             metadata.get("nonlinear_response_slope", 1.35)
         )

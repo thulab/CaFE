@@ -70,8 +70,6 @@ def test_pipeline_passes_nonsemantic_preparation_worker_count(tmp_path):
         max_anchors=256,
         calibration_seeds=32,
         max_calibration_seeds=96,
-        nonlinear_calibration_seeds=64,
-        max_nonlinear_calibration_seeds=128,
         preparation_workers=8,
         capabilities=["trend"],
         seed_start=0,

@@ -79,16 +79,6 @@ def parse_args() -> argparse.Namespace:
         default=v8.MAX_CALIBRATION_PATH_COUNT,
     )
     parser.add_argument(
-        "--nonlinear-calibration-seeds",
-        type=int,
-        default=v8.DEFAULT_NONLINEAR_CALIBRATION_PATH_COUNT,
-    )
-    parser.add_argument(
-        "--max-nonlinear-calibration-seeds",
-        type=int,
-        default=v8.MAX_NONLINEAR_CALIBRATION_PATH_COUNT,
-    )
-    parser.add_argument(
         "--capabilities",
         nargs="+",
         choices=v8.CAPABILITIES,
@@ -174,10 +164,6 @@ def commands_for_dataset(
                 str(args.calibration_seeds),
                 "--max-calibration-seeds",
                 str(args.max_calibration_seeds),
-                "--nonlinear-calibration-seeds",
-                str(args.nonlinear_calibration_seeds),
-                "--max-nonlinear-calibration-seeds",
-                str(args.max_nonlinear_calibration_seeds),
                 "--workers",
                 str(args.preparation_workers),
                 "--capabilities",
@@ -239,12 +225,6 @@ def protocol_config(
         "max_anchors": int(args.max_anchors),
         "calibration_seeds": int(args.calibration_seeds),
         "max_calibration_seeds": int(args.max_calibration_seeds),
-        "nonlinear_calibration_seeds": int(
-            args.nonlinear_calibration_seeds
-        ),
-        "max_nonlinear_calibration_seeds": int(
-            args.max_nonlinear_calibration_seeds
-        ),
         "calibration_path_policy": (
             "formal_generation_seed_bank_"
             "fixed_base_hard_failure_only_expansion_v2"
@@ -514,11 +494,6 @@ def main() -> int:
         args.max_anchors < 1
         or args.calibration_seeds < 1
         or args.max_calibration_seeds < args.calibration_seeds
-        or args.nonlinear_calibration_seeds < 1
-        or (
-            args.max_nonlinear_calibration_seeds
-            < args.nonlinear_calibration_seeds
-        )
     ):
         raise ValueError(
             "anchor and calibration path budgets must be positive and "

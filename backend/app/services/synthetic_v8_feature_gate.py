@@ -195,15 +195,14 @@ def nonlinear_mechanism_response_checks(
 ) -> list[dict[str, Any]]:
     """Validate injected nonlinear dose without misusing exact-lag R².
 
-    ``nonlinear_conditional_gain`` is an observable lag-search proxy shared
-    with real calibration windows and is already enforced by the ordinary dose
-    gate.  This construction gate separately requires the generator-recorded
-    nonlinear coefficient to increase, both in aggregate and within every
-    paired seed.  The adjusted-R² gain at the exact causal lag remains a
-    required diagnostic, but is not assumed monotone: recursive feedback
-    distributes the dependence over correlated lags, so the conditional
-    contribution of one exact lag can fall while the injected mechanism and
-    the observable best-lag signature both grow.
+    The ordinary dose gate and this construction gate both follow the
+    generator-recorded nonlinear coefficient, which must increase in aggregate
+    and within every paired seed. ``nonlinear_conditional_gain`` remains an
+    observable lag-search diagnostic shared with real windows, but it is not
+    used as an inverse coordinate or assumed monotone.  The adjusted-R² gain at
+    the exact causal lag is likewise diagnostic: recursive feedback can spread
+    dependence over correlated lags and make either conditional proxy fall
+    while the injected coefficient grows.
     """
 
     strength_groups: dict[
@@ -212,6 +211,13 @@ def nonlinear_mechanism_response_checks(
     actual_lag_groups: dict[
         tuple[str, str], dict[int, list[tuple[int, float]]]
     ] = defaultdict(lambda: defaultdict(list))
+    observable_groups: dict[
+        tuple[str, str], dict[int, list[tuple[int, float]]]
+    ] = defaultdict(lambda: defaultdict(list))
+    activity_groups: dict[
+        tuple[str, str], dict[int, list[tuple[int, float]]]
+    ] = defaultdict(lambda: defaultdict(list))
+    clip_fractions: dict[tuple[str, str], list[float]] = defaultdict(list)
     expected_counts: dict[
         tuple[str, str], Counter[int]
     ] = defaultdict(Counter)
@@ -248,6 +254,34 @@ def nonlinear_mechanism_response_checks(
             actual_lag_groups[key][int(row["intensity"])].append(
                 (int(row["seed_index"]), actual_lag_gain)
             )
+        observable_gain = float(
+            row.get("realized_features", {}).get(
+                "nonlinear_conditional_gain",
+                math.nan,
+            )
+        )
+        if math.isfinite(observable_gain):
+            observable_groups[key][int(row["intensity"])].append(
+                (int(row["seed_index"]), observable_gain)
+            )
+        activity = float(
+            row.get("generation_metadata", {}).get(
+                "nonlinear_effect_to_recurrence_residual_std_ratio",
+                math.nan,
+            )
+        )
+        if math.isfinite(activity):
+            activity_groups[key][int(row["intensity"])].append(
+                (int(row["seed_index"]), activity)
+            )
+        clip_fraction = float(
+            row.get("generation_metadata", {}).get(
+                "state_clip_fraction",
+                math.nan,
+            )
+        )
+        if math.isfinite(clip_fraction):
+            clip_fractions[key].append(clip_fraction)
 
     results: list[dict[str, Any]] = []
     for key in sorted(expected_groups):
@@ -319,6 +353,94 @@ def nonlinear_mechanism_response_checks(
                 - actual_seed_values[lower_intensity][seed]
                 for seed in shared_seeds
             ]
+
+        observable_by_intensity = observable_groups[key]
+        observable_means = {
+            intensity: float(
+                np.mean([value for _seed, value in values])
+            )
+            for intensity, values in sorted(
+                observable_by_intensity.items()
+            )
+            if values
+        }
+        missing_observable_count = sum(
+            expected_count
+            - len(observable_by_intensity.get(intensity, ()))
+            for intensity, expected_count
+            in expected_counts[key].items()
+        )
+        observable_seed_values = {
+            intensity: {seed: value for seed, value in values}
+            for intensity, values in observable_by_intensity.items()
+        }
+        observable_paired_deltas: list[float] = []
+        if len(observable_seed_values) >= 2:
+            lower_intensity = min(observable_seed_values)
+            upper_intensity = max(observable_seed_values)
+            shared_seeds = sorted(
+                set(observable_seed_values[lower_intensity])
+                & set(observable_seed_values[upper_intensity])
+            )
+            observable_paired_deltas = [
+                observable_seed_values[upper_intensity][seed]
+                - observable_seed_values[lower_intensity][seed]
+                for seed in shared_seeds
+            ]
+
+        activity_by_intensity = activity_groups[key]
+        activity_means = {
+            intensity: float(
+                np.mean([value for _seed, value in values])
+            )
+            for intensity, values in sorted(
+                activity_by_intensity.items()
+            )
+            if values
+        }
+        ordered_activity = [
+            activity_means[index] for index in sorted(activity_means)
+        ]
+        missing_activity_count = sum(
+            expected_count
+            - len(activity_by_intensity.get(intensity, ()))
+            for intensity, expected_count
+            in expected_counts[key].items()
+        )
+        activity_seed_values = {
+            intensity: {seed: value for seed, value in values}
+            for intensity, values in activity_by_intensity.items()
+        }
+        activity_paired_deltas: list[float] = []
+        if len(activity_seed_values) >= 2:
+            lower_intensity = min(activity_seed_values)
+            upper_intensity = max(activity_seed_values)
+            shared_seeds = sorted(
+                set(activity_seed_values[lower_intensity])
+                & set(activity_seed_values[upper_intensity])
+            )
+            activity_paired_deltas = [
+                activity_seed_values[upper_intensity][seed]
+                - activity_seed_values[lower_intensity][seed]
+                for seed in shared_seeds
+            ]
+        expected_total = sum(expected_counts[key].values())
+        clip_values = clip_fractions[key]
+        dynamic_activity_accepted = bool(
+            missing_activity_count == 0
+            and len(ordered_activity) >= 2
+            and all(
+                right > left + 1e-12
+                for left, right in zip(
+                    ordered_activity,
+                    ordered_activity[1:],
+                )
+            )
+            and bool(activity_paired_deltas)
+            and all(delta > 1e-12 for delta in activity_paired_deltas)
+            and len(clip_values) == expected_total
+            and max(clip_values, default=math.inf) <= 1e-12
+        )
         accepted = bool(
             missing_strength_count == 0
             and len(ordered_strengths) >= 2
@@ -335,6 +457,7 @@ def nonlinear_mechanism_response_checks(
             and missing_actual_lag_gain_count == 0
             and bool(actual_means)
             and max(actual_means.values()) > 1e-9
+            and dynamic_activity_accepted
         )
         results.append(
             {
@@ -386,6 +509,64 @@ def nonlinear_mechanism_response_checks(
                         if actual_paired_deltas
                         else None
                     ),
+                },
+                "observable_proxy_diagnostic": {
+                    "feature": "nonlinear_conditional_gain",
+                    "monotonicity_enforced": False,
+                    "missing_feature_count": missing_observable_count,
+                    "mean_feature_by_intensity": {
+                        str(name): value
+                        for name, value in observable_means.items()
+                    },
+                    "paired_low_high_count": len(
+                        observable_paired_deltas
+                    ),
+                    "paired_low_high_positive_fraction": (
+                        float(
+                            np.mean(
+                                np.asarray(observable_paired_deltas) > 0.0
+                            )
+                        )
+                        if observable_paired_deltas
+                        else None
+                    ),
+                    "paired_low_high_median_delta": (
+                        float(np.median(observable_paired_deltas))
+                        if observable_paired_deltas
+                        else None
+                    ),
+                },
+                "dynamic_activity_gate": {
+                    "feature": (
+                        "nonlinear_effect_to_recurrence_residual_std_ratio"
+                    ),
+                    "missing_feature_count": missing_activity_count,
+                    "mean_feature_by_intensity": {
+                        str(name): value
+                        for name, value in activity_means.items()
+                    },
+                    "paired_low_high_count": len(activity_paired_deltas),
+                    "paired_low_high_positive_fraction": (
+                        float(
+                            np.mean(
+                                np.asarray(activity_paired_deltas) > 0.0
+                            )
+                        )
+                        if activity_paired_deltas
+                        else None
+                    ),
+                    "paired_low_high_median_delta": (
+                        float(np.median(activity_paired_deltas))
+                        if activity_paired_deltas
+                        else None
+                    ),
+                    "state_clip_missing_count": (
+                        expected_total - len(clip_values)
+                    ),
+                    "maximum_state_clip_fraction": (
+                        max(clip_values) if clip_values else None
+                    ),
+                    "accepted": dynamic_activity_accepted,
                 },
                 "accepted": accepted,
             }

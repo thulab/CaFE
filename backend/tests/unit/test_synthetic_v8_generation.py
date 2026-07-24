@@ -29,6 +29,44 @@ def test_covariate_real_feature_contract_is_history_only():
     )
 
 
+def test_nonlinear_observable_proxy_does_not_control_mechanism_dose():
+    baseline = {
+        "acf1": {"p50": 0.7},
+        "seasonal_acf": {"p50": 0.4},
+        "dominant_period": {"p50": 24.0},
+        "spectral_concentration": {"p50": 0.3},
+        "nonlinear_conditional_gain": {"p50": 0.0},
+        "nonlinear_multi_lag_gain": {"p50": 0.0},
+    }
+    extreme = deepcopy(baseline)
+    extreme["nonlinear_conditional_gain"] = {"p50": 1.0}
+    extreme["nonlinear_multi_lag_gain"] = {"p50": 1.0}
+
+    baseline_parameters, baseline_mappings = derive_deterministic_parameters(
+        "nonlinear_persistence",
+        baseline,
+        season_length=24,
+        context_length=504,
+    )
+    extreme_parameters, extreme_mappings = derive_deterministic_parameters(
+        "nonlinear_persistence",
+        extreme,
+        season_length=24,
+        context_length=504,
+    )
+
+    assert baseline_parameters == extreme_parameters
+    assert baseline_parameters["nonlinear_gain_scale"] == pytest.approx(0.7)
+    assert baseline_parameters["nonlinear_lag_scale"] == pytest.approx(1.0 / 3.0)
+    nonlinear_sources = {
+        mapping["source_feature"]
+        for mapping in baseline_mappings
+        if str(mapping["parameter"]).startswith("nonlinear_")
+    }
+    assert nonlinear_sources == {"synthetic_protocol_constant"}
+    assert baseline_mappings == extreme_mappings
+
+
 def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
     rows = [
         {
@@ -41,12 +79,19 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
             "generation_metadata": {
                 "nonlinear_strength": (
                     0.1 * intensity + 0.001 * seed
-                )
+                ),
+                "nonlinear_effect_to_recurrence_residual_std_ratio": (
+                    0.05 * intensity + 0.0001 * seed
+                ),
+                "state_clip_fraction": 0.0,
             },
             "realized_features": {
                 "nonlinear_actual_lag_gain": (
                     0.001 * (6 - intensity) + 0.00001 * seed
-                )
+                ),
+                "nonlinear_conditional_gain": (
+                    0.002 * (6 - intensity) + 0.00001 * seed
+                ),
             },
         }
         for family_role, intensities in (
@@ -77,6 +122,22 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
             "paired_low_high_positive_fraction"
         ]
         == pytest.approx(0.0)
+        for result in results
+    )
+    assert all(
+        result["observable_proxy_diagnostic"]["monotonicity_enforced"]
+        is False
+        for result in results
+    )
+    assert all(
+        result["observable_proxy_diagnostic"][
+            "paired_low_high_positive_fraction"
+        ]
+        == pytest.approx(0.0)
+        for result in results
+    )
+    assert all(
+        result["dynamic_activity_gate"]["accepted"]
         for result in results
     )
 
@@ -111,6 +172,52 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
         if result["family_role"] == "secondary"
     )
     assert secondary["accepted"] is False
+
+
+def test_v8_nonlinear_families_use_matched_bounded_quadratic_doses():
+    generated = {}
+    for family_role in ("primary", "secondary"):
+        for intensity in (1, 5):
+            _, metadata, _ = generate_deterministic_sample(
+                "nonlinear_persistence",
+                552,
+                504,
+                1,
+                24,
+                intensity,
+                np.random.default_rng(43),
+                family_role=family_role,
+            )
+            generated[(family_role, intensity)] = metadata
+            assert metadata["state_clip_fraction"] == pytest.approx(0.0)
+            assert (
+                0.0
+                <= metadata["nonlinear_response_curvature_fraction"]
+                <= 1.0
+            )
+            assert (
+                metadata[
+                    "nonlinear_effect_to_recurrence_residual_std_ratio"
+                ]
+                > 0.0
+            )
+
+    assert generated[("primary", 1)]["nonlinear_transform"] == (
+        "signed_rational_quadratic"
+    )
+    assert generated[("secondary", 1)]["nonlinear_transform"] == (
+        "signed_softsign_quadratic"
+    )
+    for intensity in (1, 5):
+        assert generated[("primary", intensity)]["nonlinear_strength"] == (
+            pytest.approx(
+                generated[("secondary", intensity)]["nonlinear_strength"]
+            )
+        )
+    assert (
+        generated[("primary", 5)]["nonlinear_strength"]
+        > generated[("primary", 1)]["nonlinear_strength"]
+    )
 
 
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)

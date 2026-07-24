@@ -82,7 +82,7 @@ dataset。
 | `multi_seasonal` | 单变量 | `multi_period_score` |
 | `time_varying_seasonality` | 单变量 | `seasonal_amplitude_modulation` |
 | `regime_switching` | 单变量 | `regime_clock_history_incremental_r2` |
-| `nonlinear_persistence` | 单变量 | `nonlinear_conditional_gain` |
+| `nonlinear_persistence` | 单变量 | `nonlinear_strength`（合成机制剂量；`nonlinear_conditional_gain` 仅作可观察诊断） |
 | `predictable_intermittency` | 单变量 | `spike_rate` |
 | `common_factor` | 多目标 panel | `pca_top1_explained` |
 | `hierarchical_coherence` | parent + children | `hierarchy_child_heterogeneity` |

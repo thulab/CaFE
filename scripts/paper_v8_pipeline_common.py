@@ -51,7 +51,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v6"
+SCHEMA_VERSION = "paper_v8_pipeline.v8"
 CONTEXT_LENGTH = 504
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
@@ -62,13 +62,9 @@ CALIBRATION_SAMPLE_SEED = 2026072401
 GENERATION_PATH_SEED = 2026072403
 ROBUSTNESS_SEED = 2026072404
 ROBUSTNESS_NOISE_RATIO = 0.15
-NONLINEAR_PATH_SUPPORT_QUANTILE = 0.10
 DEFAULT_CALIBRATION_PATH_COUNT = 32
 MAX_CALIBRATION_PATH_COUNT = 96
 CALIBRATION_PATH_EXPANSION_STEP = 32
-DEFAULT_NONLINEAR_CALIBRATION_PATH_COUNT = 64
-MAX_NONLINEAR_CALIBRATION_PATH_COUNT = 128
-NONLINEAR_CALIBRATION_PATH_EXPANSION_STEP = 64
 NONLINEAR_FEATURE_LAG_FRACTIONS = (
     1.0 / 6.0,
     1.0 / 5.0,
@@ -98,7 +94,7 @@ STRUCTURAL_CAPABILITIES = frozenset(
     }
 )
 SYNTHETIC_DOSE_CAPABILITIES = STRUCTURAL_CAPABILITIES | frozenset(
-    {"predictable_intermittency"}
+    {"nonlinear_persistence", "predictable_intermittency"}
 )
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
 PRIMARY_TARGET_FEATURE = {
@@ -106,7 +102,10 @@ PRIMARY_TARGET_FEATURE = {
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
     "regime_switching": "regime_sparse_transition_score",
-    "nonlinear_persistence": "nonlinear_conditional_gain",
+    # The adjusted-R2 proxy is not monotone in the injected coefficient under
+    # recursive feedback.  Use the generator-known coefficient as the
+    # controlled dose and retain the observable proxy only as a diagnostic.
+    "nonlinear_persistence": "nonlinear_strength",
     # Thresholded spike counts and event-clock R² are both zero-inflated on
     # finite L504 windows.  The generator-known history event-component energy
     # share is continuous and exactly monotone in event prominence; clock
@@ -979,6 +978,11 @@ def measured_features(
         )
     )
     if capability_id == "nonlinear_persistence":
+        nonlinear_strength = float(
+            metadata.get("nonlinear_strength", math.nan)
+        )
+        if math.isfinite(nonlinear_strength):
+            values["nonlinear_strength"] = nonlinear_strength
         (
             nonlinear_gain,
             nonlinear_detected_lag,
@@ -1144,6 +1148,86 @@ def stable_monotone_support(
     }
 
 
+def raw_increasing_response_branch(
+    grid: np.ndarray,
+    raw_response: np.ndarray,
+    *,
+    support_index: int,
+) -> tuple[int, int, dict[str, Any]]:
+    """Select an invertible raw branch without a monotone envelope.
+
+    The stable-support detector may tolerate small local decreases so that
+    Monte-Carlo wiggles do not truncate an otherwise useful family.  Those
+    decreases still cannot be hidden during inverse calibration: interpolation
+    on a cumulative-maximum envelope can select lambdas whose realized
+    responses are reversed.  We therefore choose the longest contiguous
+    strictly increasing run inside the conservative support.  Response span,
+    then the earlier run, break equal-length ties.
+    """
+
+    if grid.shape != raw_response.shape or grid.ndim != 1:
+        raise ValueError("response grid and values must be aligned vectors")
+    if support_index < 0 or support_index >= len(grid):
+        raise ValueError("response support index is out of bounds")
+    bounded = np.asarray(raw_response[: support_index + 1], dtype=float)
+    scale = max(float(np.max(np.abs(bounded))), 1.0)
+    tolerance = max(32.0 * np.finfo(float).eps * scale, 1e-15)
+    runs: list[tuple[int, int]] = []
+    start = 0
+    for index in range(1, len(bounded)):
+        if bounded[index] > bounded[index - 1] + tolerance:
+            continue
+        runs.append((start, index - 1))
+        start = index
+    runs.append((start, len(bounded) - 1))
+    increasing_runs = [
+        (left, right)
+        for left, right in runs
+        if right > left
+    ]
+    if not increasing_runs:
+        return 0, 0, {
+            "policy": "longest_contiguous_raw_increasing_branch_v1",
+            "strict_increase_tolerance": tolerance,
+            "candidate_runs": [
+                {
+                    "start_index": int(left),
+                    "end_index": int(right),
+                }
+                for left, right in runs
+            ],
+            "selected_start_index": 0,
+            "selected_end_index": 0,
+        }
+    selected_start, selected_end = max(
+        increasing_runs,
+        key=lambda item: (
+            item[1] - item[0] + 1,
+            float(bounded[item[1]] - bounded[item[0]]),
+            -item[0],
+        ),
+    )
+    return selected_start, selected_end, {
+        "policy": "longest_contiguous_raw_increasing_branch_v1",
+        "strict_increase_tolerance": tolerance,
+        "candidate_runs": [
+            {
+                "start_index": int(left),
+                "end_index": int(right),
+                "point_count": int(right - left + 1),
+                "response_span": float(bounded[right] - bounded[left]),
+            }
+            for left, right in increasing_runs
+        ],
+        "selected_start_index": int(selected_start),
+        "selected_end_index": int(selected_end),
+        "selected_point_count": int(selected_end - selected_start + 1),
+        "selected_response_span": float(
+            bounded[selected_end] - bounded[selected_start]
+        ),
+    }
+
+
 def monotone_response_curve(
     dataset: DatasetSpec,
     anchors: list[dict[str, Any]],
@@ -1182,54 +1266,23 @@ def monotone_response_curve(
         full_grid,
         raw_response,
     )
-    if capability_id == "nonlinear_persistence":
-        path_support_indexes = np.asarray(
-            [
-                stable_monotone_support(full_grid, response)[0]
-                for response in path_responses
-            ],
-            dtype=int,
-        )
-        path_quantile_index = int(
-            np.quantile(
-                path_support_indexes,
-                NONLINEAR_PATH_SUPPORT_QUANTILE,
-                method="lower",
-            )
-        )
-        support_index = min(support_index, path_quantile_index)
-        unique, counts = np.unique(
-            path_support_indexes,
-            return_counts=True,
-        )
-        support.update(
-            {
-                "path_support_policy": (
-                    "lower_10pct_pathwise_stable_support_intersected_"
-                    "with_mean_support"
-                ),
-                "path_support_quantile": (
-                    NONLINEAR_PATH_SUPPORT_QUANTILE
-                ),
-                "path_support_quantile_index": path_quantile_index,
-                "path_support_quantile_lambda": float(
-                    full_grid[path_quantile_index]
-                ),
-                "path_support_index_counts": {
-                    str(int(index)): int(count)
-                    for index, count in zip(unique, counts, strict=True)
-                },
-            }
-        )
     support["selected_peak_index"] = int(support_index)
-    support["effective_lambda_support"] = [
+    support["stable_effective_lambda_support"] = [
         float(full_grid[0]),
         float(full_grid[support_index]),
     ]
-    grid = full_grid[: support_index + 1]
-    response = np.maximum.accumulate(
-        raw_response[: support_index + 1]
+    branch_start, branch_end, branch = raw_increasing_response_branch(
+        full_grid,
+        raw_response,
+        support_index=support_index,
     )
+    grid = full_grid[branch_start : branch_end + 1]
+    response = raw_response[branch_start : branch_end + 1]
+    support["inversion_branch"] = branch
+    support["effective_lambda_support"] = [
+        float(grid[0]),
+        float(grid[-1]),
+    ]
     support.update(
         {
             "path_anchor_policy": "formal_logical_seed_hash_v1",
@@ -1333,21 +1386,20 @@ def inverse_mapping_hard_failure_reasons(
 
 
 def calibration_path_schedule(
-    capability_id: str,
     *,
     initial_path_count: int,
     maximum_path_count: int,
 ) -> tuple[int, ...]:
     if initial_path_count < 1 or maximum_path_count < initial_path_count:
         raise ValueError("invalid v8 calibration path budget")
-    step = (
-        NONLINEAR_CALIBRATION_PATH_EXPANSION_STEP
-        if capability_id == "nonlinear_persistence"
-        else CALIBRATION_PATH_EXPANSION_STEP
-    )
     counts = [int(initial_path_count)]
     while counts[-1] < maximum_path_count:
-        counts.append(min(maximum_path_count, counts[-1] + step))
+        counts.append(
+            min(
+                maximum_path_count,
+                counts[-1] + CALIBRATION_PATH_EXPANSION_STEP,
+            )
+        )
     return tuple(counts)
 
 
@@ -1367,14 +1419,69 @@ def inverse_response_lambdas(
     return tuple(float(value) for value in selected)
 
 
+def selected_lambda_mean_response(
+    dataset: DatasetSpec,
+    anchors: list[dict[str, Any]],
+    *,
+    capability_id: str,
+    family_role: str,
+    calibration_seed_count: int,
+    selected_lambdas: Iterable[float],
+) -> tuple[float, ...]:
+    values = tuple(float(value) for value in selected_lambdas)
+    path_responses = np.empty(
+        (calibration_seed_count, len(values)),
+        dtype=float,
+    )
+    target_feature = PRIMARY_TARGET_FEATURE[capability_id]
+    for seed_index in range(calibration_seed_count):
+        anchor = anchor_for_seed(
+            anchors,
+            dataset_id=dataset.dataset_id,
+            capability_id=capability_id,
+            seed_index=seed_index,
+        )
+        for lambda_index, lambda_value in enumerate(values):
+            features, _metadata = generate_calibration_member(
+                dataset,
+                anchor,
+                capability_id=capability_id,
+                family_role=family_role,
+                lambda_value=lambda_value,
+                calibration_seed_index=seed_index,
+            )
+            path_responses[seed_index, lambda_index] = float(
+                features[target_feature]
+            )
+    return tuple(
+        float(value)
+        for value in np.mean(path_responses, axis=0)
+    )
+
+
+def selected_response_hard_failure_reasons(
+    response: Iterable[float],
+) -> list[str]:
+    values = np.asarray(tuple(response), dtype=float)
+    if values.ndim != 1 or values.size < 2 or not np.isfinite(values).all():
+        return ["selected_response_invalid"]
+    reasons: list[str] = []
+    if float(np.max(values) - np.min(values)) <= 1e-9:
+        reasons.append("selected_response_span_collapsed")
+    if any(
+        right < left - 1e-8
+        for left, right in zip(values, values[1:], strict=False)
+    ):
+        reasons.append("selected_response_not_monotone")
+    return reasons
+
+
 def calibrate_capabilities(
     dataset: DatasetSpec,
     anchors: list[dict[str, Any]],
     *,
     calibration_seed_count: int,
     maximum_calibration_seed_count: int | None = None,
-    nonlinear_calibration_seed_count: int | None = None,
-    maximum_nonlinear_calibration_seed_count: int | None = None,
     capability_ids: Iterable[str] = CAPABILITIES,
     progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
@@ -1385,28 +1492,13 @@ def calibrate_capabilities(
     for capability_id in capability_ids:
         if capability_id not in CAPABILITIES:
             raise ValueError(f"unsupported capability: {capability_id}")
-        initial_response_seed_count = (
-            int(nonlinear_calibration_seed_count)
-            if (
-                capability_id == "nonlinear_persistence"
-                and nonlinear_calibration_seed_count is not None
-            )
-            else int(calibration_seed_count)
+        initial_response_seed_count = int(calibration_seed_count)
+        maximum_response_seed_count = (
+            int(maximum_calibration_seed_count)
+            if maximum_calibration_seed_count is not None
+            else initial_response_seed_count
         )
-        if capability_id == "nonlinear_persistence":
-            maximum_response_seed_count = (
-                int(maximum_nonlinear_calibration_seed_count)
-                if maximum_nonlinear_calibration_seed_count is not None
-                else initial_response_seed_count
-            )
-        else:
-            maximum_response_seed_count = (
-                int(maximum_calibration_seed_count)
-                if maximum_calibration_seed_count is not None
-                else initial_response_seed_count
-            )
         path_schedule = calibration_path_schedule(
-            capability_id,
             initial_path_count=initial_response_seed_count,
             maximum_path_count=maximum_response_seed_count,
         )
@@ -1456,13 +1548,18 @@ def calibrate_capabilities(
                         float(primary_response[-1]),
                         5,
                     )
-                    calibration_status = (
-                        "fixed_cross_dataset_even_realized_strength_grid"
-                        if capability_id in STRUCTURAL_CAPABILITIES
-                        else (
+                    if capability_id in STRUCTURAL_CAPABILITIES:
+                        calibration_status = (
+                            "fixed_cross_dataset_even_realized_strength_grid"
+                        )
+                    elif capability_id == "nonlinear_persistence":
+                        calibration_status = (
+                            "generator_relative_nonlinear_coefficient_grid"
+                        )
+                    else:
+                        calibration_status = (
                             "generator_relative_continuous_event_dose_grid"
                         )
-                    )
                     real_interval = None
                 else:
                     reference = feature_summary.get(target_feature)
@@ -1505,6 +1602,19 @@ def calibrate_capabilities(
                     inverse_mapping_hard_failure_reasons(
                         np.asarray(primary_targets, dtype=float),
                         primary_lambdas,
+                    )
+                )
+                primary_selected_response = selected_lambda_mean_response(
+                    dataset,
+                    anchors,
+                    capability_id=capability_id,
+                    family_role="primary",
+                    calibration_seed_count=response_seed_count,
+                    selected_lambdas=primary_lambdas,
+                )
+                hard_failure_reasons["primary_selected_response"] = (
+                    selected_response_hard_failure_reasons(
+                        primary_selected_response
                     )
                 )
             if not any(hard_failure_reasons.values()):
@@ -1593,9 +1703,13 @@ def calibrate_capabilities(
                 "generator_structural_relative_grid"
                 if capability_id in STRUCTURAL_CAPABILITIES
                 else (
-                    "generator_continuous_event_dose_grid"
-                    if capability_id == "predictable_intermittency"
-                    else "dataset_real_feature_range"
+                    "generator_nonlinear_coefficient_grid"
+                    if capability_id == "nonlinear_persistence"
+                    else (
+                        "generator_continuous_event_dose_grid"
+                        if capability_id == "predictable_intermittency"
+                        else "dataset_real_feature_range"
+                    )
                 )
             ),
             "calibration_status": calibration_status,
@@ -1611,6 +1725,15 @@ def calibrate_capabilities(
                 "selected_target_values": np.asarray(
                     primary_targets, dtype=float
                 ).tolist(),
+                "selected_lambda_mean_response": list(
+                    primary_selected_response
+                ),
+                "selected_lambda_response_gate": {
+                    "policy": (
+                        "formal_seed_bank_same_tolerance_as_generation_gate_v1"
+                    ),
+                    "accepted": True,
+                },
             },
             "secondary": {
                 "calibration_status": secondary_status,
@@ -1627,7 +1750,7 @@ def calibrate_capabilities(
             },
         }
     return {
-        "schema_version": "paper_v8_capability_calibration.v3",
+        "schema_version": "paper_v8_capability_calibration.v5",
         "generator_version": GENERATOR_VERSION,
         "response_path_sampling_policy": {
             "anchor": "formal_logical_seed_hash_v1",
@@ -1639,20 +1762,6 @@ def calibrate_capabilities(
             int(maximum_calibration_seed_count)
             if maximum_calibration_seed_count is not None
             else int(calibration_seed_count)
-        ),
-        "nonlinear_calibration_seed_count": (
-            int(nonlinear_calibration_seed_count)
-            if nonlinear_calibration_seed_count is not None
-            else int(calibration_seed_count)
-        ),
-        "maximum_nonlinear_calibration_seed_count": (
-            int(maximum_nonlinear_calibration_seed_count)
-            if maximum_nonlinear_calibration_seed_count is not None
-            else (
-                int(nonlinear_calibration_seed_count)
-                if nonlinear_calibration_seed_count is not None
-                else int(calibration_seed_count)
-            )
         ),
         "feature_summary": feature_summary,
         "capabilities": capabilities,
