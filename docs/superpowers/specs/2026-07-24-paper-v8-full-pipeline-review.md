@@ -251,7 +251,9 @@ range_expansion_factor = 1.0
 
 参数 clip 比例、唯一值数量和更完整的分布差异可以作为诊断输出，但不默认升级为硬门槛。
 
-`predictable_intermittency` 的能力结构仍由确定性 event clock 保证，`intermittency_clock_incremental_r2` 保留为时钟可识别性诊断；但该 R² 在有限 L504 窗口上高度零膨胀，不适合作为五档强度坐标。正式主强度特征改为 realized `spike_rate`，表示事件在背景中的可见剂量；模型机制评分继续使用 event-window 预测误差，而不是 spike-rate 拟合误差。
+`predictable_intermittency` 的能力结构仍由确定性 event clock 保证，`intermittency_clock_incremental_r2` 和 realized `spike_rate` 保留为可观察诊断；但二者在有限 L504 窗口上均可能高度零膨胀，不适合作为五档反解坐标。正式主强度特征改为生成器可精确分解的 `event_effect_energy_share`：在 L504 history 内计算事件成分能量占“事件成分 + 确定性背景 texture”总能量的比例。该坐标连续、同一路径下严格单调；真实窗口仍校准事件时间尺度、宽度和背景 nuisance，事件剂量使用合成机制支持域等距标定。模型机制评分继续使用 event-window 预测误差，而不是拟合该生成器元数据。
+
+`nonlinear_persistence` 继续以可观察的 `nonlinear_conditional_gain` 作为主强度特征，但 response support 不再只看少量路径的均值曲线。普通能力使用 12 条 response paths；nonlinear 专用 64 条路径，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
 
 ## 决策 12：替换退化的 covariate future correlation
 
@@ -741,7 +743,7 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 2026-07-24：确认真实校准分成背景/nuisance 与主能力强度两层；六个单变量能力使用数据集内真实范围标定，四个结构能力使用跨数据集冻结的合成 response curve 标定，普通真实数据不再被要求具备结构语义。
 - 2026-07-24：确认同一 master sample 的 L96/L168/L336/L504 共用 clean L504 history 计算的 MASE denominator；Oracle context 只比较预测误差，不允许分母随 context 改变。
 - 2026-07-24：确认生成器数学 `lambda` 保持 `[0,1]`，实际机制参数不受统一上界 1 限制；校准从完整原始 response curve 自动识别最大稳定单调支持域，不能用单调包络掩盖 foldback，也不能把单数据集观测到的截断点硬编码为普遍常数。
-- 2026-07-24：将 `predictable_intermittency` 的强度坐标改为稳定响应的 realized `spike_rate`；零膨胀的 event-clock incremental R² 仅保留为结构可识别性诊断。
+- 2026-07-24：曾将 `predictable_intermittency` 的强度坐标改为 realized `spike_rate`，但 ETT2 全量预检证明其与 event-clock R² 一样可能零膨胀；最终改为连续且可精确分解的 `event_effect_energy_share`，真实 spike/clock 特征只作诊断。
 - 2026-07-24：首轮全链路 pilot 发现并修正三类执行/分析边界：secondary seed fallback 会破坏前缀稳定性；短 context view 的 regime/intermittent 索引 metadata 必须随裁窗平移；event window 覆盖完整 future 时不能对空 background 求均值。
 - 2026-07-24：推理调度从纯模型级 LPT 扩展为“模型级 LPT + 队尾同模型确定性多机分片”，每个 endpoint part 独立落盘并在严格覆盖校验后合并。
 - 2026-07-24：split-bank 只在至少两个 batch 时报告稳定性，并补充 batch 间相对得分差和 Top-3 overlap；secondary family 与 observation-noise robustness 必须和相同 seed/intensity 的 clean primary 做 matched-control 比较。
@@ -753,3 +755,4 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 2026-07-24：冻结19个满足 L504 的 GIFT-Eval canonical 配置：13个小时频率、4个日频和2个10秒频率；Restaurant、Hospital、COVID Deaths、Car Parts 因无504点原生序列暂不纳入。拆分 calendar season、feature period、能力专属生成时间尺度和 MASE period；10秒配置明确使用 `calendar_season_length=8640`、窗口内可观察生成尺度与 `mase_period=1`。生成时间尺度按 L504/H48 的可识别次数裁剪，MASE 不加隐藏 floor，并并列保存 history-std-normalized MAE 与 denominator 分布审计。
 - 2026-07-24：正式存储根目录固定为 `runtime/paper_exp/v8/<experiment_id>`；根 experiment manifest 以完整协议哈希为不可变身份，运行进度单独写入可更新的 pipeline status。本阶段暂不实现多个 seed shard 的组合分析。
 - 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；先对较快模型做 LPT，再将 Toto、TimesFM、TabPFN 分散为三条队列的慢尾部任务，使先结束前序队列的服务可参与队尾协作。
+- 2026-07-24：ETT2 正式运行在生成回验阶段暴露两个剂量问题：intermittency 的 thresholded spike rate 退化为零，nonlinear 的 12-path 均值支持域不能外推到64个生成 seeds。修复后普通能力保留12条校准路径，nonlinear 使用64条路径的下10%保守支持边界；压缩的 nonlinear secondary 匹配改用其支持域相对网格。ETT2 64 seeds 的 primary/secondary dose、结构、robustness 和 ablation 回验全部通过。

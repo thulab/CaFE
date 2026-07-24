@@ -9,7 +9,7 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 import numpy as np
 
@@ -49,7 +49,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v2"
+SCHEMA_VERSION = "paper_v8_pipeline.v3"
 CONTEXT_LENGTH = 504
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
@@ -61,6 +61,7 @@ CALIBRATION_PATH_SEED = 2026072402
 GENERATION_PATH_SEED = 2026072403
 ROBUSTNESS_SEED = 2026072404
 ROBUSTNESS_NOISE_RATIO = 0.15
+NONLINEAR_PATH_SUPPORT_QUANTILE = 0.10
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -81,6 +82,9 @@ STRUCTURAL_CAPABILITIES = frozenset(
         "covariate_response",
     }
 )
+SYNTHETIC_DOSE_CAPABILITIES = STRUCTURAL_CAPABILITIES | frozenset(
+    {"predictable_intermittency"}
+)
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
 PRIMARY_TARGET_FEATURE = {
     "trend": "curvature_abs",
@@ -88,11 +92,11 @@ PRIMARY_TARGET_FEATURE = {
     "time_varying_seasonality": "seasonal_amplitude_modulation",
     "regime_switching": "regime_sparse_transition_score",
     "nonlinear_persistence": "nonlinear_conditional_gain",
-    # Event-clock R² is retained as an identifiability diagnostic, but it is
-    # zero-inflated on finite L504 windows.  Spike rate is the stable realized
-    # visibility/dose coordinate while the generator keeps event timing fully
-    # deterministic and forecastable.
-    "predictable_intermittency": "spike_rate",
+    # Thresholded spike counts and event-clock R² are both zero-inflated on
+    # finite L504 windows.  The generator-known history event-component energy
+    # share is continuous and exactly monotone in event prominence; clock
+    # recoverability remains a separate observable structural diagnostic.
+    "predictable_intermittency": "event_effect_energy_share",
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
     # Strength is calibrated by the strongest ordered lagged association.
@@ -808,6 +812,12 @@ def measured_features(
         )
         if math.isfinite(effect_share):
             values["covariate_effect_variance_share"] = effect_share
+    elif capability_id == "predictable_intermittency":
+        effect_share = float(
+            metadata.get("event_effect_energy_share", math.nan)
+        )
+        if math.isfinite(effect_share):
+            values["event_effect_energy_share"] = effect_share
     return {
         str(name): float(value)
         for name, value in values.items()
@@ -946,12 +956,14 @@ def monotone_response_curve(
     calibration_seed_count: int,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
     full_grid = np.linspace(0.0, 1.0, 21)
-    means: list[float] = []
     target_feature = PRIMARY_TARGET_FEATURE[capability_id]
-    for lambda_value in full_grid:
-        realized: list[float] = []
-        for seed_index in range(calibration_seed_count):
-            anchor = anchors[seed_index % len(anchors)]
+    path_responses = np.empty(
+        (calibration_seed_count, len(full_grid)),
+        dtype=float,
+    )
+    for seed_index in range(calibration_seed_count):
+        anchor = anchors[seed_index % len(anchors)]
+        for lambda_index, lambda_value in enumerate(full_grid):
             features, _metadata = generate_calibration_member(
                 dataset,
                 anchor,
@@ -960,13 +972,58 @@ def monotone_response_curve(
                 lambda_value=float(lambda_value),
                 calibration_seed_index=seed_index,
             )
-            realized.append(float(features[target_feature]))
-        means.append(float(np.mean(realized)))
-    raw_response = np.asarray(means, dtype=float)
+            path_responses[seed_index, lambda_index] = float(
+                features[target_feature]
+            )
+    raw_response = np.mean(path_responses, axis=0)
     support_index, support = stable_monotone_support(
         full_grid,
         raw_response,
     )
+    if capability_id == "nonlinear_persistence":
+        path_support_indexes = np.asarray(
+            [
+                stable_monotone_support(full_grid, response)[0]
+                for response in path_responses
+            ],
+            dtype=int,
+        )
+        path_quantile_index = int(
+            np.quantile(
+                path_support_indexes,
+                NONLINEAR_PATH_SUPPORT_QUANTILE,
+                method="lower",
+            )
+        )
+        support_index = min(support_index, path_quantile_index)
+        unique, counts = np.unique(
+            path_support_indexes,
+            return_counts=True,
+        )
+        support.update(
+            {
+                "path_support_policy": (
+                    "lower_10pct_pathwise_stable_support_intersected_"
+                    "with_mean_support"
+                ),
+                "path_support_quantile": (
+                    NONLINEAR_PATH_SUPPORT_QUANTILE
+                ),
+                "path_support_quantile_index": path_quantile_index,
+                "path_support_quantile_lambda": float(
+                    full_grid[path_quantile_index]
+                ),
+                "path_support_index_counts": {
+                    str(int(index)): int(count)
+                    for index, count in zip(unique, counts, strict=True)
+                },
+            }
+        )
+    support["selected_peak_index"] = int(support_index)
+    support["effective_lambda_support"] = [
+        float(full_grid[0]),
+        float(full_grid[support_index]),
+    ]
     grid = full_grid[: support_index + 1]
     response = np.maximum.accumulate(
         raw_response[: support_index + 1]
@@ -1001,7 +1058,9 @@ def calibrate_capabilities(
     anchors: list[dict[str, Any]],
     *,
     calibration_seed_count: int,
+    nonlinear_calibration_seed_count: int | None = None,
     capability_ids: Iterable[str] = CAPABILITIES,
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> dict[str, Any]:
     feature_summary = summarize_feature_rows(
         anchor["features"] for anchor in anchors
@@ -1010,6 +1069,16 @@ def calibrate_capabilities(
     for capability_id in capability_ids:
         if capability_id not in CAPABILITIES:
             raise ValueError(f"unsupported capability: {capability_id}")
+        response_seed_count = (
+            int(nonlinear_calibration_seed_count)
+            if (
+                capability_id == "nonlinear_persistence"
+                and nonlinear_calibration_seed_count is not None
+            )
+            else int(calibration_seed_count)
+        )
+        if progress_callback is not None:
+            progress_callback(capability_id, response_seed_count)
         (
             primary_grid,
             primary_response,
@@ -1019,10 +1088,10 @@ def calibrate_capabilities(
             anchors,
             capability_id=capability_id,
             family_role="primary",
-            calibration_seed_count=calibration_seed_count,
+            calibration_seed_count=response_seed_count,
         )
         target_feature = PRIMARY_TARGET_FEATURE[capability_id]
-        if capability_id in STRUCTURAL_CAPABILITIES:
+        if capability_id in SYNTHETIC_DOSE_CAPABILITIES:
             primary_targets = np.linspace(
                 float(primary_response[0]),
                 float(primary_response[-1]),
@@ -1035,6 +1104,8 @@ def calibrate_capabilities(
             )
             calibration_status = (
                 "fixed_cross_dataset_even_realized_strength_grid"
+                if capability_id in STRUCTURAL_CAPABILITIES
+                else "generator_relative_continuous_event_dose_grid"
             )
             real_interval = None
         else:
@@ -1075,7 +1146,7 @@ def calibrate_capabilities(
             anchors,
             capability_id=capability_id,
             family_role="secondary",
-            calibration_seed_count=calibration_seed_count,
+            calibration_seed_count=response_seed_count,
         )
         secondary_lambdas = inverse_response_lambdas(
             secondary_grid,
@@ -1083,13 +1154,25 @@ def calibrate_capabilities(
             np.asarray(primary_targets, dtype=float),
         )
         secondary_status = "matched_primary_target_values"
-        if any(
+        nonincreasing_secondary = any(
             right <= left + 1e-8
             for left, right in zip(
                 secondary_lambdas,
                 secondary_lambdas[1:],
             )
-        ):
+        )
+        secondary_support_span = float(
+            secondary_grid[-1] - secondary_grid[0]
+        )
+        nonlinear_audit_span = float(
+            secondary_lambdas[4] - secondary_lambdas[2]
+        )
+        compressed_nonlinear_audit = bool(
+            capability_id == "nonlinear_persistence"
+            and secondary_support_span > 1e-12
+            and nonlinear_audit_span < 0.30 * secondary_support_span
+        )
+        if nonincreasing_secondary or compressed_nonlinear_audit:
             secondary_lambdas = tuple(
                 float(value)
                 for value in np.linspace(
@@ -1099,18 +1182,28 @@ def calibrate_capabilities(
                 )
             )
             secondary_status = (
-                "primary_targets_outside_secondary_support_"
+                "nonlinear_secondary_compressed_match_"
                 "fixed_relative_grid_used"
+                if compressed_nonlinear_audit
+                else (
+                    "primary_targets_outside_secondary_support_"
+                    "fixed_relative_grid_used"
+                )
             )
         capabilities[capability_id] = {
             "target_feature": target_feature,
+            "response_calibration_seed_count": response_seed_count,
             "target_dim": TARGET_DIM_BY_CAPABILITY[capability_id],
             "primary_family": PRIMARY_FAMILY_BY_CAPABILITY[capability_id],
             "secondary_family": SECONDARY_FAMILY_BY_CAPABILITY[capability_id],
             "intensity_calibration_scope": (
                 "generator_structural_relative_grid"
                 if capability_id in STRUCTURAL_CAPABILITIES
-                else "dataset_real_feature_range"
+                else (
+                    "generator_continuous_event_dose_grid"
+                    if capability_id == "predictable_intermittency"
+                    else "dataset_real_feature_range"
+                )
             ),
             "calibration_status": calibration_status,
             "real_interval_q10_q90": real_interval,
@@ -1144,6 +1237,11 @@ def calibrate_capabilities(
         "schema_version": "paper_v8_capability_calibration.v1",
         "generator_version": GENERATOR_VERSION,
         "calibration_seed_count": calibration_seed_count,
+        "nonlinear_calibration_seed_count": (
+            int(nonlinear_calibration_seed_count)
+            if nonlinear_calibration_seed_count is not None
+            else int(calibration_seed_count)
+        ),
         "feature_summary": feature_summary,
         "capabilities": capabilities,
     }

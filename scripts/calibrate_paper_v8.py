@@ -24,6 +24,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-anchors", type=int, default=256)
     parser.add_argument("--calibration-seeds", type=int, default=12)
+    parser.add_argument(
+        "--nonlinear-calibration-seeds",
+        type=int,
+        default=64,
+        help=(
+            "Path budget for conservative nonlinear response support; other "
+            "capabilities use --calibration-seeds."
+        ),
+    )
     parser.add_argument("--minimum-observed-fraction", type=float, default=0.5)
     parser.add_argument(
         "--capabilities",
@@ -36,7 +45,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.max_anchors < 1 or args.calibration_seeds < 1:
+    if (
+        args.max_anchors < 1
+        or args.calibration_seeds < 1
+        or args.nonlinear_calibration_seeds < 1
+    ):
         raise ValueError("anchor and calibration seed counts must be positive")
     if not 0.0 < args.minimum_observed_fraction <= 1.0:
         raise ValueError("minimum observed fraction must be in (0, 1]")
@@ -54,7 +67,20 @@ def main() -> int:
         dataset,
         anchors,
         calibration_seed_count=args.calibration_seeds,
+        nonlinear_calibration_seed_count=(
+            args.nonlinear_calibration_seeds
+        ),
         capability_ids=args.capabilities,
+        progress_callback=lambda capability_id, path_count: print(
+            v8.canonical_json(
+                {
+                    "dataset_id": dataset.dataset_id,
+                    "calibrating_capability": capability_id,
+                    "response_path_count": path_count,
+                }
+            ),
+            flush=True,
+        ),
     )
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
@@ -67,12 +93,21 @@ def main() -> int:
         "source": source_metadata,
         "anchor_count": len(anchors),
         "capabilities": list(args.capabilities),
+        "response_calibration_path_budget": {
+            "default": int(args.calibration_seeds),
+            "nonlinear_persistence": int(
+                args.nonlinear_calibration_seeds
+            ),
+        },
         "feature_contract": {
             "background_features": (
                 "direct finite feature row from one real L504 anchor"
             ),
             "univariate_primary_strength": (
-                "dataset q10-q90 intersected with generator response support"
+                "dataset q10-q90 intersected with generator response support; "
+                "predictable intermittency uses continuous generator-known "
+                "event energy dose because thresholded real spike counts are "
+                "zero-inflated"
             ),
             "structural_primary_strength": (
                 "fixed cross-dataset evenly spaced realized-strength grid"

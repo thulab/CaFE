@@ -230,6 +230,142 @@ def test_response_support_detects_sustained_foldback_without_magic_bound():
     assert audit["effective_lambda_support"] == pytest.approx([0.0, 0.7])
 
 
+def test_nonlinear_response_support_uses_lower_pathwise_quantile(
+    monkeypatch,
+):
+    common = load_script("paper_v8_pipeline_common")
+
+    def calibration_member(
+        dataset,
+        anchor,
+        *,
+        capability_id,
+        family_role,
+        lambda_value,
+        calibration_seed_index,
+    ):
+        del dataset, anchor, capability_id, family_role
+        if calibration_seed_index < 2 and lambda_value > 0.2:
+            value = 0.2 - 2.0 * (lambda_value - 0.2)
+        else:
+            value = lambda_value
+        return {"nonlinear_conditional_gain": value}, {}
+
+    monkeypatch.setattr(
+        common,
+        "generate_calibration_member",
+        calibration_member,
+    )
+
+    grid, response, audit = common.monotone_response_curve(
+        common.resolve_dataset("gift_electricity_h"),
+        [{} for _ in range(20)],
+        capability_id="nonlinear_persistence",
+        family_role="primary",
+        calibration_seed_count=20,
+    )
+
+    assert grid[-1] == pytest.approx(0.2)
+    assert response[-1] > response[0]
+    assert audit["path_support_quantile"] == pytest.approx(0.10)
+    assert audit["path_support_quantile_lambda"] == pytest.approx(0.2)
+    assert audit["effective_lambda_support"] == pytest.approx([0.0, 0.2])
+
+
+def test_compressed_nonlinear_secondary_match_uses_relative_grid(
+    monkeypatch,
+):
+    common = load_script("paper_v8_pipeline_common")
+
+    def response_curve(
+        dataset,
+        anchors,
+        *,
+        capability_id,
+        family_role,
+        calibration_seed_count,
+    ):
+        del dataset, anchors, capability_id, calibration_seed_count
+        if family_role == "primary":
+            grid = np.asarray([0.0, 0.3])
+            response = np.asarray([0.0, 1.0])
+        else:
+            grid = np.asarray([0.0, 0.5])
+            response = np.asarray([0.0, 10.0])
+        return grid, response, {
+            "effective_lambda_support": [
+                float(grid[0]),
+                float(grid[-1]),
+            ]
+        }
+
+    monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    anchors = [
+        {"features": {"nonlinear_conditional_gain": value}}
+        for value in np.linspace(0.0, 1.0, 20)
+    ]
+
+    calibration = common.calibrate_capabilities(
+        common.resolve_dataset("gift_electricity_h"),
+        anchors,
+        calibration_seed_count=12,
+        nonlinear_calibration_seed_count=64,
+        capability_ids=["nonlinear_persistence"],
+    )
+    nonlinear = calibration["capabilities"]["nonlinear_persistence"]
+
+    assert nonlinear["response_calibration_seed_count"] == 64
+    assert nonlinear["secondary"]["calibration_status"] == (
+        "nonlinear_secondary_compressed_match_fixed_relative_grid_used"
+    )
+    assert nonlinear["secondary"]["selected_lambdas"] == pytest.approx(
+        np.linspace(0.0, 0.5, 5)
+    )
+
+
+def test_intermittency_measured_dose_comes_from_generator_metadata():
+    common = load_script("paper_v8_pipeline_common")
+    dataset = common.resolve_dataset("gift_electricity_h")
+    conditioning = common.build_conditioning(
+        dataset,
+        capability_id="predictable_intermittency",
+        frequency="H",
+        season_length=24,
+    )
+    target, metadata, covariates = common.generate_deterministic_sample(
+        "predictable_intermittency",
+        common.MASTER_LENGTH,
+        common.CONTEXT_LENGTH,
+        1,
+        24,
+        5,
+        np.random.default_rng(41),
+        conditioning=conditioning,
+    )
+    target, covariates = common.standardize_generated_sample(
+        "predictable_intermittency",
+        target,
+        covariates,
+        metadata=metadata,
+    )
+
+    features = common.measured_features(
+        "predictable_intermittency",
+        target,
+        covariates,
+        season_length=24,
+        metadata=metadata,
+    )
+
+    assert (
+        common.PRIMARY_TARGET_FEATURE["predictable_intermittency"]
+        == "event_effect_energy_share"
+    )
+    assert features["event_effect_energy_share"] == pytest.approx(
+        metadata["event_effect_energy_share"]
+    )
+
+
 def test_master_views_share_exact_future_and_l504_mase_scale():
     common = load_script("paper_v8_pipeline_common")
     time = np.arange(common.MASTER_LENGTH, dtype=float)

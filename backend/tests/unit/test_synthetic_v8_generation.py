@@ -652,6 +652,31 @@ def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:
         assert len({fingerprints[capability_id](row) for row in rows}) >= 8
 
 
+@pytest.mark.parametrize("family_role", ["primary", "secondary"])
+def test_intermittency_event_energy_dose_is_strictly_monotone(
+    family_role,
+) -> None:
+    shares = []
+    for intensity in range(1, 6):
+        _target, metadata, _covariates = generate_deterministic_sample(
+            "predictable_intermittency",
+            552,
+            504,
+            1,
+            24,
+            intensity,
+            np.random.default_rng(37),
+            family_role=family_role,
+        )
+        shares.append(metadata["event_effect_energy_share"])
+
+    assert all(
+        right > left
+        for left, right in zip(shares, shares[1:], strict=False)
+    )
+    assert all(0.0 < share < 1.0 for share in shares)
+
+
 def test_v8_robustness_noise_changes_only_history_and_keeps_clean_future() -> None:
     clean, _, _ = generate_deterministic_sample(
         "multi_seasonal",

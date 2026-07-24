@@ -64,6 +64,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-anchors", type=int, default=256)
     parser.add_argument("--calibration-seeds", type=int, default=12)
     parser.add_argument(
+        "--nonlinear-calibration-seeds",
+        type=int,
+        default=64,
+    )
+    parser.add_argument(
         "--capabilities",
         nargs="+",
         choices=v8.CAPABILITIES,
@@ -137,6 +142,8 @@ def commands_for_dataset(
                 str(args.max_anchors),
                 "--calibration-seeds",
                 str(args.calibration_seeds),
+                "--nonlinear-calibration-seeds",
+                str(args.nonlinear_calibration_seeds),
                 "--capabilities",
                 *args.capabilities,
             ],
@@ -188,6 +195,9 @@ def protocol_config(
         "seed_count": int(args.seed_count),
         "max_anchors": int(args.max_anchors),
         "calibration_seeds": int(args.calibration_seeds),
+        "nonlinear_calibration_seeds": int(
+            args.nonlinear_calibration_seeds
+        ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
         "model_execution_config": {
@@ -339,7 +349,11 @@ def main() -> int:
         raise ValueError("inference endpoints must be unique")
     if args.seed_start < 0 or args.seed_count < 1:
         raise ValueError("seed_start must be non-negative and seed_count positive")
-    if args.max_anchors < 1 or args.calibration_seeds < 1:
+    if (
+        args.max_anchors < 1
+        or args.calibration_seeds < 1
+        or args.nonlinear_calibration_seeds < 1
+    ):
         raise ValueError("anchor and calibration seed counts must be positive")
     start = STEPS.index(args.start_at)
     stop = STEPS.index(args.stop_after)

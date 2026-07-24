@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-observable-time-scales"
+GENERATOR_VERSION = "capts-paper-v8-continuous-dose-gates"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -1946,7 +1946,20 @@ def _intermittent(length, context, dim, season, intensity, rng, cond, family):
         "phase": texture_phase,
         "future_process_noise_scale": 0.0,
     }
-    target = strength * pulse[:, None] * loading[None, :] + 0.03 * texture[:, None]
+    event_component = (
+        strength * pulse[:, None] * loading[None, :]
+    )
+    texture_component = 0.03 * texture[:, None]
+    target = event_component + texture_component
+    event_energy = float(
+        np.mean(np.square(event_component[:context]))
+    )
+    texture_energy = float(
+        np.mean(np.square(texture_component[:context]))
+    )
+    event_effect_energy_share = float(
+        event_energy / max(event_energy + texture_energy, 1e-12)
+    )
     detail = {
         "pulse_centers": [center for center in centers if center < length],
         "pulse_interval_pattern": interval_pattern,
@@ -1957,6 +1970,13 @@ def _intermittent(length, context, dim, season, intensity, rng, cond, family):
         "pulse_width": width,
         "pulse_shape": shape,
         "pulse_strength": strength,
+        "event_component_history_energy": event_energy,
+        "background_component_history_energy": texture_energy,
+        "event_effect_energy_share": event_effect_energy_share,
+        "event_dose_semantics": (
+            "history_event_component_energy_divided_by_event_plus_"
+            "deterministic_texture_energy"
+        ),
         "deterministic_texture": texture_meta,
     }
     return target, _metadata("predictable_intermittency", family, target, detail), None
