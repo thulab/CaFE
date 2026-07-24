@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any, Iterable
 
 import numpy as np
@@ -13,7 +13,7 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v1"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v2"
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -190,6 +190,116 @@ def covariate_family_match_checks(
     return values
 
 
+def nonlinear_mechanism_response_checks(
+    samples: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Validate nonlinear dose at the generator-recorded causal lag.
+
+    ``nonlinear_conditional_gain`` is an observable lag-search proxy shared
+    with real calibration windows.  This construction gate separately uses
+    the generated sample's known causal lag, preventing a correlated proxy lag
+    from making a valid I3/I5 mechanism look reversed.
+    """
+
+    groups: dict[
+        tuple[str, str], dict[int, list[tuple[int, float]]]
+    ] = defaultdict(lambda: defaultdict(list))
+    expected_counts: dict[
+        tuple[str, str], Counter[int]
+    ] = defaultdict(Counter)
+    expected_groups: set[tuple[str, str]] = set()
+    for row in samples:
+        if (
+            row.get("capability_id") != "nonlinear_persistence"
+            or row.get("evaluation_table", "main") != "main"
+        ):
+            continue
+        key = (
+            str(row["dataset_id"]),
+            str(row["generator_family_role"]),
+        )
+        expected_groups.add(key)
+        expected_counts[key][int(row["intensity"])] += 1
+        value = float(
+            row.get("realized_features", {}).get(
+                "nonlinear_actual_lag_gain",
+                math.nan,
+            )
+        )
+        if math.isfinite(value):
+            groups[key][int(row["intensity"])].append(
+                (int(row["seed_index"]), value)
+            )
+
+    results: list[dict[str, Any]] = []
+    for key in sorted(expected_groups):
+        values_by_intensity = groups[key]
+        means = {
+            intensity: float(
+                np.mean([value for _seed, value in values])
+            )
+            for intensity, values in sorted(values_by_intensity.items())
+            if values
+        }
+        ordered = [means[index] for index in sorted(means)]
+        missing_feature_count = sum(
+            expected_count
+            - len(values_by_intensity.get(intensity, ()))
+            for intensity, expected_count
+            in expected_counts[key].items()
+        )
+        seed_values = {
+            intensity: {seed: value for seed, value in values}
+            for intensity, values in values_by_intensity.items()
+        }
+        paired_deltas: list[float] = []
+        if len(seed_values) >= 2:
+            lower_intensity = min(seed_values)
+            upper_intensity = max(seed_values)
+            shared_seeds = sorted(
+                set(seed_values[lower_intensity])
+                & set(seed_values[upper_intensity])
+            )
+            paired_deltas = [
+                seed_values[upper_intensity][seed]
+                - seed_values[lower_intensity][seed]
+                for seed in shared_seeds
+            ]
+        accepted = bool(
+            missing_feature_count == 0
+            and len(ordered) >= 2
+            and max(ordered) - min(ordered) > 1e-9
+            and all(
+                right >= left - 1e-8
+                for left, right in zip(ordered, ordered[1:])
+            )
+        )
+        results.append(
+            {
+                "dataset_id": key[0],
+                "family_role": key[1],
+                "feature": "nonlinear_actual_lag_gain",
+                "missing_feature_count": missing_feature_count,
+                "mean_feature_by_intensity": {
+                    str(name): value for name, value in means.items()
+                },
+                "paired_low_high_count": len(paired_deltas),
+                "paired_low_high_positive_fraction": (
+                    float(np.mean(np.asarray(paired_deltas) > 0.0))
+                    if paired_deltas
+                    else None
+                ),
+                "paired_low_high_median_delta": (
+                    float(np.median(paired_deltas))
+                    if paired_deltas
+                    else None
+                ),
+                "accepted": accepted,
+            }
+        )
+    return results
+
+
 def validate_sample_collection(
     samples: Iterable[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -363,10 +473,17 @@ def validate_sample_collection(
             covariate_family_match_checks(primary, secondary)
         )
 
+    nonlinear_mechanism_results = nonlinear_mechanism_response_checks(
+        rows
+    )
     accepted = bool(
         all(result["accepted"] for result in basic_results.values())
         and not duplicate_groups
         and all(result["accepted"] for result in dose_results)
+        and all(
+            result["accepted"]
+            for result in nonlinear_mechanism_results
+        )
         and all(
             result.get("accepted", False)
             for result in structural_results
@@ -385,6 +502,7 @@ def validate_sample_collection(
         ),
         "duplicate_groups": duplicate_groups,
         "dose_response": dose_results,
+        "nonlinear_mechanism_response": nonlinear_mechanism_results,
         "structural_results": structural_results,
         "matched_family_results": matched_family_results,
     }

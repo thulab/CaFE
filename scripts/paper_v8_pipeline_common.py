@@ -43,13 +43,15 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
 )
 from paper_v2_transfer_common import impute_observed_window  # noqa: E402
 from synthetic_feature_profile import (  # noqa: E402
+    adjusted_r2,
     feature_vector,
     file_sha256,
     read_gift_arrow_targets,
+    robust_scale,
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v3"
+SCHEMA_VERSION = "paper_v8_pipeline.v4"
 CONTEXT_LENGTH = 504
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
@@ -62,6 +64,14 @@ GENERATION_PATH_SEED = 2026072403
 ROBUSTNESS_SEED = 2026072404
 ROBUSTNESS_NOISE_RATIO = 0.15
 NONLINEAR_PATH_SUPPORT_QUANTILE = 0.10
+NONLINEAR_FEATURE_LAG_FRACTIONS = (
+    1.0 / 6.0,
+    1.0 / 5.0,
+    1.0 / 4.0,
+    1.0 / 3.0,
+    1.0 / 2.0,
+)
+NONLINEAR_FEATURE_MAX_LAG = 32
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -417,6 +427,148 @@ def standardize_history(values: np.ndarray) -> tuple[np.ndarray, float, float]:
     return (array - mean) / scale, mean, scale
 
 
+def _v8_nonlinear_feature_inputs(
+    values: np.ndarray,
+    season_length: int,
+) -> tuple[np.ndarray, int, int]:
+    series = np.asarray(values, dtype=float).reshape(-1)
+    series = series[np.isfinite(series)]
+    if series.size < 12:
+        return np.asarray([], dtype=float), 0, 0
+    series = robust_scale(series)
+    seasonal_lag = int(
+        np.clip(
+            max(4, int(round(season_length))),
+            1,
+            max(1, series.size - 2),
+        )
+    )
+    maximum_lag = min(
+        NONLINEAR_FEATURE_MAX_LAG,
+        max(2, series.size // 4),
+    )
+    return series, seasonal_lag, maximum_lag
+
+
+def _v8_nonlinear_gain_at_lag(
+    series: np.ndarray,
+    seasonal_lag: int,
+    nonlinear_lag: int,
+) -> float:
+    start = max(seasonal_lag, nonlinear_lag, 1)
+    if series.size - start < 8:
+        return math.nan
+    target = series[start:]
+    lag1 = series[start - 1 : -1]
+    lag_seasonal = series[: series.size - seasonal_lag]
+    if lag_seasonal.size > target.size:
+        lag_seasonal = lag_seasonal[-target.size :]
+    lag_nonlinear = series[
+        start - nonlinear_lag : series.size - nonlinear_lag
+    ]
+    linear = np.column_stack(
+        [
+            np.ones_like(target),
+            lag1,
+            lag_seasonal,
+            lag_nonlinear,
+        ]
+    )
+    nonlinear = np.column_stack(
+        [
+            linear,
+            lag_nonlinear**2,
+            lag_nonlinear**3,
+        ]
+    )
+    return float(
+        adjusted_r2(target, nonlinear)
+        - adjusted_r2(target, linear)
+    )
+
+
+def v8_nonlinear_conditional_gain(
+    values: np.ndarray,
+    season_length: int,
+) -> tuple[float, int, tuple[int, ...]]:
+    """Measure generic nonlinear persistence over plausible relative lags.
+
+    The pre-v4 proxy fixed the nonlinear lag to ``season_length // 2`` and
+    added one sine-squared term.  V8 generators intentionally randomize their
+    actual lag and use either shifted-tanh or rational responses, so that proxy
+    could react more strongly at I3 than I5 merely because a correlated,
+    incorrect lag happened to fit one trajectory.
+
+    Search a small, fixed set of season-relative lags and use quadratic/cubic
+    terms.  This remains family-neutral and is also available for real windows,
+    while covering the smooth bounded response families used by V8 without
+    consulting generator metadata.
+    """
+
+    series, seasonal_lag, maximum_lag = _v8_nonlinear_feature_inputs(
+        values,
+        season_length,
+    )
+    if not series.size:
+        return 0.0, 0, ()
+    candidate_lags = tuple(
+        sorted(
+            {
+                int(
+                    np.clip(
+                        round(seasonal_lag * fraction),
+                        2,
+                        maximum_lag,
+                    )
+                )
+                for fraction in NONLINEAR_FEATURE_LAG_FRACTIONS
+            }
+        )
+    )
+    best_gain = -math.inf
+    best_lag = 0
+    for nonlinear_lag in candidate_lags:
+        gain = _v8_nonlinear_gain_at_lag(
+            series,
+            seasonal_lag,
+            nonlinear_lag,
+        )
+        if math.isfinite(gain) and gain > best_gain:
+            best_gain = gain
+            best_lag = nonlinear_lag
+    if not math.isfinite(best_gain):
+        return 0.0, 0, candidate_lags
+    return best_gain, best_lag, candidate_lags
+
+
+def v8_nonlinear_actual_lag_gain(
+    values: np.ndarray,
+    season_length: int,
+    nonlinear_lag: int,
+) -> float:
+    """Return the family-neutral nonlinear gain at a known generated lag."""
+
+    series, seasonal_lag, maximum_lag = _v8_nonlinear_feature_inputs(
+        values,
+        season_length,
+    )
+    if not series.size:
+        return 0.0
+    lag = int(
+        np.clip(
+            int(nonlinear_lag),
+            2,
+            maximum_lag,
+        )
+    )
+    gain = _v8_nonlinear_gain_at_lag(
+        series,
+        seasonal_lag,
+        lag,
+    )
+    return gain if math.isfinite(gain) else 0.0
+
+
 def calibration_period_policy(
     frequency: str,
     standardized_history: np.ndarray,
@@ -562,6 +714,21 @@ def build_calibration_anchors(
             standardized[:, None],
             int(period_policy["feature_period"]),
             context_length=CONTEXT_LENGTH,
+        )
+        (
+            nonlinear_gain,
+            nonlinear_detected_lag,
+            nonlinear_candidate_lags,
+        ) = v8_nonlinear_conditional_gain(
+            standardized,
+            int(period_policy["feature_period"]),
+        )
+        features["nonlinear_conditional_gain"] = nonlinear_gain
+        features["nonlinear_proxy_best_lag"] = float(
+            nonlinear_detected_lag
+        )
+        features["nonlinear_proxy_candidate_lag_count"] = float(
+            len(nonlinear_candidate_lags)
         )
         finite_features = {
             str(name): float(value)
@@ -806,7 +973,32 @@ def measured_features(
             ),
         )
     )
-    if capability_id == "covariate_response":
+    if capability_id == "nonlinear_persistence":
+        (
+            nonlinear_gain,
+            nonlinear_detected_lag,
+            nonlinear_candidate_lags,
+        ) = v8_nonlinear_conditional_gain(
+            np.mean(target, axis=1),
+            measurement_period,
+        )
+        values["nonlinear_conditional_gain"] = nonlinear_gain
+        values["nonlinear_proxy_best_lag"] = float(
+            nonlinear_detected_lag
+        )
+        values["nonlinear_proxy_candidate_lag_count"] = float(
+            len(nonlinear_candidate_lags)
+        )
+        actual_lag = metadata.get("nonlinear_lag")
+        if actual_lag is not None:
+            values["nonlinear_actual_lag_gain"] = (
+                v8_nonlinear_actual_lag_gain(
+                    np.mean(target, axis=1),
+                    measurement_period,
+                    int(actual_lag),
+                )
+            )
+    elif capability_id == "covariate_response":
         effect_share = float(
             metadata.get("covariate_effect_variance_share", math.nan)
         )

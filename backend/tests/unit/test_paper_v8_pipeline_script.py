@@ -230,6 +230,59 @@ def test_response_support_detects_sustained_foldback_without_magic_bound():
     assert audit["effective_lambda_support"] == pytest.approx([0.0, 0.7])
 
 
+def test_v8_nonlinear_gain_searches_relative_lags_and_tracks_strength():
+    common = load_script("paper_v8_pipeline_common")
+
+    def rational_delay_series(gain: float) -> np.ndarray:
+        rng = np.random.default_rng(9)
+        values = np.zeros(common.MASTER_LENGTH, dtype=float)
+        values[:24] = rng.normal(0.0, 0.6, size=24)
+        time = np.arange(common.MASTER_LENGTH, dtype=float)
+        forcing = (
+            np.sin(2.0 * np.pi * time / 24.0 + 0.7)
+            + 0.4 * np.sin(2.0 * np.pi * time / 47.0 + 1.2)
+        )
+        for index in range(24, common.MASTER_LENGTH):
+            delayed = values[index - 4]
+            values[index] = (
+                0.52 * values[index - 1]
+                + 0.14 * values[index - 24]
+                + gain * delayed / (1.0 + delayed * delayed)
+                + 0.18 * forcing[index]
+            )
+        return values
+
+    lower, lower_lag, candidates = (
+        common.v8_nonlinear_conditional_gain(
+            rational_delay_series(0.18),
+            24,
+        )
+    )
+    upper, upper_lag, repeated_candidates = (
+        common.v8_nonlinear_conditional_gain(
+            rational_delay_series(0.50),
+            24,
+        )
+    )
+
+    assert candidates == (4, 5, 6, 8, 12)
+    assert repeated_candidates == candidates
+    assert lower_lag == 4
+    assert upper_lag == 4
+    assert upper > lower > 0.0
+    actual_lower = common.v8_nonlinear_actual_lag_gain(
+        rational_delay_series(0.18),
+        24,
+        4,
+    )
+    actual_upper = common.v8_nonlinear_actual_lag_gain(
+        rational_delay_series(0.50),
+        24,
+        4,
+    )
+    assert actual_upper > actual_lower > 0.0
+
+
 def test_nonlinear_response_support_uses_lower_pathwise_quantile(
     monkeypatch,
 ):

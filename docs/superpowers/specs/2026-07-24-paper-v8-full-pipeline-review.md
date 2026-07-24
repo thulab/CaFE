@@ -253,7 +253,11 @@ range_expansion_factor = 1.0
 
 `predictable_intermittency` 的能力结构仍由确定性 event clock 保证，`intermittency_clock_incremental_r2` 和 realized `spike_rate` 保留为可观察诊断；但二者在有限 L504 窗口上均可能高度零膨胀，不适合作为五档反解坐标。正式主强度特征改为生成器可精确分解的 `event_effect_energy_share`：在 L504 history 内计算事件成分能量占“事件成分 + 确定性背景 texture”总能量的比例。该坐标连续、同一路径下严格单调；真实窗口仍校准事件时间尺度、宽度和背景 nuisance，事件剂量使用合成机制支持域等距标定。模型机制评分继续使用 event-window 预测误差，而不是拟合该生成器元数据。
 
-`nonlinear_persistence` 继续以可观察的 `nonlinear_conditional_gain` 作为主强度特征，但 response support 不再只看少量路径的均值曲线。普通能力使用 12 条 response paths；nonlinear 专用 64 条路径，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
+`nonlinear_persistence` 继续以可观察的 `nonlinear_conditional_gain` 作为主强度特征，但不再固定假设 nonlinear lag 等于 `season_length/2`、也不再只增加一个 sine-square 基底。v8 在冻结的少量季节相对候选 lag（`1/6, 1/5, 1/4, 1/3, 1/2`，最大 32）上分别计算加入二次和三次项后的 adjusted-R² 增益，取最佳 lag 的增益作为真实窗口和合成窗口共用的 observable proxy。这组低阶基底同时覆盖 shifted-tanh 和 rational 两个平滑有界 family，不读取生成器真值。
+
+生成有效性另设 `nonlinear_actual_lag_gain`：只在合成样本内部使用 metadata 记录的真实因果 lag，以同一组二次/三次 family-neutral 基底计算增量，强制 primary I1–I5 和 secondary I3/I5 的总体响应单调。observable proxy 负责真实范围校准和主强度坐标，actual-lag gain 负责证明生成器真正注入的机制增强；二者不得互相替代，也不能用换 seed 重试绕过失败。
+
+response support 不再只看少量路径的均值曲线。普通能力使用 12 条 response paths；nonlinear 专用 64 条路径，分别寻找稳定支持边界，并取逐路径支持边界的下 10% 分位与均值支持域的交集。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
 
 ## 决策 12：替换退化的 covariate future correlation
 
@@ -756,3 +760,4 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 2026-07-24：正式存储根目录固定为 `runtime/paper_exp/v8/<experiment_id>`；根 experiment manifest 以完整协议哈希为不可变身份，运行进度单独写入可更新的 pipeline status。本阶段暂不实现多个 seed shard 的组合分析。
 - 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；先对较快模型做 LPT，再将 Toto、TimesFM、TabPFN 分散为三条队列的慢尾部任务，使先结束前序队列的服务可参与队尾协作。
 - 2026-07-24：ETT2 正式运行在生成回验阶段暴露两个剂量问题：intermittency 的 thresholded spike rate 退化为零，nonlinear 的 12-path 均值支持域不能外推到64个生成 seeds。修复后普通能力保留12条校准路径，nonlinear 使用64条路径的下10%保守支持边界；压缩的 nonlinear secondary 匹配改用其支持域相对网格。ETT2 64 seeds 的 primary/secondary dose、结构、robustness 和 ablation 回验全部通过。
+- 2026-07-25：Jena Weather 预检暴露 nonlinear observable proxy 的 lag 错配：secondary 的真实 lag 为4，但旧指标固定检测 lag12，单条相位共振路径使 I3 均值异常抬高并反转 I3/I5。v8 改为少量季节相对 lag 搜索的二次/三次 adjusted-R² observable proxy，并新增生成器真实 lag 对齐的独立机制 gate。Jena 64 seeds 复测中 observable primary 五档和 secondary I3/I5 均递增，actual-lag primary/secondary gate、结构、robustness 与 ablation 全部通过。

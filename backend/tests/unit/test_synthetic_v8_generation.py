@@ -19,6 +19,7 @@ from app.services.synthetic_v8_generation import (
 )
 from app.services.synthetic_v8_feature_gate import (
     covariate_family_match_checks,
+    nonlinear_mechanism_response_checks,
 )
 
 
@@ -26,6 +27,54 @@ def test_covariate_real_feature_contract_is_history_only():
     assert "future_abs_covariate_target_corr" not in (
         REQUIRED_REAL_FEATURES_BY_CAPABILITY["covariate_response"]
     )
+
+
+def test_nonlinear_mechanism_gate_uses_actual_lag_gain():
+    rows = [
+        {
+            "dataset_id": "demo",
+            "capability_id": "nonlinear_persistence",
+            "generator_family_role": family_role,
+            "evaluation_table": "main",
+            "seed_index": seed,
+            "intensity": intensity,
+            "realized_features": {
+                "nonlinear_actual_lag_gain": (
+                    0.001 * intensity + 0.00001 * seed
+                )
+            },
+        }
+        for family_role, intensities in (
+            ("primary", (1, 2, 3, 4, 5)),
+            ("secondary", (3, 5)),
+        )
+        for seed in (2, 7)
+        for intensity in intensities
+    ]
+
+    results = nonlinear_mechanism_response_checks(rows)
+
+    assert len(results) == 2
+    assert all(result["accepted"] for result in results)
+    assert all(
+        result["paired_low_high_positive_fraction"] == pytest.approx(1.0)
+        for result in results
+    )
+
+    for row in rows:
+        if (
+            row["generator_family_role"] == "secondary"
+            and row["intensity"] == 5
+        ):
+            row["realized_features"] = {}
+    missing = nonlinear_mechanism_response_checks(rows)
+
+    secondary = next(
+        result
+        for result in missing
+        if result["family_role"] == "secondary"
+    )
+    assert secondary["accepted"] is False
 
 
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
