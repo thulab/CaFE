@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 import paper_v8_pipeline_common as v8
-import run_paper_v5_e2_inference as v7_inference
 import run_paper_v8_inference as v8_inference
 
 
@@ -112,6 +111,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-at", choices=STEPS, default="calibration")
     parser.add_argument("--stop-after", choices=STEPS, default="analysis")
     parser.add_argument("--resume-inference", action="store_true")
+    parser.add_argument(
+        "--upgrade-inference-execution-policy",
+        action="store_true",
+        help=(
+            "Explicitly migrate an existing pre-inference experiment from an "
+            "older model execution/scheduling policy. An active preparation-"
+            "only run may continue; refuses if that run can enter inference "
+            "or after inference artifacts exist."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -214,7 +223,7 @@ def protocol_config(
     dataset_ids: list[str],
 ) -> dict[str, Any]:
     missing_configs = sorted(
-        set(args.models) - set(v7_inference.MODEL_EXECUTION_CONFIG)
+        set(args.models) - set(v8_inference.MODEL_EXECUTION_CONFIG)
     )
     if missing_configs:
         raise ValueError(
@@ -243,7 +252,7 @@ def protocol_config(
         "capabilities": list(args.capabilities),
         "models": list(args.models),
         "model_execution_config": {
-            model_id: dict(v7_inference.MODEL_EXECUTION_CONFIG[model_id])
+            model_id: dict(v8_inference.MODEL_EXECUTION_CONFIG[model_id])
             for model_id in args.models
         },
         "dataset_execution_policy": (
@@ -251,8 +260,11 @@ def protocol_config(
         ),
         "model_scheduling_policy": {
             "policy_id": v8_inference.SCHEDULING_POLICY_ID,
-            "slow_tail_models": list(v8_inference.SLOW_TAIL_MODELS),
-            "tail_collaboration": "enabled",
+            "phase_order": "models_in_declared_order",
+            "service_collaboration": (
+                "all_compatible_services_run_deterministic_parts_of_each_model"
+            ),
+            "resume_part_identity": "preserved_when_service_count_changes",
         },
         "context_length": v8.CONTEXT_LENGTH,
         "horizon": v8.HORIZON,
@@ -303,6 +315,7 @@ def initialize_experiment(
     experiment_id: str,
     protocol: dict[str, Any],
     endpoints: list[str],
+    allow_inference_execution_upgrade: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     if v8.safe_id(experiment_id) != experiment_id:
         raise ValueError(
@@ -333,11 +346,21 @@ def initialize_experiment(
     }
     if manifest_path.exists():
         existing = v8.read_json(manifest_path)
-        if (
-            existing.get("experiment_id") != experiment_id
-            or existing.get("protocol_sha256") != protocol_sha256
-            or existing.get("protocol") != protocol
-        ):
+        exact_match = (
+            existing.get("experiment_id") == experiment_id
+            and existing.get("protocol_sha256") == protocol_sha256
+            and existing.get("protocol") == protocol
+        )
+        if not exact_match and allow_inference_execution_upgrade:
+            existing = upgrade_inference_execution_policy(
+                experiment_root,
+                existing,
+                experiment_id=experiment_id,
+                protocol=protocol,
+                protocol_sha256=protocol_sha256,
+            )
+            exact_match = True
+        if not exact_match:
             raise ValueError(
                 "existing experiment manifest does not match requested protocol"
             )
@@ -349,6 +372,100 @@ def initialize_experiment(
         )
     v8.write_json(manifest_path, manifest)
     return experiment_root, manifest
+
+
+def upgrade_inference_execution_policy(
+    experiment_root: Path,
+    existing: dict[str, Any],
+    *,
+    experiment_id: str,
+    protocol: dict[str, Any],
+    protocol_sha256: str,
+) -> dict[str, Any]:
+    """Explicitly migrate only the pre-inference execution policy.
+
+    Generation and analysis identities remain immutable.  The migration is
+    rejected once any inference file exists and records the complete prior
+    protocol/hash for auditability.
+    """
+
+    if existing.get("experiment_id") != experiment_id:
+        raise ValueError("cannot migrate a different experiment identity")
+    old_protocol = dict(existing.get("protocol") or {})
+    execution_keys = {
+        "model_execution_config",
+        "model_scheduling_policy",
+    }
+    old_identity = {
+        key: value
+        for key, value in old_protocol.items()
+        if key not in execution_keys
+    }
+    new_identity = {
+        key: value
+        for key, value in protocol.items()
+        if key not in execution_keys
+    }
+    if old_identity != new_identity:
+        raise ValueError(
+            "inference execution upgrade may not change generation or "
+            "analysis protocol fields"
+        )
+    status_path = experiment_root / "pipeline_status.json"
+    status: dict[str, Any] | None = None
+    if status_path.exists():
+        status = v8.read_json(status_path)
+        if status.get("state") == "running":
+            preparation_steps = {"calibration", "generation", "validation"}
+            active_step = status.get("active_step")
+            stop_after = status.get("stop_after")
+            if (
+                active_step not in preparation_steps
+                or stop_after not in preparation_steps
+                or status.get("protocol_sha256")
+                != existing.get("protocol_sha256")
+            ):
+                raise ValueError(
+                    "active pipeline may enter inference or does not match "
+                    "the recorded protocol; wait before upgrading the "
+                    "inference execution policy"
+                )
+    inference_files = [
+        path
+        for path in experiment_root.glob("*/03_inference/**/*")
+        if path.is_file()
+    ]
+    if inference_files:
+        raise ValueError(
+            "cannot upgrade inference execution policy after inference "
+            "artifacts exist"
+        )
+    upgraded = dict(existing)
+    history = list(upgraded.get("protocol_history") or [])
+    history.append(
+        {
+            "changed_at": v8.utc_now(),
+            "reason": "explicit_pre_inference_execution_policy_upgrade",
+            "protocol_sha256": existing.get("protocol_sha256"),
+            "protocol": old_protocol,
+            "concurrent_preparation_status": (
+                status
+                if status is not None and status.get("state") == "running"
+                else None
+            ),
+        }
+    )
+    upgraded["protocol_history"] = history
+    upgraded["protocol"] = protocol
+    upgraded["protocol_sha256"] = protocol_sha256
+    environment = dict(upgraded.get("execution_environment") or {})
+    environment["inference_execution_upgrade"] = code_provenance()
+    upgraded["execution_environment"] = environment
+    v8.write_json(
+        experiment_root / "experiment_manifest.json",
+        upgraded,
+    )
+    return upgraded
 
 
 def write_pipeline_status(
@@ -421,6 +538,9 @@ def main() -> int:
         experiment_id=experiment_id,
         protocol=protocol,
         endpoints=list(args.endpoints),
+        allow_inference_execution_upgrade=(
+            args.upgrade_inference_execution_policy
+        ),
     )
     completed: list[dict[str, Any]] = []
     write_pipeline_status(

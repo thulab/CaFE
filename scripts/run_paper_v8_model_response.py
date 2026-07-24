@@ -28,8 +28,8 @@ for path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
         sys.path.insert(0, str(path))
 
 import run_paper_e2_dynamic_stability as inference  # noqa: E402
-import run_paper_v5_e2_inference as v7_inference  # noqa: E402
 import run_paper_v8_deterministic_pilot as v8_pilot  # noqa: E402
+import run_paper_v8_inference as v8_inference  # noqa: E402
 from app.services.metric_service import compute_sample_metrics  # noqa: E402
 from app.services.synthetic_v8_generation import (  # noqa: E402
     common_factor_joint_positive_control,
@@ -86,7 +86,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional global HTTP concurrency override; by default reuse "
-            "the preregistered v7 per-model execution config."
+            "the preregistered v8 per-model execution config."
         ),
     )
     parser.add_argument("--load-timeout-seconds", type=int, default=1800)
@@ -4737,7 +4737,7 @@ def main() -> int:
                 checkpoint_predictions(data_dir, predictions, failures)
                 continue
             model = catalog[model_id]
-            execution = v7_inference.MODEL_EXECUTION_CONFIG.get(
+            execution = v8_inference.MODEL_EXECUTION_CONFIG.get(
                 model_id,
                 {
                     "replicas_per_device": 1,

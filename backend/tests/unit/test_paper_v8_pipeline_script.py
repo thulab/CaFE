@@ -216,6 +216,168 @@ def test_experiment_manifest_is_identity_scoped_and_immutable(tmp_path):
         )
 
 
+def test_pre_inference_execution_policy_upgrade_is_explicit_and_audited(
+    tmp_path,
+):
+    pipeline = load_script("run_paper_v8_pipeline")
+    protocol = {
+        "schema_version": "paper_v8_experiment_protocol.v1",
+        "dataset_ids": ["gift_electricity_h"],
+        "seed_start": 0,
+        "seed_count": 64,
+        "model_execution_config": {"Chronos-2": {"http_concurrency": 32}},
+        "model_scheduling_policy": {"policy_id": "legacy"},
+    }
+    experiment_root, original = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id="experiment",
+        protocol=protocol,
+        endpoints=["http://service-a"],
+    )
+    upgraded_protocol = {
+        **protocol,
+        "model_execution_config": {
+            "Chronos-2": {"http_concurrency": 384}
+        },
+        "model_scheduling_policy": {
+            "policy_id": "all-services-per-model"
+        },
+    }
+
+    _root, upgraded = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id="experiment",
+        protocol=upgraded_protocol,
+        endpoints=["http://service-a"],
+        allow_inference_execution_upgrade=True,
+    )
+
+    assert upgraded["protocol"] == upgraded_protocol
+    assert upgraded["protocol_history"][0]["protocol"] == protocol
+    assert (
+        upgraded["protocol_history"][0]["protocol_sha256"]
+        == original["protocol_sha256"]
+    )
+
+    inference_file = (
+        experiment_root
+        / "gift_electricity_h"
+        / "03_inference"
+        / "seed"
+        / "predictions.jsonl"
+    )
+    inference_file.parent.mkdir(parents=True)
+    inference_file.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="after inference artifacts"):
+        pipeline.initialize_experiment(
+            storage_root=tmp_path,
+            experiment_id="experiment",
+            protocol={
+                **upgraded_protocol,
+                "model_execution_config": {
+                    "Chronos-2": {"http_concurrency": 512}
+                },
+            },
+            endpoints=["http://service-a"],
+            allow_inference_execution_upgrade=True,
+        )
+
+
+def test_execution_policy_upgrade_allows_matching_preparation_only_run(
+    tmp_path,
+):
+    pipeline = load_script("run_paper_v8_pipeline")
+    protocol = {
+        "schema_version": "paper_v8_experiment_protocol.v1",
+        "dataset_ids": ["gift_electricity_h"],
+        "model_execution_config": {"Chronos-2": {"http_concurrency": 32}},
+        "model_scheduling_policy": {"policy_id": "legacy"},
+    }
+    experiment_root, original = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id="experiment",
+        protocol=protocol,
+        endpoints=["http://service-a"],
+    )
+    pipeline.write_pipeline_status(
+        experiment_root,
+        experiment_id="experiment",
+        protocol_sha256=original["protocol_sha256"],
+        state="running",
+        start_at="calibration",
+        stop_after="validation",
+        completed=[],
+        active_dataset_id="gift_electricity_h",
+        active_step="generation",
+    )
+    upgraded_protocol = {
+        **protocol,
+        "model_execution_config": {
+            "Chronos-2": {"http_concurrency": 384}
+        },
+        "model_scheduling_policy": {
+            "policy_id": "all-services-per-model"
+        },
+    }
+
+    _root, upgraded = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id="experiment",
+        protocol=upgraded_protocol,
+        endpoints=["http://service-a"],
+        allow_inference_execution_upgrade=True,
+    )
+
+    assert upgraded["protocol"] == upgraded_protocol
+    assert (
+        upgraded["protocol_history"][0]["concurrent_preparation_status"][
+            "active_step"
+        ]
+        == "generation"
+    )
+
+
+def test_execution_policy_upgrade_rejects_active_run_that_can_infer(tmp_path):
+    pipeline = load_script("run_paper_v8_pipeline")
+    protocol = {
+        "schema_version": "paper_v8_experiment_protocol.v1",
+        "dataset_ids": ["gift_electricity_h"],
+        "model_execution_config": {"Chronos-2": {"http_concurrency": 32}},
+        "model_scheduling_policy": {"policy_id": "legacy"},
+    }
+    experiment_root, original = pipeline.initialize_experiment(
+        storage_root=tmp_path,
+        experiment_id="experiment",
+        protocol=protocol,
+        endpoints=["http://service-a"],
+    )
+    pipeline.write_pipeline_status(
+        experiment_root,
+        experiment_id="experiment",
+        protocol_sha256=original["protocol_sha256"],
+        state="running",
+        start_at="calibration",
+        stop_after="analysis",
+        completed=[],
+        active_dataset_id="gift_electricity_h",
+        active_step="generation",
+    )
+
+    with pytest.raises(ValueError, match="may enter inference"):
+        pipeline.initialize_experiment(
+            storage_root=tmp_path,
+            experiment_id="experiment",
+            protocol={
+                **protocol,
+                "model_execution_config": {
+                    "Chronos-2": {"http_concurrency": 384}
+                },
+            },
+            endpoints=["http://service-a"],
+            allow_inference_execution_upgrade=True,
+        )
+
+
 def test_response_support_detects_sustained_foldback_without_magic_bound():
     common = load_script("paper_v8_pipeline_common")
     grid = np.linspace(0.0, 1.0, 11)
@@ -952,7 +1114,7 @@ def test_inference_prediction_uses_frozen_mase_scale():
     assert row["metrics"]["mase"] == pytest.approx(expected_mae / 2.0)
 
 
-def test_tail_model_is_partitioned_across_idle_services(tmp_path):
+def test_model_phase_is_partitioned_across_all_services(tmp_path):
     common = load_script("paper_v8_pipeline_common")
     inference = load_script("run_paper_v8_inference")
     task_path = tmp_path / "tasks.jsonl"
@@ -960,46 +1122,53 @@ def test_tail_model_is_partitioned_across_idle_services(tmp_path):
         task_path,
         ({"sample_id": f"sample-{index}"} for index in range(30)),
     )
-    model_ids = ["Chronos-2", "toto2.0", "tirex2", "timesfm2.5"]
+    model_id = "Chronos-2"
     services = [
         (
             f"http://service-{index}",
-            {model_id: {"model_id": model_id} for model_id in model_ids},
+            {model_id: {"model_id": model_id}},
         )
         for index in range(3)
     ]
 
-    work, assignments, manifest = inference.plan_inference_work(
-        model_ids,
+    work, manifest = inference.plan_model_phase(
+        model_id,
         services,
         task_path=task_path,
         inference_dir=tmp_path / "inference",
-        enable_tail_sharding=True,
     )
 
-    assert manifest is not None
-    tail_model = manifest["model_id"]
-    assert tail_model in model_ids
+    assert manifest["model_id"] == model_id
     assert manifest["part_count"] == 3
     assert sum(part["row_count"] for part in manifest["parts"]) == 30
     assert sorted(
-        item.tail_part_index
+        item.part_index
         for items in work.values()
         for item in items
-        if item.model_id == tail_model
     ) == [0, 1, 2]
+    assert all(len(items) == 1 for items in work.values())
     assert all(
-        any(item.model_id == tail_model for item in items)
+        item.model_id == model_id
         for items in work.values()
+        for item in items
     )
-    assert sum(
-        model_id == tail_model
-        for model_ids_for_endpoint in assignments.values()
-        for model_id in model_ids_for_endpoint
-    ) == 1
+
+    resumed_work, resumed_manifest = inference.plan_model_phase(
+        model_id,
+        services[:2],
+        task_path=task_path,
+        inference_dir=tmp_path / "inference",
+    )
+    assert resumed_manifest["part_count"] == 3
+    assert sorted(
+        item.part_index
+        for items in resumed_work.values()
+        for item in items
+    ) == [0, 1, 2]
+    assert sorted(len(items) for items in resumed_work.values()) == [1, 2]
 
 
-def test_slow_models_end_distinct_service_queues():
+def test_every_model_phase_uses_all_compatible_services(tmp_path):
     inference = load_script("run_paper_v8_inference")
     model_ids = [
         "Chronos-2",
@@ -1021,26 +1190,25 @@ def test_slow_models_end_distinct_service_queues():
             "http://192.168.99.18:10810",
         )
     ]
-
-    assignments = inference.assign_models(model_ids, services)
-
-    slow_locations = {
-        model_id: endpoint
-        for endpoint, queue in assignments.items()
-        for model_id in inference.SLOW_TAIL_MODELS
-        if model_id in queue
-    }
-    assert len(set(slow_locations.values())) == 3
-    assert {
-        queue[-1] for queue in assignments.values()
-    } == set(inference.SLOW_TAIL_MODELS)
-    assert all(
-        queue[0] not in inference.SLOW_TAIL_MODELS
-        for queue in assignments.values()
+    task_path = tmp_path / "tasks.jsonl"
+    load_script("paper_v8_pipeline_common").write_jsonl(
+        task_path,
+        ({"sample_id": f"sample-{index}"} for index in range(30)),
     )
 
+    for model_id in model_ids:
+        work, manifest = inference.plan_model_phase(
+            model_id,
+            services,
+            task_path=task_path,
+            inference_dir=tmp_path / "inference",
+        )
+        assert manifest["part_count"] == 3
+        assert sorted(work) == sorted(endpoint for endpoint, _ in services)
+        assert all(len(items) == 1 for items in work.values())
 
-def test_tail_shards_refresh_when_source_task_changes(tmp_path):
+
+def test_model_shards_refresh_when_source_task_changes(tmp_path):
     common = load_script("paper_v8_pipeline_common")
     inference = load_script("run_paper_v8_inference")
     task_path = tmp_path / "tasks.jsonl"
@@ -1049,7 +1217,7 @@ def test_tail_shards_refresh_when_source_task_changes(tmp_path):
         task_path,
         ({"sample_id": f"old-{index}"} for index in range(6)),
     )
-    first = inference.prepare_tail_task_shards(
+    first = inference.prepare_model_task_shards(
         task_path,
         model_id="timesfm2.5",
         part_count=2,
@@ -1060,7 +1228,7 @@ def test_tail_shards_refresh_when_source_task_changes(tmp_path):
         task_path,
         ({"sample_id": f"new-{index}"} for index in range(8)),
     )
-    second = inference.prepare_tail_task_shards(
+    second = inference.prepare_model_task_shards(
         task_path,
         model_id="timesfm2.5",
         part_count=2,
@@ -1077,24 +1245,31 @@ def test_tail_shards_refresh_when_source_task_changes(tmp_path):
     } == {f"new-{index}" for index in range(8)}
 
 
-def test_tail_predictions_are_merged_only_after_complete_coverage(tmp_path):
+def test_model_predictions_are_merged_only_after_complete_coverage(tmp_path):
     common = load_script("paper_v8_pipeline_common")
     inference = load_script("run_paper_v8_inference")
     model_id = "timesfm2.5"
-    model_root = tmp_path / "model_shards" / "timesfm2_5"
-    manifest = {
-        "model_id": model_id,
-        "source_task_row_count": 4,
-        "parts": [
-            {"part_index": 0, "row_count": 2},
-            {"part_index": 1, "row_count": 2},
-        ],
-    }
-    for part_index, sample_ids in enumerate(
-        (("sample-0", "sample-2"), ("sample-1", "sample-3"))
-    ):
-        part_root = (
-            model_root / "tail_parts" / f"part_{part_index:03d}"
+    task_path = tmp_path / "tasks.jsonl"
+    common.write_jsonl(
+        task_path,
+        ({"sample_id": f"sample-{index}"} for index in range(12)),
+    )
+    manifest = inference.prepare_model_task_shards(
+        task_path,
+        model_id=model_id,
+        part_count=2,
+        inference_dir=tmp_path,
+    )
+    for part in manifest["parts"]:
+        part_index = int(part["part_index"])
+        sample_ids = [
+            row["sample_id"]
+            for row in common.iter_jsonl(Path(part["path"]))
+        ]
+        part_root = inference.model_part_root(
+            tmp_path,
+            model_id,
+            part_index,
         )
         common.write_jsonl(
             inference.prediction_path_for(part_root, model_id),
@@ -1104,18 +1279,19 @@ def test_tail_predictions_are_merged_only_after_complete_coverage(tmp_path):
             ),
         )
 
-    inference.consolidate_tail_predictions(tmp_path, manifest)
+    assert inference.consolidate_model_predictions(tmp_path, manifest)
 
     canonical = list(
         common.iter_jsonl(
-            inference.prediction_path_for(model_root, model_id)
+            inference.prediction_path_for(
+                inference.model_root(tmp_path, model_id),
+                model_id,
+            )
         )
     )
     assert [row["sample_id"] for row in canonical] == [
-        "sample-0",
-        "sample-1",
-        "sample-2",
-        "sample-3",
+        f"sample-{index}"
+        for index in sorted(range(12), key=lambda value: f"sample-{value}")
     ]
     statuses = inference.aggregate_model_statuses(
         [model_id],
@@ -1134,7 +1310,7 @@ def test_tail_predictions_are_merged_only_after_complete_coverage(tmp_path):
             },
         ],
         inference_dir=tmp_path,
-        expected_view_count=4,
+        expected_view_count=12,
     )
     assert statuses[0]["status"] == "complete"
     assert statuses[0]["native_view_count"] == 4

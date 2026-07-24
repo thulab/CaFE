@@ -15,7 +15,6 @@ import numpy as np
 
 import paper_v8_pipeline_common as v8
 import run_paper_e2_dynamic_stability as engine
-import run_paper_v5_e2_inference as v7_inference
 
 
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
@@ -33,22 +32,18 @@ DEFAULT_MODELS = (
     "moirai2",
     "Timer-3.5",
 )
-MODEL_COST = {
-    "tirex2": 5.0,
-    "toto2.0": 10.0,
-    "Chronos-2": 3.0,
-    "timesfm2.5": 9.0,
-    "Timer-3.5": 4.0,
-    "Timer-3.0": 4.0,
-    "moirai2": 3.0,
-    "tabpfn-ts3": 8.0,
+MODEL_EXECUTION_CONFIG = {
+    # Paper v8 has a fixed H=48 and runs on dual RTX 5090 services.  These
+    # values are per service (both devices together), not per GPU.
+    "Timer-3.5": {"replicas_per_device": 1, "http_concurrency": 512},
+    "Chronos-2": {"replicas_per_device": 4, "http_concurrency": 384},
+    "moirai2": {"replicas_per_device": 1, "http_concurrency": 384},
+    "toto2.0": {"replicas_per_device": 3, "http_concurrency": 36},
+    "timesfm2.5": {"replicas_per_device": 8, "http_concurrency": 32},
+    "tirex2": {"replicas_per_device": 1, "http_concurrency": 32},
+    "tabpfn-ts3": {"replicas_per_device": 8, "http_concurrency": 48},
 }
-SCHEDULING_POLICY_ID = "fast-lpt-then-distinct-slow-tails-v1"
-SLOW_TAIL_MODELS = (
-    "toto2.0",
-    "timesfm2.5",
-    "tabpfn-ts3",
-)
+SCHEDULING_POLICY_ID = "all-services-per-model-deterministic-shards-v1"
 _PRINT_LOCK = threading.Lock()
 
 
@@ -58,7 +53,7 @@ class InferenceWork:
     sample_path: Path
     output_dir: Path
     work_id: str
-    tail_part_index: int | None = None
+    part_index: int
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,11 +72,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--resume", action="store_true")
-    parser.add_argument(
-        "--disable-tail-sharding",
-        action="store_true",
-        help="Do not split the queued tail model across otherwise idle services.",
-    )
     return parser.parse_args()
 
 
@@ -222,98 +212,88 @@ def health_catalog(
         client.close()
 
 
-def assign_models(
-    models: list[str],
-    services: list[tuple[str, dict[str, dict[str, Any]]]],
-) -> dict[str, list[str]]:
-    ordered_services = sorted(services, key=lambda item: item[0])
-    loads = {endpoint: 0.0 for endpoint, _catalog in ordered_services}
-    assignments = {
-        endpoint: [] for endpoint, _catalog in ordered_services
-    }
-    catalogs = {endpoint: catalog for endpoint, catalog in services}
-    slow_models = [
-        model_id for model_id in models if model_id in SLOW_TAIL_MODELS
-    ]
-    fast_models = [
-        model_id for model_id in models if model_id not in SLOW_TAIL_MODELS
-    ]
+def model_root(inference_dir: Path, model_id: str) -> Path:
+    return (
+        inference_dir
+        / "model_shards"
+        / engine.safe_filename(model_id)
+    )
 
-    def assign(model_id: str, candidates: list[str]) -> str:
-        if not candidates:
-            raise ValueError(f"model {model_id!r} unavailable on all services")
-        endpoint = min(candidates, key=lambda name: (loads[name], name))
-        assignments[endpoint].append(model_id)
-        loads[endpoint] += MODEL_COST.get(model_id, 1.0)
-        return endpoint
 
-    for model_id in sorted(
-        fast_models,
-        key=lambda name: (-MODEL_COST.get(name, 1.0), name),
+def model_part_root(
+    inference_dir: Path,
+    model_id: str,
+    part_index: int,
+) -> Path:
+    return model_root(inference_dir, model_id) / "parts" / (
+        f"part_{part_index:03d}"
+    )
+
+
+def _model_task_shard_manifest_path(
+    inference_dir: Path,
+    model_id: str,
+) -> Path:
+    return (
+        inference_dir
+        / "model_task_shards"
+        / engine.safe_filename(model_id)
+        / "manifest.json"
+    )
+
+
+def _model_task_shard_manifest_is_reusable(
+    manifest: dict[str, Any],
+    *,
+    model_id: str,
+    task_path: Path,
+) -> bool:
+    if (
+        manifest.get("model_id") != model_id
+        or manifest.get("source_task_sha256") != v8.file_sha256(task_path)
     ):
-        eligible = [
-            endpoint
-            for endpoint in assignments
-            if model_id in catalogs[endpoint]
-        ]
-        assign(model_id, eligible)
-
-    unused_slow_endpoints = set(assignments)
-    for model_id in sorted(
-        slow_models,
-        key=lambda name: (-MODEL_COST.get(name, 1.0), name),
-    ):
-        eligible = [
-            endpoint
-            for endpoint in assignments
-            if model_id in catalogs[endpoint]
-        ]
-        unused_eligible = [
-            endpoint
-            for endpoint in eligible
-            if endpoint in unused_slow_endpoints
-        ]
-        candidates = unused_eligible or eligible
-        endpoint = assign(model_id, candidates)
-        unused_slow_endpoints.discard(endpoint)
-    return assignments
+        return False
+    parts = list(manifest.get("parts") or [])
+    if len(parts) != int(manifest.get("part_count", -1)):
+        return False
+    for part in parts:
+        path = Path(part["path"])
+        if not path.is_file() or v8.file_sha256(path) != part["sha256"]:
+            return False
+    return True
 
 
-def _tail_manifest_path(inference_dir: Path) -> Path:
-    return inference_dir / "tail_shard_manifest.json"
-
-
-def prepare_tail_task_shards(
+def prepare_model_task_shards(
     task_path: Path,
     *,
     model_id: str,
     part_count: int,
     inference_dir: Path,
 ) -> dict[str, Any]:
-    if part_count < 2:
-        raise ValueError("tail sharding requires at least two parts")
-    manifest_path = _tail_manifest_path(inference_dir)
+    """Create or reuse deterministic task parts for one model.
+
+    An existing valid manifest wins over ``part_count``.  This is deliberate:
+    if a service is temporarily unavailable during resume, the original part
+    identities and completed prediction files remain valid; surviving
+    services simply process more than one existing part.
+    """
+
+    if part_count < 1:
+        raise ValueError("model task sharding requires at least one part")
+    manifest_path = _model_task_shard_manifest_path(
+        inference_dir,
+        model_id,
+    )
     if manifest_path.exists():
         manifest = v8.read_json(manifest_path)
-        reusable = (
-            manifest["model_id"] == model_id
-            and int(manifest["part_count"]) == part_count
-            and manifest["source_task_sha256"] == v8.file_sha256(task_path)
-        )
-        if reusable:
-            for part in manifest["parts"]:
-                path = Path(part["path"])
-                if not path.is_file() or v8.file_sha256(path) != part["sha256"]:
-                    reusable = False
-                    break
-        if reusable:
+        if _model_task_shard_manifest_is_reusable(
+            manifest,
+            model_id=model_id,
+            task_path=task_path,
+        ):
             return manifest
 
-    shard_dir = (
-        inference_dir
-        / "tail_task_shards"
-        / engine.safe_filename(model_id)
-    )
+    shard_dir = manifest_path.parent
     shard_dir.mkdir(parents=True, exist_ok=True)
     part_paths = [
         shard_dir / f"part_{index:03d}.jsonl"
@@ -327,7 +307,7 @@ def prepare_tail_task_shards(
         for row in v8.iter_jsonl(task_path):
             part_index = (
                 v8.stable_seed(
-                    "inference_tail_shard",
+                    "paper_v8_model_task_shard",
                     model_id,
                     str(row["sample_id"]),
                 )
@@ -348,7 +328,9 @@ def prepare_tail_task_shards(
         for handle in handles:
             handle.close()
     if not all(counts):
-        raise ValueError("tail task partition produced an empty shard")
+        raise ValueError(
+            f"model task partition for {model_id} produced an empty part"
+        )
     parts = [
         {
             "part_index": index,
@@ -358,11 +340,13 @@ def prepare_tail_task_shards(
         for index, path in enumerate(part_paths)
     ]
     manifest = {
-        "schema_version": "paper_v8_tail_shard_manifest.v1",
+        "schema_version": "paper_v8_model_task_shard_manifest.v1",
         "created_at": v8.utc_now(),
         "model_id": model_id,
         "part_count": part_count,
-        "partition_policy": "stable_hash_of_model_and_sample_id",
+        "partition_policy": (
+            "stable_hash_of_policy_model_and_sample_id"
+        ),
         "source_task_sha256": v8.file_sha256(task_path),
         "source_task_row_count": sum(counts),
         "parts": parts,
@@ -371,138 +355,44 @@ def prepare_tail_task_shards(
     return manifest
 
 
-def plan_inference_work(
-    models: list[str],
+def plan_model_phase(
+    model_id: str,
     services: list[tuple[str, dict[str, dict[str, Any]]]],
     *,
     task_path: Path,
     inference_dir: Path,
-    enable_tail_sharding: bool,
-) -> tuple[
-    dict[str, list[InferenceWork]],
-    dict[str, list[str]],
-    dict[str, Any] | None,
-]:
-    assignments = assign_models(models, services)
-    catalogs = dict(services)
-    work = {
-        endpoint: [
-            InferenceWork(
-                model_id=model_id,
-                sample_path=task_path,
-                output_dir=(
-                    inference_dir
-                    / "model_shards"
-                    / engine.safe_filename(model_id)
-                ),
-                work_id=f"{model_id}__full",
-            )
-            for model_id in model_ids
-        ]
-        for endpoint, model_ids in assignments.items()
-    }
-    if not enable_tail_sharding:
-        return work, assignments, None
-
-    existing_manifest = (
-        v8.read_json(_tail_manifest_path(inference_dir))
-        if _tail_manifest_path(inference_dir).exists()
-        else None
+) -> tuple[dict[str, list[InferenceWork]], dict[str, Any]]:
+    eligible = sorted(
+        endpoint
+        for endpoint, catalog in services
+        if model_id in catalog
     )
-    if existing_manifest is not None:
-        tail_model = str(existing_manifest["model_id"])
-        if tail_model not in models:
-            raise ValueError(
-                f"tail shard manifest contains unrequested model {tail_model!r}"
-            )
-        eligible = sorted(
-            endpoint
-            for endpoint, catalog in services
-            if tail_model in catalog
-        )
-        if not eligible:
-            raise ValueError(
-                f"tail-sharded model {tail_model!r} unavailable"
-            )
-        for endpoint in work:
-            work[endpoint] = [
-                item for item in work[endpoint]
-                if item.model_id != tail_model
-            ]
-        manifest = prepare_tail_task_shards(
-            task_path,
-            model_id=tail_model,
-            part_count=int(existing_manifest["part_count"]),
-            inference_dir=inference_dir,
-        )
-    else:
-        queued_endpoints = [
-            endpoint
-            for endpoint, model_ids in assignments.items()
-            if len(model_ids) > 1
-        ]
-        if not queued_endpoints:
-            return work, assignments, None
-        tail_endpoint = max(
-            queued_endpoints,
-            key=lambda endpoint: (
-                sum(
-                    MODEL_COST.get(model_id, 1.0)
-                    for model_id in assignments[endpoint]
-                ),
-                endpoint,
-            ),
-        )
-        tail_model = assignments[tail_endpoint][-1]
-        canonical_prediction = prediction_path_for(
-            inference_dir
-            / "model_shards"
-            / engine.safe_filename(tail_model),
-            tail_model,
-        )
-        if canonical_prediction.exists():
-            return work, assignments, None
-        eligible = sorted(
-            endpoint
-            for endpoint, catalog in services
-            if tail_model in catalog
-        )
-        if len(eligible) < 2:
-            return work, assignments, None
-        work[tail_endpoint] = [
-            item
-            for item in work[tail_endpoint]
-            if item.model_id != tail_model
-        ]
-        manifest = prepare_tail_task_shards(
-            task_path,
-            model_id=tail_model,
-            part_count=len(eligible),
-            inference_dir=inference_dir,
-        )
-
+    if not eligible:
+        raise ValueError(f"model {model_id!r} unavailable on all services")
+    manifest = prepare_model_task_shards(
+        task_path,
+        model_id=model_id,
+        part_count=len(eligible),
+        inference_dir=inference_dir,
+    )
+    work = {endpoint: [] for endpoint in eligible}
     for part in manifest["parts"]:
         part_index = int(part["part_index"])
         endpoint = eligible[part_index % len(eligible)]
-        model_root = (
-            inference_dir
-            / "model_shards"
-            / engine.safe_filename(tail_model)
-        )
-        work.setdefault(endpoint, []).append(
+        work[endpoint].append(
             InferenceWork(
-                model_id=tail_model,
+                model_id=model_id,
                 sample_path=Path(part["path"]),
-                output_dir=(
-                    model_root
-                    / "tail_parts"
-                    / f"part_{part_index:03d}"
+                output_dir=model_part_root(
+                    inference_dir,
+                    model_id,
+                    part_index,
                 ),
-                work_id=f"{tail_model}__tail_part_{part_index:03d}",
-                tail_part_index=part_index,
+                work_id=f"{model_id}__part_{part_index:03d}",
+                part_index=part_index,
             )
         )
-    return work, assignments, manifest
+    return work, manifest
 
 
 def run_service_queue(
@@ -519,12 +409,17 @@ def run_service_queue(
         timeout_seconds=30,
     )
     try:
+        if len({item.model_id for item in work_items}) > 1:
+            raise ValueError(
+                "one service queue may contain parts for only one model phase"
+            )
+        client.unload_all_loaded()
         for item in work_items:
             model_id = item.model_id
             model_dir = item.output_dir
             for directory in ("predictions", "failures"):
                 (model_dir / directory).mkdir(parents=True, exist_ok=True)
-            execution = dict(v7_inference.MODEL_EXECUTION_CONFIG[model_id])
+            execution = dict(MODEL_EXECUTION_CONFIG[model_id])
             with _PRINT_LOCK:
                 print(
                     f"{endpoint}: starting {item.work_id}, "
@@ -543,7 +438,7 @@ def run_service_queue(
                     request_max_attempts=args.max_attempts,
                     forecast_timeout_seconds=args.forecast_timeout_seconds,
                     load_timeout_seconds=args.load_timeout_seconds,
-                    keep_loaded=False,
+                    keep_loaded=True,
                     sample_path=item.sample_path,
                     prediction_kind="synthetic",
                     status_filename="model_status.json",
@@ -558,7 +453,7 @@ def run_service_queue(
                 }
             status["endpoint"] = endpoint
             status["work_id"] = item.work_id
-            status["tail_part_index"] = item.tail_part_index
+            status["part_index"] = item.part_index
             status["sample_path"] = str(item.sample_path)
             statuses.append(status)
             v8.write_json(
@@ -581,49 +476,60 @@ def run_service_queue(
     return statuses
 
 
-def consolidate_tail_predictions(
+def consolidate_model_predictions(
     inference_dir: Path,
-    tail_manifest: dict[str, Any] | None,
-) -> None:
-    if tail_manifest is None:
-        return
-    model_id = str(tail_manifest["model_id"])
-    model_root = (
-        inference_dir / "model_shards" / engine.safe_filename(model_id)
-    )
+    manifest: dict[str, Any],
+) -> bool:
+    model_id = str(manifest["model_id"])
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
     complete = True
-    for part in tail_manifest["parts"]:
+    for part in manifest["parts"]:
         part_index = int(part["part_index"])
-        part_root = (
-            model_root / "tail_parts" / f"part_{part_index:03d}"
+        part_root = model_part_root(
+            inference_dir,
+            model_id,
+            part_index,
         )
         path = prediction_path_for(part_root, model_id)
         if not path.exists():
             complete = False
             continue
         part_rows = list(v8.iter_jsonl(path))
-        if len(part_rows) != int(part["row_count"]):
+        expected_ids = {
+            str(row["sample_id"])
+            for row in v8.iter_jsonl(Path(part["path"]))
+        }
+        observed_ids = {
+            str(row["sample_id"]) for row in part_rows
+        }
+        if (
+            len(part_rows) != int(part["row_count"])
+            or observed_ids != expected_ids
+        ):
             complete = False
         for row in part_rows:
             sample_id = str(row["sample_id"])
             if sample_id in seen:
                 raise ValueError(
-                    f"duplicate tail prediction for {model_id}: {sample_id}"
+                    f"duplicate model prediction for {model_id}: {sample_id}"
                 )
             seen.add(sample_id)
             rows.append(row)
     if not complete:
-        return
-    expected = int(tail_manifest["source_task_row_count"])
+        return False
+    expected = int(manifest["source_task_row_count"])
     if len(rows) != expected:
         raise ValueError(
-            f"tail prediction coverage mismatch: {len(rows)} != {expected}"
+            f"model prediction coverage mismatch: {len(rows)} != {expected}"
         )
     rows.sort(key=lambda row: str(row["sample_id"]))
-    canonical_path = prediction_path_for(model_root, model_id)
+    canonical_path = prediction_path_for(
+        model_root(inference_dir, model_id),
+        model_id,
+    )
     v8.write_jsonl(canonical_path, rows)
+    return True
 
 
 def aggregate_model_statuses(
@@ -668,7 +574,6 @@ def aggregate_model_statuses(
             "status": (
                 "complete"
                 if observed == expected_view_count
-                and matching
                 and all(
                     row.get("status") == "complete"
                     for row in matching
@@ -736,7 +641,7 @@ def main() -> int:
     if len(set(args.models)) != len(args.models):
         raise ValueError("model ids must be unique")
     missing_configs = sorted(
-        set(args.models) - set(v7_inference.MODEL_EXECUTION_CONFIG)
+        set(args.models) - set(MODEL_EXECUTION_CONFIG)
     )
     if missing_configs:
         raise ValueError(
@@ -793,65 +698,126 @@ def main() -> int:
                 health_results.append(result)
     if not health_results:
         raise RuntimeError("no inference service is available")
+    health_results.sort(key=lambda item: item[0])
     catalogs = dict(health_results)
-    work_assignments, assignments, tail_manifest = plan_inference_work(
-        list(args.models),
-        health_results,
-        task_path=task_path,
-        inference_dir=inference_dir,
-        enable_tail_sharding=not args.disable_tail_sharding,
-    )
     work_statuses: list[dict[str, Any]] = []
-    active_work = {
-        endpoint: items
-        for endpoint, items in work_assignments.items()
-        if items
-    }
-    with ThreadPoolExecutor(max_workers=len(active_work)) as executor:
-        future_map = {
-            executor.submit(
-                run_service_queue,
-                endpoint,
-                items,
-                catalogs[endpoint],
-                args=args,
-            ): endpoint
-            for endpoint, items in active_work.items()
+    model_phases: list[dict[str, Any]] = []
+    expected_view_count = int(task_manifest["view_count"])
+    for phase_index, model_id in enumerate(args.models):
+        canonical_path = prediction_path_for(
+            model_root(inference_dir, model_id),
+            model_id,
+        )
+        if (
+            args.resume
+            and canonical_path.exists()
+            and engine.count_jsonl(canonical_path) == expected_view_count
+        ):
+            print(
+                f"model phase {phase_index + 1}/{len(args.models)} "
+                f"{model_id}: canonical prediction already complete",
+                flush=True,
+            )
+            model_phases.append(
+                {
+                    "phase_index": phase_index,
+                    "model_id": model_id,
+                    "status": "already_complete",
+                    "eligible_endpoints": sorted(
+                        endpoint
+                        for endpoint, catalog in health_results
+                        if model_id in catalog
+                    ),
+                    "part_count": 0,
+                    "work_assignments": {},
+                    "shard_manifest": None,
+                }
+            )
+            continue
+
+        work_assignments, shard_manifest = plan_model_phase(
+            model_id,
+            health_results,
+            task_path=task_path,
+            inference_dir=inference_dir,
+        )
+        active_work = {
+            endpoint: items
+            for endpoint, items in work_assignments.items()
+            if items
         }
-        for future in as_completed(future_map):
-            work_statuses.extend(future.result())
-    consolidate_tail_predictions(inference_dir, tail_manifest)
+        print(
+            f"model phase {phase_index + 1}/{len(args.models)} "
+            f"{model_id}: {len(shard_manifest['parts'])} parts on "
+            f"{len(active_work)} services",
+            flush=True,
+        )
+        phase_statuses: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=len(active_work)) as executor:
+            future_map = {
+                executor.submit(
+                    run_service_queue,
+                    endpoint,
+                    items,
+                    catalogs[endpoint],
+                    args=args,
+                ): endpoint
+                for endpoint, items in active_work.items()
+            }
+            for future in as_completed(future_map):
+                phase_statuses.extend(future.result())
+        work_statuses.extend(phase_statuses)
+        consolidated = consolidate_model_predictions(
+            inference_dir,
+            shard_manifest,
+        )
+        model_phases.append(
+            {
+                "phase_index": phase_index,
+                "model_id": model_id,
+                "status": "complete" if consolidated else "incomplete",
+                "eligible_endpoints": sorted(active_work),
+                "part_count": int(shard_manifest["part_count"]),
+                "work_assignments": {
+                    endpoint: [
+                        {
+                            "work_id": item.work_id,
+                            "part_index": item.part_index,
+                            "sample_path": str(item.sample_path),
+                            "output_dir": str(item.output_dir),
+                        }
+                        for item in items
+                    ]
+                    for endpoint, items in work_assignments.items()
+                },
+                "shard_manifest": shard_manifest,
+            }
+        )
     statuses = aggregate_model_statuses(
         list(args.models),
         work_statuses,
         inference_dir=inference_dir,
-        expected_view_count=int(task_manifest["view_count"]),
+        expected_view_count=expected_view_count,
     )
     merged_path, prediction_count = merge_predictions(
         inference_dir,
         list(args.models),
     )
     manifest = {
-        "schema_version": "paper_v8_inference_manifest.v1",
+        "schema_version": "paper_v8_inference_manifest.v2",
         "created_at": v8.utc_now(),
         "task_manifest_sha256": v8.file_sha256(task_manifest_path),
         "models": list(args.models),
         "available_endpoints": sorted(catalogs),
-        "assignments": assignments,
-        "work_assignments": {
-            endpoint: [
-                {
-                    "work_id": item.work_id,
-                    "model_id": item.model_id,
-                    "sample_path": str(item.sample_path),
-                    "output_dir": str(item.output_dir),
-                    "tail_part_index": item.tail_part_index,
-                }
-                for item in items
-            ]
-            for endpoint, items in work_assignments.items()
+        "scheduling": {
+            "policy_id": SCHEDULING_POLICY_ID,
+            "phase_order": list(args.models),
+            "model_phases": model_phases,
         },
-        "tail_sharding": tail_manifest,
+        "model_execution_config": {
+            model_id: dict(MODEL_EXECUTION_CONFIG[model_id])
+            for model_id in args.models
+        },
         "statuses": statuses,
         "predictions": {
             **v8.file_record(merged_path),
@@ -867,7 +833,7 @@ def main() -> int:
             {
                 "complete": manifest["complete"],
                 "prediction_count": prediction_count,
-                "assignments": assignments,
+                "scheduling_policy": SCHEDULING_POLICY_ID,
                 "output": str(inference_dir),
             }
         )

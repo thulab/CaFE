@@ -393,35 +393,35 @@ http://192.168.99.17:10811
 http://192.168.99.18:10810
 ```
 
-运行前进行简单健康检查，只将可用服务加入本次调度。并行分为两层：
+运行前进行简单健康检查，只将可用服务加入本次调度。正式调度改为按模型分阶段：
 
-1. 服务之间按模型队列并行，同一服务一次只加载一个模型；
-2. 单个模型内部使用冻结的 `replicas_per_device` 和 `http_concurrency`。
+1. 三台兼容服务在同一阶段都加载同一个模型，每台使用两张卡；
+2. 每个模型的完整任务按 `policy_id × model_id × sample_id` 稳定哈希为三个 part，三台服务各处理一个 part；
+3. 三个 part 全部完成、样本 ID 完整覆盖且无重复后，才生成该模型的 canonical prediction；
+4. 三台服务全部卸载当前模型，再共同进入声明顺序中的下一个模型；
+5. 单个服务内部继续按 context、horizon、目标/协变量维度和输入适配计划分 bucket，复用持久 HTTP 连接。
 
-沿用已验证的模型执行配置：
+horizon 固定为 48、服务固定为双 RTX 5090 后，模型执行配置更新为：
 
 | model | replicas/device | HTTP concurrency |
 |---|---:|---:|
-| Timer-3.5 | 1 | 64 |
-| Timer-3.0 | 1 | 32 |
-| Chronos-2 | 4 | 32 |
-| moirai2 | 2 | 16 |
-| toto2.0 | 2 | 16 |
+| Timer-3.5 | 1 | 512 |
+| Chronos-2 | 4 | 384 |
+| moirai2 | 1 | 384 |
+| toto2.0 | 3 | 36 |
 | timesfm2.5 | 8 | 32 |
 | tirex2 | 1 | 32 |
-| tabpfn-ts3 | 8 | 24 |
+| tabpfn-ts3 | 8 | 48 |
 
-三台服务都可用时，先以历史耗时做模型级 longest-processing-time 分配；服务数量减少时重新平衡模型队列。若某个模型排在一台服务的队尾、其他兼容服务会提前空闲，则默认启用尾部协作：
+上述 concurrency 是每台双卡服务的全局 HTTP 并发，不是每卡值。Timer REST 的 `/forecast` 对一个 body 中的多个 targets 顺序执行，因此正式 v8 当前仍保持每 HTTP 一个 original view；并发来自多个独立 HTTP 请求，不把 request-body 打包误写为 GPU 并行。
 
-- 正式七模型实验先对 Chronos、TiRex、Moirai、Timer 等较快模型做 LPT 分配，再将 `toto2.0`、`timesfm2.5`、`tabpfn-ts3` 作为慢尾部任务分散到三台可用服务；
-- 三台服务和全部模型均可用时，预期队列分别以 `timesfm2.5`、`toto2.0`、`tabpfn-ts3` 结尾；不足三台服务或某服务缺少模型时，只在兼容服务间重新平衡；
-- 按 `model_id × sample_id` 的 stable hash 将该尾部模型任务确定性分片；
-- 各服务完成自己的前序模型后处理一个 tail part；
-- 每个 part 使用独立任务文件、预测文件和状态文件，禁止并发写同一文件；
-- 汇总时验证 part hash、样本 ID 唯一性和完整覆盖，再生成模型 canonical prediction；
-- resume 从所有 part 的已完成 ID 继续，服务可用性减少时允许一台服务顺序接多个 part。
+每个 part 使用独立任务、预测、失败和状态文件，禁止并发写同一文件。`--resume` 时：
 
-已有 canonical prediction 的模型不在 resume 时重新分片，避免为已经完成或部分完成的旧式 shard 重复推理。可用 `--disable-tail-sharding` 显式关闭该优化。
+- 已完成 canonical prediction 的模型整阶段跳过；
+- 未完成模型复用首次建立的 part manifest 和 part 内 append-only 成功结果；
+- 可用服务从三台减少为两台或一台时不重新哈希，存活服务按轮转顺序接管多个原 part；
+- task source hash 或 part 文件 hash 不一致时拒绝静默合并；
+- 恢复到三台服务时仍使用原 part identity。
 
 每台服务写入独立 inference shard，任务使用确定性 ID：
 
@@ -429,7 +429,9 @@ http://192.168.99.18:10810
 model_id × sample_id × context_length
 ```
 
-`--resume` 模式下成功结果 append-only，重启时跳过已完成任务，只重试失败或缺失任务；已有 task manifest、generation config 和 tail-part hash 必须一致。不带 `--resume` 时，当前数据集与当前 seed shard 的 inference 目录必须精确重建，不能因 sample ID 相同而静默复用另一版生成器的预测。全部模型完成后验证输入 manifest/hash、模型覆盖、任务行数和状态，再合并 shard。
+`--resume` 模式下成功结果 append-only，重启时跳过已完成任务，只重试失败或缺失任务；已有 task manifest、generation config 和 model-part hash 必须一致。不带 `--resume` 时，当前数据集与当前 seed shard 的 inference 目录必须精确重建，不能因 sample ID 相同而静默复用另一版生成器的预测。全部模型完成后验证输入 manifest/hash、模型覆盖、任务行数和状态，再合并 shard。
+
+已有实验若只完成校准/生成/回验、尚未产生任何 inference 文件，可在 pipeline 命令中显式传 `--upgrade-inference-execution-policy`，把旧模型队列策略升级为本策略。升级会保存完整旧 protocol/hash 历史。只运行 calibration/generation/validation 且 protocol hash 与旧 manifest 一致的活动预生成任务可继续并行，升级记录同时保存当时的 preparation status；活动任务可能进入 inference、protocol 不一致或已有任意 inference 文件时必须拒绝升级。
 
 naive 和 seasonal-naive 在本地计算，不占用推理服务。模型输入适配继续沿用已登记策略，包括不支持原生多变量的模型按变量拆分后重组，以及模型不支持已知未来协变量时省略协变量。
 
@@ -733,7 +735,7 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 实现直接 anchor 参数映射、response-curve 反解 I1–I5、扁平 `seed_start/seed_count` 生成和 stable sample ID。
 - 实现独立 v8 feature/structural gate、非重复检查、强度响应回验和 manifest/hash 校验。
 - 实现 clean primary、I3/I5 secondary-family sensitivity 和 noisy-history robustness 的冻结样本组织。
-- 实现三服务健康检查、模型级 LPT 调度、模型内冻结并发、append-only shard、断点恢复和严格合并。
+- 实现三服务健康检查、全服务同模型阶段调度、模型内冻结并发、append-only part、断点恢复和严格合并。
 - 实现共享 L504 MASE denominator、fixed-L504/oracle-context、能力机制指标和每数据集 split-bank 分析。
 - 所有 calibration、generation、validation、inference 和 analysis 产物保存 schema/version/config/input hashes，阻止跨版本误合并。
 
@@ -765,3 +767,6 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；先对较快模型做 LPT，再将 Toto、TimesFM、TabPFN 分散为三条队列的慢尾部任务，使先结束前序队列的服务可参与队尾协作。
 - 2026-07-24：ETT2 正式运行在生成回验阶段暴露两个剂量问题：intermittency 的 thresholded spike rate 退化为零，nonlinear 的 12-path 均值支持域不能外推到64个生成 seeds。修复后普通能力保留12条校准路径，nonlinear 使用64条路径的下10%保守支持边界；压缩的 nonlinear secondary 匹配改用其支持域相对网格。ETT2 64 seeds 的 primary/secondary dose、结构、robustness 和 ablation 回验全部通过。
 - 2026-07-25：Jena Weather 预检暴露 nonlinear observable proxy 的 lag 错配：secondary 的真实 lag 为4，但旧指标固定检测 lag12，单条相位共振路径使 I3 均值异常抬高并反转 I3/I5。v8 改为少量季节相对 lag 搜索的二次/三次 adjusted-R² observable proxy，并新增生成器真实 lag 对齐的独立机制 gate。Jena 64 seeds 复测中 observable primary 五档和 secondary I3/I5 均递增，actual-lag primary/secondary gate、结构、robustness 与 ablation 全部通过。
+- 2026-07-25：horizon=48 的双 RTX 5090 实测确认旧并发配置显著低估 Timer、Chronos 和 Moirai 吞吐；正式推理由“不同机器固定不同模型 + 仅慢尾协作”升级为“每个模型三机六卡共同完成确定性 part，再同步切换下一模型”。更新 v8 专属 replica/HTTP concurrency，保留 shape bucket、持久连接、append-only part 和服务减少时不改变 part identity 的 resume 语义。
+- 2026-07-25：Toto 2.0 每卡 3 副本在三台双卡服务上同时加载失败；本机内核记录到系统内存 OOM，单个加载进程被杀时常驻内存约 9.4 GB。Timer 服务改为按副本波次加载（每波每卡至多一个新 worker，全部 ready 后进入下一波），把一次性加载峰值从 6 个降到 2 个，同时保留 3 副本/卡稳态。相同 120 个 v8 H48 视图实测从 2 副本/卡、并发 16 的 4.56 秒降到 3 副本/卡、并发 36 的 3.33 秒，吞吐提高约 37%，且 120/120 成功。
+- 2026-07-25：校准和生成新增按 capability 的多进程准备执行，16 核机器默认 8 workers、每进程 1 个 BLAS 线程；按冻结能力顺序合并，worker 数不进入科学协议。KDD 完整链路实测校准约 4.65×、生成约 4.96× 加速，64-seed gate 全部通过。
