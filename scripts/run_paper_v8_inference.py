@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -150,6 +151,7 @@ def prepare_view_tasks(
     source_records = [
         generation_manifest["files"]["clean"],
         generation_manifest["files"]["robustness"],
+        generation_manifest["files"]["input_ablations"],
     ]
     masters = (
         row
@@ -236,17 +238,19 @@ def prepare_tail_task_shards(
     manifest_path = _tail_manifest_path(inference_dir)
     if manifest_path.exists():
         manifest = v8.read_json(manifest_path)
-        if manifest["model_id"] != model_id:
-            raise ValueError("existing tail shard model mismatch")
-        if int(manifest["part_count"]) != part_count:
-            raise ValueError("existing tail shard count mismatch")
-        if manifest["source_task_sha256"] != v8.file_sha256(task_path):
-            raise ValueError("existing tail shard source task mismatch")
-        for part in manifest["parts"]:
-            path = Path(part["path"])
-            if v8.file_sha256(path) != part["sha256"]:
-                raise ValueError(f"tail task shard hash mismatch: {path}")
-        return manifest
+        reusable = (
+            manifest["model_id"] == model_id
+            and int(manifest["part_count"]) == part_count
+            and manifest["source_task_sha256"] == v8.file_sha256(task_path)
+        )
+        if reusable:
+            for part in manifest["parts"]:
+                path = Path(part["path"])
+                if not path.is_file() or v8.file_sha256(path) != part["sha256"]:
+                    reusable = False
+                    break
+        if reusable:
+            return manifest
 
     shard_dir = (
         inference_dir
@@ -697,6 +701,11 @@ def main() -> int:
         raise ValueError("generation validation is not accepted")
     generation_manifest = v8.read_json(generation_manifest_path)
     inference_dir = dataset_root / "03_inference" / shard_name
+    if inference_dir.exists() and not args.resume:
+        expected_parent = (dataset_root / "03_inference").resolve()
+        if inference_dir.resolve().parent != expected_parent:
+            raise ValueError("refusing to replace inference output outside dataset")
+        shutil.rmtree(inference_dir)
     inference_dir.mkdir(parents=True, exist_ok=True)
     task_manifest_path = inference_dir / "task_manifest.json"
     if task_manifest_path.exists() and args.resume:

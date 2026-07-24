@@ -69,7 +69,7 @@ def main() -> int:
                 "dataset q10-q90 intersected with generator response support"
             ),
             "structural_primary_strength": (
-                "fixed cross-dataset generator-relative response grid"
+                "fixed cross-dataset evenly spaced realized-strength grid"
             ),
             "structural_identifiability": "measured on generated samples only",
             "removed_features": ["future_abs_covariate_target_corr"],

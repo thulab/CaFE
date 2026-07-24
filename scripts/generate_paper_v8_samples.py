@@ -22,6 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, required=True)
     parser.add_argument(
+        "--capabilities",
+        nargs="+",
+        choices=v8.CAPABILITIES,
+        default=list(v8.CAPABILITIES),
+    )
+    parser.add_argument(
         "--secondary-modulus",
         type=int,
         default=4,
@@ -45,7 +51,7 @@ def selected_sensitivity_seeds(
 def members_for(capability_id: str) -> tuple[int | None, ...]:
     return (
         (0, 1)
-        if capability_id in v8.COUNTERFACTUAL_CAPABILITIES
+        if capability_id in v8.MAIN_COUNTERFACTUAL_CAPABILITIES
         else (None,)
     )
 
@@ -55,10 +61,11 @@ def iter_clean_samples(
     anchors: list[dict[str, Any]],
     calibration: dict[str, Any],
     *,
+    capability_ids: tuple[str, ...],
     seed_indexes: list[int],
     sensitivity_seeds: set[int],
 ) -> Iterator[dict[str, Any]]:
-    for capability_id in v8.CAPABILITIES:
+    for capability_id in capability_ids:
         capability_calibration = calibration["capabilities"][capability_id]
         for seed_index in seed_indexes:
             anchor = v8.anchor_for_seed(
@@ -79,6 +86,22 @@ def iter_clean_samples(
                         seed_index=seed_index,
                         counterfactual_member=member,
                     )
+            if (
+                capability_id in v8.STRICT_COUNTERFACTUAL_CAPABILITIES
+                and seed_index in sensitivity_seeds
+            ):
+                for member in (0, 1):
+                    yield v8.generate_master_sample(
+                        dataset,
+                        anchor,
+                        capability_calibration,
+                        capability_id=capability_id,
+                        family_role="primary",
+                        intensity=5,
+                        seed_index=seed_index,
+                        counterfactual_member=member,
+                        evaluation_table="strict_counterfactual_audit",
+                    )
             if seed_index not in sensitivity_seeds:
                 continue
             for intensity in (3, 5):
@@ -93,6 +116,28 @@ def iter_clean_samples(
                         seed_index=seed_index,
                         counterfactual_member=member,
                     )
+
+
+def iter_input_ablations(
+    clean_rows: list[dict[str, Any]],
+) -> Iterator[dict[str, Any]]:
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for row in clean_rows:
+        if (
+            row["capability_id"] not in v8.INPUT_ABLATION_CAPABILITIES
+            or row["generator_family_role"] != "primary"
+            or row.get("evaluation_table", "main") != "main"
+        ):
+            continue
+        key = (str(row["capability_id"]), int(row["intensity"]))
+        groups.setdefault(key, []).append(row)
+    for rows in groups.values():
+        rows.sort(key=lambda row: int(row["seed_index"]))
+        if len(rows) < 2:
+            continue
+        for index, clean in enumerate(rows):
+            donor = rows[(index + 1) % len(rows)]
+            yield v8.multivariate_input_ablation_sample(clean, donor)
 
 
 def main() -> int:
@@ -126,15 +171,22 @@ def main() -> int:
         f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     )
     clean_path = shard_dir / f"{shard_name}.jsonl"
-    clean_count = v8.write_jsonl(
-        clean_path,
+    clean_rows = list(
         iter_clean_samples(
             dataset,
             anchors,
             calibration,
+            capability_ids=tuple(args.capabilities),
             seed_indexes=seed_indexes,
             sensitivity_seeds=sensitivity_seeds,
-        ),
+        )
+    )
+    clean_count = v8.write_jsonl(clean_path, clean_rows)
+
+    ablation_path = shard_dir / f"{shard_name}__input_ablation.jsonl"
+    ablation_count = v8.write_jsonl(
+        ablation_path,
+        iter_input_ablations(clean_rows),
     )
 
     robustness_path = shard_dir / f"{shard_name}__robustness.jsonl"
@@ -144,6 +196,7 @@ def main() -> int:
             v8.robustness_sample(row)
             for row in v8.iter_jsonl(clean_path)
             if row["generator_family_role"] == "primary"
+            and row.get("evaluation_table", "main") == "main"
             and int(row["intensity"]) in {3, 5}
             and int(row["seed_index"]) in sensitivity_seeds
         ),
@@ -156,6 +209,7 @@ def main() -> int:
         "seed_start": args.seed_start,
         "seed_count": args.seed_count,
         "seed_indexes": seed_indexes,
+        "capabilities": list(args.capabilities),
         "secondary_seed_policy": {
             "stable_hash_modulus": args.secondary_modulus,
             "selected_seed_indexes": sorted(sensitivity_seeds),
@@ -167,6 +221,19 @@ def main() -> int:
             "intensities": [3, 5],
             "history_noise_ratio": v8.ROBUSTNESS_NOISE_RATIO,
             "scoring_future": "clean_latent",
+        },
+        "input_ablation_policy": {
+            "capabilities": sorted(v8.INPUT_ABLATION_CAPABILITIES),
+            "source": "clean_primary_main",
+            "donor_policy": "next_seed_same_capability_and_intensity",
+            "marginal_matching": "affine_mean_and_std",
+            "scoring_future": "original_clean_latent",
+        },
+        "strict_counterfactual_policy": {
+            "capabilities": sorted(v8.STRICT_COUNTERFACTUAL_CAPABILITIES),
+            "selected_seed_indexes": sorted(sensitivity_seeds),
+            "intensities": [5],
+            "evaluation_table": "strict_counterfactual_audit",
         },
     }
     manifest = {
@@ -183,6 +250,10 @@ def main() -> int:
                 **v8.file_record(robustness_path),
                 "row_count": robustness_count,
             },
+            "input_ablations": {
+                **v8.file_record(ablation_path),
+                "row_count": ablation_count,
+            },
         },
     }
     manifest_path = generation_dir / f"manifest__{shard_name}.json"
@@ -193,6 +264,7 @@ def main() -> int:
                 "dataset_id": dataset.dataset_id,
                 "clean_sample_count": clean_count,
                 "robustness_sample_count": robustness_count,
+                "input_ablation_sample_count": ablation_count,
                 "sensitivity_seed_count": len(sensitivity_seeds),
                 "manifest": str(manifest_path),
             }

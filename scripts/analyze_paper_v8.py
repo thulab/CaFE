@@ -24,9 +24,9 @@ PRIMARY_MECHANISM_METRIC = {
     "regime_switching": "regime_jump_nmae",
     "nonlinear_persistence": "nonlinear_recurrence_residual_nrmse",
     "predictable_intermittency": "event_window_nmae",
-    "common_factor": "counterfactual_effect_nrmse",
+    "common_factor": "common_component_nmae",
     "hierarchical_coherence": "child_contrast_nmae",
-    "cross_series_dependence": "counterfactual_effect_nrmse",
+    "cross_series_dependence": "responder_normalized_mae",
     "covariate_response": "counterfactual_effect_nrmse",
 }
 BASELINES = ("last_value", "seasonal_naive")
@@ -93,6 +93,10 @@ def metric_row(
             "master_counterfactual_pair_id"
         ),
         "counterfactual_member": sample.get("counterfactual_member"),
+        "clean_master_sample_id": sample.get("clean_master_sample_id"),
+        "input_ablation_group_id": sample.get(
+            "input_ablation_group_id"
+        ),
         "metrics": {
             str(name): float(value)
             for name, value in metrics.items()
@@ -232,11 +236,18 @@ def selected_context_rows(
         if int(row["context_length"]) == v8.CONTEXT_LENGTH
     ]
     unpaired: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    parent_matched: dict[
+        tuple[str, str], list[dict[str, Any]]
+    ] = defaultdict(list)
     paired: dict[
         tuple[str, str], dict[int, list[dict[str, Any]]]
     ] = defaultdict(lambda: defaultdict(list))
     for row in rows:
         model_id = str(row["model_id"])
+        clean_parent = row.get("clean_master_sample_id")
+        if clean_parent is not None:
+            parent_matched[(model_id, str(clean_parent))].append(row)
+            continue
         master_pair = row.get("master_counterfactual_pair_id")
         if master_pair is None:
             unpaired[(model_id, str(row["master_sample_id"]))].append(row)
@@ -285,6 +296,25 @@ def selected_context_rows(
             }
             for member in complete[selected]
         )
+    selected_parent_context = {
+        (str(row["model_id"]), str(row["master_sample_id"])): int(
+            row["context_length"]
+        )
+        for row in oracle
+    }
+    for key, candidates in parent_matched.items():
+        selected = selected_parent_context.get(key)
+        if selected is None:
+            continue
+        matching = [
+            row
+            for row in candidates
+            if int(row["context_length"]) == selected
+        ]
+        oracle.extend(
+            {**row, "context_policy": "oracle_context"}
+            for row in matching
+        )
     return fixed + oracle, pair_context
 
 
@@ -307,13 +337,14 @@ def selected_effect_rows(
     return output
 
 
-def mean_seed_group_mase(
+def mean_seed_group_metric(
     rows: Iterable[dict[str, Any]],
+    metric_name: str,
 ) -> float | None:
     grouped: dict[tuple[int, int], list[float]] = defaultdict(list)
     for row in rows:
         grouped[(int(row["seed_index"]), int(row["intensity"]))].append(
-            float(row["metrics"]["mase"])
+            float(row["metrics"][metric_name])
         )
     if not grouped:
         return None
@@ -331,11 +362,18 @@ def mean_seed_group_mase(
     )
 
 
+def mean_seed_group_mase(
+    rows: Iterable[dict[str, Any]],
+) -> float | None:
+    return mean_seed_group_metric(rows, "mase")
+
+
 def score_table(
     rows: list[dict[str, Any]],
     effects: list[dict[str, Any]],
     *,
     seed_filter: set[int] | None = None,
+    accuracy_metric_by_capability: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     filtered = [
         row
@@ -373,8 +411,22 @@ def score_table(
     output: list[dict[str, Any]] = []
     for key, group in sorted(groups.items()):
         capability = key[4]
-        accuracy = mean_seed_group_mase(group)
-        metric_name = PRIMARY_MECHANISM_METRIC[capability]
+        accuracy_metric = (
+            (accuracy_metric_by_capability or {}).get(
+                capability,
+                "mase",
+            )
+        )
+        accuracy = mean_seed_group_metric(group, accuracy_metric)
+        metric_name = (
+            "counterfactual_effect_nrmse"
+            if (
+                key[2] == "strict_counterfactual_audit"
+                and capability
+                in {"common_factor", "cross_series_dependence"}
+            )
+            else PRIMARY_MECHANISM_METRIC[capability]
+        )
         if metric_name == "counterfactual_effect_nrmse":
             mechanism_values = [
                 float(row[metric_name])
@@ -397,6 +449,7 @@ def score_table(
                 "capability_id": capability,
                 "model_id": key[5],
                 "accuracy_score": accuracy,
+                "accuracy_metric": accuracy_metric,
                 "mechanism_metric": metric_name,
                 "mechanism_score": (
                     float(np.mean(mechanism_values))
@@ -468,6 +521,13 @@ def matched_comparison_rows(
                 and row["generator_family_role"] == "primary"
             ),
         ),
+        (
+            "multivariate_input_ablation",
+            lambda row: (
+                row["evaluation_table"] == "multivariate_input_ablation"
+                and row["generator_family_role"] == "primary"
+            ),
+        ),
     )
 
     def match_key(row: dict[str, Any]) -> tuple[Any, ...]:
@@ -511,13 +571,29 @@ def matched_comparison_rows(
             and row["generator_family_role"] == "primary"
             and match_key(row) in treatment_keys
         ]
+        accuracy_override = (
+            {
+                "common_factor": "protected_target_nmae",
+                "cross_series_dependence": "responder_normalized_mae",
+            }
+            if comparison_id == "multivariate_input_ablation"
+            else None
+        )
         control_scores = {
             score_key(row): row
-            for row in score_table(control_rows, control_effects)
+            for row in score_table(
+                control_rows,
+                control_effects,
+                accuracy_metric_by_capability=accuracy_override,
+            )
         }
         treatment_scores = {
             score_key(row): row
-            for row in score_table(treatment_rows, treatment_effects)
+            for row in score_table(
+                treatment_rows,
+                treatment_effects,
+                accuracy_metric_by_capability=accuracy_override,
+            )
         }
         for key in sorted(set(control_scores) & set(treatment_scores)):
             control = control_scores[key]
@@ -540,6 +616,7 @@ def matched_comparison_rows(
                     "matched_intensities": treatment["intensities"],
                     "control_accuracy_score": control_accuracy,
                     "treatment_accuracy_score": treatment_accuracy,
+                    "accuracy_metric": treatment["accuracy_metric"],
                     "accuracy_delta": (
                         treatment_accuracy - control_accuracy
                     ),
@@ -606,6 +683,14 @@ def split_bank(
         and row["generator_family_role"] == "primary"
         and row["model_id"] in models
     ]
+    present_capabilities = [
+        capability
+        for capability in v8.CAPABILITIES
+        if any(
+            row["capability_id"] == capability
+            for row in official_rows
+        )
+    ]
     for size in sizes:
         batches = []
         for start in range(seed_start, seed_start + seed_count, size):
@@ -650,7 +735,7 @@ def split_bank(
                             float(row[score_name])
                         )
         for policy in ("fixed_l504", "oracle_context"):
-            for capability in v8.CAPABILITIES:
+            for capability in present_capabilities:
                 for kind in ("accuracy", "mechanism"):
                     rank_maps = [
                         index.get((batch_index, policy, capability, kind), {})
@@ -815,6 +900,11 @@ def render_report(
         if row["evaluation_table"] == "main"
         and row["generator_family_role"] == "primary"
     ]
+    present_capabilities = [
+        capability
+        for capability in v8.CAPABILITIES
+        if any(row["capability_id"] == capability for row in official)
+    ]
 
     def format_score(value: float | None) -> str:
         return "-" if value is None else f"{value:.3f}"
@@ -828,7 +918,7 @@ def render_report(
                 "|---|---|---:|---:|---:|---:|",
             ]
         )
-        for capability in v8.CAPABILITIES:
+        for capability in present_capabilities:
             selected = sorted(
                 [
                     row
@@ -850,6 +940,32 @@ def render_report(
                     f"{format_score(row['mechanism_score'])} | "
                     f"{row['mechanism_rank'] or '-'} |"
                 )
+        lines.append("")
+    strict = [
+        row
+        for row in scores
+        if row["evaluation_table"] == "strict_counterfactual_audit"
+        and row["generator_family_role"] == "primary"
+        and not row["is_reference_baseline"]
+    ]
+    if strict:
+        lines.extend(
+            [
+                "## I5 strict counterfactual audit",
+                "",
+                "- `effect NRMSE≈1` 表示模型几乎没有随联合输入恢复反事实效应；该表是诊断审计，不并入主能力分。",
+                "",
+                "| policy | capability | model | effect NRMSE | rank | seeds |",
+                "|---|---|---|---:|---:|---:|",
+            ]
+        )
+        for row in strict:
+            lines.append(
+                f"| {row['context_policy']} | {row['capability_id']} | "
+                f"{row['model_id']} | "
+                f"{format_score(row['mechanism_score'])} | "
+                f"{row['mechanism_rank'] or '-'} | {row['seed_count']} |"
+            )
         lines.append("")
     lines.extend(
         [
@@ -915,31 +1031,53 @@ def render_matched_report(
     for comparison_id in (
         "secondary_family",
         "observation_noise_robustness",
+        "multivariate_input_ablation",
     ):
         for policy in ("fixed_l504", "oracle_context"):
-            lines.extend(
-                [
-                    f"## {comparison_id} / {policy}",
-                    "",
-                    "| capability | model | clean MASE | treatment MASE | Δ | clean mechanism | treatment mechanism | Δ |",
-                    "|---|---|---:|---:|---:|---:|---:|---:|",
-                ]
-            )
+            if comparison_id == "multivariate_input_ablation":
+                lines.extend(
+                    [
+                        f"## {comparison_id} / {policy}",
+                        "",
+                        "- common factor 只评分历史未改的 protected target；cross-series 只评分历史未改的 responders。正 Δ 表示模型使用了被消融的跨变量信息。",
+                        "",
+                        "| capability | model | focal metric | clean | ablated | Δ |",
+                        "|---|---|---|---:|---:|---:|",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        f"## {comparison_id} / {policy}",
+                        "",
+                        "| capability | model | clean MASE | treatment MASE | Δ | clean mechanism | treatment mechanism | Δ |",
+                        "|---|---|---:|---:|---:|---:|---:|---:|",
+                    ]
+                )
             for row in official:
                 if (
                     row["comparison_id"] != comparison_id
                     or row["context_policy"] != policy
                 ):
                     continue
-                lines.append(
-                    f"| {row['capability_id']} | {row['model_id']} | "
-                    f"{score(row['control_accuracy_score'])} | "
-                    f"{score(row['treatment_accuracy_score'])} | "
-                    f"{delta(row['accuracy_relative_delta'])} | "
-                    f"{score(row['control_mechanism_score'])} | "
-                    f"{score(row['treatment_mechanism_score'])} | "
-                    f"{delta(row['mechanism_relative_delta'])} |"
-                )
+                if comparison_id == "multivariate_input_ablation":
+                    lines.append(
+                        f"| {row['capability_id']} | {row['model_id']} | "
+                        f"{row['accuracy_metric']} | "
+                        f"{score(row['control_accuracy_score'])} | "
+                        f"{score(row['treatment_accuracy_score'])} | "
+                        f"{delta(row['accuracy_relative_delta'])} |"
+                    )
+                else:
+                    lines.append(
+                        f"| {row['capability_id']} | {row['model_id']} | "
+                        f"{score(row['control_accuracy_score'])} | "
+                        f"{score(row['treatment_accuracy_score'])} | "
+                        f"{delta(row['accuracy_relative_delta'])} | "
+                        f"{score(row['control_mechanism_score'])} | "
+                        f"{score(row['treatment_mechanism_score'])} | "
+                        f"{delta(row['mechanism_relative_delta'])} |"
+                    )
             lines.append("")
     return "\n".join(lines)
 

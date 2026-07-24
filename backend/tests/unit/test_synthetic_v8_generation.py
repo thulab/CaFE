@@ -161,6 +161,10 @@ def test_v8_common_factor_requires_joint_code_to_recover_future(
     ] == pytest.approx(first_metadata["factor_persistence"])
     assert first_metadata["local_factor_loading_orthogonalized"] is True
     assert first_metadata["local_code_shape_orthogonalized"] is True
+    assert first_metadata["main_task_is_dense_dynamic_factor"] is True
+    assert first_metadata["code_strength"] < 1.0
+    assert len(first_metadata["code_shape"]) >= 24
+    assert first_metadata["dense_factor_strength"] > 0.0
     assert gate["joint_holdout_r2"] >= 0.80
     assert gate["best_single_channel_holdout_r2"] <= 0.80
     assert gate["joint_minus_best_single_holdout_r2"] >= 0.15
@@ -192,7 +196,7 @@ def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
     assert delay <= int(0.40 * 504)
     assert (delay - 48) % metadata["cross_lag_step"] == 0
     assert metadata["cross_lag_sampling_policy"] == (
-        "uniform_master_suffix_view_compatible_lag_at_least_horizon"
+        "horizon_aligned_history_covered_lag"
     )
     assert metadata["history_covered_forecast_steps"] == 48
     assert metadata["counterfactual_responder_history_invariant"] is True
@@ -388,10 +392,26 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
         first[:context_length, 1:],
         second[:context_length, 1:],
     )
-    assert len(first_metadata["historical_event_centers"]) >= 3
-    assert (
-        first_metadata["historical_event_min_center_spacing"]
-        > first_metadata["counterfactual_event_width"]
+    assert first_metadata["counterfactual_path_is_dense"] is True
+    assert first_metadata["counterfactual_path_is_in_support"] is True
+    assert first_metadata["dense_teaching_fraction"] > 0.0
+    assert first_metadata["driver_excitation_knot_spacing"] in {
+        4,
+        5,
+        6,
+    }
+    assert np.max(
+        np.abs(
+            np.asarray(first_metadata["counterfactual_path_mean_by_member"])
+        )
+    ) < 1e-10
+    assert np.asarray(
+        first_metadata["counterfactual_path_std_by_member"]
+    ) == pytest.approx(
+        np.repeat(
+            first_metadata["driver_excitation_scale"],
+            2,
+        )
     )
     assert gate["accepted"] is True
     assert gate["blind_best_driver"] == first_metadata["driver_index"]
@@ -513,8 +533,9 @@ def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:
         ),
         "cross_series_dependence": lambda row: (
             row["cross_lag_steps"],
-            tuple(row["historical_event_centers"]),
-            round(row["counterfactual_response_center_offset"], 6),
+            row["driver_excitation_knot_spacing"],
+            round(row["driver_excitation_scale"], 6),
+            round(row["counterfactual_alternative_rms"], 6),
         ),
         "covariate_response": lambda row: (
             row["counterfactual_weather_transform_selected"],

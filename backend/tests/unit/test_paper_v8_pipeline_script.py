@@ -121,6 +121,99 @@ def test_master_views_share_exact_future_and_l504_mase_scale():
 
 
 @pytest.mark.parametrize(
+    ("capability_id", "target_dim"),
+    (("common_factor", 5), ("cross_series_dependence", 3)),
+)
+def test_multivariate_input_ablation_keeps_future_and_marginal_scale(
+    capability_id,
+    target_dim,
+):
+    common = load_script("paper_v8_pipeline_common")
+    dataset = common.resolve_dataset("gift_electricity_h")
+    conditioning = common.build_conditioning(
+        dataset,
+        capability_id=capability_id,
+        frequency="H",
+        season_length=24,
+    )
+
+    def sample(seed):
+        target, metadata, covariates = (
+            common.generate_deterministic_sample(
+                capability_id,
+                common.MASTER_LENGTH,
+                common.CONTEXT_LENGTH,
+                target_dim,
+                24,
+                5,
+                np.random.default_rng(seed),
+                conditioning=conditioning,
+            )
+        )
+        target, covariates = common.standardize_generated_sample(
+            capability_id,
+            target,
+            covariates,
+            metadata=metadata,
+        )
+        scale, scale_by_target = common.mase_scales(
+            target,
+            season_length=24,
+        )
+        return {
+            "schema_version": "test",
+            "sample_id": f"sample-{seed}",
+            "master_sample_id": f"sample-{seed}",
+            "dataset_id": dataset.dataset_id,
+            "capability_id": capability_id,
+            "generator_family_role": "primary",
+            "intensity": 5,
+            "context_length": common.CONTEXT_LENGTH,
+            "horizon": common.HORIZON,
+            "target_dim": target_dim,
+            "covariate_dim": 0,
+            "covariates": None,
+            "counterfactual_pair_id": None,
+            "counterfactual_member": None,
+            "generation_metadata": metadata,
+            "target": target.tolist(),
+            "mase_scale": scale,
+            "mase_scale_by_target": scale_by_target,
+            "future_sha256": "future",
+        }
+
+    clean = sample(101)
+    donor = sample(103)
+    ablated = common.multivariate_input_ablation_sample(clean, donor)
+    clean_target = np.asarray(clean["target"])
+    ablated_target = np.asarray(ablated["target"])
+    metadata = ablated["input_ablation_metadata"]
+    channels = metadata["replaced_channels"]
+    start, stop = metadata["replaced_history_slice"]
+
+    assert np.array_equal(
+        clean_target[common.CONTEXT_LENGTH :],
+        ablated_target[common.CONTEXT_LENGTH :],
+    )
+    assert not np.array_equal(
+        clean_target[start:stop, channels],
+        ablated_target[start:stop, channels],
+    )
+    assert np.mean(
+        clean_target[start:stop, channels],
+        axis=0,
+    ) == pytest.approx(
+        np.mean(ablated_target[start:stop, channels], axis=0)
+    )
+    assert np.std(
+        clean_target[start:stop, channels],
+        axis=0,
+    ) == pytest.approx(
+        np.std(ablated_target[start:stop, channels], axis=0)
+    )
+
+
+@pytest.mark.parametrize(
     ("capability_id", "metadata", "field", "expected"),
     [
         (
@@ -194,6 +287,45 @@ def test_oracle_context_uses_one_context_for_both_pair_members():
         row for row in selected if row["context_policy"] == "oracle_context"
     ]
     assert pair_context[("demo", "pair")] == 168
+    assert len(oracle) == 2
+    assert {row["context_length"] for row in oracle} == {168}
+
+
+def test_oracle_context_reuses_clean_parent_context_for_input_ablation():
+    analysis = load_script("analyze_paper_v8")
+    rows = []
+    for context, clean_mase, ablated_mase in (
+        (96, 0.8, 0.1),
+        (168, 0.4, 0.9),
+        (336, 0.6, 0.3),
+        (504, 0.7, 0.2),
+    ):
+        rows.extend(
+            [
+                {
+                    "model_id": "demo",
+                    "master_sample_id": "clean",
+                    "master_counterfactual_pair_id": None,
+                    "clean_master_sample_id": None,
+                    "context_length": context,
+                    "metrics": {"mase": clean_mase},
+                },
+                {
+                    "model_id": "demo",
+                    "master_sample_id": "ablated",
+                    "master_counterfactual_pair_id": None,
+                    "clean_master_sample_id": "clean",
+                    "context_length": context,
+                    "metrics": {"mase": ablated_mase},
+                },
+            ]
+        )
+
+    selected, _ = analysis.selected_context_rows(rows)
+    oracle = [
+        row for row in selected if row["context_policy"] == "oracle_context"
+    ]
+
     assert len(oracle) == 2
     assert {row["context_length"] for row in oracle} == {168}
 
@@ -309,6 +441,49 @@ def test_matched_comparison_excludes_unmatched_clean_seeds_and_intensities():
     assert secondary["accuracy_relative_delta"] == pytest.approx(1.0)
 
 
+def test_input_ablation_comparison_uses_unchanged_focal_channel_metric():
+    analysis = load_script("analyze_paper_v8")
+
+    def row(table, mase, protected):
+        return {
+            "dataset_id": "dataset",
+            "context_policy": "fixed_l504",
+            "evaluation_table": table,
+            "generator_family_role": "primary",
+            "capability_id": "common_factor",
+            "model_id": "model",
+            "seed_index": 0,
+            "intensity": 5,
+            "metrics": {
+                "mase": mase,
+                "protected_target_nmae": protected,
+                "common_component_nmae": protected,
+            },
+        }
+
+    comparisons = analysis.matched_comparison_rows(
+        [
+            row("main", mase=0.2, protected=0.4),
+            row(
+                "multivariate_input_ablation",
+                mase=5.0,
+                protected=0.5,
+            ),
+        ],
+        [],
+    )
+    ablation = next(
+        item
+        for item in comparisons
+        if item["comparison_id"] == "multivariate_input_ablation"
+    )
+
+    assert ablation["accuracy_metric"] == "protected_target_nmae"
+    assert ablation["control_accuracy_score"] == pytest.approx(0.4)
+    assert ablation["treatment_accuracy_score"] == pytest.approx(0.5)
+    assert ablation["accuracy_delta"] == pytest.approx(0.1)
+
+
 def test_inference_prediction_uses_frozen_mase_scale():
     inference = load_script("run_paper_v8_inference")
     target = np.arange(12, dtype=float)[:, None]
@@ -392,6 +567,43 @@ def test_tail_model_is_partitioned_across_idle_services(tmp_path):
         for model_ids_for_endpoint in assignments.values()
         for model_id in model_ids_for_endpoint
     ) == 1
+
+
+def test_tail_shards_refresh_when_source_task_changes(tmp_path):
+    common = load_script("paper_v8_pipeline_common")
+    inference = load_script("run_paper_v8_inference")
+    task_path = tmp_path / "tasks.jsonl"
+    inference_dir = tmp_path / "inference"
+    common.write_jsonl(
+        task_path,
+        ({"sample_id": f"old-{index}"} for index in range(6)),
+    )
+    first = inference.prepare_tail_task_shards(
+        task_path,
+        model_id="timesfm2.5",
+        part_count=2,
+        inference_dir=inference_dir,
+    )
+
+    common.write_jsonl(
+        task_path,
+        ({"sample_id": f"new-{index}"} for index in range(8)),
+    )
+    second = inference.prepare_tail_task_shards(
+        task_path,
+        model_id="timesfm2.5",
+        part_count=2,
+        inference_dir=inference_dir,
+    )
+
+    assert first["source_task_sha256"] != second["source_task_sha256"]
+    assert second["source_task_row_count"] == 8
+    assert sum(part["row_count"] for part in second["parts"]) == 8
+    assert {
+        row["sample_id"]
+        for part in second["parts"]
+        for row in common.iter_jsonl(Path(part["path"]))
+    } == {f"new-{index}" for index in range(8)}
 
 
 def test_tail_predictions_are_merged_only_after_complete_coverage(tmp_path):

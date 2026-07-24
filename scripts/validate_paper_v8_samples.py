@@ -85,6 +85,86 @@ def robustness_checks(
     }
 
 
+def input_ablation_checks(
+    clean_rows: list[dict[str, Any]],
+    ablation_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    clean_by_id = {row["sample_id"]: row for row in clean_rows}
+    failures: list[dict[str, Any]] = []
+    for row in ablation_rows:
+        basic = basic_sample_checks(row)
+        clean = clean_by_id.get(str(row["clean_master_sample_id"]))
+        checks = {
+            "basic": basic["accepted"],
+            "clean_parent_exists": clean is not None,
+        }
+        if clean is not None:
+            context = int(row["context_length"])
+            observed = np.asarray(row["target"], dtype=float)
+            latent = np.asarray(clean["target"], dtype=float)
+            metadata = row["input_ablation_metadata"]
+            channels = [
+                int(value) for value in metadata["replaced_channels"]
+            ]
+            start, stop = (
+                int(value)
+                for value in metadata["replaced_history_slice"]
+            )
+            untouched_channels = [
+                index
+                for index in range(int(row["target_dim"]))
+                if index not in channels
+            ]
+            checks.update(
+                {
+                    "future_exact": bool(
+                        np.array_equal(observed[context:], latent[context:])
+                    ),
+                    "replaced_history_changed": bool(
+                        not np.array_equal(
+                            observed[start:stop, channels],
+                            latent[start:stop, channels],
+                        )
+                    ),
+                    "untouched_channels_exact": bool(
+                        not untouched_channels
+                        or np.array_equal(
+                            observed[:context, untouched_channels],
+                            latent[:context, untouched_channels],
+                        )
+                    ),
+                    "replaced_mean_matched": bool(
+                        np.allclose(
+                            np.mean(observed[start:stop, channels], axis=0),
+                            np.mean(latent[start:stop, channels], axis=0),
+                            atol=1e-10,
+                            rtol=1e-10,
+                        )
+                    ),
+                    "replaced_std_matched": bool(
+                        np.allclose(
+                            np.std(observed[start:stop, channels], axis=0),
+                            np.std(latent[start:stop, channels], axis=0),
+                            atol=1e-10,
+                            rtol=1e-10,
+                        )
+                    ),
+                    "mase_scale_reused": bool(
+                        float(row["mase_scale"]) == float(clean["mase_scale"])
+                    ),
+                }
+            )
+        if not all(checks.values()):
+            failures.append(
+                {"sample_id": row["sample_id"], "checks": checks}
+            )
+    return {
+        "accepted": not failures,
+        "sample_count": len(ablation_rows),
+        "failures": failures,
+    }
+
+
 def main() -> int:
     args = parse_args()
     dataset = v8.resolve_dataset(args.dataset_id)
@@ -104,6 +184,9 @@ def main() -> int:
     robustness_rows = list(
         v8.iter_jsonl(Path(manifest["files"]["robustness"]["path"]))
     )
+    ablation_rows = list(
+        v8.iter_jsonl(Path(manifest["files"]["input_ablations"]["path"]))
+    )
     identifiers = [str(row["sample_id"]) for row in clean_rows]
     duplicate_ids = sorted(
         identifier
@@ -112,10 +195,15 @@ def main() -> int:
     )
     clean_validation = validate_sample_collection(clean_rows)
     robust_validation = robustness_checks(clean_rows, robustness_rows)
+    ablation_validation = input_ablation_checks(
+        clean_rows,
+        ablation_rows,
+    )
     accepted = bool(
         not duplicate_ids
         and clean_validation["accepted"]
         and robust_validation["accepted"]
+        and ablation_validation["accepted"]
     )
     report = {
         "schema_version": "paper_v8_generation_validation.v1",
@@ -125,9 +213,11 @@ def main() -> int:
         "generation_manifest_sha256": v8.file_sha256(manifest_path),
         "clean_sample_count": len(clean_rows),
         "robustness_sample_count": len(robustness_rows),
+        "input_ablation_sample_count": len(ablation_rows),
         "duplicate_sample_ids": duplicate_ids,
         "clean_validation": clean_validation,
         "robustness_validation": robust_validation,
+        "input_ablation_validation": ablation_validation,
         "accepted": accepted,
     }
     report_path = generation_dir / f"validation__{shard_name}.json"
@@ -140,6 +230,7 @@ def main() -> int:
                 "accepted": True,
                 "clean_sample_count": len(clean_rows),
                 "robustness_sample_count": len(robustness_rows),
+                "input_ablation_sample_count": len(ablation_rows),
                 "report": str(report_path),
             }
         )

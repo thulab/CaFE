@@ -319,7 +319,9 @@ seed_count = N
 本次生成使用全局 seed indexes `[K, K+N)`。`seed_count` 表示每个 `capability × primary family` 的 master seed-group 数，而不是 JSONL 行数：
 
 - 同一 seed-group 共享 anchor 和 path realization，并产生 I1–I5；
-- counterfactual 能力在同一 seed-group 下产生配对 members；
+- covariate 主任务在同一 seed-group 下产生配对 members；
+- common-factor 和 cross-series 主任务只生成事实样本；严格反事实只在抽样 seed 的 I5 诊断表生成配对 members；
+- common-factor 和 cross-series 另派生保持边际均值/标准差的跨变量输入消融样本，future 保持不变；
 - 每个 master sample 只存储 504+48 的母本；
 - 96/168/336/504 views 在后续推理准备阶段切出；
 - noisy-history robustness 样本从 clean primary 样本派生，不单独建立生成轮次。
@@ -415,7 +417,7 @@ http://192.168.99.18:10810
 model_id × sample_id × context_length
 ```
 
-成功结果 append-only，重启时跳过已完成任务，只重试失败或缺失任务。全部模型完成后验证输入 manifest/hash、模型覆盖、任务行数和状态，再合并 shard。
+`--resume` 模式下成功结果 append-only，重启时跳过已完成任务，只重试失败或缺失任务；已有 task manifest、generation config 和 tail-part hash 必须一致。不带 `--resume` 时，当前数据集与当前 seed shard 的 inference 目录必须精确重建，不能因 sample ID 相同而静默复用另一版生成器的预测。全部模型完成后验证输入 manifest/hash、模型覆盖、任务行数和状态，再合并 shard。
 
 naive 和 seasonal-naive 在本地计算，不占用推理服务。模型输入适配继续沿用已登记策略，包括不支持原生多变量的模型按变量拆分后重组，以及模型不支持已知未来协变量时省略协变量。
 
@@ -466,12 +468,22 @@ counterfactual 能力先在 pair 内聚合 MASE，再按 seed-group 和 intensit
 | regime_switching | `regime_jump_nmae` |
 | nonlinear_persistence | `nonlinear_recurrence_residual_nrmse` |
 | predictable_intermittency | `event_window_nmae` |
-| common_factor | `counterfactual_effect_nrmse` |
+| common_factor | `common_component_nmae`（事实结构恢复） |
 | hierarchical_coherence | `child_contrast_nmae` |
-| cross_series_dependence | `counterfactual_effect_nrmse` |
+| cross_series_dependence | `responder_normalized_mae`（事实 responder 预测） |
 | covariate_response | `counterfactual_effect_nrmse` |
 
 每个能力分别列出 Oracle/L504 的 MASE、accuracy rank、主机制得分和 mechanism rank；另提供跨能力矩阵。naive/seasonal-naive 作为参考行显示，但不进入 foundation-model 正式排名。primary family 进入主表，secondary family 与 noisy-history robustness 分表报告。
+
+`common_factor` 和 `cross_series_dependence` 还必须单列跨变量输入消融：
+
+- common-factor 只评分 history 完全未改的 protected target，比较完整联合输入与辅助通道 donor 替换后的 `protected_target_nmae`；
+- cross-series 只评分 history 完全未改的 responders，比较完整 driver 与 forecast-covering driver block donor 替换后的 `responder_normalized_mae`；
+- donor 来自相同 capability、family 和 intensity 的另一 seed，替换段按 recipient 的均值和标准差做 affine matching；
+- control 与 ablation 在 Oracle 分析中使用 control 选择的同一个 context；
+- 正的误差增量表示模型使用了被消融的跨变量信息，但必须和事实预测误差一起解释，不能单独把“对错误输入敏感”当成能力。
+
+common/cross 的 I5 strict counterfactual effect NRMSE 只作为高难度诊断审计，不并入主能力分。首轮模型 pilot 显示该指标对多数现有 zero-shot 模型接近 1；若把它作为主分，会把“没有恢复任意 in-context 反事实映射”误写成所有模型共同失去普通动态因子或 lead-lag 预测能力。
 
 上述正式结果以数据集为独立报告单位：
 
@@ -512,6 +524,27 @@ Oracle context 比较中的 L96、L168、L336 和 L504 是同一个 552 点 mast
 正式 v8 对每个 master sample 使用完整 L504 history 预计算一次 MASE denominator，并将其保存到 sample/view metadata。四个 context views、counterfactual members 的各自 target channel 都复用由对应 clean L504 master history 得到的 denominator；robustness 样本也沿用 clean latent history 的 denominator，不用加噪 history 重新定标。
 
 `season_length` 由 canonical config 的原生频率确定。canonical config 必须至少提供一个在 504 点 history 内可定义且有意义的评测周期；无法满足时不进入该配置，不能在不同 context 下静默切换 MASE lag。Oracle context 仍按 MASE 选取，但 counterfactual pair 的两个 members 共用由 pair 平均 MASE 最小化得到的 context。
+
+## 决策 19：common-factor 与 cross-series 使用稠密事实机制，配对反事实降为审计
+
+状态：**已决定并完成单数据集 64-seed 回验**
+
+旧 common-factor 使用 8–12 点短 code block，旧 cross-series 使用少量历史事件加边界处第 4 个事件。虽然正控可以恢复机制，但 zero-shot 模型容易把最终局部结构当成异常，严格 paired effect 对所有模型接近不响应，不能作为主能力题。
+
+正式 primary family 调整为：
+
+1. `common_factor = dense_dynamic_factor_with_joint_state_relay`
+   - 五个 target 全路径包含确定性动态共同因子和异质局部成分；
+   - I1–I5 用 history `pca_top1_explained` 的生成器实际支持范围等距定标；
+   - 24–32 点长观测块反复教授 rank-2 联合状态方程，只在抽样 seed 的 I5 pair 中沿 protected channel 的 null direction 改变状态；
+   - 主事实表报告共同成分恢复，跨变量使用由 protected-target donor ablation 判断，严格 state-relay effect 只作审计。
+2. `cross_series_dependence = dense_delayed_linear_scm`
+   - driver 的完整 history 使用平滑随机 knot path 形成稠密连续激励，不再使用孤立脉冲；
+   - primary responder 使用固定混合符号 `[+1,-1,...]`，并保留低强度确定性局部背景；
+   - `lag = horizon = 48`，因此 responder future 的 48 点全部由最后 48 点可见 driver 覆盖；能力重点是跨序列使用，不额外混入长 lag 搜索难度；
+   - I1–I5 以 `lead_lag_peak_abs` 的实际生成响应等距定标，正确 driver/lag、chronological holdout R² 和正控 effect recovery 作为独立结构 gate。
+
+两种机制的严格 pair 和标准化统计量继续共享不变量前缀，保证 effect 比较不混入全局尺度差异。输入消融不是第二套 ground truth：它只破坏模型可见 history 的跨变量对齐，评分仍使用原 clean future。
 
 ## 当前审计：GIFT-Eval 接入和窗口上限
 
@@ -667,3 +700,7 @@ N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
 - 2026-07-24：首轮全链路 pilot 发现并修正三类执行/分析边界：secondary seed fallback 会破坏前缀稳定性；短 context view 的 regime/intermittent 索引 metadata 必须随裁窗平移；event window 覆盖完整 future 时不能对空 background 求均值。
 - 2026-07-24：推理调度从纯模型级 LPT 扩展为“模型级 LPT + 队尾同模型确定性多机分片”，每个 endpoint part 独立落盘并在严格覆盖校验后合并。
 - 2026-07-24：split-bank 只在至少两个 batch 时报告稳定性，并补充 batch 间相对得分差和 Top-3 overlap；secondary family 与 observation-noise robustness 必须和相同 seed/intensity 的 clean primary 做 matched-control 比较。
+- 2026-07-24：common-factor 主机制改为五变量稠密动态因子和长块 joint-state relay；cross-series 改为稠密连续 driver、混合符号 responders 和 horizon-aligned lag。主事实样本不再全量成对，严格反事实只在抽样 seed 的 I5 审计。
+- 2026-07-24：为 common/cross 新增 affine-matched donor input ablation；common 只评分 protected target，cross 只评分 responders，Oracle control/ablation 强制共用 context。确认当前 covariate secondary 混合了非线性、distributed lag 和额外尺度放大，暂不应解释成 matched-difficulty sensitivity。
+- 2026-07-24：结构能力 I1–I5 改为在生成器实际 realized-strength 支持内等距，再反解 lambda；cross 的强度轴与正确边/lag gate 解耦。
+- 2026-07-24：修正非 resume 推理会静默复用同 ID 旧预测的问题；非 resume 精确重建当前 inference seed shard，resume 才执行 hash 校验与增量续跑。

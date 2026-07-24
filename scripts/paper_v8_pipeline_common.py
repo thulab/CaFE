@@ -68,6 +68,11 @@ COUNTERFACTUAL_CAPABILITIES = frozenset(
         "covariate_response",
     }
 )
+MAIN_COUNTERFACTUAL_CAPABILITIES = frozenset({"covariate_response"})
+STRICT_COUNTERFACTUAL_CAPABILITIES = frozenset(
+    {"common_factor", "cross_series_dependence"}
+)
+INPUT_ABLATION_CAPABILITIES = STRICT_COUNTERFACTUAL_CAPABILITIES
 STRUCTURAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -90,19 +95,26 @@ PRIMARY_TARGET_FEATURE = {
     "predictable_intermittency": "spike_rate",
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
-    "cross_series_dependence": "cross_series_incremental_r2",
+    # Strength is calibrated by the strongest ordered lagged association.
+    # Correct edge/lag recovery and incremental prediction remain separate
+    # generated-sample gates; folding them into the dose coordinate made the
+    # five levels depend on a high-dimensional ridge design.
+    "cross_series_dependence": "lead_lag_peak_abs",
     "covariate_response": "covariate_incremental_r2",
 }
 TARGET_DIM_BY_CAPABILITY = {
     capability: (
-        3
-        if capability
-        in {
-            "common_factor",
-            "hierarchical_coherence",
-            "cross_series_dependence",
-        }
-        else 1
+        5
+        if capability == "common_factor"
+        else (
+            3
+            if capability
+            in {
+                "hierarchical_coherence",
+                "cross_series_dependence",
+            }
+            else 1
+        )
     )
     for capability in CAPABILITIES
 }
@@ -813,21 +825,18 @@ def calibrate_capabilities(
         )
         target_feature = PRIMARY_TARGET_FEATURE[capability_id]
         if capability_id in STRUCTURAL_CAPABILITIES:
-            primary_lambdas = tuple(
-                float(value)
-                for value in np.linspace(
-                    float(primary_grid[0]),
-                    float(primary_grid[-1]),
-                    5,
-                )
+            primary_targets = np.linspace(
+                float(primary_response[0]),
+                float(primary_response[-1]),
+                5,
             )
-            primary_targets = np.interp(
-                primary_lambdas,
+            primary_lambdas = inverse_response_lambdas(
                 primary_grid,
                 primary_response,
+                primary_targets,
             )
             calibration_status = (
-                "fixed_cross_dataset_structural_relative_grid"
+                "fixed_cross_dataset_even_realized_strength_grid"
             )
             real_interval = None
         else:
@@ -997,6 +1006,7 @@ def generate_master_sample(
     intensity: int,
     seed_index: int,
     counterfactual_member: int | None,
+    evaluation_table: str = "main",
 ) -> dict[str, Any]:
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
@@ -1063,8 +1073,16 @@ def generate_master_sample(
     pair_id = (
         f"v8__{dataset_token}__{capability_id}__{family_role}__"
         f"i{intensity}__seed{seed_index:06d}"
-        if capability_id in COUNTERFACTUAL_CAPABILITIES
+        if (
+            capability_id in COUNTERFACTUAL_CAPABILITIES
+            and counterfactual_member is not None
+        )
         else None
+    )
+    table_suffix = (
+        ""
+        if evaluation_table == "main"
+        else f"__{safe_id(evaluation_table)}"
     )
     member_suffix = (
         f"__m{int(counterfactual_member)}"
@@ -1073,7 +1091,7 @@ def generate_master_sample(
     )
     sample_id = (
         f"v8__{dataset_token}__{capability_id}__{family_role}__"
-        f"i{intensity}__seed{seed_index:06d}{member_suffix}"
+        f"i{intensity}__seed{seed_index:06d}{member_suffix}{table_suffix}"
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
@@ -1141,7 +1159,7 @@ def generate_master_sample(
             "path_seed": path_seed,
         },
         "generation_metadata": metadata,
-        "evaluation_table": "main",
+        "evaluation_table": evaluation_table,
         "input_history_semantics": "clean_latent",
         "scoring_target_semantics": "clean_latent_future",
         "observation_noise_scale": 0.0,
@@ -1159,6 +1177,123 @@ def generate_master_sample(
             None if covariates is None else covariates.tolist()
         ),
     }
+
+
+def _affine_match_history(
+    donor: np.ndarray,
+    reference: np.ndarray,
+) -> np.ndarray:
+    donor_values = np.asarray(donor, dtype=float)
+    reference_values = np.asarray(reference, dtype=float)
+    donor_center = float(np.mean(donor_values))
+    donor_scale = float(np.std(donor_values))
+    reference_center = float(np.mean(reference_values))
+    reference_scale = float(np.std(reference_values))
+    if donor_scale <= 1e-12:
+        return np.full_like(donor_values, reference_center)
+    return (
+        (donor_values - donor_center)
+        * reference_scale
+        / donor_scale
+        + reference_center
+    )
+
+
+def multivariate_input_ablation_sample(
+    clean: dict[str, Any],
+    donor: dict[str, Any],
+) -> dict[str, Any]:
+    """Break cross-channel alignment while preserving marginal scale.
+
+    The future and the focal channel history stay untouched.  Common-factor
+    auxiliaries are replaced by an affine-matched donor history.  For the
+    delayed SCM only the driver segment that causally covers the forecast is
+    replaced.  This yields a diagnostic input corruption, not another scored
+    data-generating process.
+    """
+
+    capability_id = str(clean["capability_id"])
+    if capability_id not in INPUT_ABLATION_CAPABILITIES:
+        raise ValueError(
+            f"input ablation is unsupported for {capability_id}"
+        )
+    matching_fields = (
+        "dataset_id",
+        "capability_id",
+        "generator_family_role",
+        "intensity",
+        "context_length",
+        "horizon",
+        "target_dim",
+    )
+    if any(clean[field] != donor[field] for field in matching_fields):
+        raise ValueError("input-ablation donor does not match recipient")
+    context = int(clean["context_length"])
+    target = np.asarray(clean["target"], dtype=float).copy()
+    donor_target = np.asarray(donor["target"], dtype=float)
+    metadata = clean["generation_metadata"]
+    replaced_channels: list[int]
+    replaced_slice: list[int]
+    if capability_id == "common_factor":
+        protected = int(metadata["protected_target_index"])
+        replaced_channels = [
+            index
+            for index in range(int(clean["target_dim"]))
+            if index != protected
+        ]
+        replaced_slice = [0, context]
+        for channel in replaced_channels:
+            target[:context, channel] = _affine_match_history(
+                donor_target[:context, channel],
+                target[:context, channel],
+            )
+        ablation_type = "affine_matched_auxiliary_history_donor"
+    else:
+        driver = int(metadata["driver_index"])
+        delay = int(metadata["cross_lag_steps"])
+        start = context - delay
+        replaced_channels = [driver]
+        replaced_slice = [start, context]
+        target[start:context, driver] = _affine_match_history(
+            donor_target[
+                donor_target.shape[0] - int(donor["horizon"]) - delay :
+                donor_target.shape[0] - int(donor["horizon"]),
+                driver,
+            ],
+            target[start:context, driver],
+        )
+        ablation_type = "affine_matched_forecast_covering_driver_donor"
+
+    result = json.loads(json.dumps(clean))
+    result["schema_version"] = "paper_v8_input_ablation_sample.v1"
+    result["sample_id"] = clean["sample_id"] + "__mv_input_ablation"
+    result["master_sample_id"] = result["sample_id"]
+    result["clean_master_sample_id"] = clean["sample_id"]
+    result["input_ablation_group_id"] = clean["sample_id"]
+    result["counterfactual_pair_id"] = None
+    result["counterfactual_member"] = None
+    result["evaluation_table"] = "multivariate_input_ablation"
+    result["input_history_semantics"] = "marginal_matched_cross_channel_ablation"
+    result["scoring_target_semantics"] = "original_clean_latent_future"
+    result["input_ablation_metadata"] = {
+        "ablation_type": ablation_type,
+        "donor_sample_id": donor["sample_id"],
+        "replaced_channels": replaced_channels,
+        "replaced_history_slice": replaced_slice,
+        "focal_history_unchanged": True,
+        "future_unchanged": True,
+        "affine_matched_mean_and_std": True,
+    }
+    result["target"] = target.tolist()
+    result["target_sha256"] = target_and_covariate_sha256(
+        target,
+        (
+            None
+            if result["covariates"] is None
+            else np.asarray(result["covariates"], dtype=float)
+        ),
+    )
+    return result
 
 
 def robustness_sample(clean: dict[str, Any]) -> dict[str, Any]:

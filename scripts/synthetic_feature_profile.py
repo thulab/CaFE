@@ -1737,8 +1737,8 @@ def feature_vector(
             multitarget_features(
                 window,
                 max_lag=min(
-                    48,
-                    max(12, int(season_length or 12)),
+                    96,
+                    max(48, 2 * int(season_length or 24)),
                 ),
                 include_cross_series_predictability=(
                     include_cross_series_predictability
@@ -1914,12 +1914,14 @@ def cross_series_incremental_r2(
     window: np.ndarray,
     max_lag: int = 12,
 ) -> float:
-    """Held-out error reduction from other-channel lags over own lags.
+    """Best held-out directed-lag gain over a compact own-history model.
 
-    This is a descriptive Granger-style calibration coordinate, not a
-    significance test.  Ridge stabilization and a chronological holdout keep
-    the high-dimensional unrestricted regression from receiving free in-sample
-    gains.
+    Adding every channel at every lag in one unrestricted regression makes the
+    feature collapse exactly when the searched lag is long: the design becomes
+    almost square and ridge spreads one real edge over hundreds of correlated
+    columns.  Instead, this descriptive Granger-style coordinate keeps a
+    compact own-history baseline and adds one candidate source/lag at a time.
+    The best chronological-holdout gain is averaged over destinations.
     """
 
     values = np.asarray(window, dtype=float)
@@ -1927,40 +1929,61 @@ def cross_series_incremental_r2(
         return 0.0
     lag_limit = min(
         max(2, int(max_lag)),
-        48,
+        96,
         max(2, values.shape[0] // 5),
     )
-    if values.shape[0] < 4 * lag_limit:
+    own_order = min(12, lag_limit)
+    if values.shape[0] < 3 * lag_limit:
         return 0.0
     scaled = np.column_stack(
         [robust_scale(values[:, index]) for index in range(values.shape[1])]
     )
     sample_count = values.shape[0] - lag_limit
-    lagged = np.stack(
-        [
-            scaled[lag_limit - lag : values.shape[0] - lag]
-            for lag in range(1, lag_limit + 1)
-        ],
-        axis=1,
-    )
-    split = max(2 * lag_limit, int(round(0.70 * sample_count)))
-    split = min(split, sample_count - lag_limit)
-    if split <= lag_limit or sample_count - split < lag_limit:
+    split = int(round(0.70 * sample_count))
+    minimum_holdout = max(24, own_order * 2)
+    split = min(split, sample_count - minimum_holdout)
+    if split <= max(24, 2 * own_order):
         return 0.0
     gains: list[float] = []
     for target_index in range(values.shape[1]):
         response = scaled[lag_limit:, target_index]
-        own = lagged[:, :, target_index]
-        full = lagged.reshape(sample_count, -1)
+        own = np.column_stack(
+            [
+                scaled[
+                    lag_limit - lag : values.shape[0] - lag,
+                    target_index,
+                ]
+                for lag in range(1, own_order + 1)
+            ]
+        )
         own_prediction = ridge_holdout_prediction(own, response, split)
-        full_prediction = ridge_holdout_prediction(full, response, split)
         actual = response[split:]
         own_error = float(np.sum((actual - own_prediction) ** 2))
-        full_error = float(np.sum((actual - full_prediction) ** 2))
-        if own_error > 1e-12:
-            gains.append(
-                clamp01((own_error - full_error) / own_error)
-            )
+        if own_error <= 1e-12:
+            continue
+        best_gain = 0.0
+        for source_index in range(values.shape[1]):
+            if source_index == target_index:
+                continue
+            for lag in range(1, lag_limit + 1):
+                source = scaled[
+                    lag_limit - lag : values.shape[0] - lag,
+                    source_index,
+                ]
+                full = np.column_stack([own, source])
+                prediction = ridge_holdout_prediction(
+                    full,
+                    response,
+                    split,
+                )
+                full_error = float(
+                    np.sum((actual - prediction) ** 2)
+                )
+                best_gain = max(
+                    best_gain,
+                    clamp01((own_error - full_error) / own_error),
+                )
+        gains.append(best_gain)
     return float(np.mean(gains)) if gains else 0.0
 
 

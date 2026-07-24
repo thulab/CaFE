@@ -27,6 +27,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-anchors", type=int, default=256)
     parser.add_argument("--calibration-seeds", type=int, default=12)
     parser.add_argument(
+        "--capabilities",
+        nargs="+",
+        choices=v8.CAPABILITIES,
+        default=list(v8.CAPABILITIES),
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
         default=["Chronos-2", "toto2.0", "tirex2", "timesfm2.5"],
@@ -85,7 +91,7 @@ def main() -> int:
         ),
         "generation": (
             "generate_paper_v8_samples.py",
-            [*common, *seed],
+            [*common, *seed, "--capabilities", *args.capabilities],
         ),
         "validation": (
             "validate_paper_v8_samples.py",

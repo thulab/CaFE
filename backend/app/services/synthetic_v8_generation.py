@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-jointly-observable-common-factor"
+GENERATOR_VERSION = "capts-paper-v8-dense-multivariate-mechanisms"
 FamilyRole = Literal["primary", "secondary"]
 
 COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2 = 0.80
@@ -32,9 +32,9 @@ PRIMARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "regime_switching": "deterministic_duration_motif",
     "nonlinear_persistence": "bounded_tanh_recurrence",
     "predictable_intermittency": "deterministic_gaussian_event_clock",
-    "common_factor": "episodic_jointly_observable_linear_factor",
+    "common_factor": "dense_dynamic_factor_with_joint_state_relay",
     "hierarchical_coherence": "aggregate_contrast_linear_state_space",
-    "cross_series_dependence": "counterfactual_event_driven_linear_scm",
+    "cross_series_dependence": "dense_delayed_linear_scm",
     "covariate_response": "known_future_linear_response",
 }
 
@@ -45,9 +45,9 @@ SECONDARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "regime_switching": "thresholded_quasiperiodic_oscillator_regime",
     "nonlinear_persistence": "rational_delay_recurrence",
     "predictable_intermittency": "deterministic_raised_cosine_event_clock",
-    "common_factor": "episodic_jointly_observable_spline_factor",
+    "common_factor": "dense_spline_factor_with_joint_state_relay",
     "hierarchical_coherence": "aggregate_contrast_periodic_spline",
-    "cross_series_dependence": "counterfactual_event_driven_nonlinear_scm",
+    "cross_series_dependence": "dense_delayed_nonlinear_scm",
     "covariate_response": "known_future_distributed_nonlinear_response",
 }
 
@@ -1890,19 +1890,19 @@ def _common_factor(
     family,
     counterfactual_variant,
 ):
-    """Generate a rank-one future whose latent state needs joint channels.
+    """Generate a dense dynamic factor plus a jointly observed state relay.
 
-    Every episode first exposes one scalar equation per channel, ``c = B q``.
-    Its following response is a rank-one channel loading multiplied by a
-    two-basis factor trajectory determined by ``q``.  Historical episodes teach
-    that mapping.  The final code is observed at the context boundary and its
-    response occupies the forecast horizon.
+    The common factor is present throughout the whole path, so ordinary
+    forecasting quality measures a conventional dynamic-factor mechanism.
+    A lower-amplitude relay is repeated in history: a long, smooth observation
+    block exposes one scalar equation per channel, ``c = B q``, and the next
+    block realizes a rank-one response determined by ``q``.  The final
+    observation block controls the forecast response.
 
-    Counterfactual members perturb the final latent state in the null space of
-    one protected channel's code row.  That channel therefore has an identical
-    history across the pair but a different future, which makes an
-    independent-target forecast information-theoretically unable to answer
-    both members correctly.
+    Pair members differ along the null space of one protected channel's row.
+    The protected history is therefore identical while its future differs.
+    This strict construction is intended for the I5 audit; the dense factor is
+    the main task and does not depend on the audit comparison.
     """
 
     if dim < 3:
@@ -1923,11 +1923,18 @@ def _common_factor(
         family,
         factor_persistence=factor_persistence,
     )
-    code_width = int(rng.choice(np.asarray([8, 10, 12])))
+    # A 24--32 step observation block is long enough to look like a persistent
+    # multivariate regime rather than a one-off spike.  It also leaves a
+    # substantial invariant prefix in every supported suffix view.
+    code_width = int(rng.choice(np.asarray([24, 28, 32])))
     span_candidates = np.asarray(
         [
             value
-            for value in (64, 68, 72)
+            for value in (
+                horizon + code_width + 4,
+                horizon + code_width + 8,
+                horizon + code_width + 12,
+            )
             if value >= horizon + code_width + 4
         ],
         dtype=int,
@@ -1980,15 +1987,12 @@ def _common_factor(
             0.995,
         )
     )
-    shared_strength = (
-        (0.10 + 1.35 * lam)
-        * math.sqrt(target_shared / max(1.0 - target_shared, 0.05))
-    )
+    shared_strength = 0.08 + 0.72 * lam
     code_strength = float(
         np.clip(
-            0.45 + 0.30 * shared_strength,
-            0.45,
-            1.20,
+            0.30 + 0.18 * shared_strength,
+            0.30,
+            0.80,
         )
     )
 
@@ -2022,15 +2026,47 @@ def _common_factor(
         local_factor_projection[:, None]
         * response_loadings[None, :]
     )
-    # Keep a small deterministic marginal background so the task is not a
-    # sterile rank-one matrix, but do not let it obscure the episode code to
-    # response law that the benchmark is intended to identify.
-    local_strength = float(rng.uniform(0.10, 0.18))
-    target = local_strength * local
+    # A conventional dense common factor is the primary mechanism.  Local
+    # components remain deterministic and forecastable; they are deliberately
+    # heterogeneous so contemporaneous cross-channel agreement is informative.
+    dense_factor, dense_factor_meta = _calibrated_signal(
+        length,
+        context,
+        rng,
+        cond,
+        family,
+        persistence_name="factor_persistence",
+        period_multiplier=float(rng.uniform(0.85, 1.15)),
+    )
+    local_strength = float(
+        np.clip(
+            0.72 + 0.12 * (0.65 - target_shared),
+            0.62,
+            0.82,
+        )
+    )
+    dense_factor_strength = float(
+        0.18
+        + 1.42 * lam
+        + 0.10 * (target_shared - 0.65)
+    )
+    target = (
+        local_strength * local
+        + dense_factor_strength
+        * dense_factor[:, None]
+        * response_loadings[None, :]
+    )
 
     code_phase = float(rng.uniform(0.0, 2.0 * np.pi))
     code_time = (np.arange(code_width, dtype=float) + 0.5) / code_width
-    code_shape = np.sin(2.0 * np.pi * code_time + code_phase)
+    # The carrier has smooth shoulders and occupies the whole observation
+    # block.  Repeating it in every episode makes the final block in-support.
+    shoulder = np.sin(np.pi * code_time) ** 2
+    code_shape = shoulder * (
+        np.sin(2.0 * np.pi * code_time + code_phase)
+        + 0.25
+        * np.sin(4.0 * np.pi * code_time - 0.5 * code_phase)
+    )
     code_shape -= float(np.mean(code_shape))
     code_shape /= max(
         float(np.sqrt(np.mean(code_shape * code_shape))),
@@ -2079,6 +2115,29 @@ def _common_factor(
             * code_vector[None, :]
         )
         response_stop = min(length, response_start + horizon)
+        # Keep the relay coefficient identifiable without deleting the dense
+        # factor itself from the rest of the path.  Only the two response-basis
+        # directions inside teaching windows are residualized; all orthogonal
+        # dynamic-factor variation remains.
+        teaching_segment = target[response_start:response_stop]
+        teaching_factor_score = (
+            teaching_segment
+            @ response_loadings
+            / max(loading_denominator, 1e-12)
+        )
+        nuisance_coefficients = np.linalg.lstsq(
+            response_basis[: response_stop - response_start],
+            teaching_factor_score,
+            rcond=None,
+        )[0]
+        nuisance_projection = (
+            response_basis[: response_stop - response_start]
+            @ nuisance_coefficients
+        )
+        target[response_start:response_stop] -= (
+            nuisance_projection[:, None]
+            * response_loadings[None, :]
+        )
         response = (
             response_basis[: response_stop - response_start] @ state
         )
@@ -2129,6 +2188,8 @@ def _common_factor(
         "factor_rank": 1,
         "latent_state_dimension": 2,
         "factor_persistence": factor_persistence,
+        "dense_factor_process": dense_factor_meta,
+        "dense_factor_strength": dense_factor_strength,
         "shared_factor_strength": shared_strength,
         "code_strength": code_strength,
         "code_matrix": code_matrix.tolist(),
@@ -2154,12 +2215,15 @@ def _common_factor(
         "counterfactual_protected_history_invariant": True,
         "counterfactual_future_is_joint_code_determined": True,
         "joint_observability_law": (
-            "rank2_latent_state_from_multiple_scalar_channel_equations"
+            "dense_dynamic_factor_plus_rank2_state_from_joint_channel_equations"
         ),
         "local_amplitude": local_strength,
         "local_period_multipliers": local_period_multipliers,
         "local_factor_loading_orthogonalized": True,
         "local_code_shape_orthogonalized": True,
+        "teaching_response_basis_residualized": True,
+        "main_task_is_dense_dynamic_factor": True,
+        "strict_counterfactual_role": "i5_subset_audit",
         "future_only_shock_count": 0,
     }
     return target, _metadata("common_factor", family, target, detail), None
@@ -2260,28 +2324,33 @@ def _hierarchy(length, context, dim, season, intensity, rng, cond, family):
     return target, _metadata("hierarchical_coherence", family, target, detail), None
 
 
-def _compact_cross_event(
-    time: np.ndarray,
+def _dense_driver_excitation(
+    width: int,
+    rng: np.random.Generator,
     *,
-    center: float,
-    width: float,
-    family: FamilyRole,
+    knot_spacing: int,
 ) -> np.ndarray:
-    distance = (time - center) / max(width, 1.0)
-    if family == "primary":
-        return np.where(
-            np.abs(distance) <= 3.0,
-            np.exp(-0.5 * distance * distance),
-            0.0,
-        )
-    return np.where(
-        np.abs(distance) <= 2.0,
-        np.maximum(1.0 - 0.5 * np.abs(distance), 0.0),
-        0.0,
+    """Draw a smooth, dense, zero-mean excitation on a fixed interval."""
+
+    if width < 8:
+        raise ValueError("dense driver excitation requires width >= 8")
+    knot_count = max(5, int(math.ceil(width / knot_spacing)) + 2)
+    knots = rng.normal(size=knot_count)
+    knot_x = np.linspace(0.0, width - 1.0, knot_count)
+    values = np.interp(np.arange(width, dtype=float), knot_x, knots)
+    # A short symmetric smoother removes piecewise-linear corners without
+    # erasing the broadband lag signature used by the blind edge search.
+    values = np.convolve(
+        np.pad(values, (2, 2), mode="reflect"),
+        np.asarray([1.0, 2.0, 3.0, 2.0, 1.0]) / 9.0,
+        mode="valid",
     )
+    values -= float(np.mean(values))
+    values /= max(float(np.std(values)), 1e-12)
+    return values
 
 
-def _counterfactual_realistic_driver(
+def _counterfactual_dense_driver(
     background: np.ndarray,
     context: int,
     delay: int,
@@ -2290,153 +2359,92 @@ def _counterfactual_realistic_driver(
     variant: int,
     family: FamilyRole,
 ) -> tuple[np.ndarray, dict[str, Any]]:
-    """Add broad in-support events and one swappable observed intervention."""
+    """Add continuous teaching excitation and one in-support swappable block."""
 
     length = len(background)
-    time = np.arange(length, dtype=float)
-    driver = 0.8 * np.asarray(background, dtype=float).copy()
-    support_multiplier = 3.0 if family == "primary" else 2.0
+    driver = 0.55 * np.asarray(background, dtype=float).copy()
     teaching_span = context - delay
-    if teaching_span < 12:
+    if teaching_span < 16:
         raise ValueError(
-            "cross-series lag leaves too little history for teaching events"
+            "cross-series lag leaves too little history for dense teaching"
         )
-    if teaching_span < 72:
-        historical_event_count = 3
-    elif teaching_span < 144:
-        historical_event_count = 4
-    else:
-        historical_event_count = int(rng.integers(3, 6))
+    knot_spacing = int(
+        rng.choice(
+            np.asarray([4, 5, 6])
+            if family == "primary"
+            else np.asarray([6, 7, 8])
+        )
+    )
+    history_excitation = _dense_driver_excitation(
+        context,
+        rng,
+        knot_spacing=knot_spacing,
+    )
+    excitation_scale = float(rng.uniform(0.75, 1.05))
+    driver[:context] += excitation_scale * history_excitation
 
-    # Fit several fully observed cause/response examples inside the available
-    # teaching span.  Widths therefore shrink for L=96 instead of allowing
-    # broad event supports to collide or spill across the context boundary.
-    width_upper = min(
-        7.0,
-        teaching_span
-        / (
-            2.0
-            * support_multiplier
-            * (historical_event_count + 0.75)
-        ),
+    # Construct two dense alternatives from the same generator and force both
+    # to share mean, variance and smooth endpoints.  The intervention is thus
+    # an ordinary in-support driver path, not a sign-flipped isolated anomaly.
+    alternative_a = _dense_driver_excitation(
+        delay,
+        rng,
+        knot_spacing=knot_spacing,
     )
-    width_upper = max(1.35, width_upper)
-    width_lower = max(1.15, min(4.0, 0.72 * width_upper))
-    width = float(
-        rng.uniform(width_lower, width_upper)
-        if width_upper > width_lower + 1e-9
-        else width_upper
+    alternative_b = _dense_driver_excitation(
+        delay,
+        rng,
+        knot_spacing=knot_spacing,
     )
-    event_margin = support_multiplier * width
-    center_lower = event_margin
-    center_upper = teaching_span - event_margin
-    historical_center_values = np.linspace(
-        center_lower,
-        center_upper,
-        historical_event_count,
+    taper_width = max(4, min(12, delay // 6))
+    taper = np.ones(delay, dtype=float)
+    edge = np.sin(
+        0.5
+        * np.pi
+        * (np.arange(taper_width, dtype=float) + 1.0)
+        / (taper_width + 1.0)
+    ) ** 2
+    taper[:taper_width] = edge
+    taper[-taper_width:] = edge[::-1]
+    alternative_a *= taper
+    alternative_b *= taper
+    for values in (alternative_a, alternative_b):
+        values -= float(np.mean(values))
+        values /= max(float(np.std(values)), 1e-12)
+    alternatives = (
+        excitation_scale * alternative_a,
+        excitation_scale * alternative_b,
     )
-    if historical_event_count > 1:
-        center_spacing = float(
-            (center_upper - center_lower) / (historical_event_count - 1)
-        )
-        jitter = rng.uniform(
-            -0.08 * center_spacing,
-            0.08 * center_spacing,
-            size=historical_event_count,
-        )
-        jitter[[0, -1]] = 0.0
-        historical_center_values += jitter
-    historical_centers = [
-        int(round(value)) for value in historical_center_values
-    ]
-    historical_fractions = (
-        historical_center_values / max(teaching_span, 1)
+    start = context - delay
+    # Replace only the excitation component.  Background is identical across
+    # members and driver future is identical, while responder history remains
+    # exactly invariant under a delay >= horizon.
+    driver[start:context] = (
+        0.55 * np.asarray(background[start:context], dtype=float)
+        + alternatives[variant]
     )
-    historical_amplitudes = (
-        rng.uniform(0.55, 1.05, size=len(historical_centers))
-        * rng.choice(
-            np.asarray([-1.0, 1.0]),
-            size=len(historical_centers),
-        )
-    )
-    for center, amplitude in zip(
-        historical_centers,
-        historical_amplitudes,
-        strict=True,
-    ):
-        driver += amplitude * _compact_cross_event(
-            time,
-            center=float(center),
-            width=width,
-            family=family,
-        )
-
-    design_horizon = min(48, max(1, length - context))
-    response_margin = support_multiplier * width
-    response_lower = min(
-        max(2.0, response_margin),
-        max(2.0, design_horizon / 2.0),
-    )
-    response_upper = max(
-        response_lower,
-        design_horizon - response_margin,
-    )
-    response_center_offset = float(
-        rng.uniform(response_lower, response_upper)
-        if response_upper > response_lower + 1e-9
-        else response_lower
-    )
-    intervention_center = float(
-        context - delay + response_center_offset
-    )
-    intervention_amplitude = float(rng.uniform(0.9, 1.3))
-    intervention_sign = float(rng.choice(np.asarray([-1.0, 1.0])))
-    alternative_amplitudes = (
-        intervention_sign * intervention_amplitude,
-        -intervention_sign * intervention_amplitude,
-    )
-    intervention = _compact_cross_event(
-        time,
-        center=intervention_center,
-        width=width,
-        family=family,
-    )
-    # Enforce exact responder-history invariance. Values before context-delay
-    # would already have propagated into the visible responder prefix.
-    intervention[: context - delay] = 0.0
-    driver += alternative_amplitudes[variant] * intervention
+    difference = alternatives[1] - alternatives[0]
     return driver, {
         "counterfactual_variant": variant,
-        "counterfactual_driver_slice": [context - delay, context],
+        "counterfactual_driver_slice": [start, context],
         "counterfactual_alternative_rms": float(
-            2.0
-            * intervention_amplitude
-            * np.sqrt(np.mean(intervention[:context] ** 2))
+            np.sqrt(np.mean(difference * difference))
         ),
         "driver_background_family": "real_feature_calibrated_continuous_signal",
-        "historical_event_centers": historical_centers,
-        "historical_event_fractions": historical_fractions.tolist(),
-        "historical_event_amplitudes": historical_amplitudes.tolist(),
+        "driver_excitation_family": "smoothed_random_knot_path",
+        "driver_excitation_knot_spacing": knot_spacing,
+        "driver_excitation_scale": excitation_scale,
+        "dense_teaching_fraction": float(teaching_span / context),
         "historical_teaching_span": teaching_span,
-        "historical_event_count_policy": (
-            "three_if_span_lt_72_four_if_lt_144_else_uniform_three_to_five"
-        ),
-        "historical_event_support_multiplier": support_multiplier,
-        "historical_event_width_bounds": [width_lower, width_upper],
-        "historical_event_min_center_spacing": (
-            float(np.min(np.diff(historical_center_values)))
-            if len(historical_center_values) > 1
-            else float(teaching_span)
-        ),
-        "counterfactual_event_center": intervention_center,
-        "counterfactual_response_center_offset": response_center_offset,
-        "counterfactual_event_width": width,
-        "counterfactual_event_amplitudes": list(alternative_amplitudes),
-        "counterfactual_event_shape": (
-            "compact_gaussian"
-            if family == "primary"
-            else "compact_triangular"
-        ),
+        "counterfactual_path_taper_width": taper_width,
+        "counterfactual_path_mean_by_member": [
+            float(np.mean(values)) for values in alternatives
+        ],
+        "counterfactual_path_std_by_member": [
+            float(np.std(values)) for values in alternatives
+        ],
+        "counterfactual_path_is_dense": True,
+        "counterfactual_path_is_in_support": True,
     }
 
 
@@ -2476,24 +2484,14 @@ def _cross_series_dependence(
     minimum_delay = min(horizon, context // 2)
     shortest_view = min(context, 96)
     minimum_invariant_driver_prefix = min(16, shortest_view // 4)
-    maximum_delay = min(
-        context // 2,
-        max(minimum_delay, int(0.40 * context)),
-        max(
-            minimum_delay,
-            shortest_view - minimum_invariant_driver_prefix,
-        ),
-    )
-    lag_step = max(4, int(round(horizon / 6)))
-    lag_candidates = np.arange(
-        minimum_delay,
-        maximum_delay + 1,
-        lag_step,
-        dtype=int,
-    )
-    if lag_candidates.size == 0:
-        lag_candidates = np.asarray([minimum_delay], dtype=int)
-    delay = int(driver_rng.choice(lag_candidates))
+    # Cross-series dependence is the ability under test, not lag search
+    # difficulty.  Aligning the lag with H gives the cleanest history-covered
+    # task: responder[k] is driven by the kth point of the last visible driver
+    # block.  Lag discovery remains audited blindly in the feature gate.
+    maximum_delay = minimum_delay
+    lag_step = horizon
+    lag_candidates = np.asarray([minimum_delay], dtype=int)
+    delay = minimum_delay
     driver_background, background_meta = _calibrated_signal(
         length,
         context,
@@ -2502,7 +2500,7 @@ def _cross_series_dependence(
         family,
         period_multiplier=4.0,
     )
-    driver, driver_meta = _counterfactual_realistic_driver(
+    driver, driver_meta = _counterfactual_dense_driver(
         driver_background,
         context,
         delay,
@@ -2578,7 +2576,7 @@ def _cross_series_dependence(
         "cross_lag_steps": delay,
         "cross_lag_candidate_steps": lag_candidates.tolist(),
         "cross_lag_sampling_policy": (
-            "uniform_master_suffix_view_compatible_lag_at_least_horizon"
+            "horizon_aligned_history_covered_lag"
         ),
         "cross_lag_step": lag_step,
         "minimum_supported_context_length": shortest_view,
