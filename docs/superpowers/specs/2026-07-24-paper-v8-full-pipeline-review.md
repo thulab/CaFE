@@ -403,8 +403,8 @@ http://192.168.99.18:10810
 
 三台服务都可用时，先以历史耗时做模型级 longest-processing-time 分配；服务数量减少时重新平衡模型队列。若某个模型排在一台服务的队尾、其他兼容服务会提前空闲，则默认启用尾部协作：
 
-- 正式七模型实验先将 `timesfm2.5`、`tabpfn-ts3`、`toto2.0` 分散到三台可用服务，并作为各服务的首个任务；
-- 其余模型再依据冻结的模型 cost 做 LPT 分配；不足三台服务或某服务缺少模型时，只在兼容服务间重新平衡；
+- 正式七模型实验先对 Chronos、TiRex、Moirai、Timer 等较快模型做 LPT 分配，再将 `toto2.0`、`timesfm2.5`、`tabpfn-ts3` 作为慢尾部任务分散到三台可用服务；
+- 三台服务和全部模型均可用时，预期队列分别以 `timesfm2.5`、`toto2.0`、`tabpfn-ts3` 结尾；不足三台服务或某服务缺少模型时，只在兼容服务间重新平衡；
 - 按 `model_id × sample_id` 的 stable hash 将该尾部模型任务确定性分片；
 - 各服务完成自己的前序模型后处理一个 tail part；
 - 每个 part 使用独立任务文件、预测文件和状态文件，禁止并发写同一文件；
@@ -752,4 +752,4 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 2026-07-24：修正非 resume 推理会静默复用同 ID 旧预测的问题；非 resume 精确重建当前 inference seed shard，resume 才执行 hash 校验与增量续跑。
 - 2026-07-24：冻结19个满足 L504 的 GIFT-Eval canonical 配置：13个小时频率、4个日频和2个10秒频率；Restaurant、Hospital、COVID Deaths、Car Parts 因无504点原生序列暂不纳入。拆分 calendar season、feature period、能力专属生成时间尺度和 MASE period；10秒配置明确使用 `calendar_season_length=8640`、窗口内可观察生成尺度与 `mase_period=1`。生成时间尺度按 L504/H48 的可识别次数裁剪，MASE 不加隐藏 floor，并并列保存 history-std-normalized MAE 与 denominator 分布审计。
 - 2026-07-24：正式存储根目录固定为 `runtime/paper_exp/v8/<experiment_id>`；根 experiment manifest 以完整协议哈希为不可变身份，运行进度单独写入可更新的 pipeline status。本阶段暂不实现多个 seed shard 的组合分析。
-- 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；三服务可用时强制将 TimesFM、TabPFN、Toto 分散并作为三条队列的首个任务，其余模型再做 LPT 平衡。
+- 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；先对较快模型做 LPT，再将 Toto、TimesFM、TabPFN 分散为三条队列的慢尾部任务，使先结束前序队列的服务可参与队尾协作。

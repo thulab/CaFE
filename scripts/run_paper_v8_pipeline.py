@@ -10,6 +10,7 @@ from typing import Any
 
 import paper_v8_pipeline_common as v8
 import run_paper_v5_e2_inference as v7_inference
+import run_paper_v8_inference as v8_inference
 
 
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
@@ -192,6 +193,14 @@ def protocol_config(
         "model_execution_config": {
             model_id: dict(v7_inference.MODEL_EXECUTION_CONFIG[model_id])
             for model_id in args.models
+        },
+        "dataset_execution_policy": (
+            "sequential_in_declared_order_complete_each_before_next"
+        ),
+        "model_scheduling_policy": {
+            "policy_id": v8_inference.SCHEDULING_POLICY_ID,
+            "slow_tail_models": list(v8_inference.SLOW_TAIL_MODELS),
+            "tail_collaboration": "enabled",
         },
         "context_length": v8.CONTEXT_LENGTH,
         "horizon": v8.HORIZON,

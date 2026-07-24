@@ -722,7 +722,7 @@ def test_tail_model_is_partitioned_across_idle_services(tmp_path):
     ) == 1
 
 
-def test_slow_models_start_on_distinct_services():
+def test_slow_models_end_distinct_service_queues():
     inference = load_script("run_paper_v8_inference")
     model_ids = [
         "Chronos-2",
@@ -750,13 +750,17 @@ def test_slow_models_start_on_distinct_services():
     slow_locations = {
         model_id: endpoint
         for endpoint, queue in assignments.items()
-        for model_id in inference.SLOW_MODEL_SPREAD_ORDER
+        for model_id in inference.SLOW_TAIL_MODELS
         if model_id in queue
     }
     assert len(set(slow_locations.values())) == 3
     assert {
-        queue[0] for queue in assignments.values()
-    } == set(inference.SLOW_MODEL_SPREAD_ORDER)
+        queue[-1] for queue in assignments.values()
+    } == set(inference.SLOW_TAIL_MODELS)
+    assert all(
+        queue[0] not in inference.SLOW_TAIL_MODELS
+        for queue in assignments.values()
+    )
 
 
 def test_tail_shards_refresh_when_source_task_changes(tmp_path):

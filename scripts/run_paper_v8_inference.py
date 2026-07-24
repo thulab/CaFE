@@ -35,18 +35,19 @@ DEFAULT_MODELS = (
 )
 MODEL_COST = {
     "tirex2": 5.0,
-    "toto2.0": 4.0,
+    "toto2.0": 10.0,
     "Chronos-2": 3.0,
-    "timesfm2.5": 2.0,
+    "timesfm2.5": 9.0,
     "Timer-3.5": 4.0,
     "Timer-3.0": 4.0,
     "moirai2": 3.0,
-    "tabpfn-ts3": 2.0,
+    "tabpfn-ts3": 8.0,
 }
-SLOW_MODEL_SPREAD_ORDER = (
+SCHEDULING_POLICY_ID = "fast-lpt-then-distinct-slow-tails-v1"
+SLOW_TAIL_MODELS = (
+    "toto2.0",
     "timesfm2.5",
     "tabpfn-ts3",
-    "toto2.0",
 )
 _PRINT_LOCK = threading.Lock()
 
@@ -231,31 +232,23 @@ def assign_models(
         endpoint: [] for endpoint, _catalog in ordered_services
     }
     catalogs = {endpoint: catalog for endpoint, catalog in services}
-    assigned: set[str] = set()
-    unused_endpoints = set(assignments)
-    for model_id in SLOW_MODEL_SPREAD_ORDER:
-        if model_id not in models:
-            continue
-        eligible = [
-            endpoint
-            for endpoint in assignments
-            if model_id in catalogs[endpoint]
-        ]
-        if not eligible:
+    slow_models = [
+        model_id for model_id in models if model_id in SLOW_TAIL_MODELS
+    ]
+    fast_models = [
+        model_id for model_id in models if model_id not in SLOW_TAIL_MODELS
+    ]
+
+    def assign(model_id: str, candidates: list[str]) -> str:
+        if not candidates:
             raise ValueError(f"model {model_id!r} unavailable on all services")
-        unused_eligible = [
-            endpoint for endpoint in eligible if endpoint in unused_endpoints
-        ]
-        candidates = unused_eligible or eligible
         endpoint = min(candidates, key=lambda name: (loads[name], name))
         assignments[endpoint].append(model_id)
         loads[endpoint] += MODEL_COST.get(model_id, 1.0)
-        assigned.add(model_id)
-        unused_endpoints.discard(endpoint)
+        return endpoint
 
-    remaining = [model_id for model_id in models if model_id not in assigned]
     for model_id in sorted(
-        remaining,
+        fast_models,
         key=lambda name: (-MODEL_COST.get(name, 1.0), name),
     ):
         eligible = [
@@ -263,11 +256,26 @@ def assign_models(
             for endpoint in assignments
             if model_id in catalogs[endpoint]
         ]
-        if not eligible:
-            raise ValueError(f"model {model_id!r} unavailable on all services")
-        endpoint = min(eligible, key=lambda name: (loads[name], name))
-        assignments[endpoint].append(model_id)
-        loads[endpoint] += MODEL_COST.get(model_id, 1.0)
+        assign(model_id, eligible)
+
+    unused_slow_endpoints = set(assignments)
+    for model_id in sorted(
+        slow_models,
+        key=lambda name: (-MODEL_COST.get(name, 1.0), name),
+    ):
+        eligible = [
+            endpoint
+            for endpoint in assignments
+            if model_id in catalogs[endpoint]
+        ]
+        unused_eligible = [
+            endpoint
+            for endpoint in eligible
+            if endpoint in unused_slow_endpoints
+        ]
+        candidates = unused_eligible or eligible
+        endpoint = assign(model_id, candidates)
+        unused_slow_endpoints.discard(endpoint)
     return assignments
 
 
