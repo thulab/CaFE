@@ -340,7 +340,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
     direction = np.asarray(metadata["direction_by_target"])
     formal_differences = np.diff(target[:design_stop], axis=0)
 
-    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v3"
+    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v4"
     assert metadata["trend_local_evidence_window"] == 96
     assert join == 408
     assert metadata["trend_local_polynomial_degree"] == expected_degree
@@ -618,6 +618,40 @@ def test_v8_common_factor_requires_joint_code_to_recover_future(
     assert suffix_gate["joint_holdout_r2"] >= 0.80
     assert suffix_gate["joint_minus_best_single_holdout_r2"] >= 0.15
     assert suffix_gate["accepted"] is True
+
+
+def test_v8_zero_strength_regime_background_is_deterministic_but_not_exactly_seasonal(
+) -> None:
+    first, metadata, _ = generate_deterministic_sample(
+        "regime_switching",
+        384,
+        336,
+        1,
+        24,
+        1,
+        np.random.default_rng(17),
+    )
+    repeated, _, _ = generate_deterministic_sample(
+        "regime_switching",
+        384,
+        336,
+        1,
+        24,
+        1,
+        np.random.default_rng(17),
+    )
+
+    texture = metadata["deterministic_texture"]
+    seasonal_scale = np.mean(
+        np.abs(first[24:336] - first[:312])
+    )
+
+    assert metadata["regime_strength"] == 0.0
+    assert np.array_equal(first, repeated)
+    assert texture["law"] == "deterministic_quasiperiodic_two_tone"
+    assert texture["period_ratio"] == pytest.approx(np.sqrt(2.0))
+    assert texture["future_process_noise_scale"] == 0.0
+    assert seasonal_scale > 1e-3
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))

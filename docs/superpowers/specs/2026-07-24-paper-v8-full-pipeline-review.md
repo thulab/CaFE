@@ -224,6 +224,9 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 
 - Trend 最近 96 点和 H48 future 共用同一二次曲线，更早 history 使用连接点
   切线；secondary 是同样连接语义的受限 cubic。
+- Regime 的零强度背景使用周期比为 `sqrt(2)` 的确定性双频平滑纹理；它仍然
+  完全可预测且不含 future randomness，但不会因为 8 点纹理与 24 点评分周期
+  整除而产生零 seasonal-MASE denominator。
 - Nonlinear 的 observable adjusted-R² 只作诊断，不反向控制剂量；硬 gate
   使用生成器已知系数、实际动态贡献和零状态裁剪。
 - Intermittency 的 spike rate 与 clock R² 只作诊断；事件能量占比是连续剂量。

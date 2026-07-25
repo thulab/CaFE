@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v3"
+GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v4"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -1953,23 +1953,34 @@ def _regime(length, context, dim, season, intensity, rng, cond, family):
         strength *= 2.0
     signs = rng.choice(np.asarray([-1.0, 1.0]), size=dim)
     time = np.arange(length, dtype=float)
-    texture_period = 8.0
+    texture_primary_period = 8.0
+    texture_period_ratio = math.sqrt(2.0)
+    texture_secondary_period = (
+        texture_primary_period * texture_period_ratio
+    )
     texture_phase = float(rng.uniform(0.0, 2.0 * np.pi))
-    texture_harmonic_phase = float(rng.uniform(0.0, 2.0 * np.pi))
+    texture_secondary_phase = float(rng.uniform(0.0, 2.0 * np.pi))
     texture = (
-        np.sin(2.0 * np.pi * time / texture_period + texture_phase)
+        np.sin(
+            2.0 * np.pi * time / texture_primary_period
+            + texture_phase
+        )
         + 0.25
         * np.sin(
-            4.0 * np.pi * time / texture_period
-            + texture_harmonic_phase
+            2.0 * np.pi * time / texture_secondary_period
+            + texture_secondary_phase
         )
     )
     texture_meta = {
-        "family": "smooth_two_harmonic_regime_background",
-        "period": texture_period,
-        "phase": texture_phase,
-        "harmonic_phase": texture_harmonic_phase,
-        "harmonic_weight": 0.25,
+        "family": "smooth_incommensurate_two_tone_regime_background",
+        "law": "deterministic_quasiperiodic_two_tone",
+        "primary_period": texture_primary_period,
+        "primary_phase": texture_phase,
+        "secondary_period": texture_secondary_period,
+        "secondary_phase": texture_secondary_phase,
+        "period_ratio": texture_period_ratio,
+        "secondary_weight": 0.25,
+        "future_process_noise_scale": 0.0,
     }
     state = state[:length]
     target = strength * state[:, None] * signs[None, :] + 0.04 * texture[:, None]
