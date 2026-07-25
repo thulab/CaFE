@@ -32,6 +32,18 @@ def parse_args() -> argparse.Namespace:
         "--gift-eval-dir",
         type=Path,
         default=DEFAULT_GIFT_EVAL_DIR,
+        help=(
+            "Backward-compatible default source root for gift_arrow datasets."
+        ),
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=None,
+        help=(
+            "Root consumed by the selected dataset's registered real-data "
+            "adapter. Required for non-GIFT sources such as M5."
+        ),
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-anchors", type=int, default=256)
@@ -187,11 +199,21 @@ def main() -> int:
     if not 0.0 < args.minimum_observed_fraction <= 1.0:
         raise ValueError("minimum observed fraction must be in (0, 1]")
     dataset = v8.resolve_dataset(args.dataset_id)
+    if dataset.real_data_adapter != "gift_arrow" and args.source_root is None:
+        raise ValueError(
+            f"{dataset.dataset_id} uses adapter "
+            f"{dataset.real_data_adapter!r}; pass --source-root"
+        )
+    source_root = (
+        args.source_root.resolve()
+        if args.source_root is not None
+        else args.gift_eval_dir.resolve()
+    )
     output_dir = args.output_root.resolve() / dataset.dataset_id / "01_calibration"
     anchor_started = time.perf_counter()
     anchors, source_metadata = v8.build_calibration_anchors(
         dataset,
-        gift_eval_dir=args.gift_eval_dir.resolve(),
+        source_root=source_root,
         maximum_anchors=args.max_anchors,
         minimum_observed_fraction=args.minimum_observed_fraction,
     )
@@ -228,7 +250,7 @@ def main() -> int:
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v9",
+        "schema_version": "paper_v8_calibration_bundle.v10",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
@@ -289,13 +311,14 @@ def main() -> int:
             ),
             "structural_primary_strength": (
                 "common factor and cross-series use a native multivariate "
-                "q10-q90 range when available; hierarchy requires an "
-                "explicit summing-matrix adapter and covariate response "
-                "requires declared known-future covariates; otherwise the "
-                "generator records an explicit protocol fallback"
+                "q10-q90 range when available; declared hierarchy and "
+                "known-future-covariate adapters supply matched nuisance "
+                "coordinates while their primary dose remains internal; "
+                "missing structural inputs record an explicit fallback"
             ),
             "parameter_feature_provenance": (
                 "per-parameter real_univariate, real_native_multivariate, "
+                "real_declared_hierarchy, real_known_future_covariates, "
                 "protocol_constant, or explicit protocol_fallback"
             ),
             "structural_identifiability": "measured on generated samples only",

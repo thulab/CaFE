@@ -52,6 +52,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("/root/xmy/gift-eval"),
     )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=None,
+        help=(
+            "Real-data root for a single selected adapter-backed dataset "
+            "(for example /root/xmy/M5 for m5_daily)."
+        ),
+    )
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, default=64)
     parser.add_argument("--max-anchors", type=int, default=256)
@@ -220,6 +229,14 @@ def commands_for_dataset(
                 *common,
                 "--gift-eval-dir",
                 str(args.gift_eval_dir.resolve()),
+                *(
+                    [
+                        "--source-root",
+                        str(getattr(args, "source_root").resolve()),
+                    ]
+                    if getattr(args, "source_root", None) is not None
+                    else []
+                ),
                 "--max-anchors",
                 str(args.max_anchors),
                 "--calibration-seeds",
@@ -312,10 +329,14 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v6",
+        "schema_version": "paper_v8_experiment_protocol.v7",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
+        "real_data_adapters": {
+            dataset_id: v8.resolve_dataset(dataset_id).real_data_adapter
+            for dataset_id in dataset_ids
+        },
         "seed_start": int(args.seed_start),
         "seed_count": int(args.seed_count),
         "max_anchors": int(args.max_anchors),
@@ -824,6 +845,16 @@ def run_parallel_preparation(
 def main() -> int:
     args = parse_args()
     dataset_ids = requested_dataset_ids(args)
+    non_gift_datasets = [
+        dataset_id
+        for dataset_id in dataset_ids
+        if v8.resolve_dataset(dataset_id).real_data_adapter != "gift_arrow"
+    ]
+    if non_gift_datasets and args.source_root is None:
+        raise ValueError(
+            "non-GIFT datasets require --source-root: "
+            + ", ".join(non_gift_datasets)
+        )
     if len(args.models) != len(set(args.models)):
         raise ValueError("model ids must be unique")
     if len(args.endpoints) != len(set(args.endpoints)):

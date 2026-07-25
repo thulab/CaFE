@@ -47,15 +47,18 @@ from paper_v8_features import (  # noqa: E402
     FEATURE_SCHEMA_VERSION,
     v8_feature_vector,
 )
+from paper_v8_real_data import (  # noqa: E402
+    RealSeriesRecord,
+    load_real_dataset,
+)
 from synthetic_feature_profile import (  # noqa: E402
     adjusted_r2,
     file_sha256,
-    read_gift_arrow_targets,
     robust_scale,
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v13"
+SCHEMA_VERSION = "paper_v8_pipeline.v14"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
@@ -210,6 +213,7 @@ class DatasetSpec:
     asset_name: str
     domain: str
     task_view_id: str = "univariate_background"
+    real_data_adapter: str = "gift_arrow"
 
 
 DATASET_REGISTRY = {
@@ -354,6 +358,14 @@ DATASET_REGISTRY = {
             "temperature_rain_with_missing",
             "temperature_rain_with_missing",
             "Nature",
+        ),
+        DatasetSpec(
+            "m5_daily",
+            "M5 Forecasting Accuracy",
+            "m5/D",
+            ".",
+            "Business",
+            real_data_adapter="m5_csv",
         ),
     )
 }
@@ -780,12 +792,14 @@ def _native_multivariate_features(
             minimum_observed_fraction=minimum_observed_fraction,
         )
         if imputed is None:
-            return {}
+            continue
         try:
             standardized, _location, _scale = standardize_history(imputed)
         except ValueError:
-            return {}
+            continue
         standardized_channels.append(standardized)
+    if len(standardized_channels) < 2:
+        return {}
     panel = np.column_stack(standardized_channels)
     features = v8_feature_vector(
         panel,
@@ -809,16 +823,129 @@ def _native_multivariate_features(
     return features
 
 
+def _known_future_covariate_features(
+    target_values: np.ndarray,
+    covariates: np.ndarray | None,
+    *,
+    channel_index: int,
+    start: int,
+    feature_period: int,
+    minimum_observed_fraction: float,
+) -> dict[str, float]:
+    if covariates is None:
+        return {}
+    native = np.asarray(target_values, dtype=float)
+    channels = native if native.ndim == 2 else native.reshape(1, -1)
+    if not 0 <= channel_index < channels.shape[0]:
+        return {}
+    raw_history = channels[
+        channel_index,
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH,
+    ]
+    covariate_history = np.asarray(covariates, dtype=float)[
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH
+    ]
+    if (
+        raw_history.shape != (REAL_CALIBRATION_CONTEXT_LENGTH,)
+        or covariate_history.ndim != 2
+        or covariate_history.shape[0] != REAL_CALIBRATION_CONTEXT_LENGTH
+    ):
+        return {}
+    imputed, _observed = impute_observed_window(
+        raw_history,
+        minimum_observed_fraction=minimum_observed_fraction,
+    )
+    if imputed is None or not np.isfinite(covariate_history).all():
+        return {}
+    try:
+        standardized, _location, _scale = standardize_history(imputed)
+    except ValueError:
+        return {}
+    normalized_covariates = normalize_covariates(
+        covariate_history,
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+    )
+    return v8_feature_vector(
+        standardized[:, None],
+        feature_period,
+        covariates=normalized_covariates,
+    )
+
+
+def _declared_hierarchy_features(
+    hierarchy_values: np.ndarray | None,
+    hierarchy_kind: str | None,
+    *,
+    start: int,
+    feature_period: int,
+    minimum_observed_fraction: float,
+) -> dict[str, float]:
+    if hierarchy_values is None or hierarchy_kind is None:
+        return {}
+    native = np.asarray(hierarchy_values, dtype=float)
+    if native.ndim != 2 or native.shape[0] < 3:
+        return {}
+    history = native[
+        :,
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH,
+    ].T
+    if history.shape != (
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+        native.shape[0],
+    ):
+        return {}
+    imputed_channels: list[np.ndarray] = []
+    for channel in range(history.shape[1]):
+        imputed, _observed = impute_observed_window(
+            history[:, channel],
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if imputed is None:
+            return {}
+        imputed_channels.append(imputed)
+    panel = standardize_hierarchy_by_context(
+        np.column_stack(imputed_channels),
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+    )
+    return v8_feature_vector(
+        panel,
+        feature_period,
+        hierarchy=hierarchy_kind,
+        include_cross_series_predictability=False,
+    )
+
+
 def build_calibration_anchors(
     dataset: DatasetSpec,
     *,
-    gift_eval_dir: Path,
+    gift_eval_dir: Path | None = None,
+    source_root: Path | None = None,
     maximum_anchors: int,
     sample_seed: int = CALIBRATION_SAMPLE_SEED,
     minimum_observed_fraction: float = 0.5,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    asset_path = gift_eval_dir / dataset.asset_name
-    frequency, native_records = read_gift_arrow_targets(asset_path)
+    resolved_root = source_root or gift_eval_dir
+    if resolved_root is None:
+        raise ValueError("Paper v8 calibration requires a real-data source root")
+    asset_path = resolved_root / dataset.asset_name
+    record_limit = (
+        max(64, min(256, int(math.ceil(maximum_anchors / 4))))
+        if dataset.real_data_adapter == "m5_csv"
+        else None
+    )
+    real_bundle = load_real_dataset(
+        dataset.real_data_adapter,
+        asset_path,
+        record_limit=record_limit,
+    )
+    frequency = real_bundle.frequency
+    native_records = [
+        (record.item_id, record.values)
+        for record in real_bundle.records
+    ]
+    record_by_item: dict[str, RealSeriesRecord] = {
+        record.item_id: record for record in real_bundle.records
+    }
     native_by_item = {
         str(item_id): np.asarray(values, dtype=float)
         for item_id, values in native_records
@@ -903,6 +1030,47 @@ def build_calibration_anchors(
             for name, value in native_features.items()
             if math.isfinite(float(value))
         }
+        source_record = record_by_item[item_id]
+        covariate_features = _known_future_covariate_features(
+            source_record.values,
+            source_record.covariates,
+            channel_index=channel_index,
+            start=start,
+            feature_period=int(period_policy["feature_period"]),
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        finite_covariate_features = {
+            str(name): float(value)
+            for name, value in covariate_features.items()
+            if name
+            in set(
+                REQUIRED_REAL_FEATURES_BY_CAPABILITY[
+                    "covariate_response"
+                ]
+            )
+            if math.isfinite(float(value))
+            and name != "future_abs_covariate_target_corr"
+        }
+        hierarchy_features = _declared_hierarchy_features(
+            source_record.hierarchy_values,
+            source_record.hierarchy_kind,
+            start=start,
+            feature_period=int(period_policy["feature_period"]),
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        finite_hierarchy_features = {
+            str(name): float(value)
+            for name, value in hierarchy_features.items()
+            if name
+            in {
+                *REQUIRED_REAL_FEATURES_BY_CAPABILITY[
+                    "hierarchical_coherence"
+                ],
+                "hierarchy_residual_mean_abs",
+                "hierarchy_aggregation_ratio",
+            }
+            if math.isfinite(float(value))
+        }
         standardized_master = np.concatenate([history, future])
         standardized_master = (standardized_master - location) / scale
         try:
@@ -919,7 +1087,7 @@ def build_calibration_anchors(
         )
         anchors.append(
             {
-                "schema_version": "paper_v8_calibration_anchor.v3",
+                "schema_version": "paper_v8_calibration_anchor.v4",
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "anchor_id": anchor_id,
                 "dataset_id": dataset.dataset_id,
@@ -952,6 +1120,13 @@ def build_calibration_anchors(
                 ).hexdigest(),
                 "features": finite_features,
                 "native_multivariate_features": finite_native_features,
+                "known_future_covariate_features": finite_covariate_features,
+                "declared_hierarchy_features": finite_hierarchy_features,
+                "structural_group_id": source_record.structural_group_id,
+                "covariate_column_names": list(
+                    source_record.covariate_names
+                ),
+                "hierarchy_kind": source_record.hierarchy_kind,
                 "feature_provenance": {
                     **{
                         name: "real_univariate_history_l168"
@@ -962,11 +1137,25 @@ def build_calibration_anchors(
                         for name in finite_native_features
                         if name not in finite_features
                     },
+                    **{
+                        name: "real_known_future_covariates_history_l168"
+                        for name in finite_covariate_features
+                    },
+                    **{
+                        name: "real_declared_hierarchy_history_l168"
+                        for name in finite_hierarchy_features
+                    },
                 },
                 "feature_provenance_by_scope": {
                     "real_univariate": sorted(finite_features),
                     "real_native_multivariate": sorted(
                         finite_native_features
+                    ),
+                    "real_known_future_covariates": sorted(
+                        finite_covariate_features
+                    ),
+                    "real_declared_hierarchy": sorted(
+                        finite_hierarchy_features
                     ),
                 },
                 "real_forecast_master": {
@@ -1027,10 +1216,22 @@ def build_calibration_anchors(
         for anchor in anchors
         if anchor["native_multivariate_features"]
     )
+    known_future_covariate_profile = summarize_feature_rows(
+        anchor["known_future_covariate_features"]
+        for anchor in anchors
+        if anchor["known_future_covariate_features"]
+    )
+    declared_hierarchy_profile = summarize_feature_rows(
+        anchor["declared_hierarchy_features"]
+        for anchor in anchors
+        if anchor["declared_hierarchy_features"]
+    )
     feature_support: dict[str, dict[str, Any]] = {}
     for scope, profile in (
         ("real_univariate", univariate_profile),
         ("real_native_multivariate", native_multivariate_profile),
+        ("real_known_future_covariates", known_future_covariate_profile),
+        ("real_declared_hierarchy", declared_hierarchy_profile),
     ):
         for name, summary in profile.items():
             finite_count = int(summary["finite_count"])
@@ -1047,18 +1248,21 @@ def build_calibration_anchors(
             }
             existing = feature_support.get(name)
             if existing is None or (
-                candidate["scope"] == "real_native_multivariate"
+                candidate["scope"] != "real_univariate"
                 and candidate["usable"]
             ):
                 feature_support[name] = candidate
     for anchor in anchors:
         anchor["feature_support"] = feature_support
-    arrow_files = sorted(asset_path.glob("data-*.arrow"))
     metadata = {
         "dataset": asdict(dataset),
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "real_data_adapter": real_bundle.adapter_id,
         "asset_path": str(asset_path),
-        "asset_files": [file_record(path) for path in arrow_files],
+        "asset_files": [
+            file_record(path) for path in real_bundle.asset_files
+        ],
+        "adapter_metadata": real_bundle.metadata,
         "frequency": frequency,
         "season_length": int(
             seasonal_period_for_frequency(frequency)
@@ -1108,6 +1312,8 @@ def build_calibration_anchors(
         "feature_profiles": {
             "univariate": univariate_profile,
             "native_multivariate": native_multivariate_profile,
+            "known_future_covariates": known_future_covariate_profile,
+            "declared_hierarchy": declared_hierarchy_profile,
             "support": feature_support,
         },
         "window_policy": (
@@ -1140,25 +1346,29 @@ def anchor_feature_values(
         .get("usable", True)
         if math.isfinite(float(value))
     }
-    native_feature_names = (
+    scoped_field = {
+        "common_factor": "native_multivariate_features",
+        "cross_series_dependence": "native_multivariate_features",
+        "hierarchical_coherence": "declared_hierarchy_features",
+        "covariate_response": "known_future_covariate_features",
+    }.get(capability_id)
+    scoped_feature_names = (
         set(REQUIRED_REAL_FEATURES_BY_CAPABILITY.get(capability_id, ()))
-        if capability_id in {"common_factor", "cross_series_dependence"}
+        if scoped_field is not None
         else set()
     )
-    values.update(
-        {
-            str(name): float(value)
-            for name, value in anchor.get(
-                "native_multivariate_features",
-                {},
-            ).items()
-            if name in native_feature_names
-            if anchor.get("feature_support", {})
-            .get(name, {"usable": True})
-            .get("usable", True)
-            if math.isfinite(float(value))
-        }
-    )
+    if scoped_field is not None:
+        values.update(
+            {
+                str(name): float(value)
+                for name, value in anchor.get(scoped_field, {}).items()
+                if name in scoped_feature_names
+                if anchor.get("feature_support", {})
+                .get(name, {"usable": True})
+                .get("usable", True)
+                if math.isfinite(float(value))
+            }
+        )
     return values
 
 
@@ -1251,10 +1461,28 @@ def parameter_mapping_provenance(
         for name in anchor.get("features", {})
         if support.get(name, {"usable": True}).get("usable", True)
     }
-    multivariate = {
+    scoped_field, scoped_status = {
+        "common_factor": (
+            "native_multivariate_features",
+            "real_native_multivariate",
+        ),
+        "cross_series_dependence": (
+            "native_multivariate_features",
+            "real_native_multivariate",
+        ),
+        "hierarchical_coherence": (
+            "declared_hierarchy_features",
+            "real_declared_hierarchy",
+        ),
+        "covariate_response": (
+            "known_future_covariate_features",
+            "real_known_future_covariates",
+        ),
+    }.get(capability_id, ("", ""))
+    scoped = {
         name
-        for name in anchor.get("native_multivariate_features", {})
-        if capability_id in {"common_factor", "cross_series_dependence"}
+        for name in anchor.get(scoped_field, {})
+        if scoped_field
         if name
         in set(REQUIRED_REAL_FEATURES_BY_CAPABILITY.get(capability_id, ()))
         if support.get(name, {"usable": True}).get("usable", True)
@@ -1270,12 +1498,12 @@ def parameter_mapping_provenance(
             status = "protocol_constant"
             fallback_reason = None
         elif components and all(
-            component in univariate | multivariate
+            component in univariate | scoped
             for component in components
         ):
             status = (
-                "real_native_multivariate"
-                if any(component in multivariate for component in components)
+                scoped_status
+                if any(component in scoped for component in components)
                 else "real_univariate"
             )
             fallback_reason = None
@@ -1284,7 +1512,7 @@ def parameter_mapping_provenance(
             missing = [
                 component
                 for component in components
-                if component not in univariate | multivariate
+                if component not in univariate | scoped
             ]
             fallback_reason = (
                 "real_feature_unavailable:"

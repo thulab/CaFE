@@ -48,7 +48,7 @@ Paper v8 测量模型对十种时间序列机制的响应，而不是训练生�
 ## Canonical 全流程与实现入口
 
 ```text
-GIFT-Eval 原始数据
+注册的真实数据 adapter（GIFT-Eval Arrow 或 M5 CSV）
   → 构造 forecastable real anchor pool
   → 提取唯一的 history-only v8 feature profile
   → 映射背景参数并标定 I1–I5
@@ -65,6 +65,7 @@ GIFT-Eval 原始数据
 |---|---|
 | `scripts/run_paper_v8_pipeline.py` | 完整流程编排、不可变协议与步骤状态 |
 | `scripts/paper_v8_pipeline_common.py` | 公共协议常量、数据 registry、anchor、校准与 view 逻辑 |
+| `scripts/paper_v8_real_data.py` | 低耦合真实数据 adapter、统一记录与结构语义 |
 | `scripts/paper_v8_features.py` | 唯一的 history-only 特征实现 |
 | `scripts/calibrate_paper_v8.py` | 真实 anchor 和 capability calibration bundle |
 | `scripts/generate_paper_v8_samples.py` | clean、secondary、robustness 和 input ablation 样本 |
@@ -82,17 +83,27 @@ GIFT-Eval 原始数据
 
 ### 数据集 registry
 
-当前 canonical registry 包含 20 个逻辑数据集配置：
+当前 canonical registry 包含 21 个逻辑数据集配置：
 
 - 小时级或 M4 Hourly：Electricity、Solar、ETT1、ETT2、Jena Weather、
   KDD Cup 2018、Loop Seattle、SZ-Taxi、M_DENSE、Bitbrains Fast、
   Bitbrains RND、BizITObs L2C、M4 Hourly；
 - 日频：Restaurant、Hierarchical Sales、US Births、Saugeen River Flow、
-  Temperature Rain；
+  Temperature Rain、M5；
 - 10 秒级：BizITObs Application、BizITObs Service。
 
 COVID Deaths 只有 212 点，Hospital 和 Car Parts 更短，无法稳定提供
 `168 history + 48 future`，当前不接入。
+
+registry 只声明 adapter id 和逻辑资产。读取、CSV/Arrow 解析及原生结构组织
+由 `paper_v8_real_data.py` 的注册 adapter 完成，anchor/calibration 不包含
+数据集格式分支。M5 adapter 使用 evaluation sales 和官方 calendar：
+
+- 同 store/category 的五个不同 active leaf 组成 native multivariate panel；
+- 只使用天然含两个 department child 的 HOBBIES/HOUSEHOLD category，显式构造
+  `parent = child_1 + child_2`；三子节点的 FOODS 不做静默投影；
+- known-future 只包含 day-of-week sin/cos、event count 和对应州 SNAP；
+- sell price 及其派生变化不是发行时保证已知的输入，因此显式排除。
 
 每条 anchor 必须携带 `dataset_id`、`config_id`、`task_view_id`、
 `anchor_id`、`item_id`、`channel_id`、`window_start`、frequency、

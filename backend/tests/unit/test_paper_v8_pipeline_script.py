@@ -7,6 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 REPO_ROOT = Path(__file__).parents[3]
@@ -51,7 +52,7 @@ def test_direct_anchor_summary_does_not_compress_feature_values():
 def test_v8_registry_includes_forecastable_l168_datasets():
     common = load_script("paper_v8_pipeline_common")
 
-    assert len(common.DATASET_REGISTRY) == 20
+    assert len(common.DATASET_REGISTRY) == 21
     assert {
         "gift_bizitobs_application",
         "gift_bizitobs_service",
@@ -61,7 +62,9 @@ def test_v8_registry_includes_forecastable_l168_datasets():
         "gift_us_births_d",
         "gift_saugeenday_d",
         "gift_temperature_rain_d",
+        "m5_daily",
     }.issubset(common.DATASET_REGISTRY)
+    assert common.resolve_dataset("m5_daily").real_data_adapter == "m5_csv"
 
 
 def test_v8_window_contract_separates_real_calibration_and_synthetic_master():
@@ -257,8 +260,19 @@ def test_calibration_anchor_is_forecastable_and_preserves_native_panel(
     )
     monkeypatch.setattr(
         common,
-        "read_gift_arrow_targets",
-        lambda _path: ("H", [("panel", panel)]),
+        "load_real_dataset",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            frequency="H",
+            records=(
+                common.RealSeriesRecord(
+                    item_id="panel",
+                    values=panel,
+                ),
+            ),
+            asset_files=(),
+            adapter_id="gift_arrow",
+            metadata={},
+        ),
     )
 
     anchors, metadata = common.build_calibration_anchors(
@@ -285,14 +299,100 @@ def test_calibration_anchor_is_forecastable_and_preserves_native_panel(
         )
 
 
+def test_m5_adapter_extracts_all_declared_structural_scopes(tmp_path):
+    common = load_script("paper_v8_pipeline_common")
+    day_count = 500
+    days = [f"d_{index}" for index in range(1, day_count + 1)]
+    dates = pd.date_range("2011-01-29", periods=day_count, freq="D")
+    calendar = pd.DataFrame(
+        {
+            "date": dates,
+            "wm_yr_wk": 11101 + np.arange(day_count) // 7,
+            "weekday": dates.day_name(),
+            "wday": dates.dayofweek + 1,
+            "month": dates.month,
+            "year": dates.year,
+            "d": days,
+            "event_name_1": [
+                "event" if index % 31 == 0 else None
+                for index in range(day_count)
+            ],
+            "event_type_1": None,
+            "event_name_2": None,
+            "event_type_2": None,
+            "snap_CA": (np.arange(day_count) % 10 == 0).astype(int),
+            "snap_TX": 0,
+            "snap_WI": 0,
+        }
+    )
+    calendar.to_csv(tmp_path / "calendar.csv", index=False)
+
+    rows = []
+    time = np.arange(day_count, dtype=float)
+    for index in range(10):
+        department = "HOBBIES_1" if index < 5 else "HOBBIES_2"
+        values = np.maximum(
+            0.0,
+            np.round(
+                3.0
+                + 0.3 * index
+                + 1.5 * np.sin(2.0 * np.pi * (time - index) / 7.0)
+                + 0.4 * np.sin(2.0 * np.pi * time / (11.0 + index))
+                + (time % (13 + index) == 0),
+            ),
+        ).astype(int)
+        row = {
+            "id": f"item_{index}_CA_1_evaluation",
+            "item_id": f"item_{index}",
+            "dept_id": department,
+            "cat_id": "HOBBIES",
+            "store_id": "CA_1",
+            "state_id": "CA",
+        }
+        row.update(dict(zip(days, values, strict=True)))
+        rows.append(row)
+    pd.DataFrame(rows).to_csv(
+        tmp_path / "sales_train_evaluation.csv",
+        index=False,
+    )
+
+    dataset = common.resolve_dataset("m5_daily")
+    anchors, metadata = common.build_calibration_anchors(
+        dataset,
+        source_root=tmp_path,
+        maximum_anchors=2,
+    )
+
+    assert len(anchors) == 2
+    assert metadata["real_data_adapter"] == "m5_csv"
+    assert metadata["adapter_metadata"]["known_future_covariate_columns"]
+    for anchor in anchors:
+        assert anchor["native_multivariate_features"]
+        assert anchor["known_future_covariate_features"]
+        assert anchor["declared_hierarchy_features"]
+        assert anchor["declared_hierarchy_features"][
+            "hierarchy_residual_mean_abs"
+        ] == pytest.approx(0.0, abs=1e-12)
+        assert anchor["covariate_column_names"] == [
+            "day_of_week_sin",
+            "day_of_week_cos",
+            "event_count",
+            "snap",
+        ]
+
+
 def test_parameter_mapping_records_real_and_fallback_sources():
     common = load_script("paper_v8_pipeline_common")
     anchor = {
         "features": {"acf1": 0.8},
         "native_multivariate_features": {"factor_score_acf1": 0.7},
+        "declared_hierarchy_features": {"hierarchy_aggregate_acf1": 0.9},
+        "known_future_covariate_features": {"covariate_incremental_r2": 0.2},
         "feature_support": {
             "acf1": {"usable": True},
             "factor_score_acf1": {"usable": True},
+            "hierarchy_aggregate_acf1": {"usable": True},
+            "covariate_incremental_r2": {"usable": True},
         },
     }
     mappings = common.parameter_mapping_provenance(
@@ -311,6 +411,31 @@ def test_parameter_mapping_records_real_and_fallback_sources():
     assert mappings[0]["fallback_used"] is False
     assert mappings[1]["source_status"] == "real_native_multivariate"
     assert mappings[1]["fallback_used"] is False
+
+    hierarchy_mapping = common.parameter_mapping_provenance(
+        [
+            {
+                "parameter": "aggregate_persistence",
+                "source_feature": "hierarchy_aggregate_acf1",
+            }
+        ],
+        anchor,
+        capability_id="hierarchical_coherence",
+    )
+    assert hierarchy_mapping[0]["source_status"] == "real_declared_hierarchy"
+    covariate_mapping = common.parameter_mapping_provenance(
+        [
+            {
+                "parameter": "covariate_effect_scale",
+                "source_feature": "covariate_incremental_r2",
+            }
+        ],
+        anchor,
+        capability_id="covariate_response",
+    )
+    assert covariate_mapping[0]["source_status"] == (
+        "real_known_future_covariates"
+    )
 
     unavailable = common.parameter_mapping_provenance(
         [
