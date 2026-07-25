@@ -34,7 +34,7 @@ def test_covariate_real_feature_contract_is_history_only():
 def test_off_target_selectivity_matrix_is_paired_and_nonblocking():
     rows = []
     for capability_id, target_feature in (
-        ("trend", "local_curvature_abs_w96"),
+        ("trend", "local_polynomial_energy_share_w96"),
         ("multi_seasonal", "multi_period_score"),
         (
             "time_varying_seasonality",
@@ -65,7 +65,7 @@ def test_off_target_selectivity_matrix_is_paired_and_nonblocking():
                         "target_feature_value": dose,
                         "realized_features": {
                             target_feature: dose + 0.01 * seed,
-                            "local_curvature_abs_w96": (
+                            "local_polynomial_energy_share_w96": (
                                 dose + 0.01 * seed
                                 if capability_id == "trend"
                                 else 0.2 + 0.001 * dose
@@ -88,7 +88,7 @@ def test_off_target_selectivity_matrix_is_paired_and_nonblocking():
         "feature_owner_intervention_median_abs_paired_low_high_delta"
     )
     assert result[0]["feature_own_intervention_span"][
-        "local_curvature_abs_w96"
+        "local_polynomial_energy_share_w96"
     ] == pytest.approx(4.0)
     assert result[0]["feature_own_intervention_span"][
         "pca_top1_explained"
@@ -97,7 +97,7 @@ def test_off_target_selectivity_matrix_is_paired_and_nonblocking():
         "pca_top1_explained"
     ] is None
     assert result[0]["normalized_absolute_delta_matrix"]["trend"][
-        "local_curvature_abs_w96"
+        "local_polynomial_energy_share_w96"
     ] == pytest.approx(1.0)
     assert result[0]["normalized_absolute_delta_matrix"]["multi_seasonal"][
         "multi_period_score"
@@ -113,7 +113,7 @@ def test_off_target_selectivity_matrix_is_paired_and_nonblocking():
     ] == ["seasonal_amplitude_modulation"]
     assert result[0]["selectivity_summary"]["multi_seasonal"][
         "maximum_nonexception_off_target_feature"
-    ] == "local_curvature_abs_w96"
+    ] == "local_polynomial_energy_share_w96"
     assert (
         result[0]["selectivity_summary"]["trend"][
             "on_to_max_off_target_ratio"
@@ -340,9 +340,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
     direction = np.asarray(metadata["direction_by_target"])
     formal_differences = np.diff(target[:design_stop], axis=0)
 
-    assert GENERATOR_VERSION == (
-        "capts-paper-v8-local-evidence-mechanisms"
-    )
+    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v3"
     assert metadata["trend_local_evidence_window"] == 96
     assert join == 408
     assert metadata["trend_local_polynomial_degree"] == expected_degree
@@ -354,10 +352,9 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
         "linear_tangent_at_design_horizon"
     )
     assert np.max(np.abs(np.diff(target[:join], n=2, axis=0))) < 1e-12
-    assert np.all(formal_differences * direction[None, :] > 0.0)
-    assert min(
-        metadata["minimum_tangent_derivative_ratio_by_target"]
-    ) > 0.0
+    assert np.all(
+        formal_differences[: join - 1] * direction[None, :] > 0.0
+    )
     assert max(
         np.abs(
             np.asarray(
@@ -368,7 +365,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
             - 1.0
         )
     ) > 0.20
-    assert metadata["slope_reversal_inside_design_window"] is False
+    assert metadata["slope_reversal_inside_design_window"] is True
     assert np.max(
         np.abs(np.diff(target[design_stop:], n=2, axis=0))
     ) < 1e-12

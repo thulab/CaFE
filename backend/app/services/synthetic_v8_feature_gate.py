@@ -13,7 +13,7 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v5"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v6"
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -22,7 +22,7 @@ COUNTERFACTUAL_CAPABILITIES = frozenset(
     }
 )
 PRIMARY_FEATURE_BY_CAPABILITY = {
-    "trend": "local_curvature_abs_w96",
+    "trend": "local_polynomial_energy_share_w96",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
     "regime_switching": "regime_sparse_transition_score",
@@ -101,6 +101,14 @@ def basic_sample_checks(sample: dict[str, Any]) -> dict[str, Any]:
                 )
             )
             < context
+        ),
+        "target_feature_value_finite": bool(
+            math.isfinite(
+                float(sample.get("target_feature_value", math.nan))
+            )
+        ),
+        "intensity_lambda_finite": bool(
+            math.isfinite(float(sample.get("intensity_lambda", math.nan)))
         ),
         "target_hash_matches": (
             str(sample.get("target_sha256")) == sample_content_sha256(sample)

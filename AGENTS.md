@@ -43,8 +43,11 @@ the synthetic mechanism ranking.
 
 ## Experiment Rules
 
-- Real data calibrates empirical feature ranges and generator nuisance
-  parameters. Synthetic futures in the main benchmark are deterministic.
+- Real data supplies empirical feature references and generator nuisance
+  parameters. Family-level intensity uses the usable real/generator overlap
+  only when it spans enough controllable dose; otherwise it records a
+  generator-relative fallback. Synthetic futures in the main benchmark are
+  deterministic.
 - Compute calibration and realized features from history only.
 - Preserve paired seeds, anchors, nuisance paths, and normalization statistics
   across intensity or counterfactual members.
@@ -60,6 +63,20 @@ the synthetic mechanism ranking.
 
 Python uses 4-space indentation, type hints, and snake_case names. Keep changes
 inside v8 files unless a shared helper must be corrected.
+
+All Paper v8 Python scripts import backend packages and must run in the
+`backend/` uv project, which owns the required dependencies. Always use:
+
+```bash
+cd backend
+uv run python ../scripts/calibrate_paper_v8.py ...
+uv run python ../scripts/generate_paper_v8_samples.py ...
+uv run python ../scripts/validate_paper_v8_samples.py ...
+uv run python ../scripts/run_paper_v8_pipeline.py ...
+```
+
+Do not run `uv run python scripts/...` from the repository root: the root is
+not the backend uv project and may fail on packages such as `sqlmodel`.
 
 Run focused tests first, for example:
 

@@ -15,7 +15,7 @@ from synthetic_feature_profile import (
 )
 
 
-FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v4"
+FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v5"
 LOCAL_TREND_WINDOW = 96
 LOCAL_TREND_HARMONIC_COUNT = 6
 LOCAL_TREND_MAX_REMOVED_PERIOD = 84.0
@@ -62,7 +62,12 @@ def _local_trend_residual(
     residual = np.empty_like(values, dtype=float)
     for channel in range(values.shape[1]):
         scaled = robust_scale(values[:, channel])
-        padded = np.pad(scaled, (radius, radius), mode="edge")
+        # This residual feeds a cycle-to-cycle amplitude statistic.  Edge
+        # replication attenuates the first and last cycles of an otherwise
+        # stationary carrier and creates artificial modulation.  Circular
+        # padding preserves a complete-cycle window and applies identically to
+        # real and synthetic anchors.
+        padded = np.pad(scaled, (radius, radius), mode="wrap")
         smooth = np.convolve(padded, kernel, mode="valid")
         residual[:, channel] = scaled - smooth
     return residual
@@ -171,6 +176,8 @@ def _local_trend_features(
     )
     slopes: list[float] = []
     curvatures: list[float] = []
+    quadratic_energy_shares: list[float] = []
+    polynomial_energy_shares: list[float] = []
     strengths: list[float] = []
     for adjusted, _, _ in decompositions:
         scaled = adjusted
@@ -184,6 +191,39 @@ def _local_trend_features(
         total_variance = float(np.var(scaled))
         slopes.append(abs(float(coefficients[1])))
         curvatures.append(abs(float(coefficients[2])))
+        linear_energy = float(np.var(coefficients[1] * time))
+        quadratic_energy = float(
+            np.var(coefficients[2] * time**2)
+        )
+        quadratic_energy_shares.append(
+            quadratic_energy
+            / max(linear_energy + quadratic_energy, 1e-12)
+        )
+        cubic_design = np.column_stack(
+            [np.ones(evidence_length), time, time**2, time**3]
+        )
+        try:
+            cubic_coefficients = np.linalg.lstsq(
+                cubic_design,
+                scaled,
+                rcond=None,
+            )[0]
+        except np.linalg.LinAlgError:
+            cubic_coefficients = np.asarray(
+                [float(np.mean(scaled)), 0.0, 0.0, 0.0]
+            )
+        cubic_linear_energy = float(
+            np.var(cubic_coefficients[1] * time)
+        )
+        nonlinear_component = (
+            cubic_coefficients[2] * time**2
+            + cubic_coefficients[3] * time**3
+        )
+        nonlinear_energy = float(np.var(nonlinear_component))
+        polynomial_energy_shares.append(
+            nonlinear_energy
+            / max(cubic_linear_energy + nonlinear_energy, 1e-12)
+        )
         strengths.append(
             0.0
             if total_variance <= 1e-12
@@ -196,6 +236,12 @@ def _local_trend_features(
         "local_trend_strength_w96": float(np.mean(strengths)),
         "local_slope_abs_w96": float(np.mean(slopes)),
         "local_curvature_abs_w96": float(np.mean(curvatures)),
+        "local_quadratic_energy_share_w96": float(
+            np.mean(quadratic_energy_shares)
+        ),
+        "local_polynomial_energy_share_w96": float(
+            np.mean(polynomial_energy_shares)
+        ),
     }
 
 
@@ -326,18 +372,20 @@ def v8_feature_vector(
         if value is not None:
             output[name] = value
 
-    transition_scores: list[float] = []
-    transition_residuals: list[np.ndarray] = []
-    for _, residual, scaled in trend_decompositions:
-        residual_energy_share = float(
-            np.sum(residual**2)
-            / max(float(np.sum(scaled**2)), 1e-12)
-        )
-        transition_scores.append(
-            regime_sparse_transition_score(residual)
-            * math.sqrt(float(np.clip(residual_energy_share, 0.0, 1.0)))
-        )
-        transition_residuals.append(residual)
+    # Regime transitions must not be removed as soon as they become strong
+    # enough to appear among the adaptive harmonic modes.  That made the
+    # coordinate fold back with increasing intervention strength.  A
+    # quadratic residual removes trend while retaining sparse jumps; smooth
+    # single- and multi-period carriers still distribute their difference
+    # energy rather than concentrating it at a few transition points.
+    transition_scores = [
+        regime_sparse_transition_score(spectral_residual[:, channel])
+        for channel in range(values.shape[1])
+    ]
+    transition_residuals = [
+        spectral_residual[:, channel]
+        for channel in range(values.shape[1])
+    ]
     residual_mean = np.mean(
         np.column_stack(transition_residuals),
         axis=1,

@@ -137,13 +137,13 @@ anchor，不复制窗口凑数。缺失值采用统一、可审计的轻量插�
 ### 唯一 history-only 特征实现
 
 所有真实校准、合成 realized feature 和对齐回验使用
-`scripts/paper_v8_features.py` 的 feature v4 定义。每个数据集保存唯一经验
+`scripts/paper_v8_features.py` 的 feature v5 定义。每个数据集保存唯一经验
 feature matrix；p05、p10、p25、p50、p75、p90、p95 只是摘要，不再维护
 相互冲突的参数范围、强度范围和 gate 范围。
 
 重点特征采用以下去串扰定义：
 
-- trend：最近 W96 的 joinpoint-protected 局部二次趋势；
+- trend：最近 W96 中线性项以外二/三次多项式的能量占比；
 - spectral complexity：去趋势后加 taper 的稳定频谱；
 - amplitude nonstationarity：去局部趋势后的周期系数变化；
 - transition sparsity：去趋势和稳定 carrier 后的 residual difference，
@@ -166,37 +166,50 @@ paired I1/I5 off-target selectivity matrix 作为非阻断诊断。部分 sideba
 不能用 `0.0` 伪装成真实观测；必须在 calibration bundle 的逐参数 provenance
 中记录 fallback 和原因。
 
-普通真实数据主要校准背景和 nuisance。结构能力的主强度使用统一的合成
-realized-strength 支持，真实 panel 特征只辅助校准 rank、persistence、lag、
-背景相关和相对尺度。
+普通真实数据主要校准背景和 nuisance。trend、multi-seasonal、
+time-varying-seasonality 和 regime 使用单变量真实主特征范围；common factor
+和 cross-series 只有存在同步 native multivariate feature 时才使用真实主特征
+范围。nonlinear 和 intermittency 的现有 observable proxy 不能可靠反解，
+继续使用生成器内部剂量。hierarchy 必须由声明了 summing matrix 的显式 adapter
+提供，covariate 必须有声明的 known-future 输入；普通多变量数据不能冒充这两种
+结构。语义不满足时使用并记录 protocol fallback。
 
 ### I1–I5 标定
 
 同一 seed-group 的 I1–I5 共享真实 anchor、path realization 和所有非目标
 nuisance，只改变主机制剂量及其必然下游结果。
 
-对于使用真实强度范围的能力：
+I1–I5 使用数据集×family 级标尺，不做逐正式 seed 的精确反解：
 
-1. 从数据集真实 profile 取默认 `[q10, q90]`；
-2. 默认 `range_expansion_factor = 1.0`；
-3. 与生成器实际 response support 取交集；
-4. 在有效区间内等距放置 I1–I5；
-5. 对原始 `lambda → realized feature` response curve 反解生成参数。
+1. 从数据集真实 profile 读取可用的 `[q10, q90]`，作为辅助参考；
+2. 用独立 qualification path pool 在 21 个 λ 点估计 family mean
+   `lambda → realized feature` response curve；
+3. 若真实区间与 primary family mean support 的交集至少覆盖真实
+   `q10–q90` span 的 10%，且反解后能覆盖 family 可用 λ support 的至少
+   25%，就在交集内等距放置五个参考目标；否则明确回退到
+   generator-relative 五级标尺，避免真实窄区间抹平能力难度；
+4. 只反解一次 family mean curve，得到该数据集与 family 共享的五个 λ；
+5. 正式 seed 按指定 seed index 生成不同 anchor、相位和 nuisance，但不重新
+   计算 21 点曲线，也不因单样本偏离参考目标而拒绝。
 
 `lambda` 的数学坐标始终是 `[0,1]`，具体机制参数可以按物理含义超过 1。
-不能使用累计最大包络隐藏 response curve 的 foldback；只允许在从
-`lambda=0` 开始的最大稳定单调分支内反解。
+不能使用累计最大包络伪造可逆性。先确定从 `lambda=0` 开始的稳定 support，
+再选择原始均值曲线中的可逆分支；原始 curve 与选中分支都保存。
 
-response calibration 从 formal seed bank 的前 32 条 path 开始。两半 path
-的 support 差异只记录为非阻断诊断；只有 support 退化或 I1–I5 无法形成严格
-递增时，才依次扩到 64、96，达到上限仍失败则显式终止。当前不按结果重试
-生成 seed，也不自动把过窄的真实强度抬升到统一下限。
+qualification pool 使用独立冻结 namespace 的 32 条随机但可复现路径，其
+anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文样本序号语义。
+不要求每条 qualification path 单独覆盖真实 `q10–q90`。两半 path 的 support
+差异只作非阻断诊断；只有 family mean response 退化或不可逆才依次扩到
+64、96，达到上限仍失败则显式终止。正式 seed 的编号、anchor、path、样本 ID
+和 sensitivity 身份保持确定性。最多三个候选 path 的重试只服务于数值合法性
+和启用时的 anti-copy gate，不服务于贴合真实特征目标。当前不自动把过窄的真实
+强度抬升到统一下限。
 
 ## 十种能力的当前生成与评分
 
 | 能力 | Primary family | 主剂量 | I5 主机制指标 |
 |---|---|---|---|
-| trend | C1 joinpoint quadratic | `local_curvature_abs_w96` | `trend_curvature_component_nrmse` |
+| trend | C1 joinpoint quadratic | `local_polynomial_energy_share_w96` | `trend_curvature_component_nrmse` |
 | multi-seasonal | sample-specific Fourier basis | `multi_period_score` | `seasonal_spectral_amplitude_relative_error` |
 | time-varying seasonality | modulated oscillator | `seasonal_amplitude_modulation` | `instantaneous_frequency_nmae` |
 | regime switching | deterministic duration motif | `regime_sparse_transition_score` | `regime_jump_nmae` |
@@ -252,15 +265,23 @@ seed indexes = [seed_start, seed_start + seed_count)
 
 1. shape、finite、history/future 长度和 hash 合法；
 2. sample ID、target hash 和必要的近重复检查；
-3. 主剂量对 I1–I5 正确、非退化且 paired seed 方向一致；
+3. 主剂量在完整 seed batch 上对 I1–I5 聚合响应有序且非退化；
 4. 每种能力一到两个核心机制约束；
 5. robustness、counterfactual 和 ablation 与 clean parent 的不变量成立。
 
 结构 gate 包括层级加和与 contrast、common joint observability、cross 正确
 driver/edge/lag/符号和 holdout、covariate counterfactual recovery 等。
 
-near-distance gate 在正式校准、生成、重试和 acceptance 中固定关闭。合成曲线
-不应与真实窗口做最近邻外观匹配；相关实现只可作为显式开启的研究诊断。
+对具有真实主特征的能力，仍报告生成主特征是否落在真实 anchor 原始
+`[min,max]` 以中点为中心扩成的 `1.2 × span` 范围内，并报告相对 family
+参考目标的误差。这两项是 construct-alignment audit，不参与逐样本 acceptance，
+也不触发重试。强度有效性由完整 seed batch 上的 I1–I5 聚合响应顺序与跨度回验。
+
+near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有真实 anchor
+内部做 leave-one-out，得到 pooled-z RMS DCR 与 NNDR 的 p05；只有合成 channel
+同时满足 `DCR <= p05` 和 `NNDR <= p05` 才拒绝。它不使用 held-out，不参与参数
+标定，也不把“像不像真实曲线”当作生成质量目标；可用
+`--no-near-distance-gate` 显式旁路并记录。
 
 ## 推理协议
 
@@ -352,6 +373,16 @@ Oracle gate 失败表示生成构造无效。Oracle 通过但结构基线不能�
   全部通过。
 - KDD 全链路并行 pilot：16 核、8 workers 下校准约 4.65 倍、生成约 4.96 倍
   加速，64-seed gate 全部通过；worker 数不进入科学协议。
+- ETT1 旧逐-seed conditional-inverse pilot 证明严格对齐在部分 generator
+  realization 上可实现，但同时暴露出对真实尾部分位数和 family 随机实现过度
+  敏感，因此已被当前 family-level 标尺取代，不再作为正式准入结论。
+- ETT1 当前 family-level 复测：256 anchors、32 qualification paths 下十能力
+  校准用时 107.8 秒；64 seeds 生成 3,858 个 clean masters 用时 32.5 秒，
+  零重试，强度、结构、robustness 和 ablation 回验全部通过。Cross 的真实参考
+  只映射到 family λ support 的 17.6%，因此按统一 25% 规则回退到
+  generator-relative 标尺；13 个 strict I5 seeds 的最小 history holdout R²
+  为 0.996，driver/lag/方向和正控全部通过。Cross primary 约 53.2% 样本落在
+  1.2× real-anchor support 内，该比例只作透明审计，不作为准入条件。
 
 这些结果证明当前题面和实现链路在代表性 pilot 上可用，不构成所有数据集或所有
 模型的外部性能保证。
@@ -411,14 +442,19 @@ provenance，拒绝跨版本、跨生成器或跨 seed shard 静默合并。
 以下工作不阻塞当前 v8：
 
 - M5：后续作为一个逻辑数据集的 covariate、sibling panel、additive hierarchy
-  三个 task views 接入；跨数据集汇总时只能计一次逻辑数据集权重。
+  三个 task views 接入；跨数据集汇总时只能计一次逻辑数据集权重。Hierarchy
+  adapter 必须按同步时间窗从 bottom series 构造 `y_t = S b_t`，并保存
+  summing matrix、node/level ID 和 bottom-node 索引。标准化使用保持加和的共享
+  统计量。真实 M5 的 coherence 是恒等约束而不是 I1–I5 强度；真实小树只校准
+  子节点贡献集中度、动态异质性、父子尺度和 level profile，合成器仍控制跨层
+  信息的机制剂量。
 - 外部真实校准稳定性：固定 train/reference/calibration 三路切分、时间 holdout、
   leave-one-group-out、block/group bootstrap、分位数置信区间、conformal
   coverage 和跨时期 feature stability。
 - 多 seed-shard 的 suite 级组合分析；现阶段每个 shard 由独立 manifest 引用，
   不修改已存在实验身份。
-- 统一的真实低强度自动放大下限、按 gate 结果重试/替换生成 seed。
-- near-distance、额外 surrogate families 和更重的分布相似性审计。
+- 统一的真实低强度自动放大下限、替换或顺延失败 seed。
+- 额外 surrogate families 和更重的分布相似性审计。
 
 这些内容若启用，必须作为新协议或明确的补充分析层，不能悄悄改变当前主表。
 
@@ -430,7 +466,7 @@ provenance，拒绝跨版本、跨生成器或跨 seed shard 静默合并。
 - 96/168/336/504 四视野、`fixed_l504` 和共享 L504 denominator；
 - 仅接入 19 个数据集并排除 Restaurant；
 - 把 tabpfn-ts3 或 TimePFN 放入正式默认模型集合；
-- 真实窗口的三路永久切分、near-distance/conformal 硬准入；
+- 真实窗口的三路永久切分、真实 feature range 或 conformal 的逐样本硬准入；
 - nonlinear 使用专门的 12/64/128 path 特例或按结果挑选 seed；
 - 将斜率误差作为 trend 的主机制分，或要求标准 DFM 通过 common strict relay。
 

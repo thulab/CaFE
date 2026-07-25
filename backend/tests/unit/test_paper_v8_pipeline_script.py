@@ -97,10 +97,10 @@ def test_v8_features_use_local_trend_and_history_only():
     )
 
     assert common.PRIMARY_TARGET_FEATURE["trend"] == (
-        "local_curvature_abs_w96"
+        "local_polynomial_energy_share_w96"
     )
     assert first == second
-    assert first["local_curvature_abs_w96"] > 0.0
+    assert first["local_polynomial_energy_share_w96"] > 0.0
     assert first["v8_feature_history_length"] == common.CONTEXT_LENGTH
 
 
@@ -692,7 +692,7 @@ def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
         capability_id,
         family_role,
         lambda_value,
-        calibration_seed_index,
+        qualification_path_index,
     ):
         del dataset, anchor, capability_id, family_role
         return {
@@ -701,7 +701,7 @@ def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
             # truncate or reverse the construction-dose support.
             "nonlinear_conditional_gain": (
                 lambda_value
-                if calibration_seed_index >= 2 or lambda_value <= 0.2
+                if qualification_path_index >= 2 or lambda_value <= 0.2
                 else 0.2 - 2.0 * (lambda_value - 0.2)
             ),
         }, {}
@@ -742,7 +742,7 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
         family_role,
         calibration_seed_count,
     ):
-        del dataset, anchors, capability_id, calibration_seed_count
+        del dataset, anchors, capability_id
         if family_role == "primary":
             grid = np.asarray([0.0, 0.3])
             response = np.asarray([0.0, 1.0])
@@ -756,16 +756,16 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
                 "effective_lambda_support": [
                     float(grid[0]),
                     float(grid[-1]),
-                ]
+                ],
+                "raw_lambda_grid": grid.tolist(),
+                "per_path_raw_response_curves": [
+                    response.tolist()
+                    for _ in range(calibration_seed_count)
+                ],
             },
         )
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
-    monkeypatch.setattr(
-        common,
-        "selected_lambda_mean_response",
-        lambda *args, selected_lambdas, **kwargs: tuple(selected_lambdas),
-    )
     anchors = [
         {"features": {"nonlinear_conditional_gain": value}}
         for value in np.linspace(0.0, 1.0, 20)
@@ -779,7 +779,7 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
     )
     nonlinear = calibration["capabilities"]["nonlinear_persistence"]
 
-    assert nonlinear["response_calibration_seed_count"] == 32
+    assert nonlinear["qualification_path_count"] == 32
     assert nonlinear["secondary"]["calibration_status"] == (
         "nonlinear_secondary_compressed_match_fixed_relative_grid_used"
     )
@@ -815,18 +815,22 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
                 "effective_lambda_support": [
                     float(grid[0]),
                     float(grid[-1]),
-                ]
+                ],
+                "raw_lambda_grid": grid.tolist(),
+                "per_path_raw_response_curves": [
+                    response.tolist()
+                    for _ in range(calibration_seed_count)
+                ],
             },
         )
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
-    monkeypatch.setattr(
-        common,
-        "selected_lambda_mean_response",
-        lambda *args, selected_lambdas, **kwargs: tuple(selected_lambdas),
-    )
     anchors = [
-        {"features": {"local_curvature_abs_w96": value}}
+        {
+            "features": {
+                "local_polynomial_energy_share_w96": value
+            }
+        }
         for value in np.linspace(0.2, 0.8, 20)
     ]
 
@@ -845,14 +849,15 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         ("primary", 64),
         ("secondary", 64),
     ]
-    assert trend["response_calibration_seed_count"] == 64
-    assert trend["response_calibration_path_policy"] == {
+    assert trend["qualification_path_count"] == 64
+    assert trend["qualification_path_policy"] == {
         "policy": (
-            "formal_generation_seed_bank_" "fixed_base_hard_failure_only_expansion_v2"
+            "independent_family_response_qualification_bank_"
+            "fixed_base_hard_failure_only_expansion_v1"
         ),
         "path_sampling": {
-            "anchor": "formal_logical_seed_hash_v1",
-            "rng": "formal_generation_path_v1",
+            "anchor": "independent_qualification_anchor_hash_v1",
+            "rng": "independent_qualification_path_v1",
             "seed_start": 0,
         },
         "initial_path_count": 32,
@@ -875,6 +880,49 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         ],
         "split_half_diagnostics_trigger_expansion": False,
     }
+
+
+def test_family_mean_inverse_uses_real_generator_overlap_without_seed_inverse(
+    monkeypatch,
+):
+    common = load_script("paper_v8_pipeline_common")
+
+    def response_curve(*args, family_role, **kwargs):
+        del args, kwargs, family_role
+        grid = np.linspace(0.0, 1.0, 21)
+        return grid, grid, {
+            "effective_lambda_support": [0.0, 1.0],
+            "raw_lambda_grid": grid.tolist(),
+            "per_path_raw_response_curves": [grid.tolist()] * 32,
+        }
+
+    monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    anchors = [
+        {
+            "features": {
+                "local_polynomial_energy_share_w96": float(value)
+            }
+        }
+        for value in np.linspace(0.2, 0.8, 20)
+    ]
+    calibration = common.calibrate_capabilities(
+        common.resolve_dataset("gift_ett1_h"),
+        anchors,
+        calibration_seed_count=32,
+        capability_ids=["trend"],
+    )
+    trend = calibration["capabilities"]["trend"]
+
+    assert trend["intensity_calibration_scope"] == (
+        "dataset_real_generator_overlap_reference"
+    )
+    assert trend["real_alignment_reference"]["formal_seed_inverse"] is False
+    assert trend["real_alignment_reference"][
+        "sample_level_alignment_enforced"
+    ] is False
+    assert trend["primary"]["selected_lambdas"] == pytest.approx(
+        trend["primary"]["selected_target_values"]
+    )
 
 
 def test_intermittency_measured_dose_comes_from_generator_metadata():

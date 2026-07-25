@@ -47,6 +47,20 @@ def test_parallel_calibration_merge_preserves_declared_capability_order():
     assert merged["capabilities"]["second"] == {"value": 2}
 
 
+def test_preparation_submission_prioritizes_slow_capabilities():
+    common = load_script("paper_v8_pipeline_common")
+
+    order = common.preparation_capability_order(
+        ("trend", "common_factor", "cross_series_dependence")
+    )
+
+    assert order == (
+        "cross_series_dependence",
+        "common_factor",
+        "trend",
+    )
+
+
 def test_parallel_generation_merge_preserves_shard_order(tmp_path):
     generation = load_script("generate_paper_v8_samples")
     first = tmp_path / "first.jsonl"
@@ -70,6 +84,8 @@ def test_pipeline_passes_nonsemantic_preparation_worker_count(tmp_path):
         max_anchors=256,
         calibration_seeds=32,
         max_calibration_seeds=96,
+        max_generation_attempts=3,
+        near_distance_gate=True,
         preparation_workers=8,
         capabilities=["trend"],
         seed_start=0,
@@ -104,3 +120,5 @@ def test_pipeline_passes_nonsemantic_preparation_worker_count(tmp_path):
         "--workers",
         "8",
     ]
+    assert "--max-generation-attempts" in generation_arguments
+    assert "--near-distance-gate" in generation_arguments

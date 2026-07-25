@@ -70,6 +70,24 @@ def parse_args() -> argparse.Namespace:
         default=v8.MAX_CALIBRATION_PATH_COUNT,
     )
     parser.add_argument(
+        "--max-generation-attempts",
+        type=int,
+        default=3,
+        help=(
+            "Maximum deterministic candidates for one capability/seed "
+            "bundle, including attempt zero."
+        ),
+    )
+    parser.add_argument(
+        "--near-distance-gate",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable the anchor-internal DCR/NNDR anti-copy gate during "
+            "generation."
+        ),
+    )
+    parser.add_argument(
         "--capabilities",
         nargs="+",
         choices=v8.CAPABILITIES,
@@ -163,6 +181,13 @@ def commands_for_dataset(
                 *seed,
                 "--workers",
                 str(args.preparation_workers),
+                "--max-generation-attempts",
+                str(args.max_generation_attempts),
+                (
+                    "--near-distance-gate"
+                    if args.near_distance_gate
+                    else "--no-near-distance-gate"
+                ),
                 "--capabilities",
                 *args.capabilities,
             ],
@@ -203,7 +228,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v2",
+        "schema_version": "paper_v8_experiment_protocol.v4",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -212,8 +237,28 @@ def protocol_config(
         "max_anchors": int(args.max_anchors),
         "calibration_seeds": int(args.calibration_seeds),
         "max_calibration_seeds": int(args.max_calibration_seeds),
+        "generation_acceptance": {
+            "max_attempts_per_capability_seed_bundle": int(
+                args.max_generation_attempts
+            ),
+            "feature_support": (
+                "diagnostic_only_primary_feature_anchor_minmax_with_"
+                "0.1_span_each_side_when_real_reference_exists"
+            ),
+            "near_distance_enabled": bool(args.near_distance_gate),
+            "near_distance": (
+                "anchor_internal_leave_one_out_dcr_p05_and_nndr_p05"
+            ),
+            "retry_identity": (
+                "formal seed, anchor, sample IDs, and pairing remain fixed"
+            ),
+            "family_intensity_scale": (
+                "one_family_mean_lambda_grid_per_dataset_no_formal_seed_inverse"
+            ),
+        },
         "calibration_path_policy": (
-            "formal_generation_seed_bank_" "fixed_base_hard_failure_only_expansion_v2"
+            "independent_family_response_qualification_bank_"
+            "fixed_base_hard_failure_only_expansion_v1"
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
