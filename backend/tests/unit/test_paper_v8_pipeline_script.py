@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-
 REPO_ROOT = Path(__file__).parents[3]
 SCRIPT_DIR = REPO_ROOT / "scripts"
 if str(SCRIPT_DIR) not in sys.path:
@@ -73,9 +72,7 @@ def test_10s_period_policy_separates_calendar_feature_and_mase_periods():
     assert policy["calendar_season_length"] == 8640
     assert policy["calendar_season_feature_observable"] is False
     assert 110 <= policy["raw_profile_dominant_period"] <= 130
-    assert policy["feature_period"] == round(
-        policy["raw_profile_dominant_period"]
-    )
+    assert policy["feature_period"] == round(policy["raw_profile_dominant_period"])
     assert policy["mase_period"] == 1
 
 
@@ -130,10 +127,7 @@ def test_slow_profile_period_is_clipped_per_mechanism_not_to_lag_one():
     assert 4 <= nonlinear["seasonal_lag"] <= 48
     assert 2 <= nonlinear["nonlinear_lag"] <= 32
     assert 8 <= intermittent["event_period"] <= 126
-    assert all(
-        8 <= value <= 126
-        for value in intermittent["pulse_interval_pattern"]
-    )
+    assert all(8 <= value <= 126 for value in intermittent["pulse_interval_pattern"])
     assert 2 <= covariate["event_width"] <= 6
 
 
@@ -203,9 +197,7 @@ def test_experiment_manifest_is_identity_scoped_and_immutable(tmp_path):
     assert experiment_root == second_root
     assert manifest == second_manifest
     assert manifest["protocol_sha256"] == protocol_sha256
-    assert (
-        experiment_root / "experiment_manifest.json"
-    ).is_file()
+    assert (experiment_root / "experiment_manifest.json").is_file()
 
     with pytest.raises(ValueError, match="does not match"):
         pipeline.initialize_experiment(
@@ -236,12 +228,8 @@ def test_pre_inference_execution_policy_upgrade_is_explicit_and_audited(
     )
     upgraded_protocol = {
         **protocol,
-        "model_execution_config": {
-            "Chronos-2": {"http_concurrency": 384}
-        },
-        "model_scheduling_policy": {
-            "policy_id": "all-services-per-model"
-        },
+        "model_execution_config": {"Chronos-2": {"http_concurrency": 384}},
+        "model_scheduling_policy": {"policy_id": "all-services-per-model"},
     }
 
     _root, upgraded = pipeline.initialize_experiment(
@@ -274,9 +262,7 @@ def test_pre_inference_execution_policy_upgrade_is_explicit_and_audited(
             experiment_id="experiment",
             protocol={
                 **upgraded_protocol,
-                "model_execution_config": {
-                    "Chronos-2": {"http_concurrency": 512}
-                },
+                "model_execution_config": {"Chronos-2": {"http_concurrency": 512}},
             },
             endpoints=["http://service-a"],
             allow_inference_execution_upgrade=True,
@@ -312,12 +298,8 @@ def test_execution_policy_upgrade_allows_matching_preparation_only_run(
     )
     upgraded_protocol = {
         **protocol,
-        "model_execution_config": {
-            "Chronos-2": {"http_concurrency": 384}
-        },
-        "model_scheduling_policy": {
-            "policy_id": "all-services-per-model"
-        },
+        "model_execution_config": {"Chronos-2": {"http_concurrency": 384}},
+        "model_scheduling_policy": {"policy_id": "all-services-per-model"},
     }
 
     _root, upgraded = pipeline.initialize_experiment(
@@ -330,9 +312,7 @@ def test_execution_policy_upgrade_allows_matching_preparation_only_run(
 
     assert upgraded["protocol"] == upgraded_protocol
     assert (
-        upgraded["protocol_history"][0]["concurrent_preparation_status"][
-            "active_step"
-        ]
+        upgraded["protocol_history"][0]["concurrent_preparation_status"]["active_step"]
         == "generation"
     )
 
@@ -369,9 +349,7 @@ def test_execution_policy_upgrade_rejects_active_run_that_can_infer(tmp_path):
             experiment_id="experiment",
             protocol={
                 **protocol,
-                "model_execution_config": {
-                    "Chronos-2": {"http_concurrency": 384}
-                },
+                "model_execution_config": {"Chronos-2": {"http_concurrency": 384}},
             },
             endpoints=["http://service-a"],
             allow_inference_execution_upgrade=True,
@@ -381,9 +359,7 @@ def test_execution_policy_upgrade_rejects_active_run_that_can_infer(tmp_path):
 def test_response_support_detects_sustained_foldback_without_magic_bound():
     common = load_script("paper_v8_pipeline_common")
     grid = np.linspace(0.0, 1.0, 11)
-    response = np.asarray(
-        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.62, 0.55, 0.58]
-    )
+    response = np.asarray([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.62, 0.55, 0.58])
 
     index, audit = common.stable_monotone_support(grid, response)
 
@@ -400,9 +376,8 @@ def test_v8_nonlinear_gain_searches_relative_lags_and_tracks_strength():
         values = np.zeros(common.MASTER_LENGTH, dtype=float)
         values[:24] = rng.normal(0.0, 0.6, size=24)
         time = np.arange(common.MASTER_LENGTH, dtype=float)
-        forcing = (
-            np.sin(2.0 * np.pi * time / 24.0 + 0.7)
-            + 0.4 * np.sin(2.0 * np.pi * time / 47.0 + 1.2)
+        forcing = np.sin(2.0 * np.pi * time / 24.0 + 0.7) + 0.4 * np.sin(
+            2.0 * np.pi * time / 47.0 + 1.2
         )
         for index in range(24, common.MASTER_LENGTH):
             delayed = values[index - 4]
@@ -414,17 +389,13 @@ def test_v8_nonlinear_gain_searches_relative_lags_and_tracks_strength():
             )
         return values
 
-    lower, lower_lag, candidates = (
-        common.v8_nonlinear_conditional_gain(
-            rational_delay_series(0.18),
-            24,
-        )
+    lower, lower_lag, candidates = common.v8_nonlinear_conditional_gain(
+        rational_delay_series(0.18),
+        24,
     )
-    upper, upper_lag, repeated_candidates = (
-        common.v8_nonlinear_conditional_gain(
-            rational_delay_series(0.50),
-            24,
-        )
+    upper, upper_lag, repeated_candidates = common.v8_nonlinear_conditional_gain(
+        rational_delay_series(0.50),
+        24,
     )
 
     assert candidates == (4, 5, 6, 8, 12)
@@ -489,9 +460,7 @@ def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
     assert response == pytest.approx(grid)
     assert audit["effective_lambda_support"] == pytest.approx([0.0, 1.0])
     assert "path_support_quantile" not in audit
-    assert audit["split_half_diagnostic"][
-        "triggers_path_expansion"
-    ] is False
+    assert audit["split_half_diagnostic"]["triggers_path_expansion"] is False
     assert audit["split_half_diagnostic"]["first_half_path_count"] == 10
     assert audit["split_half_diagnostic"]["second_half_path_count"] == 10
 
@@ -516,12 +485,16 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
         else:
             grid = np.asarray([0.0, 0.5])
             response = np.asarray([0.0, 10.0])
-        return grid, response, {
-            "effective_lambda_support": [
-                float(grid[0]),
-                float(grid[-1]),
-            ]
-        }
+        return (
+            grid,
+            response,
+            {
+                "effective_lambda_support": [
+                    float(grid[0]),
+                    float(grid[-1]),
+                ]
+            },
+        )
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
     monkeypatch.setattr(
@@ -571,12 +544,16 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         else:
             grid = np.asarray([0.0, 1.0])
             response = np.asarray([0.0, 1.0])
-        return grid, response, {
-            "effective_lambda_support": [
-                float(grid[0]),
-                float(grid[-1]),
-            ]
-        }
+        return (
+            grid,
+            response,
+            {
+                "effective_lambda_support": [
+                    float(grid[0]),
+                    float(grid[-1]),
+                ]
+            },
+        )
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
     monkeypatch.setattr(
@@ -585,8 +562,7 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         lambda *args, selected_lambdas, **kwargs: tuple(selected_lambdas),
     )
     anchors = [
-        {"features": {"curvature_abs": value}}
-        for value in np.linspace(0.2, 0.8, 20)
+        {"features": {"curvature_abs": value}} for value in np.linspace(0.2, 0.8, 20)
     ]
 
     calibration = common.calibrate_capabilities(
@@ -607,8 +583,7 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
     assert trend["response_calibration_seed_count"] == 64
     assert trend["response_calibration_path_policy"] == {
         "policy": (
-            "formal_generation_seed_bank_"
-            "fixed_base_hard_failure_only_expansion_v2"
+            "formal_generation_seed_bank_" "fixed_base_hard_failure_only_expansion_v2"
         ),
         "path_sampling": {
             "anchor": "formal_logical_seed_hash_v1",
@@ -683,9 +658,7 @@ def test_intermittency_measured_dose_comes_from_generator_metadata():
 def test_master_views_share_exact_future_and_l504_mase_scale():
     common = load_script("paper_v8_pipeline_common")
     time = np.arange(common.MASTER_LENGTH, dtype=float)
-    target = (
-        np.sin(2 * np.pi * time / 24.0) + 0.002 * time
-    )[:, None]
+    target = (np.sin(2 * np.pi * time / 24.0) + 0.002 * time)[:, None]
     scale, scale_by_target = common.mase_scales(target, season_length=24)
     master = {
         "sample_id": "v8__demo",
@@ -705,8 +678,7 @@ def test_master_views_share_exact_future_and_l504_mase_scale():
     }
 
     views = [
-        common.master_view(master, context)
-        for context in common.VIEW_CONTEXT_LENGTHS
+        common.master_view(master, context) for context in common.VIEW_CONTEXT_LENGTHS
     ]
 
     futures = [
@@ -740,17 +712,15 @@ def test_multivariate_input_ablation_keeps_future_and_marginal_scale(
     )
 
     def sample(seed):
-        target, metadata, covariates = (
-            common.generate_deterministic_sample(
-                capability_id,
-                common.MASTER_LENGTH,
-                common.CONTEXT_LENGTH,
-                target_dim,
-                24,
-                5,
-                np.random.default_rng(seed),
-                conditioning=conditioning,
-            )
+        target, metadata, covariates = common.generate_deterministic_sample(
+            capability_id,
+            common.MASTER_LENGTH,
+            common.CONTEXT_LENGTH,
+            target_dim,
+            24,
+            5,
+            np.random.default_rng(seed),
+            conditioning=conditioning,
         )
         target, covariates = common.standardize_generated_sample(
             capability_id,
@@ -804,15 +774,11 @@ def test_multivariate_input_ablation_keeps_future_and_marginal_scale(
     assert np.mean(
         clean_target[start:stop, channels],
         axis=0,
-    ) == pytest.approx(
-        np.mean(ablated_target[start:stop, channels], axis=0)
-    )
+    ) == pytest.approx(np.mean(ablated_target[start:stop, channels], axis=0))
     assert np.std(
         clean_target[start:stop, channels],
         axis=0,
-    ) == pytest.approx(
-        np.std(ablated_target[start:stop, channels], axis=0)
-    )
+    ) == pytest.approx(np.std(ablated_target[start:stop, channels], axis=0))
 
 
 @pytest.mark.parametrize(
@@ -885,9 +851,7 @@ def test_oracle_context_uses_one_context_for_both_pair_members():
 
     selected, pair_context = analysis.selected_context_rows(rows)
 
-    oracle = [
-        row for row in selected if row["context_policy"] == "oracle_context"
-    ]
+    oracle = [row for row in selected if row["context_policy"] == "oracle_context"]
     assert pair_context[("demo", "pair")] == 168
     assert len(oracle) == 2
     assert {row["context_length"] for row in oracle} == {168}
@@ -924,9 +888,7 @@ def test_oracle_context_reuses_clean_parent_context_for_input_ablation():
         )
 
     selected, _ = analysis.selected_context_rows(rows)
-    oracle = [
-        row for row in selected if row["context_policy"] == "oracle_context"
-    ]
+    oracle = [row for row in selected if row["context_policy"] == "oracle_context"]
 
     assert len(oracle) == 2
     assert {row["context_length"] for row in oracle} == {168}
@@ -980,15 +942,13 @@ def test_split_bank_requires_two_batches_for_stability_statistics():
     assert two_batches["mean_kendall_tau_b"] == pytest.approx(1.0)
     assert two_batches["top1_consistency"] == pytest.approx(1.0)
     assert two_batches["mean_top3_overlap"] == pytest.approx(1.0)
-    assert two_batches[
-        "mean_pairwise_relative_score_difference"
-    ] == pytest.approx(2.0 / 3.0)
+    assert two_batches["mean_pairwise_relative_score_difference"] == pytest.approx(
+        2.0 / 3.0
+    )
     assert one_batch["mean_kendall_tau_b"] is None
     assert one_batch["top1_consistency"] is None
     assert one_batch["mean_top3_overlap"] is None
-    assert one_batch[
-        "mean_pairwise_relative_score_difference"
-    ] is None
+    assert one_batch["mean_pairwise_relative_score_difference"] is None
 
 
 def test_matched_comparison_excludes_unmatched_clean_seeds_and_intensities():
@@ -1032,9 +992,7 @@ def test_matched_comparison_excludes_unmatched_clean_seeds_and_intensities():
     )
 
     secondary = next(
-        item
-        for item in comparisons
-        if item["comparison_id"] == "secondary_family"
+        item for item in comparisons if item["comparison_id"] == "secondary_family"
     )
     assert secondary["matched_seed_count"] == 1
     assert secondary["matched_intensities"] == [5]
@@ -1086,7 +1044,7 @@ def test_input_ablation_comparison_uses_unchanged_focal_channel_metric():
     assert ablation["accuracy_delta"] == pytest.approx(0.1)
 
 
-def test_inference_prediction_uses_frozen_mase_scale():
+def test_inference_prediction_keeps_only_analysis_inputs():
     inference = load_script("run_paper_v8_inference")
     target = np.arange(12, dtype=float)[:, None]
     sample = {
@@ -1120,9 +1078,56 @@ def test_inference_prediction_uses_frozen_mase_scale():
         forecast,
     )
 
-    expected_mae = float(np.mean(np.arange(8, 12)))
-    assert row["metrics"]["mae"] == pytest.approx(expected_mae)
-    assert row["metrics"]["mase"] == pytest.approx(expected_mae / 2.0)
+    assert row == {
+        "schema_version": "paper_v8_inference_prediction.v2",
+        "model_id": "model",
+        "sample_id": "view",
+        "forecast": forecast.tolist(),
+    }
+
+
+def test_bulk_request_preserves_multivariate_and_covariate_axes():
+    inference = load_script("run_paper_v8_inference")
+    children = []
+    for offset in (0, 100):
+        children.append(
+            {
+                "context_length": 4,
+                "horizon": 2,
+                "target_dim": 3,
+                "covariate_dim": 2,
+                "target": (
+                    np.arange(18, dtype=np.float32).reshape(6, 3) + offset
+                ).tolist(),
+                "covariates": (
+                    np.arange(12, dtype=np.float32).reshape(6, 2) + offset
+                ).tolist(),
+            }
+        )
+
+    content, target_shape, horizon = inference._bulk_request_content(
+        "tabpfn-ts3",
+        children,
+    )
+    payload = inference.msgpack.unpackb(content, raw=False)
+
+    assert target_shape == (2, 3, 4)
+    assert horizon == 2
+    assert payload["shape"] == [2, 3, 4]
+    assert payload["history_covariates_shape"] == [2, 2, 4]
+    assert payload["future_covariates_shape"] == [2, 2, 2]
+    targets = np.frombuffer(payload["targets"], dtype=np.float32).reshape(target_shape)
+    history = np.frombuffer(
+        payload["history_covariates"],
+        dtype=np.float32,
+    ).reshape(2, 2, 4)
+    future = np.frombuffer(
+        payload["future_covariates"],
+        dtype=np.float32,
+    ).reshape(2, 2, 2)
+    assert targets[1, 2, 3] == 111
+    assert history[1, 1, 3] == 107
+    assert future[1, 1, 1] == 111
 
 
 def test_model_phase_is_partitioned_across_all_services(tmp_path):
@@ -1152,17 +1157,13 @@ def test_model_phase_is_partitioned_across_all_services(tmp_path):
     assert manifest["model_id"] == model_id
     assert manifest["part_count"] == 3
     assert sum(part["row_count"] for part in manifest["parts"]) == 30
-    assert sorted(
-        item.part_index
-        for items in work.values()
-        for item in items
-    ) == [0, 1, 2]
+    assert sorted(item.part_index for items in work.values() for item in items) == [
+        0,
+        1,
+        2,
+    ]
     assert all(len(items) == 1 for items in work.values())
-    assert all(
-        item.model_id == model_id
-        for items in work.values()
-        for item in items
-    )
+    assert all(item.model_id == model_id for items in work.values() for item in items)
 
     resumed_work, resumed_manifest = inference.plan_model_phase(
         model_id,
@@ -1170,13 +1171,178 @@ def test_model_phase_is_partitioned_across_all_services(tmp_path):
         task_path=task_path,
         inference_dir=tmp_path / "inference",
     )
-    assert resumed_manifest["part_count"] == 3
+    assert resumed_manifest["part_count"] == 2
     assert sorted(
-        item.part_index
-        for items in resumed_work.values()
-        for item in items
-    ) == [0, 1, 2]
-    assert sorted(len(items) for items in resumed_work.values()) == [1, 2]
+        item.part_index for items in resumed_work.values() for item in items
+    ) == [0, 1]
+    assert sorted(len(items) for items in resumed_work.values()) == [1, 1]
+
+
+def test_eight_card_endpoint_does_not_infer_performance_from_devices():
+    inference = load_script("run_paper_v8_inference")
+    endpoint = "http://timecho89:10810"
+
+    profiles = inference.build_endpoint_profiles(
+        [endpoint],
+        default_devices="0,1",
+        endpoint_presets=[],
+        endpoint_devices=[f"{endpoint}=0,1,2,3,4,5,6,7"],
+        endpoint_capacities=[],
+        endpoint_concurrency_scales=[],
+        endpoint_model_capacities=[],
+        endpoint_model_concurrencies=[],
+    )
+
+    assert profiles[endpoint].devices == "0,1,2,3,4,5,6,7"
+    assert profiles[endpoint].capacity_units == 1
+    assert profiles[endpoint].concurrency_scale == 1.0
+    assert profiles[endpoint].capacity_for("Timer-3.5") == 1
+    assert profiles[endpoint].http_concurrency_for("Timer-3.5", 512) == 512
+
+
+def test_endpoint_profile_accepts_per_model_measured_overrides():
+    inference = load_script("run_paper_v8_inference")
+    endpoint = "http://timecho89:10810"
+
+    profiles = inference.build_endpoint_profiles(
+        [endpoint],
+        default_devices="0,1",
+        endpoint_presets=[],
+        endpoint_devices=[f"{endpoint}=0,1,2,3,4,5,6,7"],
+        endpoint_capacities=[],
+        endpoint_concurrency_scales=[],
+        endpoint_model_capacities=[
+            f"{endpoint}|Timer-3.5=2",
+            f"{endpoint}|Chronos-2=1",
+        ],
+        endpoint_model_concurrencies=[
+            f"{endpoint}|Timer-3.5=3072",
+            f"{endpoint}|Chronos-2=3072",
+        ],
+    )
+    profile = profiles[endpoint]
+
+    assert profile.capacity_for("Timer-3.5") == 2
+    assert profile.capacity_for("Chronos-2") == 1
+    assert profile.capacity_for("moirai2") == 1
+    assert profile.http_concurrency_for("Timer-3.5", 512) == 3072
+    assert profile.http_concurrency_for("Chronos-2", 384) == 3072
+    assert profile.http_concurrency_for("moirai2", 384) == 384
+
+
+def test_eight_card_preset_uses_measured_bulk_profiles():
+    inference = load_script("run_paper_v8_inference")
+    endpoint = "http://timecho89:10810"
+
+    profiles = inference.build_endpoint_profiles(
+        [endpoint],
+        default_devices="0,1",
+        endpoint_presets=[f"{endpoint}={inference.RTX5090X8_H48_B1_PRESET}"],
+        endpoint_devices=[],
+        endpoint_capacities=[],
+        endpoint_concurrency_scales=[],
+        endpoint_model_capacities=[],
+        endpoint_model_concurrencies=[],
+    )
+    profile = profiles[endpoint]
+
+    assert profile.devices == "0,1,2,3,4,5,6,7"
+    assert profile.capacity_for("tirex2") == 3
+    assert profile.capacity_for("tabpfn-ts3") == 4
+    assert profile.capacity_for("Timer-3.5") == 2.4
+    assert profile.http_concurrency_for("tirex2", 32) == 8
+    assert profile.http_concurrency_for("tabpfn-ts3", 32) == 64
+
+
+def test_default_topology_contains_three_dual_card_services_and_eight_card():
+    inference = load_script("run_paper_v8_inference")
+
+    assert inference.DEFAULT_ENDPOINTS == (
+        "http://127.0.0.1:10810",
+        "http://192.168.99.17:10811",
+        "http://192.168.99.18:10810",
+        "http://192.168.99.89:10810",
+    )
+    assert inference.DEFAULT_ENDPOINT_PRESETS == (
+        "http://192.168.99.89:10810=rtx5090x8-h48-b1-v1",
+    )
+
+
+def test_model_phase_honors_explicit_per_model_capacity(tmp_path):
+    common = load_script("paper_v8_pipeline_common")
+    inference = load_script("run_paper_v8_inference")
+    model_id = "Chronos-2"
+    eight_card_endpoint = "http://timecho89:10810"
+    endpoints = [
+        "http://127.0.0.1:10810",
+        "http://192.168.99.17:10811",
+        "http://192.168.99.18:10810",
+        eight_card_endpoint,
+    ]
+    services = [
+        (endpoint, {model_id: {"model_id": model_id}}) for endpoint in endpoints
+    ]
+    profiles = inference.build_endpoint_profiles(
+        endpoints,
+        default_devices="0,1",
+        endpoint_presets=[],
+        endpoint_devices=[f"{eight_card_endpoint}=0,1,2,3,4,5,6,7"],
+        endpoint_capacities=[],
+        endpoint_concurrency_scales=[],
+        endpoint_model_capacities=[f"{eight_card_endpoint}|{model_id}=4"],
+        endpoint_model_concurrencies=[],
+    )
+    task_path = tmp_path / "tasks.jsonl"
+    common.write_jsonl(
+        task_path,
+        ({"sample_id": f"sample-{index}"} for index in range(70)),
+    )
+
+    work, manifest = inference.plan_model_phase(
+        model_id,
+        services,
+        task_path=task_path,
+        inference_dir=tmp_path / "inference",
+        endpoint_profiles=profiles,
+    )
+
+    assert manifest["part_count"] == 4
+    assert manifest["part_weights"] == [1, 1, 1, 4]
+    assert len(work[eight_card_endpoint]) == 1
+    assert all(work[endpoint] for endpoint in endpoints)
+
+
+def test_single_eight_card_service_normalizes_to_one_part(tmp_path):
+    common = load_script("paper_v8_pipeline_common")
+    inference = load_script("run_paper_v8_inference")
+    endpoint = "http://timecho89:10810"
+    model_id = "Chronos-2"
+    profiles = inference.build_endpoint_profiles(
+        [endpoint],
+        default_devices="0,1",
+        endpoint_presets=[],
+        endpoint_devices=[f"{endpoint}=0,1,2,3,4,5,6,7"],
+        endpoint_capacities=[],
+        endpoint_concurrency_scales=[],
+        endpoint_model_capacities=[],
+        endpoint_model_concurrencies=[],
+    )
+    task_path = tmp_path / "tasks.jsonl"
+    common.write_jsonl(
+        task_path,
+        ({"sample_id": f"sample-{index}"} for index in range(20)),
+    )
+
+    work, manifest = inference.plan_model_phase(
+        model_id,
+        [(endpoint, {model_id: {"model_id": model_id}})],
+        task_path=task_path,
+        inference_dir=tmp_path / "inference",
+        endpoint_profiles=profiles,
+    )
+
+    assert manifest["part_count"] == 1
+    assert len(work[endpoint]) == 1
 
 
 def test_every_model_phase_uses_all_compatible_services(tmp_path):
@@ -1273,10 +1439,7 @@ def test_model_predictions_are_merged_only_after_complete_coverage(tmp_path):
     )
     for part in manifest["parts"]:
         part_index = int(part["part_index"])
-        sample_ids = [
-            row["sample_id"]
-            for row in common.iter_jsonl(Path(part["path"]))
-        ]
+        sample_ids = [row["sample_id"] for row in common.iter_jsonl(Path(part["path"]))]
         part_root = inference.model_part_root(
             tmp_path,
             model_id,
@@ -1285,7 +1448,11 @@ def test_model_predictions_are_merged_only_after_complete_coverage(tmp_path):
         common.write_jsonl(
             inference.prediction_path_for(part_root, model_id),
             (
-                {"model_id": model_id, "sample_id": sample_id}
+                {
+                    "model_id": model_id,
+                    "sample_id": sample_id,
+                    "forecast": [[0.0]],
+                }
                 for sample_id in sample_ids
             ),
         )
@@ -1304,6 +1471,14 @@ def test_model_predictions_are_merged_only_after_complete_coverage(tmp_path):
         f"sample-{index}"
         for index in sorted(range(12), key=lambda value: f"sample-{value}")
     ]
+    assert not (
+        tmp_path / "model_task_shards" / inference.engine.safe_filename(model_id)
+    ).exists()
+    assert not list(
+        (inference.model_root(tmp_path, model_id) / "parts").glob(
+            "part_*/predictions/*.jsonl"
+        )
+    )
     statuses = inference.aggregate_model_statuses(
         [model_id],
         [

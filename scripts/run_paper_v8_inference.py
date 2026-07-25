@@ -2,48 +2,129 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
+import os
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, TypeVar
 
+import httpx
+import msgpack
 import numpy as np
-
 import paper_v8_pipeline_common as v8
 import run_paper_e2_dynamic_stability as engine
 
-
+_JSON_RUN_MODEL_REQUESTS = engine.run_model_requests
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
     "http://192.168.99.17:10811",
     "http://192.168.99.18:10810",
+    "http://192.168.99.89:10810",
 )
 DEFAULT_MODELS = (
     "Chronos-2",
-    "toto2.0",
     "timesfm2.5",
-    "tabpfn-ts3",
     "tirex2",
     "moirai2",
     "Timer-3.5",
+    "toto2.0",
+    "tabpfn-ts3",
 )
 MODEL_EXECUTION_CONFIG = {
-    # Paper v8 has a fixed H=48 and runs on dual RTX 5090 services.  These
-    # values are per service (both devices together), not per GPU.
-    "Timer-3.5": {"replicas_per_device": 1, "http_concurrency": 512},
-    "Chronos-2": {"replicas_per_device": 4, "http_concurrency": 384},
-    "moirai2": {"replicas_per_device": 1, "http_concurrency": 384},
-    "toto2.0": {"replicas_per_device": 3, "http_concurrency": 36},
-    "timesfm2.5": {"replicas_per_device": 8, "http_concurrency": 32},
-    "tirex2": {"replicas_per_device": 1, "http_concurrency": 32},
-    "tabpfn-ts3": {"replicas_per_device": 8, "http_concurrency": 48},
+    # Paper v8 has a fixed H=48 and runs on RTX 5090 services. These defaults
+    # are for a dual-card endpoint; the x8 preset below overrides whole-service
+    # concurrency while retaining the same tested per-GPU batch geometry.
+    "Timer-3.5": {
+        "replicas_per_device": 1,
+        "http_concurrency": 2,
+        "task_batch_size": 1024,
+        "transport": "msgpack_bulk",
+    },
+    "Chronos-2": {
+        "replicas_per_device": 2,
+        "http_concurrency": 4,
+        "task_batch_size": 192,
+        "transport": "msgpack_bulk",
+    },
+    "moirai2": {
+        "replicas_per_device": 1,
+        "http_concurrency": 2,
+        "task_batch_size": 256,
+        "transport": "msgpack_bulk",
+    },
+    "toto2.0": {
+        "replicas_per_device": 2,
+        "http_concurrency": 4,
+        "task_batch_size": 4,
+        "transport": "msgpack_bulk",
+    },
+    "timesfm2.5": {
+        "replicas_per_device": 1,
+        "http_concurrency": 2,
+        "task_batch_size": 640,
+        "transport": "msgpack_bulk",
+    },
+    "tirex2": {
+        "replicas_per_device": 1,
+        "http_concurrency": 2,
+        "task_batch_size": 512,
+        "transport": "msgpack_bulk",
+    },
+    "tabpfn-ts3": {
+        "replicas_per_device": 8,
+        "http_concurrency": 16,
+        "task_batch_size": 8,
+        "transport": "msgpack_bulk",
+    },
 }
-SCHEDULING_POLICY_ID = "all-services-per-model-deterministic-shards-v1"
+MODEL_MAJOR_DATASET_PARALLELISM = {
+    "Chronos-2": 4,
+    "timesfm2.5": 2,
+    "tirex2": 2,
+    "moirai2": 2,
+    "Timer-3.5": 2,
+    "toto2.0": 4,
+    "tabpfn-ts3": 8,
+}
+RTX5090X8_H48_B1_PRESET = "rtx5090x8-h48-b1-v1"
+DEFAULT_ENDPOINT_PRESETS = (f"http://192.168.99.89:10810={RTX5090X8_H48_B1_PRESET}",)
+ENDPOINT_PERFORMANCE_PRESETS = {
+    RTX5090X8_H48_B1_PRESET: {
+        "devices": "0,1,2,3,4,5,6,7",
+        # Capacity is relative to one dual-card endpoint. These weights use the
+        # measured end-to-end bulk-request ratios; sub-linear entries reflect
+        # host/preprocessing work that does not scale with GPU count.
+        "model_capacity_units": {
+            "Chronos-2": 3.65,
+            "toto2.0": 3,
+            "tirex2": 3,
+            "timesfm2.5": 3.8,
+            "Timer-3.5": 2.4,
+            "moirai2": 2.8,
+            "tabpfn-ts3": 4,
+        },
+        "model_http_concurrency": {
+            "Chronos-2": 16,
+            "toto2.0": 16,
+            "tirex2": 8,
+            "timesfm2.5": 8,
+            "Timer-3.5": 8,
+            "moirai2": 8,
+            "tabpfn-ts3": 64,
+        },
+    },
+}
+SCHEDULING_POLICY_ID = (
+    "model-major-weighted-endpoint-shards-interleaved-context-bulk-v2"
+)
 _PRINT_LOCK = threading.Lock()
 
 
@@ -56,22 +137,397 @@ class InferenceWork:
     part_index: int
 
 
+@dataclass(frozen=True)
+class EndpointProfile:
+    endpoint: str
+    preset_name: str | None
+    devices: str
+    capacity_units: float
+    concurrency_scale: float
+    model_capacity_units: dict[str, float]
+    model_http_concurrency: dict[str, int]
+
+    def capacity_for(self, model_id: str) -> float:
+        return self.model_capacity_units.get(
+            model_id,
+            self.capacity_units,
+        )
+
+    def http_concurrency_for(
+        self,
+        model_id: str,
+        default: int,
+    ) -> int:
+        if model_id in self.model_http_concurrency:
+            return self.model_http_concurrency[model_id]
+        return max(1, round(default * self.concurrency_scale))
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "preset_name": self.preset_name,
+            "devices": self.devices,
+            "capacity_units": self.capacity_units,
+            "concurrency_scale": self.concurrency_scale,
+            "model_capacity_units": dict(sorted(self.model_capacity_units.items())),
+            "model_http_concurrency": dict(sorted(self.model_http_concurrency.items())),
+        }
+
+
+def add_endpoint_topology_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--devices",
+        default="0,1",
+        help="Default device list for endpoints without an override.",
+    )
+    parser.add_argument(
+        "--endpoint-preset",
+        action="append",
+        default=[],
+        metavar="ENDPOINT=PRESET",
+        help=(
+            "Apply a named, explicitly measured/estimated endpoint profile. "
+            f"Available: {', '.join(sorted(ENDPOINT_PERFORMANCE_PRESETS))}."
+        ),
+    )
+    parser.add_argument(
+        "--endpoint-devices",
+        action="append",
+        default=[],
+        metavar="ENDPOINT=DEVICE_CSV",
+        help=(
+            "Override devices for one endpoint. Repeat as needed. Device "
+            "count never changes task share or HTTP concurrency implicitly."
+        ),
+    )
+    parser.add_argument(
+        "--endpoint-capacity",
+        action="append",
+        default=[],
+        metavar="ENDPOINT=UNITS",
+        help=(
+            "Set the fallback deterministic task-share units for one "
+            "endpoint. Defaults to 1 regardless of device count."
+        ),
+    )
+    parser.add_argument(
+        "--endpoint-concurrency-scale",
+        action="append",
+        default=[],
+        metavar="ENDPOINT=SCALE",
+        help=(
+            "Set the fallback HTTP concurrency multiplier for one endpoint. "
+            "Defaults to 1 and is independent of devices and task share."
+        ),
+    )
+    parser.add_argument(
+        "--endpoint-model-capacity",
+        action="append",
+        default=[],
+        metavar="ENDPOINT|MODEL=UNITS",
+        help=(
+            "Override deterministic task-share units for one endpoint and "
+            "model. Repeat for independently measured model throughputs."
+        ),
+    )
+    parser.add_argument(
+        "--endpoint-model-concurrency",
+        action="append",
+        default=[],
+        metavar="ENDPOINT|MODEL=COUNT",
+        help=(
+            "Set absolute HTTP concurrency for one endpoint and model. "
+            "This takes precedence over the fallback concurrency scale."
+        ),
+    )
+
+
+def endpoint_presets_with_defaults(
+    endpoints: list[str],
+    explicit_presets: list[str],
+) -> list[str]:
+    presets = list(explicit_presets)
+    configured = {value.rsplit("=", 1)[0].strip() for value in presets}
+    for default_preset in DEFAULT_ENDPOINT_PRESETS:
+        endpoint = default_preset.rsplit("=", 1)[0]
+        if endpoint in endpoints and endpoint not in configured:
+            presets.append(default_preset)
+    return presets
+
+
+_OverrideValue = TypeVar("_OverrideValue")
+
+
+def _parse_endpoint_overrides(
+    values: list[str],
+    *,
+    option_name: str,
+    convert: Callable[[str], _OverrideValue],
+) -> dict[str, _OverrideValue]:
+    output: dict[str, _OverrideValue] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"{option_name} must use ENDPOINT=VALUE: {value!r}")
+        endpoint, raw = value.split("=", 1)
+        endpoint = endpoint.strip()
+        raw = raw.strip()
+        if not endpoint or not raw:
+            raise ValueError(f"{option_name} must use non-empty ENDPOINT=VALUE")
+        if endpoint in output:
+            raise ValueError(f"duplicate {option_name} for endpoint {endpoint!r}")
+        try:
+            output[endpoint] = convert(raw)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"invalid {option_name} for endpoint {endpoint!r}: {raw!r}"
+            ) from error
+    return output
+
+
+def _normalize_devices(value: str) -> str:
+    devices = [item.strip() for item in value.split(",")]
+    if (
+        not devices
+        or any(not item or not item.isdecimal() for item in devices)
+        or len(devices) != len(set(devices))
+    ):
+        raise ValueError("devices must be unique non-negative integer ids")
+    return ",".join(devices)
+
+
+def _parse_endpoint_model_overrides(
+    values: list[str],
+    *,
+    option_name: str,
+    convert: Callable[[str], _OverrideValue],
+) -> dict[tuple[str, str], _OverrideValue]:
+    output: dict[tuple[str, str], _OverrideValue] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(f"{option_name} must use ENDPOINT|MODEL=VALUE: {value!r}")
+        key, raw = value.rsplit("=", 1)
+        if "|" not in key:
+            raise ValueError(f"{option_name} must use ENDPOINT|MODEL=VALUE: {value!r}")
+        endpoint, model_id = (item.strip() for item in key.split("|", 1))
+        raw = raw.strip()
+        if not endpoint or not model_id or not raw:
+            raise ValueError(f"{option_name} must use non-empty ENDPOINT|MODEL=VALUE")
+        pair = (endpoint, model_id)
+        if pair in output:
+            raise ValueError(f"duplicate {option_name} for {endpoint!r}, {model_id!r}")
+        try:
+            parsed = convert(raw)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"invalid {option_name} for {endpoint!r}, " f"{model_id!r}: {raw!r}"
+            ) from error
+        if parsed <= 0:
+            raise ValueError(f"{option_name} values must be positive")
+        output[pair] = parsed
+    return output
+
+
+def build_endpoint_profiles(
+    endpoints: list[str],
+    *,
+    default_devices: str,
+    endpoint_presets: list[str],
+    endpoint_devices: list[str],
+    endpoint_capacities: list[str],
+    endpoint_concurrency_scales: list[str],
+    endpoint_model_capacities: list[str],
+    endpoint_model_concurrencies: list[str],
+) -> dict[str, EndpointProfile]:
+    if len(endpoints) != len(set(endpoints)):
+        raise ValueError("inference endpoints must be unique")
+    normalized_default = _normalize_devices(default_devices)
+    preset_overrides = _parse_endpoint_overrides(
+        endpoint_presets,
+        option_name="--endpoint-preset",
+        convert=str,
+    )
+    unknown_presets = sorted(
+        set(preset_overrides.values()) - set(ENDPOINT_PERFORMANCE_PRESETS)
+    )
+    if unknown_presets:
+        raise ValueError(
+            "unknown endpoint performance preset: " + ", ".join(unknown_presets)
+        )
+    device_overrides = _parse_endpoint_overrides(
+        endpoint_devices,
+        option_name="--endpoint-devices",
+        convert=_normalize_devices,
+    )
+    capacity_overrides = _parse_endpoint_overrides(
+        endpoint_capacities,
+        option_name="--endpoint-capacity",
+        convert=float,
+    )
+    concurrency_overrides = _parse_endpoint_overrides(
+        endpoint_concurrency_scales,
+        option_name="--endpoint-concurrency-scale",
+        convert=float,
+    )
+    model_capacity_overrides = _parse_endpoint_model_overrides(
+        endpoint_model_capacities,
+        option_name="--endpoint-model-capacity",
+        convert=float,
+    )
+    model_concurrency_overrides = _parse_endpoint_model_overrides(
+        endpoint_model_concurrencies,
+        option_name="--endpoint-model-concurrency",
+        convert=int,
+    )
+    configured_endpoints = (
+        set(preset_overrides)
+        | set(device_overrides)
+        | set(capacity_overrides)
+        | set(concurrency_overrides)
+        | {endpoint for endpoint, _model_id in model_capacity_overrides}
+        | {endpoint for endpoint, _model_id in model_concurrency_overrides}
+    )
+    unknown = sorted(configured_endpoints - set(endpoints))
+    if unknown:
+        raise ValueError(
+            "endpoint topology override does not match --endpoints: "
+            + ", ".join(unknown)
+        )
+    configured_models = {
+        model_id
+        for _endpoint, model_id in (
+            set(model_capacity_overrides) | set(model_concurrency_overrides)
+        )
+    }
+    unknown_models = sorted(configured_models - set(MODEL_EXECUTION_CONFIG))
+    if unknown_models:
+        raise ValueError(
+            "endpoint model override has no execution config: "
+            + ", ".join(unknown_models)
+        )
+
+    profiles: dict[str, EndpointProfile] = {}
+    for endpoint in endpoints:
+        preset_name = preset_overrides.get(endpoint)
+        preset = (
+            ENDPOINT_PERFORMANCE_PRESETS[preset_name] if preset_name is not None else {}
+        )
+        devices = device_overrides.get(
+            endpoint,
+            str(preset.get("devices", normalized_default)),
+        )
+        capacity_units = capacity_overrides.get(endpoint, 1.0)
+        if capacity_units <= 0:
+            raise ValueError("endpoint capacity units must be positive")
+        concurrency_scale = concurrency_overrides.get(endpoint, 1.0)
+        if concurrency_scale <= 0:
+            raise ValueError("endpoint concurrency scales must be positive")
+        profiles[endpoint] = EndpointProfile(
+            endpoint=endpoint,
+            preset_name=preset_name,
+            devices=devices,
+            capacity_units=capacity_units,
+            concurrency_scale=concurrency_scale,
+            model_capacity_units={
+                **dict(preset.get("model_capacity_units", {})),
+                **{
+                    model_id: value
+                    for (
+                        configured_endpoint,
+                        model_id,
+                    ), value in model_capacity_overrides.items()
+                    if configured_endpoint == endpoint
+                },
+            },
+            model_http_concurrency={
+                **dict(preset.get("model_http_concurrency", {})),
+                **{
+                    model_id: value
+                    for (
+                        configured_endpoint,
+                        model_id,
+                    ), value in model_concurrency_overrides.items()
+                    if configured_endpoint == endpoint
+                },
+            },
+        )
+    return profiles
+
+
+def endpoint_topology_cli_arguments(args: argparse.Namespace) -> list[str]:
+    arguments = ["--devices", str(args.devices)]
+    for option, values in (
+        ("--endpoint-preset", args.endpoint_preset),
+        ("--endpoint-devices", args.endpoint_devices),
+        ("--endpoint-capacity", args.endpoint_capacity),
+        (
+            "--endpoint-concurrency-scale",
+            args.endpoint_concurrency_scale,
+        ),
+        (
+            "--endpoint-model-capacity",
+            args.endpoint_model_capacity,
+        ),
+        (
+            "--endpoint-model-concurrency",
+            args.endpoint_model_concurrency,
+        ),
+    ):
+        for value in values:
+            arguments.extend((option, value))
+    return arguments
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run formal Paper v8 multi-service model inference."
     )
     parser.add_argument("--dataset-id", default="gift_electricity_h")
+    parser.add_argument(
+        "--dataset-ids",
+        nargs="+",
+        help=(
+            "Run several generated datasets model-major, keeping each model "
+            "loaded until every listed dataset is complete."
+        ),
+    )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, required=True)
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
     parser.add_argument("--api-prefix", default="/ai/api/v1")
-    parser.add_argument("--devices", default="0,1")
+    add_endpoint_topology_arguments(parser)
     parser.add_argument("--load-timeout-seconds", type=int, default=1800)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--prepare-only",
+        action="store_true",
+        help="Prepare the task view and model endpoint shards without inference.",
+    )
+    parser.add_argument(
+        "--preprocess-workers",
+        type=int,
+        default=min(16, os.cpu_count() or 1),
+        help="Parallel dataset preprocessors used by model-major execution.",
+    )
+    parser.add_argument(
+        "--request-concurrency-divisor",
+        type=int,
+        default=1,
+        help=(
+            "Divide endpoint HTTP concurrency by this value when several "
+            "datasets share one loaded model."
+        ),
+    )
+    parser.add_argument(
+        "--keep-loaded-between-runs",
+        action="store_true",
+        help=(
+            "Leave the selected model loaded so a model-major controller can "
+            "reuse it for the next dataset."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -85,11 +541,7 @@ def prediction_path_for(
     *,
     prediction_kind: str = "synthetic",
 ) -> Path:
-    return (
-        output_dir
-        / "predictions"
-        / f"{engine.safe_filename(model_id)}.jsonl"
-    )
+    return output_dir / "predictions" / f"{engine.safe_filename(model_id)}.jsonl"
 
 
 def prediction_row(
@@ -99,62 +551,797 @@ def prediction_row(
     forecast: np.ndarray | list[list[float]],
 ) -> dict[str, Any]:
     values = np.asarray(forecast, dtype=float)
-    target = np.asarray(sample["target"], dtype=float)
-    context = int(sample["context_length"])
-    truth = target[context:]
     expected_shape = (int(sample["horizon"]), int(sample["target_dim"]))
     if values.shape != expected_shape:
-        raise ValueError(
-            f"forecast shape mismatch: {values.shape} != {expected_shape}"
-        )
-    mae = float(np.mean(np.abs(values - truth)))
-    scale = float(sample["mase_scale"])
-    history_scale = float(
-        np.mean(np.std(target[:context], axis=0))
-    )
+        raise ValueError(f"forecast shape mismatch: {values.shape} != {expected_shape}")
     return {
-        "schema_version": "paper_v8_inference_prediction.v1",
+        "schema_version": "paper_v8_inference_prediction.v2",
         "model_id": model_id,
-        "model_group": model_group,
         "sample_id": sample["sample_id"],
-        "view_id": sample["sample_id"],
-        "master_sample_id": sample["master_sample_id"],
-        "dataset_id": sample["dataset_id"],
-        "config_id": sample["config_id"],
-        "profile_id": sample["profile_id"],
-        "capability_id": sample["capability_id"],
-        "generator_family_role": sample["generator_family_role"],
-        "generator_family_id": sample["generator_family_id"],
-        "evaluation_table": sample.get("evaluation_table", "main"),
-        "intensity": int(sample["intensity"]),
-        "seed_index": int(sample["seed_index"]),
-        "counterfactual_pair_id": sample.get("counterfactual_pair_id"),
-        "counterfactual_member": sample.get("counterfactual_member"),
-        "context_length": context,
-        "horizon": int(sample["horizon"]),
-        "target_dim": int(sample["target_dim"]),
-        "covariate_dim": int(sample["covariate_dim"]),
-        "mase_scale": scale,
-        "mase_period": int(
-            sample.get("mase_period", sample.get("season_length", 1))
-        ),
-        "metrics": {
-            "mae": mae,
-            "mase": mae / scale,
-            "history_std_normalized_mae": (
-                mae / max(history_scale, 1e-12)
-            ),
-        },
         "forecast": values.tolist(),
-        "target_future": truth.tolist(),
-        "future_sha256": sample["future_sha256"],
     }
+
+
+def _bulk_request_content(
+    model_id: str,
+    children: list[dict[str, Any]],
+) -> tuple[bytes, tuple[int, int, int], int]:
+    if not children:
+        raise ValueError("a bulk forecast request requires at least one child")
+    context = int(children[0]["context_length"])
+    horizon = int(children[0]["horizon"])
+    target_dim = int(children[0]["target_dim"])
+    covariate_dim = int(children[0]["covariate_dim"])
+    for child in children[1:]:
+        observed = (
+            int(child["context_length"]),
+            int(child["horizon"]),
+            int(child["target_dim"]),
+            int(child["covariate_dim"]),
+        )
+        if observed != (context, horizon, target_dim, covariate_dim):
+            raise ValueError(
+                "bulk forecast children must have identical request shapes"
+            )
+
+    targets = np.stack(
+        [
+            np.asarray(child["target"], dtype=np.float32)[:context].T
+            for child in children
+        ]
+    )
+    payload: dict[str, Any] = {
+        "model_id": model_id,
+        "shape": list(targets.shape),
+        "targets": np.ascontiguousarray(targets).tobytes(),
+        "output_length": horizon,
+    }
+    if covariate_dim:
+        history_covariates = np.stack(
+            [
+                np.asarray(child["covariates"], dtype=np.float32)[:context].T
+                for child in children
+            ]
+        )
+        future_covariates = np.stack(
+            [
+                np.asarray(child["covariates"], dtype=np.float32)[
+                    context : context + horizon
+                ].T
+                for child in children
+            ]
+        )
+        payload.update(
+            {
+                "history_covariates_shape": list(history_covariates.shape),
+                "history_covariates": np.ascontiguousarray(
+                    history_covariates
+                ).tobytes(),
+                "future_covariates_shape": list(future_covariates.shape),
+                "future_covariates": np.ascontiguousarray(future_covariates).tobytes(),
+            }
+        )
+    return (
+        msgpack.packb(payload, use_bin_type=True),
+        tuple(int(value) for value in targets.shape),
+        horizon,
+    )
+
+
+async def _forecast_bulk_with_retry(
+    client: httpx.AsyncClient,
+    *,
+    forecast_url: str,
+    model_id: str,
+    children: list[dict[str, Any]],
+    max_attempts: int,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    content, input_shape, horizon = _bulk_request_content(
+        model_id,
+        children,
+    )
+    last_error = "unknown bulk forecast error"
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = await client.post(
+                forecast_url,
+                content=content,
+                headers={"Content-Type": "application/msgpack"},
+            )
+            response.raise_for_status()
+            payload = msgpack.unpackb(response.content, raw=False)
+            if payload.get("encoding") != "float32":
+                raise ValueError("bulk forecast returned an unknown encoding")
+            output_shape = tuple(int(value) for value in payload["shape"])
+            expected_shape = (input_shape[0], input_shape[1], horizon)
+            if output_shape != expected_shape:
+                raise ValueError(
+                    f"bulk forecast shape {output_shape} != {expected_shape}"
+                )
+            forecasts = np.frombuffer(
+                payload["forecasts"],
+                dtype=np.float32,
+            )
+            if forecasts.size != int(np.prod(output_shape)):
+                raise ValueError(
+                    "bulk forecast byte length does not match output shape"
+                )
+            forecasts = forecasts.reshape(output_shape)
+            if not np.isfinite(forecasts).all():
+                raise ValueError("bulk forecast contains non-finite values")
+            return {
+                "forecasts": forecasts,
+                "attempts": attempt,
+                "elapsed_seconds": time.monotonic() - started,
+                "error": None,
+            }
+        except (
+            httpx.HTTPError,
+            KeyError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            msgpack.ExtraData,
+            msgpack.FormatError,
+        ) as error:
+            last_error = f"{type(error).__name__}: {error}"
+            if attempt < max_attempts:
+                await asyncio.sleep(0.25 * (2 ** (attempt - 1)))
+    return {
+        "forecasts": None,
+        "attempts": max_attempts,
+        "elapsed_seconds": time.monotonic() - started,
+        "error": last_error,
+    }
+
+
+async def _run_model_requests_v8_serial(
+    *,
+    forecast_url: str,
+    model_id: str,
+    model: dict[str, Any],
+    sample_path: Path,
+    done: set[str],
+    pending_groups: dict[tuple[Any, ...], int],
+    http_concurrency: int,
+    timeout_seconds: int,
+    max_attempts: int,
+    output_handle: Any,
+    failure_handle: Any,
+    compatible_count: int,
+    initial_persisted: int,
+    input_adaptation_policy: str | None = None,
+) -> list[dict[str, Any]]:
+    execution = MODEL_EXECUTION_CONFIG[model_id]
+    if execution.get("transport") != "msgpack_bulk":
+        return await _JSON_RUN_MODEL_REQUESTS(
+            forecast_url=forecast_url,
+            model_id=model_id,
+            model=model,
+            sample_path=sample_path,
+            done=done,
+            pending_groups=pending_groups,
+            http_concurrency=http_concurrency,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+            output_handle=output_handle,
+            failure_handle=failure_handle,
+            compatible_count=compatible_count,
+            initial_persisted=initial_persisted,
+            input_adaptation_policy=input_adaptation_policy,
+        )
+
+    task_batch_size = int(execution["task_batch_size"])
+    limits = httpx.Limits(
+        max_connections=http_concurrency,
+        max_keepalive_connections=http_concurrency,
+        keepalive_expiry=120.0,
+    )
+    timeout = httpx.Timeout(timeout_seconds)
+    bucket_stats: list[dict[str, Any]] = []
+    persisted = initial_persisted
+    bulk_url = forecast_url.rsplit("/", 1)[0] + "/forecast/bulk"
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        limits=limits,
+        trust_env=False,
+    ) as async_client:
+        ordered_groups = sorted(
+            pending_groups,
+            key=engine.request_group_sort_key,
+        )
+        for bucket_index, group_key in enumerate(ordered_groups, start=1):
+            pending_count = pending_groups[group_key]
+            label = engine.request_group_label(group_key)
+            group_items: list[
+                tuple[
+                    dict[str, Any],
+                    dict[str, Any],
+                    list[dict[str, Any]],
+                ]
+            ] = []
+            for sample in iter_forecast_samples(sample_path):
+                plan = engine.input_adaptation_plan(
+                    model,
+                    sample,
+                    policy_id=input_adaptation_policy,
+                )
+                if (
+                    sample["sample_id"] in done
+                    or plan is None
+                    or engine.request_group_key(sample, plan=plan) != group_key
+                ):
+                    continue
+                group_items.append(
+                    (
+                        sample,
+                        plan,
+                        engine.adapted_request_samples(sample, plan),
+                    )
+                )
+            if len(group_items) != pending_count:
+                raise RuntimeError(
+                    f"{model_id}/{label} producer count "
+                    f"{len(group_items)} != {pending_count}"
+                )
+
+            child_count = int(group_items[0][1]["target_request_count"])
+            views_per_request = max(1, task_batch_size // child_count)
+            chunks = [
+                group_items[offset : offset + views_per_request]
+                for offset in range(0, len(group_items), views_per_request)
+            ]
+            print(
+                f"{model_id}: bucket {bucket_index}/{len(ordered_groups)} "
+                f"{label}, pending={pending_count}, bulk_batch="
+                f"{task_batch_size}, views/request={views_per_request}, "
+                f"requests={len(chunks)}, concurrency={http_concurrency}",
+                flush=True,
+            )
+            queue: asyncio.Queue[
+                list[
+                    tuple[
+                        dict[str, Any],
+                        dict[str, Any],
+                        list[dict[str, Any]],
+                    ]
+                ]
+                | None
+            ] = asyncio.Queue()
+            for chunk in chunks:
+                queue.put_nowait(chunk)
+            for _worker_index in range(http_concurrency):
+                queue.put_nowait(None)
+
+            bucket_started = time.monotonic()
+            succeeded_count = 0
+            failed_count = 0
+            successful_transport_request_count = 0
+            attempted_transport_request_count = 0
+
+            async def worker() -> None:
+                nonlocal succeeded_count, failed_count, persisted
+                nonlocal successful_transport_request_count
+                nonlocal attempted_transport_request_count
+                while True:
+                    chunk = await queue.get()
+                    try:
+                        if chunk is None:
+                            return
+                        children = [
+                            child
+                            for _sample, _plan, child_samples in chunk
+                            for child in child_samples
+                        ]
+                        result = await _forecast_bulk_with_retry(
+                            async_client,
+                            forecast_url=bulk_url,
+                            model_id=model_id,
+                            children=children,
+                            max_attempts=max_attempts,
+                        )
+                        attempted_transport_request_count += int(result["attempts"])
+                        forecasts = result["forecasts"]
+                        if forecasts is None:
+                            for sample, plan, _children in chunk:
+                                failure_handle.write(
+                                    json.dumps(
+                                        {
+                                            "model_id": model_id,
+                                            "sample_id": sample["sample_id"],
+                                            "request_group": label,
+                                            "attempts": result["attempts"],
+                                            "request_seconds": result[
+                                                "elapsed_seconds"
+                                            ],
+                                            "error": result["error"],
+                                            "input_adaptation": plan,
+                                            "failed_target_index": None,
+                                            "transport": "msgpack_bulk",
+                                            "created_at": v8.utc_now(),
+                                        },
+                                        ensure_ascii=False,
+                                        sort_keys=True,
+                                    )
+                                    + "\n"
+                                )
+                                failed_count += 1
+                            continue
+
+                        successful_transport_request_count += 1
+                        offset = 0
+                        for sample, plan, child_samples in chunk:
+                            child_forecasts = forecasts[
+                                offset : offset + len(child_samples)
+                            ]
+                            offset += len(child_samples)
+                            if plan["target_mode"] == "independent_univariate":
+                                forecast = np.concatenate(
+                                    [
+                                        child_forecast.T
+                                        for child_forecast in child_forecasts
+                                    ],
+                                    axis=1,
+                                )
+                            else:
+                                forecast = child_forecasts[0].T
+                            row = prediction_row(
+                                model_id,
+                                "timer_service",
+                                sample,
+                                forecast,
+                            )
+                            row["input_adaptation"] = plan
+                            output_handle.write(
+                                json.dumps(
+                                    row,
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                )
+                                + "\n"
+                            )
+                            succeeded_count += 1
+                            persisted += 1
+                            if persisted % 500 == 0:
+                                output_handle.flush()
+                                print(
+                                    f"{model_id}: persisted={persisted}/"
+                                    f"{compatible_count}",
+                                    flush=True,
+                                )
+                    finally:
+                        queue.task_done()
+
+            tasks = [
+                asyncio.create_task(worker())
+                for _worker_index in range(http_concurrency)
+            ]
+            await asyncio.gather(*tasks)
+            output_handle.flush()
+            failure_handle.flush()
+            elapsed = time.monotonic() - bucket_started
+            if succeeded_count + failed_count != pending_count:
+                raise RuntimeError(
+                    f"{model_id}/{label} processed count mismatch: "
+                    f"{succeeded_count}+{failed_count}!={pending_count}"
+                )
+            bucket_stats.append(
+                {
+                    "request_group": label,
+                    "context_length": group_key[0],
+                    "horizon": group_key[1],
+                    "target_dim": group_key[2],
+                    "covariate_dim": group_key[3],
+                    "frequency": group_key[4],
+                    "pending_count": pending_count,
+                    "succeeded_count": succeeded_count,
+                    "failed_count": failed_count,
+                    "transport": "msgpack_bulk",
+                    "task_batch_size": task_batch_size,
+                    "views_per_http_request": views_per_request,
+                    "expected_http_request_count": len(chunks),
+                    "successful_http_request_count": (
+                        successful_transport_request_count
+                    ),
+                    "attempted_http_request_count": (attempted_transport_request_count),
+                    "logical_model_input_count": pending_count * child_count,
+                    "elapsed_seconds": round(elapsed, 3),
+                    "successful_tasks_per_second": round(
+                        succeeded_count / max(elapsed, 1e-12),
+                        3,
+                    ),
+                    **(
+                        {
+                            "target_request_count_per_view": int(group_key[5]),
+                            "target_mode": str(group_key[6]),
+                            "covariate_mode": str(group_key[7]),
+                            "request_target_dim": int(group_key[8]),
+                            "request_covariate_dim": int(group_key[9]),
+                        }
+                        if len(group_key) > 5
+                        else {}
+                    ),
+                }
+            )
+            print(
+                f"{model_id}: bucket {label} complete, "
+                f"{succeeded_count}/{pending_count} in {elapsed:.1f}s "
+                f"({successful_transport_request_count} bulk requests)",
+                flush=True,
+            )
+    return bucket_stats
+
+
+async def _run_model_requests_v8_group_scans(
+    *,
+    forecast_url: str,
+    model_id: str,
+    model: dict[str, Any],
+    sample_path: Path,
+    done: set[str],
+    pending_groups: dict[tuple[Any, ...], int],
+    http_concurrency: int,
+    timeout_seconds: int,
+    max_attempts: int,
+    output_handle: Any,
+    failure_handle: Any,
+    compatible_count: int,
+    initial_persisted: int,
+    input_adaptation_policy: str | None = None,
+) -> list[dict[str, Any]]:
+    """Interleave homogeneous context buckets in one endpoint concurrency budget.
+
+    Each individual msgpack request remains shape-homogeneous, while several
+    context/target/covariate groups run concurrently. This is important for an
+    eight-card endpoint: a small tail bucket must not leave the other replicas
+    idle merely because groups were processed serially.
+    """
+    execution = MODEL_EXECUTION_CONFIG[model_id]
+    if execution.get("transport") != "msgpack_bulk" or len(pending_groups) <= 1:
+        return await _run_model_requests_v8_serial(
+            forecast_url=forecast_url,
+            model_id=model_id,
+            model=model,
+            sample_path=sample_path,
+            done=done,
+            pending_groups=pending_groups,
+            http_concurrency=http_concurrency,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+            output_handle=output_handle,
+            failure_handle=failure_handle,
+            compatible_count=compatible_count,
+            initial_persisted=initial_persisted,
+            input_adaptation_policy=input_adaptation_policy,
+        )
+
+    ordered_groups = sorted(pending_groups, key=engine.request_group_sort_key)
+    wave_size = min(http_concurrency, len(ordered_groups))
+    all_stats: list[dict[str, Any]] = []
+    for offset in range(0, len(ordered_groups), wave_size):
+        wave = ordered_groups[offset : offset + wave_size]
+        group_concurrency = max(1, http_concurrency // len(wave))
+        results = await asyncio.gather(
+            *(
+                _run_model_requests_v8_serial(
+                    forecast_url=forecast_url,
+                    model_id=model_id,
+                    model=model,
+                    sample_path=sample_path,
+                    done=done,
+                    pending_groups={group_key: pending_groups[group_key]},
+                    http_concurrency=group_concurrency,
+                    timeout_seconds=timeout_seconds,
+                    max_attempts=max_attempts,
+                    output_handle=output_handle,
+                    failure_handle=failure_handle,
+                    compatible_count=compatible_count,
+                    initial_persisted=initial_persisted,
+                    input_adaptation_policy=input_adaptation_policy,
+                )
+                for group_key in wave
+            )
+        )
+        for group_stats in results:
+            all_stats.extend(group_stats)
+    all_stats.sort(
+        key=lambda row: (
+            int(row["context_length"]),
+            int(row["target_dim"]),
+            int(row["covariate_dim"]),
+        )
+    )
+    return all_stats
+
+
+async def run_model_requests_v8(
+    *,
+    forecast_url: str,
+    model_id: str,
+    model: dict[str, Any],
+    sample_path: Path,
+    done: set[str],
+    pending_groups: dict[tuple[Any, ...], int],
+    http_concurrency: int,
+    timeout_seconds: int,
+    max_attempts: int,
+    output_handle: Any,
+    failure_handle: Any,
+    compatible_count: int,
+    initial_persisted: int,
+    input_adaptation_policy: str | None = None,
+) -> list[dict[str, Any]]:
+    """Scan one shard once, then interleave homogeneous bulk requests."""
+    execution = MODEL_EXECUTION_CONFIG[model_id]
+    if execution.get("transport") != "msgpack_bulk":
+        return await _JSON_RUN_MODEL_REQUESTS(
+            forecast_url=forecast_url,
+            model_id=model_id,
+            model=model,
+            sample_path=sample_path,
+            done=done,
+            pending_groups=pending_groups,
+            http_concurrency=http_concurrency,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+            output_handle=output_handle,
+            failure_handle=failure_handle,
+            compatible_count=compatible_count,
+            initial_persisted=initial_persisted,
+            input_adaptation_policy=input_adaptation_policy,
+        )
+
+    task_batch_size = int(execution["task_batch_size"])
+    ordered_groups = sorted(pending_groups, key=engine.request_group_sort_key)
+    states: dict[tuple[Any, ...], dict[str, Any]] = {
+        group_key: {
+            "label": engine.request_group_label(group_key),
+            "pending_count": int(pending_groups[group_key]),
+            "items": [],
+            "succeeded_count": 0,
+            "failed_count": 0,
+            "successful_request_count": 0,
+            "attempted_request_count": 0,
+            "started": None,
+            "finished": None,
+        }
+        for group_key in ordered_groups
+    }
+
+    for sample in iter_forecast_samples(sample_path):
+        plan = engine.input_adaptation_plan(
+            model,
+            sample,
+            policy_id=input_adaptation_policy,
+        )
+        if sample["sample_id"] in done or plan is None:
+            continue
+        group_key = engine.request_group_key(sample, plan=plan)
+        state = states.get(group_key)
+        if state is not None:
+            state["items"].append(
+                (
+                    sample,
+                    plan,
+                    engine.adapted_request_samples(sample, plan),
+                )
+            )
+
+    grouped_chunks: dict[tuple[Any, ...], list[list[Any]]] = {}
+    for group_key in ordered_groups:
+        state = states[group_key]
+        items = state["items"]
+        if len(items) != state["pending_count"]:
+            raise RuntimeError(
+                f"{model_id}/{state['label']} producer count "
+                f"{len(items)} != {state['pending_count']}"
+            )
+        child_count = int(items[0][1]["target_request_count"])
+        views_per_request = max(1, task_batch_size // child_count)
+        chunks = [
+            items[offset : offset + views_per_request]
+            for offset in range(0, len(items), views_per_request)
+        ]
+        state["child_count"] = child_count
+        state["views_per_request"] = views_per_request
+        state["expected_request_count"] = len(chunks)
+        grouped_chunks[group_key] = chunks
+
+    jobs: list[tuple[tuple[Any, ...], list[Any]]] = []
+    max_chunk_count = max(
+        (len(chunks) for chunks in grouped_chunks.values()),
+        default=0,
+    )
+    for chunk_index in range(max_chunk_count):
+        for group_key in ordered_groups:
+            chunks = grouped_chunks[group_key]
+            if chunk_index < len(chunks):
+                jobs.append((group_key, chunks[chunk_index]))
+    print(
+        f"{model_id}: one-scan scheduler prepared {len(jobs)} bulk "
+        f"requests across {len(ordered_groups)} shape groups; "
+        f"concurrency={http_concurrency}, batch={task_batch_size}",
+        flush=True,
+    )
+
+    queue: asyncio.Queue[tuple[tuple[Any, ...], list[Any]] | None] = asyncio.Queue()
+    for job in jobs:
+        queue.put_nowait(job)
+    for _worker_index in range(http_concurrency):
+        queue.put_nowait(None)
+
+    persisted = initial_persisted
+    bulk_url = forecast_url.rsplit("/", 1)[0] + "/forecast/bulk"
+    limits = httpx.Limits(
+        max_connections=http_concurrency,
+        max_keepalive_connections=http_concurrency,
+        keepalive_expiry=120.0,
+    )
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(timeout_seconds),
+        limits=limits,
+        trust_env=False,
+    ) as async_client:
+
+        async def worker() -> None:
+            nonlocal persisted
+            while True:
+                job = await queue.get()
+                try:
+                    if job is None:
+                        return
+                    group_key, chunk = job
+                    state = states[group_key]
+                    if state["started"] is None:
+                        state["started"] = time.monotonic()
+                    children = [
+                        child
+                        for _sample, _plan, child_samples in chunk
+                        for child in child_samples
+                    ]
+                    result = await _forecast_bulk_with_retry(
+                        async_client,
+                        forecast_url=bulk_url,
+                        model_id=model_id,
+                        children=children,
+                        max_attempts=max_attempts,
+                    )
+                    state["attempted_request_count"] += int(result["attempts"])
+                    forecasts = result["forecasts"]
+                    if forecasts is None:
+                        for sample, plan, _children in chunk:
+                            failure_handle.write(
+                                json.dumps(
+                                    {
+                                        "model_id": model_id,
+                                        "sample_id": sample["sample_id"],
+                                        "request_group": state["label"],
+                                        "attempts": result["attempts"],
+                                        "request_seconds": result["elapsed_seconds"],
+                                        "error": result["error"],
+                                        "input_adaptation": plan,
+                                        "failed_target_index": None,
+                                        "transport": "msgpack_bulk",
+                                        "created_at": v8.utc_now(),
+                                    },
+                                    ensure_ascii=False,
+                                    sort_keys=True,
+                                )
+                                + "\n"
+                            )
+                            state["failed_count"] += 1
+                        state["finished"] = time.monotonic()
+                        continue
+
+                    state["successful_request_count"] += 1
+                    child_offset = 0
+                    for sample, plan, child_samples in chunk:
+                        child_forecasts = forecasts[
+                            child_offset : child_offset + len(child_samples)
+                        ]
+                        child_offset += len(child_samples)
+                        if plan["target_mode"] == "independent_univariate":
+                            forecast = np.concatenate(
+                                [
+                                    child_forecast.T
+                                    for child_forecast in child_forecasts
+                                ],
+                                axis=1,
+                            )
+                        else:
+                            forecast = child_forecasts[0].T
+                        row = prediction_row(
+                            model_id,
+                            "timer_service",
+                            sample,
+                            forecast,
+                        )
+                        row["input_adaptation"] = plan
+                        output_handle.write(
+                            json.dumps(
+                                row,
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            )
+                            + "\n"
+                        )
+                        state["succeeded_count"] += 1
+                        persisted += 1
+                        if persisted % 500 == 0:
+                            output_handle.flush()
+                    state["finished"] = time.monotonic()
+                finally:
+                    queue.task_done()
+
+        workers = [
+            asyncio.create_task(worker()) for _worker_index in range(http_concurrency)
+        ]
+        await asyncio.gather(*workers)
+
+    output_handle.flush()
+    failure_handle.flush()
+    bucket_stats: list[dict[str, Any]] = []
+    for group_key in ordered_groups:
+        state = states[group_key]
+        pending_count = int(state["pending_count"])
+        succeeded_count = int(state["succeeded_count"])
+        failed_count = int(state["failed_count"])
+        if succeeded_count + failed_count != pending_count:
+            raise RuntimeError(
+                f"{model_id}/{state['label']} processed count mismatch: "
+                f"{succeeded_count}+{failed_count}!={pending_count}"
+            )
+        elapsed = max(
+            float(state["finished"] - state["started"]),
+            1e-12,
+        )
+        bucket_stats.append(
+            {
+                "request_group": state["label"],
+                "context_length": group_key[0],
+                "horizon": group_key[1],
+                "target_dim": group_key[2],
+                "covariate_dim": group_key[3],
+                "frequency": group_key[4],
+                "pending_count": pending_count,
+                "succeeded_count": succeeded_count,
+                "failed_count": failed_count,
+                "transport": "msgpack_bulk",
+                "task_batch_size": task_batch_size,
+                "views_per_http_request": int(state["views_per_request"]),
+                "expected_http_request_count": int(state["expected_request_count"]),
+                "successful_http_request_count": int(state["successful_request_count"]),
+                "attempted_http_request_count": int(state["attempted_request_count"]),
+                "logical_model_input_count": (
+                    pending_count * int(state["child_count"])
+                ),
+                "elapsed_seconds": round(elapsed, 3),
+                "successful_tasks_per_second": round(
+                    succeeded_count / elapsed,
+                    3,
+                ),
+                **(
+                    {
+                        "target_request_count_per_view": int(group_key[5]),
+                        "target_mode": str(group_key[6]),
+                        "covariate_mode": str(group_key[7]),
+                        "request_target_dim": int(group_key[8]),
+                        "request_covariate_dim": int(group_key[9]),
+                    }
+                    if len(group_key) > 5
+                    else {}
+                ),
+            }
+        )
+    return bucket_stats
 
 
 def install_engine_hooks() -> None:
     engine.iter_forecast_samples = iter_forecast_samples
     engine.prediction_row = prediction_row
     engine.prediction_path_for = prediction_path_for
+    engine.run_model_requests = run_model_requests_v8
 
 
 def prepare_view_tasks(
@@ -168,9 +1355,7 @@ def prepare_view_tasks(
         generation_manifest["files"]["input_ablations"],
     ]
     masters = (
-        row
-        for record in source_records
-        for row in v8.iter_jsonl(Path(record["path"]))
+        row for record in source_records for row in v8.iter_jsonl(Path(record["path"]))
     )
     task_path = inference_dir / "forecast_views.jsonl"
     view_count = v8.write_jsonl(
@@ -200,9 +1385,7 @@ def health_catalog(
 ) -> tuple[str, dict[str, dict[str, Any]]] | None:
     client = engine.TimerServiceClient(endpoint, api_prefix, timeout_seconds=30)
     try:
-        catalog = {
-            str(row["model_id"]): row for row in client.list_models()
-        }
+        catalog = {str(row["model_id"]): row for row in client.list_models()}
         return endpoint, catalog
     except Exception as error:  # noqa: BLE001
         with _PRINT_LOCK:
@@ -213,11 +1396,7 @@ def health_catalog(
 
 
 def model_root(inference_dir: Path, model_id: str) -> Path:
-    return (
-        inference_dir
-        / "model_shards"
-        / engine.safe_filename(model_id)
-    )
+    return inference_dir / "model_shards" / engine.safe_filename(model_id)
 
 
 def model_part_root(
@@ -225,9 +1404,62 @@ def model_part_root(
     model_id: str,
     part_index: int,
 ) -> Path:
-    return model_root(inference_dir, model_id) / "parts" / (
-        f"part_{part_index:03d}"
+    return model_root(inference_dir, model_id) / "parts" / (f"part_{part_index:03d}")
+
+
+def compact_prediction_row(row: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        "schema_version": "paper_v8_inference_prediction.v2",
+        "model_id": str(row["model_id"]),
+        "sample_id": str(row["sample_id"]),
+        "forecast": row["forecast"],
+    }
+    if row.get("input_adaptation") is not None:
+        compact["input_adaptation"] = row["input_adaptation"]
+    return compact
+
+
+def compact_canonical_prediction_file(path: Path) -> int:
+    return v8.write_jsonl(
+        path,
+        (compact_prediction_row(row) for row in v8.iter_jsonl(path)),
     )
+
+
+def cleanup_completed_model_intermediates(
+    inference_dir: Path,
+    model_id: str,
+) -> int:
+    """Remove restart-only artifacts after a canonical model file exists."""
+
+    canonical_path = prediction_path_for(
+        model_root(inference_dir, model_id),
+        model_id,
+    )
+    if not canonical_path.is_file():
+        return 0
+    removed_bytes = 0
+    parts_root = model_root(inference_dir, model_id) / "parts"
+    for part_root in sorted(parts_root.glob("part_*")):
+        for directory_name in ("predictions", "failures"):
+            directory = part_root / directory_name
+            if directory.is_dir():
+                removed_bytes += sum(
+                    path.stat().st_size
+                    for path in directory.rglob("*")
+                    if path.is_file()
+                )
+                shutil.rmtree(directory)
+    shard_dir = _model_task_shard_manifest_path(
+        inference_dir,
+        model_id,
+    ).parent
+    if shard_dir.is_dir():
+        removed_bytes += sum(
+            path.stat().st_size for path in shard_dir.rglob("*") if path.is_file()
+        )
+        shutil.rmtree(shard_dir)
+    return removed_bytes
 
 
 def _model_task_shard_manifest_path(
@@ -247,11 +1479,13 @@ def _model_task_shard_manifest_is_reusable(
     *,
     model_id: str,
     task_path: Path,
+    part_weights: list[int],
 ) -> bool:
-    if (
-        manifest.get("model_id") != model_id
-        or manifest.get("source_task_sha256") != v8.file_sha256(task_path)
-    ):
+    if manifest.get("model_id") != model_id or manifest.get(
+        "source_task_sha256"
+    ) != v8.file_sha256(task_path):
+        return False
+    if list(manifest.get("part_weights") or []) != part_weights:
         return False
     parts = list(manifest.get("parts") or [])
     if len(parts) != int(manifest.get("part_count", -1)):
@@ -269,17 +1503,21 @@ def prepare_model_task_shards(
     model_id: str,
     part_count: int,
     inference_dir: Path,
+    part_weights: list[int] | None = None,
 ) -> dict[str, Any]:
     """Create or reuse deterministic task parts for one model.
 
-    An existing valid manifest wins over ``part_count``.  This is deliberate:
-    if a service is temporarily unavailable during resume, the original part
-    identities and completed prediction files remain valid; surviving
-    services simply process more than one existing part.
+    An existing manifest is reused when its source hash and capacity weights
+    match. Capacity changes rebuild the shards so one endpoint still receives
+    one large, weighted part instead of many tiny sequential parts.
     """
 
     if part_count < 1:
         raise ValueError("model task sharding requires at least one part")
+    if part_weights is None:
+        part_weights = [1] * part_count
+    if len(part_weights) != part_count or any(weight < 1 for weight in part_weights):
+        raise ValueError("part_weights must contain one positive weight per part")
     manifest_path = _model_task_shard_manifest_path(
         inference_dir,
         model_id,
@@ -290,29 +1528,33 @@ def prepare_model_task_shards(
             manifest,
             model_id=model_id,
             task_path=task_path,
+            part_weights=part_weights,
         ):
             return manifest
 
     shard_dir = manifest_path.parent
     shard_dir.mkdir(parents=True, exist_ok=True)
-    part_paths = [
-        shard_dir / f"part_{index:03d}.jsonl"
-        for index in range(part_count)
-    ]
-    handles = [
-        path.open("w", encoding="utf-8") for path in part_paths
-    ]
+    part_paths = [shard_dir / f"part_{index:03d}.jsonl" for index in range(part_count)]
+    handles = [path.open("w", encoding="utf-8") for path in part_paths]
     counts = [0] * part_count
+    total_weight = sum(part_weights)
     try:
         for row in v8.iter_jsonl(task_path):
-            part_index = (
+            slot = (
                 v8.stable_seed(
                     "paper_v8_model_task_shard",
                     model_id,
                     str(row["sample_id"]),
                 )
-                % part_count
+                % total_weight
             )
+            cumulative_weight = 0
+            part_index = 0
+            for candidate, weight in enumerate(part_weights):
+                cumulative_weight += weight
+                if slot < cumulative_weight:
+                    part_index = candidate
+                    break
             handles[part_index].write(
                 json.dumps(
                     row,
@@ -328,9 +1570,7 @@ def prepare_model_task_shards(
         for handle in handles:
             handle.close()
     if not all(counts):
-        raise ValueError(
-            f"model task partition for {model_id} produced an empty part"
-        )
+        raise ValueError(f"model task partition for {model_id} produced an empty part")
     parts = [
         {
             "part_index": index,
@@ -340,12 +1580,13 @@ def prepare_model_task_shards(
         for index, path in enumerate(part_paths)
     ]
     manifest = {
-        "schema_version": "paper_v8_model_task_shard_manifest.v1",
+        "schema_version": "paper_v8_model_task_shard_manifest.v2",
         "created_at": v8.utc_now(),
         "model_id": model_id,
         "part_count": part_count,
+        "part_weights": part_weights,
         "partition_policy": (
-            "stable_hash_of_policy_model_and_sample_id"
+            "stable_hash_of_policy_model_and_sample_id_weighted_by_endpoint"
         ),
         "source_task_sha256": v8.file_sha256(task_path),
         "source_task_row_count": sum(counts),
@@ -361,24 +1602,50 @@ def plan_model_phase(
     *,
     task_path: Path,
     inference_dir: Path,
+    endpoint_profiles: dict[str, EndpointProfile] | None = None,
 ) -> tuple[dict[str, list[InferenceWork]], dict[str, Any]]:
-    eligible = sorted(
-        endpoint
-        for endpoint, catalog in services
-        if model_id in catalog
-    )
+    eligible = sorted(endpoint for endpoint, catalog in services if model_id in catalog)
     if not eligible:
         raise ValueError(f"model {model_id!r} unavailable on all services")
+    capacities = {
+        endpoint: (
+            endpoint_profiles[endpoint].capacity_for(model_id)
+            if endpoint_profiles is not None
+            else 1
+        )
+        for endpoint in eligible
+    }
+    # Keep shards coarse enough that every homogeneous context bucket can fill
+    # the model batch. Exact rational normalization (for example 3.65 ->
+    # 73/20) creates hundreds of tiny parts and destroys GPU utilization.
+    target_part_count = max(
+        len(eligible),
+        int(sum(capacities.values()) + 0.5),
+    )
+    normalized_capacities = {endpoint: 1 for endpoint in eligible}
+    for _part_index in range(target_part_count - len(eligible)):
+        endpoint = min(
+            eligible,
+            key=lambda candidate: (
+                normalized_capacities[candidate] / capacities[candidate],
+                candidate,
+            ),
+        )
+        normalized_capacities[endpoint] += 1
     manifest = prepare_model_task_shards(
         task_path,
         model_id=model_id,
         part_count=len(eligible),
         inference_dir=inference_dir,
+        part_weights=[normalized_capacities[endpoint] for endpoint in eligible],
     )
     work = {endpoint: [] for endpoint in eligible}
-    for part in manifest["parts"]:
+    for part in sorted(
+        manifest["parts"],
+        key=lambda row: int(row["part_index"]),
+    ):
         part_index = int(part["part_index"])
-        endpoint = eligible[part_index % len(eligible)]
+        endpoint = eligible[part_index]
         work[endpoint].append(
             InferenceWork(
                 model_id=model_id,
@@ -401,6 +1668,7 @@ def run_service_queue(
     catalog: dict[str, dict[str, Any]],
     *,
     args: argparse.Namespace,
+    endpoint_profile: EndpointProfile,
 ) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
     client = engine.TimerServiceClient(
@@ -413,18 +1681,31 @@ def run_service_queue(
             raise ValueError(
                 "one service queue may contain parts for only one model phase"
             )
-        client.unload_all_loaded()
+        if not args.keep_loaded_between_runs:
+            client.unload_all_loaded()
         for item in work_items:
             model_id = item.model_id
             model_dir = item.output_dir
             for directory in ("predictions", "failures"):
                 (model_dir / directory).mkdir(parents=True, exist_ok=True)
             execution = dict(MODEL_EXECUTION_CONFIG[model_id])
+            endpoint_concurrency = endpoint_profile.http_concurrency_for(
+                model_id,
+                execution["http_concurrency"],
+            )
+            execution["http_concurrency"] = max(
+                1,
+                endpoint_concurrency // max(1, args.request_concurrency_divisor),
+            )
             with _PRINT_LOCK:
                 print(
                     f"{endpoint}: starting {item.work_id}, "
+                    f"devices={endpoint_profile.devices}, "
+                    f"capacity={endpoint_profile.capacity_for(model_id)}, "
                     f"replicas={execution['replicas_per_device']}, "
-                    f"concurrency={execution['http_concurrency']}",
+                    f"concurrency={execution['http_concurrency']}, "
+                    f"transport={execution.get('transport', 'json')}, "
+                    f"batch={execution.get('task_batch_size', 1)}",
                     flush=True,
                 )
             started = time.monotonic()
@@ -434,7 +1715,7 @@ def run_service_queue(
                     catalog[model_id],
                     output_dir=model_dir,
                     execution=execution,
-                    devices=args.devices,
+                    devices=endpoint_profile.devices,
                     request_max_attempts=args.max_attempts,
                     forecast_timeout_seconds=args.forecast_timeout_seconds,
                     load_timeout_seconds=args.load_timeout_seconds,
@@ -444,6 +1725,22 @@ def run_service_queue(
                     status_filename="model_status.json",
                     input_adaptation_policy=engine.INPUT_ADAPTATION_POLICY_ID,
                 )
+                if execution.get("transport") == "msgpack_bulk":
+                    bucket_stats = list(status.get("bucket_stats") or [])
+                    status["successful_http_request_count"] = sum(
+                        int(row.get("successful_http_request_count", 0))
+                        for row in bucket_stats
+                    )
+                    status["attempted_http_request_count_this_attempt"] = sum(
+                        int(row.get("attempted_http_request_count", 0))
+                        for row in bucket_stats
+                    )
+                    status.setdefault("execution", {}).update(
+                        {
+                            "transport": "msgpack_bulk",
+                            "task_batch_size": int(execution["task_batch_size"]),
+                        }
+                    )
             except Exception as error:  # noqa: BLE001
                 status = {
                     "model_id": model_id,
@@ -455,6 +1752,7 @@ def run_service_queue(
             status["work_id"] = item.work_id
             status["part_index"] = item.part_index
             status["sample_path"] = str(item.sample_path)
+            status["endpoint_profile"] = endpoint_profile.as_dict()
             statuses.append(status)
             v8.write_json(
                 model_dir / "service_status.json",
@@ -468,10 +1766,11 @@ def run_service_queue(
                     flush=True,
                 )
     finally:
-        try:
-            client.unload_all_loaded()
-        except Exception:  # noqa: BLE001
-            pass
+        if not args.keep_loaded_between_runs:
+            try:
+                client.unload_all_loaded()
+            except Exception:  # noqa: BLE001
+                pass
         client.close()
     return statuses
 
@@ -497,16 +1796,10 @@ def consolidate_model_predictions(
             continue
         part_rows = list(v8.iter_jsonl(path))
         expected_ids = {
-            str(row["sample_id"])
-            for row in v8.iter_jsonl(Path(part["path"]))
+            str(row["sample_id"]) for row in v8.iter_jsonl(Path(part["path"]))
         }
-        observed_ids = {
-            str(row["sample_id"]) for row in part_rows
-        }
-        if (
-            len(part_rows) != int(part["row_count"])
-            or observed_ids != expected_ids
-        ):
+        observed_ids = {str(row["sample_id"]) for row in part_rows}
+        if len(part_rows) != int(part["row_count"]) or observed_ids != expected_ids:
             complete = False
         for row in part_rows:
             sample_id = str(row["sample_id"])
@@ -528,7 +1821,23 @@ def consolidate_model_predictions(
         model_root(inference_dir, model_id),
         model_id,
     )
-    v8.write_jsonl(canonical_path, rows)
+    written = v8.write_jsonl(
+        canonical_path,
+        (compact_prediction_row(row) for row in rows),
+    )
+    if written != expected:
+        raise RuntimeError(
+            f"canonical model prediction count mismatch: {written} != {expected}"
+        )
+    removed_bytes = cleanup_completed_model_intermediates(
+        inference_dir,
+        model_id,
+    )
+    print(
+        f"{model_id}: removed {removed_bytes / (1024**2):.1f} MiB "
+        "of completed endpoint intermediates",
+        flush=True,
+    )
     return True
 
 
@@ -554,50 +1863,30 @@ def aggregate_model_statuses(
         "failed_request_count_this_attempt",
     )
     for model_id in models:
-        matching = [
-            row for row in work_statuses
-            if row.get("model_id") == model_id
-        ]
+        matching = [row for row in work_statuses if row.get("model_id") == model_id]
         canonical_path = prediction_path_for(
-            inference_dir
-            / "model_shards"
-            / engine.safe_filename(model_id),
+            inference_dir / "model_shards" / engine.safe_filename(model_id),
             model_id,
         )
-        observed = (
-            engine.count_jsonl(canonical_path)
-            if canonical_path.exists()
-            else 0
-        )
+        observed = engine.count_jsonl(canonical_path) if canonical_path.exists() else 0
         status: dict[str, Any] = {
             "model_id": model_id,
             "status": (
                 "complete"
                 if observed == expected_view_count
-                and all(
-                    row.get("status") == "complete"
-                    for row in matching
-                )
+                and all(row.get("status") == "complete" for row in matching)
                 else "failed"
             ),
             "expected_original_view_count": expected_view_count,
             "succeeded_original_view_count": observed,
             "endpoints": sorted(
-                {
-                    str(row["endpoint"])
-                    for row in matching
-                    if row.get("endpoint")
-                }
+                {str(row["endpoint"]) for row in matching if row.get("endpoint")}
             ),
             "work_statuses": matching,
             "prediction_path": str(canonical_path),
         }
         for field in count_fields:
-            values = [
-                int(row[field])
-                for row in matching
-                if row.get(field) is not None
-            ]
+            values = [int(row[field]) for row in matching if row.get(field) is not None]
             if values:
                 status[field] = sum(values)
         output.append(status)
@@ -636,13 +1925,342 @@ def merge_predictions(
     return merged_path, count
 
 
+def _unload_accelerator_models(
+    endpoints: list[str],
+    api_prefix: str,
+) -> None:
+    def unload(endpoint: str) -> None:
+        client = engine.TimerServiceClient(
+            endpoint,
+            api_prefix,
+            timeout_seconds=30,
+        )
+        try:
+            client.unload_all_loaded()
+        finally:
+            client.close()
+
+    with ThreadPoolExecutor(max_workers=len(endpoints)) as executor:
+        futures = [executor.submit(unload, endpoint) for endpoint in endpoints]
+        for future in as_completed(futures):
+            future.result()
+
+
+def _single_dataset_child_arguments(
+    args: argparse.Namespace,
+    *,
+    dataset_id: str,
+    models: list[str],
+    keep_loaded: bool,
+    request_concurrency_divisor: int = 1,
+) -> list[str]:
+    arguments = [
+        "--dataset-id",
+        dataset_id,
+        "--output-root",
+        str(args.output_root.resolve()),
+        "--seed-start",
+        str(args.seed_start),
+        "--seed-count",
+        str(args.seed_count),
+        "--models",
+        *models,
+        "--endpoints",
+        *args.endpoints,
+        "--api-prefix",
+        args.api_prefix,
+        "--load-timeout-seconds",
+        str(args.load_timeout_seconds),
+        "--forecast-timeout-seconds",
+        str(args.forecast_timeout_seconds),
+        "--max-attempts",
+        str(args.max_attempts),
+        "--resume",
+        "--request-concurrency-divisor",
+        str(request_concurrency_divisor),
+        *endpoint_topology_cli_arguments(args),
+    ]
+    if keep_loaded:
+        arguments.append("--keep-loaded-between-runs")
+    return arguments
+
+
+def _prepare_model_dataset(
+    args: argparse.Namespace,
+    *,
+    dataset_id: str,
+    model_id: str,
+) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            *_single_dataset_child_arguments(
+                args,
+                dataset_id=dataset_id,
+                models=[model_id],
+                keep_loaded=True,
+            ),
+            "--prepare-only",
+        ],
+        cwd=v8.REPO_ROOT,
+        check=True,
+    )
+
+
+def _prepare_model_datasets(
+    args: argparse.Namespace,
+    *,
+    dataset_ids: list[str],
+    model_id: str,
+) -> None:
+    pending_dataset_ids = [
+        dataset_id
+        for dataset_id in dataset_ids
+        if not _model_dataset_is_complete(
+            args,
+            dataset_id=dataset_id,
+            model_id=model_id,
+        )
+    ]
+    if not pending_dataset_ids:
+        print(
+            f"{model_id}: all dataset canonical predictions already exist; "
+            "preparation skipped",
+            flush=True,
+        )
+        return
+    workers = min(max(1, args.preprocess_workers), len(pending_dataset_ids))
+    print(
+        f"{model_id}: preparing {len(pending_dataset_ids)} datasets with "
+        f"{workers} CPU workers",
+        flush=True,
+    )
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(
+                _prepare_model_dataset,
+                args,
+                dataset_id=dataset_id,
+                model_id=model_id,
+            ): dataset_id
+            for dataset_id in pending_dataset_ids
+        }
+        for future in as_completed(futures):
+            future.result()
+
+
+def _model_dataset_is_complete(
+    args: argparse.Namespace,
+    *,
+    dataset_id: str,
+    model_id: str,
+) -> bool:
+    shard_name = f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
+    path = prediction_path_for(
+        model_root(
+            args.output_root.resolve() / dataset_id / "03_inference" / shard_name,
+            model_id,
+        ),
+        model_id,
+    )
+    return path.is_file()
+
+
+def _run_model_dataset(
+    args: argparse.Namespace,
+    *,
+    dataset_id: str,
+    model_id: str,
+    request_concurrency_divisor: int,
+) -> None:
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            *_single_dataset_child_arguments(
+                args,
+                dataset_id=dataset_id,
+                models=[model_id],
+                keep_loaded=True,
+                request_concurrency_divisor=request_concurrency_divisor,
+            ),
+        ],
+        cwd=v8.REPO_ROOT,
+        check=True,
+    )
+
+
+def run_model_major_controller(args: argparse.Namespace) -> int:
+    dataset_ids = list(dict.fromkeys(args.dataset_ids or []))
+    if not dataset_ids:
+        raise ValueError("--dataset-ids requires at least one dataset")
+    for dataset_id in dataset_ids:
+        v8.resolve_dataset(dataset_id)
+
+    status_path = args.output_root.resolve() / "model_major_inference_status.json"
+    completed: list[dict[str, Any]] = []
+    status = {
+        "schema_version": "paper_v8_model_major_inference_status.v1",
+        "started_at": v8.utc_now(),
+        "state": "running",
+        "dataset_ids": dataset_ids,
+        "models": list(args.models),
+        "completed": completed,
+    }
+    v8.write_json(status_path, status)
+    try:
+        for model_index, model_id in enumerate(args.models, start=1):
+            print(
+                f"model-major phase {model_index}/{len(args.models)}: "
+                f"{model_id} across {len(dataset_ids)} datasets",
+                flush=True,
+            )
+            _prepare_model_datasets(
+                args,
+                dataset_ids=dataset_ids,
+                model_id=model_id,
+            )
+            _unload_accelerator_models(list(args.endpoints), args.api_prefix)
+
+            pending_dataset_ids: list[str] = []
+            for dataset_id in dataset_ids:
+                if _model_dataset_is_complete(
+                    args,
+                    dataset_id=dataset_id,
+                    model_id=model_id,
+                ):
+                    completed.append(
+                        {
+                            "model_id": model_id,
+                            "dataset_id": dataset_id,
+                            "completed_at": v8.utc_now(),
+                            "resumed": True,
+                        }
+                    )
+                else:
+                    pending_dataset_ids.append(dataset_id)
+            status["completed"] = completed
+            v8.write_json(status_path, status)
+
+            def record_completed(dataset_id: str) -> None:
+                completed.append(
+                    {
+                        "model_id": model_id,
+                        "dataset_id": dataset_id,
+                        "completed_at": v8.utc_now(),
+                    }
+                )
+                status["completed"] = completed
+                status["active_model_id"] = model_id
+                status["active_dataset_id"] = dataset_id
+                v8.write_json(status_path, status)
+
+            if pending_dataset_ids:
+                first_dataset_id = pending_dataset_ids.pop(0)
+                print(
+                    f"{model_id}: loading model with dataset " f"{first_dataset_id}",
+                    flush=True,
+                )
+                _run_model_dataset(
+                    args,
+                    dataset_id=first_dataset_id,
+                    model_id=model_id,
+                    request_concurrency_divisor=1,
+                )
+                record_completed(first_dataset_id)
+
+            dataset_parallelism = MODEL_MAJOR_DATASET_PARALLELISM.get(model_id, 1)
+            for offset in range(0, len(pending_dataset_ids), dataset_parallelism):
+                batch = pending_dataset_ids[offset : offset + dataset_parallelism]
+                divisor = len(batch)
+                status["active_model_id"] = model_id
+                status["active_dataset_ids"] = batch
+                v8.write_json(status_path, status)
+                print(
+                    f"{model_id}: concurrent dataset batch "
+                    f"{offset // dataset_parallelism + 1}, "
+                    f"datasets={batch}, concurrency_divisor={divisor}",
+                    flush=True,
+                )
+                with ThreadPoolExecutor(max_workers=divisor) as executor:
+                    futures = {
+                        executor.submit(
+                            _run_model_dataset,
+                            args,
+                            dataset_id=dataset_id,
+                            model_id=model_id,
+                            request_concurrency_divisor=divisor,
+                        ): dataset_id
+                        for dataset_id in batch
+                    }
+                    for future in as_completed(futures):
+                        future.result()
+                        record_completed(futures[future])
+            _unload_accelerator_models(list(args.endpoints), args.api_prefix)
+
+        # Rebuild each dataset-level merged predictions file and manifest with
+        # all models after the model-major child runs have completed.
+        for dataset_id in dataset_ids:
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    *_single_dataset_child_arguments(
+                        args,
+                        dataset_id=dataset_id,
+                        models=list(args.models),
+                        keep_loaded=False,
+                    ),
+                ],
+                cwd=v8.REPO_ROOT,
+                check=True,
+            )
+    except Exception as error:
+        status.update(
+            {
+                "state": "failed",
+                "finished_at": v8.utc_now(),
+                "error": f"{type(error).__name__}: {error}",
+            }
+        )
+        v8.write_json(status_path, status)
+        _unload_accelerator_models(list(args.endpoints), args.api_prefix)
+        raise
+
+    status.update(
+        {
+            "state": "complete",
+            "finished_at": v8.utc_now(),
+            "active_model_id": None,
+            "active_dataset_id": None,
+        }
+    )
+    v8.write_json(status_path, status)
+    return 0
+
+
 def main() -> int:
     args = parse_args()
+    if args.dataset_ids:
+        return run_model_major_controller(args)
     if len(set(args.models)) != len(args.models):
         raise ValueError("model ids must be unique")
-    missing_configs = sorted(
-        set(args.models) - set(MODEL_EXECUTION_CONFIG)
+    endpoint_presets = endpoint_presets_with_defaults(
+        list(args.endpoints),
+        list(args.endpoint_preset),
     )
+    endpoint_profiles = build_endpoint_profiles(
+        list(args.endpoints),
+        default_devices=args.devices,
+        endpoint_presets=endpoint_presets,
+        endpoint_devices=list(args.endpoint_devices),
+        endpoint_capacities=list(args.endpoint_capacity),
+        endpoint_concurrency_scales=list(args.endpoint_concurrency_scale),
+        endpoint_model_capacities=list(args.endpoint_model_capacity),
+        endpoint_model_concurrencies=list(args.endpoint_model_concurrency),
+    )
+    missing_configs = sorted(set(args.models) - set(MODEL_EXECUTION_CONFIG))
     if missing_configs:
         raise ValueError(
             "missing model execution configs: " + ", ".join(missing_configs)
@@ -651,12 +2269,8 @@ def main() -> int:
     dataset = v8.resolve_dataset(args.dataset_id)
     dataset_root = args.output_root.resolve() / dataset.dataset_id
     generation_dir = dataset_root / "02_generation"
-    shard_name = (
-        f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
-    )
-    generation_manifest_path = (
-        generation_dir / f"manifest__{shard_name}.json"
-    )
+    shard_name = f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
+    generation_manifest_path = generation_dir / f"manifest__{shard_name}.json"
     validation_path = generation_dir / f"validation__{shard_name}.json"
     validation = v8.read_json(validation_path)
     if not validation["accepted"]:
@@ -700,6 +2314,22 @@ def main() -> int:
         raise RuntimeError("no inference service is available")
     health_results.sort(key=lambda item: item[0])
     catalogs = dict(health_results)
+    if args.prepare_only:
+        for model_id in args.models:
+            _work_assignments, shard_manifest = plan_model_phase(
+                model_id,
+                health_results,
+                task_path=task_path,
+                inference_dir=inference_dir,
+                endpoint_profiles=endpoint_profiles,
+            )
+            print(
+                f"prepared {dataset.dataset_id}/{model_id}: "
+                f"{shard_manifest['source_task_row_count']} tasks, "
+                f"{shard_manifest['part_count']} endpoint shards",
+                flush=True,
+            )
+        return 0
     work_statuses: list[dict[str, Any]] = []
     model_phases: list[dict[str, Any]] = []
     expected_view_count = int(task_manifest["view_count"])
@@ -713,9 +2343,20 @@ def main() -> int:
             and canonical_path.exists()
             and engine.count_jsonl(canonical_path) == expected_view_count
         ):
+            compacted_count = compact_canonical_prediction_file(canonical_path)
+            if compacted_count != expected_view_count:
+                raise RuntimeError(
+                    f"compacted prediction count mismatch: "
+                    f"{compacted_count} != {expected_view_count}"
+                )
+            removed_bytes = cleanup_completed_model_intermediates(
+                inference_dir,
+                model_id,
+            )
             print(
                 f"model phase {phase_index + 1}/{len(args.models)} "
-                f"{model_id}: canonical prediction already complete",
+                f"{model_id}: canonical prediction already complete; "
+                f"cleaned={removed_bytes / (1024**2):.1f} MiB",
                 flush=True,
             )
             model_phases.append(
@@ -740,11 +2381,10 @@ def main() -> int:
             health_results,
             task_path=task_path,
             inference_dir=inference_dir,
+            endpoint_profiles=endpoint_profiles,
         )
         active_work = {
-            endpoint: items
-            for endpoint, items in work_assignments.items()
-            if items
+            endpoint: items for endpoint, items in work_assignments.items() if items
         }
         print(
             f"model phase {phase_index + 1}/{len(args.models)} "
@@ -761,6 +2401,7 @@ def main() -> int:
                     items,
                     catalogs[endpoint],
                     args=args,
+                    endpoint_profile=endpoint_profiles[endpoint],
                 ): endpoint
                 for endpoint, items in active_work.items()
             }
@@ -777,6 +2418,10 @@ def main() -> int:
                 "model_id": model_id,
                 "status": "complete" if consolidated else "incomplete",
                 "eligible_endpoints": sorted(active_work),
+                "endpoint_profiles": {
+                    endpoint: endpoint_profiles[endpoint].as_dict()
+                    for endpoint in sorted(active_work)
+                },
                 "part_count": int(shard_manifest["part_count"]),
                 "work_assignments": {
                     endpoint: [
@@ -793,34 +2438,69 @@ def main() -> int:
                 "shard_manifest": shard_manifest,
             }
         )
+    if args.keep_loaded_between_runs and len(args.models) == 1:
+        complete = all(
+            row.get("status") in {"complete", "already_complete"}
+            for row in model_phases
+        )
+        print(
+            v8.canonical_json(
+                {
+                    "complete": complete,
+                    "dataset_manifest_deferred": True,
+                    "output": str(inference_dir),
+                    "scheduling_policy": SCHEDULING_POLICY_ID,
+                }
+            )
+        )
+        return 0 if complete else 2
     statuses = aggregate_model_statuses(
         list(args.models),
         work_statuses,
         inference_dir=inference_dir,
         expected_view_count=expected_view_count,
     )
-    merged_path, prediction_count = merge_predictions(
-        inference_dir,
-        list(args.models),
-    )
+    stale_merged_path = inference_dir / "predictions.jsonl"
+    stale_merged_path.unlink(missing_ok=True)
+    prediction_files = []
+    prediction_count = 0
+    for model_id in args.models:
+        path = prediction_path_for(
+            model_root(inference_dir, model_id),
+            model_id,
+        )
+        if not path.is_file():
+            continue
+        prediction_files.append(
+            {
+                "model_id": model_id,
+                "row_count": expected_view_count,
+                **v8.file_record(path),
+            }
+        )
+        prediction_count += expected_view_count
     manifest = {
-        "schema_version": "paper_v8_inference_manifest.v2",
+        "schema_version": "paper_v8_inference_manifest.v3",
         "created_at": v8.utc_now(),
         "task_manifest_sha256": v8.file_sha256(task_manifest_path),
         "models": list(args.models),
         "available_endpoints": sorted(catalogs),
+        "endpoint_profiles": {
+            endpoint: endpoint_profiles[endpoint].as_dict()
+            for endpoint in sorted(catalogs)
+        },
         "scheduling": {
             "policy_id": SCHEDULING_POLICY_ID,
             "phase_order": list(args.models),
             "model_phases": model_phases,
         },
         "model_execution_config": {
-            model_id: dict(MODEL_EXECUTION_CONFIG[model_id])
-            for model_id in args.models
+            model_id: dict(MODEL_EXECUTION_CONFIG[model_id]) for model_id in args.models
         },
         "statuses": statuses,
         "predictions": {
-            **v8.file_record(merged_path),
+            "storage": "per_model_jsonl",
+            "files": prediction_files,
             "row_count": prediction_count,
         },
     }

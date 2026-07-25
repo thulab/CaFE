@@ -385,37 +385,59 @@ seed_start=32, seed_count=32
 
 状态：**已决定**
 
-v8 正式推理默认使用当前可用的两到三台服务：
+v8 正式推理默认使用三台双卡服务和一台 8 卡服务：
 
 ```text
 http://127.0.0.1:10810
 http://192.168.99.17:10811
 http://192.168.99.18:10810
+http://192.168.99.89:10810
 ```
+
+默认设备列表仍为 `0,1`。设备数只控制模型加载，不推导吞吐；
+89 通过默认 endpoint preset 启用下表的 8 卡配置。仍可用
+`--endpoint-model-capacity
+'ENDPOINT|MODEL=UNITS'` 按模型设置实测任务权重，用
+`--endpoint-model-concurrency 'ENDPOINT|MODEL=COUNT'` 设置实测绝对
+并发覆盖 preset。
+
+| model | replica/GPU | bulk batch | 双卡/8 卡 HTTP 并发 | 89 相对双卡权重 |
+|---|---:|---:|---:|---:|
+| Chronos-2 | 2 | 192 | 4 / 16 | 3.65 |
+| timesfm2.5 | 1 | 640 | 2 / 8 | 3.8 |
+| tirex2 | 1 | 512 | 2 / 8 | 3.0 |
+| moirai2 | 1 | 256 | 2 / 8 | 2.8 |
+| Timer-3.5 | 1 | 1024 | 2 / 8 | 2.4 |
+| toto2.0 | 2 | 4 | 4 / 16 | 3.0 |
+| tabpfn-ts3 | 8 | 8 | 16 / 64 | 4.0 |
+
+这些数值来自 H=48 的 bulk 请求实测，8 卡配置不能从双卡配置简单
+乘 4。请求端按 endpoint 权重生成一端一个大分片，并在一次扫描后
+将不同 context/shape 的同构 bulk 请求交错送入全局并发队列。
+模型只加载一次并连续跑完 19 个数据集；数据集可以并行，但每个
+子任务按并行数等比例降低 HTTP concurrency，使 endpoint 的全局
+in-flight 保持上表数值。
 
 运行前进行简单健康检查，只将可用服务加入本次调度。正式调度改为按模型分阶段：
 
-1. 三台兼容服务在同一阶段都加载同一个模型，每台使用两张卡；
-2. 每个模型的完整任务按 `policy_id × model_id × sample_id` 稳定哈希为三个 part，三台服务各处理一个 part；
-3. 三个 part 全部完成、样本 ID 完整覆盖且无重复后，才生成该模型的 canonical prediction；
-4. 三台服务全部卸载当前模型，再共同进入声明顺序中的下一个模型；
+1. 所有兼容服务在同一阶段都加载同一个模型，每台使用其 endpoint profile 声明的设备；
+2. 每个模型的完整任务按 `policy_id × model_id × sample_id` 稳定哈希为容量 part，再按 endpoint 容量比例分配；
+3. 所有 part 完成、样本 ID 完整覆盖且无重复后，才生成该模型的 canonical prediction；
+4. 所有服务全部卸载当前模型，再共同进入声明顺序中的下一个模型；
 5. 单个服务内部继续按 context、horizon、目标/协变量维度和输入适配计划分 bucket，复用持久 HTTP 连接。
 
 horizon 固定为 48、服务固定为双 RTX 5090 后，模型执行配置更新为：
 
-| model | replicas/device | HTTP concurrency |
-|---|---:|---:|
-| Timer-3.5 | 1 | 512 |
-| Chronos-2 | 4 | 384 |
-| moirai2 | 1 | 384 |
-| toto2.0 | 3 | 36 |
-| timesfm2.5 | 8 | 32 |
-| tirex2 | 1 | 32 |
-| tabpfn-ts3 | 8 | 48 |
-
-上述 concurrency 是每台双卡服务的全局 HTTP 并发，不是每卡值。Timer REST 的 `/forecast` 对一个 body 中的多个 targets 顺序执行，因此正式 v8 当前仍保持每 HTTP 一个 original view；并发来自多个独立 HTTP 请求，不把 request-body 打包误写为 GPU 并行。
+模型执行配置使用上表的 bulk batch 和 endpoint 全局 HTTP 并发。
+请求通过 `/forecast/bulk` 发送，同一个 HTTP 只包含同构 shape，
+不同 context 组在全局队列中交错调度。
 
 每个 part 使用独立任务、预测、失败和状态文件，禁止并发写同一文件。`--resume` 时：
+
+canonical prediction 校验完整后立即删除该模型的 endpoint 任务分片
+和 part prediction，只保留 endpoint 状态与加载时间。预测行不重复
+保存任务真值和可重算指标，最终 inference manifest 直接索引各模型
+canonical 文件，不再生成一份顶层 merged prediction。
 
 - 已完成 canonical prediction 的模型整阶段跳过；
 - 未完成模型复用首次建立的 part manifest 和 part 内 append-only 成功结果；
@@ -771,3 +793,4 @@ v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
 - 2026-07-25：Toto 2.0 每卡 3 副本在三台双卡服务上同时加载失败；本机内核记录到系统内存 OOM，单个加载进程被杀时常驻内存约 9.4 GB。Timer 服务改为按副本波次加载（每波每卡至多一个新 worker，全部 ready 后进入下一波），把一次性加载峰值从 6 个降到 2 个，同时保留 3 副本/卡稳态。相同 120 个 v8 H48 视图实测从 2 副本/卡、并发 16 的 4.56 秒降到 3 副本/卡、并发 36 的 3.33 秒，吞吐提高约 37%，且 120/120 成功。
 - 2026-07-25：校准和生成新增按 capability 的多进程准备执行，16 核机器默认 8 workers、每进程 1 个 BLAS 线程；按冻结能力顺序合并，worker 数不进入科学协议。KDD 完整链路实测校准约 4.65×、生成约 4.96× 加速，64-seed gate 全部通过。
 - 2026-07-25：LOOP_SEATTLE 暴露 `nonlinear_conditional_gain` 绝对值约 `4e-4`、真实/合成范围不相交且随注入系数局部折返。nonlinear 主剂量因此改为生成器已知的 `nonlinear_strength`；observable 与 actual-lag adjusted-R² 均降为非单调诊断，且不再反向控制 gain/lag。进一步的工作区审计发现旧 shifted-tanh 在高强度时进入单侧饱和，I5 的动态非线性贡献反而下降；primary/secondary 因此替换为两种零中心有界二次响应并共享同一系数剂量。原有 nonlinear 64/128 path 特例随之删除，所有能力统一使用 32 条 formal paths，只有硬失败才扩到 64/96。
+- 2026-07-25：推理 endpoint 增加异构设备与按模型性能 profile；设备数只决定模型加载，绝不自动放大任务份额或 HTTP 并发。89 的已测模型使用绝对并发和显式任务权重；服务集合变化时按当前可用 endpoint 重新生成一端一片的加权 manifest。

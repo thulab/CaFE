@@ -12,16 +12,15 @@ from typing import Any
 import paper_v8_pipeline_common as v8
 import run_paper_v8_inference as v8_inference
 
-
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 DEFAULT_MODELS = (
     "Chronos-2",
-    "toto2.0",
     "timesfm2.5",
-    "tabpfn-ts3",
     "tirex2",
     "moirai2",
     "Timer-3.5",
+    "toto2.0",
+    "tabpfn-ts3",
 )
 STEPS = ("calibration", "generation", "validation", "inference", "analysis")
 
@@ -92,12 +91,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--endpoints",
         nargs="+",
-        default=[
-            "http://127.0.0.1:10810",
-            "http://192.168.99.17:10811",
-            "http://192.168.99.18:10810",
-        ],
+        default=list(v8_inference.DEFAULT_ENDPOINTS),
     )
+    v8_inference.add_endpoint_topology_arguments(parser)
     parser.add_argument("--start-at", choices=STEPS, default="calibration")
     parser.add_argument("--stop-after", choices=STEPS, default="analysis")
     parser.add_argument("--resume-inference", action="store_true")
@@ -123,9 +119,7 @@ def run(script: str, arguments: list[str]) -> None:
 def requested_dataset_ids(args: argparse.Namespace) -> list[str]:
     if args.dataset_id and args.dataset_ids:
         raise ValueError("use either --dataset-id or --dataset-ids, not both")
-    values = list(
-        args.dataset_ids or args.dataset_id or ["gift_electricity_h"]
-    )
+    values = list(args.dataset_ids or args.dataset_id or ["gift_electricity_h"])
     if len(values) != len(set(values)):
         raise ValueError("v8 dataset ids must be unique")
     for dataset_id in values:
@@ -194,6 +188,7 @@ def commands_for_dataset(
                 *args.models,
                 "--endpoints",
                 *args.endpoints,
+                *v8_inference.endpoint_topology_cli_arguments(args),
                 *(["--resume"] if args.resume_inference else []),
             ],
         ),
@@ -226,8 +221,7 @@ def protocol_config(
         "calibration_seeds": int(args.calibration_seeds),
         "max_calibration_seeds": int(args.max_calibration_seeds),
         "calibration_path_policy": (
-            "formal_generation_seed_bank_"
-            "fixed_base_hard_failure_only_expansion_v2"
+            "formal_generation_seed_bank_" "fixed_base_hard_failure_only_expansion_v2"
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
@@ -262,13 +256,9 @@ def default_experiment_id(
     *,
     now: datetime | None = None,
 ) -> str:
-    timestamp = (now or datetime.now(timezone.utc)).strftime(
-        "%Y%m%dT%H%M%SZ"
-    )
+    timestamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     generator_tag = v8.safe_id(v8.GENERATOR_VERSION)
-    return (
-        f"v8_{generator_tag}_{protocol_sha256[:12]}_{timestamp}"
-    )
+    return f"v8_{generator_tag}_{protocol_sha256[:12]}_{timestamp}"
 
 
 def code_provenance() -> dict[str, Any]:
@@ -295,12 +285,11 @@ def initialize_experiment(
     experiment_id: str,
     protocol: dict[str, Any],
     endpoints: list[str],
+    endpoint_profiles: dict[str, dict[str, Any]] | None = None,
     allow_inference_execution_upgrade: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     if v8.safe_id(experiment_id) != experiment_id:
-        raise ValueError(
-            "experiment-id may contain only letters, digits, '_' and '-'"
-        )
+        raise ValueError("experiment-id may contain only letters, digits, '_' and '-'")
     experiment_root = storage_root.resolve() / experiment_id
     manifest_path = experiment_root / "experiment_manifest.json"
     protocol_sha256 = v8.json_sha256(protocol)
@@ -312,6 +301,7 @@ def initialize_experiment(
         "protocol": protocol,
         "execution_environment": {
             "requested_endpoints": list(endpoints),
+            "requested_endpoint_profiles": endpoint_profiles,
             **code_provenance(),
         },
         "storage": {
@@ -377,14 +367,10 @@ def upgrade_inference_execution_policy(
         "model_scheduling_policy",
     }
     old_identity = {
-        key: value
-        for key, value in old_protocol.items()
-        if key not in execution_keys
+        key: value for key, value in old_protocol.items() if key not in execution_keys
     }
     new_identity = {
-        key: value
-        for key, value in protocol.items()
-        if key not in execution_keys
+        key: value for key, value in protocol.items() if key not in execution_keys
     }
     if old_identity != new_identity:
         raise ValueError(
@@ -402,8 +388,7 @@ def upgrade_inference_execution_policy(
             if (
                 active_step not in preparation_steps
                 or stop_after not in preparation_steps
-                or status.get("protocol_sha256")
-                != existing.get("protocol_sha256")
+                or status.get("protocol_sha256") != existing.get("protocol_sha256")
             ):
                 raise ValueError(
                     "active pipeline may enter inference or does not match "
@@ -411,9 +396,7 @@ def upgrade_inference_execution_policy(
                     "inference execution policy"
                 )
     inference_files = [
-        path
-        for path in experiment_root.glob("*/03_inference/**/*")
-        if path.is_file()
+        path for path in experiment_root.glob("*/03_inference/**/*") if path.is_file()
     ]
     if inference_files:
         raise ValueError(
@@ -486,6 +469,20 @@ def main() -> int:
         raise ValueError("model ids must be unique")
     if len(args.endpoints) != len(set(args.endpoints)):
         raise ValueError("inference endpoints must be unique")
+    endpoint_presets = v8_inference.endpoint_presets_with_defaults(
+        list(args.endpoints),
+        list(args.endpoint_preset),
+    )
+    endpoint_profiles = v8_inference.build_endpoint_profiles(
+        list(args.endpoints),
+        default_devices=args.devices,
+        endpoint_presets=endpoint_presets,
+        endpoint_devices=list(args.endpoint_devices),
+        endpoint_capacities=list(args.endpoint_capacity),
+        endpoint_concurrency_scales=list(args.endpoint_concurrency_scale),
+        endpoint_model_capacities=list(args.endpoint_model_capacity),
+        endpoint_model_concurrencies=list(args.endpoint_model_concurrency),
+    )
     if args.seed_start < 0 or args.seed_count < 1:
         raise ValueError("seed_start must be non-negative and seed_count positive")
     if args.preparation_workers < 1:
@@ -505,17 +502,17 @@ def main() -> int:
         raise ValueError("stop-after must not precede start-at")
     protocol = protocol_config(args, dataset_ids)
     protocol_sha256 = v8.json_sha256(protocol)
-    experiment_id = args.experiment_id or default_experiment_id(
-        protocol_sha256
-    )
+    experiment_id = args.experiment_id or default_experiment_id(protocol_sha256)
     experiment_root, manifest = initialize_experiment(
         storage_root=args.output_root,
         experiment_id=experiment_id,
         protocol=protocol,
         endpoints=list(args.endpoints),
-        allow_inference_execution_upgrade=(
-            args.upgrade_inference_execution_policy
-        ),
+        endpoint_profiles={
+            endpoint: profile.as_dict()
+            for endpoint, profile in endpoint_profiles.items()
+        },
+        allow_inference_execution_upgrade=(args.upgrade_inference_execution_policy),
     )
     completed: list[dict[str, Any]] = []
     write_pipeline_status(
