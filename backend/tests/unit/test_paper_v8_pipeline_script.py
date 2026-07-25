@@ -499,6 +499,52 @@ def test_multi_dataset_pipeline_accepts_explicit_dataset_list():
     ]
 
 
+def test_pipeline_routes_multi_dataset_inference_through_model_major_controller(
+    tmp_path,
+):
+    pipeline = load_script("run_paper_v8_pipeline")
+    args = SimpleNamespace(
+        seed_start=0,
+        seed_count=64,
+        models=["Chronos-2", "toto2.0"],
+        endpoints=[
+            "http://127.0.0.1:10810",
+            "http://192.168.99.89:10810",
+        ],
+        devices="0,1",
+        endpoint_preset=[
+            "http://192.168.99.89:10810=rtx5090x8-h48-b1-v1"
+        ],
+        endpoint_devices=[],
+        endpoint_capacity=[],
+        endpoint_concurrency_scale=[],
+        endpoint_model_capacity=[],
+        endpoint_model_concurrency=[],
+        inference_preprocess_workers=16,
+        resume_inference=True,
+    )
+
+    arguments = pipeline.model_major_inference_arguments(
+        args,
+        ["gift_electricity_h", "gift_solar_h"],
+        experiment_root=tmp_path,
+    )
+
+    assert "--dataset-id" not in arguments
+    dataset_option = arguments.index("--dataset-ids")
+    assert arguments[dataset_option + 1 : dataset_option + 3] == [
+        "gift_electricity_h",
+        "gift_solar_h",
+    ]
+    preprocess_option = arguments.index("--preprocess-workers")
+    assert arguments[preprocess_option + 1] == "16"
+    assert "--resume" in arguments
+    assert (
+        "http://192.168.99.89:10810=rtx5090x8-h48-b1-v1"
+        in arguments
+    )
+
+
 def test_experiment_manifest_is_identity_scoped_and_immutable(tmp_path):
     pipeline = load_script("run_paper_v8_pipeline")
     protocol = {
@@ -2006,6 +2052,22 @@ def test_timepfn_profile_prioritizes_fast_loading_and_large_bulk_requests():
     assert inference.DEFAULT_MODELS[-1] == "toto2.0"
     assert "TimePFN" not in inference.DEFAULT_MODELS
     assert "tabpfn-ts3" not in inference.DEFAULT_MODELS
+
+
+def test_formal_models_use_bounded_model_major_dataset_parallelism():
+    inference = load_script("run_paper_v8_inference")
+
+    assert {
+        model_id: inference.MODEL_MAJOR_DATASET_PARALLELISM[model_id]
+        for model_id in inference.DEFAULT_MODELS
+    } == {
+        "Chronos-2": 4,
+        "timesfm2.5": 2,
+        "tirex2": 2,
+        "moirai2": 2,
+        "Timer-3.5": 2,
+        "toto2.0": 4,
+    }
 
 
 def test_default_topology_contains_three_dual_card_services_and_eight_card():

@@ -2401,11 +2401,27 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
     status_path = args.output_root.resolve() / "model_major_inference_status.json"
     completed: list[dict[str, Any]] = []
     status = {
-        "schema_version": "paper_v8_model_major_inference_status.v1",
+        "schema_version": "paper_v8_model_major_inference_status.v2",
         "started_at": v8.utc_now(),
         "state": "running",
         "dataset_ids": dataset_ids,
         "models": list(args.models),
+        "execution": {
+            "preprocess_workers": int(args.preprocess_workers),
+            "dataset_parallelism_by_model": {
+                model_id: int(
+                    MODEL_MAJOR_DATASET_PARALLELISM.get(model_id, 1)
+                )
+                for model_id in args.models
+            },
+            "request_concurrency_policy": (
+                "divide_each_endpoint_model_http_concurrency_by_the_number_"
+                "of_concurrent_datasets"
+            ),
+            "first_pending_dataset_role": (
+                "load_once_before_concurrent_dataset_batches"
+            ),
+        },
         "completed": completed,
     }
     v8.write_json(status_path, status)
@@ -2561,6 +2577,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
             "finished_at": v8.utc_now(),
             "active_model_id": None,
             "active_dataset_id": None,
+            "active_dataset_ids": [],
         }
     )
     v8.write_json(status_path, status)

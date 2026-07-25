@@ -71,6 +71,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--inference-preprocess-workers",
+        type=int,
+        default=min(16, os.cpu_count() or 1),
+        help=(
+            "CPU workers that prepare per-model dataset tasks before the "
+            "model-major inference phases."
+        ),
+    )
+    parser.add_argument(
         "--calibration-seeds",
         type=int,
         default=v8.DEFAULT_CALIBRATION_PATH_COUNT,
@@ -263,6 +272,32 @@ def commands_for_dataset(
             [*common, *seed, "--models", *args.models],
         ),
     }
+
+
+def model_major_inference_arguments(
+    args: argparse.Namespace,
+    dataset_ids: list[str],
+    *,
+    experiment_root: Path,
+) -> list[str]:
+    return [
+        "--dataset-ids",
+        *dataset_ids,
+        "--output-root",
+        str(experiment_root),
+        "--seed-start",
+        str(args.seed_start),
+        "--seed-count",
+        str(args.seed_count),
+        "--models",
+        *args.models,
+        "--endpoints",
+        *args.endpoints,
+        *v8_inference.endpoint_topology_cli_arguments(args),
+        "--preprocess-workers",
+        str(args.inference_preprocess_workers),
+        *(["--resume"] if args.resume_inference else []),
+    ]
 
 
 def protocol_config(
@@ -811,6 +846,8 @@ def main() -> int:
         raise ValueError("seed_start must be non-negative and seed_count positive")
     if args.preparation_workers < 1:
         raise ValueError("preparation_workers must be positive")
+    if args.inference_preprocess_workers < 1:
+        raise ValueError("inference_preprocess_workers must be positive")
     if (
         args.max_anchors < 1
         or args.calibration_seeds < 1
@@ -908,18 +945,29 @@ def main() -> int:
         return 0
 
     active_dataset_id: str | None = None
+    active_dataset_ids: list[str] | None = None
     active_step: str | None = None
+    completed_steps_by_dataset: dict[str, list[str]] = {
+        dataset_id: [] for dataset_id in dataset_ids
+    }
+
+    def completed_records() -> list[dict[str, Any]]:
+        return [
+            {
+                "dataset_id": dataset_id,
+                "steps": list(completed_steps_by_dataset[dataset_id]),
+                "output_dir": str(experiment_root / dataset_id),
+            }
+            for dataset_id in dataset_ids
+            if completed_steps_by_dataset[dataset_id]
+        ]
+
     try:
-        for dataset_id in dataset_ids:
-            active_dataset_id = dataset_id
-            commands = commands_for_dataset(
-                args,
-                dataset_id,
-                experiment_root=experiment_root,
-            )
-            completed_steps: list[str] = []
-            for step in STEPS[start : stop + 1]:
-                active_step = step
+        for step in STEPS[start : stop + 1]:
+            active_step = step
+            if step == "inference":
+                active_dataset_id = None
+                active_dataset_ids = list(dataset_ids)
                 write_pipeline_status(
                     experiment_root,
                     experiment_id=experiment_id,
@@ -927,20 +975,45 @@ def main() -> int:
                     state="running",
                     start_at=args.start_at,
                     stop_after=args.stop_after,
-                    completed=completed,
+                    completed=completed_records(),
+                    active_dataset_ids=active_dataset_ids,
+                    active_step=step,
+                )
+                run(
+                    "run_paper_v8_inference.py",
+                    model_major_inference_arguments(
+                        args,
+                        dataset_ids,
+                        experiment_root=experiment_root,
+                    ),
+                )
+                for dataset_id in dataset_ids:
+                    completed_steps_by_dataset[dataset_id].append(step)
+                active_dataset_ids = None
+                continue
+
+            for dataset_id in dataset_ids:
+                active_dataset_id = dataset_id
+                active_dataset_ids = None
+                write_pipeline_status(
+                    experiment_root,
+                    experiment_id=experiment_id,
+                    protocol_sha256=manifest["protocol_sha256"],
+                    state="running",
+                    start_at=args.start_at,
+                    stop_after=args.stop_after,
+                    completed=completed_records(),
                     active_dataset_id=dataset_id,
                     active_step=step,
                 )
+                commands = commands_for_dataset(
+                    args,
+                    dataset_id,
+                    experiment_root=experiment_root,
+                )
                 script, arguments = commands[step]
                 run(script, arguments)
-                completed_steps.append(step)
-            completed.append(
-                {
-                    "dataset_id": dataset_id,
-                    "steps": completed_steps,
-                    "output_dir": str(experiment_root / dataset_id),
-                }
-            )
+                completed_steps_by_dataset[dataset_id].append(step)
     except Exception as error:
         write_pipeline_status(
             experiment_root,
@@ -949,12 +1022,14 @@ def main() -> int:
             state="failed",
             start_at=args.start_at,
             stop_after=args.stop_after,
-            completed=completed,
+            completed=completed_records(),
             active_dataset_id=active_dataset_id,
+            active_dataset_ids=active_dataset_ids,
             active_step=active_step,
             error=f"{type(error).__name__}: {error}",
         )
         raise
+    completed = completed_records()
     write_pipeline_status(
         experiment_root,
         experiment_id=experiment_id,

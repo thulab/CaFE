@@ -331,9 +331,17 @@ sample/model 覆盖再合并。`--resume` 只跳过已验证成功任务；非 r
 当前 inference shard，禁止静默复用同 ID 的旧预测。设备、endpoint 和并发属于
 执行 provenance，不改变科学协议。
 
+多数据集推理默认使用 `--dataset-ids` 的 model-major controller：一个模型只
+加载一次并跑完全部数据集，再切换到下一个模型。任务预处理默认使用 16 个 CPU
+worker；Chronos-2/Toto 2.0 同时跑 4 个数据集，TimesFM 2.5/TiRex2/Moirai2/
+Timer 3.5 同时跑 2 个。并发数据集共享同一 endpoint 时，各子任务的 HTTP
+concurrency 按活跃数据集数等分，维持既定服务总并发上限。上述数值属于执行
+参数并写入 model-major status，不改变实验协议。
+
 校准、生成和回验允许按数据集并发；推荐在 16 核机器上使用 4 个数据集 job，
-每个 job 4 个 capability worker。推理仍按声明的数据集顺序逐数据集完成，便于
-按数据集下载和校验。并发度只写入 execution provenance，不改变科学协议。
+每个 job 4 个 capability worker。推理在每个模型阶段内按声明顺序组成确定性
+数据集 batch；某个数据集的六模型都完成后即可独立下载和校验。并发度只写入
+execution provenance，不改变科学协议。
 
 ## 分析与报告
 
