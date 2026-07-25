@@ -27,6 +27,20 @@ def load_common():
     return module
 
 
+def test_v8_common_uses_lightweight_normalization_module():
+    common = load_common()
+
+    assert common.standardize_by_context.__module__ == (
+        "app.services.synthetic_normalization"
+    )
+    assert common.standardize_hierarchy_by_context.__module__ == (
+        "app.services.synthetic_normalization"
+    )
+    assert common.normalize_covariates.__module__ == (
+        "app.services.synthetic_normalization"
+    )
+
+
 def test_response_curve_uses_independent_qualification_anchor_bank(
     monkeypatch,
 ):

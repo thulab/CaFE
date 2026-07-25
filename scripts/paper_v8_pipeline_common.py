@@ -21,10 +21,10 @@ for import_path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
         os.sys.path.insert(0, str(import_path))
 
 from app.services.metric_service import seasonal_period_for_frequency  # noqa: E402
-from app.services.synthetic_generation_service import (  # noqa: E402
-    _normalize_covariates,
-    _standardize_by_context,
-    _standardize_hierarchy_by_context,
+from app.services.synthetic_normalization import (  # noqa: E402
+    normalize_covariates,
+    standardize_by_context,
+    standardize_hierarchy_by_context,
 )
 from app.services.synthetic_generator_conditioning import (  # noqa: E402
     GeneratorConditioning,
@@ -1357,11 +1357,11 @@ def standardize_generated_sample(
         )
         metadata["counterfactual_standardization"] = normalization
     elif capability_id == "hierarchical_coherence":
-        target = _standardize_hierarchy_by_context(target, CONTEXT_LENGTH)
+        target = standardize_hierarchy_by_context(target, CONTEXT_LENGTH)
     else:
-        target = _standardize_by_context(target, CONTEXT_LENGTH)
+        target = standardize_by_context(target, CONTEXT_LENGTH)
     if covariates is not None:
-        covariates = _normalize_covariates(covariates, CONTEXT_LENGTH)
+        covariates = normalize_covariates(covariates, CONTEXT_LENGTH)
     return np.asarray(target, dtype=float), (
         None if covariates is None else np.asarray(covariates, dtype=float)
     )

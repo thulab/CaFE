@@ -64,21 +64,24 @@ the synthetic mechanism ranking.
 Python uses 4-space indentation, type hints, and snake_case names. Keep changes
 inside v8 files unless a shared helper must be corrected.
 
-All Paper v8 Python scripts import backend packages and must run in the
-`backend/` uv project, which owns the required dependencies. Always use:
+Paper v8 scripts use lightweight research modules and must not depend on the
+database, API, or persistence service import graph. The repository has no
+root Python project, so use the backend uv project only as the dependency
+environment while keeping the working directory at the repository root:
 
 ```bash
-cd backend
-uv run python ../scripts/calibrate_paper_v8.py ...
-uv run python ../scripts/generate_paper_v8_samples.py ...
-uv run python ../scripts/validate_paper_v8_samples.py ...
-uv run python ../scripts/run_paper_v8_pipeline.py ...
+uv run --project backend python scripts/calibrate_paper_v8.py ...
+uv run --project backend python scripts/generate_paper_v8_samples.py ...
+uv run --project backend python scripts/validate_paper_v8_samples.py ...
+uv run --project backend python scripts/run_paper_v8_pipeline.py ...
 ```
 
-Do not run `uv run python scripts/...` from the repository root: the root is
-not the backend uv project and may fail on packages such as `sqlmodel`.
+If a Paper v8 script unexpectedly requires `sqlmodel`, a database session, or
+an application store merely to import, treat that as a layering bug and
+remove the dependency instead of changing the execution environment.
 
-Run focused tests first, for example:
+Backend pytest still uses the backend uv project. Run focused tests first, for
+example:
 
 ```bash
 cd backend
