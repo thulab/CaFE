@@ -192,6 +192,15 @@ def test_context_restandardization_uses_only_visible_history() -> None:
     assert actual == [[3.0], [5.0]]
 
 
+def test_v8_prediction_metrics_reject_target_dimension_mismatch() -> None:
+    with pytest.raises(ValueError, match="target dimension mismatch"):
+        explorer._prediction_metrics(
+            actual=[[1.0, 2.0]],
+            forecast=[[1.0]],
+            mase_scale=1.0,
+        )
+
+
 def test_http_api_and_static_page(indexed_fixture: tuple[Path, Path]) -> None:
     data_dir, index_path = indexed_fixture
     reader = explorer.SampleExplorer(data_dir, index_path)
@@ -214,3 +223,241 @@ def test_http_api_and_static_page(indexed_fixture: tuple[Path, Path]) -> None:
     assert metadata["index"]["groupCount"] == 1
     assert "TS Lens" in page
     assert "default-src 'self'" in content_security_policy
+
+
+@pytest.fixture()
+def v8_indexed_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, dict]:
+    data_dir = tmp_path / "v8_formal_fixture"
+    dataset_id = "gift_fixture_h"
+    shard_name = "seed_000000_000001"
+    inference_dir = data_dir / dataset_id / "03_inference" / shard_name
+    tasks: list[dict] = []
+
+    def add_group(
+        capability_id: str,
+        *,
+        member: int | None = None,
+    ) -> None:
+        paired_group = (
+            f"v8__{dataset_id}__{capability_id}__primary__seed000000"
+        )
+        for intensity in range(1, 6):
+            member_suffix = f"__m{member}" if member is not None else ""
+            master_id = (
+                f"v8__{dataset_id}__{capability_id}__primary__"
+                f"i{intensity}__seed000000{member_suffix}"
+            )
+            for context in (2, 4):
+                target = [
+                    [float(intensity + offset), float(2 * intensity + offset)]
+                    for offset in range(context + 2)
+                ]
+                tasks.append(
+                    {
+                        "capability_id": capability_id,
+                        "context_length": context,
+                        "counterfactual_member": member,
+                        "dataset_id": dataset_id,
+                        "evaluation_table": "main",
+                        "frequency": "H",
+                        "generator_family_role": "primary",
+                        "horizon": 2,
+                        "intensity": intensity,
+                        "mase_scale": 2.0,
+                        "master_sample_id": master_id,
+                        "paired_group_id": paired_group,
+                        "realized_features": {
+                            "feature_a": intensity + context / 10
+                        },
+                        "sample_id": f"{master_id}__L{context}",
+                        "season_length": 2,
+                        "seed_index": 0,
+                        "target": target,
+                        "target_dim": 2,
+                        "target_feature": "feature_a",
+                        "target_feature_value": intensity + context / 10,
+                    }
+                )
+
+    add_group("trend")
+    add_group("covariate_response", member=0)
+    add_group("covariate_response", member=1)
+    tasks.extend(
+        [
+            {
+                **tasks[0],
+                "evaluation_table": "observation_noise_robustness",
+                "sample_id": "ignored-robustness__L2",
+                "master_sample_id": "ignored-robustness",
+            },
+            {
+                **tasks[0],
+                "generator_family_role": "secondary",
+                "sample_id": "ignored-secondary__L2",
+                "master_sample_id": "ignored-secondary",
+            },
+        ]
+    )
+    task_path = inference_dir / "forecast_views.jsonl"
+    write_jsonl(task_path, tasks)
+    (inference_dir / "task_manifest.json").write_text(
+        json.dumps({"task_file": {"path": str(task_path)}}),
+        encoding="utf-8",
+    )
+
+    prediction_descriptors = []
+    for model_id, adjustment in (("model-a", 0.25), ("model-b", 0.5)):
+        prediction_path = (
+            inference_dir
+            / "model_shards"
+            / model_id
+            / "predictions"
+            / f"{model_id}.jsonl"
+        )
+        predictions = []
+        for task in tasks:
+            actual = task["target"][task["context_length"] :]
+            predictions.append(
+                {
+                    "forecast": [
+                        [value + adjustment for value in row] for row in actual
+                    ],
+                    "input_adaptation": {
+                        "target_mode": "native_multivariate"
+                    },
+                    "model_id": model_id,
+                    "sample_id": task["sample_id"],
+                }
+            )
+        write_jsonl(prediction_path, list(reversed(predictions)))
+        prediction_descriptors.append(
+            {"model_id": model_id, "path": str(prediction_path)}
+        )
+    (inference_dir / "inference_manifest.json").write_text(
+        json.dumps(
+            {
+                "complete": True,
+                "models": ["model-a", "model-b"],
+                "predictions": {"files": prediction_descriptors},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    score_dir = data_dir / dataset_id / "04_analysis" / shard_name
+    score_dir.mkdir(parents=True)
+    score_rows = []
+    for capability_id in ("trend", "covariate_response"):
+        for rank, (model_id, score) in enumerate(
+            (("model-a", 0.25), ("model-b", 0.5)), start=1
+        ):
+            score_rows.append(
+                {
+                    "accuracy_rank": rank,
+                    "accuracy_score": score,
+                    "capability_id": capability_id,
+                    "context_policy": "oracle_context",
+                    "evaluation_table": "main",
+                    "generator_family_role": "primary",
+                    "intensities": [1, 2, 3, 4, 5],
+                    "model_id": model_id,
+                    "seed_count": 1,
+                }
+            )
+    (score_dir / "scores.json").write_text(
+        json.dumps({"scores": score_rows}), encoding="utf-8"
+    )
+    (data_dir / "distributed_analysis_manifest.json").write_text(
+        json.dumps(
+            {
+                "datasets": [{"dataset_id": dataset_id}],
+                "seed_count": 1,
+                "seed_start": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    index_path = data_dir / "index.sqlite3"
+    artifacts = explorer.ensure_v8_index(
+        data_dir,
+        index_path,
+        progress=lambda _message: None,
+    )
+    return data_dir, index_path, artifacts
+
+
+def test_v8_index_filters_main_primary_and_separates_members(
+    v8_indexed_fixture: tuple[Path, Path, dict],
+) -> None:
+    data_dir, index_path, artifacts = v8_indexed_fixture
+    reader = explorer.V8SampleExplorer(data_dir, index_path, artifacts)
+    try:
+        metadata = reader.meta()
+        assert metadata["experiment"] == {
+            "version": "v8",
+            "id": "v8_formal_fixture",
+            "shard": "seed_000000_000001",
+            "sampleScope": "main/primary/clean",
+        }
+        assert metadata["index"] == {
+            "builtAt": metadata["index"]["builtAt"],
+            "sampleCount": 15,
+            "groupCount": 3,
+            "predictionCount": 60,
+            "groupUnit": "seed groups",
+        }
+        assert metadata["contexts"] == [2, 4]
+        assert [model["id"] for model in metadata["models"]] == [
+            "model-a",
+            "model-b",
+        ]
+
+        covariate_groups = reader.groups(
+            "gift_fixture_h", "covariate_response"
+        )
+        assert [row["counterfactualMember"] for row in covariate_groups] == [
+            0,
+            1,
+        ]
+        trend_group = reader.groups("gift_fixture_h", "trend")[0]
+        payload = reader.sample(trend_group["id"], 4)
+    finally:
+        reader.close()
+
+    assert [row["intensity"] for row in payload["intensities"]] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
+    first = payload["intensities"][0]
+    assert len(first["history"]) == 4
+    assert len(first["actual"]) == 2
+    assert first["targetStrength"] == pytest.approx(1.4)
+    assert first["realizedFeature"] == pytest.approx(1.4)
+    assert first["models"]["model-a"]["metrics"] == {
+        "mae": pytest.approx(0.25),
+        "mase": pytest.approx(0.125),
+    }
+    assert payload["missingPredictions"] == []
+    assert payload["oracleContextRanking"]["best"]["modelId"] == "model-a"
+
+
+def test_default_v8_parent_resolves_newest_completed_experiment(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "v8"
+    older = parent / "older"
+    newer = parent / "newer"
+    older.mkdir(parents=True)
+    newer.mkdir()
+    (older / "model_major_inference_status.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (newer / "distributed_analysis_manifest.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    assert explorer.resolve_data_dir(parent) == newer.resolve()

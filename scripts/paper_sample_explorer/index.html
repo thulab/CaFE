@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="dark">
-    <meta name="description" content="Paper v7 合成时序样本与多模型推理结果浏览器">
+    <meta name="description" content="Paper v8 合成时序样本与多模型推理结果浏览器">
     <title>TS Lens · Synthetic Sample Explorer</title>
     <link rel="stylesheet" href="/styles.css">
   </head>
@@ -19,13 +19,13 @@
             </svg>
           </div>
           <div>
-            <p class="eyebrow">PAPER EXP · V7</p>
+            <p class="eyebrow" id="experiment-version">PAPER EXP · V8</p>
             <h1>TS Lens</h1>
           </div>
         </div>
         <div class="header-copy">
           <p class="header-title">合成样本推理观察台</p>
-          <p class="header-subtitle">同一随机种子的五档能力强度，叠加全部模型预测。</p>
+          <p class="header-subtitle" id="experiment-subtitle">同一随机种子的五档能力强度，叠加全部模型预测。</p>
         </div>
         <div class="index-status" id="index-status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
@@ -44,7 +44,7 @@
               <div class="best-model-callout" id="best-model-callout" hidden>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3h8v3a4 4 0 0 1-8 0V3Zm-3 1h3v2a4 4 0 0 1-3-2Zm14 0h-3v2a4 4 0 0 0 3-2ZM12 10v4m-3 4h6m-5-4h4l1 4H9l1-4Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <div>
-                  <span class="best-model-label">Oracle-context · 1,600 samples mean MASE</span>
+                  <span class="best-model-label">Oracle-context · main primary mean MASE</span>
                   <p><strong id="best-model-name">—</strong><span id="best-model-score">—</span></p>
                 </div>
               </div>

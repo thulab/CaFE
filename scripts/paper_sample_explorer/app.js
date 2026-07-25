@@ -52,6 +52,8 @@ const elements = {
   modalTitle: document.querySelector("#chart-modal-title"),
   modalChartHost: document.querySelector("#modal-chart-host"),
   modalChartMeta: document.querySelector("#modal-chart-meta"),
+  experimentVersion: document.querySelector("#experiment-version"),
+  experimentSubtitle: document.querySelector("#experiment-subtitle"),
 };
 
 const queryState = new URLSearchParams(window.location.search);
@@ -174,7 +176,7 @@ function refreshCapabilityOptions() {
     elements.capability,
     capabilities.map((capability) => ({
       value: capability.id,
-      label: `${capability.id} · ${capability.sampleCount} samples`,
+      label: `${capability.id} · ${capability.sampleCount} groups`,
     })),
     state.capabilityId,
   );
@@ -183,8 +185,24 @@ function refreshCapabilityOptions() {
 
 function updateIndexStatus() {
   const index = state.meta.index;
-  elements.indexStatus.lastElementChild.textContent = `${formatInteger(index.groupCount)} paired samples`;
-  elements.indexDetail.textContent = `${formatInteger(index.sampleCount)} masters · ${formatInteger(index.predictionCount)} predictions indexed`;
+  elements.indexStatus.lastElementChild.textContent = `${formatInteger(index.groupCount)} ${index.groupUnit || "paired samples"}`;
+  elements.indexDetail.textContent = `${formatInteger(index.sampleCount)} samples · ${formatInteger(index.predictionCount)} predictions indexed`;
+  const experiment = state.meta.experiment;
+  if (experiment) {
+    elements.experimentVersion.textContent = `PAPER EXP · ${String(experiment.version || "v8").toUpperCase()}`;
+    elements.experimentSubtitle.textContent = `${experiment.id} · ${experiment.sampleScope || "main/primary"} · 同一种子的五档强度`;
+  }
+}
+
+function groupOptionLabel(group, index) {
+  const prefix = `样本 ${String(index + 1).padStart(3, "0")}`;
+  if (Number.isInteger(group.seedIndex)) {
+    const member = Number.isInteger(group.counterfactualMember)
+      ? ` · member ${group.counterfactualMember}`
+      : "";
+    return `${prefix} · seed ${String(group.seedIndex).padStart(6, "0")}${member}`;
+  }
+  return `${prefix} · R${group.roundIndex} · ${group.analysisBlock}${String(group.analysisBlockIndex).padStart(3, "0")}`;
 }
 
 async function loadGroups({ preserveGroup = true } = {}) {
@@ -204,7 +222,7 @@ async function loadGroups({ preserveGroup = true } = {}) {
       elements.sample,
       state.groups.map((group, index) => ({
         value: group.id,
-        label: `样本 ${String(index + 1).padStart(3, "0")} · R${group.roundIndex} · ${group.analysisBlock}${String(group.analysisBlockIndex).padStart(3, "0")}`,
+        label: groupOptionLabel(group, index),
       })),
       state.groupId,
     );
@@ -266,7 +284,8 @@ async function loadSample() {
     elements.loading.hidden = true;
     elements.error.hidden = true;
     elements.chartGrid.hidden = false;
-    elements.liveRegion.textContent = `已读取样本 ${state.payload.group.poolIndex + 1}，五档强度。`;
+    const selected = state.payload.group.seedIndex ?? state.payload.group.poolIndex;
+    elements.liveRegion.textContent = `已读取样本 ${selected}，五档强度。`;
   } catch (error) {
     if (error.name !== "AbortError") showError(error);
   }
@@ -289,7 +308,9 @@ function updateSampleLabels() {
     group.datasetId,
     group.capabilityId,
     `sample ${visibleIndex}/${state.groups.length}`,
-    `seed pool ${group.poolIndex}`,
+    Number.isInteger(group.seedIndex)
+      ? `seed ${group.seedIndex}${Number.isInteger(group.counterfactualMember) ? ` · member ${group.counterfactualMember}` : ""}`
+      : `seed pool ${group.poolIndex}`,
   ].join(" / ");
   elements.chartMeta.textContent = `L${state.context} + H${state.payload.horizon} · target dim ${group.targetDim} · season ${group.seasonLength}${group.frequency}`;
 }
@@ -321,7 +342,7 @@ function updateBestModelAnnotation() {
   elements.contextBestName.textContent = intensityBest.modelId;
   elements.contextBestScore.textContent = `MASE ${formatValue(intensityBest.maseMean, 4)}`;
   elements.contextBestCallout.title = [
-    "当前 paired sample，仅比较 intensity=5 在所选 context 下的 MASE。",
+    "当前 seed group，仅比较 intensity=5 在所选 context 下的 MASE。",
     intensityRunnerUp ? `第二名 ${intensityRunnerUp.modelId}，差值 ${formatValue(intensityRunnerUp.maseMean - intensityBest.maseMean, 4)}。` : "",
   ].filter(Boolean).join("\n");
   elements.contextBestCallout.hidden = false;
@@ -610,7 +631,9 @@ function createChart(intensity, yExtent, { expanded = false } = {}) {
   const footer = document.createElement("div");
   footer.className = "chart-card-footer";
   const sampleId = document.createElement("span");
-  sampleId.textContent = `R${state.payload.group.roundIndex} · pool ${state.payload.group.poolIndex}`;
+  sampleId.textContent = Number.isInteger(state.payload.group.seedIndex)
+    ? `seed ${state.payload.group.seedIndex}${Number.isInteger(state.payload.group.counterfactualMember) ? ` · member ${state.payload.group.counterfactualMember}` : ""}`
+    : `R${state.payload.group.roundIndex} · pool ${state.payload.group.poolIndex}`;
   const maes = [...state.selectedModels]
     .map((modelId) => intensity.models[modelId]?.metrics?.mae)
     .filter((value) => Number.isFinite(Number(value)))
