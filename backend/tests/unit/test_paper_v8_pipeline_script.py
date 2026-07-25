@@ -413,6 +413,76 @@ def test_sensitivity_seed_selection_is_prefix_stable():
     assert first == set()
 
 
+def test_generation_retries_a_numerically_invalid_candidate(monkeypatch):
+    generation = load_script("generate_paper_v8_samples")
+    dataset = SimpleNamespace(dataset_id="test_dataset")
+    anchor = {"anchor_id": "anchor-0"}
+    attempted: list[int] = []
+
+    monkeypatch.setattr(
+        generation.v8,
+        "anchor_for_seed",
+        lambda *args, **kwargs: anchor,
+    )
+
+    def fake_clean_seed_bundle(*args, **kwargs):
+        attempt = int(kwargs["generation_attempt"])
+        attempted.append(attempt)
+        if attempt == 0:
+            raise ValueError("collapsed candidate")
+        return [
+            {
+                "sample_id": "accepted-sample",
+                "capability_id": "trend",
+                "evaluation_table": "main",
+                "parameter_sampling": {
+                    "path_seed": generation.generation_path_seed(
+                        dataset.dataset_id,
+                        "trend",
+                        0,
+                        attempt,
+                    )
+                },
+            }
+        ]
+
+    monkeypatch.setattr(
+        generation,
+        "clean_seed_bundle",
+        fake_clean_seed_bundle,
+    )
+    monkeypatch.setattr(
+        generation.realism,
+        "evaluate_sample",
+        lambda *args, **kwargs: {
+            "accepted": True,
+            "failure_codes": [],
+        },
+    )
+    audits: list[dict] = []
+
+    rows = list(
+        generation.iter_clean_samples(
+            dataset,
+            [anchor],
+            {"capabilities": {"trend": {}}},
+            capability_ids=("trend",),
+            seed_indexes=[0],
+            sensitivity_seeds=set(),
+            gate_context=object(),
+            max_generation_attempts=2,
+            attempt_audits=audits,
+        )
+    )
+
+    assert attempted == [0, 1]
+    assert rows[0]["generation_attempt"] == 1
+    assert audits[0]["selected_attempt"] == 1
+    assert audits[0]["attempts"][0]["failed_samples"][0][
+        "failure_codes"
+    ] == ["candidate_generation_error"]
+
+
 def test_multi_dataset_pipeline_accepts_explicit_dataset_list():
     pipeline = load_script("run_paper_v8_pipeline")
     args = SimpleNamespace(

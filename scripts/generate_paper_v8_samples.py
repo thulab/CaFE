@@ -95,6 +95,30 @@ def selected_sensitivity_seeds(
     }
 
 
+def generation_path_seed(
+    dataset_id: str,
+    capability_id: str,
+    seed_index: int,
+    generation_attempt: int,
+) -> int:
+    if generation_attempt == 0:
+        return v8.stable_seed(
+            dataset_id,
+            capability_id,
+            seed_index,
+            "generation-path",
+            base=v8.GENERATION_PATH_SEED,
+        )
+    return v8.stable_seed(
+        dataset_id,
+        capability_id,
+        seed_index,
+        "generation-path-retry",
+        generation_attempt,
+        base=v8.GENERATION_PATH_SEED,
+    )
+
+
 def members_for(capability_id: str) -> tuple[int | None, ...]:
     return (
         (0, 1)
@@ -234,15 +258,50 @@ def iter_clean_samples(
             )
             audit_attempts: list[dict[str, Any]] = []
             for generation_attempt in range(max_generation_attempts):
-                candidates = clean_seed_bundle(
-                    dataset,
-                    anchor,
-                    capability_calibration,
-                    capability_id=capability_id,
-                    seed_index=seed_index,
-                    sensitivity_seed=seed_index in sensitivity_seeds,
-                    generation_attempt=generation_attempt,
-                )
+                try:
+                    candidates = clean_seed_bundle(
+                        dataset,
+                        anchor,
+                        capability_calibration,
+                        capability_id=capability_id,
+                        seed_index=seed_index,
+                        sensitivity_seed=seed_index in sensitivity_seeds,
+                        generation_attempt=generation_attempt,
+                    )
+                except ValueError as error:
+                    audit_attempts.append(
+                        {
+                            "attempt": generation_attempt,
+                            "path_seed": generation_path_seed(
+                                dataset.dataset_id,
+                                capability_id,
+                                seed_index,
+                                generation_attempt,
+                            ),
+                            "accepted": False,
+                            "failed_samples": [
+                                {
+                                    "sample_id": (
+                                        f"{dataset.dataset_id}/"
+                                        f"{capability_id}/seed={seed_index}"
+                                    ),
+                                    "failure_codes": [
+                                        "candidate_generation_error"
+                                    ],
+                                    "gate": {
+                                        "candidate_generation": {
+                                            "accepted": False,
+                                            "error": (
+                                                f"{type(error).__name__}: "
+                                                f"{error}"
+                                            ),
+                                        }
+                                    },
+                                }
+                            ],
+                        }
+                    )
+                    continue
                 failed_samples: list[dict[str, Any]] = []
                 for row in candidates:
                     gate = realism.evaluate_sample(row, gate_context)

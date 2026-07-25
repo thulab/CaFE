@@ -277,7 +277,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v5",
+        "schema_version": "paper_v8_experiment_protocol.v6",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -296,7 +296,7 @@ def protocol_config(
             ),
             "near_distance_enabled": bool(args.near_distance_gate),
             "near_distance": (
-                "anchor_internal_leave_one_out_dcr_p05_and_nndr_p05_"
+                "anchor_internal_leave_one_out_dcr_p01_and_nndr_p01_"
                 "with_multivariate_majority_vote"
             ),
             "retry_identity": (
@@ -305,6 +305,9 @@ def protocol_config(
             "structural_identifiability": (
                 "strict_common_factor_and_cross_series_pairs_are_retried_"
                 "until_their_positive_control_gate_passes"
+            ),
+            "cross_series_minimum_history_holdout_r2": (
+                v8.CROSS_SERIES_MIN_HOLDOUT_R2
             ),
             "family_intensity_scale": (
                 "one_family_mean_lambda_grid_per_dataset_no_formal_seed_inverse"

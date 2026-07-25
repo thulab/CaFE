@@ -21,7 +21,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 
 
-SCHEMA_VERSION = "paper_v8_realism_gate.v3"
+SCHEMA_VERSION = "paper_v8_realism_gate.v4"
 HISTORY_LENGTH = 168
 MINIMUM_ANCHOR_COUNT = 12
 DISTANCE_EPSILON = 1e-12
@@ -70,8 +70,8 @@ class NearDistancePolicy:
     anchor_count: int
     pooled_mean: float | None
     pooled_std: float | None
-    d1_p05: float | None
-    nndr_p05: float | None
+    d1_p01: float | None
+    nndr_p01: float | None
     normalized_anchor_histories: np.ndarray | None
 
     def summary(self) -> dict[str, Any]:
@@ -85,12 +85,12 @@ class NearDistancePolicy:
             "anchor_count": self.anchor_count,
             "pooled_mean": self.pooled_mean,
             "pooled_std": self.pooled_std,
-            "d1_p05": self.d1_p05,
-            "nndr_p05": self.nndr_p05,
+            "d1_p01": self.d1_p01,
+            "nndr_p01": self.nndr_p01,
             "distance": "pooled_z_normalized_rms",
             "calibration": "all_real_anchors_leave_one_out",
             "channel_risk_rule": (
-                "d1<=loo_d1_p05 AND nndr<=loo_nndr_p05"
+                "d1<=loo_d1_p01 AND nndr<=loo_nndr_p01"
             ),
             "sample_risk_rule": (
                 "univariate_channel_risk_or_multivariate_majority_vote"
@@ -415,9 +415,9 @@ def _build_near_distance_policy(
     loo_d1 = nearest_two[:, 0]
     loo_d2 = nearest_two[:, 1]
     loo_nndr = loo_d1 / np.maximum(loo_d2, DISTANCE_EPSILON)
-    d1_p05 = float(np.quantile(loo_d1, 0.05))
-    nndr_p05 = float(np.quantile(loo_nndr, 0.05))
-    if not math.isfinite(d1_p05) or not math.isfinite(nndr_p05):
+    d1_p01 = float(np.quantile(loo_d1, 0.01))
+    nndr_p01 = float(np.quantile(loo_nndr, 0.01))
+    if not math.isfinite(d1_p01) or not math.isfinite(nndr_p01):
         raise ValueError("real-anchor LOO thresholds must be finite")
     normalized.setflags(write=False)
     return NearDistancePolicy(
@@ -428,8 +428,8 @@ def _build_near_distance_policy(
         anchor_count=len(real_anchor_masters),
         pooled_mean=pooled_mean,
         pooled_std=pooled_std,
-        d1_p05=d1_p05,
-        nndr_p05=nndr_p05,
+        d1_p01=d1_p01,
+        nndr_p01=nndr_p01,
         normalized_anchor_histories=normalized,
     )
 
@@ -450,8 +450,8 @@ def _near_not_enforced(
         anchor_count=anchor_count,
         pooled_mean=pooled_mean,
         pooled_std=pooled_std,
-        d1_p05=None,
-        nndr_p05=None,
+        d1_p01=None,
+        nndr_p01=None,
         normalized_anchor_histories=None,
     )
 
@@ -673,7 +673,7 @@ def _evaluate_near_distance(
     references = policy.normalized_anchor_histories
     assert references is not None
     assert policy.pooled_mean is not None and policy.pooled_std is not None
-    assert policy.d1_p05 is not None and policy.nndr_p05 is not None
+    assert policy.d1_p01 is not None and policy.nndr_p01 is not None
     history = target[
         context_length - HISTORY_LENGTH : context_length,
         :,
@@ -694,7 +694,7 @@ def _evaluate_near_distance(
         d1 = float(nearest[0])
         d2 = float(nearest[1])
         nndr = d1 / max(d2, DISTANCE_EPSILON)
-        risk = bool(d1 <= policy.d1_p05 and nndr <= policy.nndr_p05)
+        risk = bool(d1 <= policy.d1_p01 and nndr <= policy.nndr_p01)
         if risk:
             risk_channels.append(channel_index)
         channel_results.append(

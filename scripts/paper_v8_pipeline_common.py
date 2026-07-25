@@ -31,6 +31,7 @@ from app.services.synthetic_generator_conditioning import (  # noqa: E402
     REAL_BOUNDED_INTENSITY_POLICY_ID,
 )
 from app.services.synthetic_v8_generation import (  # noqa: E402
+    CROSS_SERIES_MIN_HOLDOUT_R2,
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
@@ -54,7 +55,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v12"
+SCHEMA_VERSION = "paper_v8_pipeline.v13"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48

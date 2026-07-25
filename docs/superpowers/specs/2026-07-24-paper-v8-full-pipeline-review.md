@@ -278,8 +278,10 @@ driver/edge/lag/符号和 holdout、covariate counterfactual recovery 等。
 也不触发重试。强度有效性由完整 seed batch 上的 I1–I5 聚合响应顺序与跨度回验。
 
 near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有真实 anchor
-内部做 leave-one-out，得到 pooled-z RMS DCR 与 NNDR 的 p05；channel 同时满足
-`DCR <= p05` 和 `NNDR <= p05` 时标记风险。单变量样本直接据此拒绝；多变量样本
+内部做 leave-one-out，得到 pooled-z RMS DCR 与 NNDR 的 p01；channel 同时满足
+`DCR <= p01` 和 `NNDR <= p01` 时标记风险。p01 是面向整批数千次查询的保守
+anti-copy 尾部，而不是把单次查询的 p05 假阳性率重复应用到每个样本。单变量样本
+直接据此拒绝；多变量样本
 使用多数 channel 表决，避免把多个单变量比较中的任一偶然命中误判成整条多变量
 样本污染。它不使用 held-out，不参与参数标定，也不把“像不像真实曲线”当作生成
 质量目标；可用 `--no-near-distance-gate` 显式旁路并记录。
@@ -288,6 +290,11 @@ near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有�
 通道，seasonal-naive history error 可能严格为零；该通道显式回退到标准 lag-1
 MASE denominator，不加任意数值 floor，并在样本与 validation audit 中记录
 effective period 和 fallback 计数。
+
+cross-series strict gate 要求盲搜索找对 driver 与 lag、反事实正控恢复通过，并且
+声明边在 chronology holdout 上至少解释 50% 响应方差。`R² >= 0.5` 只承担
+“依赖强度不是微弱信号”的下限；结构识别本身由正确 edge/lag 和正控指标判断，
+不再用 `R² >= 0.8` 把“响应几乎纯线性”误当作“结构可识别”的必要条件。
 
 ## 推理协议
 
