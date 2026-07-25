@@ -58,7 +58,9 @@ def test_response_curve_uses_formal_logical_seed_anchor_bank(monkeypatch):
         assert capability_id == "trend"
         assert family_role == "primary"
         assert anchor["marker"] == calibration_seed_index
-        return {"curvature_abs": lambda_value}, {}
+        return {
+            common.PRIMARY_TARGET_FEATURE[capability_id]: lambda_value
+        }, {}
 
     monkeypatch.setattr(common, "anchor_for_seed", anchor_for_seed)
     monkeypatch.setattr(

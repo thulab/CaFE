@@ -36,7 +36,6 @@ DEFAULT_MODELS = (
     "moirai2",
     "Timer-3.5",
     "toto2.0",
-    "TimePFN",
 )
 MODEL_EXECUTION_CONFIG = {
     # Paper v8 has a fixed H=48 and runs on RTX 5090 services. These defaults
@@ -1344,10 +1343,119 @@ def install_engine_hooks() -> None:
     engine.run_model_requests = run_model_requests_v8
 
 
+def validated_file_record_path(
+    record: dict[str, Any],
+    *,
+    label: str,
+    validate_row_count: bool = False,
+) -> Path:
+    """Resolve a manifest file record only after validating its content."""
+
+    path_value = record.get("path")
+    if not path_value:
+        raise ValueError(f"{label} file record is missing path")
+    path = Path(str(path_value))
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} file is missing: {path}")
+    expected_bytes = record.get("bytes")
+    if expected_bytes is None or int(expected_bytes) != path.stat().st_size:
+        raise ValueError(f"{label} file byte-size mismatch: {path}")
+    expected_sha256 = record.get("sha256")
+    if (
+        not expected_sha256
+        or str(expected_sha256) != v8.file_sha256(path)
+    ):
+        raise ValueError(f"{label} file hash mismatch: {path}")
+    if validate_row_count:
+        expected_rows = record.get("row_count")
+        if expected_rows is None:
+            raise ValueError(f"{label} file record is missing row_count")
+        observed_rows = engine.count_jsonl(path)
+        if observed_rows != int(expected_rows):
+            raise ValueError(
+                f"{label} file row-count mismatch: "
+                f"{observed_rows} != {expected_rows}"
+            )
+    return path
+
+
+def formal_real_anchor_source_record(
+    calibration_bundle: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Require the auxiliary real-anchor source for a formal inference run."""
+
+    if calibration_bundle is None:
+        raise ValueError(
+            "formal Paper-v8 inference requires calibration_bundle.json "
+            "with real_anchor_masters"
+        )
+    record = calibration_bundle.get("files", {}).get(
+        "real_anchor_masters"
+    )
+    if not isinstance(record, dict):
+        raise ValueError(
+            "formal Paper-v8 inference calibration bundle is missing "
+            "files.real_anchor_masters"
+        )
+    validated_file_record_path(
+        record,
+        label="real-anchor source",
+    )
+    return record
+
+
+def validate_inference_task_manifest_files(
+    task_manifest: dict[str, Any],
+) -> Path:
+    """Validate the combined task and both independently consumed components."""
+
+    if task_manifest.get("schema_version") != (
+        "paper_v8_inference_task_manifest.v2"
+    ):
+        raise ValueError("unsupported Paper-v8 inference task manifest")
+    task_components = task_manifest.get("task_components")
+    if not isinstance(task_components, dict):
+        raise ValueError("inference task manifest is missing task_components")
+    component_paths: dict[str, Path] = {}
+    for name in ("synthetic", "real_anchors"):
+        record = task_components.get(name)
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"inference task manifest is missing {name} component"
+            )
+        component_paths[name] = validated_file_record_path(
+            record,
+            label=f"inference task component {name}",
+            validate_row_count=True,
+        )
+    task_record = task_manifest.get("task_file")
+    if not isinstance(task_record, dict):
+        raise ValueError("inference task manifest is missing task_file")
+    task_path = validated_file_record_path(
+        task_record,
+        label="combined inference task",
+        validate_row_count=True,
+    )
+    synthetic_count = int(task_components["synthetic"]["row_count"])
+    real_count = int(task_components["real_anchors"]["row_count"])
+    if synthetic_count != int(task_manifest.get("synthetic_view_count", -1)):
+        raise ValueError("synthetic inference task count disagrees with manifest")
+    if real_count != int(task_manifest.get("real_anchor_view_count", -1)):
+        raise ValueError("real-anchor inference task count disagrees with manifest")
+    if synthetic_count + real_count != int(
+        task_manifest.get("view_count", -1)
+    ):
+        raise ValueError("combined inference task count disagrees with components")
+    if int(task_record["row_count"]) != int(task_manifest["view_count"]):
+        raise ValueError("combined inference task record count mismatch")
+    return task_path
+
+
 def prepare_view_tasks(
     generation_manifest: dict[str, Any],
     *,
     inference_dir: Path,
+    calibration_bundle: dict[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     source_records = [
         generation_manifest["files"]["clean"],
@@ -1357,26 +1465,117 @@ def prepare_view_tasks(
     masters = (
         row for record in source_records for row in v8.iter_jsonl(Path(record["path"]))
     )
+    synthetic_task_path = inference_dir / "synthetic_forecast_views.jsonl"
+    synthetic_view_count = v8.write_jsonl(
+        synthetic_task_path,
+        v8.iter_master_views(masters),
+    )
+    real_source_record = (
+        (calibration_bundle or {}).get("files", {}).get(
+            "real_anchor_masters"
+        )
+    )
+    if real_source_record is not None:
+        if not isinstance(real_source_record, dict):
+            raise ValueError("real-anchor source file record must be an object")
+        validated_file_record_path(
+            real_source_record,
+            label="real-anchor source",
+        )
+    real_task_path = inference_dir / "real_anchor_views.jsonl"
+
+    def real_anchor_tasks() -> Iterator[dict[str, Any]]:
+        if real_source_record is None:
+            return
+        for master in v8.iter_jsonl(Path(real_source_record["path"])):
+            row = dict(master)
+            row["schema_version"] = "paper_v8_real_anchor_forecast_view.v1"
+            row["evaluation_table"] = "real_anchor_forecast"
+            row["view_id"] = row["sample_id"]
+            row["context_policy"] = (
+                f"fixed_l{v8.REAL_CALIBRATION_CONTEXT_LENGTH}"
+            )
+            row["context_policy_candidates"] = [
+                v8.REAL_CALIBRATION_CONTEXT_LENGTH
+            ]
+            row["scoring_target_semantics"] = "held_out_real_future"
+            yield row
+
+    real_anchor_view_count = v8.write_jsonl(
+        real_task_path,
+        real_anchor_tasks(),
+    )
     task_path = inference_dir / "forecast_views.jsonl"
     view_count = v8.write_jsonl(
         task_path,
-        v8.iter_master_views(masters),
+        (
+            row
+            for path in (synthetic_task_path, real_task_path)
+            for row in v8.iter_jsonl(path)
+        ),
     )
     manifest = {
-        "schema_version": "paper_v8_inference_task_manifest.v1",
+        "schema_version": "paper_v8_inference_task_manifest.v2",
         "created_at": v8.utc_now(),
         "generation_config_sha256": generation_manifest["config_sha256"],
         "generation_files": source_records,
+        "calibration_bundle_content_sha256": (
+            None
+            if calibration_bundle is None
+            else calibration_bundle.get("bundle_content_sha256")
+        ),
+        "real_anchor_source": real_source_record,
         "context_lengths": list(v8.VIEW_CONTEXT_LENGTHS),
+        "fixed_context_length": v8.FIXED_CONTEXT_LENGTH,
+        "synthetic_view_count": synthetic_view_count,
+        "real_anchor_view_count": real_anchor_view_count,
         "view_count": view_count,
+        "task_components": {
+            "synthetic": {
+                **v8.file_record(synthetic_task_path),
+                "row_count": synthetic_view_count,
+            },
+            "real_anchors": {
+                **v8.file_record(real_task_path),
+                "row_count": real_anchor_view_count,
+            },
+        },
         "task_file": {
             **v8.file_record(task_path),
             "row_count": view_count,
         },
-        "mase_policy": "shared_clean_l504_denominator_across_views",
+        "mase_policy": (
+            "synthetic views share clean L336 denominator; real anchors use "
+            "their own clean "
+            f"L{v8.REAL_CALIBRATION_CONTEXT_LENGTH} history denominator"
+        ),
     }
     v8.write_json(inference_dir / "task_manifest.json", manifest)
     return task_path, manifest
+
+
+def write_real_anchor_prediction_subset(
+    canonical_prediction_path: Path,
+    *,
+    real_anchor_task_path: Path,
+    output_path: Path,
+) -> int:
+    """Materialize an auxiliary real-anchor result without duplicating tasks."""
+
+    real_ids = {
+        str(row["sample_id"])
+        for row in v8.iter_jsonl(real_anchor_task_path)
+    }
+    if not real_ids:
+        return v8.write_jsonl(output_path, ())
+    return v8.write_jsonl(
+        output_path,
+        (
+            row
+            for row in v8.iter_jsonl(canonical_prediction_path)
+            if str(row["sample_id"]) in real_ids
+        ),
+    )
 
 
 def health_catalog(
@@ -1481,10 +1680,44 @@ def cleanup_completed_model_intermediates(
     return removed_bytes
 
 
+def task_sample_ids(path: Path) -> set[str]:
+    sample_ids: set[str] = set()
+    for row in v8.iter_jsonl(path):
+        sample_id = str(row["sample_id"])
+        if sample_id in sample_ids:
+            raise ValueError(f"duplicate inference task sample_id: {sample_id}")
+        sample_ids.add(sample_id)
+    return sample_ids
+
+
+def canonical_prediction_sample_ids(
+    path: Path,
+    *,
+    model_id: str,
+) -> set[str]:
+    """Return canonical IDs while rejecting duplicate or foreign model rows."""
+
+    sample_ids: set[str] = set()
+    for row in v8.iter_jsonl(path):
+        observed_model = str(row.get("model_id", ""))
+        if observed_model != model_id:
+            raise ValueError(
+                f"canonical prediction model mismatch for {path}: "
+                f"{observed_model!r} != {model_id!r}"
+            )
+        sample_id = str(row["sample_id"])
+        if sample_id in sample_ids:
+            raise ValueError(
+                f"duplicate canonical prediction for {model_id}: {sample_id}"
+            )
+        sample_ids.add(sample_id)
+    return sample_ids
+
+
 def cached_complete_model_records(
     inference_dir: Path,
     *,
-    expected_view_count: int,
+    expected_sample_ids: set[str],
 ) -> dict[str, dict[str, Any]]:
     """Reuse a complete manifest when its canonical files are unchanged."""
 
@@ -1511,11 +1744,19 @@ def cached_complete_model_records(
         if (
             status.get("status") == "complete"
             and int(status.get("succeeded_original_view_count", -1))
-            == expected_view_count
-            and int(record.get("row_count", -1)) == expected_view_count
+            == len(expected_sample_ids)
+            and int(record.get("row_count", -1))
+            == len(expected_sample_ids)
             and Path(record.get("path", "")).resolve() == canonical_path.resolve()
             and canonical_path.is_file()
             and int(record.get("bytes", -1)) == canonical_path.stat().st_size
+            and str(record.get("sha256", ""))
+            == v8.file_sha256(canonical_path)
+            and canonical_prediction_sample_ids(
+                canonical_path,
+                model_id=model_id,
+            )
+            == expected_sample_ids
         ):
             cached[model_id] = dict(record)
     return cached
@@ -2362,6 +2603,15 @@ def main() -> int:
     if not validation["accepted"]:
         raise ValueError("generation validation is not accepted")
     generation_manifest = v8.read_json(generation_manifest_path)
+    calibration_bundle_path = (
+        dataset_root / "01_calibration" / "calibration_bundle.json"
+    )
+    calibration_bundle = (
+        v8.read_json(calibration_bundle_path)
+        if calibration_bundle_path.is_file()
+        else None
+    )
+    formal_real_anchor_source_record(calibration_bundle)
     inference_dir = dataset_root / "03_inference" / shard_name
     if inference_dir.exists() and not args.resume:
         expected_parent = (dataset_root / "03_inference").resolve()
@@ -2372,19 +2622,29 @@ def main() -> int:
     task_manifest_path = inference_dir / "task_manifest.json"
     if task_manifest_path.exists() and args.resume:
         task_manifest = v8.read_json(task_manifest_path)
-        task_path = Path(task_manifest["task_file"]["path"])
-        if v8.file_sha256(task_path) != task_manifest["task_file"]["sha256"]:
-            raise ValueError("existing inference task file hash mismatch")
+        task_path = validate_inference_task_manifest_files(task_manifest)
         if (
             task_manifest["generation_config_sha256"]
             != generation_manifest["config_sha256"]
         ):
             raise ValueError("resume generation config mismatch")
+        expected_calibration_sha256 = (
+            None
+            if calibration_bundle is None
+            else calibration_bundle.get("bundle_content_sha256")
+        )
+        if (
+            task_manifest.get("calibration_bundle_content_sha256")
+            != expected_calibration_sha256
+        ):
+            raise ValueError("resume calibration bundle mismatch")
     else:
         task_path, task_manifest = prepare_view_tasks(
             generation_manifest,
             inference_dir=inference_dir,
+            calibration_bundle=calibration_bundle,
         )
+        validate_inference_task_manifest_files(task_manifest)
 
     health_results: list[tuple[str, dict[str, dict[str, Any]]]] = []
     with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
@@ -2418,11 +2678,16 @@ def main() -> int:
         return 0
     work_statuses: list[dict[str, Any]] = []
     model_phases: list[dict[str, Any]] = []
+    expected_sample_ids = task_sample_ids(task_path)
     expected_view_count = int(task_manifest["view_count"])
+    if len(expected_sample_ids) != expected_view_count:
+        raise ValueError(
+            "combined inference task contains duplicate or missing sample IDs"
+        )
     cached_model_records = (
         cached_complete_model_records(
             inference_dir,
-            expected_view_count=expected_view_count,
+            expected_sample_ids=expected_sample_ids,
         )
         if args.resume
         else set()
@@ -2433,12 +2698,21 @@ def main() -> int:
             model_id,
         )
         manifest_cached = model_id in cached_model_records
+        canonical_matches_task = False
+        if args.resume and canonical_path.exists():
+            canonical_matches_task = (
+                canonical_prediction_sample_ids(
+                    canonical_path,
+                    model_id=model_id,
+                )
+                == expected_sample_ids
+            )
         if (
             args.resume
             and canonical_path.exists()
             and (
                 manifest_cached
-                or engine.count_jsonl(canonical_path) == expected_view_count
+                or canonical_matches_task
             )
         ):
             already_compact = manifest_cached or canonical_prediction_file_is_compact(
@@ -2570,7 +2844,16 @@ def main() -> int:
     stale_merged_path = inference_dir / "predictions.jsonl"
     stale_merged_path.unlink(missing_ok=True)
     prediction_files = []
+    real_anchor_prediction_files = []
     prediction_count = 0
+    real_anchor_prediction_count = 0
+    validate_inference_task_manifest_files(task_manifest)
+    real_anchor_task_path = Path(
+        task_manifest["task_components"]["real_anchors"]["path"]
+    )
+    expected_real_anchor_count = int(
+        task_manifest["real_anchor_view_count"]
+    )
     for model_id in args.models:
         path = prediction_path_for(
             model_root(inference_dir, model_id),
@@ -2591,6 +2874,30 @@ def main() -> int:
             }
         )
         prediction_count += expected_view_count
+        real_output_path = (
+            inference_dir
+            / "real_anchor_predictions"
+            / f"{engine.safe_filename(model_id)}.jsonl"
+        )
+        observed_real_anchor_count = write_real_anchor_prediction_subset(
+            path,
+            real_anchor_task_path=real_anchor_task_path,
+            output_path=real_output_path,
+        )
+        if observed_real_anchor_count != expected_real_anchor_count:
+            raise RuntimeError(
+                f"{model_id} real-anchor prediction count mismatch: "
+                f"{observed_real_anchor_count} != "
+                f"{expected_real_anchor_count}"
+            )
+        real_anchor_prediction_files.append(
+            {
+                "model_id": model_id,
+                "row_count": observed_real_anchor_count,
+                **v8.file_record(real_output_path),
+            }
+        )
+        real_anchor_prediction_count += observed_real_anchor_count
     manifest = {
         "schema_version": "paper_v8_inference_manifest.v3",
         "created_at": v8.utc_now(),
@@ -2611,9 +2918,19 @@ def main() -> int:
         },
         "statuses": statuses,
         "predictions": {
-            "storage": "per_model_jsonl",
+            "storage": "per_model_jsonl_including_synthetic_and_real_tasks",
             "files": prediction_files,
             "row_count": prediction_count,
+            "synthetic_row_count_per_model": int(
+                task_manifest["synthetic_view_count"]
+            ),
+            "real_anchor": {
+                "storage": "separate_per_model_auxiliary_jsonl",
+                "files": real_anchor_prediction_files,
+                "row_count": real_anchor_prediction_count,
+                "rows_per_model": expected_real_anchor_count,
+                "included_in_mechanism_ranking": False,
+            },
         },
     }
     manifest["complete"] = all(

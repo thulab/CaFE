@@ -28,11 +28,12 @@ def load_script(name: str):
 def test_calibration_strata_are_nonoverlapping_and_use_floor_capacity():
     common = load_script("paper_v8_pipeline_common")
 
-    strata = common.nonoverlapping_strata(2 * 504 + 37)
+    window = common.REAL_FORECAST_MASTER_LENGTH
+    strata = common.nonoverlapping_strata(2 * window + 37)
 
     assert len(strata) == 2
     assert all(upper >= lower for lower, upper in strata)
-    assert strata[0][1] + 504 <= strata[1][0]
+    assert strata[0][1] + window <= strata[1][0]
 
 
 def test_direct_anchor_summary_does_not_compress_feature_values():
@@ -47,13 +48,14 @@ def test_direct_anchor_summary_does_not_compress_feature_values():
     }
 
 
-def test_v8_registry_freezes_nineteen_l504_eligible_datasets():
+def test_v8_registry_includes_forecastable_l168_datasets():
     common = load_script("paper_v8_pipeline_common")
 
-    assert len(common.DATASET_REGISTRY) == 19
+    assert len(common.DATASET_REGISTRY) == 20
     assert {
         "gift_bizitobs_application",
         "gift_bizitobs_service",
+        "gift_restaurant_d",
         "gift_hierarchical_sales_d",
         "gift_m4_hourly",
         "gift_us_births_d",
@@ -62,23 +64,285 @@ def test_v8_registry_freezes_nineteen_l504_eligible_datasets():
     }.issubset(common.DATASET_REGISTRY)
 
 
+def test_v8_window_contract_separates_real_calibration_and_synthetic_master():
+    common = load_script("paper_v8_pipeline_common")
+
+    assert common.REAL_CALIBRATION_CONTEXT_LENGTH == 168
+    assert common.CONTEXT_LENGTH == 336
+    assert common.HORIZON == 48
+    assert common.REAL_FORECAST_MASTER_LENGTH == 216
+    assert common.MASTER_LENGTH == 384
+    assert common.VIEW_CONTEXT_LENGTHS == (96, 168, 336)
+    assert common.FIXED_CONTEXT_LENGTH == 168
+
+
+def test_v8_features_use_local_trend_and_history_only():
+    common = load_script("paper_v8_pipeline_common")
+    time = np.linspace(-1.0, 1.0, common.MASTER_LENGTH)
+    target = (0.4 * time + 0.8 * time**2)[:, None]
+    changed_future = target.copy()
+    changed_future[common.CONTEXT_LENGTH :] += 1000.0
+
+    first = common.measured_features(
+        "trend",
+        target,
+        None,
+        season_length=24,
+    )
+    second = common.measured_features(
+        "trend",
+        changed_future,
+        None,
+        season_length=24,
+    )
+
+    assert common.PRIMARY_TARGET_FEATURE["trend"] == (
+        "local_curvature_abs_w96"
+    )
+    assert first == second
+    assert first["local_curvature_abs_w96"] > 0.0
+    assert first["v8_feature_history_length"] == common.CONTEXT_LENGTH
+
+
+def test_v8_multi_period_feature_accumulates_noncarrier_spectral_energy():
+    features = load_script("paper_v8_features")
+    time = np.arange(336, dtype=float)
+    carrier = np.sin(2.0 * np.pi * time / 24.0)
+    weak_multi = carrier + 0.15 * np.sin(2.0 * np.pi * time / 16.0)
+    strong_multi = (
+        carrier
+        + 0.55 * np.sin(2.0 * np.pi * time / 16.0)
+        + 0.45 * np.sin(2.0 * np.pi * time / 40.0)
+    )
+
+    carrier_score = features.v8_feature_vector(
+        carrier,
+        season_length=24,
+    )["multi_period_score"]
+    weak_score = features.v8_feature_vector(
+        weak_multi,
+        season_length=24,
+    )["multi_period_score"]
+    strong_score = features.v8_feature_vector(
+        strong_multi,
+        season_length=24,
+    )["multi_period_score"]
+
+    assert carrier_score < weak_score < strong_score
+
+
+def test_v8_multi_period_feature_rejects_quadratic_trend():
+    features = load_script("paper_v8_features")
+    time = np.linspace(-1.0, 1.0, 336)
+    trend = 0.7 * time + 1.8 * time**2
+
+    score = features.v8_feature_vector(
+        trend,
+        season_length=24,
+    )["multi_period_score"]
+
+    assert score < 1e-6
+
+
+def test_v8_local_curvature_removes_carriers_without_hiding_trend_dose():
+    features = load_script("paper_v8_features")
+    observations = 336
+    index = np.arange(observations, dtype=float)
+    local_time = np.clip(
+        (index - (observations - 96)) / 95.0,
+        0.0,
+        None,
+    )
+    trend_low = 0.01 * index + 0.1 * local_time**2
+    trend_high = 0.01 * index + 0.8 * local_time**2
+    multi_low = (
+        np.sin(2.0 * np.pi * index / 24.0)
+        + 0.1 * np.sin(2.0 * np.pi * index / 16.0)
+        + 0.08 * np.sin(2.0 * np.pi * index / 40.0)
+    )
+    multi_high = (
+        np.sin(2.0 * np.pi * index / 24.0)
+        + 0.6 * np.sin(2.0 * np.pi * index / 16.0)
+        + 0.48 * np.sin(2.0 * np.pi * index / 40.0)
+    )
+    modulated_low = (
+        1.0 + 0.05 * np.sin(2.0 * np.pi * index / 48.0)
+    ) * np.sin(2.0 * np.pi * index / 16.0)
+    modulated_high = (
+        1.0 + 0.6 * np.sin(2.0 * np.pi * index / 48.0)
+    ) * np.sin(2.0 * np.pi * index / 16.0)
+
+    def curvature(values, period):
+        return features.v8_feature_vector(
+            values,
+            season_length=period,
+        )["local_curvature_abs_w96"]
+
+    trend_delta = abs(
+        curvature(trend_high, 24) - curvature(trend_low, 24)
+    )
+    multi_delta = abs(
+        curvature(multi_high, 24) - curvature(multi_low, 24)
+    )
+    modulation_delta = abs(
+        curvature(modulated_high, 16)
+        - curvature(modulated_low, 16)
+    )
+
+    assert curvature(trend_high, 24) > curvature(trend_low, 24)
+    assert multi_delta < 0.5 * trend_delta
+    assert modulation_delta < 0.5 * trend_delta
+
+
+def test_v8_transition_sparsity_requires_material_unexplained_changes():
+    features = load_script("paper_v8_features")
+    observations = 336
+    index = np.arange(observations, dtype=float)
+    carrier = np.sin(2.0 * np.pi * index / 24.0)
+    regime_state = np.where((index // 24) % 2 == 0, -1.0, 1.0)
+    regime_low = carrier + 0.05 * regime_state
+    regime_high = carrier + 0.6 * regime_state
+    multi_low = (
+        carrier
+        + 0.1 * np.sin(2.0 * np.pi * index / 16.0)
+        + 0.08 * np.sin(2.0 * np.pi * index / 40.0)
+    )
+    multi_high = (
+        carrier
+        + 0.6 * np.sin(2.0 * np.pi * index / 16.0)
+        + 0.48 * np.sin(2.0 * np.pi * index / 40.0)
+    )
+    modulated_low = (
+        1.0 + 0.05 * np.sin(2.0 * np.pi * index / 48.0)
+    ) * np.sin(2.0 * np.pi * index / 16.0)
+    modulated_high = (
+        1.0 + 0.6 * np.sin(2.0 * np.pi * index / 48.0)
+    ) * np.sin(2.0 * np.pi * index / 16.0)
+
+    def sparsity(values, period):
+        return features.v8_feature_vector(
+            values,
+            season_length=period,
+        )["regime_sparse_transition_score"]
+
+    regime_delta = abs(
+        sparsity(regime_high, 24) - sparsity(regime_low, 24)
+    )
+    multi_delta = abs(
+        sparsity(multi_high, 24) - sparsity(multi_low, 24)
+    )
+    modulation_delta = abs(
+        sparsity(modulated_high, 16)
+        - sparsity(modulated_low, 16)
+    )
+
+    assert sparsity(regime_high, 24) > sparsity(regime_low, 24)
+    assert multi_delta < 0.5 * regime_delta
+    assert modulation_delta < 0.5 * regime_delta
+
+
+def test_calibration_anchor_is_forecastable_and_preserves_native_panel(
+    monkeypatch,
+    tmp_path,
+):
+    common = load_script("paper_v8_pipeline_common")
+    dataset = common.resolve_dataset("gift_ett1_h")
+    time = np.arange(500, dtype=float)
+    panel = np.vstack(
+        [
+            np.sin(2.0 * np.pi * time / 24.0),
+            np.cos(2.0 * np.pi * time / 24.0),
+            np.sin(2.0 * np.pi * (time - 3.0) / 24.0),
+        ]
+    )
+    monkeypatch.setattr(
+        common,
+        "read_gift_arrow_targets",
+        lambda _path: ("H", [("panel", panel)]),
+    )
+
+    anchors, metadata = common.build_calibration_anchors(
+        dataset,
+        gift_eval_dir=tmp_path,
+        maximum_anchors=2,
+    )
+
+    assert len(anchors) == 2
+    assert metadata["feature_profiles"]["native_multivariate"]
+    for anchor in anchors:
+        master = anchor["real_forecast_master"]
+        target = np.asarray(master["target"], dtype=float)
+        assert target.shape == (216, 1)
+        assert master["context_length"] == 168
+        assert master["horizon"] == 48
+        assert np.mean(target[:168]) == pytest.approx(0.0, abs=1e-12)
+        assert np.std(target[:168]) == pytest.approx(1.0)
+        assert anchor["native_multivariate_features"][
+            "pca_top1_explained"
+        ] > 0.0
+        assert anchor["feature_provenance"]["pca_top1_explained"] == (
+            "real_native_multivariate_history_l168"
+        )
+
+
+def test_parameter_mapping_records_real_and_fallback_sources():
+    common = load_script("paper_v8_pipeline_common")
+    anchor = {
+        "features": {"acf1": 0.8},
+        "native_multivariate_features": {"factor_score_acf1": 0.7},
+        "feature_support": {
+            "acf1": {"usable": True},
+            "factor_score_acf1": {"usable": True},
+        },
+    }
+    mappings = common.parameter_mapping_provenance(
+        [
+            {"parameter": "profile_acf1", "source_feature": "acf1"},
+            {
+                "parameter": "factor_persistence",
+                "source_feature": "factor_score_acf1",
+            },
+        ],
+        anchor,
+        capability_id="common_factor",
+    )
+
+    assert mappings[0]["source_status"] == "real_univariate"
+    assert mappings[0]["fallback_used"] is False
+    assert mappings[1]["source_status"] == "real_native_multivariate"
+    assert mappings[1]["fallback_used"] is False
+
+    unavailable = common.parameter_mapping_provenance(
+        [
+            {
+                "parameter": "factor_persistence",
+                "source_feature": "factor_score_acf1",
+            }
+        ],
+        {**anchor, "feature_support": {"factor_score_acf1": {"usable": False}}},
+        capability_id="common_factor",
+    )
+    assert unavailable[0]["source_status"] == "protocol_fallback"
+    assert "factor_score_acf1" in unavailable[0]["fallback_reason"]
+
+
 def test_10s_period_policy_separates_calendar_feature_and_mase_periods():
     common = load_script("paper_v8_pipeline_common")
-    time = np.arange(common.CONTEXT_LENGTH, dtype=float)
-    history = np.sin(2.0 * np.pi * time / 120.0)
+    time = np.arange(common.REAL_CALIBRATION_CONTEXT_LENGTH, dtype=float)
+    history = np.sin(2.0 * np.pi * time / 42.0)
 
     policy = common.calibration_period_policy("10S", history)
 
     assert policy["calendar_season_length"] == 8640
     assert policy["calendar_season_feature_observable"] is False
-    assert 110 <= policy["raw_profile_dominant_period"] <= 130
+    assert 38 <= policy["raw_profile_dominant_period"] <= 46
     assert policy["feature_period"] == round(policy["raw_profile_dominant_period"])
     assert policy["mase_period"] == 1
 
 
 def test_hourly_period_policy_keeps_calendar_period_for_features_and_mase():
     common = load_script("paper_v8_pipeline_common")
-    time = np.arange(common.CONTEXT_LENGTH, dtype=float)
+    time = np.arange(common.REAL_CALIBRATION_CONTEXT_LENGTH, dtype=float)
     history = np.sin(2.0 * np.pi * time / 24.0)
 
     policy = common.calibration_period_policy("H", history)
@@ -120,9 +384,9 @@ def test_slow_profile_period_is_clipped_per_mechanism_not_to_lag_one():
     intermittent = metadata("predictable_intermittency")
     covariate = metadata("covariate_response")
 
-    assert multi["effective_primary_period"] == 84
-    assert max(multi["periods"]) <= 168
-    assert 8 <= time_varying["primary_period"] <= 126
+    assert 24 <= multi["effective_primary_period"] <= 48
+    assert max(multi["periods"]) <= 48
+    assert 8 <= time_varying["primary_period"] <= 84
     assert all(12 <= value <= 84 for value in regime["dwell_pattern"])
     assert 4 <= nonlinear["seasonal_lag"] <= 48
     assert 2 <= nonlinear["nonlinear_lag"] <= 32
@@ -562,7 +826,8 @@ def test_response_paths_expand_only_after_hard_failure(monkeypatch):
         lambda *args, selected_lambdas, **kwargs: tuple(selected_lambdas),
     )
     anchors = [
-        {"features": {"curvature_abs": value}} for value in np.linspace(0.2, 0.8, 20)
+        {"features": {"local_curvature_abs_w96": value}}
+        for value in np.linspace(0.2, 0.8, 20)
     ]
 
     calibration = common.calibrate_capabilities(
@@ -655,7 +920,7 @@ def test_intermittency_measured_dose_comes_from_generator_metadata():
     )
 
 
-def test_master_views_share_exact_future_and_l504_mase_scale():
+def test_master_views_share_exact_future_and_l336_mase_scale():
     common = load_script("paper_v8_pipeline_common")
     time = np.arange(common.MASTER_LENGTH, dtype=float)
     target = (np.sin(2 * np.pi * time / 24.0) + 0.002 * time)[:, None]
@@ -689,7 +954,7 @@ def test_master_views_share_exact_future_and_l504_mase_scale():
     assert {view["mase_scale"] for view in views} == {scale}
     assert all(
         view["view_standardization_policy"]
-        == "slice_exact_l504_standardized_master_without_restandardization"
+        == "slice_exact_l336_standardized_master_without_restandardization"
         for view in views
     )
 
@@ -786,13 +1051,13 @@ def test_multivariate_input_ablation_keeps_future_and_marginal_scale(
     [
         (
             "regime_switching",
-            {"cut_points": [480, 510]},
+            {"cut_points": [312, 342]},
             "cut_points",
             [72, 102],
         ),
         (
             "predictable_intermittency",
-            {"pulse_centers": [480, 520]},
+            {"pulse_centers": [312, 352]},
             "pulse_centers",
             [72, 112],
         ),
@@ -835,7 +1100,6 @@ def test_oracle_context_uses_one_context_for_both_pair_members():
         (96, (0.5, 1.5)),
         (168, (0.7, 0.7)),
         (336, (0.9, 0.9)),
-        (504, (1.0, 1.0)),
     ):
         for member, mase in enumerate(member_mase):
             rows.append(
@@ -864,7 +1128,6 @@ def test_oracle_context_reuses_clean_parent_context_for_input_ablation():
         (96, 0.8, 0.1),
         (168, 0.4, 0.9),
         (336, 0.6, 0.3),
-        (504, 0.7, 0.2),
     ):
         rows.extend(
             [
@@ -900,7 +1163,7 @@ def test_split_bank_requires_two_batches_for_stability_statistics():
     for seed in range(64):
         batch_scale = 1.0 if seed < 32 else 2.0
         for model_id, model_scale in (("a", 1.0), ("b", 2.0)):
-            for policy in ("fixed_l504", "oracle_context"):
+            for policy in ("fixed_l168", "oracle_context"):
                 rows.append(
                     {
                         "dataset_id": "dataset",
@@ -936,8 +1199,8 @@ def test_split_bank_requires_two_batches_for_stability_statistics():
         ): row
         for row in split
     }
-    two_batches = by_key[(32, "fixed_l504", "trend", "accuracy")]
-    one_batch = by_key[(64, "fixed_l504", "trend", "accuracy")]
+    two_batches = by_key[(32, "fixed_l168", "trend", "accuracy")]
+    one_batch = by_key[(64, "fixed_l168", "trend", "accuracy")]
 
     assert two_batches["mean_kendall_tau_b"] == pytest.approx(1.0)
     assert two_batches["top1_consistency"] == pytest.approx(1.0)
@@ -964,7 +1227,7 @@ def test_matched_comparison_excludes_unmatched_clean_seeds_and_intensities():
     ):
         return {
             "dataset_id": "dataset",
-            "context_policy": "fixed_l504",
+            "context_policy": "fixed_l168",
             "evaluation_table": table,
             "generator_family_role": family,
             "capability_id": "trend",
@@ -1007,7 +1270,7 @@ def test_input_ablation_comparison_uses_unchanged_focal_channel_metric():
     def row(table, mase, protected):
         return {
             "dataset_id": "dataset",
-            "context_policy": "fixed_l504",
+            "context_policy": "fixed_l168",
             "evaluation_table": table,
             "generator_family_role": "primary",
             "capability_id": "common_factor",
@@ -1042,6 +1305,322 @@ def test_input_ablation_comparison_uses_unchanged_focal_channel_metric():
     assert ablation["control_accuracy_score"] == pytest.approx(0.4)
     assert ablation["treatment_accuracy_score"] == pytest.approx(0.5)
     assert ablation["accuracy_delta"] == pytest.approx(0.1)
+
+
+def test_inference_tasks_include_real_anchors_as_separate_auxiliary_table(
+    monkeypatch,
+    tmp_path,
+):
+    inference = load_script("run_paper_v8_inference")
+    source_records = []
+    for name in ("clean", "robustness", "input_ablations"):
+        path = tmp_path / f"{name}.jsonl"
+        inference.v8.write_jsonl(path, ())
+        source_records.append(inference.v8.file_record(path))
+    synthetic_task = {
+        "sample_id": "synthetic__L168",
+        "context_length": 168,
+        "horizon": 48,
+        "target_dim": 1,
+        "covariate_dim": 0,
+        "target": np.zeros((216, 1)).tolist(),
+        "covariates": None,
+        "frequency": "1h",
+    }
+    monkeypatch.setattr(
+        inference.v8,
+        "iter_master_views",
+        lambda _masters: iter([synthetic_task]),
+    )
+    real_master_path = tmp_path / "real_anchor_masters.jsonl"
+    real_master = {
+        **synthetic_task,
+        "sample_id": "v8real__anchor",
+        "anchor_id": "anchor",
+    }
+    inference.v8.write_jsonl(real_master_path, [real_master])
+    generation_manifest = {
+        "config_sha256": "generation",
+        "files": {
+            key: record
+            for key, record in zip(
+                ("clean", "robustness", "input_ablations"),
+                source_records,
+                strict=True,
+            )
+        },
+    }
+    calibration_bundle = {
+        "bundle_content_sha256": "calibration",
+        "files": {
+            "real_anchor_masters": inference.v8.file_record(
+                real_master_path
+            )
+        },
+    }
+
+    task_path, manifest = inference.prepare_view_tasks(
+        generation_manifest,
+        inference_dir=tmp_path / "inference",
+        calibration_bundle=calibration_bundle,
+    )
+    tasks = list(inference.v8.iter_jsonl(task_path))
+
+    assert manifest["synthetic_view_count"] == 1
+    assert manifest["real_anchor_view_count"] == 1
+    assert manifest["view_count"] == 2
+    assert [row["sample_id"] for row in tasks] == [
+        "synthetic__L168",
+        "v8real__anchor",
+    ]
+    assert tasks[1]["evaluation_table"] == "real_anchor_forecast"
+    assert tasks[1]["context_policy"] == "fixed_l168"
+
+    canonical_path = tmp_path / "predictions.jsonl"
+    inference.v8.write_jsonl(
+        canonical_path,
+        [
+            {"sample_id": row["sample_id"], "forecast": []}
+            for row in tasks
+        ],
+    )
+    output_path = tmp_path / "real_predictions.jsonl"
+    count = inference.write_real_anchor_prediction_subset(
+        canonical_path,
+        real_anchor_task_path=Path(
+            manifest["task_components"]["real_anchors"]["path"]
+        ),
+        output_path=output_path,
+    )
+    assert count == 1
+    assert [
+        row["sample_id"]
+        for row in inference.v8.iter_jsonl(output_path)
+    ] == ["v8real__anchor"]
+
+
+def test_formal_inference_requires_a_valid_real_anchor_source(tmp_path):
+    inference = load_script("run_paper_v8_inference")
+
+    with pytest.raises(ValueError, match="requires calibration_bundle"):
+        inference.formal_real_anchor_source_record(None)
+    with pytest.raises(ValueError, match="missing files.real_anchor_masters"):
+        inference.formal_real_anchor_source_record({"files": {}})
+
+    path = tmp_path / "real_anchor_masters.jsonl"
+    inference.v8.write_jsonl(path, [{"sample_id": "v8real__anchor"}])
+    record = inference.v8.file_record(path)
+    assert inference.formal_real_anchor_source_record(
+        {"files": {"real_anchor_masters": record}}
+    ) == record
+
+    path.write_text('{"sample_id":"changed"}\\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="byte-size mismatch|hash mismatch"):
+        inference.formal_real_anchor_source_record(
+            {"files": {"real_anchor_masters": record}}
+        )
+
+
+def test_prepare_view_tasks_allows_explicit_no_anchor_compatibility(
+    monkeypatch,
+    tmp_path,
+):
+    inference = load_script("run_paper_v8_inference")
+    source_records = {}
+    for name in ("clean", "robustness", "input_ablations"):
+        path = tmp_path / f"{name}.jsonl"
+        inference.v8.write_jsonl(path, ())
+        source_records[name] = inference.v8.file_record(path)
+    monkeypatch.setattr(
+        inference.v8,
+        "iter_master_views",
+        lambda _masters: iter(()),
+    )
+
+    _, manifest = inference.prepare_view_tasks(
+        {
+            "config_sha256": "generation",
+            "files": source_records,
+        },
+        inference_dir=tmp_path / "inference",
+        calibration_bundle=None,
+    )
+
+    assert manifest["real_anchor_view_count"] == 0
+    assert inference.validate_inference_task_manifest_files(manifest).is_file()
+
+
+def test_resume_task_validation_checks_combined_and_both_components(
+    tmp_path,
+):
+    inference = load_script("run_paper_v8_inference")
+    root = tmp_path / "inference"
+    synthetic_path = root / "synthetic.jsonl"
+    real_path = root / "real.jsonl"
+    combined_path = root / "combined.jsonl"
+    synthetic = {"sample_id": "synthetic"}
+    real = {"sample_id": "v8real__anchor"}
+    inference.v8.write_jsonl(synthetic_path, [synthetic])
+    inference.v8.write_jsonl(real_path, [real])
+    inference.v8.write_jsonl(combined_path, [synthetic, real])
+
+    def record(path, rows):
+        return {
+            **inference.v8.file_record(path),
+            "row_count": rows,
+        }
+
+    manifest = {
+        "schema_version": "paper_v8_inference_task_manifest.v2",
+        "synthetic_view_count": 1,
+        "real_anchor_view_count": 1,
+        "view_count": 2,
+        "task_components": {
+            "synthetic": record(synthetic_path, 1),
+            "real_anchors": record(real_path, 1),
+        },
+        "task_file": record(combined_path, 2),
+    }
+    assert (
+        inference.validate_inference_task_manifest_files(manifest)
+        == combined_path
+    )
+
+    synthetic_path.write_text(
+        '{"sample_id":"corrupted"}\\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="component synthetic.*mismatch"):
+        inference.validate_inference_task_manifest_files(manifest)
+
+
+def test_cached_prediction_reuse_requires_exact_unique_task_ids(tmp_path):
+    inference = load_script("run_paper_v8_inference")
+    model_id = "Chronos-2"
+    canonical_path = inference.prediction_path_for(
+        inference.model_root(tmp_path, model_id),
+        model_id,
+    )
+    inference.v8.write_jsonl(
+        canonical_path,
+        [
+            {
+                "model_id": model_id,
+                "sample_id": "a",
+                "forecast": [[0.0]],
+            },
+            {
+                "model_id": model_id,
+                "sample_id": "b",
+                "forecast": [[0.0]],
+            },
+        ],
+    )
+    record = {
+        "model_id": model_id,
+        "row_count": 2,
+        **inference.v8.file_record(canonical_path),
+    }
+    inference.v8.write_json(
+        tmp_path / "inference_manifest.json",
+        {
+            "schema_version": "paper_v8_inference_manifest.v3",
+            "complete": True,
+            "statuses": [
+                {
+                    "model_id": model_id,
+                    "status": "complete",
+                    "succeeded_original_view_count": 2,
+                }
+            ],
+            "predictions": {"files": [record]},
+        },
+    )
+
+    assert model_id in inference.cached_complete_model_records(
+        tmp_path,
+        expected_sample_ids={"a", "b"},
+    )
+    assert not inference.cached_complete_model_records(
+        tmp_path,
+        expected_sample_ids={"a", "c"},
+    )
+
+    inference.v8.write_jsonl(
+        canonical_path,
+        [
+            {"model_id": model_id, "sample_id": "a", "forecast": [[0.0]]},
+            {"model_id": model_id, "sample_id": "a", "forecast": [[0.0]]},
+        ],
+    )
+    with pytest.raises(ValueError, match="duplicate canonical prediction"):
+        inference.canonical_prediction_sample_ids(
+            canonical_path,
+            model_id=model_id,
+        )
+
+
+def test_analysis_validates_synthetic_component_and_rejects_real_table(
+    tmp_path,
+):
+    analyze = load_script("analyze_paper_v8")
+    inference_dir = tmp_path / "inference"
+    synthetic_path = inference_dir / "synthetic.jsonl"
+    rows = [
+        {"sample_id": "main", "evaluation_table": "main"},
+        {
+            "sample_id": "robustness",
+            "evaluation_table": "observation_noise_robustness",
+        },
+    ]
+    analyze.v8.write_jsonl(synthetic_path, rows)
+
+    def write_manifests():
+        component = {
+            **analyze.v8.file_record(synthetic_path),
+            "row_count": len(rows),
+        }
+        task_manifest_path = inference_dir / "task_manifest.json"
+        analyze.v8.write_json(
+            task_manifest_path,
+            {
+                "schema_version": "paper_v8_inference_task_manifest.v2",
+                "synthetic_view_count": len(rows),
+                "task_components": {"synthetic": component},
+            },
+        )
+        return {
+            "task_manifest_sha256": analyze.v8.file_sha256(
+                task_manifest_path
+            )
+        }
+
+    inference_manifest = write_manifests()
+    path, _ = analyze.validated_synthetic_task_path(
+        inference_dir,
+        inference_manifest,
+    )
+    assert path == synthetic_path
+
+    with pytest.raises(ValueError, match="task manifest hash mismatch"):
+        analyze.validated_synthetic_task_path(
+            inference_dir,
+            {"task_manifest_sha256": "stale"},
+        )
+
+    rows[:] = [
+        {
+            "sample_id": "v8real__anchor",
+            "evaluation_table": "real_anchor_forecast",
+        }
+    ]
+    analyze.v8.write_jsonl(synthetic_path, rows)
+    inference_manifest = write_manifests()
+    with pytest.raises(ValueError, match="non-synthetic evaluation table"):
+        analyze.validated_synthetic_task_path(
+            inference_dir,
+            inference_manifest,
+        )
 
 
 def test_inference_prediction_keeps_only_analysis_inputs():
@@ -1284,7 +1863,8 @@ def test_timepfn_profile_prioritizes_fast_loading_and_large_bulk_requests():
         "transport": "msgpack_bulk",
     }
     assert inference.MODEL_MAJOR_DATASET_PARALLELISM["TimePFN"] == 4
-    assert inference.DEFAULT_MODELS[-2:] == ("toto2.0", "TimePFN")
+    assert inference.DEFAULT_MODELS[-1] == "toto2.0"
+    assert "TimePFN" not in inference.DEFAULT_MODELS
     assert "tabpfn-ts3" not in inference.DEFAULT_MODELS
 
 

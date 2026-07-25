@@ -13,13 +13,43 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v3"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v5"
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
         "cross_series_dependence",
         "covariate_response",
     }
+)
+PRIMARY_FEATURE_BY_CAPABILITY = {
+    "trend": "local_curvature_abs_w96",
+    "multi_seasonal": "multi_period_score",
+    "time_varying_seasonality": "seasonal_amplitude_modulation",
+    "regime_switching": "regime_sparse_transition_score",
+    "nonlinear_persistence": "nonlinear_strength",
+    "predictable_intermittency": "event_effect_energy_share",
+    "common_factor": "pca_top1_explained",
+    "hierarchical_coherence": "hierarchy_child_heterogeneity",
+    "cross_series_dependence": "lead_lag_peak_abs",
+    "covariate_response": "covariate_effect_variance_share",
+}
+SELECTIVITY_EXCEPTIONS = (
+    {
+        "intervention_capability": "multi_seasonal",
+        "feature": "seasonal_amplitude_modulation",
+        "reason": (
+            "stationary symmetric spectral sidebands are algebraically "
+            "equivalent to sinusoidal amplitude modulation"
+        ),
+    },
+    {
+        "intervention_capability": "time_varying_seasonality",
+        "feature": "multi_period_score",
+        "reason": (
+            "sinusoidal amplitude modulation necessarily creates stationary "
+            "Fourier sidebands over a finite observation window"
+        ),
+    },
 )
 
 
@@ -574,6 +604,184 @@ def nonlinear_mechanism_response_checks(
     return results
 
 
+def paired_off_target_selectivity_matrix(
+    samples: Iterable[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Summarize paired intensity effects on every capability coordinate.
+
+    This is intentionally diagnostic.  Each column is normalized by that
+    feature's own median paired low/high response under its owning
+    intervention.  Thus the diagonal is one when identifiable, and each
+    off-diagonal cell directly answers how large the cross-response is relative
+    to the feature's intended dose response.
+
+    Multi-period sidebands and sinusoidal amplitude modulation are a known
+    Fourier equivalence.  Those cells remain visible in the matrix but are
+    explicitly excluded from the maximum off-target summary.
+    """
+
+    rows = [
+        row
+        for row in samples
+        if row.get("evaluation_table", "main") == "main"
+        and row.get("counterfactual_member") in (None, 0)
+    ]
+    feature_names = tuple(PRIMARY_FEATURE_BY_CAPABILITY.values())
+    scopes: set[tuple[str, str]] = set()
+    by_path: dict[
+        tuple[str, str, str, int], dict[int, dict[str, float]]
+    ] = defaultdict(dict)
+    for row in rows:
+        scope = (
+            str(row["dataset_id"]),
+            str(row["generator_family_role"]),
+        )
+        scopes.add(scope)
+        features = dict(row.get("realized_features") or {})
+        target_name = PRIMARY_FEATURE_BY_CAPABILITY.get(
+            str(row.get("capability_id"))
+        )
+        if target_name and row.get("target_feature_value") is not None:
+            features.setdefault(
+                target_name,
+                float(row["target_feature_value"]),
+            )
+        finite = {
+            name: float(features[name])
+            for name in feature_names
+            if name in features and math.isfinite(float(features[name]))
+        }
+        by_path[
+            (
+                scope[0],
+                scope[1],
+                str(row["capability_id"]),
+                int(row["seed_index"]),
+            )
+        ][int(row["intensity"])] = finite
+
+    results: list[dict[str, Any]] = []
+    exception_pairs = {
+        (
+            str(row["intervention_capability"]),
+            str(row["feature"]),
+        )
+        for row in SELECTIVITY_EXCEPTIONS
+    }
+    for scope in sorted(scopes):
+        raw_deltas: dict[str, dict[str, list[float]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        paired_counts: dict[str, int] = {}
+        for capability_id in PRIMARY_FEATURE_BY_CAPABILITY:
+            path_count = 0
+            for key, intensities in by_path.items():
+                if key[:2] != scope or key[2] != capability_id:
+                    continue
+                if len(intensities) < 2:
+                    continue
+                lower = intensities[min(intensities)]
+                upper = intensities[max(intensities)]
+                shared = set(lower) & set(upper)
+                if not shared:
+                    continue
+                path_count += 1
+                for name in shared:
+                    raw_deltas[capability_id][name].append(
+                        abs(float(upper[name]) - float(lower[name]))
+                    )
+            paired_counts[capability_id] = path_count
+
+        normalizers: dict[str, float | None] = {}
+        normalizer_counts: dict[str, int] = {}
+        for capability_id, feature_name in (
+            PRIMARY_FEATURE_BY_CAPABILITY.items()
+        ):
+            values = raw_deltas[capability_id].get(feature_name, [])
+            normalizer_counts[feature_name] = len(values)
+            span = float(np.median(values)) if values else math.nan
+            normalizers[feature_name] = (
+                span if math.isfinite(span) and span > 1e-12 else None
+            )
+
+        matrix: dict[str, dict[str, float | None]] = {}
+        selectivity: dict[str, dict[str, Any]] = {}
+        for capability_id, on_target in PRIMARY_FEATURE_BY_CAPABILITY.items():
+            matrix[capability_id] = {
+                name: (
+                    float(np.median(raw_deltas[capability_id][name]))
+                    / float(normalizers[name])
+                    if raw_deltas[capability_id].get(name)
+                    and normalizers.get(name) is not None
+                    else None
+                )
+                for name in feature_names
+            }
+            on_value = matrix[capability_id].get(on_target)
+            off_values = [
+                float(value)
+                for name, value in matrix[capability_id].items()
+                if name != on_target
+                and value is not None
+                and (capability_id, name) not in exception_pairs
+            ]
+            maximum_off = max(off_values) if off_values else None
+            maximum_off_feature = next(
+                (
+                    name
+                    for name, value in matrix[capability_id].items()
+                    if name != on_target
+                    and value is not None
+                    and (capability_id, name) not in exception_pairs
+                    and float(value) == maximum_off
+                ),
+                None,
+            )
+            excluded_features = [
+                name
+                for name, value in matrix[capability_id].items()
+                if value is not None
+                and (capability_id, name) in exception_pairs
+            ]
+            selectivity[capability_id] = {
+                "on_target_normalized_delta": on_value,
+                "maximum_off_target_normalized_delta": maximum_off,
+                "maximum_nonexception_off_target_normalized_delta": maximum_off,
+                "maximum_nonexception_off_target_feature": (
+                    maximum_off_feature
+                ),
+                "excluded_off_target_features": excluded_features,
+                "on_to_max_off_target_ratio": (
+                    None
+                    if on_value is None or maximum_off is None
+                    else float(on_value) / max(maximum_off, 1e-12)
+                ),
+            }
+        results.append(
+            {
+                "dataset_id": scope[0],
+                "family_role": scope[1],
+                "diagnostic_only": True,
+                "blocking": False,
+                "normalization": (
+                    "feature_owner_intervention_median_abs_paired_low_high_delta"
+                ),
+                "feature_by_capability": dict(
+                    PRIMARY_FEATURE_BY_CAPABILITY
+                ),
+                "feature_own_intervention_span": normalizers,
+                "feature_own_intervention_paired_seed_count": normalizer_counts,
+                "paired_seed_count_by_intervention": paired_counts,
+                "normalized_absolute_delta_matrix": matrix,
+                "selectivity_summary": selectivity,
+                "selectivity_exceptions": [
+                    dict(row) for row in SELECTIVITY_EXCEPTIONS
+                ],
+            }
+        )
+    return results
+
+
 def validate_sample_collection(
     samples: Iterable[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -750,6 +958,7 @@ def validate_sample_collection(
     nonlinear_mechanism_results = nonlinear_mechanism_response_checks(
         rows
     )
+    off_target_selectivity = paired_off_target_selectivity_matrix(rows)
     accepted = bool(
         all(result["accepted"] for result in basic_results.values())
         and not duplicate_groups
@@ -779,4 +988,5 @@ def validate_sample_collection(
         "nonlinear_mechanism_response": nonlinear_mechanism_results,
         "structural_results": structural_results,
         "matched_family_results": matched_family_results,
+        "off_target_selectivity": off_target_selectivity,
     }

@@ -10,13 +10,17 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-nonlinear-quadratic-dose"
+GENERATOR_VERSION = "capts-paper-v8-local-evidence-mechanisms"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
-MULTI_SEASONAL_PRIMARY_PERIOD_RANGE = (8.0, 84.0)
-MULTI_SEASONAL_COMPONENT_PERIOD_RANGE = (4.0, 168.0)
-TIME_VARYING_CARRIER_PERIOD_RANGE = (8.0, 126.0)
+SHORTEST_SUPPORTED_CONTEXT = 96
+TREND_LOCAL_EVIDENCE_WINDOW = 96
+TREND_DESIGN_HORIZON = 48
+MULTI_SEASONAL_PRIMARY_PERIOD_RANGE = (8.0, 32.0)
+MULTI_SEASONAL_COMPONENT_PERIOD_RANGE = (4.0, 48.0)
+TIME_VARYING_CARRIER_PERIOD_RANGE = (8.0, 32.0)
+TIME_VARYING_MODULATION_PERIOD_RANGE = (24.0, 96.0)
 INTERMITTENT_EVENT_PERIOD_RANGE = (8, 126)
 REGIME_DWELL_RANGE = (12, 84)
 NONLINEAR_SEASONAL_LAG_RANGE = (4, 48)
@@ -452,8 +456,8 @@ def derive_deterministic_parameters(
             "cross_lag_steps",
             "lead_lag_peak_lag_abs",
             float(season_length),
-            12.0,
-            48.0,
+            8.0,
+            24.0,
             "round_then_clip",
             lambda value: float(round(value)),
         )
@@ -541,7 +545,7 @@ def _profile_period(
 
     ``profile_dominant_period`` is a descriptive spectral peak rather than a
     literal calendar season.  Every mechanism therefore clips it to a range
-    that is identifiable inside the fixed L504/H48 protocol.
+    that is identifiable inside the shortest supported L96/H48 view.
     """
 
     raw = _parameter(conditioning, "profile_dominant_period", fallback)
@@ -706,7 +710,13 @@ def _joint_factor_episode_arrays(
 ) -> tuple[np.ndarray, np.ndarray]:
     matrix = np.asarray(values, dtype=float)
     code_shape = np.asarray(metadata["code_shape"], dtype=float)
-    basis = np.asarray(metadata["response_basis"], dtype=float)
+    basis = np.asarray(
+        metadata.get(
+            "teaching_response_basis",
+            metadata["response_basis"],
+        ),
+        dtype=float,
+    )
     loadings = np.asarray(
         metadata.get(
             "standardized_response_loadings",
@@ -722,7 +732,7 @@ def _joint_factor_episode_arrays(
             int(value) for value in episode["response_slice"]
         )
         response_width = response_stop - response_start
-        if response_width != basis.shape[0]:
+        if response_width < 4 or response_width > basis.shape[0]:
             continue
         code = _project_code_amplitude(
             matrix,
@@ -734,7 +744,7 @@ def _joint_factor_episode_arrays(
             response @ loadings / max(loading_denominator, 1e-12)
         )
         coefficient = np.linalg.lstsq(
-            basis,
+            basis[:response_width],
             factor_score,
             rcond=None,
         )[0]
@@ -1420,10 +1430,11 @@ def generate_deterministic_sample(
 
 def _trend(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
-    # One context spans one normalized unit.  This keeps polynomial families
-    # numerically comparable and makes the forecast an actual extrapolation
-    # instead of letting a cubic term explode over a long history window.
-    x = (np.arange(length, dtype=float) - (context - 1)) / max(4, context - 1)
+    evidence_window = min(TREND_LOCAL_EVIDENCE_WINDOW, context)
+    join_index = context - evidence_window
+    coordinate = (
+        np.arange(length, dtype=float) - float(join_index)
+    ) / max(4, evidence_window)
     direction = rng.choice(np.asarray([-1.0, 1.0]), size=dim)
     slope_jitter = rng.uniform(0.75, 1.25, size=dim)
     curvature_sign = rng.choice(np.asarray([-1.0, 1.0]), size=dim)
@@ -1435,29 +1446,111 @@ def _trend(length, context, dim, season, intensity, rng, cond, family):
         * (0.5 + 2.0 * slope_scale)
         * (0.5 + profile_strength)
     )
-    ratio = _parameter(cond, "trend_curvature_ratio", 0.06)
-    effective_ratio = ratio * (0.10 + 0.90 * lam)
+    ratio = float(
+        np.clip(
+            _parameter(cond, "trend_curvature_ratio", 0.06),
+            0.01,
+            0.35,
+        )
+    )
+    dose = float(np.clip(lam, 0.0, 1.0))
     if family == "primary":
-        basis = (
-            slope_jitter[None, :] * x[:, None]
-            + curvature_sign[None, :] * effective_ratio * x[:, None] ** 2
-        )
-        basis_name = "centered_quadratic"
+        polynomial_degree = 2
+        ratio_cap = float(np.clip(0.12 + 0.55 * ratio, 0.12, 0.30))
+        basis_name = "c1_local_quadratic_with_linear_tangent_history"
     else:
-        basis = (
-            slope_jitter[None, :] * x[:, None]
-            + curvature_sign[None, :]
-            * 1.50
-            * effective_ratio
-            * x[:, None] ** 3
+        polynomial_degree = 3
+        # At the end of H48, v=1.5.  A negative cubic coefficient therefore
+        # retains at least 5.5% of the tangent slope even at the maximum cap:
+        # 1 - 3 * 0.14 * 1.5**2 = 0.055.
+        ratio_cap = float(np.clip(0.06 + 0.28 * ratio, 0.06, 0.14))
+        basis_name = "c1_local_cubic_with_linear_tangent_history"
+    effective_ratio = ratio_cap * (0.10 + 0.90 * dose)
+    polynomial_coefficients = (
+        curvature_sign * effective_ratio * slope_jitter
+    )
+
+    # The recent W96 evidence window and H48 forecast share one polynomial.
+    # Earlier history is its tangent at v=0.  Values beyond the benchmark
+    # horizon use the tangent at v=1+H/W, retaining prefix invariance for audit
+    # calls that request a path longer than the formal H48 sample.
+    design_horizon = min(
+        TREND_DESIGN_HORIZON,
+        max(1, length - context),
+    )
+    design_stop_coordinate = 1.0 + design_horizon / evidence_window
+    basis = slope_jitter[None, :] * coordinate[:, None]
+    local_mask = (
+        (coordinate >= 0.0)
+        & (coordinate <= design_stop_coordinate)
+    )
+    basis[local_mask] += (
+        polynomial_coefficients[None, :]
+        * coordinate[local_mask, None] ** polynomial_degree
+    )
+    post_mask = coordinate > design_stop_coordinate
+    if np.any(post_mask):
+        stop_value = (
+            slope_jitter * design_stop_coordinate
+            + polynomial_coefficients
+            * design_stop_coordinate**polynomial_degree
         )
-        basis_name = "centered_cubic"
+        stop_derivative = (
+            slope_jitter
+            + polynomial_degree
+            * polynomial_coefficients
+            * design_stop_coordinate ** (polynomial_degree - 1)
+        )
+        basis[post_mask] = (
+            stop_value[None, :]
+            + (
+                coordinate[post_mask, None]
+                - design_stop_coordinate
+            )
+            * stop_derivative[None, :]
+        )
+
+    endpoint_derivative_ratio = (
+        1.0
+        + polynomial_degree
+        * curvature_sign
+        * effective_ratio
+        * design_stop_coordinate ** (polynomial_degree - 1)
+    )
+    minimum_derivative_ratio = np.minimum(
+        1.0,
+        endpoint_derivative_ratio,
+    )
     target = strength * basis * direction[None, :]
     detail = {
         "trend_basis": basis_name,
+        "trend_prehistory_law": "linear_tangent_at_local_join",
+        "trend_postforecast_law": "linear_tangent_at_design_horizon",
+        "trend_continuity_order": 1,
+        "trend_local_evidence_window": evidence_window,
+        "trend_join_index": join_index,
+        "trend_join_coordinate": 0.0,
+        "trend_design_horizon": design_horizon,
+        "trend_design_stop_index": context + design_horizon,
+        "trend_design_stop_coordinate": design_stop_coordinate,
+        "trend_local_polynomial_degree": polynomial_degree,
         "trend_strength_parameter": strength,
         "curvature_ratio": ratio,
+        "trend_polynomial_ratio_cap": ratio_cap,
         "effective_curvature_ratio": effective_ratio,
+        "effective_polynomial_ratio": effective_ratio,
+        "local_polynomial_coefficient_by_target": (
+            polynomial_coefficients.tolist()
+        ),
+        "minimum_tangent_derivative_ratio_by_target": (
+            minimum_derivative_ratio.tolist()
+        ),
+        "design_endpoint_derivative_ratio_by_target": (
+            endpoint_derivative_ratio.tolist()
+        ),
+        "slope_reversal_inside_design_window": bool(
+            np.any(minimum_derivative_ratio <= 0.0)
+        ),
         "direction_by_target": direction.tolist(),
         "slope_jitter_by_target": slope_jitter.tolist(),
         "curvature_sign_by_target": curvature_sign.tolist(),
@@ -1469,11 +1562,20 @@ def _trend(length, context, dim, season, intensity, rng, cond, family):
 def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
     time = np.arange(length, dtype=float)
+    evidence_window = min(SHORTEST_SUPPORTED_CONTEXT, context)
+    primary_period_upper = min(
+        MULTI_SEASONAL_PRIMARY_PERIOD_RANGE[1],
+        evidence_window / 3.0,
+    )
+    component_period_upper = min(
+        MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[1],
+        evidence_window / 2.0,
+    )
     raw_period, primary_period = _profile_period(
         cond,
         float(season),
         lower=MULTI_SEASONAL_PRIMARY_PERIOD_RANGE[0],
-        upper=min(MULTI_SEASONAL_PRIMARY_PERIOD_RANGE[1], context / 6.0),
+        upper=primary_period_upper,
     )
     ratio = _parameter(cond, "secondary_component_ratio", 0.45)
     target = np.zeros((length, dim), dtype=float)
@@ -1491,10 +1593,7 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
             *np.clip(
                 primary_period * candidate_ratios,
                 MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[0],
-                min(
-                    MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[1],
-                    context / 3.0,
-                ),
+                component_period_upper,
             ).tolist(),
         ]
         amplitudes = [1.0, ratio * (0.15 + 0.85 * lam), 0.6 * ratio * (0.15 + 0.85 * lam)]
@@ -1532,10 +1631,7 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
                 np.clip(
                     primary_period * float(rng.uniform(1.35, 2.35)),
                     MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[0],
-                    min(
-                        MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[1],
-                        context / 3.0,
-                    ),
+                    component_period_upper,
                 )
             ),
             spectral_concentration=concentration,
@@ -1553,12 +1649,20 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
         "mechanism_law": law,
         "raw_profile_dominant_period": raw_period,
         "effective_primary_period": primary_period,
-        "primary_period_bounds": list(
-            MULTI_SEASONAL_PRIMARY_PERIOD_RANGE
-        ),
-        "component_period_bounds": list(
-            MULTI_SEASONAL_COMPONENT_PERIOD_RANGE
-        ),
+        "minimum_supported_context_length": SHORTEST_SUPPORTED_CONTEXT,
+        "period_evidence_window": evidence_window,
+        "primary_period_bounds": [
+            MULTI_SEASONAL_PRIMARY_PERIOD_RANGE[0],
+            primary_period_upper,
+        ],
+        "component_period_bounds": [
+            MULTI_SEASONAL_COMPONENT_PERIOD_RANGE[0],
+            component_period_upper,
+        ],
+        "cycles_in_shortest_evidence_window": [
+            float(evidence_window / max(period, 1e-12))
+            for period in periods
+        ],
     }
     return target, _metadata("multi_seasonal", family, target, detail), None
 
@@ -1566,20 +1670,39 @@ def _multi_seasonal(length, context, dim, season, intensity, rng, cond, family):
 def _time_varying(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
     time = np.arange(length, dtype=float)
+    evidence_window = min(SHORTEST_SUPPORTED_CONTEXT, context)
+    carrier_period_upper = min(
+        TIME_VARYING_CARRIER_PERIOD_RANGE[1],
+        evidence_window / 3.0,
+    )
     raw_period, base_period = _profile_period(
         cond,
         float(season),
         lower=TIME_VARYING_CARRIER_PERIOD_RANGE[0],
-        upper=min(TIME_VARYING_CARRIER_PERIOD_RANGE[1], context / 4.0),
+        upper=carrier_period_upper,
     )
     period = float(
         np.clip(
             base_period * rng.uniform(0.85, 1.15),
             TIME_VARYING_CARRIER_PERIOD_RANGE[0],
-            min(TIME_VARYING_CARRIER_PERIOD_RANGE[1], context / 4.0),
+            carrier_period_upper,
         )
     )
-    modulation_period = float(np.clip(period * rng.uniform(2.2, 4.0), 2 * period, context / 2))
+    modulation_period_lower = max(
+        TIME_VARYING_MODULATION_PERIOD_RANGE[0],
+        2.0 * period,
+    )
+    modulation_period_upper = min(
+        TIME_VARYING_MODULATION_PERIOD_RANGE[1],
+        float(evidence_window),
+    )
+    modulation_period = float(
+        np.clip(
+            period * rng.uniform(2.2, 4.0),
+            modulation_period_lower,
+            modulation_period_upper,
+        )
+    )
     carrier_phase = rng.uniform(0.0, 2.0 * np.pi, size=dim)
     modulation_phase = rng.uniform(0.0, 2.0 * np.pi, size=dim)
     depth = _parameter(cond, "modulation_depth_scale", 0.35) * (0.10 + 0.90 * lam)
@@ -1619,8 +1742,21 @@ def _time_varying(length, context, dim, season, intensity, rng, cond, family):
         "mechanism_law": law,
         "raw_profile_dominant_period": raw_period,
         "effective_carrier_base_period": base_period,
-        "carrier_period_bounds": list(
-            TIME_VARYING_CARRIER_PERIOD_RANGE
+        "minimum_supported_context_length": SHORTEST_SUPPORTED_CONTEXT,
+        "period_evidence_window": evidence_window,
+        "carrier_period_bounds": [
+            TIME_VARYING_CARRIER_PERIOD_RANGE[0],
+            carrier_period_upper,
+        ],
+        "modulation_period_bounds": [
+            modulation_period_lower,
+            modulation_period_upper,
+        ],
+        "carrier_cycles_in_shortest_evidence_window": float(
+            evidence_window / period
+        ),
+        "modulation_cycles_in_shortest_evidence_window": float(
+            evidence_window / modulation_period
         ),
     }
     return target, _metadata("time_varying_seasonality", family, target, detail), None
@@ -2116,10 +2252,11 @@ def _common_factor(
 
     The common factor is present throughout the whole path, so ordinary
     forecasting quality measures a conventional dynamic-factor mechanism.
-    A lower-amplitude relay is repeated in history: a long, smooth observation
+    A lower-amplitude relay is repeated densely in history: a smooth observation
     block exposes one scalar equation per channel, ``c = B q``, and the next
-    block realizes a rank-one response determined by ``q``.  The final
-    observation block controls the forecast response.
+    block realizes a rank-one response determined by ``q``.  Five complete
+    teaching episodes remain visible even in the final L96 suffix, while the
+    final observation block controls the H48 forecast response.
 
     Pair members differ along the null space of one protected channel's row.
     The protected history is therefore identical while its future differs.
@@ -2145,25 +2282,25 @@ def _common_factor(
         family,
         factor_persistence=factor_persistence,
     )
-    # A 24--32 step observation block is long enough to look like a persistent
-    # multivariate regime rather than a one-off spike.  It also leaves a
-    # substantial invariant prefix in every supported suffix view.
-    code_width = int(rng.choice(np.asarray([24, 28, 32])))
-    span_candidates = np.asarray(
-        [
-            value
-            for value in (
-                horizon + code_width + 4,
-                horizon + code_width + 8,
-                horizon + code_width + 12,
-            )
-            if value >= horizon + code_width + 4
-        ],
-        dtype=int,
+    # Six-to-eight observed points and eight response points give a smooth,
+    # overdetermined rank-two episode while allowing five complete teaching
+    # examples in the final L96 suffix.  The formal future remains H48 and uses
+    # the full response basis.
+    code_width = int(rng.choice(np.asarray([6, 7, 8])))
+    teaching_response_width = 8
+    teaching_episode_gap = 1
+    episode_span = (
+        code_width + teaching_response_width + teaching_episode_gap
     )
-    if not span_candidates.size:
-        span_candidates = np.asarray([horizon + code_width + 4], dtype=int)
-    episode_span = int(rng.choice(span_candidates))
+    (
+        teaching_response_basis,
+        teaching_response_basis_meta,
+    ) = _orthonormal_factor_basis(
+        teaching_response_width,
+        rng,
+        family,
+        factor_persistence=factor_persistence,
+    )
     response_starts = [
         context - episode_span * offset
         for offset in range(1, 1 + context // episode_span)
@@ -2336,7 +2473,10 @@ def _common_factor(
             * code_shape[:, None]
             * code_vector[None, :]
         )
-        response_stop = min(length, response_start + horizon)
+        response_stop = min(
+            length,
+            response_start + teaching_response_width,
+        )
         # Keep the relay coefficient identifiable without deleting the dense
         # factor itself from the rest of the path.  Only the two response-basis
         # directions inside teaching windows are residualized; all orthogonal
@@ -2348,12 +2488,16 @@ def _common_factor(
             / max(loading_denominator, 1e-12)
         )
         nuisance_coefficients = np.linalg.lstsq(
-            response_basis[: response_stop - response_start],
+            teaching_response_basis[
+                : response_stop - response_start
+            ],
             teaching_factor_score,
             rcond=None,
         )[0]
         nuisance_projection = (
-            response_basis[: response_stop - response_start]
+            teaching_response_basis[
+                : response_stop - response_start
+            ]
             @ nuisance_coefficients
         )
         target[response_start:response_stop] -= (
@@ -2361,7 +2505,10 @@ def _common_factor(
             * response_loadings[None, :]
         )
         response = (
-            response_basis[: response_stop - response_start] @ state
+            teaching_response_basis[
+                : response_stop - response_start
+            ]
+            @ state
         )
         target[response_start:response_stop] += (
             shared_strength
@@ -2406,6 +2553,15 @@ def _common_factor(
     )
 
     code_condition_number = float(np.linalg.cond(code_matrix))
+    shortest_suffix_start = max(
+        0,
+        context - SHORTEST_SUPPORTED_CONTEXT,
+    )
+    shortest_suffix_episode_count = sum(
+        int(episode["code_slice"][0]) >= shortest_suffix_start
+        and int(episode["response_slice"][1]) <= context
+        for episode in historical_episodes
+    )
     detail = {
         "factor_rank": 1,
         "latent_state_dimension": 2,
@@ -2421,6 +2577,12 @@ def _common_factor(
         "code_shape_phase": code_phase,
         "response_basis": response_basis.tolist(),
         "response_basis_process": response_basis_meta,
+        "teaching_response_basis": (
+            teaching_response_basis.tolist()
+        ),
+        "teaching_response_basis_process": (
+            teaching_response_basis_meta
+        ),
         "response_loadings": response_loadings.tolist(),
         "loadings": response_loadings.tolist(),
         "loading_rms": float(
@@ -2428,7 +2590,19 @@ def _common_factor(
         ),
         "historical_episodes": historical_episodes,
         "historical_episode_count": len(historical_episodes),
+        "teaching_code_width": code_width,
+        "teaching_response_width": teaching_response_width,
+        "teaching_episode_gap": teaching_episode_gap,
         "episode_span": episode_span,
+        "minimum_supported_context_length": (
+            SHORTEST_SUPPORTED_CONTEXT
+        ),
+        "historical_episode_count_in_shortest_suffix": (
+            shortest_suffix_episode_count
+        ),
+        "shortest_suffix_has_sufficient_teaching_evidence": bool(
+            shortest_suffix_episode_count >= 5
+        ),
         "final_code_slice": [final_code_start, context],
         "protected_target_index": protected_target,
         "counterfactual_variant": variant,
@@ -2638,9 +2812,10 @@ def _counterfactual_dense_driver(
         excitation_scale * alternative_b,
     )
     start = context - delay
-    # Replace only the excitation component.  Background is identical across
-    # members and driver future is identical, while responder history remains
-    # exactly invariant under a delay >= horizon.
+    # Replace only the excitation component.  Background and driver future are
+    # identical across members.  Because the block ends exactly at the context
+    # boundary, every responder-history value still depends on the shared
+    # driver prefix; only the declared future effect prefix differs.
     driver[start:context] = (
         0.55 * np.asarray(background[start:context], dtype=float)
         + alternatives[variant]
@@ -2695,25 +2870,30 @@ def _cross_series_dependence(
     requested_delay = int(
         round(_parameter(cond, "cross_lag_steps", float(season)))
     )
-    # v8 currently has a fixed H=48 protocol.  Capping the design horizon also
-    # preserves prefix invariance when a caller generates a longer audit path.
+    # V8 has a fixed H=48 protocol.  The lag itself is capped at 24 so a blind
+    # history-only search still has at least 72 aligned observations inside the
+    # shortest L96 view.  The paired intervention consequently affects the
+    # first ``delay`` forecast points (plus the two-tap tail in the secondary
+    # family); the remainder is an explicit unaffected control region.
     horizon = min(48, max(1, length - context))
-    # A lag at least as long as H makes the responder future depend only on
-    # driver values already visible in history.  Formal samples are generated
-    # once at L=504 and exposed as suffix views down to L=96, so the lag must
-    # also leave a stable driver prefix inside that shortest view.  Eight-step
-    # variation is a property of the DGP, not a model patch accommodation.
-    minimum_delay = min(horizon, context // 2)
     shortest_view = min(context, 96)
     minimum_invariant_driver_prefix = min(16, shortest_view // 4)
-    # Cross-series dependence is the ability under test, not lag search
-    # difficulty.  Aligning the lag with H gives the cleanest history-covered
-    # task: responder[k] is driven by the kth point of the last visible driver
-    # block.  Lag discovery remains audited blindly in the feature gate.
-    maximum_delay = minimum_delay
-    lag_step = horizon
-    lag_candidates = np.asarray([minimum_delay], dtype=int)
-    delay = minimum_delay
+    minimum_delay = 8
+    maximum_delay = min(24, shortest_view // 4)
+    delay = int(
+        np.clip(
+            requested_delay,
+            minimum_delay,
+            maximum_delay,
+        )
+    )
+    lag_step = 1
+    lag_candidates = np.arange(
+        minimum_delay,
+        maximum_delay + 1,
+        lag_step,
+        dtype=int,
+    )
     driver_background, background_meta = _calibrated_signal(
         length,
         context,
@@ -2736,12 +2916,14 @@ def _cross_series_dependence(
     if family == "primary":
         response_source = shifted
         response_law = "single_linear_cross_lag"
+        counterfactual_effect_steps = min(delay, horizon)
     else:
         shifted_1 = np.concatenate([[shifted[0]], shifted[:-1]])
         shifted_2 = np.concatenate([[shifted[0], shifted[0]], shifted[:-2]])
         filtered = 0.60 * shifted + 0.28 * shifted_1 + 0.12 * shifted_2
         response_source = np.tanh(1.25 * filtered)
         response_law = "distributed_lag_saturating_response"
+        counterfactual_effect_steps = min(delay + 2, horizon)
     dependence_scale = _parameter(cond, "cross_dependence_scale", 0.65)
     alignment = _parameter(cond, "cross_lag_alignment", 0.6)
     gain = dependence_scale * (0.12 + 1.38 * lam) * (
@@ -2798,14 +2980,25 @@ def _cross_series_dependence(
         "cross_lag_steps": delay,
         "cross_lag_candidate_steps": lag_candidates.tolist(),
         "cross_lag_sampling_policy": (
-            "horizon_aligned_history_covered_lag"
+            "real_anchor_lag_clipped_to_l96_identifiable_range"
         ),
         "cross_lag_step": lag_step,
         "minimum_supported_context_length": shortest_view,
         "minimum_invariant_driver_prefix": (
             minimum_invariant_driver_prefix
         ),
-        "history_covered_forecast_steps": min(delay, length - context),
+        "history_covered_forecast_steps": counterfactual_effect_steps,
+        "counterfactual_effect_forecast_steps": (
+            counterfactual_effect_steps
+        ),
+        "counterfactual_effect_future_slice": [
+            context,
+            context + counterfactual_effect_steps,
+        ],
+        "counterfactual_unaffected_future_slice": [
+            context + counterfactual_effect_steps,
+            context + horizon,
+        ],
         "response_law": response_law,
         "dependence_gain": float(gain),
         "calibrated_background_ratio": float(calibrated_background_ratio),

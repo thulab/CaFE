@@ -76,6 +76,13 @@ def test_pipeline_passes_nonsemantic_preparation_worker_count(tmp_path):
         seed_count=64,
         models=["Chronos-2"],
         endpoints=["http://127.0.0.1:10810"],
+        devices="0,1",
+        endpoint_preset=[],
+        endpoint_devices=[],
+        endpoint_capacity=[],
+        endpoint_concurrency_scale=[],
+        endpoint_model_capacity=[],
+        endpoint_model_concurrency=[],
         resume_inference=False,
     )
 

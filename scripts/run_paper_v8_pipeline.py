@@ -13,15 +13,7 @@ import paper_v8_pipeline_common as v8
 import run_paper_v8_inference as v8_inference
 
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
-DEFAULT_MODELS = (
-    "Chronos-2",
-    "timesfm2.5",
-    "tirex2",
-    "moirai2",
-    "Timer-3.5",
-    "toto2.0",
-    "TimePFN",
-)
+DEFAULT_MODELS = v8_inference.DEFAULT_MODELS
 STEPS = ("calibration", "generation", "validation", "inference", "analysis")
 
 
@@ -211,7 +203,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v1",
+        "schema_version": "paper_v8_experiment_protocol.v2",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -240,7 +232,11 @@ def protocol_config(
             ),
             "resume_part_identity": "preserved_when_service_count_changes",
         },
-        "context_length": v8.CONTEXT_LENGTH,
+        "real_calibration_context_length": (
+            v8.REAL_CALIBRATION_CONTEXT_LENGTH
+        ),
+        "synthetic_master_context_length": v8.CONTEXT_LENGTH,
+        "fixed_context_length": v8.FIXED_CONTEXT_LENGTH,
         "horizon": v8.HORIZON,
         "view_context_lengths": list(v8.VIEW_CONTEXT_LENGTHS),
         "intensities": list(v8.INTENSITIES),

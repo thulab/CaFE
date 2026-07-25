@@ -23,7 +23,6 @@ for import_path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
 from app.services.metric_service import seasonal_period_for_frequency  # noqa: E402
 from app.services.synthetic_generation_service import (  # noqa: E402
     _normalize_covariates,
-    _realized_features,
     _standardize_by_context,
     _standardize_hierarchy_by_context,
 )
@@ -34,6 +33,7 @@ from app.services.synthetic_generator_conditioning import (  # noqa: E402
 from app.services.synthetic_v8_generation import (  # noqa: E402
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
+    REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
     add_observation_noise_to_history,
     derive_deterministic_parameters,
@@ -42,20 +42,27 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
     standardize_cross_series_counterfactual_member,
 )
 from paper_v2_transfer_common import impute_observed_window  # noqa: E402
+from paper_v8_features import (  # noqa: E402
+    FEATURE_SCHEMA_VERSION,
+    v8_feature_vector,
+)
 from synthetic_feature_profile import (  # noqa: E402
     adjusted_r2,
-    feature_vector,
     file_sha256,
     read_gift_arrow_targets,
     robust_scale,
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v8"
-CONTEXT_LENGTH = 504
+SCHEMA_VERSION = "paper_v8_pipeline.v9"
+REAL_CALIBRATION_CONTEXT_LENGTH = 168
+CONTEXT_LENGTH = 336
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
-VIEW_CONTEXT_LENGTHS = (96, 168, 336, 504)
+REAL_FORECAST_MASTER_LENGTH = REAL_CALIBRATION_CONTEXT_LENGTH + HORIZON
+VIEW_CONTEXT_LENGTHS = (96, 168, 336)
+FIXED_CONTEXT_LENGTH = 168
+MIN_REAL_FEATURE_COUNT = 12
 INTENSITIES = (1, 2, 3, 4, 5)
 QUANTILE_LEVELS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 CALIBRATION_SAMPLE_SEED = 2026072401
@@ -98,7 +105,7 @@ SYNTHETIC_DOSE_CAPABILITIES = STRUCTURAL_CAPABILITIES | frozenset(
 )
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
 PRIMARY_TARGET_FEATURE = {
-    "trend": "curvature_abs",
+    "trend": "local_curvature_abs_w96",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
     "regime_switching": "regime_sparse_transition_score",
@@ -107,7 +114,7 @@ PRIMARY_TARGET_FEATURE = {
     # controlled dose and retain the observable proxy only as a diagnostic.
     "nonlinear_persistence": "nonlinear_strength",
     # Thresholded spike counts and event-clock R² are both zero-inflated on
-    # finite L504 windows.  The generator-known history event-component energy
+    # finite L336 windows.  The generator-known history event-component energy
     # share is continuous and exactly monotone in event prominence; clock
     # recoverability remains a separate observable structural diagnostic.
     "predictable_intermittency": "event_effect_energy_share",
@@ -251,6 +258,13 @@ DATASET_REGISTRY = {
             "bizitobs_service",
             "bizitobs_service",
             "Web/CloudOps",
+        ),
+        DatasetSpec(
+            "gift_restaurant_d",
+            "Restaurant",
+            "restaurant",
+            "restaurant",
+            "Business",
         ),
         DatasetSpec(
             "gift_hierarchical_sales_d",
@@ -404,7 +418,7 @@ def expand_native_records(
 def nonoverlapping_strata(
     series_length: int,
     *,
-    window_length: int = CONTEXT_LENGTH,
+    window_length: int = REAL_FORECAST_MASTER_LENGTH,
 ) -> list[tuple[int, int]]:
     capacity = int(series_length) // int(window_length)
     if capacity <= 0:
@@ -579,17 +593,16 @@ def calibration_period_policy(
 ) -> dict[str, Any]:
     """Separate calendar, feature, generator-profile, and MASE periods.
 
-    A sub-daily calendar season may be much longer than L504.  In that case it
+    A sub-daily calendar season may be much longer than L168.  In that case it
     remains provenance, the real-window spectral peak supplies an observable
     feature period, and non-seasonal MASE uses lag one.
     """
 
     history = np.asarray(standardized_history, dtype=float).reshape(-1)
     calendar_period = int(seasonal_period_for_frequency(frequency))
-    provisional = feature_vector(
+    provisional = v8_feature_vector(
         history[:, None],
         None,
-        context_length=CONTEXT_LENGTH,
     )
     raw_dominant = float(provisional.get("dominant_period", 24.0))
     if not math.isfinite(raw_dominant) or raw_dominant <= 0.0:
@@ -599,13 +612,13 @@ def calibration_period_policy(
             np.clip(
                 raw_dominant,
                 8.0,
-                CONTEXT_LENGTH / 3.0,
+                REAL_CALIBRATION_CONTEXT_LENGTH / 3.0,
             )
         )
     )
     calendar_feature_observable = bool(
         calendar_period >= 2
-        and 2 * calendar_period <= CONTEXT_LENGTH
+        and 2 * calendar_period <= REAL_CALIBRATION_CONTEXT_LENGTH
     )
     feature_period = (
         calendar_period
@@ -614,7 +627,7 @@ def calibration_period_policy(
     )
     mase_period = (
         calendar_period
-        if 1 <= calendar_period < CONTEXT_LENGTH
+        if 1 <= calendar_period < REAL_CALIBRATION_CONTEXT_LENGTH
         else 1
     )
     return {
@@ -622,8 +635,8 @@ def calibration_period_policy(
         "calendar_season_feature_observable": (
             calendar_feature_observable
         ),
-        "calendar_cycles_in_l504": float(
-            CONTEXT_LENGTH / max(calendar_period, 1)
+        "calendar_cycles_in_calibration_history": float(
+            REAL_CALIBRATION_CONTEXT_LENGTH / max(calendar_period, 1)
         ),
         "raw_profile_dominant_period": raw_dominant,
         "profile_period": profile_period,
@@ -637,7 +650,7 @@ def calibration_period_policy(
         "mase_period_source": (
             "calendar_season"
             if mase_period == calendar_period
-            else "nonseasonal_lag1_calendar_unobservable_in_l504"
+            else "nonseasonal_lag1_calendar_unobservable_in_l168"
         ),
     }
 
@@ -670,6 +683,78 @@ def summarize_feature_rows(
     return summary
 
 
+def _real_forecast_mase_scale(
+    standardized_history: np.ndarray,
+    requested_period: int,
+) -> tuple[int, float]:
+    history = np.asarray(standardized_history, dtype=float).reshape(-1)
+    period = int(requested_period)
+    if not 1 <= period < history.size:
+        period = 1
+    scale = float(np.mean(np.abs(history[period:] - history[:-period])))
+    if not math.isfinite(scale) or scale <= 1e-12:
+        period = 1
+        scale = float(np.mean(np.abs(np.diff(history))))
+    if not math.isfinite(scale) or scale <= 1e-12:
+        raise ValueError("real forecast anchor has no valid MASE scale")
+    return period, scale
+
+
+def _native_multivariate_features(
+    values: np.ndarray,
+    *,
+    start: int,
+    feature_period: int,
+    minimum_observed_fraction: float,
+) -> dict[str, float]:
+    native = np.asarray(values, dtype=float)
+    if native.ndim != 2 or native.shape[0] < 2:
+        return {}
+    history = native[
+        :,
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH,
+    ].T
+    if history.shape != (
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+        native.shape[0],
+    ):
+        return {}
+    standardized_channels: list[np.ndarray] = []
+    for channel in range(min(history.shape[1], 5)):
+        imputed, _observed = impute_observed_window(
+            history[:, channel],
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if imputed is None:
+            return {}
+        try:
+            standardized, _location, _scale = standardize_history(imputed)
+        except ValueError:
+            return {}
+        standardized_channels.append(standardized)
+    panel = np.column_stack(standardized_channels)
+    features = v8_feature_vector(
+        panel,
+        feature_period,
+        include_cross_series_predictability=False,
+    )
+    if panel.shape[1] >= 2:
+        cross_features = v8_feature_vector(
+            panel[:, : min(panel.shape[1], 3)],
+            feature_period,
+            include_cross_series_predictability=True,
+            cross_series_max_lag=24,
+        )
+        for name in (
+            "lead_lag_peak_abs",
+            "lead_lag_peak_lag_abs",
+            "cross_series_incremental_r2",
+        ):
+            if name in cross_features:
+                features[name] = cross_features[name]
+    return features
+
+
 def build_calibration_anchors(
     dataset: DatasetSpec,
     *,
@@ -680,6 +765,10 @@ def build_calibration_anchors(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     asset_path = gift_eval_dir / dataset.asset_name
     frequency, native_records = read_gift_arrow_targets(asset_path)
+    native_by_item = {
+        str(item_id): np.asarray(values, dtype=float)
+        for item_id, values in native_records
+    }
     series = expand_native_records(native_records)
     candidates: list[tuple[int, int, int]] = []
     for series_index, (_series_id, _item_id, _channel, values) in enumerate(series):
@@ -697,34 +786,43 @@ def build_calibration_anchors(
         series_index, lower, upper = candidates[int(candidate_index)]
         series_id, item_id, channel_index, values = series[series_index]
         start = int(rng.integers(lower, upper + 1)) if upper > lower else int(lower)
-        raw = np.asarray(values[start : start + CONTEXT_LENGTH], dtype=float)
-        imputed, observed_fraction = impute_observed_window(
-            raw,
+        raw_master = np.asarray(
+            values[start : start + REAL_FORECAST_MASTER_LENGTH],
+            dtype=float,
+        )
+        if raw_master.size != REAL_FORECAST_MASTER_LENGTH:
+            rejected_missing += 1
+            continue
+        history, history_observed_fraction = impute_observed_window(
+            raw_master[:REAL_CALIBRATION_CONTEXT_LENGTH],
             minimum_observed_fraction=minimum_observed_fraction,
         )
-        if imputed is None:
+        future, future_observed_fraction = impute_observed_window(
+            raw_master[REAL_CALIBRATION_CONTEXT_LENGTH:],
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if history is None or future is None:
             rejected_missing += 1
             continue
         try:
-            standardized, location, scale = standardize_history(imputed)
+            standardized_history, location, scale = standardize_history(history)
         except ValueError:
             rejected_uninformative += 1
             continue
         period_policy = calibration_period_policy(
             frequency,
-            standardized,
+            standardized_history,
         )
-        features = feature_vector(
-            standardized[:, None],
+        features = v8_feature_vector(
+            standardized_history[:, None],
             int(period_policy["feature_period"]),
-            context_length=CONTEXT_LENGTH,
         )
         (
             nonlinear_gain,
             nonlinear_detected_lag,
             nonlinear_candidate_lags,
         ) = v8_nonlinear_conditional_gain(
-            standardized,
+            standardized_history,
             int(period_policy["feature_period"]),
         )
         features["nonlinear_conditional_gain"] = nonlinear_gain
@@ -740,20 +838,42 @@ def build_calibration_anchors(
             if math.isfinite(float(value))
             and name != "future_abs_covariate_target_corr"
         }
+        native_features = _native_multivariate_features(
+            native_by_item[item_id],
+            start=start,
+            feature_period=int(period_policy["feature_period"]),
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        finite_native_features = {
+            str(name): float(value)
+            for name, value in native_features.items()
+            if math.isfinite(float(value))
+        }
+        standardized_master = np.concatenate([history, future])
+        standardized_master = (standardized_master - location) / scale
+        try:
+            real_mase_period, real_mase_scale = _real_forecast_mase_scale(
+                standardized_history,
+                int(period_policy["mase_period"]),
+            )
+        except ValueError:
+            rejected_uninformative += 1
+            continue
         anchor_id = (
             f"{safe_id(dataset.dataset_id)}__{safe_id(item_id)}__"
             f"c{channel_index}__t{start}"
         )
         anchors.append(
             {
-                "schema_version": "paper_v8_calibration_anchor.v2",
+                "schema_version": "paper_v8_calibration_anchor.v3",
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "anchor_id": anchor_id,
                 "dataset_id": dataset.dataset_id,
                 "config_id": dataset.config_id,
                 "task_view_id": dataset.task_view_id,
                 "profile_id": (
                     f"{dataset.dataset_id}__{dataset.task_view_id}__"
-                    f"L{CONTEXT_LENGTH}"
+                    f"L{REAL_CALIBRATION_CONTEXT_LENGTH}"
                 ),
                 "frequency": frequency,
                 # ``season_length`` remains the literal calendar period for
@@ -767,23 +887,122 @@ def build_calibration_anchors(
                 "series_id": series_id,
                 "channel_id": channel_index,
                 "window_start": start,
-                "context_length": CONTEXT_LENGTH,
-                "observed_fraction": observed_fraction,
+                "context_length": REAL_CALIBRATION_CONTEXT_LENGTH,
+                "horizon": HORIZON,
+                "observed_fraction": history_observed_fraction,
+                "future_observed_fraction": future_observed_fraction,
                 "history_location": location,
                 "history_scale": scale,
                 "history_sha256": hashlib.sha256(
-                    np.asarray(imputed, dtype="<f8").tobytes()
+                    np.asarray(history, dtype="<f8").tobytes()
                 ).hexdigest(),
                 "features": finite_features,
+                "native_multivariate_features": finite_native_features,
+                "feature_provenance": {
+                    **{
+                        name: "real_univariate_history_l168"
+                        for name in finite_features
+                    },
+                    **{
+                        name: "real_native_multivariate_history_l168"
+                        for name in finite_native_features
+                        if name not in finite_features
+                    },
+                },
+                "feature_provenance_by_scope": {
+                    "real_univariate": sorted(finite_features),
+                    "real_native_multivariate": sorted(
+                        finite_native_features
+                    ),
+                },
+                "real_forecast_master": {
+                    "schema_version": (
+                        "paper_v8_real_anchor_forecast_master.v1"
+                    ),
+                    "sample_id": f"v8real__{anchor_id}",
+                    "dataset_id": dataset.dataset_id,
+                    "config_id": dataset.config_id,
+                    "task_view_id": dataset.task_view_id,
+                    "anchor_id": anchor_id,
+                    "context_length": REAL_CALIBRATION_CONTEXT_LENGTH,
+                    "horizon": HORIZON,
+                    "target_dim": 1,
+                    "covariate_dim": 0,
+                    "target": standardized_master[:, None].tolist(),
+                    "covariates": None,
+                    "frequency": frequency,
+                    "calendar_season_length": int(
+                        period_policy["calendar_season_length"]
+                    ),
+                    "feature_period": int(period_policy["feature_period"]),
+                    "mase_period": real_mase_period,
+                    "mase_scale": real_mase_scale,
+                    "standardization": {
+                        "scope": "history_only_l168",
+                        "location": location,
+                        "scale": scale,
+                    },
+                    "history_sha256": hashlib.sha256(
+                        np.asarray(
+                            standardized_master[
+                                :REAL_CALIBRATION_CONTEXT_LENGTH
+                            ],
+                            dtype="<f8",
+                        ).tobytes()
+                    ).hexdigest(),
+                    "future_sha256": hashlib.sha256(
+                        np.asarray(
+                            standardized_master[
+                                REAL_CALIBRATION_CONTEXT_LENGTH:
+                            ],
+                            dtype="<f8",
+                        ).tobytes()
+                    ).hexdigest(),
+                },
             }
         )
         if len(anchors) >= target_count:
             break
     if not anchors:
         raise ValueError(f"{dataset.dataset_id} produced no valid v8 anchors")
+    univariate_profile = summarize_feature_rows(
+        anchor["features"] for anchor in anchors
+    )
+    native_multivariate_profile = summarize_feature_rows(
+        anchor["native_multivariate_features"]
+        for anchor in anchors
+        if anchor["native_multivariate_features"]
+    )
+    feature_support: dict[str, dict[str, Any]] = {}
+    for scope, profile in (
+        ("real_univariate", univariate_profile),
+        ("real_native_multivariate", native_multivariate_profile),
+    ):
+        for name, summary in profile.items():
+            finite_count = int(summary["finite_count"])
+            candidate = {
+                "scope": scope,
+                "finite_count": finite_count,
+                "minimum_finite_count": MIN_REAL_FEATURE_COUNT,
+                "usable": finite_count >= MIN_REAL_FEATURE_COUNT,
+                "fallback_reason": (
+                    None
+                    if finite_count >= MIN_REAL_FEATURE_COUNT
+                    else "insufficient_finite_real_windows"
+                ),
+            }
+            existing = feature_support.get(name)
+            if existing is None or (
+                candidate["scope"] == "real_native_multivariate"
+                and candidate["usable"]
+            ):
+                feature_support[name] = candidate
+    for anchor in anchors:
+        anchor["feature_support"] = feature_support
     arrow_files = sorted(asset_path.glob("data-*.arrow"))
     metadata = {
         "dataset": asdict(dataset),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "asset_path": str(asset_path),
         "asset_files": [file_record(path) for path in arrow_files],
         "frequency": frequency,
@@ -795,11 +1014,14 @@ def build_calibration_anchors(
                 seasonal_period_for_frequency(frequency)
             ),
             "calendar_feature_observable_rule": (
-                "at_least_two_complete_calendar_cycles_in_l504"
+                "at_least_two_complete_calendar_cycles_in_l168"
             ),
-            "profile_period_bounds": [8, CONTEXT_LENGTH // 3],
+            "profile_period_bounds": [
+                8,
+                REAL_CALIBRATION_CONTEXT_LENGTH // 3,
+            ],
             "mase_fallback": (
-                "lag1_when_calendar_period_is_not_defined_inside_l504"
+                "lag1_when_calendar_period_is_not_defined_inside_l168"
             ),
         },
         "accepted_feature_period_counts": {
@@ -829,9 +1051,15 @@ def build_calibration_anchors(
         "rejected_uninformative_count": rejected_uninformative,
         "minimum_observed_fraction": minimum_observed_fraction,
         "sample_seed": sample_seed,
+        "feature_profiles": {
+            "univariate": univariate_profile,
+            "native_multivariate": native_multivariate_profile,
+            "support": feature_support,
+        },
         "window_policy": (
-            "full-series non-overlapping capacity strata with deterministic "
-            "without-replacement selection and within-stratum jitter"
+            "forecastable L168+H48 non-overlapping capacity strata with "
+            "deterministic without-replacement selection and within-stratum "
+            "jitter"
         ),
     }
     return anchors, metadata
@@ -843,6 +1071,99 @@ def anchor_summary(features: dict[str, float]) -> dict[str, dict[str, float]]:
         for name, value in features.items()
         if math.isfinite(float(value))
     }
+
+
+def anchor_feature_values(
+    anchor: dict[str, Any],
+    *,
+    capability_id: str | None = None,
+) -> dict[str, float]:
+    values = {
+        str(name): float(value)
+        for name, value in anchor.get("features", {}).items()
+        if anchor.get("feature_support", {})
+        .get(name, {"usable": True})
+        .get("usable", True)
+        if math.isfinite(float(value))
+    }
+    native_feature_names = (
+        set(REQUIRED_REAL_FEATURES_BY_CAPABILITY.get(capability_id, ()))
+        if capability_id in {"common_factor", "cross_series_dependence"}
+        else set()
+    )
+    values.update(
+        {
+            str(name): float(value)
+            for name, value in anchor.get(
+                "native_multivariate_features",
+                {},
+            ).items()
+            if name in native_feature_names
+            if anchor.get("feature_support", {})
+            .get(name, {"usable": True})
+            .get("usable", True)
+            if math.isfinite(float(value))
+        }
+    )
+    return values
+
+
+def parameter_mapping_provenance(
+    mappings: Iterable[dict[str, Any]],
+    anchor: dict[str, Any],
+    *,
+    capability_id: str | None = None,
+) -> list[dict[str, Any]]:
+    support = anchor.get("feature_support", {})
+    univariate = {
+        name
+        for name in anchor.get("features", {})
+        if support.get(name, {"usable": True}).get("usable", True)
+    }
+    multivariate = {
+        name
+        for name in anchor.get("native_multivariate_features", {})
+        if capability_id in {"common_factor", "cross_series_dependence"}
+        if name
+        in set(REQUIRED_REAL_FEATURES_BY_CAPABILITY.get(capability_id, ()))
+        if support.get(name, {"usable": True}).get("usable", True)
+    }
+    output: list[dict[str, Any]] = []
+    for mapping in mappings:
+        row = dict(mapping)
+        source = str(row.get("source_feature", ""))
+        components = tuple(
+            part for part in source.split("/") if part
+        )
+        if source == "synthetic_protocol_constant":
+            status = "protocol_constant"
+            fallback_reason = None
+        elif components and all(
+            component in univariate | multivariate
+            for component in components
+        ):
+            status = (
+                "real_native_multivariate"
+                if any(component in multivariate for component in components)
+                else "real_univariate"
+            )
+            fallback_reason = None
+        else:
+            status = "protocol_fallback"
+            missing = [
+                component
+                for component in components
+                if component not in univariate | multivariate
+            ]
+            fallback_reason = (
+                "real_feature_unavailable:"
+                + ",".join(missing or [source or "unknown"])
+            )
+        row["source_status"] = status
+        row["fallback_used"] = status == "protocol_fallback"
+        row["fallback_reason"] = fallback_reason
+        output.append(row)
+    return output
 
 
 def build_conditioning(
@@ -925,6 +1246,12 @@ def measured_features(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     metadata = metadata or {}
+    target_history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
+    covariate_history = (
+        None
+        if covariates is None
+        else np.asarray(covariates, dtype=float)[:CONTEXT_LENGTH]
+    )
     measurement_period = int(season_length)
     if capability_id == "multi_seasonal":
         periods = metadata.get("periods") or []
@@ -959,23 +1286,14 @@ def measured_features(
         if capability_id == "hierarchical_coherence"
         else None
     )
-    values = _realized_features(
-        target,
-        covariates,
+    values = v8_feature_vector(
+        target_history,
         measurement_period,
-        CONTEXT_LENGTH,
-    )
-    values.update(
-        feature_vector(
-            target,
-            measurement_period,
-            covariates=covariates,
-            context_length=CONTEXT_LENGTH,
-            hierarchy=hierarchy,
-            include_cross_series_predictability=(
-                capability_id == "cross_series_dependence"
-            ),
-        )
+        covariates=covariate_history,
+        hierarchy=hierarchy,
+        include_cross_series_predictability=(
+            capability_id == "cross_series_dependence"
+        ),
     )
     if capability_id == "nonlinear_persistence":
         nonlinear_strength = float(
@@ -988,7 +1306,7 @@ def measured_features(
             nonlinear_detected_lag,
             nonlinear_candidate_lags,
         ) = v8_nonlinear_conditional_gain(
-            np.mean(target, axis=1),
+            np.mean(target_history, axis=1),
             measurement_period,
         )
         values["nonlinear_conditional_gain"] = nonlinear_gain
@@ -1002,7 +1320,7 @@ def measured_features(
         if actual_lag is not None:
             values["nonlinear_actual_lag_gain"] = (
                 v8_nonlinear_actual_lag_gain(
-                    np.mean(target, axis=1),
+                    np.mean(target_history, axis=1),
                     measurement_period,
                     int(actual_lag),
                 )
@@ -1038,9 +1356,19 @@ def generate_calibration_member(
 ) -> tuple[dict[str, float], dict[str, Any]]:
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
-        anchor_summary(anchor["features"]),
+        anchor_summary(
+            anchor_feature_values(
+                anchor,
+                capability_id=capability_id,
+            )
+        ),
         season_length=int(anchor["feature_period"]),
         context_length=CONTEXT_LENGTH,
+    )
+    mappings = parameter_mapping_provenance(
+        mappings,
+        anchor,
+        capability_id=capability_id,
     )
     conditioning = build_conditioning(
         dataset,
@@ -1776,7 +2104,7 @@ def mase_scales(
     history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
     period = int(season_length)
     if not 1 <= period < len(history):
-        raise ValueError("v8 MASE period must be defined inside L504")
+        raise ValueError("v8 MASE period must be defined inside L336")
     differences = np.abs(history[period:] - history[:-period])
     by_target = np.mean(differences, axis=0)
     if not np.isfinite(by_target).all() or np.any(by_target <= 1e-12):
@@ -1827,9 +2155,19 @@ def generate_master_sample(
 ) -> dict[str, Any]:
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
-        anchor_summary(anchor["features"]),
+        anchor_summary(
+            anchor_feature_values(
+                anchor,
+                capability_id=capability_id,
+            )
+        ),
         season_length=int(anchor["feature_period"]),
         context_length=CONTEXT_LENGTH,
+    )
+    mappings = parameter_mapping_provenance(
+        mappings,
+        anchor,
+        capability_id=capability_id,
     )
     family_calibration = capability_calibration[family_role]
     lambdas = tuple(
@@ -1913,7 +2251,8 @@ def generate_master_sample(
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
-        "schema_version": "paper_v8_master_sample.v2",
+        "schema_version": "paper_v8_master_sample.v3",
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "sample_id": sample_id,
         "master_sample_id": sample_id,
         "paired_group_id": (
@@ -1965,8 +2304,8 @@ def generate_master_sample(
         "calendar_season_feature_observable": bool(
             anchor["calendar_season_feature_observable"]
         ),
-        "calendar_cycles_in_l504": float(
-            anchor["calendar_cycles_in_l504"]
+        "calendar_cycles_in_calibration_history": float(
+            anchor["calendar_cycles_in_calibration_history"]
         ),
         "feature_period": int(anchor["feature_period"]),
         "feature_period_source": str(anchor["feature_period_source"]),
@@ -1997,7 +2336,7 @@ def generate_master_sample(
         "mase_period_source": str(anchor["mase_period_source"]),
         "mase_scale": mase_scale,
         "mase_scale_by_target": scale_by_target,
-        "mase_scale_source": "clean_l504_history",
+        "mase_scale_source": "clean_l336_history",
         "target_sha256": target_hash,
         "future_sha256": hashlib.sha256(
             np.asarray(target[CONTEXT_LENGTH:], dtype="<f8").tobytes()
@@ -2220,7 +2559,7 @@ def master_view(
     if context_length not in VIEW_CONTEXT_LENGTHS:
         raise ValueError(f"unsupported v8 context view {context_length}")
     if int(master["context_length"]) != CONTEXT_LENGTH:
-        raise ValueError("v8 inference views require an L504 master")
+        raise ValueError("v8 inference views require an L336 master")
     start = CONTEXT_LENGTH - context_length
     target = np.asarray(master["target"], dtype=float)[start:]
     covariates = (
@@ -2229,7 +2568,7 @@ def master_view(
         else np.asarray(master["covariates"], dtype=float)[start:]
     )
     result = json.loads(json.dumps(master))
-    result["schema_version"] = "paper_v8_forecast_view.v1"
+    result["schema_version"] = "paper_v8_forecast_view.v2"
     result["source_master_sample_id"] = master["sample_id"]
     result["master_sample_id"] = master["sample_id"]
     result["sample_id"] = f"{master['sample_id']}__L{context_length}"
@@ -2237,7 +2576,7 @@ def master_view(
     result["context_length"] = context_length
     result["context_policy_candidates"] = list(VIEW_CONTEXT_LENGTHS)
     result["view_standardization_policy"] = (
-        "slice_exact_l504_standardized_master_without_restandardization"
+        "slice_exact_l336_standardized_master_without_restandardization"
     )
     result["target"] = target.tolist()
     result["covariates"] = (

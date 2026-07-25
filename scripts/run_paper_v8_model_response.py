@@ -28,6 +28,7 @@ for path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
         sys.path.insert(0, str(path))
 
 import run_paper_e2_dynamic_stability as inference  # noqa: E402
+import paper_v8_pipeline_common as v8_common  # noqa: E402
 import run_paper_v8_deterministic_pilot as v8_pilot  # noqa: E402
 import run_paper_v8_inference as v8_inference  # noqa: E402
 from app.services.metric_service import compute_sample_metrics  # noqa: E402
@@ -63,6 +64,7 @@ STRUCTURED_CAPABILITIES = frozenset(
         "cross_series_dependence",
     }
 )
+FIXED_CONTEXT_LENGTH = v8_common.FIXED_CONTEXT_LENGTH
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,9 +77,9 @@ def parse_args() -> argparse.Namespace:
         "--context-lengths",
         nargs="+",
         type=int,
-        choices=v8_pilot.VIEW_CONTEXT_LENGTHS,
-        default=list(v8_pilot.VIEW_CONTEXT_LENGTHS),
-        help="Suffix views expanded from each L504 master.",
+        choices=v8_common.VIEW_CONTEXT_LENGTHS,
+        default=list(v8_common.VIEW_CONTEXT_LENGTHS),
+        help="Suffix views expanded from each generated master.",
     )
     parser.add_argument("--devices", default="0,1")
     parser.add_argument(
@@ -184,27 +186,42 @@ def expand_master_samples(
     *,
     context_lengths: tuple[int, ...],
 ) -> list[dict[str, Any]]:
-    """Expand one L504 DGP draw into standardized suffix forecast views."""
+    """Expand one current-protocol master into standardized suffix views."""
 
     contexts = tuple(dict.fromkeys(int(value) for value in context_lengths))
     if not contexts or any(
-        value not in v8_pilot.VIEW_CONTEXT_LENGTHS
+        value not in v8_common.VIEW_CONTEXT_LENGTHS
         for value in contexts
     ):
         raise ValueError("invalid context-length view request")
     output: list[dict[str, Any]] = []
     for master in masters:
-        if int(master["context_length"]) != v8_pilot.CONTEXT_LENGTH:
+        if int(master["context_length"]) != v8_common.CONTEXT_LENGTH:
             raise ValueError(
-                "v8 inference input must contain L504 master samples"
+                "v8 inference input must contain current-protocol master samples"
             )
         clean_parent_id = str(
             master.get("master_sample_id", master["sample_id"])
         )
         for context_length in contexts:
-            target, covariates, metadata = v8_pilot.suffix_view(
-                master,
-                context_length,
+            start = v8_common.CONTEXT_LENGTH - context_length
+            target = np.asarray(master["target"], dtype=float)[start:]
+            covariates = (
+                None
+                if master.get("covariates") is None
+                else np.asarray(master["covariates"], dtype=float)[start:]
+            )
+            metadata = v8_common._shift_generation_metadata(
+                master["generation_metadata"],
+                capability_id=str(master["capability_id"]),
+                context_length=context_length,
+            )
+            target, covariates = v8_pilot.standardize_sample(
+                str(master["capability_id"]),
+                target,
+                covariates,
+                metadata=metadata,
+                context_length=context_length,
             )
             result = deepcopy(master)
             result["schema_version"] = "paper_v8_forecast_suffix_view.v1"
@@ -228,7 +245,7 @@ def expand_master_samples(
                 target[context_length:]
             )
             result["context_view_policy"] = (
-                "suffix_of_single_L504_master_with_shared_latent_future"
+                "suffix_of_single_master_with_shared_latent_future"
             )
             if result.get("counterfactual_pair_id") is not None:
                 result["counterfactual_pair_id"] = (
@@ -597,6 +614,7 @@ def trend_recovery_metrics(
     forecast: np.ndarray,
 ) -> dict[str, float]:
     time = np.linspace(-1.0, 1.0, truth.shape[0])
+    centered_quadratic_basis = time * time - float(np.mean(time * time))
     truth_slopes = np.asarray(
         [np.polyfit(time, truth[:, target], deg=1)[0] for target in range(truth.shape[1])]
     )
@@ -605,6 +623,30 @@ def trend_recovery_metrics(
             np.polyfit(time, forecast[:, target], deg=1)[0]
             for target in range(forecast.shape[1])
         ]
+    )
+    truth_curvatures = np.asarray(
+        [
+            np.polyfit(time, truth[:, target], deg=2)[0]
+            for target in range(truth.shape[1])
+        ]
+    )
+    forecast_curvatures = np.asarray(
+        [
+            np.polyfit(time, forecast[:, target], deg=2)[0]
+            for target in range(forecast.shape[1])
+        ]
+    )
+    truth_curvature_component = (
+        centered_quadratic_basis[:, None] * truth_curvatures[None, :]
+    )
+    forecast_curvature_component = (
+        centered_quadratic_basis[:, None] * forecast_curvatures[None, :]
+    )
+    truth_curvature_rms = float(
+        np.sqrt(np.mean(truth_curvature_component**2))
+    )
+    forecast_curvature_rms = float(
+        np.sqrt(np.mean(forecast_curvature_component**2))
     )
     return {
         "trend_slope_relative_abs_error": float(
@@ -622,6 +664,27 @@ def trend_recovery_metrics(
         ),
         "trend_direction_accuracy": float(
             np.mean(np.sign(truth_slopes) == np.sign(forecast_slopes))
+        ),
+        "trend_curvature_component_nrmse": float(
+            np.sqrt(
+                np.mean(
+                    (
+                        forecast_curvature_component
+                        - truth_curvature_component
+                    )
+                    ** 2
+                )
+            )
+            / max(truth_curvature_rms, 1e-8)
+        ),
+        "trend_curvature_sign_accuracy": float(
+            np.mean(
+                np.sign(truth_curvatures)
+                == np.sign(forecast_curvatures)
+            )
+        ),
+        "trend_curvature_magnitude_ratio": (
+            forecast_curvature_rms / max(truth_curvature_rms, 1e-8)
         ),
     }
 
@@ -1281,6 +1344,9 @@ def aggregate_predictions(
         "trend_slope_relative_abs_error",
         "trend_curvature_relative_abs_error",
         "trend_direction_accuracy",
+        "trend_curvature_component_nrmse",
+        "trend_curvature_sign_accuracy",
+        "trend_curvature_magnitude_ratio",
         "seasonal_spectral_amplitude_relative_error",
         "seasonal_spectral_phase_amplitude_alignment",
         "modulation_envelope_nmae",
@@ -2511,11 +2577,11 @@ def master_context_audit(
     predictions: list[dict[str, Any]],
     samples: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Recompute result tables on the full L504 suffix only.
+    """Recompute result tables on the preregistered fixed-context suffix.
 
-    The four context views share one generated master and are not independent
-    samples.  Keeping this audit separate prevents a pooled suffix-view
-    diagnostic from being mislabeled as an L504 benchmark result.
+    Context views share one generated master and are not independent samples.
+    Keeping this audit separate prevents a pooled suffix-view diagnostic from
+    being mislabeled as the fixed-context benchmark result.
     """
 
     context_lengths = sorted(
@@ -2538,7 +2604,11 @@ def master_context_audit(
             "covariate_counterfactual_audits": [],
             "structure_recovery_audits": [],
         }
-    context_length = max(context_lengths)
+    if FIXED_CONTEXT_LENGTH not in context_lengths:
+        raise ValueError(
+            f"fixed L{FIXED_CONTEXT_LENGTH} context is missing from predictions"
+        )
+    context_length = FIXED_CONTEXT_LENGTH
     scoped_predictions = [
         row
         for row in predictions
@@ -2747,9 +2817,9 @@ def render_report(summary: dict[str, Any]) -> str:
         "",
         "## Overall curve behavior",
         "",
-        "The counts and means in this section pool the four suffix views "
-        "(L96/L168/L336/L504) for descriptive diagnostics; they are not "
-        "independent generated samples and are not the formal L504 result.",
+        "The counts and means in this section pool the three suffix views "
+        "(L96/L168/L336) for descriptive diagnostics; they are not "
+        "independent generated samples and are not the formal fixed-L168 result.",
         "",
         "| model | native n | MASE | curve corr | forecast/truth std | flat rate | multivariate semantics |",
         "|---|---:|---:|---:|---:|---:|---|",
@@ -2768,12 +2838,12 @@ def render_report(summary: dict[str, Any]) -> str:
             "",
             "## Context-view diagnostic",
             "",
-            "Every context is a suffix of the same L504 master. The best context "
+            "Every context is a suffix of the same L336 master. The best context "
             "below is descriptive on this pilot; a formal model-specific choice "
             "must be fixed using an independent calibration split.",
             "",
-            "| model | L96 MASE | L168 MASE | L336 MASE | L504 MASE | diagnostic best |",
-            "|---|---:|---:|---:|---:|---:|",
+            "| model | L96 MASE | L168 MASE | L336 MASE | diagnostic best |",
+            "|---|---:|---:|---:|---:|",
         ]
     )
     context_rows = {
@@ -2785,7 +2855,7 @@ def render_report(summary: dict[str, Any]) -> str:
         if model_id in DIAGNOSTIC_PROBE_MODELS:
             continue
         values = []
-        for context_length in v8_pilot.VIEW_CONTEXT_LENGTHS:
+        for context_length in v8_common.VIEW_CONTEXT_LENGTHS:
             row = context_rows.get((model_id, context_length))
             values.append(
                 "—"
@@ -3177,15 +3247,15 @@ def render_chinese_report(
             "随机 3–6 段 duration motif 与 anchor；非线性随机 lag、初态和 forcing；间歇性"
             "随机 3–6 段 interval motif 与 clock phase；共同因子随机秩二 code matrix、"
             "响应基和混合符号载荷，并用多段 code→response episode 教示映射；层级随机"
-            "aggregate child share、contrast 方向和周期。跨序列依赖从 H 到 H+32 的"
-            "8 步网格抽取 lag，并随机历史/反事实事件位置；协变量 A/B 对随机选择"
+            "aggregate child share、contrast 方向和周期。跨序列依赖从 8–24 点"
+            "范围抽取可由 L96 识别的 lag，并随机连续 driver path；协变量 A/B 对随机选择"
             "future reflection、smooth offset 或 amplitude expansion，并随机事件时刻。"
             "这些变化都属于机制内 nuisance，不引入 future-only randomness。",
             "",
             "## 实际模型曲线行为",
             "",
-            "本节汇总 L96/L168/L336/L504 四个同母本 suffix view，只用于视野诊断；"
-            "四个 view 不是四个独立生成样本，也不作为 L504 正式结果计数。",
+            "本节汇总 L96/L168/L336 三个同母本 suffix view，只用于视野诊断；"
+            "三个 view 不是三个独立生成样本，正式固定主表使用 L168。",
             "",
             "| 模型 | n | MASE | 曲线相关 | 预测/真值 std | 平坦率 | 多变量语义 |",
             "|---|---:|---:|---:|---:|---:|---|",
@@ -3570,7 +3640,10 @@ def render_benchmark_final_audit(
     master_audit = summary.get("master_context_audit") or {}
     master_context_length = int(
         master_audit.get("context_length")
-        or generation_summary.get("context_length", 504)
+        or generation_summary.get(
+            "context_length",
+            v8_common.FIXED_CONTEXT_LENGTH,
+        )
     )
     scoped_aggregates = master_audit.get("aggregates") or summary["aggregates"]
     scoped_family_sensitivity = (
@@ -3717,9 +3790,9 @@ def render_benchmark_final_audit(
         f"- 真实模型：{', '.join(models)}，共 {len(models)} 个；每能力 "
         f"{i5_sample_count} 个独立母本。共同因子、跨序列与协变量能力为 "
         f"{i5_sample_count // 2} 个严格反事实母本 pair。",
-        "- L96/L168/L336 都是同一 L504 母本的 suffix view；它们只用于视野敏感性"
-        "诊断，不与 L504 混合计作独立样本。正式视野必须在独立 calibration split "
-        "上预选。",
+        "- L96/L168/L336 都是同一 L336 母本的 suffix view；它们只用于视野敏感性"
+        "诊断，不混合计作独立样本；正式固定主表使用 L168，oracle-context 在三档"
+        "中选择。",
         "- 多变量语义：Chronos-2/Toto2/TiRex2 使用原生多目标路径；TabPFN 在服务内部"
         "逐目标拆分；TimesFM2.5/Timer-3.5 由统一适配器逐目标调用。Toto2/Timer-3.5 "
         "不支持协变量，future covariates 会按契约省略。",
@@ -3731,11 +3804,11 @@ def render_benchmark_final_audit(
         "- 主表仍为 clean deterministic：随机性只在生成整条路径前抽取，future 内没有"
         "新增不可预测创新。",
         "- 参数不再独立按边际抽取：每个 seed 选择一个真实窗口作为经验 copula 锚点，"
-        "保留各特征的联合分位秩，再映射到各自 p25-p75 支持。",
+        "保留真实 anchor 内的联合特征组合，再映射到生成器支持。",
         "- nuisance 动态化包括：趋势系数符号/比例、多季节连续周期比、时变调制相位、"
         "随机 regime/event motif、非线性 lag/初态/forcing、common-factor 的秩二 "
         "code matrix/episode、响应基和混合符号载荷、hierarchy child share/contrast、"
-        "cross-series 的 H..H+32 lag 和事件位置、"
+        "cross-series 的 8–24 lag 和连续 driver path、"
         "future-covariate 反事实变换与事件时刻。",
         "",
         "| 能力 | I5 唯一参数组合/独立抽取 | nuisance 路径/独立抽取 | dose | "

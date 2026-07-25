@@ -184,8 +184,13 @@ def main() -> int:
         maximum_anchors=args.max_anchors,
         minimum_observed_fraction=args.minimum_observed_fraction,
     )
+    real_forecast_masters = [
+        dict(anchor.pop("real_forecast_master")) for anchor in anchors
+    ]
     anchor_path = output_dir / "anchors.jsonl"
     v8.write_jsonl(anchor_path, anchors)
+    real_forecast_path = output_dir / "real_anchor_masters.jsonl"
+    v8.write_jsonl(real_forecast_path, real_forecast_masters)
     capability_ids = tuple(args.capabilities)
     capability_calibration = calibrate_capabilities(
         dataset,
@@ -198,13 +203,14 @@ def main() -> int:
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v6",
+        "schema_version": "paper_v8_calibration_bundle.v7",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset": source_metadata["dataset"],
         "source": source_metadata,
         "anchor_count": len(anchors),
+        "real_forecast_anchor_count": len(real_forecast_masters),
         "capabilities": list(args.capabilities),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
@@ -228,7 +234,12 @@ def main() -> int:
         },
         "feature_contract": {
             "background_features": (
-                "direct finite feature row from one real L504 anchor"
+                "direct finite feature row from one forecastable real L168 anchor"
+            ),
+            "feature_schema_version": v8.FEATURE_SCHEMA_VERSION,
+            "feature_measurement": (
+                "single history-only v8 feature vector; local trend evidence "
+                "uses the trailing 96 observations"
             ),
             "univariate_primary_strength": (
                 "dataset q10-q90 intersected with generator response support; "
@@ -238,6 +249,10 @@ def main() -> int:
             ),
             "structural_primary_strength": (
                 "fixed cross-dataset evenly spaced realized-strength grid"
+            ),
+            "parameter_feature_provenance": (
+                "per-parameter real_univariate, real_native_multivariate, "
+                "protocol_constant, or explicit protocol_fallback"
             ),
             "structural_identifiability": "measured on generated samples only",
             "response_inverse": (
@@ -250,7 +265,7 @@ def main() -> int:
                     "frequency-derived provenance"
                 ),
                 "feature_period": (
-                    "calendar season when two cycles fit L504, otherwise "
+                    "calendar season when two cycles fit L168, otherwise "
                     "observable profile dominant period"
                 ),
                 "generator_period": (
@@ -258,13 +273,19 @@ def main() -> int:
                     "anchor profile dominant period"
                 ),
                 "mase_period": (
-                    "calendar season when defined inside L504, otherwise "
+                    "calendar season when defined inside L168, otherwise "
                     "non-seasonal lag 1"
                 ),
             },
+            "real_anchor_forecast": (
+                "independent auxiliary table; every collected anchor stores "
+                "L168 history plus a held-out H48 future and never enters "
+                "synthetic mechanism ranking"
+            ),
         },
         "files": {
             "anchors": v8.file_record(anchor_path),
+            "real_anchor_masters": v8.file_record(real_forecast_path),
             "capability_calibration": v8.file_record(capability_path),
         },
     }
@@ -282,6 +303,7 @@ def main() -> int:
             {
                 "dataset_id": dataset.dataset_id,
                 "anchor_count": len(anchors),
+                "real_forecast_anchor_count": len(real_forecast_masters),
                 "output": str(output_dir),
                 "bundle_content_sha256": bundle["bundle_content_sha256"],
             }

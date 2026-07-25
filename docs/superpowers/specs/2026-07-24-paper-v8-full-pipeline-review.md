@@ -1,729 +1,364 @@
-# Paper v8 全流程梳理与执行决策
+# Paper v8 合成机制 Benchmark：Canonical 全流程决策
 
-## 文档定位
+## 文档地位
 
-本文档记录大规模推理前对 Paper v8 全流程的逐阶段梳理结果和已确认决策。讨论完成后，以本文档作为校准、生成、对齐回验、推理和分析流程的实施依据。
+本文档是 Paper v8 校准、生成、回验、推理和分析的唯一规范性决策文档。
+它只覆盖论文的合成数据研究，不覆盖 FastAPI/Vue 评测平台。
 
-本文档区分三类内容：
+本文档描述的是当前已冻结协议。代码和产物必须与本文一致；发生协议变更时，
+必须更新协议版本并创建新的不可变实验目录，不能静默复用旧产物。历史方案只在
+文末“已废止设计”中保留极简索引，不再作为实现依据。
 
-- **已决定**：后续实现必须遵循。
-- **待讨论**：尚未形成执行结论。
-- **暂缓**：当前 v8 不实施，不作为主流程阻塞条件。
+## 协议快照
 
-当前范围只覆盖合成数据研究，不涉及时序预测模型评测平台的前后端。
-
-## 总体目标
-
-v8 的主测试采用以下原则：
-
-- 真实数据只用于校准合成机制的经验特征范围和生成参数分布。
-- 合成 future 完全由确定性机制产生。
-- 主能力表使用确定性机制、样本参数随机化。
-- robustness 表可以对观测 history 添加噪声，但评分使用 clean latent future。
-- 正式预测 horizon 固定为 48。
-- 每个样本生成 504 点 history 和 48 点 future，再从同一母本截取 96、168、336、504 四种 lookback。
-- 生成后必须进行机制和真实经验范围的对齐回验。
-
-## v8 核心流程
-
-当前拟定的精简主链路如下：
-
-```text
-真实数据
-  → 构造统一校准窗口池
-  → 提取真实特征分布
-  → 将特征分布映射到生成参数
-  → 生成确定性合成 history + future
-  → 特征对齐和机制有效性回验
-  → 组织正式推理任务
-  → 调用模型推理
-  → 计算通用误差和机制指标
-  → 汇总能力结果并分析
-```
-
-当前已按本文档完成单数据集、64-seed 的首轮全链路实现和 pilot。
-
-## 决策 1：真实数据校准不做三路切分
-
-状态：**已决定**
-
-v8 不再将真实窗口永久切分为：
-
-- generator parameter；
-- gate reference；
-- gate calibration。
-
-给定一个真实数据集及其 task view，所有满足质量条件的候选窗口共同组成一个 calibration window pool。该窗口池的全集用于：
-
-- 提取真实特征经验分布；
-- 建立特征到生成参数的映射；
-- 描述特征之间的联合关系；
-- 标定能力强度；
-- 作为生成后特征对齐回验的真实参照。
-
-这里不存在预测模型训练意义上的数据泄漏，因为真实窗口不用于训练或评价下游预测模型，合成 future 也不是从真实窗口复制得到的。
-
-使用同一真实窗口池进行校准和对齐回验时，回验结论应解释为：
-
-> 合成生成器是否正确匹配了指定真实数据集的经验特征范围，即 construct alignment。
-
-它不被解释为对未见时间段、未见序列或其他数据集的外部泛化保证。
-
-## 决策 2：v8 必须保留的验证只有对齐回验
-
-状态：**已决定**
-
-v8 当前必须实施的是生成后的对齐回验，用于检查：
-
-- 样本形状和数值合法，且没有重复或近重复样本；
-- I1–I5 的主机制特征对强度参数有正确且非退化的响应；
-- 每个能力最核心、不能由普通数值检查替代的机制约束成立。
-
-真实特征范围只用于给生成机制提供合理尺度，不作为过强的样本准入条件。对齐回验的主语始终是合成生成器，而不是要求真实数据集先通过复杂的能力资格审计。
-
-以下内容暂缓，不作为 v8 主流程的阻塞条件：
-
-- 固定的 train/reference/calibration 三路切分；
-- conformal coverage 保证；
-- 独立 gate calibration；
-- block bootstrap；
-- group bootstrap；
-- 时间后段 holdout；
-- leave-one-group-out；
-- 特征分位数置信区间和外部稳定性审计。
-
-这些审计未来可以作为补充实验增加，但不应增加当前核心链路复杂度。
-
-## 决策 3：真实校准视野固定为 504 点
-
-状态：**已决定**
-
-真实数据只用于 history-only 特征校准，因此每个真实 anchor 固定包含：
-
-```text
-504 点 history
-```
-
-不再为真实校准窗口附加 48 点真实 future，也不使用 336/168/96/48 的自适应校准视野。无法提供完整 504 点 history 的数据集或配置暂不进入 v8 正式实验。
-
-“真实全集”指：
-
-> 按确定的 task view、固定 504 点长度和质量条件能够构造出的全部合格 calibration anchor 候选。
-
-真实 anchor 不再使用统一固定 stride。按每条序列可覆盖的非重叠 504 点单元计算数据集容量，再使用固定种子的分层随机抽样，最多保留 256 个通过质量检查的 anchor。抽样规则、seed、候选容量和实际数量必须写入产物。
-
-## 决策 4：96/168/336/504 是同一母本的后缀视图
-
-状态：**已决定**
-
-合成样本仍严格生成 `504 history + 48 future` 母本。四种推理 lookback 必须共享同一个 48 点 future：
-
-```text
-L=96：  history [408, 504) + future [504, 552)
-L=168： history [336, 504) + future [504, 552)
-L=336： history [168, 504) + future [504, 552)
-L=504： history [0,   504) + future [504, 552)
-```
-
-正式实验不为每种 lookback 单独生成样本。模型可以从同一 504 点母本中选择不同长度的可见历史，因此不同 lookback 的比较不会混入 future 或生成 seed 的差异。
-
-## 决策 5：删除两类 embargo
-
-状态：**已决定**
-
-v8 核心流程不再需要以下两类设计：
-
-### 母窗口尾部的 48 点 validation tail
-
-旧流程加载：
-
-```text
-504 history + 48 benchmark future + 48 validation tail = 600 点
-```
-
-其中最后 48 点不会进入任务窗口，而且它仍可能被相邻滑动窗口使用，因此并未真正隔离相邻窗口。v8 将母窗口直接简化为 552 点，不再要求额外尾部。
-
-### 不同数据角色之间的 552 点 temporal embargo
-
-旧流程在单序列的 generator parameter、gate reference 和 gate calibration 之间保留 `context + horizon = 552` 点隔离。
-
-v8 不再划分这些角色，因此删除相应 temporal embargo。
-
-需要保留的概念只有：
-
-- `real_calibration_context_length = 504`；
-- `synthetic_context_length = 504`；
-- `synthetic_horizon = 48`；
-- `synthetic_master_length = 552`。
-
-真实校准不再有固定 stride。合成任务的 `horizon` 不应被命名为 embargo。
-
-## 决策 6：标准化只使用 history
-
-状态：**已决定，后续需复核具体实现**
-
-真实窗口的标准化统计量只从 history 计算，避免 future 反向影响模型可见 history 的尺度：
-
-- 普通目标：每个变量使用自己的 history 均值和标准差；
-- additive hierarchy：各变量分别中心化，所有变量共享能够保持加和恒等式的尺度；
-- covariates：连续变量使用 history 统计量归一化，离散/事件变量保持其语义编码。
-
-标准化后的特征分布表示真实数据的形态、动态和跨变量结构，不表示原始业务量纲。
-
-对于 paired/counterfactual members，必须共享同一组标准化统计量，避免全局尺度差异混入机制比较。
-
-## 决策 7：使用唯一的真实特征经验分布
-
-状态：**已决定**
-
-每个“数据集 × task view × capability”保存一份基于所有合格窗口的 history-only 特征矩阵。p05、p10、p25、p50、p75、p90、p95 只是该经验分布的摘要，不再分别构造互不一致的参数范围、强度范围和旧版 gate 范围。
-
-主流程不再复用 v7 feature gate，也不再把 Mahalanobis 或 conformal coverage 作为 v8 的必要组成。
-
-## 决策 8：样本参数直接使用真实 anchor，不压缩到 IQR
-
-状态：**已决定**
-
-每个合成样本从 calibration window pool 中选择一个真实 feature row 作为 anchor。除被实验主动干预的主能力参数外，其余可校准参数直接从该 anchor 的特征映射得到。
-
-不再执行把真实经验 rank 从 `[0, 1]` 压缩到 `[0.25, 0.75]` 的逻辑，也不对各特征进行相互独立的边际采样。
-
-同一 paired sample 的 I1–I5 必须共享：
-
-- 真实 anchor；
-- parameter seed 中与能力强度无关的部分；
-- path seed；
-- nuisance realization。
-
-五档之间只允许主能力干预及其必然下游结果发生变化。这样既保留真实特征组合，又能把跨强度差异归因于被测试机制。
-
-真实 anchor 只负责数据集校准的背景参数。生成器仍通过 path seed 随机化相位、符号、事件位置、变量载荷、lag、排列、局部形状等机制实例，因此 anchor 采样不等于复制真实曲线。
-
-## 决策 9：由真实范围和生成器支持范围共同标定 I1–I5
-
-状态：**已决定**
-
-先在代表性 anchors 和 seeds 上扫描生成参数，得到：
-
-```text
-lambda → realized primary feature
-```
-
-这条 response curve 定义生成器对该主特征的可实现范围。真实 history 提供稳健参考区间，默认使用 `[q10, q90]`，并以 q50 为中心设置可配置的范围放大系数：
-
-```text
-range_expansion_factor = 1.0
-```
-
-系数为 1 时不放大真实区间；未来若需要增强压力，可围绕 q50 温和扩展，但最终目标必须限制在生成器可实现范围内。
-
-将放大后的真实参考区间裁到生成器支持范围，得到有效目标区间，再在该区间内等距放置 I1–I5 的五个目标特征值。最后对 response curve 做反插值，得到五个实际生成参数或 lambda。
-
-真实区间很窄时，默认保留这种温和校准结果，不额外要求数据集通过复杂的能力支持审计。是否需要将 `range_expansion_factor` 调大，由后续合成样本和模型响应 pilot 决定。
-
-生成器的数学 `lambda` 坐标固定定义在 `[0, 1]`，但实际生成参数可以按各自含义超过 1。正式校准不能用累计最大包络掩盖原始 response curve 的回落：每个 `capability × family` 保存完整原始曲线，并自动识别从 `lambda=0` 开始的最大稳定单调分支，只在该有效支持域内反解 I1–I5。检测到的上界、foldback 容差和原始曲线都写入 calibration bundle，不为某个 family 硬编码一个跨数据集通用截断常数。
-
-## 决策 10：真实范围和强度标定统一使用 history
-
-状态：**已决定**
-
-以下步骤统一使用 504 点 history 和同一套特征函数：
-
-- 真实参数校准；
-- 真实主特征分位数；
-- 合成参数对齐；
-- 合成强度对齐。
-
-完整 552 点不再用于定义真实参数或强度范围，只用于各能力最核心的合成机制检查。
-
-## 决策 11：生成有效性回验保持精练
-
-状态：**已决定**
-
-用于参数映射的 required feature 必须存在且为有限值；不可定义的特征不能以 `0.0` 冒充真实观测。除此之外，不为真实数据增加复杂的准入审计。
-
-生成有效性只保留以下核心检查：
-
-1. 基本合法性：shape、finite、history/future 长度正确。
-2. 非重复性：样本哈希和必要的近重复检查。
-3. 强度响应：主特征随 I1–I5 的总体方向正确，且不是完全不变。
-4. 能力核心约束：每个能力只选择一到两个最能说明机制成立的检查，例如层级加和、cross-series 正确边/lag、covariate counterfactual response。
-
-参数 clip 比例、唯一值数量和更完整的分布差异可以作为诊断输出，但不默认升级为硬门槛。
-
-`predictable_intermittency` 的能力结构仍由确定性 event clock 保证，`intermittency_clock_incremental_r2` 和 realized `spike_rate` 保留为可观察诊断；但二者在有限 L504 窗口上均可能高度零膨胀，不适合作为五档反解坐标。正式主强度特征改为生成器可精确分解的 `event_effect_energy_share`：在 L504 history 内计算事件成分能量占“事件成分 + 确定性背景 texture”总能量的比例。该坐标连续、同一路径下严格单调；真实窗口仍校准事件时间尺度、宽度和背景 nuisance，事件剂量使用合成机制支持域等距标定。模型机制评分继续使用 event-window 预测误差，而不是拟合该生成器元数据。
-
-`nonlinear_persistence` 的主强度坐标改为生成器记录的 `nonlinear_strength`，即递推方程中有界非线性滞后响应项的系数。I1–I5 在生成器有效支持域内按该系数等距标定；真实窗口不再通过 `nonlinear_conditional_gain` 反解或缩放这个系数。primary 使用零中心的 `x|x|/(1+x²)`，secondary 使用 `x|x|/(1+|x|)`，两者在原点均没有可被线性 AR 吸收的一阶项，并使用相同系数剂量。真实数据仍校准 profile period、背景自相关、谱集中度和确定性 forcing 等 nuisance，nonlinear lag 则取 profile period 的固定比例并在 seed 内小幅随机化。
-
-`nonlinear_conditional_gain` 保留为真实窗口与合成窗口共用的 observable diagnostic：v8 在冻结的少量季节相对候选 lag（`1/6, 1/5, 1/4, 1/3, 1/2`，最大 32）上分别计算加入二次和三次项后的 adjusted-R² 增益并取最佳值。它不再承担 inverse calibration 或单调 gate，因为线性基线会吸收大部分滞后作用，递归反馈也会把依赖分散到相关 lag。`nonlinear_actual_lag_gain` 同样只作诊断。硬 gate 要求 `nonlinear_strength` 总体及每个配对 seed 严格递增；同时用生成器分解得到的“非线性项标准差 / 递推残差标准差”检查动态贡献随档位递增，并要求状态裁剪比例为零，防止系数上升但实际动力学进入固定点或饱和区。
-
-response support 不再只看少量路径的均值曲线。数值反解与正式生成共享冻结的 logical-seed anchor hash 和 generation-path RNG，使校准曲线直接对应它要构造的正式批次，而不是用另一批随机路径外推；这不按结果重试或替换 seed。所有能力固定从 formal bank 的前 32 条 response paths 开始；两等分 path block 的 support 与均值响应差异写入非阻断审计，不以 `0.05` 或其他统一差异阈值触发扩展。只有 support 退化或 primary 五档反解不能形成严格递增的强度时，才依次扩到 64、96 条；达到上限仍无解则明确失败。若 secondary family 为匹配 primary 数值目标而把 sensitivity audit 的 I3–I5 压缩到不足其支持域的 30%，则 secondary 改用自身保守支持域内的五档相对网格；主表 primary 标定不受影响。
-
-当前不引入生成 seed 重试，也不设置真实强度过低时的自动放大下限。偶发批次 gate 失败保持可见，避免在正式样本形成后按实现强度挑选 seed；这两项仅作为后续协议备选。
-
-## 决策 12：替换退化的 covariate future correlation
-
-状态：**已决定**
-
-删除 `future_abs_covariate_target_corr`，不保留将不可定义值写为零的兼容路径。
-
-真实校准继续使用仅在 504 点 history 上即可计算的 `covariate_incremental_r2` 作为主强度特征。它用于提供协变量作用的合理尺度，不承担严格证明真实协变量样本外预测价值的任务。
-
-生成器扫描作用强度并测量 realized `covariate_incremental_r2`，再通过 response curve 反解 I1–I5，不要求从真实特征值解析求出协变量作用系数。
-
-模型能力的主要诊断来自合成 counterfactual future：两个 member 共享 target history 和 past covariates，只改变 known-future covariates；正确的 future target 差异由协变量响应律唯一确定。真实校准与模型能力判定因此保持解耦。
-
-## 决策 13：保留精简 feature gate，默认关闭 near-distance gate
-
-状态：**已决定**
-
-仓库已有 feature gate 实现，但现有版本基于旧三路切分、control-feature robust Mahalanobis 距离和 conformal threshold。clean-deterministic 模式只是从旧 gate 中投影掉噪声、异常值等随机控制特征，旧阈值不能直接作为正式 v8 gate。
-
-v8 复用现有特征提取和 gate 接口，但正式语义精简为：
-
-- required realized features 为有限值；
-- primary feature 对 I1–I5 有正确且非退化的总体响应；
-- 可选 control features 只做宽松的合理性诊断，不恢复旧版复杂的 conformal 准入流程。
-
-能力专属的层级恒等式、跨序列边/lag、共同因子联合可识别性和协变量反事实响应继续作为 structural/identifiability gate，不混入通用 feature gate。
-
-near-distance gate 在 v8 校准、生成、重试和 acceptance 中默认关闭：
-
-```text
-near_distance_gate_enabled = false
-```
-
-原因是合成机制不会复制真实窗口的具体曲线，原始序列和最近邻距离不能有效衡量机制 benchmark 的质量。v8 不要求 near-distance artifact，不要求 profile 同时具有 near-distance calibration，也不因 near-distance 结果重试或拒绝样本。
-
-现有 near-distance 实现暂不删除，只保留为显式开启的可选诊断工具，不进入正式默认流程。
-
-## 决策 14：v8 使用独立文件和扁平 seed pool
-
-状态：**已决定**
-
-v8 不继续扩展旧 `synthetic_generation_service.py` 的生成、校准和 gate 分支。全流程使用名称中明确带 `v8` 的新文件，旧 v2-v7 文件只作为实现参考。
-
-建议的核心文件边界为：
-
-```text
-backend/app/services/synthetic_v8_generation.py
-backend/app/services/synthetic_v8_feature_gate.py
-scripts/calibrate_paper_v8.py
-scripts/generate_paper_v8_samples.py
-scripts/validate_paper_v8_samples.py
-scripts/run_paper_v8_inference.py
-scripts/analyze_paper_v8.py
-```
-
-最终文件数量可以在实现时合并，但不能让正式 v8 重新依赖旧 generation service 的 mandatory near-distance、三路切分或旧 acceptance/retry 语义。
-
-正式样本生成阶段唯一的样本预算参数是 `seed_count`，同时提供一个不改变预算、只确定种子身份范围的 `seed_start`：
-
-```text
-seed_start = K    # 默认 0
-seed_count = N
-```
-
-本次生成使用全局 seed indexes `[K, K+N)`。`seed_count` 表示每个 `capability × primary family` 的 master seed-group 数，而不是 JSONL 行数：
-
-- 同一 seed-group 共享 anchor 和 path realization，并产生 I1–I5；
-- covariate 主任务在同一 seed-group 下产生配对 members；
-- common-factor 和 cross-series 主任务只生成事实样本；严格反事实只在抽样 seed 的 I5 诊断表生成配对 members；
-- common-factor 和 cross-series 另派生保持边际均值/标准差的跨变量输入消融样本，future 保持不变；
-- 每个 master sample 只存储 504+48 的母本；
-- 96/168/336/504 views 在后续推理准备阶段切出；
-- noisy-history robustness 样本从 clean primary 样本派生，不单独建立生成轮次。
-
-response-curve 使用的内部 seeds 属于校准阶段，随 calibration bundle 冻结，不作为正式生成命令参数。secondary-family 在 I3/I5 和部分 seeds 上的敏感性策略也由冻结配置确定，不增加 generation round。
-
-secondary/robustness seed 子集只由每个 seed 自身的 stable hash 决定。小 seed pool 若没有命中允许审计子集为空，不能为了凑样本临时选择第一个 seed；否则扩展 seed pool 时会破坏前缀稳定性。
-
-v8 删除以下统计轮次身份：
-
-- `round_index`；
-- `round_seed`；
-- `samples_per_round`；
-- 在生成阶段预先写入的 `analysis_block_id`。
-
-正式样本身份只需要稳定记录：
-
-```text
-capability_id
-family_role
-intensity
-seed_index
-counterfactual_member（如适用）
-generator_version
-```
-
-相同 generator/calibration 版本和相同 seed index 必须生成相同内容。由此支持两种操作：
-
-```text
-# 重建或扩展同一个 pool：前 32 个保持不变
-seed_start=0,  seed_count=32
-seed_start=0,  seed_count=64
-
-# 生成两个互不重叠的新批次
-seed_start=0,  seed_count=32
-seed_start=32, seed_count=32
-```
-
-不得用当前日期或运行时间隐式改变随机种子，否则同一命令无法复现。若 generator version 或 calibration bundle 改变，即使 seed index 相同也属于不同样本版本，manifest 必须阻止它们被误合并。
-
-生成完成后，再由独立的推理准备步骤根据 sample manifest 切分：
-
-- inference shards；
-- analysis blocks；
-- pilot/full subsets；
-- lookback views。
-
-这些切分只改变任务组织和索引，不重新生成样本。为了断点恢复允许物理文件分 chunk 写出，但 chunk 只是执行细节，不具有统计 round 语义。
-
-校准和生成的十个 capability 在给定 dataset、anchor、logical seed 和 family 后彼此独立，因此准备阶段默认按 capability 使用 8 个进程并行。每个进程固定使用 1 个 BLAS 线程，避免 8 个进程再次各自展开线性代数线程而过度争抢 16 核 CPU。主进程按冻结的 capability 顺序合并结果和 JSONL shard；worker 完成顺序不影响样本顺序、sample ID 或科学协议。`--preparation-workers` 只属于 execution provenance，不进入 experiment protocol hash，可设为 1 获得串行参考实现。KDD Cup H 的 256-anchor 完整校准由 731.49 秒降至 157.36 秒，64-seed 完整生成由 240.76 秒降至 48.52 秒；校准产物严格一致，串并行小样本的 clean、ablation、robustness 文件哈希一致，完整新链路回验通过。
-
-## 决策 15：三机模型级并行推理
-
-状态：**已决定**
-
-v8 正式推理默认使用三台双卡服务和一台 8 卡服务：
-
-```text
-http://127.0.0.1:10810
-http://192.168.99.17:10811
-http://192.168.99.18:10810
-http://192.168.99.89:10810
-```
-
-默认设备列表仍为 `0,1`。设备数只控制模型加载，不推导吞吐；
-89 通过默认 endpoint preset 启用下表的 8 卡配置。仍可用
-`--endpoint-model-capacity
-'ENDPOINT|MODEL=UNITS'` 按模型设置实测任务权重，用
-`--endpoint-model-concurrency 'ENDPOINT|MODEL=COUNT'` 设置实测绝对
-并发覆盖 preset。
-
-| model | replica/GPU | bulk batch | 双卡/8 卡 HTTP 并发 | 89 相对双卡权重 |
-|---|---:|---:|---:|---:|
-| Chronos-2 | 2 | 192 | 4 / 16 | 3.65 |
-| timesfm2.5 | 1 | 640 | 2 / 8 | 3.8 |
-| tirex2 | 1 | 512 | 2 / 8 | 3.0 |
-| moirai2 | 1 | 256 | 2 / 8 | 2.8 |
-| Timer-3.5 | 1 | 1024 | 2 / 8 | 2.4 |
-| toto2.0 | 2 | 4 | 4 / 16 | 3.0 |
-| tabpfn-ts3 | 8 | 8 | 16 / 64 | 4.0 |
-
-这些数值来自 H=48 的 bulk 请求实测，8 卡配置不能从双卡配置简单
-乘 4。请求端按 endpoint 权重生成一端一个大分片，并在一次扫描后
-将不同 context/shape 的同构 bulk 请求交错送入全局并发队列。
-模型只加载一次并连续跑完 19 个数据集；数据集可以并行，但每个
-子任务按并行数等比例降低 HTTP concurrency，使 endpoint 的全局
-in-flight 保持上表数值。
-
-运行前进行简单健康检查，只将可用服务加入本次调度。正式调度改为按模型分阶段：
-
-1. 所有兼容服务在同一阶段都加载同一个模型，每台使用其 endpoint profile 声明的设备；
-2. 每个模型的完整任务按 `policy_id × model_id × sample_id` 稳定哈希为容量 part，再按 endpoint 容量比例分配；
-3. 所有 part 完成、样本 ID 完整覆盖且无重复后，才生成该模型的 canonical prediction；
-4. 所有服务全部卸载当前模型，再共同进入声明顺序中的下一个模型；
-5. 单个服务内部继续按 context、horizon、目标/协变量维度和输入适配计划分 bucket，复用持久 HTTP 连接。
-
-horizon 固定为 48、服务固定为双 RTX 5090 后，模型执行配置更新为：
-
-模型执行配置使用上表的 bulk batch 和 endpoint 全局 HTTP 并发。
-请求通过 `/forecast/bulk` 发送，同一个 HTTP 只包含同构 shape，
-不同 context 组在全局队列中交错调度。
-
-每个 part 使用独立任务、预测、失败和状态文件，禁止并发写同一文件。`--resume` 时：
-
-canonical prediction 校验完整后立即删除该模型的 endpoint 任务分片
-和 part prediction，只保留 endpoint 状态与加载时间。预测行不重复
-保存任务真值和可重算指标，最终 inference manifest 直接索引各模型
-canonical 文件，不再生成一份顶层 merged prediction。
-
-- 已完成 canonical prediction 的模型整阶段跳过；
-- 未完成模型复用首次建立的 part manifest 和 part 内 append-only 成功结果；
-- 可用服务从三台减少为两台或一台时不重新哈希，存活服务按轮转顺序接管多个原 part；
-- task source hash 或 part 文件 hash 不一致时拒绝静默合并；
-- 恢复到三台服务时仍使用原 part identity。
-
-每台服务写入独立 inference shard，任务使用确定性 ID：
-
-```text
-model_id × sample_id × context_length
-```
-
-`--resume` 模式下成功结果 append-only，重启时跳过已完成任务，只重试失败或缺失任务；已有 task manifest、generation config 和 model-part hash 必须一致。不带 `--resume` 时，当前数据集与当前 seed shard 的 inference 目录必须精确重建，不能因 sample ID 相同而静默复用另一版生成器的预测。全部模型完成后验证输入 manifest/hash、模型覆盖、任务行数和状态，再合并 shard。
-
-已有实验若只完成校准/生成/回验、尚未产生任何 inference 文件，可在 pipeline 命令中显式传 `--upgrade-inference-execution-policy`，把旧模型队列策略升级为本策略。升级会保存完整旧 protocol/hash 历史。只运行 calibration/generation/validation 且 protocol hash 与旧 manifest 一致的活动预生成任务可继续并行，升级记录同时保存当时的 preparation status；活动任务可能进入 inference、protocol 不一致或已有任意 inference 文件时必须拒绝升级。
-
-naive 和 seasonal-naive 在本地计算，不占用推理服务。模型输入适配继续沿用已登记策略，包括不支持原生多变量的模型按变量拆分后重组，以及模型不支持已知未来协变量时省略协变量。
-
-## 决策 16：同时报告 Oracle context、固定 L504 和 split-bank 稳定性
-
-状态：**已决定**
-
-每个模型和能力同时报告两种 context policy：
-
-- `fixed_l504`：所有样本固定使用 504 点 history；
-- `oracle_context`：在 96/168/336/504 中按 MASE 选择最佳 view。
-
-Oracle context 是允许模型选择最适视野的乐观能力上界，不替代固定 L504 的受控比较。对 counterfactual pairs，两个 members 必须共享同一个 oracle context，该 context 由 pair 两个 members 的平均 MASE 决定，避免用不同视野拼接反事实 effect。
-
-稳定性分析以 master `seed_index` 为切分单位：
-
-- 同一 seed 的 I1–I5 不拆开；
-- counterfactual members 不拆开；
-- 四种 context views 不拆开；
-- 所有模型使用完全相同的 batch membership。
-
-按可用 seed pool 依次考察 `N=32,64,128,...`，每个 N 将排序后的 seed groups 切成不重叠 batch，分别重算模型平均得分和排名。v8 不恢复旧 round 身份，也不默认增加随机重复切分、partial order、practical-tie 或 bootstrap 层。
-
-split-bank 核心输出暂定为：
-
-- 模型 batch 间相对得分差；
-- 模型排名 Kendall tau-b；
-- Top-1 一致率；
-- 必要时附 Top-3 overlap。
-
-所有结果分别对 `fixed_l504` 和 `oracle_context` 计算。最终表格中通用 MASE 与能力专属机制指标如何共同展示，继续讨论后冻结。
-
-正式能力表不将 MASE 和机制指标合成为任意加权总分：
-
-- `accuracy_score`：I1–I5 等权的 seed-group mean MASE，越低越好；
-- `mechanism_score`：I5 的能力专属主机制误差，越低越好；
-- 分别报告 `accuracy_rank` 和 `mechanism_rank`。
-
-counterfactual 能力先在 pair 内聚合 MASE，再按 seed-group 和 intensity 聚合；机制指标直接按完整 pair 计算。层级能力以 child-contrast NMAE 为主机制指标，并把 coherence NMAE 作为必报辅助项。
-
-十个能力的主机制指标为：
-
-| capability | primary mechanism metric |
+| 项目 | 当前值 |
 |---|---|
-| trend | `trend_slope_relative_abs_error` |
-| multi_seasonal | `seasonal_spectral_amplitude_relative_error` |
-| time_varying_seasonality | `instantaneous_frequency_nmae` |
-| regime_switching | `regime_jump_nmae` |
-| nonlinear_persistence | `nonlinear_recurrence_residual_nrmse` |
-| predictable_intermittency | `event_window_nmae` |
-| common_factor | `common_component_nmae`（事实结构恢复） |
-| hierarchical_coherence | `child_contrast_nmae` |
-| cross_series_dependence | `responder_normalized_mae`（事实 responder 预测） |
-| covariate_response | `counterfactual_effect_nrmse` |
+| 真实 calibration history | 168 |
+| 真实 anchor held-out future | 48 |
+| 合成 master history | 336 |
+| 合成 forecast horizon | 48 |
+| 推理 suffix views | 96 / 168 / 336 |
+| 固定主表 | `fixed_l168` |
+| Oracle context | 在 96 / 168 / 336 中选择 |
+| 合成 MASE denominator | 每个 clean L336 master history 计算一次，三个 view 共用 |
+| 真实 anchor MASE denominator | 每个真实 L168 history 独立计算 |
+| 每数据集 anchor 上限 | 256 个通过质量检查的窗口 |
+| 正式默认模型 | Chronos-2、TimesFM 2.5、TiRex2、Moirai 2、Timer 3.5、Toto 2.0 |
+| 主生成 | clean、deterministic future、primary family |
+| 预测 horizon 内的新随机创新 | 无 |
 
-每个能力分别列出 Oracle/L504 的 MASE、accuracy rank、主机制得分和 mechanism rank；另提供跨能力矩阵。naive/seasonal-naive 作为参考行显示，但不进入 foundation-model 正式排名。primary family 进入主表，secondary family 与 noisy-history robustness 分表报告。
+`oracle_context` 是同一 master 的乐观视野上界，不替代固定视野的受控比较。
+反事实 pair 的两个 member 必须共用同一个 Oracle context；该 context 由 pair
+平均 MASE 选择。
 
-`common_factor` 和 `cross_series_dependence` 还必须单列跨变量输入消融：
+## 研究目标与解释边界
 
-- common-factor 只评分 history 完全未改的 protected target，比较完整联合输入与辅助通道 donor 替换后的 `protected_target_nmae`；
-- cross-series 只评分 history 完全未改的 responders，比较完整 driver 与 forecast-covering driver block donor 替换后的 `responder_normalized_mae`；
-- donor 来自相同 capability、family 和 intensity 的另一 seed，替换段按 recipient 的均值和标准差做 affine matching；
-- control 与 ablation 在 Oracle 分析中使用 control 选择的同一个 context；
-- 正的误差增量表示模型使用了被消融的跨变量信息，但必须和事实预测误差一起解释，不能单独把“对错误输入敏感”当成能力。
+Paper v8 测量模型对十种时间序列机制的响应，而不是训练生成模型去复刻真实曲线。
 
-common/cross 的 I5 strict counterfactual effect NRMSE 只作为高难度诊断审计，不并入主能力分。首轮模型 pilot 显示该指标对多数现有 zero-shot 模型接近 1；若把它作为主分，会把“没有恢复任意 in-context 反事实映射”误写成所有模型共同失去普通动态因子或 lead-lag 预测能力。
+- 真实数据用于校准经验形态、背景 nuisance 和可用参数尺度。
+- 合成结构是能力题面的主体；合成 future 完全由已知确定性机制产生。
+- 主表随机化样本参数、相位、符号、事件位置、载荷和 lag，但不在 forecast
+  区间注入不可预测的过程创新。
+- 真实校准与合成回验只支持 construct alignment：
+  “生成器是否落在合理经验尺度并正确实现目标机制”。
+- 真实 anchor 预测只提供外部 sanity check，不进入合成机制得分或排名。
+- 不要求每个真实数据集天然具备层级、共同因子、跨序列因果或 known-future
+  covariate 语义；缺失结构由合成机制定义。
 
-上述正式结果以数据集为独立报告单位：
-
-```text
-dataset → capability → model score/rank
-```
-
-不要求把不同数据集等权或按样本量加权压成一个正式总分。跨数据集平均、总体模型排名和 pooled split-bank 只作为开发期预实验诊断，必须明确标记为 preliminary，不作为论文对模型能力强弱的最终结论。
-
-split-bank 优先在每个数据集内部对 accuracy score 和 mechanism score 分别计算，核心稳定性指标为 batch 间相对得分差、Kendall tau-b、Top-1 一致率，并将 Top-3 overlap 作为辅助。若某数据集的 seed pool 不足以支持某个 N，则不计算该档，不通过跨数据集合并来补足。
-
-## 决策 17：区分真实背景校准和结构能力强度标定
-
-状态：**已决定**
-
-真实数据校准是合成机制的背景约束，不是要求每个真实数据集预先具备十种能力语义。正式 v8 将校准分成两层：
-
-1. 所有能力都从当前数据集的 504 点 anchor pool 校准边际形态和 nuisance，包括尺度无关的趋势、周期、自相关、稀疏性以及生成器实际使用的其他背景特征。
-2. 六个单变量能力继续使用当前数据集的真实主特征 `[q10, q90]` 与生成器 response-curve 支持范围的交集标定 I1–I5。
-3. `common_factor`、`hierarchical_coherence`、`cross_series_dependence` 和 `covariate_response` 不要求普通 GIFT 数据集提供真实层级、边、共同因子或 known-future covariate 语义。它们使用冻结且跨数据集一致的生成器 response curve 和结构强度目标标定 I1–I5；真实 anchor 只负责背景与 nuisance。
-
-因此正式实现必须把 feature contract 显式拆成：
+## Canonical 全流程与实现入口
 
 ```text
-background_features
-primary_strength_feature
-structural_identifiability_features
+GIFT-Eval 原始数据
+  → 构造 forecastable real anchor pool
+  → 提取唯一的 history-only v8 feature profile
+  → 映射背景参数并标定 I1–I5
+  → 生成 L336 + H48 deterministic masters
+  → 生成机制与配对关系回验
+  → 切出 L96/L168/L336 suffix views
+  → 模型推理与真实 anchor 辅助预测
+  → fixed-L168 / oracle-context 能力分析
 ```
 
-结构能力的 `primary_strength_feature` 和 identifiability gate 从合成样本测量，不再列入普通真实 anchor 的 required features。该设计确保结构题在不同数据集之间具有一致难度，同时保留“该样本由哪个真实数据集校准背景”的来源语义。
+正式入口和主要职责如下：
 
-## 决策 18：四种 context 共用 L504 MASE 分母
+| 文件 | 职责 |
+|---|---|
+| `scripts/run_paper_v8_pipeline.py` | 完整流程编排、不可变协议与步骤状态 |
+| `scripts/paper_v8_pipeline_common.py` | 公共协议常量、数据 registry、anchor、校准与 view 逻辑 |
+| `scripts/paper_v8_features.py` | 唯一的 history-only 特征实现 |
+| `scripts/calibrate_paper_v8.py` | 真实 anchor 和 capability calibration bundle |
+| `scripts/generate_paper_v8_samples.py` | clean、secondary、robustness 和 input ablation 样本 |
+| `scripts/validate_paper_v8_samples.py` | 生成合法性、配对关系、强度和尺度回验 |
+| `scripts/run_paper_v8_inference.py` | view 准备、多服务推理、断点恢复和严格合并 |
+| `scripts/analyze_paper_v8.py` | fixed/oracle 指标、排名、matched audit 与 split-bank |
+| `scripts/paper_v8_structured_baselines.py` | common/cross 结构正控 |
+| `backend/app/services/synthetic_v8_generation.py` | 十能力 primary/secondary 生成器 |
+| `backend/app/services/synthetic_v8_feature_gate.py` | 精简 feature/structure gate |
 
-状态：**已决定**
+旧 v2–v7 脚本和 `run_paper_v8_model_response.py` 的 standalone pilot/report
+不定义正式协议。正式分析仍复用的通用指标函数应保持与上述入口一致。
 
-Oracle context 比较中的 L96、L168、L336 和 L504 是同一个 552 点 master sample 的不同可见 history suffix，不是四个独立样本。若分别用各 suffix history 计算 MASE 分母，context 选择会同时受到预测误差和分母变化影响，不能解释为模型对视野长度的选择。
+## 真实数据接入与 anchor
 
-正式 v8 对每个 master sample 使用完整 L504 history 预计算一次 MASE denominator，并将其保存到 sample/view metadata。四个 context views、counterfactual members 的各自 target channel 都复用由对应 clean L504 master history 得到的 denominator；robustness 样本也沿用 clean latent history 的 denominator，不用加噪 history 重新定标。
+### 数据集 registry
 
-日历季节由 canonical config 的原生频率确定，但不再重载为生成时间尺度和 MASE period。正式字段拆分为：
+当前 canonical registry 包含 20 个逻辑数据集配置：
 
-- `calendar_season_length`：频率推导的日历周期，只作来源语义和可观测时的 calendar-season 特征；
-- `feature_period`：L504 内至少可观察的真实特征周期；若完整日历周期在 L504 内不足两次，则使用窗口频谱主时间尺度；
-- 生成机制时间尺度：从直接 anchor 的 `profile_dominant_period` 出发，按能力的可识别范围裁剪；
-- `mase_period`：日历周期在 L504 内可定义时沿用，否则明确使用 non-seasonal lag 1。
+- 小时级或 M4 Hourly：Electricity、Solar、ETT1、ETT2、Jena Weather、
+  KDD Cup 2018、Loop Seattle、SZ-Taxi、M_DENSE、Bitbrains Fast、
+  Bitbrains RND、BizITObs L2C、M4 Hourly；
+- 日频：Restaurant、Hierarchical Sales、US Births、Saugeen River Flow、
+  Temperature Rain；
+- 10 秒级：BizITObs Application、BizITObs Service。
 
-因此 10 秒 BizITObs 保留 `calendar_season_length=8640`，但使用窗口内可观察的 feature/generator period 和 `mase_period=1`。四种 context 仍共享 clean L504 MASE denominator，不能按 suffix 静默改变 lag。Oracle context 仍按 MASE 选取，但 counterfactual pair 的两个 members 共用由 pair 平均 MASE 最小化得到的 context。
+COVID Deaths 只有 212 点，Hospital 和 Car Parts 更短，无法稳定提供
+`168 history + 48 future`，当前不接入。
 
-## 决策 19：common-factor 与 cross-series 使用稠密事实机制，配对反事实降为审计
+每条 anchor 必须携带 `dataset_id`、`config_id`、`task_view_id`、
+`anchor_id`、`item_id`、`channel_id`、`window_start`、frequency、
+period policy、observed fraction 和输入文件 hash，保证可回查来源。
 
-状态：**已决定并完成单数据集 64-seed 回验**
+### 窗口与采样
 
-旧 common-factor 使用 8–12 点短 code block，旧 cross-series 使用少量历史事件加边界处第 4 个事件。虽然正控可以恢复机制，但 zero-shot 模型容易把最终局部结构当成异常，严格 paired effect 对所有模型接近不响应，不能作为主能力题。
+每个候选真实窗口包含 168 点 calibration history 和连续 48 点 held-out
+future，共 216 点。特征只从前 168 点提取；future 只用于真实 anchor 辅助预测。
 
-正式 primary family 调整为：
-
-1. `common_factor = dense_dynamic_factor_with_joint_state_relay`
-   - 五个 target 全路径包含确定性动态共同因子和异质局部成分；
-   - I1–I5 用 history `pca_top1_explained` 的生成器实际支持范围等距定标；
-   - 24–32 点长观测块反复教授 rank-2 联合状态方程，只在抽样 seed 的 I5 pair 中沿 protected channel 的 null direction 改变状态；
-   - 主事实表报告共同成分恢复，跨变量使用由 protected-target donor ablation 判断，严格 state-relay effect 只作审计。
-2. `cross_series_dependence = dense_delayed_linear_scm`
-   - driver 的完整 history 使用平滑随机 knot path 形成稠密连续激励，不再使用孤立脉冲；
-   - primary responder 使用固定混合符号 `[+1,-1,...]`，并保留低强度确定性局部背景；
-   - `lag = horizon = 48`，因此 responder future 的 48 点全部由最后 48 点可见 driver 覆盖；能力重点是跨序列使用，不额外混入长 lag 搜索难度；
-   - I1–I5 以 `lead_lag_peak_abs` 的实际生成响应等距定标，正确 driver/lag、chronological holdout R² 和正控 effect recovery 作为独立结构 gate。
-
-两种机制的严格 pair 和标准化统计量继续共享不变量前缀，保证 effect 比较不混入全局尺度差异。输入消融不是第二套 ground truth：它只破坏模型可见 history 的跨变量对齐，评分仍使用原 clean future。
-
-## 当前审计：GIFT-Eval 接入和窗口上限
-
-状态：**现状已核清，v8 核心方案与 canonical config 清单已冻结**
-
-### GIFT-Eval 的“23 个数据集”与本地配置
-
-GIFT-Eval 论文中的 23 个数据集是逻辑数据集口径。官方数据包将其中许多数据集按频率继续展开，本地标准配置共 55 个 `dataset × frequency` 配置；M4 Yearly、Quarterly、Monthly、Weekly、Daily、Hourly 在论文的数据集总数中合并计为一个 M4 逻辑数据集。
-
-23 个逻辑数据集为：
-
-1. Jena Weather；
-2. BizITObs Application；
-3. BizITObs Service；
-4. BizITObs L2C；
-5. Bitbrains Fast Storage；
-6. Bitbrains RND；
-7. Restaurant；
-8. ETT1；
-9. ETT2；
-10. Loop Seattle；
-11. SZ-Taxi；
-12. M_DENSE；
-13. Solar；
-14. Hierarchical Sales；
-15. M4；
-16. Hospital；
-17. COVID Deaths；
-18. US Births；
-19. Saugeen；
-20. Temperature Rain；
-21. KDD Cup 2018；
-22. Car Parts；
-23. Electricity。
-
-### 当前仓库实际怎么接入
-
-当前正式链路并未接入完整 23 个逻辑数据集：
-
-- `build_paper_v4_profile_suite.py` 只注册了 12 个 GIFT-Eval 小时级配置和 M4 Hourly；
-- v7 九能力构建器复用了这批单变量来源，再额外注册 Swiss、GEFCom、M5 等结构化来源；
-- v8 pilot 进一步缩到每个能力一个开发期数据集，六个单变量能力都使用 `gift_electricity_h`。
-
-当前 GIFT Arrow 读取器只读取：
-
-- `item_id`；
-- `target`；
-- `freq`。
-
-它忽略 `start`，也忽略部分 GIFT 配置中存在的 `past_feat_dynamic_real`。单变量 task view 会把原生多变量 target 拆成各通道；panel task view 只取预先指定的前若干通道。
-
-当前 v7 正式构建路径还会：
-
-- 在切窗前排除 GIFT-Eval 官方 test tail；
-- 加载 `504 history + 48 benchmark future + 48 validation tail`；
-- 使用 48 点步长；
-- 在展平后的所有候选窗口上做确定性等距抽样；
-- 先截到 `max_windows`，再做 finite/informative 检查，因此无效窗口不会回填；
-- 对含任意非有限值的窗口整窗拒绝。
-
-这不是严格的序列均衡抽样。长序列因为拥有更多候选 origin，会自然获得更高权重。`BucketSpec.max_series` 对 GIFT loader 实际没有生效，真正限制结果规模的是 task view 级别的 `max_windows`。
-
-仓库中的上限目前不统一：
-
-- v4 profile builder 默认每数据集 240 个母窗口；
-- v7 九能力构建器代码默认每 task view 120 个；
-- 当前冻结的 v7 产物实际使用 160 个；
-- 因为先截候选、后做质量检查，当前 v7 GIFT task view 实际经常只有 127–160 个窗口。
-
-另一个旧实现 `build_paper_v4_profile_suite.py` 已经有序列均衡和备用候选回填，但该逻辑没有进入 v7 九能力使用的通用 GIFT loader。两个路径对缺失值的处理也不一致：前者允许受控插补，后者整窗拒绝。
-
-所有当前单变量 GIFT 来源还硬编码 `season_length=24`。这只适合当前选取的小时级子集，不能直接扩展到秒、分钟、日、周、月、季度和年度配置。
-
-### 固定 504 点校准视野与数据集资格
-
-v8 不再为了覆盖完整 23 个逻辑数据集而引入自适应真实校准长度。真实 anchor 必须具有完整 504 点 history；不满足的数据集或配置暂不测试。
-
-按当前数据长度，Restaurant、Hospital、COVID Deaths 和 Car Parts 没有任何 504 点原生序列，因此暂不进入正式 v8。M4 Yearly 也不能形成 504 点 anchor，正式 canonical config 固定采用 M4 Hourly。正式报告必须写明实际纳入的数据集清单，不能把可用子集表述为完整 23 数据集结果。
-
-正式纳入的19个 canonical config 为：
-
-- 小时频率、`calendar_season_length=24`：Jena Weather H、BizITObs L2C H、Bitbrains Fast H、Bitbrains RND H、ETT1 H、ETT2 H、Loop Seattle H、SZ-Taxi H、M_DENSE H、Solar H、M4 Hourly、KDD Cup 2018 H、Electricity H；
-- 日频、`calendar_season_length=7`：Hierarchical Sales D、US Births D、Saugeen D、Temperature Rain D；
-- 10秒频率、`calendar_season_length=8640`：BizITObs Application、BizITObs Service。
-
-### 已确认的 v8 接入方案
-
-1. 新建 v8 专用 GIFT registry，主身份为 23 个逻辑数据集；每条 anchor 同时保留 `dataset_id`、`config_id`、`frequency`、`item_id`、`channel_id` 和 `window_start`。
-2. 每个逻辑数据集预注册一个支持 504 点的 canonical config，避免同一原序列的多个下采样版本被重复计权。canonical config 优先保证 504 点内包含有意义的动态/季节尺度、具有足够 origin 且缺失可控；具体清单在实现前冻结。无法找到合格 canonical config 的逻辑数据集标记为未纳入。
-3. 不再排除官方 test/validation tail，因为 v8 真实数据只做校准；使用完整可用序列构造 calibration pool。
-4. 合成母本固定为 504+48；真实校准固定为 history-only 504 点。两者的校准和对齐特征统一在完整 504 点 history 上测量。
-5. 每个逻辑数据集最多保留 256 个**通过质量检查后的** anchor；上限作用于接受窗口而不是候选窗口。真实校准不再使用固定 `stride=48`。对每条序列或连续有效片段 `s`，定义非重叠覆盖容量：
-
-   ```text
-   C_s = floor(T_s / 504)
-   C_dataset = sum_s C_s
-   N_anchor = min(C_dataset, 256)
-   ```
-
-   不能先把不同序列长度相加再除以 504，因为窗口不能跨越序列边界。原生 panel 的同一时间窗口只计一次；拆成单变量的 channel 则按独立序列计数。
-
-   将每条序列按 `C_s` 划成覆盖全时间范围的 strata，每个 stratum 提供一个带固定种子 jitter 的候选 origin；再从所有 strata 中无放回抽取 `N_anchor` 个。抽样使用冻结的 `calibration_sample_seed` 或稳定 hash，保证同一数据、配置和 seed 可完全复现。质量失败后从尚未选中的 strata 回填。
-
-   这种抽样等价于按可覆盖观测长度加权，但不会让大量高度重叠的窗口伪装成大量独立 anchor。大数据集的有效步长会自动变长，不需要人为设置统一 stride。
-6. 256 是上限而不是最低配额。候选不足的数据集保留全部有效窗口并记录实际数量，不复制窗口凑数。
-7. 缺失值配置使用一个统一、可审计的轻量插补策略，不再因单个缺失点整窗拒绝，也不把插补后的窗口伪装成完全观测；产物记录 `observed_fraction`。
-8. 日历季节从原生频率解析并随 anchor 保存，不再全局硬编码为 24；同时显式保存 `feature_period` 和 `mase_period`，避免将日历周期、生成周期与评价周期混为一个字段。
-9. 同一逻辑数据集的 calibration pool 由十个能力共享，不再为每个 capability 重复切一套真实窗口。
-10. 对没有真实多变量、层级或 known-future covariate 语义的数据集，真实 anchor 只校准边际背景和 nuisance；共同因子、层级、cross-series 和 covariate 的识别结构由合成机制定义，不要求真实数据先具备相同结构。
-11. 每个 clean、robustness 和 inference sample 都必须直接携带数据集来源字段，不能只在汇总文件中保存。最低字段为 `dataset_id`、`config_id`、`task_view_id` 和 `profile_id`；正式 v8 另保存 `anchor_id`，并能回查 `item_id/channel_id/window_start`。正式多数据集 `sample_id` 也必须包含 `dataset_id` 或其稳定短标识，避免不同数据集的同能力、同强度、同 seed 发生 ID 冲突。
-
-因此真实 anchor 数会自然随数据集大小变化：
+按 task-view 展开后的每条序列，以不重叠的 216 点容量划分覆盖全时间范围的
+strata，每个 stratum 使用冻结 seed 做一次带 jitter 的候选抽样。候选顺序为
+确定性的无放回顺序，质量失败后继续使用剩余 strata 回填，直到达到：
 
 ```text
-N_anchor(dataset) = min(sum_s floor(T_s / 504), 256)
+N_anchor = min(sum_s floor(T_s / 216), 256)
 ```
 
-这种变化只属于真实校准阶段。anchor 较少的数据集可以在不同 path seeds 下复用同一真实背景，但不能复制 anchor 来伪造更大的真实经验样本量。
+窗口不能跨序列边界。256 是上限，不是最低配额；候选不足时保留所有合格
+anchor，不复制窗口凑数。缺失值采用统一、可审计的轻量插补，并保存
+`observed_fraction`；低于最低观测比例或无信息窗口明确拒绝。
 
-## 第一阶段实施时必须处理的问题
+### 标准化与 period 语义
 
-状态：**已处理**
+所有标准化统计量只从 history 计算。
 
-### v8 不应继续读取 v7 gate-reference 子集
+- 普通单变量按该变量 history 的均值和标准差标准化。
+- additive hierarchy 使用保持加和恒等式的共享尺度策略。
+- paired/counterfactual members 共用标准化统计量，避免尺度差异冒充机制响应。
+- 连续 covariate 使用 history 统计量；离散事件保留语义编码。
 
-当前 pilot 直接读取 v7 `real_source_samples.jsonl`，该文件来源于旧 near-distance artifact 的 `reference_raw`，只覆盖旧三路切分中的 gate-reference 子集。
+四种时间尺度必须分开保存：
 
-正式 v8 应从原始数据集重新构造统一 calibration window pool，或者冻结一份包含全部合格窗口的新 v8 校准产物。
+- `calendar_season_length`：由原生频率得到的日历 provenance；
+- `feature_period`：在 L168 内可观察的日历周期；不足两周期时使用真实窗口的
+  dominant period；
+- `generator_period`：按各能力在 L336/H48 内的可识别性裁剪后的生成尺度；
+- `mase_period`：日历周期在 L168 内可定义时使用，否则明确回退为 lag 1。
 
-当前实现已从 `/root/xmy/gift-eval/electricity/H` 原始 Arrow 数据重建 504 点统一 calibration pool，不读取 v7 gate-reference 子集。
+## 特征、真实校准与参数映射
 
-## 正式实验存储协议
+### 唯一 history-only 特征实现
 
-状态：**已决定**
+所有真实校准、合成 realized feature 和对齐回验使用
+`scripts/paper_v8_features.py` 的 feature v4 定义。每个数据集保存唯一经验
+feature matrix；p05、p10、p25、p50、p75、p90、p95 只是摘要，不再维护
+相互冲突的参数范围、强度范围和 gate 范围。
 
-正式产物统一写入 `runtime/paper_exp/v8`，每次完整协议运行创建一个不可变实验目录：
+重点特征采用以下去串扰定义：
+
+- trend：最近 W96 的 joinpoint-protected 局部二次趋势；
+- spectral complexity：去趋势后加 taper 的稳定频谱；
+- amplitude nonstationarity：去局部趋势后的周期系数变化；
+- transition sparsity：去趋势和稳定 carrier 后的 residual difference，
+  并乘以未解释残差能量的平方根。
+
+paired I1/I5 off-target selectivity matrix 作为非阻断诊断。部分 sideband
+在数学上不可完全分离，因此不设置一个跨能力统一硬阈值。
+
+### 真实特征来源与 fallback
+
+参数映射按下列顺序尝试：
+
+1. 可用的 real univariate feature；
+2. 可用的 native multivariate、explicit hierarchy 或 known-future
+   covariate feature；
+3. 明确登记的 protocol constant；
+4. 带原因的 protocol fallback。
+
+一个真实特征至少有 12 个有限窗口才标记为可用。不可定义、退化或样本不足时，
+不能用 `0.0` 伪装成真实观测；必须在 calibration bundle 的逐参数 provenance
+中记录 fallback 和原因。
+
+普通真实数据主要校准背景和 nuisance。结构能力的主强度使用统一的合成
+realized-strength 支持，真实 panel 特征只辅助校准 rank、persistence、lag、
+背景相关和相对尺度。
+
+### I1–I5 标定
+
+同一 seed-group 的 I1–I5 共享真实 anchor、path realization 和所有非目标
+nuisance，只改变主机制剂量及其必然下游结果。
+
+对于使用真实强度范围的能力：
+
+1. 从数据集真实 profile 取默认 `[q10, q90]`；
+2. 默认 `range_expansion_factor = 1.0`；
+3. 与生成器实际 response support 取交集；
+4. 在有效区间内等距放置 I1–I5；
+5. 对原始 `lambda → realized feature` response curve 反解生成参数。
+
+`lambda` 的数学坐标始终是 `[0,1]`，具体机制参数可以按物理含义超过 1。
+不能使用累计最大包络隐藏 response curve 的 foldback；只允许在从
+`lambda=0` 开始的最大稳定单调分支内反解。
+
+response calibration 从 formal seed bank 的前 32 条 path 开始。两半 path
+的 support 差异只记录为非阻断诊断；只有 support 退化或 I1–I5 无法形成严格
+递增时，才依次扩到 64、96，达到上限仍失败则显式终止。当前不按结果重试
+生成 seed，也不自动把过窄的真实强度抬升到统一下限。
+
+## 十种能力的当前生成与评分
+
+| 能力 | Primary family | 主剂量 | I5 主机制指标 |
+|---|---|---|---|
+| trend | C1 joinpoint quadratic | `local_curvature_abs_w96` | `trend_curvature_component_nrmse` |
+| multi-seasonal | sample-specific Fourier basis | `multi_period_score` | `seasonal_spectral_amplitude_relative_error` |
+| time-varying seasonality | modulated oscillator | `seasonal_amplitude_modulation` | `instantaneous_frequency_nmae` |
+| regime switching | deterministic duration motif | `regime_sparse_transition_score` | `regime_jump_nmae` |
+| nonlinear persistence | signed rational quadratic recurrence | `nonlinear_strength` | `nonlinear_recurrence_residual_nrmse` |
+| predictable intermittency | deterministic Gaussian event clock | `event_effect_energy_share` | `event_window_nmae` |
+| common factor | dense dynamic factor with joint-state relay | `pca_top1_explained` | `common_component_nmae` |
+| hierarchical coherence | aggregate/contrast linear state space | `hierarchy_child_heterogeneity` | `child_contrast_nmae` |
+| cross-series dependence | dense delayed linear SCM | `lead_lag_peak_abs` | `responder_normalized_mae` |
+| covariate response | known-future linear response | `covariate_effect_variance_share` | `counterfactual_effect_nrmse` |
+
+关键限定如下：
+
+- Trend 最近 96 点和 H48 future 共用同一二次曲线，更早 history 使用连接点
+  切线；secondary 是同样连接语义的受限 cubic。
+- Nonlinear 的 observable adjusted-R² 只作诊断，不反向控制剂量；硬 gate
+  使用生成器已知系数、实际动态贡献和零状态裁剪。
+- Intermittency 的 spike rate 与 clock R² 只作诊断；事件能量占比是连续剂量。
+- Common main 是标准 dense dynamic factor；strict joint-state relay 是独立
+  联立解码审计，不作为标准 DFM 的硬通过条件。
+- Cross primary 是带混合符号 responders 的线性 lag SCM；正确边、方向和 lag
+  必须由 history-only gate 恢复。
+- Covariate 主任务用 known-future counterfactual pair 证明响应；历史
+  incremental R² 只作可解释诊断。
+
+## 生成组织与回验
+
+### Seed 与样本身份
+
+正式生成只接受扁平的 `seed_start` 和 `seed_count`：
+
+```text
+seed indexes = [seed_start, seed_start + seed_count)
+```
+
+扩展 seed 范围不会改变已有 seed 的 anchor、nuisance 或样本 ID。不存在
+`round_index`、`round_seed` 或 `samples_per_round`。不同日期若需要一批独立
+样本，使用不重叠的 seed index 范围；实验目录和 manifest 仍是协议身份。
+
+### 样本表
+
+- 主表：所有 seed 的 clean primary I1–I5。
+- Secondary sensitivity：stable-hash 选中的部分 seed，只在 I3/I5。
+- Observation-noise robustness：同一子集的 primary I3/I5，只给可见 history
+  添加相对 history scale 为 0.15 的观测噪声，评分使用 clean latent future。
+- Strict counterfactual：common/cross 的抽样 seed、I5 独立诊断表。
+- Multivariate input ablation：common/cross 使用 matched donor 替换辅助输入，
+  保持受评 target history 与 future 不变，并做均值/标准差 affine matching。
+- Covariate main：counterfactual members 属于主能力构造。
+
+### 必要 gate
+
+生成 acceptance 只保留能直接证明题目成立的检查：
+
+1. shape、finite、history/future 长度和 hash 合法；
+2. sample ID、target hash 和必要的近重复检查；
+3. 主剂量对 I1–I5 正确、非退化且 paired seed 方向一致；
+4. 每种能力一到两个核心机制约束；
+5. robustness、counterfactual 和 ablation 与 clean parent 的不变量成立。
+
+结构 gate 包括层级加和与 contrast、common joint observability、cross 正确
+driver/edge/lag/符号和 holdout、covariate counterfactual recovery 等。
+
+near-distance gate 在正式校准、生成、重试和 acceptance 中固定关闭。合成曲线
+不应与真实窗口做最近邻外观匹配；相关实现只可作为显式开启的研究诊断。
+
+## 推理协议
+
+正式默认模型按下列顺序登记：
+
+1. Chronos-2
+2. TimesFM 2.5
+3. TiRex2
+4. Moirai 2
+5. Timer 3.5
+6. Toto 2.0
+
+本地 `last_value` 和 `seasonal_naive` 只作参考，不参与 foundation-model
+正式排名。未进入默认集合的服务模型只有在命令行显式指定并具有 execution
+config 时才运行。
+
+模型输入适配必须写入每条 prediction：
+
+- 原生多变量模型使用 joint target；
+- 不支持原生多变量的模型由适配器逐变量调用并重组；
+- 不支持 known-future covariates 的模型明确省略 covariates；
+- 这些输入语义必须在报告中与结构能力结果一起解释。
+
+推理从同一 L336 master 切出 L96/L168/L336 suffix，不重新标准化。所有真实
+anchor 同时构造一个 fixed-L168 辅助任务。正式推理 manifest 分开记录 synthetic
+views 和 real-anchor views，真实预测另存子集文件。
+
+多服务调度使用模型阶段、确定性 endpoint shards、shape buckets、持久连接和
+append-only checkpoint。每个模型结束后严格校验 task hash、row count 和
+sample/model 覆盖再合并。`--resume` 只跳过已验证成功任务；非 resume 重新构造
+当前 inference shard，禁止静默复用同 ID 的旧预测。设备、endpoint 和并发属于
+执行 provenance，不改变科学协议。
+
+## 分析与报告
+
+### 正式结果表
+
+每个数据集独立报告，不默认跨数据集等权平均或生成单一总排名。主能力表只使用
+clean primary family，同时报告：
+
+- `fixed_l168`；
+- `oracle_context`；
+- `accuracy_score`：I1–I5 的 seed-group mean MASE；
+- `mechanism_score`：I5 的能力专属主机制误差；
+- `accuracy_rank` 和 `mechanism_rank`，两者不合并成任意加权总分；
+- history-std normalized MAE 与 MASE denominator 分布作为尺度审计。
+
+Reference baselines 显示分数但不进入 foundation-model 排名。Secondary、
+observation-noise robustness、multivariate input ablation 和 strict
+counterfactual 分表报告，并与同 seed/intensity 的 clean primary 匹配比较。
+
+split-bank 以完整 `seed_index` group 为单位；I1–I5、pair members 和 context
+views 不拆开。当前产物可按 32/64/128 等完整 batch 报告相对得分差、Kendall
+tau-b、Top-1 一致率和必要的 Top-3 overlap。它是当前实验内部的描述性稳定性
+结果，不替代 deferred 的外部校准稳定性审计。
+
+### 结构正控
+
+结构正控单独写入 `structured_positive_controls.json`，不参与 foundation-model
+排名。
+
+- Common main：rank-1/2 dynamic factor + factor VAR，与 matched diagonal AR
+  比较；主要看 factor trajectory correlation 和 auxiliary-input ablation。
+  相对 diagonal AR 的点误差改善只作诊断，不设统一 10% 硬阈值。
+- Common strict relay：标准 DFM 标记为 not applicable；生成器感知 oracle
+  负责证明联立解码构造数学上可解。
+- Cross main：history-only、盲 source/lag 的 ridge VAR 与 diagonal AR 比较，
+  同时检查 input ablation。
+- Cross strict pair：使用一套 history-only shared-fit ARDL/VARX 参数应用于
+  两个 member，future driver 共享；分别报告 active prefix 的 NRMSE、
+  correlation、amplitude，以及理论零 effect tail 的 leakage。
+
+Oracle gate 失败表示生成构造无效。Oracle 通过但结构基线不能利用相应输入时，
+优先诊断题面强度、context 和结构信息，而不是直接把失败归因于 foundation model。
+
+## 已验证的关键 pilot
+
+- ETT1 16-seed feature pilot：multi/time-varying 对 local curvature 的归一化
+  串扰从 `1.684/2.186` 降至 `0.145/0.157`；对 transition sparsity 的串扰
+  从 `1.084/0.810` 降至 `0.229/0.235`；trend 和 regime 的 I1–I5 均为
+  16/16 正向。
+- ETT1 16-seed structure pilot：Cross VAR 相对 diagonal AR 在
+  L96/L168/L336 改善 `27.3%/23.9%/16.9%`；strict active NRMSE 为
+  `0.0053/0.0080/0.0030`、相关约 1、zero-tail leakage 为 0。Common
+  factor trajectory correlation 为 `0.738/0.779/0.786`，input ablation
+  分别恶化 `47.0%/77.9%/76.6%`，三档 context 均无 fallback。
+- Jena Weather 64-seed nonlinear 复测：observable primary 五档和 secondary
+  I3/I5 递增，actual-lag primary/secondary gate、结构、robustness 与 ablation
+  全部通过。
+- KDD 全链路并行 pilot：16 核、8 workers 下校准约 4.65 倍、生成约 4.96 倍
+  加速，64-seed gate 全部通过；worker 数不进入科学协议。
+
+这些结果证明当前题面和实现链路在代表性 pilot 上可用，不构成所有数据集或所有
+模型的外部性能保证。
+
+## 产物与不可变性
+
+正式根目录：
 
 ```text
 runtime/paper_exp/v8/
@@ -732,65 +367,71 @@ runtime/paper_exp/v8/
     pipeline_status.json
     <dataset_id>/
       01_calibration/
+        anchors.jsonl
+        real_anchor_masters.jsonl
+        capability_calibration.json
+        calibration_bundle.json
       02_generation/
+        sample_shards/
+          seed_<start>_<end>.jsonl
+          seed_<start>_<end>__robustness.jsonl
+          seed_<start>_<end>__input_ablation.jsonl
+        manifest__seed_<start>_<end>.json
+        validation__seed_<start>_<end>.json
       03_inference/
+        seed_<start>_<end>/
+          synthetic_forecast_views.jsonl
+          real_anchor_views.jsonl
+          forecast_views.jsonl
+          task_manifest.json
+          model_task_shards/
+          model_shards/
+          real_anchor_predictions/
+          inference_manifest.json
       04_analysis/
+        seed_<start>_<end>/
+          prediction_metrics.jsonl
+          counterfactual_effects.jsonl
+          scores.json
+          split_bank.json
+          matched_comparisons.json
+          structured_positive_controls.json
+          REPORT_ZH.md
+          MATCHED_AUDITS_ZH.md
+          analysis_manifest.json
 ```
 
-默认实验标识为：
+`experiment_manifest.json` 保存完整科学协议、协议 hash、代码版本和存储约定，
+创建后不可覆盖。`pipeline_status.json` 是唯一允许原地更新的根状态文件。
+每一级 manifest 保存 schema/version、输入 hash、输出 hash、row count 和必要
+provenance，拒绝跨版本、跨生成器或跨 seed shard 静默合并。
 
-```text
-v8_<generator-version>_<protocol-hash-prefix>_<created-at-utc>
-```
+## 明确 deferred
 
-`experiment_manifest.json` 在运行任何数据集前写入，只保存不可变身份、完整科学协议、协议 SHA-256、代码版本和存储约定；同名目录已经存在时必须逐字段验证协议一致，禁止覆盖成另一套实验。执行端点仅作为运行环境 provenance，不进入科学协议哈希。
+以下工作不阻塞当前 v8：
 
-`pipeline_status.json` 是唯一允许原地更新的根状态文件，记录当前数据集、当前步骤、已完成数据集和失败原因。各数据集继续独立保存校准、生成、回验、推理和分析产物，不默认生成跨数据集平均或排名。
+- M5：后续作为一个逻辑数据集的 covariate、sibling panel、additive hierarchy
+  三个 task views 接入；跨数据集汇总时只能计一次逻辑数据集权重。
+- 外部真实校准稳定性：固定 train/reference/calibration 三路切分、时间 holdout、
+  leave-one-group-out、block/group bootstrap、分位数置信区间、conformal
+  coverage 和跨时期 feature stability。
+- 多 seed-shard 的 suite 级组合分析；现阶段每个 shard 由独立 manifest 引用，
+  不修改已存在实验身份。
+- 统一的真实低强度自动放大下限、按 gate 结果重试/替换生成 seed。
+- near-distance、额外 surrogate families 和更重的分布相似性审计。
 
-本阶段不实现跨 seed shard 的组合分析。生成 shard 仍按 `[seed_start, seed_end)` 命名；将来由独立的 suite/analysis manifest 引用多个已存在 shard，不修改本次实验身份和已有产物。
+这些内容若启用，必须作为新协议或明确的补充分析层，不能悄悄改变当前主表。
 
-## 正式实现清单
+## 已废止设计
 
-- 新建 v8 GIFT registry，冻结每个可用逻辑数据集的 canonical config、频率、season length 和数据源 hash。
-- 从原始数据重新建立 504 点 calibration pool；实现分层固定种子抽样、质量失败回填、轻量缺失值插补和完整 anchor provenance。
-- 将真实 feature contract 拆成背景、单变量主强度和合成结构可识别性三层；删除 `future_abs_covariate_target_corr`。
-- 实现直接 anchor 参数映射、response-curve 反解 I1–I5、扁平 `seed_start/seed_count` 生成和 stable sample ID。
-- 实现独立 v8 feature/structural gate、非重复检查、强度响应回验和 manifest/hash 校验。
-- 实现 clean primary、I3/I5 secondary-family sensitivity 和 noisy-history robustness 的冻结样本组织。
-- 实现三服务健康检查、全服务同模型阶段调度、模型内冻结并发、append-only part、断点恢复和严格合并。
-- 实现共享 L504 MASE denominator、fixed-L504/oracle-context、能力机制指标和每数据集 split-bank 分析。
-- 所有 calibration、generation、validation、inference 和 analysis 产物保存 schema/version/config/input hashes，阻止跨版本误合并。
+以下历史设计不再属于 Paper v8 canonical 协议：
 
-## 变更记录
+- 真实校准和合成 master 使用 L504；
+- 96/168/336/504 四视野、`fixed_l504` 和共享 L504 denominator；
+- 仅接入 19 个数据集并排除 Restaurant；
+- 把 tabpfn-ts3 或 TimePFN 放入正式默认模型集合；
+- 真实窗口的三路永久切分、near-distance/conformal 硬准入；
+- nonlinear 使用专门的 12/64/128 path 特例或按结果挑选 seed；
+- 将斜率误差作为 trend 的主机制分，或要求标准 DFM 通过 common strict relay。
 
-- 2026-07-24：建立文档；确认真实全集校准、仅保留对齐回验、合成 552 点母本、共享 future 的四种 lookback，以及删除三路切分和两类 embargo。
-- 2026-07-24：确认统一经验特征分布、直接 anchor 参数采样和 history-only 校准。
-- 2026-07-24：将强度标定精简为“真实 q10-q90 参考区间 × 默认 1.0 放大系数 × 生成器可实现范围”，通过 response curve 反解 I1–I5；将生成回验缩减为合法性、非重复性、强度响应和少量能力核心约束；covariate 保留 history `covariate_incremental_r2` 校准并删除退化的 future correlation。
-- 2026-07-24：确认 v8 保留精简 feature gate，near-distance gate 默认关闭并从校准前置条件、生成 acceptance 和重试链路中移除。
-- 2026-07-24：确认 v8 全流程使用独立且名称带 v8 的文件；正式生成使用一个扁平 master seed pool，以 `seed_count` 表示样本预算、`seed_start` 表示可复现且可追加的种子范围，不再生成统计 rounds，所有 inference/analysis 切分在生成后完成。
-- 2026-07-24：确认 v8 使用两到三台推理服务做模型级并行；每台服务一次加载一个模型，模型内部沿用已验证的 replica/HTTP concurrency，结果按服务独立落盘后校验合并。
-- 2026-07-24：确认分析同时包含 Oracle context 和固定 L504，并按完整 seed-groups 做 32/64/128/... split-bank 得分与排名稳定性；能力表分别报告五档平均 MASE accuracy score/rank 与 I5 mechanism score/rank，不合并成单一加权总分。
-- 2026-07-24：核清当前 GIFT-Eval 接入只覆盖开发期子集，论文的 23 个逻辑数据集对应 55 个官方频率配置；记录当前 loader 的 tail 排除、展平抽样、质量检查后不回填、缺失值整窗拒绝和 seasonality 硬编码问题；曾讨论自适应真实校准视野，随后由下一条决策废止。
-- 2026-07-24：放弃自适应真实校准长度；真实 anchor 固定为 504 点 history，不足 504 点的数据集/配置暂不测试。真实 anchor 数按 `min(sum floor(T_s/504), 256)` 随有效数据规模变化；正式结果按数据集分别报告，跨数据集总分和排名仅作为预实验。确认每个生成、robustness 和 inference sample 必须直接保存数据集来源和可回查的 anchor provenance。
-- 2026-07-24：确认真实校准分成背景/nuisance 与主能力强度两层；六个单变量能力使用数据集内真实范围标定，四个结构能力使用跨数据集冻结的合成 response curve 标定，普通真实数据不再被要求具备结构语义。
-- 2026-07-24：确认同一 master sample 的 L96/L168/L336/L504 共用 clean L504 history 计算的 MASE denominator；Oracle context 只比较预测误差，不允许分母随 context 改变。
-- 2026-07-24：确认生成器数学 `lambda` 保持 `[0,1]`，实际机制参数不受统一上界 1 限制；校准从完整原始 response curve 自动识别最大稳定单调支持域，不能用单调包络掩盖 foldback，也不能把单数据集观测到的截断点硬编码为普遍常数。
-- 2026-07-24：曾将 `predictable_intermittency` 的强度坐标改为 realized `spike_rate`，但 ETT2 全量预检证明其与 event-clock R² 一样可能零膨胀；最终改为连续且可精确分解的 `event_effect_energy_share`，真实 spike/clock 特征只作诊断。
-- 2026-07-24：首轮全链路 pilot 发现并修正三类执行/分析边界：secondary seed fallback 会破坏前缀稳定性；短 context view 的 regime/intermittent 索引 metadata 必须随裁窗平移；event window 覆盖完整 future 时不能对空 background 求均值。
-- 2026-07-24：推理调度从纯模型级 LPT 扩展为“模型级 LPT + 队尾同模型确定性多机分片”，每个 endpoint part 独立落盘并在严格覆盖校验后合并。
-- 2026-07-24：split-bank 只在至少两个 batch 时报告稳定性，并补充 batch 间相对得分差和 Top-3 overlap；secondary family 与 observation-noise robustness 必须和相同 seed/intensity 的 clean primary 做 matched-control 比较。
-- 2026-07-24：common-factor 主机制改为五变量稠密动态因子和长块 joint-state relay；cross-series 改为稠密连续 driver、混合符号 responders 和 horizon-aligned lag。主事实样本不再全量成对，严格反事实只在抽样 seed 的 I5 审计。
-- 2026-07-24：为 common/cross 新增 affine-matched donor input ablation；common 只评分 protected target，cross 只评分 responders，Oracle control/ablation 强制共用 context。
-- 2026-07-24：修复 covariate secondary 的强度与背景混杂：移除额外 `1.7` 放大，保持 primary response 数值路径不变，将 secondary response 的 history 均值和标准差仿射匹配到同 seed 的 primary reference，并用生成器已知的 `covariate_effect_variance_share` 标定 I1–I5。matched seed 的两族严格共享 weather driver、事件、baseline 和符号，只将即时线性响应替换为半线性饱和、一期 lag 与 distributed-event 响应，避免原 spline driver 改变 seasonal MASE denominator。`covariate_incremental_r2` 保留为可解释的线性审计特征，不再作为跨 family 的剂量坐标。
-- 2026-07-24：结构能力 I1–I5 改为在生成器实际 realized-strength 支持内等距，再反解 lambda；cross 的强度轴与正确边/lag gate 解耦。
-- 2026-07-24：修正非 resume 推理会静默复用同 ID 旧预测的问题；非 resume 精确重建当前 inference seed shard，resume 才执行 hash 校验与增量续跑。
-- 2026-07-24：冻结19个满足 L504 的 GIFT-Eval canonical 配置：13个小时频率、4个日频和2个10秒频率；Restaurant、Hospital、COVID Deaths、Car Parts 因无504点原生序列暂不纳入。拆分 calendar season、feature period、能力专属生成时间尺度和 MASE period；10秒配置明确使用 `calendar_season_length=8640`、窗口内可观察生成尺度与 `mase_period=1`。生成时间尺度按 L504/H48 的可识别次数裁剪，MASE 不加隐藏 floor，并并列保存 history-std-normalized MAE 与 denominator 分布审计。
-- 2026-07-24：正式存储根目录固定为 `runtime/paper_exp/v8/<experiment_id>`；根 experiment manifest 以完整协议哈希为不可变身份，运行进度单独写入可更新的 pipeline status。本阶段暂不实现多个 seed shard 的组合分析。
-- 2026-07-24：正式推理模型冻结为 Chronos-2、toto2.0、timesfm2.5、tabpfn-ts3、tirex2、moirai2、Timer-3.5；先对较快模型做 LPT，再将 Toto、TimesFM、TabPFN 分散为三条队列的慢尾部任务，使先结束前序队列的服务可参与队尾协作。
-- 2026-07-24：ETT2 正式运行在生成回验阶段暴露两个剂量问题：intermittency 的 thresholded spike rate 退化为零，nonlinear 的 12-path 均值支持域不能外推到64个生成 seeds。修复后普通能力保留12条校准路径，nonlinear 使用64条路径的下10%保守支持边界；压缩的 nonlinear secondary 匹配改用其支持域相对网格。ETT2 64 seeds 的 primary/secondary dose、结构、robustness 和 ablation 回验全部通过。
-- 2026-07-25：Jena Weather 预检暴露 nonlinear observable proxy 的 lag 错配：secondary 的真实 lag 为4，但旧指标固定检测 lag12，单条相位共振路径使 I3 均值异常抬高并反转 I3/I5。v8 改为少量季节相对 lag 搜索的二次/三次 adjusted-R² observable proxy，并新增生成器真实 lag 对齐的独立机制 gate。Jena 64 seeds 复测中 observable primary 五档和 secondary I3/I5 均递增，actual-lag primary/secondary gate、结构、robustness 与 ablation 全部通过。
-- 2026-07-25：horizon=48 的双 RTX 5090 实测确认旧并发配置显著低估 Timer、Chronos 和 Moirai 吞吐；正式推理由“不同机器固定不同模型 + 仅慢尾协作”升级为“每个模型三机六卡共同完成确定性 part，再同步切换下一模型”。更新 v8 专属 replica/HTTP concurrency，保留 shape bucket、持久连接、append-only part 和服务减少时不改变 part identity 的 resume 语义。
-- 2026-07-25：Toto 2.0 每卡 3 副本在三台双卡服务上同时加载失败；本机内核记录到系统内存 OOM，单个加载进程被杀时常驻内存约 9.4 GB。Timer 服务改为按副本波次加载（每波每卡至多一个新 worker，全部 ready 后进入下一波），把一次性加载峰值从 6 个降到 2 个，同时保留 3 副本/卡稳态。相同 120 个 v8 H48 视图实测从 2 副本/卡、并发 16 的 4.56 秒降到 3 副本/卡、并发 36 的 3.33 秒，吞吐提高约 37%，且 120/120 成功。
-- 2026-07-25：校准和生成新增按 capability 的多进程准备执行，16 核机器默认 8 workers、每进程 1 个 BLAS 线程；按冻结能力顺序合并，worker 数不进入科学协议。KDD 完整链路实测校准约 4.65×、生成约 4.96× 加速，64-seed gate 全部通过。
-- 2026-07-25：LOOP_SEATTLE 暴露 `nonlinear_conditional_gain` 绝对值约 `4e-4`、真实/合成范围不相交且随注入系数局部折返。nonlinear 主剂量因此改为生成器已知的 `nonlinear_strength`；observable 与 actual-lag adjusted-R² 均降为非单调诊断，且不再反向控制 gain/lag。进一步的工作区审计发现旧 shifted-tanh 在高强度时进入单侧饱和，I5 的动态非线性贡献反而下降；primary/secondary 因此替换为两种零中心有界二次响应并共享同一系数剂量。原有 nonlinear 64/128 path 特例随之删除，所有能力统一使用 32 条 formal paths，只有硬失败才扩到 64/96。
-- 2026-07-25：推理 endpoint 增加异构设备与按模型性能 profile；设备数只决定模型加载，绝不自动放大任务份额或 HTTP 并发。89 的已测模型使用绝对并发和显式任务权重；服务集合变化时按当前可用 endpoint 重新生成一端一片的加权 manifest。
+如需追溯这些方案，只查看 Git 历史，不得从本清单恢复实现。
