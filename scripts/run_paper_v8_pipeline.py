@@ -20,7 +20,7 @@ DEFAULT_MODELS = (
     "moirai2",
     "Timer-3.5",
     "toto2.0",
-    "tabpfn-ts3",
+    "TimePFN",
 )
 STEPS = ("calibration", "generation", "validation", "inference", "analysis")
 

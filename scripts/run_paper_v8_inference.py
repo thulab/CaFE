@@ -36,7 +36,7 @@ DEFAULT_MODELS = (
     "moirai2",
     "Timer-3.5",
     "toto2.0",
-    "tabpfn-ts3",
+    "TimePFN",
 )
 MODEL_EXECUTION_CONFIG = {
     # Paper v8 has a fixed H=48 and runs on RTX 5090 services. These defaults
@@ -78,10 +78,10 @@ MODEL_EXECUTION_CONFIG = {
         "task_batch_size": 512,
         "transport": "msgpack_bulk",
     },
-    "tabpfn-ts3": {
-        "replicas_per_device": 8,
-        "http_concurrency": 16,
-        "task_batch_size": 8,
+    "TimePFN": {
+        "replicas_per_device": 1,
+        "http_concurrency": 2,
+        "task_batch_size": 512,
         "transport": "msgpack_bulk",
     },
 }
@@ -92,7 +92,7 @@ MODEL_MAJOR_DATASET_PARALLELISM = {
     "moirai2": 2,
     "Timer-3.5": 2,
     "toto2.0": 4,
-    "tabpfn-ts3": 8,
+    "TimePFN": 4,
 }
 RTX5090X8_H48_B1_PRESET = "rtx5090x8-h48-b1-v1"
 DEFAULT_ENDPOINT_PRESETS = (f"http://192.168.99.89:10810={RTX5090X8_H48_B1_PRESET}",)
@@ -109,7 +109,7 @@ ENDPOINT_PERFORMANCE_PRESETS = {
             "timesfm2.5": 3.8,
             "Timer-3.5": 2.4,
             "moirai2": 2.8,
-            "tabpfn-ts3": 4,
+            "TimePFN": 4,
         },
         "model_http_concurrency": {
             "Chronos-2": 16,
@@ -118,7 +118,7 @@ ENDPOINT_PERFORMANCE_PRESETS = {
             "timesfm2.5": 8,
             "Timer-3.5": 8,
             "moirai2": 8,
-            "tabpfn-ts3": 64,
+            "TimePFN": 8,
         },
     },
 }
@@ -1419,6 +1419,25 @@ def compact_prediction_row(row: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
+def canonical_prediction_file_is_compact(path: Path) -> bool:
+    """Check the writer format without reparsing and rewriting the whole file."""
+
+    allowed_keys = {
+        "schema_version",
+        "model_id",
+        "sample_id",
+        "forecast",
+        "input_adaptation",
+    }
+    required_keys = allowed_keys - {"input_adaptation"}
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                keys = set(json.loads(line))
+                return required_keys <= keys <= allowed_keys
+    return True
+
+
 def compact_canonical_prediction_file(path: Path) -> int:
     return v8.write_jsonl(
         path,
@@ -1460,6 +1479,46 @@ def cleanup_completed_model_intermediates(
         )
         shutil.rmtree(shard_dir)
     return removed_bytes
+
+
+def cached_complete_model_records(
+    inference_dir: Path,
+    *,
+    expected_view_count: int,
+) -> dict[str, dict[str, Any]]:
+    """Reuse a complete manifest when its canonical files are unchanged."""
+
+    manifest_path = inference_dir / "inference_manifest.json"
+    if not manifest_path.is_file():
+        return {}
+    manifest = v8.read_json(manifest_path)
+    if (
+        manifest.get("schema_version") != "paper_v8_inference_manifest.v3"
+        or not manifest.get("complete")
+    ):
+        return {}
+    statuses = {
+        str(row["model_id"]): row for row in manifest.get("statuses", [])
+    }
+    cached: dict[str, dict[str, Any]] = {}
+    for record in manifest.get("predictions", {}).get("files", []):
+        model_id = str(record["model_id"])
+        status = statuses.get(model_id, {})
+        canonical_path = prediction_path_for(
+            model_root(inference_dir, model_id),
+            model_id,
+        )
+        if (
+            status.get("status") == "complete"
+            and int(status.get("succeeded_original_view_count", -1))
+            == expected_view_count
+            and int(record.get("row_count", -1)) == expected_view_count
+            and Path(record.get("path", "")).resolve() == canonical_path.resolve()
+            and canonical_path.is_file()
+            and int(record.get("bytes", -1)) == canonical_path.stat().st_size
+        ):
+            cached[model_id] = dict(record)
+    return cached
 
 
 def _model_task_shard_manifest_path(
@@ -2199,9 +2258,20 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
                         record_completed(futures[future])
             _unload_accelerator_models(list(args.endpoints), args.api_prefix)
 
-        # Rebuild each dataset-level merged predictions file and manifest with
-        # all models after the model-major child runs have completed.
-        for dataset_id in dataset_ids:
+        # Rebuild dataset manifests in parallel. At this point every canonical
+        # prediction is immutable and accelerator models have been unloaded,
+        # so the children only validate cached file records and write metadata.
+        finalization_workers = min(
+            max(1, args.preprocess_workers),
+            len(dataset_ids),
+        )
+        print(
+            f"rebuilding {len(dataset_ids)} dataset manifests with "
+            f"{finalization_workers} workers",
+            flush=True,
+        )
+
+        def rebuild_dataset_manifest(dataset_id: str) -> None:
             subprocess.run(
                 [
                     sys.executable,
@@ -2216,6 +2286,14 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
                 cwd=v8.REPO_ROOT,
                 check=True,
             )
+
+        with ThreadPoolExecutor(max_workers=finalization_workers) as executor:
+            futures = {
+                executor.submit(rebuild_dataset_manifest, dataset_id): dataset_id
+                for dataset_id in dataset_ids
+            }
+            for future in as_completed(futures):
+                future.result()
     except Exception as error:
         status.update(
             {
@@ -2225,7 +2303,15 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
             }
         )
         v8.write_json(status_path, status)
-        _unload_accelerator_models(list(args.endpoints), args.api_prefix)
+        try:
+            _unload_accelerator_models(list(args.endpoints), args.api_prefix)
+        except Exception as cleanup_error:
+            print(
+                f"best-effort model cleanup failed after {type(error).__name__}: "
+                f"{cleanup_error}",
+                file=sys.stderr,
+                flush=True,
+            )
         raise
 
     status.update(
@@ -2333,17 +2419,36 @@ def main() -> int:
     work_statuses: list[dict[str, Any]] = []
     model_phases: list[dict[str, Any]] = []
     expected_view_count = int(task_manifest["view_count"])
+    cached_model_records = (
+        cached_complete_model_records(
+            inference_dir,
+            expected_view_count=expected_view_count,
+        )
+        if args.resume
+        else set()
+    )
     for phase_index, model_id in enumerate(args.models):
         canonical_path = prediction_path_for(
             model_root(inference_dir, model_id),
             model_id,
         )
+        manifest_cached = model_id in cached_model_records
         if (
             args.resume
             and canonical_path.exists()
-            and engine.count_jsonl(canonical_path) == expected_view_count
+            and (
+                manifest_cached
+                or engine.count_jsonl(canonical_path) == expected_view_count
+            )
         ):
-            compacted_count = compact_canonical_prediction_file(canonical_path)
+            already_compact = manifest_cached or canonical_prediction_file_is_compact(
+                canonical_path
+            )
+            compacted_count = (
+                expected_view_count
+                if already_compact
+                else compact_canonical_prediction_file(canonical_path)
+            )
             if compacted_count != expected_view_count:
                 raise RuntimeError(
                     f"compacted prediction count mismatch: "
@@ -2356,6 +2461,8 @@ def main() -> int:
             print(
                 f"model phase {phase_index + 1}/{len(args.models)} "
                 f"{model_id}: canonical prediction already complete; "
+                f"verified={'manifest' if manifest_cached else 'row_count'}, "
+                f"format={'already_compact' if already_compact else 'rewritten'}, "
                 f"cleaned={removed_bytes / (1024**2):.1f} MiB",
                 flush=True,
             )
@@ -2471,11 +2578,16 @@ def main() -> int:
         )
         if not path.is_file():
             continue
+        cached_record = cached_model_records.get(model_id)
         prediction_files.append(
             {
                 "model_id": model_id,
                 "row_count": expected_view_count,
-                **v8.file_record(path),
+                **(
+                    cached_record
+                    if cached_record is not None
+                    else v8.file_record(path)
+                ),
             }
         )
         prediction_count += expected_view_count

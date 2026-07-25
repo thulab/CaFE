@@ -1086,6 +1086,26 @@ def test_inference_prediction_keeps_only_analysis_inputs():
     }
 
 
+def test_compaction_probe_skips_final_format_and_detects_legacy_rows(tmp_path):
+    inference = load_script("run_paper_v8_inference")
+    path = tmp_path / "predictions.jsonl"
+    compact = {
+        "schema_version": "paper_v8_inference_prediction.v2",
+        "model_id": "model",
+        "sample_id": "view",
+        "forecast": [[1.0]],
+        "input_adaptation": {"target_mode": "native_univariate"},
+    }
+    path.write_text(inference.json.dumps(compact) + "\n", encoding="utf-8")
+
+    assert inference.canonical_prediction_file_is_compact(path)
+
+    legacy = {**compact, "request_seconds": 1.25}
+    path.write_text(inference.json.dumps(legacy) + "\n", encoding="utf-8")
+
+    assert not inference.canonical_prediction_file_is_compact(path)
+
+
 def test_bulk_request_preserves_multivariate_and_covariate_axes():
     inference = load_script("run_paper_v8_inference")
     children = []
@@ -1106,7 +1126,7 @@ def test_bulk_request_preserves_multivariate_and_covariate_axes():
         )
 
     content, target_shape, horizon = inference._bulk_request_content(
-        "tabpfn-ts3",
+        "model",
         children,
     )
     payload = inference.msgpack.unpackb(content, raw=False)
@@ -1248,10 +1268,24 @@ def test_eight_card_preset_uses_measured_bulk_profiles():
 
     assert profile.devices == "0,1,2,3,4,5,6,7"
     assert profile.capacity_for("tirex2") == 3
-    assert profile.capacity_for("tabpfn-ts3") == 4
+    assert profile.capacity_for("TimePFN") == 4
     assert profile.capacity_for("Timer-3.5") == 2.4
     assert profile.http_concurrency_for("tirex2", 32) == 8
-    assert profile.http_concurrency_for("tabpfn-ts3", 32) == 64
+    assert profile.http_concurrency_for("TimePFN", 32) == 8
+
+
+def test_timepfn_profile_prioritizes_fast_loading_and_large_bulk_requests():
+    inference = load_script("run_paper_v8_inference")
+
+    assert inference.MODEL_EXECUTION_CONFIG["TimePFN"] == {
+        "replicas_per_device": 1,
+        "http_concurrency": 2,
+        "task_batch_size": 512,
+        "transport": "msgpack_bulk",
+    }
+    assert inference.MODEL_MAJOR_DATASET_PARALLELISM["TimePFN"] == 4
+    assert inference.DEFAULT_MODELS[-2:] == ("toto2.0", "TimePFN")
+    assert "tabpfn-ts3" not in inference.DEFAULT_MODELS
 
 
 def test_default_topology_contains_three_dual_card_services_and_eight_card():
@@ -1351,7 +1385,7 @@ def test_every_model_phase_uses_all_compatible_services(tmp_path):
         "Chronos-2",
         "toto2.0",
         "timesfm2.5",
-        "tabpfn-ts3",
+        "TimePFN",
         "tirex2",
         "moirai2",
         "Timer-3.5",

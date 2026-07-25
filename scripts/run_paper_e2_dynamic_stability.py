@@ -20,7 +20,6 @@ from typing import Any, Iterable, Iterator
 import httpx
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = REPO_ROOT / "backend"
 SCRIPT_DIR = REPO_ROOT / "scripts"
@@ -38,23 +37,22 @@ from app.services.synthetic_generator_conditioning import (  # noqa: E402
     resolve_generator_conditioning,
 )
 
-
 SCHEMA_VERSION = "paper_e2_dynamic_stability.v3"
 EXPERIMENT_VERSION = "v4"
 EXPERIMENT_ID = "E2_dynamic_stability"
-DEFAULT_OUTPUT_DIR = REPO_ROOT / "runtime/paper_exp" / EXPERIMENT_VERSION / EXPERIMENT_ID
-NINE_CAPABILITY_SUITE_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v4/01_nine_capability_suite"
+DEFAULT_OUTPUT_DIR = (
+    REPO_ROOT / "runtime/paper_exp" / EXPERIMENT_VERSION / EXPERIMENT_ID
 )
-GENERATOR_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "generator_conditioning_artifact.json"
+NINE_CAPABILITY_SUITE_DIR = REPO_ROOT / "runtime/paper_exp/v4/01_nine_capability_suite"
+GENERATOR_ARTIFACT_PATH = (
+    NINE_CAPABILITY_SUITE_DIR / "generator_conditioning_artifact.json"
+)
 FEATURE_GATE_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "feature_gate_artifact.json"
 NEAR_DISTANCE_ARTIFACT_PATH = NINE_CAPABILITY_SUITE_DIR / "near_distance_artifact.json"
 SUPPORT_MATRIX_PATH = (
     NINE_CAPABILITY_SUITE_DIR / "dataset_capability_support_matrix.json"
 )
-REAL_EVALUATION_SUITE_DIR = (
-    REPO_ROOT / "runtime/paper_exp/v4/02_real_evaluation_suite"
-)
+REAL_EVALUATION_SUITE_DIR = REPO_ROOT / "runtime/paper_exp/v4/02_real_evaluation_suite"
 REAL_SAMPLES_PATH = REAL_EVALUATION_SUITE_DIR / "real_samples.jsonl"
 REAL_DATASET_SUPPORT_PATH = REAL_EVALUATION_SUITE_DIR / "dataset_support.json"
 PROTOCOL_PATH = (
@@ -120,8 +118,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-url", default="http://127.0.0.1:10810")
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
-    parser.add_argument("--round-seeds", nargs="+", type=int, default=list(DEFAULT_ROUND_SEEDS))
-    parser.add_argument("--samples-per-round", type=int, default=DEFAULT_SAMPLES_PER_ROUND)
+    parser.add_argument(
+        "--round-seeds", nargs="+", type=int, default=list(DEFAULT_ROUND_SEEDS)
+    )
+    parser.add_argument(
+        "--samples-per-round", type=int, default=DEFAULT_SAMPLES_PER_ROUND
+    )
     parser.add_argument("--devices", default=DEFAULT_DEVICES)
     parser.add_argument(
         "--request-max-attempts",
@@ -130,7 +132,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
     parser.add_argument("--model-load-timeout-seconds", type=int, default=1800)
-    parser.add_argument("--bootstrap-replicates", type=int, default=DEFAULT_BOOTSTRAP_REPLICATES)
+    parser.add_argument(
+        "--bootstrap-replicates", type=int, default=DEFAULT_BOOTSTRAP_REPLICATES
+    )
     parser.add_argument(
         "--stage",
         choices=("all", "generate", "infer", "analyze"),
@@ -157,10 +161,7 @@ def main() -> int:
         generator_artifact,
         support_matrix=support_matrix,
     )
-    if (
-        args.stage in {"all", "infer", "analyze"}
-        and not args.skip_real_alignment
-    ):
+    if args.stage in {"all", "infer", "analyze"} and not args.skip_real_alignment:
         require_file(REAL_SAMPLES_PATH)
         require_file(REAL_DATASET_SUPPORT_PATH)
     prepare_or_resume_output(output_dir, config=config, resume=args.resume)
@@ -212,7 +213,9 @@ def validate_cli_args(args: argparse.Namespace) -> None:
         raise ValueError("request-max-attempts must be positive")
     unknown_models = sorted(set(args.models) - set(MODEL_EXECUTION_CONFIG))
     if unknown_models:
-        raise ValueError(f"missing frozen execution config for models: {unknown_models}")
+        raise ValueError(
+            f"missing frozen execution config for models: {unknown_models}"
+        )
     if args.bootstrap_replicates < 100:
         raise ValueError("bootstrap-replicates must be at least 100")
 
@@ -308,9 +311,7 @@ def generator_cells(
                 "dataset_id": conditioning.dataset_id,
                 "status": "supported",
                 "target_feature": conditioning.target_feature,
-                "target_relative_levels": list(
-                    conditioning.target_percentile_levels
-                ),
+                "target_relative_levels": list(conditioning.target_percentile_levels),
                 "target_values": list(conditioning.target_values),
             }
         )
@@ -340,8 +341,7 @@ def experiment_config(
         artifact.get("schema_version")
         != "synthetic_v2_generator_conditioning_artifact.v4"
         or not isinstance(policy, dict)
-        or policy.get("policy_id")
-        != "dataset-local-real-bounded-generator-feasible-v1"
+        or policy.get("policy_id") != "dataset-local-real-bounded-generator-feasible-v1"
     ):
         raise ValueError(
             "E2 requires the v4 dataset-local generator conditioning artifact"
@@ -374,9 +374,7 @@ def experiment_config(
         "conditioning_profile_ids": conditioning_profile_ids,
         "eligible_profile_capability_cells": eligible_cells,
         "skipped_profile_capability_cells": skipped_cells,
-        "dataset_count": len(
-            {str(cell["dataset_id"]) for cell in eligible_cells}
-        ),
+        "dataset_count": len({str(cell["dataset_id"]) for cell in eligible_cells}),
         "profile_capability_count": profile_capability_count,
         "skipped_profile_capability_count": len(skipped_cells),
         "intensities": list(INTENSITIES),
@@ -401,7 +399,9 @@ def experiment_config(
         "model_execution": {
             model_id: dict(MODEL_EXECUTION_CONFIG[model_id]) for model_id in args.models
         },
-        "devices": ",".join(part.strip() for part in args.devices.split(",") if part.strip()),
+        "devices": ",".join(
+            part.strip() for part in args.devices.split(",") if part.strip()
+        ),
         "tasks_per_http_request": 1,
         "shape_schedule": "complete each request_group_key bucket before the next bucket",
         "request_max_attempts": int(args.request_max_attempts),
@@ -450,7 +450,9 @@ def prepare_or_resume_output(
                 f"E2 output already exists; use --resume with exactly the same config: {output_dir}"
             )
         if (output_dir / "manifest.json").exists():
-            raise FileExistsError(f"completed E2 output is sealed by manifest.json: {output_dir}")
+            raise FileExistsError(
+                f"completed E2 output is sealed by manifest.json: {output_dir}"
+            )
         existing = read_json(config_path)
         if canonical_json(existing) != canonical_json(config):
             raise ValueError("resume config does not match the existing E2 config.json")
@@ -511,7 +513,9 @@ def generate_samples_if_needed(
                 artifact=artifact,
             )
             if conditioning is None:
-                raise RuntimeError(f"missing conditioning for {profile_id}/{capability_id}")
+                raise RuntimeError(
+                    f"missing conditioning for {profile_id}/{capability_id}"
+                )
             for round_index, round_seed in enumerate(config["round_seeds"], start=1):
                 for sample_index in range(config["samples_per_round_per_cell"]):
                     sample_seed = _seed_for(
@@ -553,8 +557,7 @@ def generate_samples_if_needed(
                             latent=latent,
                         )
                         handle.write(
-                            json.dumps(row, ensure_ascii=False, sort_keys=True)
-                            + "\n"
+                            json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
                         )
                         created += 1
                         if created % 500 == 0:
@@ -584,9 +587,7 @@ def sample_row(
     features: dict[str, float],
     latent: dict[str, Any],
 ) -> dict[str, Any]:
-    sample_id = (
-        f"{profile_id}__{capability_id}__i{intensity}__r{round_index}__s{sample_index:03d}"
-    )
+    sample_id = f"{profile_id}__{capability_id}__i{intensity}__r{round_index}__s{sample_index:03d}"
     return {
         "schema_version": "paper_e2_sample.v2",
         "sample_id": sample_id,
@@ -605,7 +606,9 @@ def sample_row(
         "target_dim": int(profile["target_dim"]),
         "covariate_dim": 0 if covariates is None else int(covariates.shape[1]),
         "target": np.asarray(target, dtype=float).tolist(),
-        "covariates": None if covariates is None else np.asarray(covariates, dtype=float).tolist(),
+        "covariates": (
+            None if covariates is None else np.asarray(covariates, dtype=float).tolist()
+        ),
         "realized_features": clean_float_mapping(features),
         "acceptance_attempts": int(latent["acceptance"]["attempts"]),
         "target_feature": latent["generator_conditioning"]["target_feature"],
@@ -641,7 +644,9 @@ def run_inference(
                 sample_path=REAL_SAMPLES_PATH,
                 prediction_kind="real",
             )
-        statuses = read_json_if_exists(output_dir / "model_status.json", default={"models": {}})
+        statuses = read_json_if_exists(
+            output_dir / "model_status.json", default={"models": {}}
+        )
         for model in requested:
             model_id = str(model["model_id"])
             print(f"starting model: {model_id}", flush=True)
@@ -660,12 +665,12 @@ def run_inference(
                 )
             except Exception as error:  # noqa: BLE001
                 prediction_path = prediction_path_for(output_dir, model_id)
-                succeeded = count_jsonl(prediction_path) if prediction_path.exists() else 0
+                succeeded = (
+                    count_jsonl(prediction_path) if prediction_path.exists() else 0
+                )
                 compatible_count = sum(
                     model_supports_sample(model, sample)
-                    for sample in iter_forecast_samples(
-                        output_dir / "samples.jsonl"
-                    )
+                    for sample in iter_forecast_samples(output_dir / "samples.jsonl")
                 )
                 status = {
                     "model_id": model_id,
@@ -704,9 +709,7 @@ def run_inference(
                         forecast_timeout_seconds=int(
                             config["forecast_timeout_seconds"]
                         ),
-                        load_timeout_seconds=int(
-                            config["model_load_timeout_seconds"]
-                        ),
+                        load_timeout_seconds=int(config["model_load_timeout_seconds"]),
                         keep_loaded=args.keep_loaded,
                         sample_path=REAL_SAMPLES_PATH,
                         prediction_kind="real",
@@ -719,9 +722,7 @@ def run_inference(
                         prediction_kind="real",
                     )
                     succeeded = (
-                        count_jsonl(prediction_path)
-                        if prediction_path.exists()
-                        else 0
+                        count_jsonl(prediction_path) if prediction_path.exists() else 0
                     )
                     compatible_count = sum(
                         model_supports_sample(model, sample)
@@ -783,28 +784,77 @@ class TimerServiceClient:
     def unload_all_loaded(self) -> None:
         for model in self.list_loaded_models():
             endpoints = model.get("endpoints") or []
-            if any(str(endpoint.get("device", "")).lower() != "cpu" for endpoint in endpoints):
+            if any(
+                str(endpoint.get("device", "")).lower() != "cpu"
+                for endpoint in endpoints
+            ):
                 self.unload_model(str(model["model_id"]))
 
     def unload_model(self, model_id: str) -> None:
-        try:
-            self._post(
-                "/models/unload",
-                {"model_id": model_id},
-                timeout_seconds=max(self.timeout_seconds, 600),
-            )
-        except RuntimeError as error:
-            if "409" in str(error) and "not loaded" in str(error).lower():
-                return
-            raise
         deadline = time.monotonic() + max(self.timeout_seconds, 600)
-        while any(
-            str(model.get("model_id", "")).lower() == model_id.lower()
-            for model in self.list_loaded_models()
-        ):
+        next_submit = time.monotonic()
+        last_transient_error: Exception | None = None
+        while True:
+            now = time.monotonic()
+            if now >= next_submit:
+                try:
+                    self._post(
+                        "/models/unload",
+                        {"model_id": model_id},
+                        timeout_seconds=max(self.timeout_seconds, 600),
+                    )
+                    last_transient_error = None
+                except RuntimeError as error:
+                    message = str(error).lower()
+                    if "409" in message and "not loaded" in message:
+                        return
+                    if not self._is_transient_control_error(error):
+                        raise
+                    last_transient_error = error
+                except (httpx.TimeoutException, httpx.TransportError) as error:
+                    last_transient_error = error
+                next_submit = time.monotonic() + 10
+
+            try:
+                state = self._loaded_state(model_id)
+            except (
+                RuntimeError,
+                httpx.TimeoutException,
+                httpx.TransportError,
+            ) as error:
+                if not self._is_transient_control_error(error):
+                    raise
+                last_transient_error = error
+                state = object()
+            if state is None:
+                return
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out unloading model {model_id}")
+                detail = (
+                    f"; last transient error: {last_transient_error}"
+                    if last_transient_error is not None
+                    else ""
+                )
+                raise TimeoutError(f"timed out unloading model {model_id}{detail}")
             time.sleep(1)
+
+    @staticmethod
+    def _is_transient_control_error(error: Exception) -> bool:
+        if isinstance(error, (httpx.TimeoutException, httpx.TransportError)):
+            return True
+        message = str(error).lower()
+        return any(
+            marker in message
+            for marker in (
+                " 429",
+                " 502",
+                " 503",
+                " 504",
+                "coordinator unreachable",
+                "resource temporarily unavailable",
+                "timed out",
+                "timeout",
+            )
+        )
 
     def ensure_loaded(
         self,
@@ -897,7 +947,9 @@ class TimerServiceClient:
             )
 
     def _get(self, path: str) -> dict[str, Any]:
-        return parse_envelope(self.client.get(self.base + path, timeout=self.timeout_seconds))
+        return parse_envelope(
+            self.client.get(self.base + path, timeout=self.timeout_seconds)
+        )
 
     def _post(
         self,
@@ -996,9 +1048,7 @@ def summarize_model_input_adaptation(
             summary["unsupported_window_view_count"] += 1
             continue
         summary["compatible_sample_count"] += 1
-        summary["expected_http_request_count"] += int(
-            plan["target_request_count"]
-        )
+        summary["expected_http_request_count"] += int(plan["target_request_count"])
         if plan["adapted"]:
             summary["adapted_view_count"] += 1
         else:
@@ -1057,10 +1107,14 @@ def run_one_model(
     if len(done) > compatible_count:
         raise ValueError(f"prediction file for {model_id} has too many unique samples")
     if len(done) == compatible_count:
-        previous = read_json_if_exists(
-            output_dir / status_filename,
-            default={"models": {}},
-        ).get("models", {}).get(model_id)
+        previous = (
+            read_json_if_exists(
+                output_dir / status_filename,
+                default={"models": {}},
+            )
+            .get("models", {})
+            .get(model_id)
+        )
         if (
             previous
             and previous.get("status") == "complete"
@@ -1102,7 +1156,9 @@ def run_one_model(
                 timeout_seconds=load_timeout_seconds,
             )
             with prediction_path.open("a", encoding="utf-8") as output_handle:
-                failure_path = output_dir / "failures" / f"{safe_filename(model_id)}.jsonl"
+                failure_path = (
+                    output_dir / "failures" / f"{safe_filename(model_id)}.jsonl"
+                )
                 if prediction_kind == "real":
                     failure_path = (
                         output_dir
@@ -1144,12 +1200,9 @@ def run_one_model(
         "succeeded_count": succeeded,
         "succeeded_original_view_count": succeeded,
         "failed_request_count_this_attempt": failures,
-        "successful_http_request_count": persisted_http_request_count(
-            prediction_path
-        ),
+        "successful_http_request_count": persisted_http_request_count(prediction_path),
         "attempted_http_request_count_this_attempt": sum(
-            int(row.get("attempted_http_request_count", 0))
-            for row in bucket_stats
+            int(row.get("attempted_http_request_count", 0)) for row in bucket_stats
         ),
         "execution": {
             "devices": devices,
@@ -1224,10 +1277,8 @@ async def run_model_requests(
                 f"{label}, pending={pending_count}, concurrency={http_concurrency}",
                 flush=True,
             )
-            queue: asyncio.Queue[
-                tuple[dict[str, Any], dict[str, Any]] | None
-            ] = asyncio.Queue(
-                maxsize=max(2 * http_concurrency, 1)
+            queue: asyncio.Queue[tuple[dict[str, Any], dict[str, Any]] | None] = (
+                asyncio.Queue(maxsize=max(2 * http_concurrency, 1))
             )
             bucket_started = time.monotonic()
             succeeded_count = 0
@@ -1301,7 +1352,8 @@ async def run_model_requests(
                                 result["attempted_http_request_count"]
                             )
                             output_handle.write(
-                                json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+                                json.dumps(row, ensure_ascii=False, sort_keys=True)
+                                + "\n"
                             )
                             succeeded_count += 1
                             persisted += 1
@@ -1326,16 +1378,14 @@ async def run_model_requests(
                                             "failed_target_index"
                                         ],
                                         "successful_http_request_count": int(
-                                            result[
-                                                "successful_http_request_count"
-                                            ]
+                                            result["successful_http_request_count"]
                                         ),
                                         "attempted_http_request_count": int(
-                                            result[
-                                                "attempted_http_request_count"
-                                            ]
+                                            result["attempted_http_request_count"]
                                         ),
-                                        "created_at": datetime.now(timezone.utc).isoformat(),
+                                        "created_at": datetime.now(
+                                            timezone.utc
+                                        ).isoformat(),
                                     },
                                     ensure_ascii=False,
                                     sort_keys=True,
@@ -1348,7 +1398,8 @@ async def run_model_requests(
 
             tasks = [asyncio.create_task(producer())]
             tasks.extend(
-                asyncio.create_task(worker()) for _worker_index in range(http_concurrency)
+                asyncio.create_task(worker())
+                for _worker_index in range(http_concurrency)
             )
             await asyncio.gather(*tasks)
             output_handle.flush()
@@ -1375,21 +1426,15 @@ async def run_model_requests(
                         if len(group_key) > 5
                         else pending_count
                     ),
-                    "successful_http_request_count": (
-                        successful_http_request_count
-                    ),
-                    "attempted_http_request_count": (
-                        attempted_http_request_count
-                    ),
+                    "successful_http_request_count": (successful_http_request_count),
+                    "attempted_http_request_count": (attempted_http_request_count),
                     "elapsed_seconds": round(elapsed, 3),
                     "successful_tasks_per_second": round(
                         succeeded_count / max(elapsed, 1e-12), 3
                     ),
                     **(
                         {
-                            "target_request_count_per_view": int(
-                                group_key[5]
-                            ),
+                            "target_request_count_per_view": int(group_key[5]),
                             "target_mode": str(group_key[6]),
                             "covariate_mode": str(group_key[7]),
                             "request_target_dim": int(group_key[8]),
@@ -1586,10 +1631,7 @@ def _supports_native_targets(
     if "max_target_count" not in limits:
         return False
     maximum_targets = limits["max_target_count"]
-    return (
-        maximum_targets is None
-        or target_dim <= int(maximum_targets)
-    )
+    return maximum_targets is None or target_dim <= int(maximum_targets)
 
 
 def _supports_native_covariates(
@@ -1604,10 +1646,7 @@ def _supports_native_covariates(
     if covariate_dim > maximum_covariates:
         return False
     maximum_future = limits.get("max_future_covs_length")
-    return (
-        maximum_future is not None
-        and horizon <= int(maximum_future)
-    )
+    return maximum_future is not None and horizon <= int(maximum_future)
 
 
 def input_adaptation_plan(
@@ -1630,9 +1669,7 @@ def input_adaptation_plan(
     covariate_dim = int(sample["covariate_dim"])
     horizon = int(sample["horizon"])
     target_native = (
-        True
-        if policy_id is None
-        else _supports_native_targets(limits, target_dim)
+        True if policy_id is None else _supports_native_targets(limits, target_dim)
     )
     covariates_native = (
         True
@@ -1644,11 +1681,7 @@ def input_adaptation_plan(
         )
     )
     if target_native:
-        target_mode = (
-            "native_univariate"
-            if target_dim == 1
-            else "native_multivariate"
-        )
+        target_mode = "native_univariate" if target_dim == 1 else "native_multivariate"
     else:
         target_mode = "independent_univariate"
     if covariate_dim == 0:
@@ -1657,20 +1690,14 @@ def input_adaptation_plan(
         covariate_mode = "native"
     else:
         covariate_mode = "omitted_unsupported"
-    target_request_count = (
-        target_dim
-        if target_mode == "independent_univariate"
-        else 1
-    )
+    target_request_count = target_dim if target_mode == "independent_univariate" else 1
     adapted = (
         target_mode == "independent_univariate"
         or covariate_mode == "omitted_unsupported"
     )
     return {
         "policy_id": (
-            INPUT_ADAPTATION_POLICY_ID
-            if policy_id is not None
-            else "native-only"
+            INPUT_ADAPTATION_POLICY_ID if policy_id is not None else "native-only"
         ),
         "target_mode": target_mode,
         "covariate_mode": covariate_mode,
@@ -1681,9 +1708,7 @@ def input_adaptation_plan(
         ),
         "target_request_count": target_request_count,
         "original_covariate_dim": covariate_dim,
-        "request_covariate_dim": (
-            covariate_dim if covariate_mode == "native" else 0
-        ),
+        "request_covariate_dim": (covariate_dim if covariate_mode == "native" else 0),
     }
 
 
@@ -1696,9 +1721,7 @@ def _target_column_names(sample: dict[str, Any]) -> list[str]:
         return [f"target_{index}" for index in range(target_dim)]
     names = [str(value) for value in configured]
     if len(names) != target_dim or len(set(names)) != len(names):
-        raise ValueError(
-            "target_column_names must be unique and match target_dim"
-        )
+        raise ValueError("target_column_names must be unique and match target_dim")
     return names
 
 
@@ -1711,9 +1734,7 @@ def adapted_request_samples(
     target = np.asarray(sample["target"], dtype=float)
     target_names = _target_column_names(sample)
     if plan["target_mode"] == "independent_univariate":
-        target_indexes: list[int | None] = list(
-            range(int(sample["target_dim"]))
-        )
+        target_indexes: list[int | None] = list(range(int(sample["target_dim"])))
     else:
         target_indexes = [None]
     requests: list[dict[str, Any]] = []
@@ -1782,9 +1803,7 @@ def request_group_key(
 
 def request_group_sort_key(group: tuple[Any, ...]) -> tuple[Any, ...]:
     context, horizon, target_dim, covariate_dim, frequency = group[:5]
-    request_covariate_dim = (
-        int(group[9]) if len(group) > 5 else int(covariate_dim)
-    )
+    request_covariate_dim = int(group[9]) if len(group) > 5 else int(covariate_dim)
     return (
         int(request_covariate_dim > 0),
         int(context),
@@ -1796,9 +1815,7 @@ def request_group_sort_key(group: tuple[Any, ...]) -> tuple[Any, ...]:
 
 def request_group_label(group: tuple[Any, ...]) -> str:
     context, horizon, target_dim, covariate_dim, frequency = group[:5]
-    base = (
-        f"ctx{context}_h{horizon}_t{target_dim}_c{covariate_dim}_{frequency}"
-    )
+    base = f"ctx{context}_h{horizon}_t{target_dim}_c{covariate_dim}_{frequency}"
     if len(group) == 5:
         return base
     (
@@ -1822,7 +1839,9 @@ def forecast_target(sample: dict[str, Any]) -> dict[str, Any]:
     columns = [TIME_COLUMN, *_target_column_names(sample)]
     return {
         "columns": columns,
-        "data": [[timestamp, *row] for timestamp, row in zip(timestamps, target, strict=True)],
+        "data": [
+            [timestamp, *row] for timestamp, row in zip(timestamps, target, strict=True)
+        ],
     }
 
 
@@ -1836,17 +1855,12 @@ def _covariate_column_names(sample: dict[str, Any]) -> list[str]:
     else:
         capability = CAPABILITIES_BY_ID.get(str(sample.get("capability_id", "")))
         catalog_names = (
-            list(capability.covariate_columns)
-            if capability is not None
-            else []
+            list(capability.covariate_columns) if capability is not None else []
         )
         names = (
             [str(value) for value in catalog_names]
             if len(catalog_names) == covariate_dim
-            else [
-                f"covariate_{index}"
-                for index in range(covariate_dim)
-            ]
+            else [f"covariate_{index}" for index in range(covariate_dim)]
         )
     if len(names) != covariate_dim or len(set(names)) != len(names):
         raise ValueError(
@@ -1939,9 +1953,13 @@ def sample_timestamps(sample: dict[str, Any]) -> list[str]:
 def parse_forecast_result(result: dict[str, Any], *, horizon: int) -> list[list[float]]:
     columns = result["columns"]
     indexes = [index for index, column in enumerate(columns) if column != TIME_COLUMN]
-    rows = [[float(row[index]) for index in indexes] for row in result["data"][:horizon]]
+    rows = [
+        [float(row[index]) for index in indexes] for row in result["data"][:horizon]
+    ]
     if len(rows) != horizon:
-        raise ValueError(f"forecast length {len(rows)} does not match horizon {horizon}")
+        raise ValueError(
+            f"forecast length {len(rows)} does not match horizon {horizon}"
+        )
     return rows
 
 
@@ -1960,10 +1978,7 @@ def prediction_row(
         target[:context].tolist(),
         seasonal_period=int(sample["season_length"]),
     )
-    if (
-        sample.get("capability_id") == "hierarchical_coherence"
-        and values.shape[1] >= 3
-    ):
+    if sample.get("capability_id") == "hierarchical_coherence" and values.shape[1] >= 3:
         residual = values[:, 0] - np.sum(values[:, 1:], axis=1)
         metrics["coherence_mae"] = float(np.mean(np.abs(residual)))
     row = {
@@ -2014,13 +2029,19 @@ def analyze_experiment(
         requested_models=config["requested_models"],
     )
     expected_by_model.update(
-        {model_id: int(config["expected_generated_sample_count"]) for model_id in BASELINE_MODELS}
+        {
+            model_id: int(config["expected_generated_sample_count"])
+            for model_id in BASELINE_MODELS
+        }
     )
     prediction_rows: list[dict[str, Any]] = []
     coverage_rows: list[dict[str, Any]] = []
     for model_id, expected in [
-        *( (model_id, expected_by_model[model_id]) for model_id in BASELINE_MODELS ),
-        *( (model_id, expected_by_model[model_id]) for model_id in config["requested_models"] ),
+        *((model_id, expected_by_model[model_id]) for model_id in BASELINE_MODELS),
+        *(
+            (model_id, expected_by_model[model_id])
+            for model_id in config["requested_models"]
+        ),
     ]:
         path = prediction_path_for(output_dir, model_id)
         observed = count_jsonl(path) if path.exists() else 0
@@ -2086,9 +2107,7 @@ def analyze_experiment(
         outputs.update(
             {
                 "real_model_ranks.csv": alignment["real_model_ranks"],
-                "synthetic_model_ranks.csv": alignment[
-                    "synthetic_model_ranks"
-                ],
+                "synthetic_model_ranks.csv": alignment["synthetic_model_ranks"],
                 "synthetic_real_rank_alignment.csv": alignment["rows"],
             }
         )
@@ -2224,16 +2243,12 @@ def analyze_synthetic_real_alignment(
         "dataset_id",
     )
     rows: list[dict[str, Any]] = []
-    for dataset_id in sorted(
-        set(real_by_dataset) | set(synthetic_by_dataset)
-    ):
+    for dataset_id in sorted(set(real_by_dataset) | set(synthetic_by_dataset)):
         dataset_key = (dataset_id,) if not isinstance(dataset_id, tuple) else dataset_id
         real_rows = real_by_dataset.get(dataset_key, [])
         synthetic_rows = synthetic_by_dataset.get(dataset_key, [])
         real_lookup = {str(row["model_id"]): row for row in real_rows}
-        synthetic_lookup = {
-            str(row["model_id"]): row for row in synthetic_rows
-        }
+        synthetic_lookup = {str(row["model_id"]): row for row in synthetic_rows}
         models = sorted(set(real_lookup) & set(synthetic_lookup))
         real_ranks = np.asarray(
             [real_lookup[model_id]["real_rank"] for model_id in models],
@@ -2248,15 +2263,9 @@ def analyze_synthetic_real_alignment(
         )
         enough = len(models) >= 2
         spearman = (
-            spearman_rank_correlation(synthetic_ranks, real_ranks)
-            if enough
-            else None
+            spearman_rank_correlation(synthetic_ranks, real_ranks) if enough else None
         )
-        kendall = (
-            kendall_tau_b(synthetic_ranks, real_ranks)
-            if enough
-            else None
-        )
+        kendall = kendall_tau_b(synthetic_ranks, real_ranks) if enough else None
         top_k = min(3, len(models))
         synthetic_top = set(
             sorted(
@@ -2299,17 +2308,11 @@ def analyze_synthetic_real_alignment(
                 "top_k": top_k,
                 "top_k_overlap_count": len(synthetic_top & real_top),
                 "top_k_overlap_rate": (
-                    float(len(synthetic_top & real_top) / top_k)
-                    if top_k
-                    else None
+                    float(len(synthetic_top & real_top) / top_k) if top_k else None
                 ),
                 "pairwise_ordering_agreement": pairwise["agreement"],
-                "pairwise_comparable_count": pairwise[
-                    "comparable_pair_count"
-                ],
-                "pairwise_agreement_count": pairwise[
-                    "agreement_pair_count"
-                ],
+                "pairwise_comparable_count": pairwise["comparable_pair_count"],
+                "pairwise_agreement_count": pairwise["agreement_pair_count"],
                 "effective_capability_count": len(
                     {
                         str(row["capability_id"])
@@ -2414,11 +2417,7 @@ def real_model_rank_rows(
     supported_dataset_ids: set[str],
 ) -> list[dict[str, Any]]:
     grouped = group_rows(
-        [
-            row
-            for row in predictions
-            if str(row["dataset_id"]) in supported_dataset_ids
-        ],
+        [row for row in predictions if str(row["dataset_id"]) in supported_dataset_ids],
         "dataset_id",
         "model_id",
     )
@@ -2430,9 +2429,7 @@ def real_model_rank_rows(
             "real_mean_mase": float(
                 np.mean([float(row["metrics"]["mase"]) for row in group])
             ),
-            "real_sample_count": len(
-                {str(row["sample_id"]) for row in group}
-            ),
+            "real_sample_count": len({str(row["sample_id"]) for row in group}),
         }
         for key, group in sorted(grouped.items())
     ]
@@ -2453,11 +2450,7 @@ def synthetic_model_rank_rows(
     supported_dataset_ids: set[str],
 ) -> list[dict[str, Any]]:
     cell_groups = group_rows(
-        [
-            row
-            for row in predictions
-            if str(row["dataset_id"]) in supported_dataset_ids
-        ],
+        [row for row in predictions if str(row["dataset_id"]) in supported_dataset_ids],
         "dataset_id",
         "capability_id",
         "intensity",
@@ -2501,13 +2494,9 @@ def synthetic_model_rank_rows(
             "effective_capability_count": len(
                 {str(row["capability_id"]) for row in group}
             ),
-            "effective_intensity_count": len(
-                {int(row["intensity"]) for row in group}
-            ),
+            "effective_intensity_count": len({int(row["intensity"]) for row in group}),
             "effective_cell_count": len(group),
-            "synthetic_sample_count": sum(
-                int(row["sample_count"]) for row in group
-            ),
+            "synthetic_sample_count": sum(int(row["sample_count"]) for row in group),
         }
         for key, group in sorted(by_model.items())
     ]
@@ -2550,9 +2539,7 @@ def pairwise_ordering_agreement(
             comparable += 1
             agreements += int(np.sign(left_delta) == np.sign(right_delta))
     return {
-        "agreement": (
-            float(agreements / comparable) if comparable else None
-        ),
+        "agreement": (float(agreements / comparable) if comparable else None),
         "comparable_pair_count": comparable,
         "agreement_pair_count": agreements,
     }
@@ -2689,7 +2676,9 @@ def rank_stability_rows(round_rows: list[dict[str, Any]]) -> list[dict[str, Any]
             ]
             models = sorted(set.intersection(*model_sets))
             if len(models) < 2:
-                raise ValueError(f"ranking scope {scope} has fewer than two models in {key}")
+                raise ValueError(
+                    f"ranking scope {scope} has fewer than two models in {key}"
+                )
             rounds = sorted(value[0] for value in by_round)
             matrix = np.asarray(
                 [
@@ -2751,7 +2740,10 @@ def model_profile_icc_rows(round_rows: list[dict[str, Any]]) -> list[dict[str, A
             for row in group
         }
         matrix = np.asarray(
-            [[lookup[(*cell, round_index)] for round_index in rounds] for cell in cells],
+            [
+                [lookup[(*cell, round_index)] for round_index in rounds]
+                for cell in cells
+            ],
             dtype=float,
         )
         rows.append(
@@ -2781,14 +2773,20 @@ def cross_round_distance_rows(sample_path: Path) -> list[dict[str, Any]]:
         for left_index in range(len(round_indexes)):
             left_rows = by_round[(round_indexes[left_index],)]
             left = np.vstack(
-                [np.asarray(row["target"], dtype=float).reshape(-1) for row in left_rows]
+                [
+                    np.asarray(row["target"], dtype=float).reshape(-1)
+                    for row in left_rows
+                ]
             )
             exact_left = {array_hash(row["target"]) for row in left_rows}
             rounded_left = {array_hash(np.round(row["target"], 6)) for row in left_rows}
             for right_index in range(left_index + 1, len(round_indexes)):
                 right_rows = by_round[(round_indexes[right_index],)]
                 right = np.vstack(
-                    [np.asarray(row["target"], dtype=float).reshape(-1) for row in right_rows]
+                    [
+                        np.asarray(row["target"], dtype=float).reshape(-1)
+                        for row in right_rows
+                    ]
                 )
                 right_to_left = nearest_mae_distances(right, left)
                 left_to_right = nearest_mae_distances(left, right)
@@ -2916,7 +2914,9 @@ def summarize_stability(
         "cross_round_distance": {
             "cell_count": len(distance_rows),
             "minimum_dcr_q01": min(row["cross_round_dcr_q01"] for row in distance_rows),
-            "minimum_nndr_q05": min(row["cross_round_nndr_q05"] for row in distance_rows),
+            "minimum_nndr_q05": min(
+                row["cross_round_nndr_q05"] for row in distance_rows
+            ),
             "maximum_exact_duplicate_rate": max(
                 row["exact_duplicate_rate"] for row in distance_rows
             ),
@@ -2942,8 +2942,7 @@ def stability_criteria(statistics: dict[str, Any]) -> dict[str, Any]:
         "model_ranking": bool(
             statistics["rank_stability"]["kendall_mean_median"]
             >= MIN_MEDIAN_CELL_KENDALL
-            and statistics["rank_stability"]["kendall_mean_p10"]
-            >= MIN_P10_CELL_KENDALL
+            and statistics["rank_stability"]["kendall_mean_p10"] >= MIN_P10_CELL_KENDALL
         ),
         "bootstrap_ci": bool(
             statistics["bootstrap_ci"]["relative_width_median"]
@@ -2975,7 +2974,9 @@ def hierarchical_bootstrap_means(
     seed: int,
 ) -> np.ndarray:
     if len(round_values) < 2 or any(len(values) < 2 for values in round_values):
-        raise ValueError("hierarchical bootstrap needs at least two rounds with two samples each")
+        raise ValueError(
+            "hierarchical bootstrap needs at least two rounds with two samples each"
+        )
     rng = np.random.default_rng(seed)
     within_means = np.column_stack(
         [
@@ -3007,11 +3008,11 @@ def icc_a1(matrix: np.ndarray) -> float:
     residual = values - row_means[:, None] - column_means[None, :] + grand
     ms_error = float(np.sum(residual**2)) / ((subjects - 1) * (raters - 1))
     denominator = (
-        ms_rows
-        + (raters - 1) * ms_error
-        + raters * (ms_columns - ms_error) / subjects
+        ms_rows + (raters - 1) * ms_error + raters * (ms_columns - ms_error) / subjects
     )
-    return float((ms_rows - ms_error) / denominator) if abs(denominator) > 1e-12 else 0.0
+    return (
+        float((ms_rows - ms_error) / denominator) if abs(denominator) > 1e-12 else 0.0
+    )
 
 
 def kendall_tau_b(left: np.ndarray, right: np.ndarray) -> float:
@@ -3033,13 +3034,14 @@ def kendall_tau_b(left: np.ndarray, right: np.ndarray) -> float:
             else:
                 discordant += 1
     denominator = math.sqrt(
-        (concordant + discordant + ties_left)
-        * (concordant + discordant + ties_right)
+        (concordant + discordant + ties_left) * (concordant + discordant + ties_right)
     )
     return float((concordant - discordant) / denominator) if denominator else 0.0
 
 
-def nearest_mae_distances(query: np.ndarray, reference: np.ndarray) -> dict[str, np.ndarray]:
+def nearest_mae_distances(
+    query: np.ndarray, reference: np.ndarray
+) -> dict[str, np.ndarray]:
     distances = np.mean(np.abs(query[:, None, :] - reference[None, :, :]), axis=2)
     part = np.partition(distances, kth=1, axis=1)
     d1 = part[:, 0]
@@ -3067,7 +3069,9 @@ def successful_sample_ids(path: Path) -> set[str]:
     for row in iter_jsonl(path):
         sample_id = str(row["sample_id"])
         if sample_id in identifiers:
-            raise ValueError(f"duplicate successful prediction for {sample_id} in {path}")
+            raise ValueError(
+                f"duplicate successful prediction for {sample_id} in {path}"
+            )
         identifiers.add(sample_id)
     return identifiers
 
@@ -3083,7 +3087,10 @@ def prediction_path_for(
 
 
 def safe_filename(value: str) -> str:
-    return "".join(character if character.isalnum() or character in "-_" else "_" for character in value)
+    return "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in value
+    )
 
 
 def parse_envelope(response: httpx.Response) -> dict[str, Any]:
@@ -3108,11 +3115,17 @@ def parse_envelope(response: httpx.Response) -> dict[str, Any]:
 
 def finite_metrics(rows: list[dict[str, Any]], metric: str) -> np.ndarray:
     values = np.asarray(
-        [float(row["metrics"][metric]) for row in rows if is_finite(row["metrics"].get(metric))],
+        [
+            float(row["metrics"][metric])
+            for row in rows
+            if is_finite(row["metrics"].get(metric))
+        ],
         dtype=float,
     )
     if len(values) != len(rows):
-        raise ValueError(f"metric {metric} is absent or non-finite in {len(rows) - len(values)} rows")
+        raise ValueError(
+            f"metric {metric} is absent or non-finite in {len(rows) - len(values)} rows"
+        )
     return values
 
 
@@ -3195,7 +3208,9 @@ def render_report(summary: dict[str, Any]) -> str:
             "cells and incompatible models receive no imputed worst rank."
         )
     lines.append("")
-    lines.append("Detailed cell/model/round results are retained in the CSV and JSONL files in this directory.")
+    lines.append(
+        "Detailed cell/model/round results are retained in the CSV and JSONL files in this directory."
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -3235,7 +3250,9 @@ def write_manifest(output_dir: Path, *, config: dict[str, Any]) -> None:
             name: {"path": relative_path(path), "sha256": sha256_file(path)}
             for name, path in inputs.items()
         },
-        "config_sha256": hashlib.sha256(canonical_json(config).encode("utf-8")).hexdigest(),
+        "config_sha256": hashlib.sha256(
+            canonical_json(config).encode("utf-8")
+        ).hexdigest(),
         "files": files,
     }
     write_json(output_dir / "manifest.json", manifest)
@@ -3260,9 +3277,7 @@ def stable_seed(*parts: Any) -> int:
 
 def clean_float_mapping(values: dict[str, Any]) -> dict[str, float]:
     return {
-        str(name): float(value)
-        for name, value in values.items()
-        if is_finite(value)
+        str(name): float(value) for name, value in values.items() if is_finite(value)
     }
 
 
@@ -3280,7 +3295,9 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 try:
                     yield json.loads(line)
                 except json.JSONDecodeError as error:
-                    raise ValueError(f"invalid JSONL at {path}:{line_number}") from error
+                    raise ValueError(
+                        f"invalid JSONL at {path}:{line_number}"
+                    ) from error
 
 
 def iter_forecast_samples(path: Path) -> Iterator[dict[str, Any]]:
@@ -3335,11 +3352,7 @@ def iter_forecast_samples(path: Path) -> Iterator[dict[str, Any]]:
             "covariate_dim": int(row.get("covariate_dim", 0)),
             "target": np.vstack([history, future]).tolist(),
             "covariates": covariates,
-            **(
-                {"timestamps": timestamps}
-                if timestamps is not None
-                else {}
-            ),
+            **({"timestamps": timestamps} if timestamps is not None else {}),
         }
 
 

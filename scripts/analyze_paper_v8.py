@@ -43,12 +43,12 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=[
             "Chronos-2",
-            "toto2.0",
             "timesfm2.5",
-            "tabpfn-ts3",
             "tirex2",
             "moirai2",
             "Timer-3.5",
+            "toto2.0",
+            "TimePFN",
         ],
     )
     return parser.parse_args()

@@ -10,8 +10,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-
-SCRIPT_PATH = Path(__file__).parents[3] / "scripts" / "run_paper_e2_dynamic_stability.py"
+SCRIPT_PATH = (
+    Path(__file__).parents[3] / "scripts" / "run_paper_e2_dynamic_stability.py"
+)
 
 
 def load_module():
@@ -233,20 +234,23 @@ def test_generation_pairs_sample_seed_across_intensities(tmp_path, monkeypatch):
 
     assert len(rows) == 20
     assert {row["dataset_id"] for row in rows} == {"dataset_a"}
-    assert {row["intensity_comparability"] for row in rows} == {
-        "within_dataset_only"
-    }
+    assert {row["intensity_comparability"] for row in rows} == {"within_dataset_only"}
     assert "canonical_target_strength" not in rows[0]
     assert rows[0]["target_relative_level"] == 0.0
     assert "target_percentile_level" not in rows[0]
-    assert all(len({row["sample_seed"] for row in group}) == 1 for group in grouped.values())
-    assert len(
-        {
-            grouped[(round_index, sample_index)][0]["sample_seed"]
-            for round_index in (1, 2)
-            for sample_index in (0, 1)
-        }
-    ) == 4
+    assert all(
+        len({row["sample_seed"] for row in group}) == 1 for group in grouped.values()
+    )
+    assert (
+        len(
+            {
+                grouped[(round_index, sample_index)][0]["sample_seed"]
+                for round_index in (1, 2)
+                for sample_index in (0, 1)
+            }
+        )
+        == 4
+    )
 
 
 def test_real_prediction_row_omits_synthetic_coordinates():
@@ -565,9 +569,7 @@ def test_model_compatibility_uses_target_and_future_covariate_limits():
     }
 
     assert module.model_supports_sample(univariate_only, base)
-    assert not module.model_supports_sample(
-        univariate_only, {**base, "target_dim": 3}
-    )
+    assert not module.model_supports_sample(univariate_only, {**base, "target_dim": 3})
     assert not module.model_supports_sample(
         univariate_only, {**base, "covariate_dim": 2}
     )
@@ -958,6 +960,33 @@ def test_model_load_rejects_wrong_replica_topology(monkeypatch):
         )
 
 
+def test_model_unload_treats_transient_503_as_in_progress(monkeypatch):
+    module = load_module()
+    client = object.__new__(module.TimerServiceClient)
+    client.timeout_seconds = 30
+    states = iter(
+        [
+            {"model_id": "model", "status": "loaded"},
+            None,
+        ]
+    )
+    posts = []
+
+    def transient_post(path, body, **kwargs):
+        posts.append((path, body, kwargs))
+        raise RuntimeError(
+            "returned 503: Coordinator unreachable: Resource temporarily unavailable"
+        )
+
+    monkeypatch.setattr(client, "_post", transient_post)
+    monkeypatch.setattr(client, "_loaded_state", lambda _model_id: next(states))
+    monkeypatch.setattr(module.time, "sleep", lambda _seconds: None)
+
+    client.unload_model("model")
+
+    assert len(posts) == 1
+
+
 def test_request_group_order_finishes_non_covariate_shapes_first():
     module = load_module()
     groups = [
@@ -992,7 +1021,9 @@ def test_rank_stability_keeps_foundation_scope_separate_from_baselines():
                 {
                     "model_id": model_id,
                     "model_group": (
-                        "baseline" if model_id in module.BASELINE_MODELS else "timer_service"
+                        "baseline"
+                        if model_id in module.BASELINE_MODELS
+                        else "timer_service"
                     ),
                     "profile_id": "profile",
                     "capability_id": "trend",
@@ -1074,11 +1105,14 @@ def test_resume_requires_identical_config_and_manifest_seals_output(tmp_path):
     output = tmp_path / "E2"
     config = {"schema_version": module.SCHEMA_VERSION, "round_seeds": [1, 2]}
     module.prepare_or_resume_output(output, config=config, resume=False)
-    assert json.loads(
-        (output / "skipped_profile_capability_cells.json").read_text(
-            encoding="utf-8"
-        )
-    )["cells"] == []
+    assert (
+        json.loads(
+            (output / "skipped_profile_capability_cells.json").read_text(
+                encoding="utf-8"
+            )
+        )["cells"]
+        == []
+    )
 
     module.prepare_or_resume_output(output, config=config, resume=True)
     with pytest.raises(ValueError, match="does not match"):
