@@ -2084,6 +2084,92 @@ def test_default_topology_contains_three_dual_card_services_and_eight_card():
     )
 
 
+def test_model_load_waits_for_concurrent_loading_state(monkeypatch):
+    inference = load_script("run_paper_v8_inference")
+    client = object.__new__(inference.TimerServiceClient)
+    expected = {
+        "model_id": "model",
+        "status": "loaded",
+        "endpoints": [
+            {"device": "cuda:0", "worker_pid": 10},
+            {"device": "cuda:1", "worker_pid": 11},
+        ],
+    }
+    states = iter(
+        [
+            {
+                "model_id": "model",
+                "status": "loading",
+                "devices": ["cuda:0", "cuda:1"],
+                "endpoints": [],
+            },
+            expected,
+        ]
+    )
+    posts = []
+    monkeypatch.setattr(client, "_loaded_state", lambda _model_id: next(states))
+    monkeypatch.setattr(
+        client,
+        "_post",
+        lambda path, body, **kwargs: posts.append((path, body, kwargs)) or {},
+    )
+    monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
+
+    _seconds, state = client.ensure_loaded(
+        "model",
+        devices="0,1",
+        replicas_per_device=1,
+        timeout_seconds=60,
+    )
+
+    assert state == expected
+    assert posts == []
+
+
+def test_model_load_treats_concurrent_409_as_in_progress(monkeypatch):
+    inference = load_script("run_paper_v8_inference")
+    client = object.__new__(inference.TimerServiceClient)
+    expected = {
+        "model_id": "model",
+        "status": "loaded",
+        "endpoints": [
+            {"device": "cuda:0", "worker_pid": 10},
+            {"device": "cuda:1", "worker_pid": 11},
+        ],
+    }
+    states = iter(
+        [
+            None,
+            {
+                "model_id": "model",
+                "status": "loading",
+                "devices": ["cuda:0", "cuda:1"],
+                "endpoints": [],
+            },
+            expected,
+        ]
+    )
+    posts = []
+
+    def conflicting_post(path, body, **kwargs):
+        posts.append((path, body, kwargs))
+        raise RuntimeError("returned 409: model is already loading")
+
+    monkeypatch.setattr(client, "_loaded_state", lambda _model_id: next(states))
+    monkeypatch.setattr(client, "_post", conflicting_post)
+    monkeypatch.setattr(inference.time, "sleep", lambda _seconds: None)
+
+    _seconds, state = client.ensure_loaded(
+        "model",
+        devices="0,1",
+        replicas_per_device=1,
+        timeout_seconds=60,
+    )
+
+    assert state == expected
+    assert len(posts) == 1
+
+
 def test_model_phase_honors_explicit_per_model_capacity(tmp_path):
     common = load_script("paper_v8_pipeline_common")
     inference = load_script("run_paper_v8_inference")
@@ -2286,9 +2372,9 @@ def test_model_predictions_are_merged_only_after_complete_coverage(tmp_path):
     assert [row["sample_id"] for row in canonical] == [
         f"sample-{index}"
         for index in sorted(range(12), key=lambda value: f"sample-{value}")
-    ]
+        ]
     assert not (
-        tmp_path / "model_task_shards" / inference.engine.safe_filename(model_id)
+        tmp_path / "model_task_shards" / inference.safe_filename(model_id)
     ).exists()
     assert not list(
         (inference.model_root(tmp_path, model_id) / "parts").glob(

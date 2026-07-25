@@ -94,6 +94,20 @@ Do not run the full backend suite, frontend tests, or start the web platform
 unless the user explicitly asks. For generator changes, also run the relevant
 `test_synthetic_formula_*.py` files and a small calibration/generation pilot.
 
+## Long-Running Jobs
+
+When starting a long-running or background experiment through a Codex tool
+shell, use a uniquely named detached `tmux` session. Do not use `nohup ... &`:
+the tool runtime may clean up that process tree when its parent shell exits,
+even when `nohup` is present.
+
+Redirect the command to an explicit log under `runtime/`, enable
+`remain-on-exit` when useful, and verify all three after launch:
+
+- `tmux list-panes` reports a live pane;
+- the expected experiment process is running;
+- the log and status manifest are advancing without errors.
+
 ## Git and Safety
 
 Keep commits concise and task-scoped. Do not commit runtime datasets,
