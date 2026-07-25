@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).parents[3]
 SCRIPT_DIR = REPO_ROOT / "scripts"
@@ -122,3 +124,63 @@ def test_pipeline_passes_nonsemantic_preparation_worker_count(tmp_path):
     ]
     assert "--max-generation-attempts" in generation_arguments
     assert "--near-distance-gate" in generation_arguments
+
+
+def test_dataset_parallel_preparation_continues_after_one_failure(
+    monkeypatch,
+    tmp_path,
+):
+    pipeline = load_script("run_paper_v8_pipeline")
+    calls: list[str] = []
+
+    def fake_commands(_args, dataset_id, *, experiment_root):
+        assert experiment_root == tmp_path
+        return {
+            step: (f"{dataset_id}:{step}", [])
+            for step in ("calibration", "generation", "validation")
+        }
+
+    def fake_run(script, _arguments, *, log_path=None):
+        assert log_path is not None
+        calls.append(script)
+        if script == "first:generation":
+            raise RuntimeError("expected failure")
+
+    monkeypatch.setattr(pipeline, "commands_for_dataset", fake_commands)
+    monkeypatch.setattr(pipeline, "run", fake_run)
+    args = SimpleNamespace(
+        dataset_workers=2,
+        start_at="calibration",
+        stop_after="validation",
+    )
+
+    completed, failed = pipeline.run_parallel_preparation(
+        args,
+        ["first", "second"],
+        experiment_root=tmp_path,
+        experiment_id="experiment",
+        protocol_sha256="protocol",
+        steps=["calibration", "generation", "validation"],
+    )
+
+    assert [item["dataset_id"] for item in completed] == ["second"]
+    assert [item["dataset_id"] for item in failed] == ["first"]
+    assert failed[0]["failed_step"] == "generation"
+    assert "second:validation" in calls
+    assert pipeline.v8.read_json(
+        tmp_path / "first" / "preparation_status.json"
+    )["state"] == "failed"
+    assert pipeline.v8.read_json(
+        tmp_path / "second" / "preparation_status.json"
+    )["state"] == "complete"
+
+
+def test_dataset_parallel_preparation_is_rejected_for_inference():
+    pipeline = load_script("run_paper_v8_pipeline")
+
+    assert pipeline.STEPS.index("inference") > pipeline.STEPS.index("validation")
+    with pytest.raises(ValueError, match="preparation-only"):
+        pipeline.validate_dataset_parallelism(
+            dataset_workers=2,
+            stop_index=pipeline.STEPS.index("inference"),
+        )

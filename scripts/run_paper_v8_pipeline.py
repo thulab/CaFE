@@ -5,6 +5,8 @@ import argparse
 import os
 import subprocess
 import sys
+import time
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -58,6 +60,15 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=min(8, os.cpu_count() or 1),
         help="Capability-level processes used by calibration and generation.",
+    )
+    parser.add_argument(
+        "--dataset-workers",
+        type=int,
+        default=1,
+        help=(
+            "Datasets prepared concurrently. Values above one are allowed "
+            "only when the selected range ends at validation."
+        ),
     )
     parser.add_argument(
         "--calibration-seeds",
@@ -120,10 +131,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run(script: str, arguments: list[str]) -> None:
+def run(
+    script: str,
+    arguments: list[str],
+    *,
+    log_path: Path | None = None,
+) -> None:
     command = [sys.executable, str(v8.REPO_ROOT / "scripts" / script), *arguments]
     print("+ " + " ".join(command), flush=True)
-    subprocess.run(command, cwd=v8.REPO_ROOT / "backend", check=True)
+    if log_path is None:
+        subprocess.run(command, cwd=v8.REPO_ROOT / "backend", check=True)
+        return
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(
+            f"\n[{v8.utc_now()}] + {' '.join(command)}\n"
+        )
+        log.flush()
+        subprocess.run(
+            command,
+            cwd=v8.REPO_ROOT / "backend",
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=True,
+            text=True,
+        )
 
 
 def requested_dataset_ids(args: argparse.Namespace) -> list[str]:
@@ -135,6 +167,23 @@ def requested_dataset_ids(args: argparse.Namespace) -> list[str]:
     for dataset_id in values:
         v8.resolve_dataset(dataset_id)
     return values
+
+
+def validate_dataset_parallelism(
+    *,
+    dataset_workers: int,
+    stop_index: int,
+) -> None:
+    if dataset_workers < 1:
+        raise ValueError("dataset_workers must be positive")
+    if (
+        dataset_workers > 1
+        and stop_index > STEPS.index("validation")
+    ):
+        raise ValueError(
+            "dataset-level parallelism is preparation-only; use "
+            "--dataset-workers 1 when inference or analysis is selected"
+        )
 
 
 def commands_for_dataset(
@@ -267,7 +316,8 @@ def protocol_config(
             for model_id in args.models
         },
         "dataset_execution_policy": (
-            "sequential_in_declared_order_complete_each_before_next"
+            "preparation_dataset_parallelism_is_execution_only_"
+            "inference_remains_sequential_in_declared_order"
         ),
         "model_scheduling_policy": {
             "policy_id": v8_inference.SCHEDULING_POLICY_ID,
@@ -327,6 +377,7 @@ def initialize_experiment(
     protocol: dict[str, Any],
     endpoints: list[str],
     endpoint_profiles: dict[str, dict[str, Any]] | None = None,
+    preparation_execution: dict[str, Any] | None = None,
     allow_inference_execution_upgrade: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     if v8.safe_id(experiment_id) != experiment_id:
@@ -343,6 +394,7 @@ def initialize_experiment(
         "execution_environment": {
             "requested_endpoints": list(endpoints),
             "requested_endpoint_profiles": endpoint_profiles,
+            "preparation_execution": preparation_execution,
             **code_provenance(),
         },
         "storage": {
@@ -427,7 +479,8 @@ def upgrade_inference_execution_policy(
             active_step = status.get("active_step")
             stop_after = status.get("stop_after")
             if (
-                active_step not in preparation_steps
+                active_step
+                not in preparation_steps | {"concurrent_preparation"}
                 or stop_after not in preparation_steps
                 or status.get("protocol_sha256") != existing.get("protocol_sha256")
             ):
@@ -483,12 +536,15 @@ def write_pipeline_status(
     completed: list[dict[str, Any]],
     active_dataset_id: str | None = None,
     active_step: str | None = None,
+    active_dataset_ids: list[str] | None = None,
+    active_jobs: list[dict[str, Any]] | None = None,
+    failed: list[dict[str, Any]] | None = None,
     error: str | None = None,
 ) -> None:
     v8.write_json(
         experiment_root / "pipeline_status.json",
         {
-            "schema_version": "paper_v8_pipeline_status.v1",
+            "schema_version": "paper_v8_pipeline_status.v2",
             "updated_at": v8.utc_now(),
             "experiment_id": experiment_id,
             "protocol_sha256": protocol_sha256,
@@ -497,10 +553,226 @@ def write_pipeline_status(
             "stop_after": stop_after,
             "active_dataset_id": active_dataset_id,
             "active_step": active_step,
+            "active_dataset_ids": list(active_dataset_ids or []),
+            "active_jobs": list(active_jobs or []),
             "completed": completed,
+            "failed": list(failed or []),
             "error": error,
         },
     )
+
+
+def write_dataset_preparation_status(
+    experiment_root: Path,
+    *,
+    dataset_id: str,
+    state: str,
+    requested_steps: list[str],
+    completed_steps: list[str],
+    active_step: str | None = None,
+    elapsed_seconds: float | None = None,
+    error: str | None = None,
+) -> None:
+    v8.write_json(
+        experiment_root / dataset_id / "preparation_status.json",
+        {
+            "schema_version": "paper_v8_dataset_preparation_status.v1",
+            "updated_at": v8.utc_now(),
+            "dataset_id": dataset_id,
+            "state": state,
+            "requested_steps": requested_steps,
+            "completed_steps": completed_steps,
+            "active_step": active_step,
+            "elapsed_seconds": elapsed_seconds,
+            "error": error,
+        },
+    )
+
+
+def execute_dataset_steps(
+    args: argparse.Namespace,
+    dataset_id: str,
+    *,
+    experiment_root: Path,
+    steps: list[str],
+    log_path: Path | None = None,
+) -> dict[str, Any]:
+    """Execute one dataset as an isolated preparation job.
+
+    Errors are returned as data so a bad dataset cannot prevent the scheduler
+    from attempting the remaining declared datasets.
+    """
+
+    started = time.monotonic()
+    completed_steps: list[str] = []
+    commands = commands_for_dataset(
+        args,
+        dataset_id,
+        experiment_root=experiment_root,
+    )
+    write_dataset_preparation_status(
+        experiment_root,
+        dataset_id=dataset_id,
+        state="running",
+        requested_steps=steps,
+        completed_steps=completed_steps,
+        active_step=steps[0] if steps else None,
+    )
+    for step in steps:
+        write_dataset_preparation_status(
+            experiment_root,
+            dataset_id=dataset_id,
+            state="running",
+            requested_steps=steps,
+            completed_steps=completed_steps,
+            active_step=step,
+            elapsed_seconds=round(time.monotonic() - started, 3),
+        )
+        script, arguments = commands[step]
+        try:
+            run(script, arguments, log_path=log_path)
+        except Exception as error:
+            elapsed = round(time.monotonic() - started, 3)
+            error_text = f"{type(error).__name__}: {error}"
+            outcome = {
+                "dataset_id": dataset_id,
+                "state": "failed",
+                "steps": list(completed_steps),
+                "failed_step": step,
+                "output_dir": str(experiment_root / dataset_id),
+                "log_path": str(log_path) if log_path is not None else None,
+                "elapsed_seconds": elapsed,
+                "error": error_text,
+            }
+            write_dataset_preparation_status(
+                experiment_root,
+                dataset_id=dataset_id,
+                state="failed",
+                requested_steps=steps,
+                completed_steps=completed_steps,
+                active_step=step,
+                elapsed_seconds=elapsed,
+                error=error_text,
+            )
+            return outcome
+        completed_steps.append(step)
+    elapsed = round(time.monotonic() - started, 3)
+    outcome = {
+        "dataset_id": dataset_id,
+        "state": "complete",
+        "steps": list(completed_steps),
+        "output_dir": str(experiment_root / dataset_id),
+        "log_path": str(log_path) if log_path is not None else None,
+        "elapsed_seconds": elapsed,
+    }
+    write_dataset_preparation_status(
+        experiment_root,
+        dataset_id=dataset_id,
+        state="complete",
+        requested_steps=steps,
+        completed_steps=completed_steps,
+        elapsed_seconds=elapsed,
+    )
+    return outcome
+
+
+def run_parallel_preparation(
+    args: argparse.Namespace,
+    dataset_ids: list[str],
+    *,
+    experiment_root: Path,
+    experiment_id: str,
+    protocol_sha256: str,
+    steps: list[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Prepare datasets with a bounded, work-conserving process schedule."""
+
+    outcomes: dict[str, dict[str, Any]] = {}
+    active: dict[Future[dict[str, Any]], str] = {}
+    next_index = 0
+    log_root = experiment_root / "preparation_logs"
+
+    def ordered(state: str) -> list[dict[str, Any]]:
+        return [
+            outcomes[dataset_id]
+            for dataset_id in dataset_ids
+            if outcomes.get(dataset_id, {}).get("state") == state
+        ]
+
+    def submit_available(executor: ThreadPoolExecutor) -> None:
+        nonlocal next_index
+        while (
+            len(active) < args.dataset_workers
+            and next_index < len(dataset_ids)
+        ):
+            dataset_id = dataset_ids[next_index]
+            next_index += 1
+            future = executor.submit(
+                execute_dataset_steps,
+                args,
+                dataset_id,
+                experiment_root=experiment_root,
+                steps=steps,
+                log_path=log_root / f"{dataset_id}.log",
+            )
+            active[future] = dataset_id
+
+    def write_running_status() -> None:
+        active_ids = [
+            dataset_id
+            for dataset_id in dataset_ids
+            if dataset_id in set(active.values())
+        ]
+        write_pipeline_status(
+            experiment_root,
+            experiment_id=experiment_id,
+            protocol_sha256=protocol_sha256,
+            state="running",
+            start_at=args.start_at,
+            stop_after=args.stop_after,
+            completed=ordered("complete"),
+            failed=ordered("failed"),
+            active_step="concurrent_preparation",
+            active_dataset_ids=active_ids,
+            active_jobs=[
+                {
+                    "dataset_id": dataset_id,
+                    "status_path": str(
+                        experiment_root
+                        / dataset_id
+                        / "preparation_status.json"
+                    ),
+                    "log_path": str(log_root / f"{dataset_id}.log"),
+                }
+                for dataset_id in active_ids
+            ],
+        )
+
+    with ThreadPoolExecutor(max_workers=args.dataset_workers) as executor:
+        submit_available(executor)
+        write_running_status()
+        while active:
+            done, _ = wait(set(active), return_when=FIRST_COMPLETED)
+            for future in done:
+                dataset_id = active.pop(future)
+                try:
+                    outcome = future.result()
+                except Exception as error:
+                    outcome = {
+                        "dataset_id": dataset_id,
+                        "state": "failed",
+                        "steps": [],
+                        "failed_step": "scheduler",
+                        "output_dir": str(experiment_root / dataset_id),
+                        "log_path": str(log_root / f"{dataset_id}.log"),
+                        "elapsed_seconds": None,
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                outcomes[dataset_id] = outcome
+                print(v8.canonical_json(outcome), flush=True)
+            submit_available(executor)
+            write_running_status()
+    return ordered("complete"), ordered("failed")
 
 
 def main() -> int:
@@ -541,6 +813,11 @@ def main() -> int:
     stop = STEPS.index(args.stop_after)
     if stop < start:
         raise ValueError("stop-after must not precede start-at")
+    validation_index = STEPS.index("validation")
+    validate_dataset_parallelism(
+        dataset_workers=args.dataset_workers,
+        stop_index=stop,
+    )
     protocol = protocol_config(args, dataset_ids)
     protocol_sha256 = v8.json_sha256(protocol)
     experiment_id = args.experiment_id or default_experiment_id(protocol_sha256)
@@ -552,6 +829,13 @@ def main() -> int:
         endpoint_profiles={
             endpoint: profile.as_dict()
             for endpoint, profile in endpoint_profiles.items()
+        },
+        preparation_execution={
+            "dataset_workers": int(args.dataset_workers),
+            "capability_workers_per_dataset": int(args.preparation_workers),
+            "maximum_capability_worker_processes": int(
+                args.dataset_workers * args.preparation_workers
+            ),
         },
         allow_inference_execution_upgrade=(args.upgrade_inference_execution_policy),
     )
@@ -565,8 +849,58 @@ def main() -> int:
         stop_after=args.stop_after,
         completed=completed,
     )
+    if stop <= validation_index:
+        completed, failed = run_parallel_preparation(
+            args,
+            dataset_ids,
+            experiment_root=experiment_root,
+            experiment_id=experiment_id,
+            protocol_sha256=manifest["protocol_sha256"],
+            steps=list(STEPS[start : stop + 1]),
+        )
+        if failed:
+            error_text = (
+                f"{len(failed)} of {len(dataset_ids)} dataset preparation "
+                "jobs failed"
+            )
+            write_pipeline_status(
+                experiment_root,
+                experiment_id=experiment_id,
+                protocol_sha256=manifest["protocol_sha256"],
+                state="failed",
+                start_at=args.start_at,
+                stop_after=args.stop_after,
+                completed=completed,
+                failed=failed,
+                error=error_text,
+            )
+            raise RuntimeError(error_text)
+        write_pipeline_status(
+            experiment_root,
+            experiment_id=experiment_id,
+            protocol_sha256=manifest["protocol_sha256"],
+            state="complete",
+            start_at=args.start_at,
+            stop_after=args.stop_after,
+            completed=completed,
+        )
+        print(
+            v8.canonical_json(
+                {
+                    "experiment_id": experiment_id,
+                    "protocol_sha256": manifest["protocol_sha256"],
+                    "dataset_count": len(dataset_ids),
+                    "output": str(experiment_root),
+                }
+            )
+        )
+        return 0
+
+    active_dataset_id: str | None = None
+    active_step: str | None = None
     try:
         for dataset_id in dataset_ids:
+            active_dataset_id = dataset_id
             commands = commands_for_dataset(
                 args,
                 dataset_id,
@@ -574,6 +908,7 @@ def main() -> int:
             )
             completed_steps: list[str] = []
             for step in STEPS[start : stop + 1]:
+                active_step = step
                 write_pipeline_status(
                     experiment_root,
                     experiment_id=experiment_id,
@@ -604,8 +939,8 @@ def main() -> int:
             start_at=args.start_at,
             stop_after=args.stop_after,
             completed=completed,
-            active_dataset_id=dataset_id,
-            active_step=step,
+            active_dataset_id=active_dataset_id,
+            active_step=active_step,
             error=f"{type(error).__name__}: {error}",
         )
         raise
