@@ -453,8 +453,12 @@ def build_endpoint_profiles(
 
 def endpoint_topology_cli_arguments(args: argparse.Namespace) -> list[str]:
     arguments = ["--devices", str(args.devices)]
+    endpoint_presets = endpoint_presets_with_defaults(
+        list(args.endpoints),
+        list(args.endpoint_preset),
+    )
     for option, values in (
-        ("--endpoint-preset", args.endpoint_preset),
+        ("--endpoint-preset", endpoint_presets),
         ("--endpoint-devices", args.endpoint_devices),
         ("--endpoint-capacity", args.endpoint_capacity),
         (

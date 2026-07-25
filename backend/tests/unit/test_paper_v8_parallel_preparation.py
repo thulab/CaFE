@@ -126,6 +126,28 @@ def test_pipeline_passes_nonsemantic_preparation_worker_count(tmp_path):
     assert "--near-distance-gate" in generation_arguments
 
 
+def test_endpoint_topology_cli_arguments_forwards_default_endpoint_preset():
+    inference = load_script("run_paper_v8_inference")
+    endpoint = "http://192.168.99.89:10810"
+    args = SimpleNamespace(
+        endpoints=["http://127.0.0.1:10810", endpoint],
+        devices="0,1",
+        endpoint_preset=[],
+        endpoint_devices=[],
+        endpoint_capacity=[],
+        endpoint_concurrency_scale=[],
+        endpoint_model_capacity=[],
+        endpoint_model_concurrency=[],
+    )
+
+    arguments = inference.endpoint_topology_cli_arguments(args)
+
+    preset_option = arguments.index("--endpoint-preset")
+    assert arguments[preset_option + 1] == (
+        f"{endpoint}={inference.RTX5090X8_H48_B1_PRESET}"
+    )
+
+
 def test_dataset_parallel_preparation_continues_after_one_failure(
     monkeypatch,
     tmp_path,
