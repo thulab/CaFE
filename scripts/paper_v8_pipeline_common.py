@@ -2301,15 +2301,64 @@ def mase_scales(
     *,
     season_length: int,
 ) -> tuple[float, list[float]]:
+    policy = mase_scale_policy(target, season_length=season_length)
+    return (
+        float(policy["scale"]),
+        [float(value) for value in policy["scale_by_target"]],
+    )
+
+
+def mase_scale_policy(
+    target: np.ndarray,
+    *,
+    season_length: int,
+) -> dict[str, Any]:
+    """Resolve finite MASE scales without flooring deterministic sequences.
+
+    An exactly seasonal deterministic history has a zero seasonal-naive
+    denominator even though its lag-one variation is well defined.  In that
+    degenerate case, use the standard non-seasonal MASE denominator for only
+    the affected target and record the effective period explicitly.
+    """
+
     history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
     period = int(season_length)
     if not 1 <= period < len(history):
         raise ValueError("v8 MASE period must be defined inside L336")
     differences = np.abs(history[period:] - history[:-period])
     by_target = np.mean(differences, axis=0)
-    if not np.isfinite(by_target).all() or np.any(by_target <= 1e-12):
+    if not np.isfinite(by_target).all():
+        raise ValueError("v8 MASE denominator is non-finite")
+    effective_periods = np.full(by_target.shape, period, dtype=int)
+    fallback_mask = by_target <= 1e-12
+    if np.any(fallback_mask):
+        lag_one = np.mean(np.abs(np.diff(history, axis=0)), axis=0)
+        if (
+            not np.isfinite(lag_one[fallback_mask]).all()
+            or np.any(lag_one[fallback_mask] <= 1e-12)
+        ):
+            raise ValueError(
+                "v8 seasonal and lag-one MASE denominators are zero or "
+                "non-finite"
+            )
+        by_target[fallback_mask] = lag_one[fallback_mask]
+        effective_periods[fallback_mask] = 1
+    if np.any(by_target <= 1e-12):
         raise ValueError("v8 MASE denominator is zero or non-finite")
-    return float(np.mean(by_target)), [float(value) for value in by_target]
+    return {
+        "policy": "seasonal_lag_with_lag1_degeneracy_fallback_v1",
+        "requested_period": period,
+        "effective_period_by_target": [
+            int(value) for value in effective_periods
+        ],
+        "fallback_target_indices": [
+            int(index) for index in np.flatnonzero(fallback_mask)
+        ],
+        "scale": float(np.mean(by_target)),
+        "scale_by_target": [
+            float(value) for value in by_target
+        ],
+    }
 
 
 def target_and_covariate_sha256(
@@ -2455,10 +2504,12 @@ def generate_master_sample(
         season_length=conditioning.season_length,
         metadata=metadata,
     )
-    mase_scale, scale_by_target = mase_scales(
+    mase_policy = mase_scale_policy(
         target,
         season_length=int(anchor["mase_period"]),
     )
+    mase_scale = float(mase_policy["scale"])
+    scale_by_target = list(mase_policy["scale_by_target"])
     dataset_token = safe_id(dataset.dataset_id)
     pair_id = (
         f"v8__{dataset_token}__{capability_id}__{family_role}__"
@@ -2485,7 +2536,7 @@ def generate_master_sample(
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
-        "schema_version": "paper_v8_master_sample.v5",
+        "schema_version": "paper_v8_master_sample.v6",
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "sample_id": sample_id,
         "master_sample_id": sample_id,
@@ -2590,7 +2641,17 @@ def generate_master_sample(
         "mase_period_source": str(anchor["mase_period_source"]),
         "mase_scale": mase_scale,
         "mase_scale_by_target": scale_by_target,
-        "mase_scale_source": "clean_l336_history",
+        "mase_scale_effective_period_by_target": list(
+            mase_policy["effective_period_by_target"]
+        ),
+        "mase_scale_fallback_target_indices": list(
+            mase_policy["fallback_target_indices"]
+        ),
+        "mase_scale_policy": str(mase_policy["policy"]),
+        "mase_scale_source": (
+            "clean_l336_history_seasonal_lag_with_lag1_"
+            "degeneracy_fallback"
+        ),
         "target_sha256": target_hash,
         "future_sha256": hashlib.sha256(
             np.asarray(target[CONTEXT_LENGTH:], dtype="<f8").tobytes()

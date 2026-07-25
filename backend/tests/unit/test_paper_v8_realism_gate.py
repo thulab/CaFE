@@ -120,6 +120,40 @@ def test_far_history_passes_and_each_channel_is_checked_vectorially():
     assert not result["near_distance"]["risk_channel_indices"]
 
 
+def test_multivariate_near_distance_uses_sample_level_majority_vote():
+    masters = real_masters()
+    context = realism.build_realism_gate_context(
+        anchor_rows(),
+        masters,
+        calibration(),
+        near_distance_enabled=True,
+    )
+    exact = np.asarray(masters[3]["target"], dtype=float)[:, 0]
+    time = np.arange(realism.HISTORY_LENGTH, dtype=float)
+    one_risky = np.column_stack(
+        [exact, 50.0 + time, -80.0 + 0.4 * time]
+    )
+    all_risky = np.column_stack([exact, exact, exact])
+
+    accepted = realism.evaluate_sample(
+        sample_from_history(one_risky),
+        context,
+    )
+    rejected = realism.evaluate_sample(
+        sample_from_history(all_risky),
+        context,
+    )
+
+    assert accepted["near_distance"]["risk_channel_indices"] == [0]
+    assert accepted["near_distance"]["accepted"] is True
+    assert (
+        accepted["near_distance"]["minimum_risk_channels_for_rejection"]
+        == 2
+    )
+    assert rejected["near_distance"]["accepted"] is False
+    assert rejected["near_distance"]["risk_channel_indices"] == [0, 1, 2]
+
+
 def test_feature_support_is_diagnostic_outside_raw_anchor_padding():
     context = realism.build_realism_gate_context(
         anchor_rows(),

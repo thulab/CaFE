@@ -20,7 +20,7 @@
 | 推理 suffix views | 96 / 168 / 336 |
 | 固定主表 | `fixed_l168` |
 | Oracle context | 在 96 / 168 / 336 中选择 |
-| 合成 MASE denominator | 每个 clean L336 master history 计算一次，三个 view 共用 |
+| 合成 MASE denominator | 每个 clean L336 master history 计算一次；seasonal lag 退化时逐通道回退 lag-1；三个 view 共用 |
 | 真实 anchor MASE denominator | 每个真实 L168 history 独立计算 |
 | 每数据集 anchor 上限 | 256 个通过质量检查的窗口 |
 | 正式默认模型 | Chronos-2、TimesFM 2.5、TiRex2、Moirai 2、Timer 3.5、Toto 2.0 |
@@ -201,9 +201,9 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 不要求每条 qualification path 单独覆盖真实 `q10–q90`。两半 path 的 support
 差异只作非阻断诊断；只有 family mean response 退化或不可逆才依次扩到
 64、96，达到上限仍失败则显式终止。正式 seed 的编号、anchor、path、样本 ID
-和 sensitivity 身份保持确定性。最多三个候选 path 的重试只服务于数值合法性
-和启用时的 anti-copy gate，不服务于贴合真实特征目标。当前不自动把过窄的真实
-强度抬升到统一下限。
+和 sensitivity 身份保持确定性。最多五个候选 path 的重试只服务于数值合法性、
+启用时的 anti-copy gate，以及 strict common-factor/cross-series 结构正控，
+不服务于贴合真实特征目标。当前不自动把过窄的真实强度抬升到统一下限。
 
 ## 十种能力的当前生成与评分
 
@@ -278,10 +278,16 @@ driver/edge/lag/符号和 holdout、covariate counterfactual recovery 等。
 也不触发重试。强度有效性由完整 seed batch 上的 I1–I5 聚合响应顺序与跨度回验。
 
 near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有真实 anchor
-内部做 leave-one-out，得到 pooled-z RMS DCR 与 NNDR 的 p05；只有合成 channel
-同时满足 `DCR <= p05` 和 `NNDR <= p05` 才拒绝。它不使用 held-out，不参与参数
-标定，也不把“像不像真实曲线”当作生成质量目标；可用
-`--no-near-distance-gate` 显式旁路并记录。
+内部做 leave-one-out，得到 pooled-z RMS DCR 与 NNDR 的 p05；channel 同时满足
+`DCR <= p05` 和 `NNDR <= p05` 时标记风险。单变量样本直接据此拒绝；多变量样本
+使用多数 channel 表决，避免把多个单变量比较中的任一偶然命中误判成整条多变量
+样本污染。它不使用 held-out，不参与参数标定，也不把“像不像真实曲线”当作生成
+质量目标；可用 `--no-near-distance-gate` 显式旁路并记录。
+
+合成 MASE 默认使用真实 anchor 给出的 seasonal lag。对完全确定、精确周期的
+通道，seasonal-naive history error 可能严格为零；该通道显式回退到标准 lag-1
+MASE denominator，不加任意数值 floor，并在样本与 validation audit 中记录
+effective period 和 fallback 计数。
 
 ## 推理协议
 
@@ -314,6 +320,10 @@ append-only checkpoint。每个模型结束后严格校验 task hash、row count
 sample/model 覆盖再合并。`--resume` 只跳过已验证成功任务；非 resume 重新构造
 当前 inference shard，禁止静默复用同 ID 的旧预测。设备、endpoint 和并发属于
 执行 provenance，不改变科学协议。
+
+校准、生成和回验允许按数据集并发；推荐在 16 核机器上使用 4 个数据集 job，
+每个 job 4 个 capability worker。推理仍按声明的数据集顺序逐数据集完成，便于
+按数据集下载和校验。并发度只写入 execution provenance，不改变科学协议。
 
 ## 分析与报告
 

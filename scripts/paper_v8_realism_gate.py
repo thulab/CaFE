@@ -21,7 +21,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 
 
-SCHEMA_VERSION = "paper_v8_realism_gate.v2"
+SCHEMA_VERSION = "paper_v8_realism_gate.v3"
 HISTORY_LENGTH = 168
 MINIMUM_ANCHOR_COUNT = 12
 DISTANCE_EPSILON = 1e-12
@@ -89,7 +89,12 @@ class NearDistancePolicy:
             "nndr_p05": self.nndr_p05,
             "distance": "pooled_z_normalized_rms",
             "calibration": "all_real_anchors_leave_one_out",
-            "risk_rule": "d1<=loo_d1_p05 AND nndr<=loo_nndr_p05",
+            "channel_risk_rule": (
+                "d1<=loo_d1_p05 AND nndr<=loo_nndr_p05"
+            ),
+            "sample_risk_rule": (
+                "univariate_channel_risk_or_multivariate_majority_vote"
+            ),
         }
 
 
@@ -701,7 +706,12 @@ def _evaluate_near_distance(
                 "risk": risk,
             }
         )
-    accepted = not risk_channels
+    target_dim = int(normalized.shape[1])
+    minimum_risk_channels = (
+        1 if target_dim == 1 else int(math.ceil(target_dim / 2.0))
+    )
+    sample_copy_risk = len(risk_channels) >= minimum_risk_channels
+    accepted = not sample_copy_risk
     return {
         **policy.summary(),
         "accepted": accepted,
@@ -709,6 +719,13 @@ def _evaluate_near_distance(
         "reason_code": None if accepted else "near_real_anchor_copy_risk",
         "channels": channel_results,
         "risk_channel_indices": risk_channels,
+        "risk_channel_count": len(risk_channels),
+        "minimum_risk_channels_for_rejection": minimum_risk_channels,
+        "multivariate_multiple_comparison_policy": (
+            "not_applicable"
+            if target_dim == 1
+            else "majority_vote_over_univariate_anchor_comparisons"
+        ),
     }
 
 

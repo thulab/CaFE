@@ -184,3 +184,37 @@ def test_dataset_parallel_preparation_is_rejected_for_inference():
             dataset_workers=2,
             stop_index=pipeline.STEPS.index("inference"),
         )
+
+
+def test_structural_pair_failure_is_available_to_generation_retry(
+    monkeypatch,
+):
+    generation = load_script("generate_paper_v8_samples")
+    rows = [
+        {
+            "evaluation_table": "strict_counterfactual_audit",
+            "counterfactual_member": member,
+            "counterfactual_pair_id": "pair",
+            "capability_id": "cross_series_dependence",
+            "context_length": 2,
+            "generation_metadata": {},
+            "target": [[0.0], [0.0], [0.0]],
+        }
+        for member in (0, 1)
+    ]
+    monkeypatch.setattr(
+        generation,
+        "cross_series_identifiability_gate",
+        lambda **_arguments: {
+            "accepted": False,
+            "enforced": True,
+            "reason": "test",
+        },
+    )
+
+    gate = generation.structural_seed_bundle_gate(rows)
+
+    assert gate is not None
+    assert gate["accepted"] is False
+    assert gate["pair_id"] == "pair"
+    assert all("structural_generation_gate" in row for row in rows)

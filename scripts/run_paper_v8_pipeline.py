@@ -83,7 +83,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-generation-attempts",
         type=int,
-        default=3,
+        default=5,
         help=(
             "Maximum deterministic candidates for one capability/seed "
             "bundle, including attempt zero."
@@ -277,7 +277,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v4",
+        "schema_version": "paper_v8_experiment_protocol.v5",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -296,10 +296,15 @@ def protocol_config(
             ),
             "near_distance_enabled": bool(args.near_distance_gate),
             "near_distance": (
-                "anchor_internal_leave_one_out_dcr_p05_and_nndr_p05"
+                "anchor_internal_leave_one_out_dcr_p05_and_nndr_p05_"
+                "with_multivariate_majority_vote"
             ),
             "retry_identity": (
                 "formal seed, anchor, sample IDs, and pairing remain fixed"
+            ),
+            "structural_identifiability": (
+                "strict_common_factor_and_cross_series_pairs_are_retried_"
+                "until_their_positive_control_gate_passes"
             ),
             "family_intensity_scale": (
                 "one_family_mean_lambda_grid_per_dataset_no_formal_seed_inverse"
@@ -308,6 +313,9 @@ def protocol_config(
         "calibration_path_policy": (
             "independent_family_response_qualification_bank_"
             "fixed_base_hard_failure_only_expansion_v1"
+        ),
+        "mase_scale_policy": (
+            "seasonal_lag_with_per_target_lag1_degeneracy_fallback_v1"
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),

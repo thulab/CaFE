@@ -22,11 +22,15 @@ import numpy as np
 
 import paper_v8_pipeline_common as v8
 import paper_v8_realism_gate as realism
+from app.services.synthetic_v8_generation import (
+    common_factor_identifiability_gate,
+    cross_series_identifiability_gate,
+)
 
 
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
-DEFAULT_MAX_GENERATION_ATTEMPTS = 3
+DEFAULT_MAX_GENERATION_ATTEMPTS = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -163,6 +167,50 @@ def clean_seed_bundle(
     return rows
 
 
+def structural_seed_bundle_gate(
+    rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    strict_rows = [
+        row
+        for row in rows
+        if row.get("evaluation_table") == "strict_counterfactual_audit"
+    ]
+    if not strict_rows:
+        return None
+    members = {
+        int(row["counterfactual_member"]): row
+        for row in strict_rows
+    }
+    if set(members) != {0, 1}:
+        return {
+            "accepted": False,
+            "enforced": True,
+            "reason": "incomplete_strict_counterfactual_pair",
+        }
+    first, second = members[0], members[1]
+    capability_id = str(first["capability_id"])
+    arguments = {
+        "first_target": np.asarray(first["target"], dtype=float),
+        "second_target": np.asarray(second["target"], dtype=float),
+        "context_length": int(first["context_length"]),
+        "metadata": first["generation_metadata"],
+        "enforced": True,
+    }
+    if capability_id == "common_factor":
+        gate = common_factor_identifiability_gate(**arguments)
+    elif capability_id == "cross_series_dependence":
+        gate = cross_series_identifiability_gate(**arguments)
+    else:
+        return None
+    for row in strict_rows:
+        row["structural_generation_gate"] = gate
+    return {
+        "pair_id": first["counterfactual_pair_id"],
+        "capability_id": capability_id,
+        **gate,
+    }
+
+
 def iter_clean_samples(
     dataset: v8.DatasetSpec,
     anchors: list[dict[str, Any]],
@@ -210,6 +258,22 @@ def iter_clean_samples(
                                 "gate": gate,
                             }
                         )
+                structural_gate = structural_seed_bundle_gate(candidates)
+                if (
+                    structural_gate is not None
+                    and not structural_gate["accepted"]
+                ):
+                    failed_samples.append(
+                        {
+                            "sample_id": structural_gate["pair_id"],
+                            "failure_codes": [
+                                "structural_identifiability_gate"
+                            ],
+                            "gate": {
+                                "structural_identifiability": structural_gate
+                            },
+                        }
+                    )
                 audit_attempts.append(
                     {
                         "attempt": generation_attempt,

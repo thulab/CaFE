@@ -1007,6 +1007,28 @@ def test_master_views_share_exact_future_and_l336_mase_scale():
     )
 
 
+def test_exact_seasonal_mase_scale_uses_recorded_lag_one_fallback():
+    common = load_script("paper_v8_pipeline_common")
+    time = np.arange(common.MASTER_LENGTH, dtype=float)
+    target = np.sin(2.0 * np.pi * time / 24.0)[:, None]
+
+    policy = common.mase_scale_policy(target, season_length=24)
+    scale, scale_by_target = common.mase_scales(
+        target,
+        season_length=24,
+    )
+
+    expected = float(
+        np.mean(np.abs(np.diff(target[: common.CONTEXT_LENGTH, 0])))
+    )
+    assert policy["requested_period"] == 24
+    assert policy["effective_period_by_target"] == [1]
+    assert policy["fallback_target_indices"] == [0]
+    assert policy["scale"] == pytest.approx(expected)
+    assert scale == pytest.approx(expected)
+    assert scale_by_target == pytest.approx([expected])
+
+
 @pytest.mark.parametrize(
     ("capability_id", "target_dim"),
     (("common_factor", 5), ("cross_series_dependence", 3)),
