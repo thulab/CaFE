@@ -13,8 +13,8 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v14"
-MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION = 0.75
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v15"
+MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION = 0.50
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -748,6 +748,11 @@ def nonlinear_mechanism_response_checks(
             if activity_paired_deltas
             else None
         )
+        activity_median_delta = (
+            float(np.median(activity_paired_deltas))
+            if activity_paired_deltas
+            else None
+        )
         dynamic_activity_accepted = bool(
             missing_activity_count == 0
             and len(ordered_activity) >= 2
@@ -755,7 +760,9 @@ def nonlinear_mechanism_response_checks(
             and bool(activity_paired_deltas)
             and activity_positive_fraction is not None
             and activity_positive_fraction
-            >= MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION
+            > MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION
+            and activity_median_delta is not None
+            and activity_median_delta > 1e-12
             and len(clip_values) == expected_total
             and max(clip_values, default=math.inf) <= 1e-12
         )
@@ -870,12 +877,9 @@ def nonlinear_mechanism_response_checks(
                     "minimum_paired_positive_fraction": (
                         MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION
                     ),
+                    "strict_majority_required": True,
                     "intermediate_intensity_means_are_diagnostic_only": True,
-                    "paired_low_high_median_delta": (
-                        float(np.median(activity_paired_deltas))
-                        if activity_paired_deltas
-                        else None
-                    ),
+                    "paired_low_high_median_delta": activity_median_delta,
                     "state_clip_missing_count": (
                         expected_total - len(clip_values)
                     ),

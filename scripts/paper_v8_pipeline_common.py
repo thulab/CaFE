@@ -62,7 +62,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v22"
+SCHEMA_VERSION = "paper_v8_pipeline.v23"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48

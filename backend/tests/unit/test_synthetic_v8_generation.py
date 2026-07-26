@@ -215,7 +215,7 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
             ("primary", (1, 2, 3, 4, 5)),
             ("secondary", (3, 5)),
         )
-        for seed in (2, 7)
+        for seed in (2, 7, 11)
         for intensity in intensities
     ]
 
@@ -261,7 +261,12 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
         result["dynamic_activity_gate"][
             "minimum_paired_positive_fraction"
         ]
-        == pytest.approx(0.75)
+        == pytest.approx(0.50)
+        for result in results
+    )
+    assert all(
+        result["dynamic_activity_gate"]["strict_majority_required"]
+        is True
         for result in results
     )
 
@@ -283,6 +288,30 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
         if result["family_role"] == "primary"
     )
     assert primary["dynamic_activity_gate"]["accepted"] is True
+
+    # The activity/residual ratio is an actuator-health diagnostic, not the
+    # public nonlinear coordinate.  A noisy minority may move backwards as
+    # long as the paired median and endpoint mean increase and clipping stays
+    # absent.
+    for row in rows:
+        if (
+            row["generator_family_role"] == "secondary"
+            and row["seed_index"] == 2
+            and row["intensity"] == 5
+        ):
+            row["generation_metadata"][
+                "nonlinear_effect_to_recurrence_residual_std_ratio"
+            ] = 0.10
+    majority_activity = nonlinear_mechanism_response_checks(rows)
+    secondary = next(
+        result
+        for result in majority_activity
+        if result["family_role"] == "secondary"
+    )
+    assert secondary["dynamic_activity_gate"]["accepted"] is True
+    assert secondary["dynamic_activity_gate"][
+        "paired_low_high_positive_fraction"
+    ] == pytest.approx(2.0 / 3.0)
 
     for row in rows:
         if (

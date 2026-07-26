@@ -264,7 +264,10 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 - Nonlinear 的 history-only 条件增量 adjusted-R² 的平方根（相关系数量纲的
   `nonlinear_conditional_effect_size`）是与真实数据校准的强度坐标；硬 gate
   仍独立使用生成器已知系数、实际动态贡献和零状态裁剪，避免把可观测 proxy
-  当成机制已正确实现的证明。
+  当成机制已正确实现的证明。动态贡献相对 recurrence residual 的比值允许
+  饱和或局部 foldback；作为 actuator-health gate，它要求低高剂量端点均值、
+  paired 中位数上升且严格多数 seed 为正，不再以 75% 的辅助比值方向门限
+  覆盖已经通过的公开强度坐标。
 - Intermittency 的强度坐标是在历史窗口内减去固定的居中 9 点移动平均后，
   正残差占正负残差总能量的比例；固定窗口避免数据依赖的频谱选模造成强度曲线
   跳变。spike rate 与 clock R² 只作诊断，
