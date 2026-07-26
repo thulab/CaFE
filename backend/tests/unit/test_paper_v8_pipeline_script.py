@@ -283,6 +283,7 @@ def test_calibration_anchor_is_forecastable_and_preserves_native_panel(
 
     assert len(anchors) == 2
     assert metadata["feature_profiles"]["native_multivariate"]
+    assert not metadata["feature_profiles"]["hierarchy_children"]
     for anchor in anchors:
         master = anchor["real_forecast_master"]
         target = np.asarray(master["target"], dtype=float)
@@ -297,6 +298,10 @@ def test_calibration_anchor_is_forecastable_and_preserves_native_panel(
         assert anchor["feature_provenance"]["pca_top1_explained"] == (
             "real_native_multivariate_history_l168"
         )
+        assert not anchor["hierarchy_children_features"]
+        assert not anchor["feature_provenance_by_scope"][
+            "real_hierarchy_children"
+        ]
 
 
 def test_m5_adapter_extracts_all_declared_structural_scopes(tmp_path):
@@ -370,7 +375,8 @@ def test_m5_adapter_extracts_all_declared_structural_scopes(tmp_path):
         assert anchor["native_multivariate_features"]
         assert anchor["known_future_covariate_features"]
         assert anchor["declared_hierarchy_features"]
-        assert anchor["declared_hierarchy_features"][
+        assert anchor["hierarchy_children_features"]
+        assert anchor["hierarchy_children_features"][
             "hierarchy_residual_mean_abs"
         ] == pytest.approx(0.0, abs=1e-12)
         assert anchor["covariate_column_names"] == [
@@ -386,7 +392,7 @@ def test_parameter_mapping_records_real_and_fallback_sources():
     anchor = {
         "features": {"acf1": 0.8},
         "native_multivariate_features": {"factor_score_acf1": 0.7},
-        "declared_hierarchy_features": {"hierarchy_aggregate_acf1": 0.9},
+        "hierarchy_children_features": {"hierarchy_aggregate_acf1": 0.9},
         "known_future_covariate_features": {"covariate_incremental_r2": 0.2},
         "feature_support": {
             "acf1": {"usable": True},
@@ -422,7 +428,7 @@ def test_parameter_mapping_records_real_and_fallback_sources():
         anchor,
         capability_id="hierarchical_coherence",
     )
-    assert hierarchy_mapping[0]["source_status"] == "real_declared_hierarchy"
+    assert hierarchy_mapping[0]["source_status"] == "real_hierarchy_children"
     covariate_mapping = common.parameter_mapping_provenance(
         [
             {
@@ -606,6 +612,162 @@ def test_generation_retries_a_numerically_invalid_candidate(monkeypatch):
     assert audits[0]["attempts"][0]["failed_samples"][0][
         "failure_codes"
     ] == ["candidate_generation_error"]
+
+
+def test_generation_skips_capabilities_without_real_calibrated_grid():
+    generation = load_script("generate_paper_v8_samples")
+    calibration = {
+        "capabilities": {
+            "trend": {
+                "available_for_generation": True,
+                "availability_status": "available",
+                "unavailable_reason_codes": [],
+                "intensity_calibration_scope": (
+                    "dataset_real_generator_overlap_reference"
+                ),
+            },
+            "nonlinear_persistence": {
+                "available_for_generation": False,
+                "availability_status": "unavailable",
+                "unavailable_reason_codes": [
+                    "insufficient_finite_real_anchor_features"
+                ],
+                "intensity_calibration_scope": (
+                    "dataset_real_calibration_unavailable"
+                ),
+            },
+        }
+    }
+
+    available, unavailable = generation.resolve_generation_capabilities(
+        calibration,
+        ("trend", "nonlinear_persistence"),
+    )
+
+    assert available == ("trend",)
+    assert unavailable == [
+        {
+            "capability_id": "nonlinear_persistence",
+            "availability_status": "unavailable",
+            "reason_codes": [
+                "insufficient_finite_real_anchor_features"
+            ],
+            "intensity_calibration_scope": (
+                "dataset_real_calibration_unavailable"
+            ),
+        }
+    ]
+
+
+def test_real_intensity_sources_are_capability_specific():
+    common = load_script("paper_v8_pipeline_common")
+    anchors = [
+        {
+            "features": {
+                "local_polynomial_energy_share_w96": float(index),
+            },
+            "native_multivariate_features": {
+                "pca_top1_explained": float(index),
+            },
+            "hierarchy_children_features": {
+                "hierarchy_child_heterogeneity": float(index),
+            },
+            "known_future_covariate_features": {
+                "covariate_incremental_r2": float(index),
+            },
+        }
+        for index in range(12)
+    ]
+
+    expected_scopes = {
+        "trend": "real_univariate",
+        "common_factor": "real_native_multivariate",
+        "hierarchical_coherence": "real_hierarchy_children",
+        "covariate_response": "real_known_future_covariates",
+    }
+    for capability_id, expected_scope in expected_scopes.items():
+        summary, audit = common.real_intensity_feature_summary(
+            anchors,
+            capability_id=capability_id,
+        )
+        assert summary is not None
+        assert audit["usable"] is True
+        assert audit["scope"] == expected_scope
+
+    summary, audit = common.real_intensity_feature_summary(
+        anchors,
+        capability_id="cross_series_dependence",
+    )
+    assert summary is None
+    assert audit["scope"] == "real_native_multivariate"
+    assert audit["reason_code"] == (
+        "insufficient_finite_real_anchor_features"
+    )
+
+
+def test_covariate_features_require_explicit_known_future_declaration():
+    common = load_script("paper_v8_pipeline_common")
+    time = np.arange(common.REAL_CALIBRATION_CONTEXT_LENGTH, dtype=float)
+    target = np.sin(time / 7.0)
+    covariates = np.column_stack([np.cos(time / 11.0)])
+    arguments = {
+        "target_values": target,
+        "covariates": covariates,
+        "channel_index": 0,
+        "start": 0,
+        "feature_period": 24,
+        "minimum_observed_fraction": 0.5,
+    }
+
+    assert common._known_future_covariate_features(
+        **arguments,
+        covariate_kind=None,
+    ) == {}
+    declared = common._known_future_covariate_features(
+        **arguments,
+        covariate_kind="known_future",
+    )
+    assert "covariate_incremental_r2" in declared
+
+
+def test_parallel_calibration_merge_rebuilds_availability_summary():
+    calibration_script = load_script("calibrate_paper_v8")
+    results = {
+        "trend": {
+            "schema_version": "test",
+            "available_capabilities": ["trend"],
+            "unavailable_capabilities": {},
+            "capabilities": {
+                "trend": {
+                    "available_for_generation": True,
+                    "unavailable_reason_codes": [],
+                }
+            },
+        },
+        "nonlinear_persistence": {
+            "schema_version": "test",
+            "available_capabilities": [],
+            "unavailable_capabilities": {
+                "nonlinear_persistence": ["missing_real_feature"]
+            },
+            "capabilities": {
+                "nonlinear_persistence": {
+                    "available_for_generation": False,
+                    "unavailable_reason_codes": ["missing_real_feature"],
+                }
+            },
+        },
+    }
+
+    merged = calibration_script.merge_capability_calibrations(
+        results,
+        ("trend", "nonlinear_persistence"),
+    )
+
+    assert merged["available_capabilities"] == ["trend"]
+    assert merged["unavailable_capabilities"] == {
+        "nonlinear_persistence": ["missing_real_feature"]
+    }
 
 
 def test_multi_dataset_pipeline_accepts_explicit_dataset_list():
@@ -921,7 +1083,7 @@ def test_v8_nonlinear_gain_searches_relative_lags_and_tracks_strength():
     assert actual_upper > actual_lower > 0.0
 
 
-def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
+def test_nonlinear_response_uses_observable_proxy_not_construction_dose(
     monkeypatch,
 ):
     common = load_script("paper_v8_pipeline_common")
@@ -937,14 +1099,11 @@ def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
     ):
         del dataset, anchor, capability_id, family_role
         return {
-            "nonlinear_strength": lambda_value,
-            # Deliberately folded: this observable diagnostic must not
-            # truncate or reverse the construction-dose support.
-            "nonlinear_conditional_gain": (
-                lambda_value
-                if qualification_path_index >= 2 or lambda_value <= 0.2
-                else 0.2 - 2.0 * (lambda_value - 0.2)
-            ),
+            # Deliberately reversed: generator metadata must not define the
+            # real-data intensity coordinate.
+            "nonlinear_strength": 1.0 - lambda_value,
+            "nonlinear_conditional_gain": lambda_value,
+            "nonlinear_conditional_effect_size": lambda_value,
         }, {}
 
     monkeypatch.setattr(
@@ -970,10 +1129,11 @@ def test_nonlinear_response_uses_construction_dose_not_observable_proxy(
     assert audit["split_half_diagnostic"]["second_half_path_count"] == 10
 
 
-def test_compressed_nonlinear_secondary_match_uses_relative_grid(
+def test_real_nonlinear_observable_dose_enters_generator_qualification(
     monkeypatch,
 ):
     common = load_script("paper_v8_pipeline_common")
+    response_called = False
 
     def response_curve(
         dataset,
@@ -983,13 +1143,12 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
         family_role,
         calibration_seed_count,
     ):
+        nonlocal response_called
+        response_called = True
         del dataset, anchors, capability_id
-        if family_role == "primary":
-            grid = np.asarray([0.0, 0.3])
-            response = np.asarray([0.0, 1.0])
-        else:
-            grid = np.asarray([0.0, 0.5])
-            response = np.asarray([0.0, 10.0])
+        del family_role
+        grid = np.asarray([0.0, 1.0])
+        response = np.asarray([0.0, 1.0])
         return (
             grid,
             response,
@@ -1008,7 +1167,7 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
 
     monkeypatch.setattr(common, "monotone_response_curve", response_curve)
     anchors = [
-        {"features": {"nonlinear_conditional_gain": value}}
+        {"features": {"nonlinear_conditional_effect_size": value}}
         for value in np.linspace(0.0, 1.0, 20)
     ]
 
@@ -1020,13 +1179,119 @@ def test_compressed_nonlinear_secondary_match_uses_relative_grid(
     )
     nonlinear = calibration["capabilities"]["nonlinear_persistence"]
 
+    assert response_called is True
+    assert nonlinear["available_for_generation"] is True
     assert nonlinear["qualification_path_count"] == 32
-    assert nonlinear["secondary"]["calibration_status"] == (
-        "nonlinear_secondary_compressed_match_fixed_relative_grid_used"
+    assert nonlinear["unavailable_reason_codes"] == []
+    assert nonlinear["primary"] is not None
+    assert calibration["available_capabilities"] == [
+        "nonlinear_persistence"
+    ]
+    assert calibration["unavailable_capabilities"] == {}
+
+
+def test_secondary_family_cannot_fall_back_when_real_grid_is_compressed(
+    monkeypatch,
+):
+    common = load_script("paper_v8_pipeline_common")
+
+    def response_curve(*args, family_role, **kwargs):
+        del args, kwargs
+        grid = np.linspace(0.0, 1.0, 21)
+        response = grid if family_role == "primary" else 10.0 * grid
+        return grid, response, {
+            "effective_lambda_support": [0.0, 1.0],
+            "raw_lambda_grid": grid.tolist(),
+            "per_path_raw_response_curves": [response.tolist()] * 32,
+        }
+
+    monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    anchors = [
+        {
+            "features": {
+                "local_polynomial_energy_share_w96": float(value)
+            }
+        }
+        for value in np.linspace(0.0, 1.0, 20)
+    ]
+
+    calibration = common.calibrate_capabilities(
+        common.resolve_dataset("gift_electricity_h"),
+        anchors,
+        calibration_seed_count=32,
+        capability_ids=["trend"],
     )
-    assert nonlinear["secondary"]["selected_lambdas"] == pytest.approx(
-        np.linspace(0.0, 0.5, 5)
+    trend = calibration["capabilities"]["trend"]
+
+    assert trend["available_for_generation"] is False
+    assert trend["unavailable_reason_codes"] == [
+        "real_reference_maps_to_insufficient_secondary_lambda_span"
+    ]
+    assert trend["secondary"]["selected_lambdas"] != pytest.approx(
+        np.linspace(0.0, 1.0, 5)
     )
+
+
+def test_structural_gate_unreachable_marks_calibration_cell_unavailable(
+    monkeypatch,
+):
+    common = load_script("paper_v8_pipeline_common")
+
+    def response_curve(*args, **kwargs):
+        del args, kwargs
+        grid = np.linspace(0.0, 1.0, 21)
+        return grid, grid, {
+            "effective_lambda_support": [0.0, 1.0],
+            "raw_lambda_grid": grid.tolist(),
+            "per_path_raw_response_curves": [grid.tolist()] * 32,
+        }
+
+    observed: dict[str, object] = {}
+
+    def reachability(*args, **kwargs):
+        del args
+        observed.update(kwargs)
+        return {
+            "accepted": False,
+            "reason_codes": ["selected_i5_structural_gate_unreachable"],
+            "near_distance_evaluated": False,
+        }
+
+    monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    monkeypatch.setattr(
+        common,
+        "structural_calibration_reachability",
+        reachability,
+    )
+    anchors = [
+        {
+            "native_multivariate_features": {
+                "cross_series_incremental_r2": float(value)
+            },
+            "features": {},
+        }
+        for value in np.linspace(0.2, 0.8, 20)
+    ]
+
+    calibration = common.calibrate_capabilities(
+        common.resolve_dataset("gift_ett1_h"),
+        anchors,
+        calibration_seed_count=32,
+        capability_ids=["cross_series_dependence"],
+    )
+    record = calibration["capabilities"]["cross_series_dependence"]
+
+    assert observed["family_role"] == "primary"
+    assert observed["calibration_seed_count"] == 32
+    assert observed["lambda_value"] == pytest.approx(
+        record["primary"]["selected_lambdas"][-1]
+    )
+    assert record["available_for_generation"] is False
+    assert record["unavailable_reason_codes"] == [
+        "selected_i5_structural_gate_unreachable"
+    ]
+    assert record["structural_gate_reachability"]["accepted"] is False
+    assert calibration["available_capabilities"] == []
 
 
 def test_response_paths_expand_only_after_hard_failure(monkeypatch):
@@ -1166,7 +1431,7 @@ def test_family_mean_inverse_uses_real_generator_overlap_without_seed_inverse(
     )
 
 
-def test_intermittency_measured_dose_comes_from_generator_metadata():
+def test_intermittency_measured_dose_comes_from_history_feature():
     common = load_script("paper_v8_pipeline_common")
     dataset = common.resolve_dataset("gift_electricity_h")
     conditioning = common.build_conditioning(
@@ -1202,11 +1467,16 @@ def test_intermittency_measured_dose_comes_from_generator_metadata():
 
     assert (
         common.PRIMARY_TARGET_FEATURE["predictable_intermittency"]
-        == "event_effect_energy_share"
+        == "event_positive_residual_energy_share"
     )
-    assert features["event_effect_energy_share"] == pytest.approx(
-        metadata["event_effect_energy_share"]
+    direct = common.v8_feature_vector(
+        target[: common.CONTEXT_LENGTH],
+        int(metadata["event_period"]),
     )
+    assert features["event_positive_residual_energy_share"] == pytest.approx(
+        direct["event_positive_residual_energy_share"]
+    )
+    assert "event_effect_energy_share" in features
 
 
 def test_master_views_share_exact_future_and_l336_mase_scale():
@@ -1590,6 +1860,64 @@ def test_experiment_capability_rows_reject_incomplete_policy_coverage():
             models=["model"],
             capabilities=["trend"],
         )
+
+
+def test_experiment_capability_rows_use_capability_specific_dataset_support():
+    analysis = load_script("analyze_paper_v8")
+    rows = []
+    for dataset_id in ("first", "second"):
+        for model_id, rank in (("a", 1), ("b", 2)):
+            rows.append(
+                {
+                    "dataset_id": dataset_id,
+                    "context_policy": "fixed_l168",
+                    "evaluation_table": "main",
+                    "generator_family_role": "primary",
+                    "capability_id": "trend",
+                    "model_id": model_id,
+                    "accuracy_score": float(rank),
+                    "history_std_normalized_mae": float(rank),
+                    "accuracy_rank": rank,
+                    "mechanism_score": float(rank),
+                    "mechanism_rank": rank,
+                }
+            )
+    for model_id, rank in (("a", 2), ("b", 1)):
+        rows.append(
+            {
+                "dataset_id": "second",
+                "context_policy": "fixed_l168",
+                "evaluation_table": "main",
+                "generator_family_role": "primary",
+                "capability_id": "common_factor",
+                "model_id": model_id,
+                "accuracy_score": float(rank),
+                "history_std_normalized_mae": float(rank),
+                "accuracy_rank": rank,
+                "mechanism_score": float(rank),
+                "mechanism_rank": rank,
+            }
+        )
+
+    result = analysis.experiment_capability_rows(
+        rows,
+        context_policy="fixed_l168",
+        dataset_ids=["first", "second"],
+        models=["a", "b"],
+        capabilities=["trend", "common_factor"],
+        capability_dataset_ids={
+            "trend": ["first", "second"],
+            "common_factor": ["second"],
+        },
+    )
+
+    common_factor = [
+        row for row in result if row["capability_id"] == "common_factor"
+    ]
+    assert {row["dataset_count"] for row in common_factor} == {1}
+    assert {tuple(row["dataset_ids"]) for row in common_factor} == {
+        ("second",)
+    }
 
 
 def test_split_bank_requires_two_batches_for_stability_statistics():

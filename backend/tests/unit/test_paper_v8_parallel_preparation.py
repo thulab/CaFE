@@ -30,12 +30,24 @@ def test_parallel_calibration_merge_preserves_declared_capability_order():
         "second": {
             "schema_version": "schema",
             "generator_version": "generator",
-            "capabilities": {"second": {"value": 2}},
+            "capabilities": {
+                "second": {
+                    "value": 2,
+                    "available_for_generation": False,
+                    "unavailable_reason_codes": ["unsupported"],
+                }
+            },
         },
         "first": {
             "schema_version": "schema",
             "generator_version": "generator",
-            "capabilities": {"first": {"value": 1}},
+            "capabilities": {
+                "first": {
+                    "value": 1,
+                    "available_for_generation": True,
+                    "unavailable_reason_codes": [],
+                }
+            },
         },
     }
 
@@ -45,8 +57,10 @@ def test_parallel_calibration_merge_preserves_declared_capability_order():
     )
 
     assert list(merged["capabilities"]) == ["first", "second"]
-    assert merged["capabilities"]["first"] == {"value": 1}
-    assert merged["capabilities"]["second"] == {"value": 2}
+    assert merged["available_capabilities"] == ["first"]
+    assert merged["unavailable_capabilities"] == {
+        "second": ["unsupported"]
+    }
 
 
 def test_preparation_submission_prioritizes_slow_capabilities():

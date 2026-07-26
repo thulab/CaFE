@@ -115,6 +115,25 @@ def merge_capability_calibrations(
         capability_id: results[capability_id]["capabilities"][capability_id]
         for capability_id in capability_ids
     }
+    merged["available_capabilities"] = [
+        capability_id
+        for capability_id in capability_ids
+        if merged["capabilities"][capability_id][
+            "available_for_generation"
+        ]
+    ]
+    merged["unavailable_capabilities"] = {
+        capability_id: list(
+            merged["capabilities"][capability_id].get(
+                "unavailable_reason_codes",
+                [],
+            )
+        )
+        for capability_id in capability_ids
+        if not merged["capabilities"][capability_id][
+            "available_for_generation"
+        ]
+    }
     return merged
 
 
@@ -173,9 +192,16 @@ def calibrate_capabilities(
                     {
                         "calibrated_capability": capability_id,
                         "dataset_id": dataset.dataset_id,
-                        "qualification_path_count": calibration[
-                            "qualification_path_count"
+                        "available_for_generation": calibration[
+                            "available_for_generation"
                         ],
+                        "qualification_path_count": calibration.get(
+                            "qualification_path_count"
+                        ),
+                        "unavailable_reason_codes": calibration.get(
+                            "unavailable_reason_codes",
+                            [],
+                        ),
                     }
                 ),
                 flush=True,
@@ -199,7 +225,11 @@ def main() -> int:
     if not 0.0 < args.minimum_observed_fraction <= 1.0:
         raise ValueError("minimum observed fraction must be in (0, 1]")
     dataset = v8.resolve_dataset(args.dataset_id)
-    if dataset.real_data_adapter != "gift_arrow" and args.source_root is None:
+    if (
+        dataset.real_data_adapter
+        not in v8.GIFT_EVAL_REAL_DATA_ADAPTERS
+        and args.source_root is None
+    ):
         raise ValueError(
             f"{dataset.dataset_id} uses adapter "
             f"{dataset.real_data_adapter!r}; pass --source-root"
@@ -250,7 +280,7 @@ def main() -> int:
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v10",
+        "schema_version": "paper_v8_calibration_bundle.v14",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
@@ -258,7 +288,13 @@ def main() -> int:
         "source": source_metadata,
         "anchor_count": len(anchors),
         "real_forecast_anchor_count": len(real_forecast_masters),
-        "capabilities": list(args.capabilities),
+        "requested_capabilities": list(args.capabilities),
+        "capabilities": list(
+            capability_calibration["available_capabilities"]
+        ),
+        "unavailable_capabilities": capability_calibration[
+            "unavailable_capabilities"
+        ],
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
             "blas_threads_per_process": 1,
@@ -302,29 +338,35 @@ def main() -> int:
                 "uses the trailing 96 observations"
             ),
             "univariate_primary_strength": (
-                "five targets use the usable overlap between dataset q10-q90 "
-                "and the primary family's mean response support; formal "
-                "seeds share this family-level lambda scale; "
-                "nonlinear persistence and predictable intermittency use "
-                "generator-known mechanism doses because their observable "
-                "proxies are not reliable inverse coordinates"
+                "six targets require the usable joint overlap between "
+                "dataset q10-q90 and both families' mean response support; "
+                "formal seeds share this family-level lambda scale; a missing "
+                "or unsupported real coordinate makes the dataset-capability "
+                "cell unavailable"
             ),
             "structural_primary_strength": (
                 "common factor and cross-series use a native multivariate "
-                "q10-q90 range when available; declared hierarchy and "
-                "known-future-covariate adapters supply matched nuisance "
-                "coordinates while their primary dose remains internal; "
-                "missing structural inputs record an explicit fallback"
+                "q10-q90 range; hierarchy constructs the parent from two "
+                "synchronized real children and uses their q10-q90 range; "
+                "covariate response requires a semantically matched "
+                "known-future-covariate primary coordinate; missing structural "
+                "inputs make the cell unavailable"
             ),
             "parameter_feature_provenance": (
                 "per-parameter real_univariate, real_native_multivariate, "
-                "real_declared_hierarchy, real_known_future_covariates, "
+                "real_hierarchy_children, real_known_future_covariates, "
                 "protocol_constant, or explicit protocol_fallback"
             ),
-            "structural_identifiability": "measured on generated samples only",
+            "structural_identifiability": (
+                "selected-I5 primary-family reachability is qualified on "
+                "independent calibration paths without near-distance; formal "
+                "generated samples are checked again"
+            ),
             "response_inverse": (
-                "21-point family-mean response over independent qualification "
-                "paths; formal seeds are never individually inverted"
+                "21-point primary and secondary family-mean responses over "
+                "independent qualification paths; both families must support "
+                "the same real-derived targets; formal seeds are never "
+                "individually inverted"
             ),
             "realized_target_alignment": (
                 "diagnostic only; no per-sample target-error rejection"

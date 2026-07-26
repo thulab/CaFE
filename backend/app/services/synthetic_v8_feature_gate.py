@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import math
 from collections import Counter, defaultdict
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -13,7 +13,7 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v7"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v13"
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -21,17 +21,33 @@ COUNTERFACTUAL_CAPABILITIES = frozenset(
         "covariate_response",
     }
 )
+STRUCTURAL_CAPABILITIES = frozenset(
+    {
+        "common_factor",
+        "hierarchical_coherence",
+        "cross_series_dependence",
+        "covariate_response",
+    }
+)
+MINIMUM_CALIBRATION_REACHABILITY_FRACTION = {
+    "common_factor": 1.00,
+    "hierarchical_coherence": 1.00,
+    "cross_series_dependence": 1.00,
+    "covariate_response": 1.00,
+}
 PRIMARY_FEATURE_BY_CAPABILITY = {
     "trend": "local_polynomial_energy_share_w96",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
     "regime_switching": "regime_sparse_transition_score",
-    "nonlinear_persistence": "nonlinear_strength",
-    "predictable_intermittency": "event_effect_energy_share",
+    "nonlinear_persistence": "nonlinear_conditional_effect_size",
+    "predictable_intermittency": (
+        "event_positive_residual_energy_share"
+    ),
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
     "cross_series_dependence": "cross_series_incremental_r2",
-    "covariate_response": "covariate_effect_variance_share",
+    "covariate_response": "covariate_incremental_r2",
 }
 SELECTIVITY_EXCEPTIONS = (
     {
@@ -73,6 +89,7 @@ def basic_sample_checks(sample: dict[str, Any]) -> dict[str, Any]:
     covariate_array = (
         None if covariates is None else np.asarray(covariates, dtype=float)
     )
+    intensity_calibration = sample.get("intensity_calibration")
     covariate_shape_valid = (
         covariate_array is None
         if covariate_dim == 0
@@ -109,6 +126,11 @@ def basic_sample_checks(sample: dict[str, Any]) -> dict[str, Any]:
         ),
         "intensity_lambda_finite": bool(
             math.isfinite(float(sample.get("intensity_lambda", math.nan)))
+        ),
+        "intensity_grid_real_calibrated": bool(
+            isinstance(intensity_calibration, dict)
+            and intensity_calibration.get("scope")
+            == "dataset_real_generator_overlap_reference"
         ),
         "target_hash_matches": (
             str(sample.get("target_sha256")) == sample_content_sha256(sample)
@@ -178,6 +200,241 @@ def covariate_pair_checks(
     return values
 
 
+def structural_calibration_member_gate(
+    capability_id: str,
+    first_target: np.ndarray,
+    *,
+    context_length: int,
+    metadata: Mapping[str, Any] | None = None,
+    second_target: np.ndarray | None = None,
+    first_covariates: np.ndarray | None = None,
+    second_covariates: np.ndarray | None = None,
+    atol: float = 1e-10,
+) -> dict[str, Any]:
+    """Evaluate one calibration path using only structural construction gates.
+
+    This is deliberately separate from dataset-local feature support and
+    near-distance checks.  Calibration asks whether a selected generator dose
+    can satisfy the same structural hard gate later enforced during formal
+    generation; similarity to a real trajectory is irrelevant to that
+    reachability question.
+
+    Counterfactual capabilities require both members.  Hierarchy requires one
+    parent-first additive target.  Malformed or incomplete inputs fail closed
+    and are returned as records so a qualification bank remains auditable.
+    """
+
+    result_prefix = {
+        "schema_version": "structural_calibration_member_gate.v1",
+        "capability_id": str(capability_id),
+        "enforced": True,
+        "calibration_reachability": True,
+        "gate_scope": "generator_structural_hard_gate_only",
+        "near_distance_evaluated": False,
+    }
+    if capability_id not in STRUCTURAL_CAPABILITIES:
+        return {
+            **result_prefix,
+            "accepted": False,
+            "reason": "unsupported_structural_capability",
+        }
+    try:
+        first = np.asarray(first_target, dtype=float)
+        if first.ndim != 2 or not np.isfinite(first).all():
+            raise ValueError("first target must be a finite matrix")
+        if not 1 <= int(context_length) < first.shape[0]:
+            raise ValueError("context_length must split history and future")
+
+        if capability_id == "hierarchical_coherence":
+            if first.shape[1] < 3:
+                raise ValueError(
+                    "hierarchy requires parent and at least two children"
+                )
+            gate = hierarchy_checks({"target": first}, atol=atol)
+        else:
+            if second_target is None:
+                raise ValueError("counterfactual second target is missing")
+            second = np.asarray(second_target, dtype=float)
+            if (
+                second.shape != first.shape
+                or not np.isfinite(second).all()
+            ):
+                raise ValueError(
+                    "counterfactual targets must be finite equal-shaped matrices"
+                )
+            if capability_id == "common_factor":
+                gate = common_factor_identifiability_gate(
+                    first,
+                    second,
+                    context_length=int(context_length),
+                    metadata=dict(metadata or {}),
+                    enforced=True,
+                )
+            elif capability_id == "cross_series_dependence":
+                gate = cross_series_identifiability_gate(
+                    first,
+                    second,
+                    context_length=int(context_length),
+                    metadata=dict(metadata or {}),
+                    enforced=True,
+                )
+            else:
+                if first_covariates is None or second_covariates is None:
+                    raise ValueError(
+                        "covariate counterfactual arrays are missing"
+                    )
+                first_covariate_array = np.asarray(
+                    first_covariates,
+                    dtype=float,
+                )
+                second_covariate_array = np.asarray(
+                    second_covariates,
+                    dtype=float,
+                )
+                expected_covariate_rows = first.shape[0]
+                if (
+                    first_covariate_array.ndim != 2
+                    or second_covariate_array.shape
+                    != first_covariate_array.shape
+                    or first_covariate_array.shape[0]
+                    != expected_covariate_rows
+                    or not np.isfinite(first_covariate_array).all()
+                    or not np.isfinite(second_covariate_array).all()
+                ):
+                    raise ValueError(
+                        "covariates must be finite equal-shaped matrices "
+                        "aligned with the targets"
+                    )
+                gate = covariate_pair_checks(
+                    {
+                        "context_length": int(context_length),
+                        "target": first,
+                        "covariates": first_covariate_array,
+                    },
+                    {
+                        "context_length": int(context_length),
+                        "target": second,
+                        "covariates": second_covariate_array,
+                    },
+                    atol=atol,
+                )
+                gate["enforced"] = True
+    except (
+        IndexError,
+        KeyError,
+        TypeError,
+        ValueError,
+        np.linalg.LinAlgError,
+    ) as error:
+        return {
+            **result_prefix,
+            "accepted": False,
+            "reason": "malformed_structural_calibration_member",
+            "error": f"{type(error).__name__}: {error}",
+        }
+    return {
+        **gate,
+        **result_prefix,
+        "underlying_gate_schema_version": gate.get("schema_version"),
+    }
+
+
+def summarize_structural_calibration_reachability(
+    capability_id: str,
+    *,
+    family_role: str,
+    lambda_value: float,
+    path_gates: Iterable[Mapping[str, Any]],
+    expected_path_count: int,
+    minimum_pass_fraction: float | None = None,
+) -> dict[str, Any]:
+    """Fail closed unless the selected I5 dose is structurally reachable.
+
+    Every structural qualification path must pass.  Formal generation fails
+    closed for every requested seed, so accepting a partially reachable
+    qualification bank would allow a cell to pass calibration and then
+    exhaust its fixed candidate budget during generation.  The caller is
+    responsible for evaluating the exact selected I5 lambda, rather than a
+    nearby raw-grid value.
+    """
+
+    if capability_id not in STRUCTURAL_CAPABILITIES:
+        raise ValueError(
+            f"unsupported structural capability: {capability_id}"
+        )
+    if family_role not in {"primary", "secondary"}:
+        raise ValueError("family_role must be primary or secondary")
+    if (
+        expected_path_count < 1
+        or not math.isfinite(float(lambda_value))
+        or not 0.0 <= float(lambda_value) <= 1.0
+    ):
+        raise ValueError(
+            "expected path count and selected lambda must be valid"
+        )
+    required_fraction = float(
+        MINIMUM_CALIBRATION_REACHABILITY_FRACTION[capability_id]
+        if minimum_pass_fraction is None
+        else minimum_pass_fraction
+    )
+    if (
+        not math.isfinite(required_fraction)
+        or not 0.0 < required_fraction <= 1.0
+    ):
+        raise ValueError("minimum pass fraction must be in (0, 1]")
+
+    rows = [dict(row) for row in path_gates]
+    invalid_result_count = sum(
+        row.get("capability_id") != capability_id
+        or row.get("calibration_reachability") is not True
+        or row.get("near_distance_evaluated") is not False
+        or not isinstance(row.get("accepted"), bool)
+        for row in rows
+    )
+    accepted_path_count = sum(
+        row.get("accepted") is True for row in rows
+    )
+    missing_path_count = max(0, expected_path_count - len(rows))
+    unexpected_path_count = max(0, len(rows) - expected_path_count)
+    required_pass_count = int(
+        math.ceil(required_fraction * expected_path_count - 1e-12)
+    )
+    reason_codes: list[str] = []
+    if missing_path_count:
+        reason_codes.append("structural_gate_qualification_paths_missing")
+    if unexpected_path_count:
+        reason_codes.append("structural_gate_qualification_paths_unexpected")
+    if invalid_result_count:
+        reason_codes.append("structural_gate_qualification_results_invalid")
+    if accepted_path_count < required_pass_count:
+        reason_codes.append("selected_i5_structural_gate_unreachable")
+    accepted = not reason_codes
+    return {
+        "schema_version": "structural_calibration_reachability.v1",
+        "capability_id": capability_id,
+        "family_role": family_role,
+        "selected_intensity": 5,
+        "selected_lambda": float(lambda_value),
+        "qualification_scope": "selected_i5_exact_lambda",
+        "gate_scope": "generator_structural_hard_gate_only",
+        "near_distance_evaluated": False,
+        "expected_path_count": int(expected_path_count),
+        "observed_path_count": len(rows),
+        "missing_path_count": missing_path_count,
+        "unexpected_path_count": unexpected_path_count,
+        "invalid_result_count": invalid_result_count,
+        "accepted_path_count": accepted_path_count,
+        "required_pass_count": required_pass_count,
+        "pass_fraction": (
+            float(accepted_path_count / expected_path_count)
+        ),
+        "minimum_pass_fraction": required_fraction,
+        "accepted": accepted,
+        "reason_codes": reason_codes,
+        "path_gates": rows,
+    }
+
+
 def covariate_family_match_checks(
     primary: dict[str, Any],
     secondary: dict[str, Any],
@@ -185,13 +442,25 @@ def covariate_family_match_checks(
     dose_atol: float = 1e-8,
     mase_scale_relative_tolerance: float = 0.10,
 ) -> dict[str, Any]:
-    """Check that covariate secondary changes the response law in isolation."""
+    """Check that covariate families share the calibrated target and nuisance.
+
+    Primary and secondary use separate inverse response curves, so their
+    lambda, internal coefficient, and per-seed realized proxy need not be
+    identical.  The paired contract is the same real-derived reference target,
+    covariate path, and baseline motif.
+    """
 
     primary_covariates = np.asarray(primary["covariates"], dtype=float)
     secondary_covariates = np.asarray(secondary["covariates"], dtype=float)
     primary_metadata = primary["generation_metadata"]
     secondary_metadata = secondary["generation_metadata"]
     primary_scale = float(primary["mase_scale"])
+    primary_reference = float(
+        primary.get("intensity_target_feature_value", math.nan)
+    )
+    secondary_reference = float(
+        secondary.get("intensity_target_feature_value", math.nan)
+    )
     scale_relative_difference = abs(
         float(secondary["mase_scale"]) - primary_scale
     ) / max(abs(primary_scale), 1e-12)
@@ -201,7 +470,10 @@ def covariate_family_match_checks(
         "covariate_max_abs_difference": float(
             np.max(np.abs(primary_covariates - secondary_covariates))
         ),
-        "dose_absolute_difference": abs(
+        "reference_target_absolute_difference": abs(
+            primary_reference - secondary_reference
+        ),
+        "realized_feature_absolute_difference": abs(
             float(primary["target_feature_value"])
             - float(secondary["target_feature_value"])
         ),
@@ -217,11 +489,13 @@ def covariate_family_match_checks(
         "mase_scale_relative_tolerance": (
             mase_scale_relative_tolerance
         ),
+        "family_specific_inverse_allowed": True,
     }
     values["accepted"] = bool(
         values["covariate_max_abs_difference"] <= dose_atol
-        and values["dose_absolute_difference"] <= dose_atol
-        and values["effect_strength_absolute_difference"] <= dose_atol
+        and math.isfinite(primary_reference)
+        and math.isfinite(secondary_reference)
+        and values["reference_target_absolute_difference"] <= dose_atol
         and values["baseline_motif_matches"]
         and scale_relative_difference <= mase_scale_relative_tolerance
     )
@@ -235,12 +509,12 @@ def nonlinear_mechanism_response_checks(
 
     The ordinary dose gate and this construction gate both follow the
     generator-recorded nonlinear coefficient, which must increase in aggregate
-    and within every paired seed. ``nonlinear_conditional_gain`` remains an
-    observable lag-search diagnostic shared with real windows, but it is not
-    used as an inverse coordinate or assumed monotone.  The adjusted-R² gain at
-    the exact causal lag is likewise diagnostic: recursive feedback can spread
-    dependence over correlated lags and make either conditional proxy fall
-    while the injected coefficient grows.
+    and within every paired seed. ``nonlinear_conditional_effect_size`` is the
+    history-only inverse coordinate shared with real windows; the underlying
+    ``nonlinear_conditional_gain`` remains an observable diagnostic.  The
+    adjusted-R² gain at the exact causal lag is likewise diagnostic: recursive
+    feedback can spread dependence over correlated lags and make either
+    conditional proxy fall while the injected coefficient grows.
     """
 
     strength_groups: dict[

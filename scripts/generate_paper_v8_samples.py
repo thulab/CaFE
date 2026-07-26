@@ -95,6 +95,48 @@ def selected_sensitivity_seeds(
     }
 
 
+def resolve_generation_capabilities(
+    calibration: dict[str, Any],
+    requested_capability_ids: tuple[str, ...],
+) -> tuple[tuple[str, ...], list[dict[str, Any]]]:
+    records = calibration.get("capabilities")
+    if not isinstance(records, dict):
+        raise ValueError("capability calibration is missing capability records")
+    available: list[str] = []
+    unavailable: list[dict[str, Any]] = []
+    for capability_id in requested_capability_ids:
+        record = records.get(capability_id)
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"capability calibration is missing {capability_id}"
+            )
+        is_available = bool(record.get("available_for_generation"))
+        uses_real_grid = (
+            record.get("intensity_calibration_scope")
+            == "dataset_real_generator_overlap_reference"
+        )
+        no_reasons = not list(record.get("unavailable_reason_codes") or [])
+        if is_available and uses_real_grid and no_reasons:
+            available.append(capability_id)
+            continue
+        unavailable.append(
+            {
+                "capability_id": capability_id,
+                "availability_status": str(
+                    record.get("availability_status", "unavailable")
+                ),
+                "reason_codes": list(
+                    record.get("unavailable_reason_codes")
+                    or ["real_calibrated_intensity_grid_unavailable"]
+                ),
+                "intensity_calibration_scope": record.get(
+                    "intensity_calibration_scope"
+                ),
+            }
+        )
+    return tuple(available), unavailable
+
+
 def generation_path_seed(
     dataset_id: str,
     capability_id: str,
@@ -616,6 +658,11 @@ def main() -> int:
     )
     if bundle["generator_version"] != v8.GENERATOR_VERSION:
         raise ValueError("calibration bundle generator version mismatch")
+    if bundle.get("pipeline_schema_version") != v8.SCHEMA_VERSION:
+        raise ValueError(
+            "calibration bundle pipeline schema mismatch; regenerate the "
+            "immutable calibration artifacts"
+        )
 
     seed_indexes = list(
         range(args.seed_start, args.seed_start + args.seed_count)
@@ -631,7 +678,19 @@ def main() -> int:
         f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     )
     clean_path = shard_dir / f"{shard_name}.jsonl"
-    capability_ids = tuple(args.capabilities)
+    requested_capability_ids = tuple(args.capabilities)
+    capability_ids, unavailable_capabilities = (
+        resolve_generation_capabilities(
+            calibration,
+            requested_capability_ids,
+        )
+    )
+    if not capability_ids:
+        raise ValueError(
+            "none of the requested capabilities has a real-calibrated "
+            "intensity grid; unavailable="
+            f"{v8.canonical_json(unavailable_capabilities)}"
+        )
     gate_context = realism.build_realism_gate_context(
         anchors,
         real_anchor_masters,
@@ -726,14 +785,19 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "paper_v8_generation_config.v5",
+        "schema_version": "paper_v8_generation_config.v7",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": v8.GENERATOR_VERSION,
         "seed_start": args.seed_start,
         "seed_count": args.seed_count,
         "seed_indexes": seed_indexes,
-        "capabilities": list(args.capabilities),
+        "requested_capabilities": list(requested_capability_ids),
+        "capabilities": list(capability_ids),
+        "unavailable_capabilities": unavailable_capabilities,
+        "capability_selection_policy": (
+            "generate_only_explicit_real_calibrated_intensity_grids_v1"
+        ),
         "realism_gate_policy": {
             **gate_context.policy_summary,
             "max_generation_attempts": args.max_generation_attempts,
@@ -775,7 +839,7 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "paper_v8_generation_manifest.v5",
+        "schema_version": "paper_v8_generation_manifest.v7",
         "created_at": v8.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),

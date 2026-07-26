@@ -15,10 +15,11 @@ from synthetic_feature_profile import (
 )
 
 
-FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v5"
+FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v6"
 LOCAL_TREND_WINDOW = 96
 LOCAL_TREND_HARMONIC_COUNT = 6
 LOCAL_TREND_MAX_REMOVED_PERIOD = 84.0
+INTERMITTENCY_LOCAL_BASELINE_WINDOW = 9
 LOCAL_TREND_MIN_REMOVED_PERIOD = 4.0
 LOCAL_TREND_FREQUENCY_FFT_SIZE = 4096
 
@@ -280,6 +281,40 @@ def _multi_period_energy_share(
     return float(np.clip(np.sum(residual_power) / total, 0.0, 1.0))
 
 
+def _event_positive_residual_energy_share(values: np.ndarray) -> float:
+    """Measure positive intermittent prominence after smooth-mode removal.
+
+    A fixed centered nine-point moving average removes the local background
+    without selecting a data-dependent spectral basis.  The remaining
+    positive versus negative energy share is continuous on finite histories
+    and needs neither event labels nor generator metadata.  Predictability of
+    generated events remains a separate construction gate.
+    """
+
+    signal = robust_scale(np.asarray(values, dtype=float).reshape(-1))
+    observations = signal.size
+    window = INTERMITTENCY_LOCAL_BASELINE_WINDOW
+    if observations < window:
+        return 0.0
+    padding = window // 2
+    padded = np.pad(signal, padding, mode="reflect")
+    local_background = np.convolve(
+        padded,
+        np.ones(window, dtype=float) / window,
+        mode="valid",
+    )
+    residual = signal - local_background
+    centered = residual - float(np.median(residual))
+    positive = np.clip(centered, 0.0, None)
+    negative = np.clip(-centered, 0.0, None)
+    positive_energy = float(np.sum(positive**2))
+    negative_energy = float(np.sum(negative**2))
+    return float(
+        positive_energy
+        / max(positive_energy + negative_energy, 1e-12)
+    )
+
+
 def _mean_finite(rows: list[dict[str, float]], name: str) -> float | None:
     values = [
         float(row[name])
@@ -398,6 +433,16 @@ def v8_feature_vector(
         float(np.mean(np.abs(robust_scale(residual_diff)) > 3.0))
         if residual_diff.size
         else 0.0
+    )
+    output["event_positive_residual_energy_share"] = float(
+        np.mean(
+            [
+                _event_positive_residual_energy_share(
+                    values[:, channel]
+                )
+                for channel in range(values.shape[1])
+            ]
+        )
     )
     output["v8_feature_history_length"] = float(values.shape[0])
     return {

@@ -21,7 +21,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 
 
-SCHEMA_VERSION = "paper_v8_realism_gate.v4"
+SCHEMA_VERSION = "paper_v8_realism_gate.v7"
 HISTORY_LENGTH = 168
 MINIMUM_ANCHOR_COUNT = 12
 DISTANCE_EPSILON = 1e-12
@@ -308,11 +308,22 @@ def _build_feature_policy(
         and real_feature_calibration.get("scope") is not None
         else "real_univariate"
     )
-    feature_row_key = (
-        "native_multivariate_features"
-        if source_scope == "real_native_multivariate"
-        else "features"
-    )
+    feature_row_key = {
+        "real_univariate": "features",
+        "real_native_multivariate": "native_multivariate_features",
+        "real_declared_hierarchy": "declared_hierarchy_features",
+        "real_hierarchy_children": "hierarchy_children_features",
+        "real_known_future_covariates": (
+            "known_future_covariate_features"
+        ),
+    }.get(source_scope)
+    if feature_row_key is None:
+        return _feature_not_enforced(
+            capability_id,
+            target_feature,
+            "unsupported_real_feature_scope",
+            padding_fraction,
+        )
     for anchor in anchors:
         features = anchor.get(feature_row_key)
         if not isinstance(features, Mapping):

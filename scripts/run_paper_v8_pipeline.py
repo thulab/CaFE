@@ -380,7 +380,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v8",
+        "schema_version": "paper_v8_experiment_protocol.v11",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -423,7 +423,12 @@ def protocol_config(
                 "history_only_incremental_r2_with_fixed_responder_nuisance"
             ),
             "family_intensity_scale": (
-                "one_family_mean_lambda_grid_per_dataset_no_formal_seed_inverse"
+                "joint_primary_secondary_family_mean_inverse_on_dataset_real_"
+                "support_no_generator_relative_fallback"
+            ),
+            "unavailable_capability_policy": (
+                "skip_dataset_capability_when_real_coordinate_or_joint_"
+                "generator_support_is_unavailable"
             ),
         },
         "calibration_path_policy": (
@@ -1119,7 +1124,10 @@ def main() -> int:
     non_gift_datasets = [
         dataset_id
         for dataset_id in dataset_ids
-        if v8.resolve_dataset(dataset_id).real_data_adapter != "gift_arrow"
+        if (
+            v8.resolve_dataset(dataset_id).real_data_adapter
+            not in v8.GIFT_EVAL_REAL_DATA_ADAPTERS
+        )
     ]
     if non_gift_datasets and args.source_root is None:
         raise ValueError(

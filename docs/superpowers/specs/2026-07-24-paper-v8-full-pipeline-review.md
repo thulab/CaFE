@@ -43,7 +43,7 @@ Paper v8 测量模型对十种时间序列机制的响应，而不是训练生�
   “生成器是否落在合理经验尺度并正确实现目标机制”。
 - 真实 anchor 预测只提供外部 sanity check，不进入合成机制得分或排名。
 - 不要求每个真实数据集天然具备层级、共同因子、跨序列因果或 known-future
-  covariate 语义；缺失结构由合成机制定义。
+  covariate 语义；但缺失校准结构时，对应 `dataset × capability` 不进入实验生成。
 
 ## Canonical 全流程与实现入口
 
@@ -148,7 +148,7 @@ anchor，不复制窗口凑数。缺失值采用统一、可审计的轻量插�
 ### 唯一 history-only 特征实现
 
 所有真实校准、合成 realized feature 和对齐回验使用
-`scripts/paper_v8_features.py` 的 feature v5 定义。每个数据集保存唯一经验
+`scripts/paper_v8_features.py` 的 feature v6 定义。每个数据集保存唯一经验
 feature matrix；p05、p10、p25、p50、p75、p90、p95 只是摘要，不再维护
 相互冲突的参数范围、强度范围和 gate 范围。
 
@@ -168,7 +168,7 @@ paired I1/I5 off-target selectivity matrix 作为非阻断诊断。部分 sideba
 参数映射按下列顺序尝试：
 
 1. 可用的 real univariate feature；
-2. 可用的 native multivariate、explicit hierarchy 或 known-future
+2. 可用的 native multivariate、synchronized hierarchy children 或 known-future
    covariate feature；
 3. 明确登记的 protocol constant；
 4. 带原因的 protocol fallback。
@@ -177,13 +177,24 @@ paired I1/I5 off-target selectivity matrix 作为非阻断诊断。部分 sideba
 不能用 `0.0` 伪装成真实观测；必须在 calibration bundle 的逐参数 provenance
 中记录 fallback 和原因。
 
-普通真实数据主要校准背景和 nuisance。trend、multi-seasonal、
-time-varying-seasonality 和 regime 使用单变量真实主特征范围；common factor
-和 cross-series 只有存在同步 native multivariate feature 时才使用真实主特征
-范围。nonlinear 和 intermittency 的现有 observable proxy 不能可靠反解，
-继续使用生成器内部剂量。hierarchy 必须由声明了 summing matrix 的显式 adapter
-提供，covariate 必须有声明的 known-future 输入；普通多变量数据不能冒充这两种
-结构。语义不满足时使用并记录 protocol fallback。
+普通真实数据主要校准背景和 nuisance。每个能力的 intensity 还必须有语义一致的
+真实主特征：trend、multi-seasonal、time-varying-seasonality、regime、
+nonlinear 和 intermittency 从单变量真实窗口读取；common factor 和 cross-series
+只从同步 native multivariate view 读取；hierarchy 从至少两个同步 children
+读取，校准时直接构造 `parent = sum(children)`，不要求真实数据另带 parent 或
+summing matrix；covariate response 只从声明的 known-future view 读取。不同时间
+戳或无共同语义的多变量数据不能冒充 hierarchy 或 covariate 结构。目标主特征缺失、有限窗口少于
+12 个或真实范围退化时，该 `dataset × capability` 标记为 unavailable，不得使用
+生成器内部剂量替代。
+
+Hierarchical Sales 使用专用 adapter：先对完整 Arrow fail-closed 校验 118 个
+item-level leaves、B1–B4 brand 分组、共同日轴和长度，再在同 brand 内按自然顺序
+形成不重叠 sibling pairs。adapter 只声明两个 children，校准器构造
+`parent = child_1 + child_2`。原始 `hierarchical_sales_data.csv` 存在时，还要求其
+QTY 在补齐日轴后与 Arrow 逐点一致，并把一一对应的二元 PROMO 指示器声明为
+known-future covariate；原始 CSV 缺失或校验失败时不得从其他目标通道伪造
+covariate。普通多变量 sibling 只属于 native multivariate 结构，不能因此获得
+hierarchy 或 known-future-covariate provenance。
 
 ### I1–I5 标定
 
@@ -192,16 +203,26 @@ nuisance，只改变主机制剂量及其必然下游结果。
 
 I1–I5 使用数据集×family 级标尺，不做逐正式 seed 的精确反解：
 
-1. 从数据集真实 profile 读取可用的 `[q10, q90]`，作为辅助参考；
-2. 用独立 qualification path pool 在 21 个 λ 点估计 family mean
-   `lambda → realized feature` response curve；
-3. 若真实区间与 primary family mean support 的交集至少覆盖真实
-   `q10–q90` span 的 10%，且反解后能覆盖 family 可用 λ support 的至少
-   25%，就在交集内等距放置五个参考目标；否则明确回退到
-   generator-relative 五级标尺，避免真实窄区间抹平能力难度；
-4. 只反解一次 family mean curve，得到该数据集与 family 共享的五个 λ；
+1. 从数据集真实 profile 读取可用的 `[q10, q90]`；
+2. 用独立 qualification path pool 在 21 个 λ 点分别估计 primary 和 secondary
+   family mean `lambda → realized feature` response curve；
+3. 取真实区间、primary support 和 secondary support 的共同交集。共同交集必须
+   覆盖真实 `q10–q90` span 的 10% 以上，且反解后在两个 family 中都必须覆盖各自
+   可用 λ support 的至少 25%；
+4. 在共同交集内等距放置五个真实来源目标，并分别反解两个 family 的 λ；
 5. 正式 seed 按指定 seed index 生成不同 anchor、相位和 nuisance，但不重新
    计算 21 点曲线，也不因单样本偏离参考目标而拒绝。
+
+对结构能力还要在独立 qualification path bank 上，用 primary family 精确的
+selected-I5 λ 运行正式结构 hard gate。四种结构能力的 qualification path 必须
+100% 通过；否则会出现校准接受部分可达的结构能力、正式生成却在某个固定 seed
+耗尽候选预算的契约冲突。缺失路径、畸形结果或任一路径不通过均把当前 cell 标为
+unavailable。
+该检查不运行 near-distance，也不通过扩大 path 数量掩盖系统性结构不可达。
+
+任一真实主特征或共同支持条件失败时，该 `dataset × capability` 记为 unavailable，
+生成阶段跳过；不允许 generator-relative、generator-structural 或内部机制剂量
+fallback。unavailable 只影响当前 cell，不阻断同一数据集的其他能力。
 
 `lambda` 的数学坐标始终是 `[0,1]`，具体机制参数可以按物理含义超过 1。
 不能使用累计最大包络伪造可逆性。先确定从 `lambda=0` 开始的稳定 support，
@@ -224,12 +245,12 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 | multi-seasonal | sample-specific Fourier basis | `multi_period_score` | `seasonal_spectral_amplitude_relative_error` |
 | time-varying seasonality | modulated oscillator | `seasonal_amplitude_modulation` | `instantaneous_frequency_nmae` |
 | regime switching | deterministic duration motif | `regime_sparse_transition_score` | `regime_jump_nmae` |
-| nonlinear persistence | signed rational quadratic recurrence | `nonlinear_strength` | `nonlinear_recurrence_residual_nrmse` |
-| predictable intermittency | deterministic Gaussian event clock | `event_effect_energy_share` | `event_window_nmae` |
+| nonlinear persistence | signed rational quadratic recurrence | `nonlinear_conditional_effect_size` | `nonlinear_recurrence_residual_nrmse` |
+| predictable intermittency | deterministic Gaussian event clock | `event_positive_residual_energy_share` | `event_window_nmae` |
 | common factor | dense dynamic factor with joint-state relay | `pca_top1_explained` | `common_component_nmae` |
 | hierarchical coherence | aggregate/contrast linear state space | `hierarchy_child_heterogeneity` | `child_contrast_nmae` |
-| cross-series dependence | dense delayed linear SCM | `lead_lag_peak_abs` | `responder_normalized_mae` |
-| covariate response | known-future linear response | `covariate_effect_variance_share` | `counterfactual_effect_nrmse` |
+| cross-series dependence | dense delayed linear SCM | `cross_series_incremental_r2` | `responder_normalized_mae` |
+| covariate response | known-future linear response | `covariate_incremental_r2` | `counterfactual_effect_nrmse` |
 
 关键限定如下：
 
@@ -238,15 +259,24 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 - Regime 的零强度背景使用周期比为 `sqrt(2)` 的确定性双频平滑纹理；它仍然
   完全可预测且不含 future randomness，但不会因为 8 点纹理与 24 点评分周期
   整除而产生零 seasonal-MASE denominator。
-- Nonlinear 的 observable adjusted-R² 只作诊断，不反向控制剂量；硬 gate
-  使用生成器已知系数、实际动态贡献和零状态裁剪。
-- Intermittency 的 spike rate 与 clock R² 只作诊断；事件能量占比是连续剂量。
+- Nonlinear 的 history-only 条件增量 adjusted-R² 的平方根（相关系数量纲的
+  `nonlinear_conditional_effect_size`）是与真实数据校准的强度坐标；硬 gate
+  仍独立使用生成器已知系数、实际动态贡献和零状态裁剪，避免把可观测 proxy
+  当成机制已正确实现的证明。
+- Intermittency 的强度坐标是在历史窗口内减去固定的居中 9 点移动平均后，
+  正残差占正负残差总能量的比例；固定窗口避免数据依赖的频谱选模造成强度曲线
+  跳变。spike rate 与 clock R² 只作诊断，
+  生成器已知事件能量及 event-window 恢复仍用于结构 gate。
 - Common main 是标准 dense dynamic factor；strict joint-state relay 是独立
   联立解码审计，不作为标准 DFM 的硬通过条件。
 - Cross primary 是带混合符号 responders 的线性 lag SCM；正确边、方向和 lag
   必须由 history-only gate 恢复。
-- Covariate 主任务用 known-future counterfactual pair 证明响应；历史
-  incremental R² 只作可解释诊断。
+- Hierarchy 在真实校准与合成生成两侧都只生成/读取两个 children，再以
+  `parent = child_1 + child_2` 构造 aggregate；加和残差仍是硬 gate。
+- Covariate 以 history-only incremental R² 作为真实强度坐标，并用
+  known-future counterfactual pair 证明响应。Primary/secondary 各自反解
+  family λ，配对 gate 要求相同的真实参考目标、covariate path 和 baseline，
+  不错误要求两个 family 的内部系数或单 seed realized proxy 完全相等。
 
 ## 生成组织与回验
 
@@ -285,6 +315,8 @@ seed indexes = [seed_start, seed_start + seed_count)
 
 结构 gate 包括层级加和与 contrast、common joint observability、cross 正确
 driver/edge/lag/符号和 holdout、covariate counterfactual recovery 等。
+selected-I5 的这些结构约束已在校准阶段先做可达性资格检查；正式生成仍逐样本或
+逐 counterfactual pair 复验，校准通过不替代生成 acceptance。
 
 对具有真实主特征的能力，仍报告生成主特征是否落在真实 anchor 原始
 `[min,max]` 以中点为中心扩成的 `1.2 × span` 范围内，并报告相对 family
@@ -417,9 +449,10 @@ Oracle gate 失败表示生成构造无效。Oracle 通过但结构基线不能�
   敏感，因此已被当前 family-level 标尺取代，不再作为正式准入结论。
 - ETT1 当前 family-level 复测：256 anchors、32 qualification paths 下十能力
   校准用时 107.8 秒；64 seeds 生成 3,858 个 clean masters 用时 32.5 秒，
-  零重试，强度、结构、robustness 和 ablation 回验全部通过。Cross 的真实参考
-  只映射到 family λ support 的 17.6%，因此按统一 25% 规则回退到
-  generator-relative 标尺；13 个 strict I5 seeds 的最小 history holdout R²
+  零重试，强度、结构、robustness 和 ablation 回验全部通过。该结果来自旧协议；
+  当时 Cross 的真实参考只映射到 family λ support 的 17.6%，并曾回退到
+  generator-relative 标尺。现协议不再允许此回退，同样情形会把该 cell 标记为
+  unavailable。13 个 strict I5 seeds 的最小 history holdout R²
   为 0.996，driver/lag/方向和正控全部通过。Cross primary 约 53.2% 样本落在
   1.2× real-anchor support 内，该比例只作透明审计，不作为准入条件。
 

@@ -19,10 +19,34 @@ from app.services.synthetic_v8_generation import (
     standardize_cross_series_counterfactual_member,
 )
 from app.services.synthetic_v8_feature_gate import (
+    basic_sample_checks,
     covariate_family_match_checks,
     nonlinear_mechanism_response_checks,
     paired_off_target_selectivity_matrix,
 )
+
+
+def test_basic_gate_rejects_non_real_intensity_grid() -> None:
+    sample = {
+        "target": np.zeros((384, 1)).tolist(),
+        "context_length": 336,
+        "horizon": 48,
+        "target_dim": 1,
+        "covariates": None,
+        "covariate_dim": 0,
+        "mase_scale": 1.0,
+        "mase_period": 24,
+        "target_feature_value": 0.5,
+        "intensity_lambda": 0.5,
+        "intensity_calibration": {
+            "scope": "generator_relative_grid",
+        },
+    }
+
+    result = basic_sample_checks(sample)
+
+    assert result["accepted"] is False
+    assert result["checks"]["intensity_grid_real_calibrated"] is False
 
 
 def test_covariate_real_feature_contract_is_history_only():
@@ -1012,6 +1036,7 @@ def test_v8_covariate_family_gate_rejects_scale_confounding() -> None:
     primary = {
         "sample_id": "primary",
         "target_feature_value": 0.5,
+        "intensity_target_feature_value": 0.48,
         "mase_scale": 0.8,
         "covariates": [[0.0, 1.0], [1.0, 0.0]],
         "generation_metadata": metadata,
@@ -1023,6 +1048,17 @@ def test_v8_covariate_family_gate_rejects_scale_confounding() -> None:
     }
 
     assert covariate_family_match_checks(primary, secondary)["accepted"]
+    secondary["target_feature_value"] = 0.52
+    secondary["generation_metadata"] = {
+        **metadata,
+        "effect_strength": 0.43,
+    }
+    family_inverse = covariate_family_match_checks(primary, secondary)
+    assert family_inverse["accepted"]
+    assert family_inverse["family_specific_inverse_allowed"] is True
+    secondary["intensity_target_feature_value"] = 0.49
+    assert not covariate_family_match_checks(primary, secondary)["accepted"]
+    secondary["intensity_target_feature_value"] = 0.48
     secondary["mase_scale"] = 0.08
     rejected = covariate_family_match_checks(primary, secondary)
     assert rejected["accepted"] is False

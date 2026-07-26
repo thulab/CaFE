@@ -2206,6 +2206,7 @@ def experiment_capability_rows(
     dataset_ids: list[str],
     models: list[str],
     capabilities: list[str],
+    capability_dataset_ids: dict[str, list[str]] | None = None,
 ) -> list[dict[str, Any]]:
     selected = [
         row
@@ -2225,7 +2226,26 @@ def experiment_capability_rows(
         ): row
         for row in selected
     }
-    expected_count = len(dataset_ids) * len(capabilities) * len(models)
+    datasets_by_capability = (
+        {
+            capability_id: list(dataset_ids)
+            for capability_id in capabilities
+        }
+        if capability_dataset_ids is None
+        else {
+            capability_id: [
+                dataset_id
+                for dataset_id in dataset_ids
+                if dataset_id
+                in set(capability_dataset_ids.get(capability_id, ()))
+            ]
+            for capability_id in capabilities
+        }
+    )
+    expected_count = sum(
+        len(datasets_by_capability[capability_id]) * len(models)
+        for capability_id in capabilities
+    )
     if len(selected) != expected_count or len(by_key) != expected_count:
         raise ValueError(
             f"{context_policy} main score coverage mismatch: "
@@ -2235,11 +2255,14 @@ def experiment_capability_rows(
 
     output: list[dict[str, Any]] = []
     for capability_id in capabilities:
+        supported_dataset_ids = datasets_by_capability[capability_id]
+        if not supported_dataset_ids:
+            continue
         capability_rows: list[dict[str, Any]] = []
         for model_id in models:
             rows = [
                 by_key[(dataset_id, capability_id, model_id)]
-                for dataset_id in dataset_ids
+                for dataset_id in supported_dataset_ids
             ]
             accuracy_scores = [
                 float(row["accuracy_score"])
@@ -2267,11 +2290,11 @@ def experiment_capability_rows(
                 if row.get("mechanism_rank") is not None
             ]
             if (
-                len(accuracy_scores) != len(dataset_ids)
-                or len(normalized_maes) != len(dataset_ids)
-                or len(mechanism_scores) != len(dataset_ids)
-                or len(accuracy_ranks) != len(dataset_ids)
-                or len(mechanism_ranks) != len(dataset_ids)
+                len(accuracy_scores) != len(supported_dataset_ids)
+                or len(normalized_maes) != len(supported_dataset_ids)
+                or len(mechanism_scores) != len(supported_dataset_ids)
+                or len(accuracy_ranks) != len(supported_dataset_ids)
+                or len(mechanism_ranks) != len(supported_dataset_ids)
             ):
                 raise ValueError(
                     f"incomplete aggregate score for {context_policy}/"
@@ -2285,7 +2308,8 @@ def experiment_capability_rows(
                     "context_policy": context_policy,
                     "capability_id": capability_id,
                     "model_id": model_id,
-                    "dataset_count": len(dataset_ids),
+                    "dataset_count": len(supported_dataset_ids),
+                    "dataset_ids": supported_dataset_ids,
                     "macro_mean_accuracy_score": float(
                         np.mean(accuracy_scores)
                     ),
@@ -2337,7 +2361,8 @@ def render_experiment_capability_report(
         "",
         f"- 实验：`{experiment_id}`",
         f"- Context policy：`{context_policy}`",
-        "- 数据集等权聚合；foundation models 内排名，结构化正控不参与。",
+        "- 每个能力仅在真实校准可用的数据集上等权聚合；"
+        "foundation models 内排名，结构化正控不参与。",
         "- 平均 rank 越小越好；Oracle context 仅按逐样本 MASE 选窗。",
         "",
         "| capability | model | mean MASE | mean accuracy rank | "
@@ -2393,7 +2418,7 @@ def reusable_experiment_analysis_manifest(
     try:
         manifest = v8.read_json(manifest_path)
         if manifest.get("schema_version") != (
-            "paper_v8_experiment_analysis_manifest.v1"
+            "paper_v8_experiment_analysis_manifest.v2"
         ):
             return False
         if str(manifest.get("experiment_manifest_sha256")) != (
@@ -2428,6 +2453,15 @@ def reusable_experiment_analysis_manifest(
                 return False
             score_path = validated_file_record(score_record)
             if str(row.get("scores_sha256")) != v8.file_sha256(score_path):
+                return False
+            generation_path = Path(
+                str(row.get("generation_manifest_path", ""))
+            )
+            if (
+                not generation_path.is_file()
+                or str(row.get("generation_manifest_sha256"))
+                != v8.file_sha256(generation_path)
+            ):
                 return False
         files = manifest.get("files")
         if not isinstance(files, dict) or not files:
@@ -2495,6 +2529,9 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
 
     all_scores: list[dict[str, Any]] = []
     input_records: list[dict[str, Any]] = []
+    capability_dataset_ids = {
+        capability_id: [] for capability_id in capabilities
+    }
     for dataset_id in dataset_ids:
         dataset_analysis_dir = (
             experiment_root / dataset_id / "04_analysis" / shard_name
@@ -2531,6 +2568,30 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         if not isinstance(scores, list):
             raise ValueError(f"invalid dataset scores payload: {dataset_id}")
         all_scores.extend(scores)
+        generation_manifest_path = (
+            experiment_root
+            / dataset_id
+            / "02_generation"
+            / f"manifest__{shard_name}.json"
+        )
+        generation_manifest = v8.read_json(generation_manifest_path)
+        generated_capabilities = [
+            str(value)
+            for value in generation_manifest.get("config", {}).get(
+                "capabilities",
+                [],
+            )
+        ]
+        unexpected_capabilities = sorted(
+            set(generated_capabilities) - set(capabilities)
+        )
+        if unexpected_capabilities:
+            raise ValueError(
+                f"generation manifest has unexpected capabilities for "
+                f"{dataset_id}: {unexpected_capabilities}"
+            )
+        for capability_id in generated_capabilities:
+            capability_dataset_ids[capability_id].append(dataset_id)
         input_records.append(
             {
                 "dataset_id": dataset_id,
@@ -2539,6 +2600,13 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                     dataset_manifest_path
                 ),
                 "scores_sha256": v8.file_sha256(score_path),
+                "generation_manifest_path": str(
+                    generation_manifest_path
+                ),
+                "generation_manifest_sha256": v8.file_sha256(
+                    generation_manifest_path
+                ),
+                "generated_capabilities": generated_capabilities,
             }
         )
 
@@ -2548,6 +2616,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         dataset_ids=dataset_ids,
         models=models,
         capabilities=capabilities,
+        capability_dataset_ids=capability_dataset_ids,
     )
     oracle_rows = experiment_capability_rows(
         all_scores,
@@ -2555,6 +2624,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         dataset_ids=dataset_ids,
         models=models,
         capabilities=capabilities,
+        capability_dataset_ids=capability_dataset_ids,
     )
     fixed_path = analysis_dir / "capability_scores_fixed_l168.json"
     oracle_path = analysis_dir / "capability_scores_oracle_context.json"
@@ -2579,7 +2649,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_experiment_analysis_manifest.v1",
+        "schema_version": "paper_v8_experiment_analysis_manifest.v2",
         "created_at": v8.utc_now(),
         "experiment_id": str(experiment_manifest["experiment_id"]),
         "experiment_manifest_sha256": v8.file_sha256(
@@ -2590,9 +2660,11 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         "datasets": dataset_ids,
         "models": models,
         "capabilities": capabilities,
+        "capability_dataset_ids": capability_dataset_ids,
         "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
         "aggregation_policy": (
-            "equal_dataset_macro_mean_with_mean_within_dataset_model_rank"
+            "equal_supported_dataset_macro_mean_with_mean_within_dataset_"
+            "model_rank"
         ),
         "oracle_selection_policy": (
             "per_model_master_sample_minimum_mase_over_l96_l168_l336;"

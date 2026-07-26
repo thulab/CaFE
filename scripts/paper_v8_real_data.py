@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.ipc as pa_ipc
 
 from synthetic_feature_profile import (
     M5_COVARIATE_PROVENANCE,
@@ -25,6 +28,7 @@ class RealSeriesRecord:
     channel_ids: tuple[str, ...] = ()
     covariates: np.ndarray | None = None
     covariate_names: tuple[str, ...] = ()
+    covariate_kind: str | None = None
     hierarchy_values: np.ndarray | None = None
     hierarchy_kind: str | None = None
     structural_group_id: str | None = None
@@ -103,6 +107,398 @@ def load_gift_arrow(
             "record_selection": (
                 "source_order_prefix" if record_limit is not None else "all"
             ),
+        },
+    )
+
+
+_HIERARCHICAL_SALES_ITEM_PATTERN = re.compile(
+    r"QTY_(B[1-4])_([1-9][0-9]*)"
+)
+_HIERARCHICAL_SALES_PROMO_PATTERN = re.compile(
+    r"PROMO_(B[1-4])_([1-9][0-9]*)"
+)
+_HIERARCHICAL_SALES_EXPECTED_BRAND_COUNTS = {
+    "B1": 42,
+    "B2": 45,
+    "B3": 21,
+    "B4": 10,
+}
+
+
+def _hierarchical_sales_arrow_table(
+    asset_path: Path,
+) -> tuple[pa.Table, Path]:
+    if not asset_path.is_dir():
+        raise FileNotFoundError(
+            f"Hierarchical Sales directory not found: {asset_path}"
+        )
+    arrow_files = sorted(asset_path.glob("data-*.arrow"))
+    if len(arrow_files) != 1:
+        raise ValueError(
+            "expected exactly one canonical data-*.arrow in "
+            f"{asset_path}, got {len(arrow_files)}"
+        )
+    arrow_path = arrow_files[0]
+    with pa.memory_map(str(arrow_path), "r") as source:
+        table = pa_ipc.open_stream(source).read_all()
+    required = {"item_id", "start", "target", "freq"}
+    missing = sorted(required - set(table.column_names))
+    if missing:
+        raise ValueError(
+            f"Hierarchical Sales Arrow is missing columns: {', '.join(missing)}"
+        )
+    return table, arrow_path
+
+
+def _hierarchical_sales_promotion_covariates(
+    asset_path: Path,
+    *,
+    expected_targets: dict[str, np.ndarray],
+    start: pd.Timestamp,
+    target_length: int,
+) -> tuple[dict[str, np.ndarray] | None, Path | None, dict[str, Any]]:
+    expected_item_ids = set(expected_targets)
+    promotion_path = asset_path / "hierarchical_sales_data.csv"
+    if not promotion_path.is_file():
+        return (
+            None,
+            None,
+            {
+                "available": False,
+                "reason": "hierarchical_sales_data.csv not found",
+                "expected_asset": promotion_path.name,
+                "missing_date_fill_policy": "not_applied_without_source",
+            },
+        )
+
+    frame = pd.read_csv(promotion_path)
+    if "DATE" not in frame.columns:
+        raise ValueError("Hierarchical Sales promotion CSV is missing DATE")
+    qty_columns = {
+        str(column)
+        for column in frame.columns
+        if _HIERARCHICAL_SALES_ITEM_PATTERN.fullmatch(str(column))
+    }
+    expected_promo_columns = {
+        item_id.replace("QTY_", "PROMO_", 1)
+        for item_id in expected_item_ids
+    }
+    promo_columns = {
+        str(column)
+        for column in frame.columns
+        if _HIERARCHICAL_SALES_PROMO_PATTERN.fullmatch(str(column))
+    }
+    if qty_columns != expected_item_ids:
+        raise ValueError(
+            "Hierarchical Sales promotion CSV QTY columns do not match the "
+            f"118-leaf contract; missing={sorted(expected_item_ids - qty_columns)}, "
+            f"unexpected={sorted(qty_columns - expected_item_ids)}"
+        )
+    if promo_columns != expected_promo_columns:
+        raise ValueError(
+            "Hierarchical Sales promotion CSV PROMO columns do not map "
+            "one-to-one to QTY leaves; "
+            f"missing={sorted(expected_promo_columns - promo_columns)}, "
+            f"unexpected={sorted(promo_columns - expected_promo_columns)}"
+        )
+
+    parsed_dates = pd.to_datetime(frame["DATE"], errors="coerce")
+    if parsed_dates.isna().any():
+        raise ValueError(
+            "Hierarchical Sales promotion CSV contains invalid DATE values"
+        )
+    normalized_dates = pd.DatetimeIndex(parsed_dates).normalize()
+    if normalized_dates.duplicated().any():
+        raise ValueError(
+            "Hierarchical Sales promotion CSV contains duplicate DATE values"
+        )
+
+    ordered_promo_columns = sorted(
+        expected_promo_columns,
+        key=lambda value: (
+            int(_HIERARCHICAL_SALES_PROMO_PATTERN.fullmatch(value).group(1)[1:]),
+            int(_HIERARCHICAL_SALES_PROMO_PATTERN.fullmatch(value).group(2)),
+        ),
+    )
+    raw_promotions = frame[ordered_promo_columns]
+    numeric_promotions = raw_promotions.apply(pd.to_numeric, errors="coerce")
+    invalid_cells = raw_promotions.notna() & numeric_promotions.isna()
+    if invalid_cells.to_numpy().any():
+        raise ValueError(
+            "Hierarchical Sales promotion CSV contains non-numeric PROMO values"
+        )
+    numeric_promotions.index = normalized_dates
+    finite_promotion_values = numeric_promotions.to_numpy(dtype=float)
+    finite_promotion_values = finite_promotion_values[
+        np.isfinite(finite_promotion_values)
+    ]
+    if not np.isin(finite_promotion_values, (0.0, 1.0)).all():
+        raise ValueError(
+            "Hierarchical Sales PROMO values must be binary presence indicators"
+        )
+
+    expected_dates = pd.date_range(
+        start=start.normalize(),
+        periods=target_length,
+        freq="D",
+    )
+    overlap_count = int(expected_dates.isin(normalized_dates).sum())
+    if overlap_count == 0:
+        raise ValueError(
+            "Hierarchical Sales promotion CSV has no DATE overlap with Arrow"
+        )
+    aligned = numeric_promotions.reindex(expected_dates)
+    numeric_qty = frame[sorted(qty_columns)].apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+    invalid_qty_cells = frame[sorted(qty_columns)].notna() & numeric_qty.isna()
+    if invalid_qty_cells.to_numpy().any():
+        raise ValueError(
+            "Hierarchical Sales promotion CSV contains non-numeric QTY values"
+        )
+    numeric_qty.index = normalized_dates
+    aligned_qty = numeric_qty.reindex(expected_dates)
+    mismatched_qty = [
+        item_id
+        for item_id, arrow_values in sorted(expected_targets.items())
+        if not np.array_equal(
+            aligned_qty[item_id].to_numpy(dtype=float),
+            np.asarray(arrow_values, dtype=float),
+            equal_nan=True,
+        )
+    ]
+    if mismatched_qty:
+        raise ValueError(
+            "Hierarchical Sales promotion CSV QTY values do not match Arrow "
+            f"after daily DATE alignment: {mismatched_qty}"
+        )
+    missing_date_count = int((~expected_dates.isin(normalized_dates)).sum())
+    missing_value_count = int(aligned.isna().to_numpy().sum())
+    aligned = aligned.fillna(0.0)
+    aligned_values = aligned.to_numpy(dtype=float)
+    if not np.isfinite(aligned_values).all():
+        raise ValueError(
+            "Hierarchical Sales promotion CSV contains non-finite PROMO values"
+        )
+
+    promotion_by_item_id = {
+        promo_name.replace("PROMO_", "QTY_", 1): aligned[promo_name].to_numpy(
+            dtype=float,
+        )
+        for promo_name in ordered_promo_columns
+    }
+    return (
+        promotion_by_item_id,
+        promotion_path,
+        {
+            "available": True,
+            "source": "original hierarchical_sales_data.csv promotion indicator",
+            "source_dataset_doi": "10.17632/njdkntcpc9.1",
+            "source_download_url": (
+                "https://data.mendeley.com/public-files/datasets/"
+                "njdkntcpc9/files/08bb4f43-6dfa-4995-b268-"
+                "42fa0690ba6b/file_downloaded"
+            ),
+            "covariate_kind": "known_future",
+            "qty_column_count": len(qty_columns),
+            "promo_column_count": len(promo_columns),
+            "date_alignment": "Arrow start plus complete daily target index",
+            "source_date_count": len(normalized_dates),
+            "aligned_date_count": len(expected_dates),
+            "overlap_date_count": overlap_count,
+            "qty_values_match_arrow": True,
+            "missing_date_count": missing_date_count,
+            "missing_value_count": missing_value_count,
+            "missing_date_fill_policy": (
+                "missing dates and missing PROMO cells are filled with 0"
+            ),
+        },
+    )
+
+
+@register_real_data_adapter("gift_hierarchical_sales")
+def load_gift_hierarchical_sales(
+    asset_path: Path,
+    record_limit: int | None,
+) -> RealDatasetBundle:
+    """Restore deterministic additive sibling pairs from Hierarchical Sales."""
+
+    table, arrow_path = _hierarchical_sales_arrow_table(asset_path)
+    item_ids = [str(value) for value in table.column("item_id").to_pylist()]
+    if len(item_ids) != len(set(item_ids)):
+        raise ValueError("Hierarchical Sales contains duplicate item IDs")
+
+    expected_ids = {
+        f"QTY_{brand}_{index}"
+        for brand, count in _HIERARCHICAL_SALES_EXPECTED_BRAND_COUNTS.items()
+        for index in range(1, count + 1)
+    }
+    actual_ids = set(item_ids)
+    if actual_ids != expected_ids:
+        missing_ids = sorted(expected_ids - actual_ids)
+        unexpected_ids = sorted(actual_ids - expected_ids)
+        raise ValueError(
+            "Hierarchical Sales item IDs do not match the fail-closed "
+            f"118-leaf contract; missing={missing_ids}, "
+            f"unexpected={unexpected_ids}"
+        )
+
+    frequencies = {
+        str(value) for value in table.column("freq").to_pylist()
+    }
+    if frequencies != {"D"}:
+        raise ValueError(
+            "Hierarchical Sales must have one daily frequency; "
+            f"got {sorted(frequencies)}"
+        )
+    starts = table.column("start").to_pylist()
+    if any(value is None for value in starts) or len(set(starts)) != 1:
+        raise ValueError(
+            "Hierarchical Sales leaves must have one non-null common start"
+        )
+
+    values_by_id: dict[str, np.ndarray] = {}
+    lengths: set[int] = set()
+    for item_id, target in zip(
+        item_ids,
+        table.column("target").to_pylist(),
+        strict=True,
+    ):
+        match = _HIERARCHICAL_SALES_ITEM_PATTERN.fullmatch(item_id)
+        if match is None:
+            raise ValueError(
+                f"unsupported Hierarchical Sales item ID: {item_id!r}"
+            )
+        values = np.asarray(target, dtype=float)
+        if values.ndim != 1 or values.size == 0:
+            raise ValueError(
+                f"Hierarchical Sales item {item_id!r} has unsupported "
+                f"target shape {values.shape}"
+            )
+        values_by_id[item_id] = values
+        lengths.add(int(values.size))
+    if len(lengths) != 1:
+        raise ValueError(
+            "Hierarchical Sales leaves must have one common target length; "
+            f"got {sorted(lengths)}"
+        )
+    target_length = next(iter(lengths))
+    common_start = pd.Timestamp(starts[0])
+    (
+        promotion_by_item_id,
+        promotion_path,
+        promotion_metadata,
+    ) = _hierarchical_sales_promotion_covariates(
+        asset_path,
+        expected_targets=values_by_id,
+        start=common_start,
+        target_length=target_length,
+    )
+
+    records: list[RealSeriesRecord] = []
+    unpaired_child_ids: list[str] = []
+    for brand, count in _HIERARCHICAL_SALES_EXPECTED_BRAND_COUNTS.items():
+        brand_ids = [f"QTY_{brand}_{index}" for index in range(1, count + 1)]
+        for offset in range(0, count - 1, 2):
+            channel_ids = tuple(brand_ids[offset : offset + 2])
+            children = np.vstack(
+                [values_by_id[channel_id] for channel_id in channel_ids]
+            )
+            covariate_names = tuple(
+                channel_id.replace("QTY_", "PROMO_", 1)
+                for channel_id in channel_ids
+            )
+            covariates = (
+                None
+                if promotion_by_item_id is None
+                else np.column_stack(
+                    [
+                        promotion_by_item_id[channel_id]
+                        for channel_id in channel_ids
+                    ]
+                )
+            )
+            records.append(
+                RealSeriesRecord(
+                    item_id=(
+                        f"hierarchical_sales:{brand}:"
+                        f"{offset + 1}-{offset + 2}"
+                    ),
+                    values=np.asarray(children, dtype=float),
+                    channel_ids=channel_ids,
+                    covariates=covariates,
+                    covariate_names=(
+                        covariate_names if covariates is not None else ()
+                    ),
+                    covariate_kind=(
+                        "known_future" if covariates is not None else None
+                    ),
+                    hierarchy_values=np.asarray(children, dtype=float),
+                    hierarchy_kind="children_only_additive",
+                    structural_group_id=f"hierarchical_sales:{brand}",
+                )
+            )
+        if count % 2:
+            unpaired_child_ids.append(brand_ids[-1])
+
+    eligible_pair_count = len(records)
+    selected = (
+        records if record_limit is None else records[: int(record_limit)]
+    )
+    asset_files = (
+        (arrow_path,)
+        if promotion_path is None
+        else (arrow_path, promotion_path)
+    )
+    return RealDatasetBundle(
+        frequency="D",
+        records=tuple(selected),
+        asset_files=asset_files,
+        adapter_id="gift_hierarchical_sales",
+        metadata={
+            "record_selection": (
+                "natural_sibling_pair_prefix"
+                if record_limit is not None
+                else "all_natural_sibling_pairs"
+            ),
+            "validated_leaf_count": len(values_by_id),
+            "validated_brand_counts": dict(
+                _HIERARCHICAL_SALES_EXPECTED_BRAND_COUNTS
+            ),
+            "target_length": target_length,
+            "common_start": common_start.isoformat(),
+            "eligible_pair_count": eligible_pair_count,
+            "selected_pair_count": len(selected),
+            "unpaired_child_ids": unpaired_child_ids,
+            "panel_contract": (
+                "two consecutive leaves from one validated brand, paired in "
+                "natural item-number order without overlap"
+            ),
+            "hierarchy_contract": (
+                "children_only_additive: the synthetic hierarchy parent is "
+                "constructed as the exact sum of the two declared children"
+            ),
+            "hierarchy_provenance": {
+                "source": "GIFT-Eval hierarchical_sales/D Arrow",
+                "item_id_pattern": _HIERARCHICAL_SALES_ITEM_PATTERN.pattern,
+                "grouping_key": "B1-B4 brand token in item_id",
+                "pairing": "consecutive natural-order leaves within brand",
+                "validation": (
+                    "exact IDs, brand counts, daily frequency, common start, "
+                    "common non-empty target length"
+                ),
+            },
+            "promotion_covariates": promotion_metadata,
+            "known_future_covariate_provenance": (
+                promotion_metadata.get("source")
+                if promotion_metadata["available"]
+                else None
+            ),
+            "asset_sha256": {
+                path.name: file_sha256(path)
+                for path in asset_files
+            },
         },
     )
 
@@ -257,6 +653,7 @@ def load_m5_csv(
                 channel_ids=channel_ids,
                 covariates=np.asarray(covariates, dtype=float),
                 covariate_names=tuple(M5_KNOWN_FUTURE_COVARIATES),
+                covariate_kind="known_future",
                 hierarchy_values=np.asarray(
                     hierarchy_by_group[group_id],
                     dtype=float,
