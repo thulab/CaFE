@@ -2126,7 +2126,7 @@ def main() -> int:
                 gate for gate in identifiability_gates if gate["enforced"]
             ]
             identifiability_summary = {
-                "schema_version": "cross_series_identifiability_summary.v1",
+                "schema_version": "cross_series_identifiability_summary.v2",
                 "pair_count": len(identifiability_gates) // 2,
                 "enforced_pair_count": len(enforced_identifiability_gates) // 2,
                 "enforced_acceptance_rate": float(
@@ -2137,10 +2137,12 @@ def main() -> int:
                         ]
                     )
                 ),
-                "minimum_enforced_history_holdout_r2": float(
+                "minimum_enforced_aggregate_incremental_holdout_gain": float(
                     np.min(
                         [
-                            gate["minimum_declared_holdout_r2"]
+                            gate[
+                                "aggregate_declared_incremental_holdout_gain"
+                            ]
                             for gate in enforced_identifiability_gates
                         ]
                     )

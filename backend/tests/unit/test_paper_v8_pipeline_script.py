@@ -1190,7 +1190,7 @@ def test_real_nonlinear_observable_dose_enters_generator_qualification(
     assert calibration["unavailable_capabilities"] == {}
 
 
-def test_secondary_family_cannot_fall_back_when_real_grid_is_compressed(
+def test_compact_lambda_mapping_passes_when_observable_doses_are_separated(
     monkeypatch,
 ):
     common = load_script("paper_v8_pipeline_common")
@@ -1209,7 +1209,7 @@ def test_secondary_family_cannot_fall_back_when_real_grid_is_compressed(
     anchors = [
         {
             "features": {
-                "local_polynomial_energy_share_w96": float(value)
+                "multi_period_score": float(value)
             }
         }
         for value in np.linspace(0.0, 1.0, 20)
@@ -1219,17 +1219,157 @@ def test_secondary_family_cannot_fall_back_when_real_grid_is_compressed(
         common.resolve_dataset("gift_electricity_h"),
         anchors,
         calibration_seed_count=32,
-        capability_ids=["trend"],
+        capability_ids=["multi_seasonal"],
     )
-    trend = calibration["capabilities"]["trend"]
+    multi_seasonal = calibration["capabilities"]["multi_seasonal"]
 
-    assert trend["available_for_generation"] is False
-    assert trend["unavailable_reason_codes"] == [
-        "real_reference_maps_to_insufficient_secondary_lambda_span"
-    ]
-    assert trend["secondary"]["selected_lambdas"] != pytest.approx(
+    assert multi_seasonal["available_for_generation"] is True
+    assert multi_seasonal["unavailable_reason_codes"] == []
+    assert multi_seasonal["secondary"]["selected_lambdas"] != pytest.approx(
         np.linspace(0.0, 1.0, 5)
     )
+    alignment = multi_seasonal["real_alignment_reference"]
+    assert alignment["mapped_lambda_span_fraction"]["secondary"] == (
+        pytest.approx(0.08)
+    )
+    assert alignment["mapped_lambda_span_usage"] == (
+        "diagnostic_only_observable_response_gate_replaces_threshold"
+    )
+    assert alignment["minimum_lambda_span_fraction_for_use"] is None
+    gate = multi_seasonal["secondary"][
+        "selected_lambda_observable_separation_gate"
+    ]
+    assert gate["accepted"] is True
+    assert gate["lambda_span_used_as_hard_gate"] is False
+    assert gate["thresholds"][
+        "minimum_paired_standardized_separation"
+    ] == 3.0
+    assert gate["monotone_path_fraction"] == 1.0
+
+
+def test_observable_response_gate_uses_paired_differences_not_anchor_offsets():
+    common = load_script("paper_v8_pipeline_common")
+    raw_grid = np.linspace(0.0, 1.0, 21)
+    path_offsets = np.linspace(-0.30, 0.30, 32)
+    path_curves = [
+        (offset + 0.10 * raw_grid).tolist()
+        for offset in path_offsets
+    ]
+
+    gate = common.observable_response_separation_gate(
+        {
+            "raw_lambda_grid": raw_grid.tolist(),
+            "per_path_raw_response_curves": path_curves,
+        },
+        np.linspace(0.0, 1.0, 5),
+        minimum_adjacent_non_decreasing_path_fraction=0.75,
+        minimum_paired_standardized_separation=3.0,
+    )
+
+    assert gate["accepted"] is True
+    assert gate["monotone_path_fraction"] == 1.0
+    assert gate["minimum_paired_standardized_separation"] > 3.0
+    assert gate["reason_codes"] == []
+    assert len(gate["adjacent_level_diagnostics"]) == 4
+
+
+def test_observable_response_gate_rejects_outlier_driven_mean_increase():
+    common = load_script("paper_v8_pipeline_common")
+    raw_grid = np.linspace(0.0, 1.0, 21)
+    path_curves = [
+        (0.10 * raw_grid).tolist()
+        for _ in range(16)
+    ] + [
+        (-0.08 * raw_grid).tolist()
+        for _ in range(16)
+    ]
+
+    gate = common.observable_response_separation_gate(
+        {
+            "raw_lambda_grid": raw_grid.tolist(),
+            "per_path_raw_response_curves": path_curves,
+        },
+        np.linspace(0.0, 1.0, 5),
+        minimum_adjacent_non_decreasing_path_fraction=0.75,
+        minimum_paired_standardized_separation=3.0,
+    )
+
+    assert gate["accepted"] is False
+    assert gate["minimum_adjacent_non_decreasing_path_fraction"] == 0.5
+    assert gate["minimum_paired_standardized_separation"] < 3.0
+    assert gate["reason_codes"] == [
+        "insufficient_adjacent_non_decreasing_path_fraction",
+        "insufficient_paired_observable_response_separation",
+    ]
+
+
+def test_observable_response_separation_gate_fails_closed_without_paths():
+    common = load_script("paper_v8_pipeline_common")
+
+    gate = common.observable_response_separation_gate(
+        {"raw_lambda_grid": [0.0, 1.0]},
+        np.linspace(0.0, 1.0, 5),
+        minimum_adjacent_non_decreasing_path_fraction=0.75,
+        minimum_paired_standardized_separation=3.0,
+    )
+
+    assert gate["accepted"] is False
+    assert gate["reason_codes"] == [
+        "observable_response_separation_gate_invalid"
+    ]
+    assert "qualification_path_response_data_missing" in (
+        gate["validation_errors"]
+    )
+
+
+def test_observable_response_gate_records_full_path_fraction_as_diagnostic(
+    monkeypatch,
+):
+    common = load_script("paper_v8_pipeline_common")
+    path_count = 32
+
+    def response_curve(*args, **kwargs):
+        del args, kwargs
+        grid = np.linspace(0.0, 1.0, 21)
+        curves = np.tile(grid, (path_count, 1))
+        # Five paths have a small local reversal at selected I2.  The family
+        # mean remains increasing. Full-path monotonicity is recorded, while
+        # the hard gate uses each adjacent paired difference.
+        curves[:5, 6] = 0.55
+        curves[5:, 6] = (0.30 * path_count - 0.55 * 5) / 27
+        response = np.mean(curves, axis=0)
+        return grid, response, {
+            "effective_lambda_support": [0.0, 1.0],
+            "raw_lambda_grid": grid.tolist(),
+            "per_path_raw_response_curves": curves.tolist(),
+        }
+
+    monkeypatch.setattr(common, "monotone_response_curve", response_curve)
+    anchors = [
+        {
+            "features": {
+                "seasonal_amplitude_modulation": float(value)
+            }
+        }
+        for value in np.linspace(0.0, 1.0, 20)
+    ]
+
+    calibration = common.calibrate_capabilities(
+        common.resolve_dataset("gift_electricity_h"),
+        anchors,
+        calibration_seed_count=path_count,
+        capability_ids=["time_varying_seasonality"],
+    )
+    tvs = calibration["capabilities"]["time_varying_seasonality"]
+
+    assert tvs["available_for_generation"] is True
+    gate = tvs["primary"]["selected_lambda_observable_separation_gate"]
+    assert gate["thresholds"][
+        "minimum_adjacent_non_decreasing_path_fraction"
+    ] == 0.75
+    assert gate["monotone_path_fraction"] == pytest.approx(27.0 / 32.0)
+    assert gate["full_path_monotone_fraction_is_diagnostic_only"] is True
+    assert gate["accepted"] is True
 
 
 def test_structural_gate_unreachable_marks_calibration_cell_unavailable(

@@ -410,17 +410,20 @@ def protocol_config(
                 "formal seed, anchor, sample IDs, and pairing remain fixed"
             ),
             "structural_identifiability": (
-                "strict_common_factor_and_cross_series_pairs_are_retried_"
-                "until_their_positive_control_gate_passes"
+                "real_calibrated_common_factor_and_cross_series_pairs_use_"
+                "observable_aligned_selected_dose_gates_plus_separate_"
+                "lambda1_blind_positive_controls"
             ),
-            "cross_series_minimum_history_holdout_r2": (
-                v8.CROSS_SERIES_MIN_HOLDOUT_R2
+            "cross_series_minimum_incremental_history_holdout_gain": (
+                v8.CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN
             ),
             "common_factor_identifiability": (
-                "blind_rank1_panel_filter_no_generator_private_codebook"
+                "pca_share_above_finite_panel_floor_at_selected_dose_plus_"
+                "blind_rank1_counterfactual_control_at_lambda1"
             ),
             "cross_series_intensity_coordinate": (
-                "history_only_incremental_r2_with_fixed_responder_nuisance"
+                "time_reverse_null_corrected_history_only_incremental_gain_"
+                "with_public_lag_range_1_to_24"
             ),
             "family_intensity_scale": (
                 "joint_primary_secondary_family_mean_inverse_on_dataset_real_"

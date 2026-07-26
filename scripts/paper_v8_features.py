@@ -7,15 +7,18 @@ import numpy as np
 
 from synthetic_feature_profile import (
     feature_vector,
+    lead_lag_peak_abs,
+    lead_lag_peak_lag_abs,
     multitarget_features,
     regime_sparse_transition_score,
+    ridge_holdout_prediction,
     robust_scale,
     seasonal_modulation_features,
     spectral_time_scale_features,
 )
 
 
-FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v6"
+FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v7"
 LOCAL_TREND_WINDOW = 96
 LOCAL_TREND_HARMONIC_COUNT = 6
 LOCAL_TREND_MAX_REMOVED_PERIOD = 84.0
@@ -324,6 +327,125 @@ def _mean_finite(rows: list[dict[str, float]], name: str) -> float | None:
     return float(np.mean(values)) if values else None
 
 
+def _best_cross_series_holdout_gains(
+    values: np.ndarray,
+    *,
+    max_lag: int,
+) -> np.ndarray:
+    """Return the searched directed-lag gain for each destination.
+
+    This is the compact Paper-v8 search model: a destination's own recent
+    history is the baseline and one source/lag candidate is added at a time.
+    Keeping the per-destination results lets the caller pair the forward
+    search with an identically searched null coordinate.
+    """
+
+    matrix = np.asarray(values, dtype=float)
+    target_count = matrix.shape[1]
+    gains = np.full(target_count, np.nan, dtype=float)
+    lag_limit = min(
+        max(2, int(max_lag)),
+        96,
+        max(2, matrix.shape[0] // 5),
+    )
+    own_order = min(12, lag_limit)
+    if matrix.shape[0] < 3 * lag_limit:
+        return gains
+    scaled = np.column_stack(
+        [
+            robust_scale(matrix[:, target_index])
+            for target_index in range(target_count)
+        ]
+    )
+    sample_count = matrix.shape[0] - lag_limit
+    split = int(round(0.70 * sample_count))
+    minimum_holdout = max(24, own_order * 2)
+    split = min(split, sample_count - minimum_holdout)
+    if split <= max(24, 2 * own_order):
+        return gains
+
+    for target_index in range(target_count):
+        response = scaled[lag_limit:, target_index]
+        own = np.column_stack(
+            [
+                scaled[
+                    lag_limit - lag : matrix.shape[0] - lag,
+                    target_index,
+                ]
+                for lag in range(1, own_order + 1)
+            ]
+        )
+        own_prediction = ridge_holdout_prediction(own, response, split)
+        actual = response[split:]
+        own_error = float(np.sum((actual - own_prediction) ** 2))
+        if own_error <= 1e-12:
+            continue
+        best_gain = 0.0
+        for source_index in range(target_count):
+            if source_index == target_index:
+                continue
+            for lag in range(1, lag_limit + 1):
+                source = scaled[
+                    lag_limit - lag : matrix.shape[0] - lag,
+                    source_index,
+                ]
+                prediction = ridge_holdout_prediction(
+                    np.column_stack([own, source]),
+                    response,
+                    split,
+                )
+                full_error = float(np.sum((actual - prediction) ** 2))
+                candidate_gain = float(
+                    np.clip(
+                        (own_error - full_error) / own_error,
+                        0.0,
+                        1.0,
+                    )
+                )
+                best_gain = max(best_gain, candidate_gain)
+        gains[target_index] = best_gain
+    return gains
+
+
+def _paper_v8_cross_series_incremental_r2(
+    values: np.ndarray,
+    *,
+    max_lag: int,
+) -> float:
+    """Bias-correct the directed-lag search with a time-reversed null.
+
+    Maximizing held-out gain over every source and lag has a material positive
+    floor on a 168-point history, even for independent channels.  A persistent
+    common background can raise that floor further without a directed edge.
+    Reversing the entire visible panel preserves each channel, contemporaneous
+    dependence, candidate count, and fitting procedure while reversing
+    temporal direction.  Its same-destination best gain is therefore a paired,
+    deterministic null for both search bias and reversible common structure.
+
+    Positive forward-minus-reverse evidence is averaged over destinations.
+    A genuine source-to-destination lag remains positive for the destination;
+    the reverse-direction evidence lands on the source and cannot cancel it.
+    Both searches use only the supplied history and no generator metadata.
+    """
+
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] < 2:
+        return 0.0
+    forward = _best_cross_series_holdout_gains(
+        matrix,
+        max_lag=max_lag,
+    )
+    reverse = _best_cross_series_holdout_gains(
+        matrix[::-1],
+        max_lag=max_lag,
+    )
+    usable = np.isfinite(forward) & np.isfinite(reverse)
+    if not np.any(usable):
+        return 0.0
+    corrected = np.clip(forward[usable] - reverse[usable], 0.0, 1.0)
+    return float(np.mean(corrected))
+
+
 def v8_feature_vector(
     history: np.ndarray,
     season_length: int | None = None,
@@ -361,19 +483,38 @@ def v8_feature_vector(
         include_cross_series_predictability=False,
     )
     if include_cross_series_predictability and values.shape[1] > 1:
+        xsd_max_lag = (
+            int(cross_series_max_lag)
+            if cross_series_max_lag is not None
+            else min(
+                96,
+                max(48, 2 * int(season_length or 24)),
+            )
+        )
         output.update(
             multitarget_features(
                 values,
-                max_lag=(
-                    int(cross_series_max_lag)
-                    if cross_series_max_lag is not None
-                    else min(
-                        96,
-                        max(48, 2 * int(season_length or 24)),
+                max_lag=xsd_max_lag,
+                include_cross_series_predictability=False,
+            )
+        )
+        output.update(
+            {
+                "lead_lag_peak_abs": lead_lag_peak_abs(
+                    values,
+                    max_lag=xsd_max_lag,
+                ),
+                "lead_lag_peak_lag_abs": lead_lag_peak_lag_abs(
+                    values,
+                    max_lag=xsd_max_lag,
+                ),
+                "cross_series_incremental_r2": (
+                    _paper_v8_cross_series_incremental_r2(
+                        values,
+                        max_lag=xsd_max_lag,
                     )
                 ),
-                include_cross_series_predictability=True,
-            )
+            }
         )
     trend_decompositions = [
         _joinpoint_harmonic_decomposition(values[:, channel])

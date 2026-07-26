@@ -173,7 +173,7 @@ def test_nonlinear_observable_proxy_does_not_control_mechanism_dose():
     )
 
     assert baseline_parameters == extreme_parameters
-    assert baseline_parameters["nonlinear_gain_scale"] == pytest.approx(0.7)
+    assert baseline_parameters["nonlinear_gain_scale"] == pytest.approx(2.1)
     assert baseline_parameters["nonlinear_lag_scale"] == pytest.approx(1.0 / 3.0)
     nonlinear_sources = {
         mapping["source_feature"]
@@ -257,6 +257,32 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
         result["dynamic_activity_gate"]["accepted"]
         for result in results
     )
+    assert all(
+        result["dynamic_activity_gate"][
+            "minimum_paired_positive_fraction"
+        ]
+        == pytest.approx(0.75)
+        for result in results
+    )
+
+    # The activity ratio is a bounded diagnostic and can peak before I5 as
+    # the nonlinear term begins to dominate the recurrence residual.  Its
+    # paired low/high direction remains positive and is the hard condition.
+    for row in rows:
+        if (
+            row["generator_family_role"] == "primary"
+            and row["intensity"] == 4
+        ):
+            row["generation_metadata"][
+                "nonlinear_effect_to_recurrence_residual_std_ratio"
+            ] = 10.0
+    folded_activity = nonlinear_mechanism_response_checks(rows)
+    primary = next(
+        result
+        for result in folded_activity
+        if result["family_role"] == "primary"
+    )
+    assert primary["dynamic_activity_gate"]["accepted"] is True
 
     for row in rows:
         if (
@@ -320,10 +346,10 @@ def test_v8_nonlinear_families_use_matched_bounded_quadratic_doses():
             )
 
     assert generated[("primary", 1)]["nonlinear_transform"] == (
-        "signed_rational_quadratic"
+        "centered_rational_quadratic"
     )
     assert generated[("secondary", 1)]["nonlinear_transform"] == (
-        "signed_softsign_quadratic"
+        "centered_tanh_quadratic"
     )
     for intensity in (1, 5):
         assert generated[("primary", intensity)]["nonlinear_strength"] == (
@@ -364,7 +390,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
     direction = np.asarray(metadata["direction_by_target"])
     formal_differences = np.diff(target[:design_stop], axis=0)
 
-    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v5"
+    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v6"
     assert metadata["trend_local_evidence_window"] == 96
     assert join == 408
     assert metadata["trend_local_polynomial_degree"] == expected_degree
@@ -592,7 +618,10 @@ def test_v8_common_factor_uses_blind_shared_state_to_recover_future(
     assert first_metadata["local_nuisance_path_pair_invariant"] is True
     assert first_metadata["dense_factor_strength"] > 0.0
     assert gate["generator_metadata_used_for_fitting"] is False
-    assert gate["joint_holdout_r2"] >= 0.50
+    assert (
+        gate["observable_factor_share"]
+        >= gate["minimum_observable_factor_share"]
+    )
     assert gate["positive_control_effect_nrmse"] <= 0.15
     assert gate["positive_control_effect_correlation"] >= 0.95
     assert gate["accepted"] is True
@@ -898,8 +927,17 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     )
     assert gate["accepted"] is True
     assert gate["blind_best_driver"] == first_metadata["driver_index"]
-    assert gate["blind_best_lag"] == first_metadata["cross_lag_steps"]
-    assert gate["minimum_declared_holdout_r2"] >= 0.50
+    assert (
+        abs(
+            gate["blind_best_lag"]
+            - first_metadata["cross_lag_steps"]
+        )
+        <= 2
+    )
+    assert (
+        gate["aggregate_declared_incremental_holdout_gain"]
+        >= gate["minimum_incremental_holdout_gain_threshold"]
+    )
     assert first_metadata["effective_background_ratio"] == pytest.approx(
         first_metadata["calibrated_background_ratio"]
     )

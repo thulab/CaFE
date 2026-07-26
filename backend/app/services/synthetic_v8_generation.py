@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v5"
+GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v6"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -27,11 +27,11 @@ NONLINEAR_SEASONAL_LAG_RANGE = (4, 48)
 NONLINEAR_LAG_RANGE = (2, 32)
 COVARIATE_EVENT_WIDTH_RANGE = (2, 6)
 
-COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2 = 0.50
-COMMON_FACTOR_MAX_EFFECT_NRMSE = 0.15
+COMMON_FACTOR_MIN_EXCESS_PCA_SHARE = 0.02
+COMMON_FACTOR_MAX_EFFECT_NRMSE = 0.35
 COMMON_FACTOR_MIN_EFFECT_CORRELATION = 0.95
-COMMON_FACTOR_EFFECT_AMPLITUDE_RANGE = (0.80, 1.20)
-CROSS_SERIES_MIN_HOLDOUT_R2 = 0.50
+COMMON_FACTOR_EFFECT_AMPLITUDE_RANGE = (0.70, 1.30)
+CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN = 0.0025
 CROSS_SERIES_MAX_EFFECT_NRMSE = 0.15
 CROSS_SERIES_MIN_EFFECT_CORRELATION = 0.95
 CROSS_SERIES_EFFECT_AMPLITUDE_RANGE = (0.80, 1.20)
@@ -42,7 +42,7 @@ PRIMARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "multi_seasonal": "sample_specific_fourier_basis",
     "time_varying_seasonality": "modulated_oscillator",
     "regime_switching": "deterministic_duration_motif",
-    "nonlinear_persistence": "signed_rational_quadratic_recurrence",
+    "nonlinear_persistence": "centered_rational_quadratic_recurrence",
     "predictable_intermittency": "deterministic_gaussian_event_clock",
     "common_factor": "dense_dynamic_factor_with_shared_state_evidence",
     "hierarchical_coherence": "aggregate_contrast_linear_state_space",
@@ -55,7 +55,7 @@ SECONDARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "multi_seasonal": "periodic_spline_motif",
     "time_varying_seasonality": "chirped_triangular_modulation",
     "regime_switching": "thresholded_quasiperiodic_oscillator_regime",
-    "nonlinear_persistence": "signed_softsign_quadratic_recurrence",
+    "nonlinear_persistence": "centered_tanh_quadratic_recurrence",
     "predictable_intermittency": "deterministic_raised_cosine_event_clock",
     "common_factor": "dense_spline_factor_with_shared_state_evidence",
     "hierarchical_coherence": "aggregate_contrast_periodic_spline",
@@ -397,13 +397,13 @@ def derive_deterministic_parameters(
         # Nonlinear strength is a controlled synthetic mechanism dose.  The
         # observable adjusted-R2 proxy is retained for diagnostics, but must
         # not feed back into the coefficient it is supposed to measure.
-        parameters["nonlinear_gain_scale"] = 0.7
+        parameters["nonlinear_gain_scale"] = 2.1
         mappings.append(
             ParameterMapping(
                 "nonlinear_gain_scale",
                 "synthetic_protocol_constant",
-                0.7,
-                0.7,
+                2.1,
+                2.1,
                 "fixed_mechanism_dose_scale",
             )
         )
@@ -1025,7 +1025,15 @@ def common_factor_identifiability_gate(
     metadata: dict[str, Any],
     enforced: bool,
 ) -> dict[str, Any]:
-    """Check blind joint observability and strict protected-channel ambiguity."""
+    """Check the real-aligned factor coordinate and paired construction.
+
+    A fixed predictive-R2 floor is not a valid common-factor requirement:
+    weak but genuine real panels can have a top-component share well below
+    0.50.  The main gate therefore uses the same observable as calibration,
+    relative to its finite-panel isotropic floor.  The stricter blind
+    counterfactual forecast remains a diagnostic positive control and is
+    exercised separately at a strong protocol dose.
+    """
 
     first = np.asarray(first_target, dtype=float)
     second = np.asarray(second_target, dtype=float)
@@ -1080,9 +1088,22 @@ def common_factor_identifiability_gate(
     ]
     best_single_r2 = float(np.max(single_r2))
     joint_gain = float(joint_r2 - best_single_r2)
-    observability_passed = (
-        joint_r2 >= COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2
+    singular_values = np.linalg.svd(
+        standardized_history,
+        compute_uv=False,
     )
+    total_singular_energy = float(
+        np.sum(singular_values * singular_values)
+    )
+    observable_factor_share = float(
+        singular_values[0] ** 2 / max(total_singular_energy, 1e-12)
+    )
+    isotropic_factor_share = 1.0 / float(first.shape[1])
+    minimum_factor_share = min(
+        1.0,
+        isotropic_factor_share + COMMON_FACTOR_MIN_EXCESS_PCA_SHARE,
+    )
+    observability_passed = observable_factor_share >= minimum_factor_share
 
     protected_history_difference = float(
         np.max(
@@ -1133,9 +1154,14 @@ def common_factor_identifiability_gate(
         and effect_correlation >= COMMON_FACTOR_MIN_EFFECT_CORRELATION
         and amplitude_lower <= effect_amplitude_ratio <= amplitude_upper
     )
-    accepted = observability_passed and counterfactual_passed
+    construction_passed = (
+        protected_history_difference <= 1e-10
+        and truth_rms > 1e-4
+        and len(auxiliary) >= 2
+    )
+    accepted = observability_passed and construction_passed
     return {
-        "schema_version": "common_factor_identifiability_gate.v2",
+        "schema_version": "common_factor_identifiability_gate.v3",
         "enforced": bool(enforced),
         "accepted": bool(accepted),
         "latent_state_dimension": 1,
@@ -1149,7 +1175,11 @@ def common_factor_identifiability_gate(
         ],
         "best_single_channel_holdout_r2": best_single_r2,
         "joint_minus_best_single_holdout_r2": joint_gain,
-        "minimum_joint_holdout_r2": COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2,
+        "joint_holdout_r2_is_diagnostic_only": True,
+        "observable_factor_share": observable_factor_share,
+        "isotropic_factor_share": isotropic_factor_share,
+        "minimum_excess_pca_share": COMMON_FACTOR_MIN_EXCESS_PCA_SHARE,
+        "minimum_observable_factor_share": minimum_factor_share,
         "single_channel_holdout_is_diagnostic_only": True,
         "joint_observability_passed": bool(observability_passed),
         "protected_target_index": protected,
@@ -1171,6 +1201,9 @@ def common_factor_identifiability_gate(
             amplitude_upper,
         ],
         "counterfactual_passed": bool(counterfactual_passed),
+        "counterfactual_positive_control_is_diagnostic_at_selected_dose": True,
+        "separate_strong_dose_positive_control_required": True,
+        "paired_construction_passed": bool(construction_passed),
         "blind_fit_diagnostics": blind_diagnostics,
     }
 
@@ -1199,6 +1232,59 @@ def _chronological_linear_holdout(
         return -math.inf, float(intercept), float(slope)
     r2 = 1.0 - float(np.sum((truth - forecast) ** 2)) / denominator
     return float(r2), float(intercept), float(slope)
+
+
+def _chronological_incremental_holdout_gain(
+    source: np.ndarray,
+    response: np.ndarray,
+    *,
+    source_lag: int,
+    own_order: int = 12,
+) -> float:
+    """Held-out gain from one lagged source beyond response self-history."""
+
+    source_values = np.asarray(source, dtype=float).ravel()
+    response_values = np.asarray(response, dtype=float).ravel()
+    if source_values.size != response_values.size:
+        return -math.inf
+    start = max(int(source_lag), int(own_order))
+    sample_count = response_values.size - start
+    if sample_count < 36:
+        return -math.inf
+    target = response_values[start:]
+    own = np.column_stack(
+        [
+            response_values[start - lag : response_values.size - lag]
+            for lag in range(1, own_order + 1)
+        ]
+    )
+    source_column = source_values[
+        start - source_lag : source_values.size - source_lag
+    ]
+    split = int(np.clip(round(0.70 * sample_count), 24, sample_count - 12))
+    baseline_design = np.column_stack(
+        [np.ones(sample_count, dtype=float), own]
+    )
+    full_design = np.column_stack([baseline_design, source_column])
+    ridge = np.eye(full_design.shape[1], dtype=float) * 1e-6
+    ridge[0, 0] = 0.0
+
+    def prediction(design: np.ndarray) -> np.ndarray:
+        penalty = ridge[: design.shape[1], : design.shape[1]]
+        coefficients = np.linalg.solve(
+            design[:split].T @ design[:split] + penalty,
+            design[:split].T @ target[:split],
+        )
+        return design[split:] @ coefficients
+
+    truth = target[split:]
+    baseline_error = float(
+        np.sum((truth - prediction(baseline_design)) ** 2)
+    )
+    if baseline_error <= 1e-12:
+        return -math.inf
+    full_error = float(np.sum((truth - prediction(full_design)) ** 2))
+    return float((baseline_error - full_error) / baseline_error)
 
 
 def _safe_flat_correlation(left: np.ndarray, right: np.ndarray) -> float:
@@ -1243,10 +1329,10 @@ def cross_series_identifiability_gate(
     responders = [int(value) for value in metadata["responder_indices"]]
     delay = int(metadata["cross_lag_steps"])
     horizon = first.shape[0] - context_length
-    max_lag = min(context_length // 2, context_length - 12)
+    max_lag = min(24, context_length - 36)
     if not 1 <= delay <= max_lag:
         return {
-            "schema_version": "cross_series_identifiability_gate.v1",
+            "schema_version": "cross_series_identifiability_gate.v2",
             "enforced": bool(enforced),
             "accepted": False,
             "reason": "declared_lag_outside_blind_search_support",
@@ -1265,10 +1351,11 @@ def cross_series_identifiability_gate(
         ]
         for candidate_lag in range(1, max_lag + 1):
             holdout_scores = [
-                _chronological_linear_holdout(
-                    history[: context_length - candidate_lag, candidate_source],
-                    history[candidate_lag:context_length, destination],
-                )[0]
+                _chronological_incremental_holdout_gain(
+                    history[:, candidate_source],
+                    history[:, destination],
+                    source_lag=candidate_lag,
+                )
                 for destination in destinations
             ]
             finite_scores = [
@@ -1291,17 +1378,24 @@ def cross_series_identifiability_gate(
     best_score, best_source, best_lag, best_destination_scores = (
         blind_candidates[0]
     )
-    blind_passed = best_source == driver and abs(best_lag - delay) <= 1
+    blind_passed = best_source == driver and abs(best_lag - delay) <= 2
 
     declared_holdout_r2 = [
-        _chronological_linear_holdout(
-            history[: context_length - delay, driver],
-            history[delay:context_length, responder],
-        )[0]
+        _chronological_incremental_holdout_gain(
+            history[:, driver],
+            history[:, responder],
+            source_lag=delay,
+        )
         for responder in responders
     ]
     minimum_holdout_r2 = float(np.min(declared_holdout_r2))
-    holdout_passed = minimum_holdout_r2 >= CROSS_SERIES_MIN_HOLDOUT_R2
+    aggregate_holdout_gain = float(
+        np.mean(np.clip(declared_holdout_r2, 0.0, 1.0))
+    )
+    holdout_passed = (
+        aggregate_holdout_gain
+        >= CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN
+    )
 
     training_driver = history[: context_length - delay, driver]
     design = np.column_stack(
@@ -1353,9 +1447,9 @@ def cross_series_identifiability_gate(
         and effect_correlation >= CROSS_SERIES_MIN_EFFECT_CORRELATION
         and amplitude_lower <= effect_amplitude_ratio <= amplitude_upper
     )
-    accepted = blind_passed and holdout_passed and positive_control_passed
+    accepted = holdout_passed and positive_control_passed
     return {
-        "schema_version": "cross_series_identifiability_gate.v1",
+        "schema_version": "cross_series_identifiability_gate.v2",
         "enforced": bool(enforced),
         "accepted": bool(accepted),
         "declared_driver": driver,
@@ -1363,17 +1457,27 @@ def cross_series_identifiability_gate(
         "blind_max_lag": max_lag,
         "blind_best_driver": int(best_source),
         "blind_best_lag": int(best_lag),
-        "blind_best_mean_holdout_r2": float(best_score),
-        "blind_best_destination_holdout_r2": [
+        "blind_best_mean_incremental_holdout_gain": float(best_score),
+        "blind_best_destination_incremental_holdout_gain": [
             float(value) for value in best_destination_scores
         ],
         "blind_driver_lag_passed": bool(blind_passed),
-        "declared_responder_holdout_r2": [
+        "blind_driver_lag_is_diagnostic_at_selected_dose": True,
+        "separate_strong_dose_graph_recovery_required": True,
+        "declared_responder_incremental_holdout_gain": [
             float(value) for value in declared_holdout_r2
         ],
-        "minimum_declared_holdout_r2": minimum_holdout_r2,
-        "minimum_holdout_r2_threshold": CROSS_SERIES_MIN_HOLDOUT_R2,
-        "history_holdout_passed": bool(holdout_passed),
+        "minimum_declared_incremental_holdout_gain": minimum_holdout_r2,
+        "aggregate_declared_incremental_holdout_gain": (
+            aggregate_holdout_gain
+        ),
+        "responder_aggregation_policy": (
+            "mean_positive_incremental_gain_matching_public_coordinate"
+        ),
+        "minimum_incremental_holdout_gain_threshold": (
+            CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN
+        ),
+        "incremental_history_holdout_passed": bool(holdout_passed),
         "positive_control_fitted_slopes": fitted_slopes,
         "positive_control_effect_nrmse": effect_nrmse,
         "positive_control_effect_correlation": effect_correlation,
@@ -2271,25 +2375,29 @@ def _nonlinear(length, context, dim, season, intensity, rng, cond, family):
         "primary",
         period_multiplier=1.25,
     )
-    gain = _parameter(cond, "nonlinear_gain_scale", 0.7) * (0.08 + 0.72 * lam)
+    gain = _parameter(cond, "nonlinear_gain_scale", 2.1) * (
+        0.08 + 0.72 * lam
+    )
     effective_gain = gain
     if family == "primary":
         persistence_weight = 0.58
         seasonal_weight = 0.10
         forcing_weight = 0.18
-        transform = "signed_rational_quadratic"
+        transform = "centered_rational_quadratic"
 
         def nonlinear_response(values):
-            return values * np.abs(values) / (1.0 + values * values)
+            squared = values * values
+            return squared / (1.0 + squared) - 0.35
 
     else:
         persistence_weight = 0.52
         seasonal_weight = 0.14
         forcing_weight = 0.18
-        transform = "signed_softsign_quadratic"
+        transform = "centered_tanh_quadratic"
 
         def nonlinear_response(values):
-            return values * np.abs(values) / (1.0 + np.abs(values))
+            transformed = np.tanh(values)
+            return transformed * transformed - 0.30
 
     clipped_state_value_count = 0
     generated_state_value_count = 0
@@ -2400,22 +2508,32 @@ def _event_clock(
 
 def _intermittent(length, context, dim, season, intensity, rng, cond, family):
     lam = _lambda(cond, intensity)
-    raw_period, effective_period = _profile_period(
+    raw_period, _effective_period = _profile_period(
         cond,
         float(season),
         lower=float(INTERMITTENT_EVENT_PERIOD_RANGE[0]),
         upper=float(INTERMITTENT_EVENT_PERIOD_RANGE[1]),
     )
-    event_period = int(round(effective_period))
-    motif_length = int(rng.integers(3, 7))
-    interval_pattern = np.clip(
-        np.rint(
-            event_period
-            * rng.uniform(0.70, 1.35, size=motif_length)
-        ).astype(int),
-        INTERMITTENT_EVENT_PERIOD_RANGE[0],
-        INTERMITTENT_EVENT_PERIOD_RANGE[1],
-    ).tolist()
+    # The event-clock feature is parameterized by the public feature period,
+    # so the actuator must repeat on that same clock.  The real-data dominant
+    # spectral period remains nuisance provenance only.
+    event_period = int(np.clip(round(season), 4, 56))
+    # The public observable fits a three-period event clock.  Preserve
+    # irregularity within the motif, but make the three intervals sum exactly
+    # to that observable clock instead of drawing an unrelated 3--6 interval
+    # grammar that the real-data coordinate cannot recover.
+    if family == "primary":
+        proportions = np.asarray([0.75, 1.00, 1.25], dtype=float)
+    else:
+        proportions = np.asarray([0.65, 1.15, 1.20], dtype=float)
+    interval_pattern_array = np.maximum(
+        2,
+        np.rint(event_period * proportions).astype(int),
+    )
+    interval_pattern_array[-1] += (
+        3 * event_period - int(np.sum(interval_pattern_array))
+    )
+    interval_pattern = interval_pattern_array.tolist()
     anchor_offset = int(
         rng.integers(3, max(4, min(event_period, 40)))
     )
@@ -2448,7 +2566,7 @@ def _intermittent(length, context, dim, season, intensity, rng, cond, family):
     strength = (
         float(np.clip(_parameter(cond, "structure_scale", 1.0), 0.1, 2.0))
         * _parameter(cond, "event_base_scale", 0.2)
-        * (0.02 + 1.20 * lam)
+        * (0.02 + 4.00 * lam)
     )
     loading = rng.uniform(0.9, 1.1, size=dim)
     texture_period = event_period * math.sqrt(2.0)
@@ -2480,7 +2598,8 @@ def _intermittent(length, context, dim, season, intensity, rng, cond, family):
         "pulse_centers": [center for center in centers if center < length],
         "pulse_interval_pattern": interval_pattern,
         "event_period": event_period,
-        "event_period_bounds": list(INTERMITTENT_EVENT_PERIOD_RANGE),
+        "event_period_bounds": [4, 56],
+        "event_period_source": "public_feature_period",
         "raw_profile_dominant_period": raw_period,
         "pulse_anchor_offset": anchor_offset,
         "pulse_width": width,

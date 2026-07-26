@@ -31,7 +31,7 @@ from app.services.synthetic_generator_conditioning import (  # noqa: E402
     REAL_BOUNDED_INTENSITY_POLICY_ID,
 )
 from app.services.synthetic_v8_generation import (  # noqa: E402
-    CROSS_SERIES_MIN_HOLDOUT_R2,
+    CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN,
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
@@ -62,7 +62,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v20"
+SCHEMA_VERSION = "paper_v8_pipeline.v22"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
@@ -138,6 +138,27 @@ REAL_INTENSITY_SOURCE_BY_CAPABILITY = {
 }
 MINIMUM_REAL_OVERLAP_FRACTION = 0.10
 MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION = 0.25
+MINIMUM_ADJACENT_NON_DECREASING_PATH_FRACTION = 0.75
+MINIMUM_PAIRED_OBSERVABLE_RESPONSE_Z = 3.0
+OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY = {
+    capability_id: {
+        "minimum_adjacent_non_decreasing_path_fraction": (
+            MINIMUM_ADJACENT_NON_DECREASING_PATH_FRACTION
+        ),
+        "minimum_paired_standardized_separation": (
+            MINIMUM_PAIRED_OBSERVABLE_RESPONSE_Z
+        ),
+    }
+    for capability_id in (
+        "multi_seasonal",
+        "time_varying_seasonality",
+        "regime_switching",
+        "nonlinear_persistence",
+        "predictable_intermittency",
+        "common_factor",
+        "cross_series_dependence",
+    )
+}
 
 
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
@@ -1722,6 +1743,9 @@ def measured_features(
         include_cross_series_predictability=(
             capability_id == "cross_series_dependence"
         ),
+        cross_series_max_lag=(
+            24 if capability_id == "cross_series_dependence" else None
+        ),
     )
     if capability_id == "nonlinear_persistence":
         nonlinear_strength = float(
@@ -1898,29 +1922,98 @@ def structural_calibration_reachability(
                 qualification_path_index=seed_index,
                 counterfactual_variant=1,
             )
-        path_gates.append(
-            structural_calibration_member_gate(
+        selected_dose_gate = structural_calibration_member_gate(
+            capability_id,
+            np.asarray(first["target"], dtype=float),
+            context_length=CONTEXT_LENGTH,
+            metadata=first["generation_metadata"],
+            second_target=(
+                None
+                if second is None
+                else np.asarray(second["target"], dtype=float)
+            ),
+            first_covariates=(
+                None
+                if first["covariates"] is None
+                else np.asarray(first["covariates"], dtype=float)
+            ),
+            second_covariates=(
+                None
+                if second is None or second["covariates"] is None
+                else np.asarray(second["covariates"], dtype=float)
+            ),
+        )
+        if capability_id in {
+            "common_factor",
+            "cross_series_dependence",
+        }:
+            _strong_features, strong_first = generate_calibration_member(
+                dataset,
+                anchor,
+                capability_id=capability_id,
+                family_role=family_role,
+                lambda_value=1.0,
+                qualification_path_index=seed_index,
+                counterfactual_variant=0,
+            )
+            _strong_features, strong_second = generate_calibration_member(
+                dataset,
+                anchor,
+                capability_id=capability_id,
+                family_role=family_role,
+                lambda_value=1.0,
+                qualification_path_index=seed_index,
+                counterfactual_variant=1,
+            )
+            strong_dose_gate = structural_calibration_member_gate(
                 capability_id,
-                np.asarray(first["target"], dtype=float),
+                np.asarray(strong_first["target"], dtype=float),
                 context_length=CONTEXT_LENGTH,
-                metadata=first["generation_metadata"],
-                second_target=(
-                    None
-                    if second is None
-                    else np.asarray(second["target"], dtype=float)
-                ),
-                first_covariates=(
-                    None
-                    if first["covariates"] is None
-                    else np.asarray(first["covariates"], dtype=float)
-                ),
-                second_covariates=(
-                    None
-                    if second is None or second["covariates"] is None
-                    else np.asarray(second["covariates"], dtype=float)
+                metadata=strong_first["generation_metadata"],
+                second_target=np.asarray(
+                    strong_second["target"],
+                    dtype=float,
                 ),
             )
-        )
+            if capability_id == "common_factor":
+                strong_positive_control_passed = bool(
+                    strong_dose_gate.get("counterfactual_passed", False)
+                    and strong_dose_gate.get(
+                        "joint_observability_passed",
+                        False,
+                    )
+                )
+            else:
+                strong_positive_control_passed = bool(
+                    strong_dose_gate.get(
+                        "blind_driver_lag_passed",
+                        False,
+                    )
+                    and strong_dose_gate.get(
+                        "incremental_history_holdout_passed",
+                        False,
+                    )
+                    and strong_dose_gate.get(
+                        "positive_control_passed",
+                        False,
+                    )
+                )
+            selected_dose_gate = {
+                **selected_dose_gate,
+                "selected_real_calibrated_dose_accepted": bool(
+                    selected_dose_gate["accepted"]
+                ),
+                "strong_dose_positive_control": {
+                    "lambda_value": 1.0,
+                    "accepted": strong_positive_control_passed,
+                    "gate": strong_dose_gate,
+                },
+                "accepted": bool(
+                    selected_dose_gate["accepted"]
+                    and strong_positive_control_passed
+                ),
+            }
+        path_gates.append(selected_dose_gate)
     return summarize_structural_calibration_reachability(
         capability_id,
         family_role=family_role,
@@ -2275,6 +2368,230 @@ def selected_response_hard_failure_reasons(
     return reasons
 
 
+def observable_response_separation_gate(
+    support_detection: dict[str, Any],
+    selected_lambdas: Iterable[float],
+    *,
+    minimum_adjacent_non_decreasing_path_fraction: float,
+    minimum_paired_standardized_separation: float,
+) -> dict[str, Any]:
+    """Qualify selected doses in observable feature space.
+
+    The raw generator coefficient is not an observable intensity coordinate,
+    so a compact lambda interval is not itself a failure.  Instead, selected
+    levels must remain ordered on enough independently sampled qualification
+    paths and adjacent family-mean levels must be separated relative to the
+    between-path feature variability.
+    """
+
+    policy = (
+        "selected_dose_paired_difference_observable_separation_v2"
+    )
+    reason_codes: list[str] = []
+    validation_errors: list[str] = []
+    try:
+        raw_grid = np.asarray(
+            support_detection["raw_lambda_grid"],
+            dtype=float,
+        )
+        path_curves = np.asarray(
+            support_detection["per_path_raw_response_curves"],
+            dtype=float,
+        )
+        selected = np.asarray(tuple(selected_lambdas), dtype=float)
+    except (KeyError, TypeError, ValueError):
+        raw_grid = np.asarray([], dtype=float)
+        path_curves = np.empty((0, 0), dtype=float)
+        selected = np.asarray([], dtype=float)
+        validation_errors.append("qualification_path_response_data_missing")
+
+    if raw_grid.ndim != 1 or raw_grid.size < 2:
+        validation_errors.append("raw_lambda_grid_invalid")
+    if (
+        path_curves.ndim != 2
+        or path_curves.shape[0] < 2
+        or path_curves.shape[1] != raw_grid.size
+    ):
+        validation_errors.append("qualification_path_response_shape_invalid")
+    if selected.ndim != 1 or selected.size < 2:
+        validation_errors.append("selected_lambda_grid_invalid")
+    if (
+        not validation_errors
+        and (
+            not np.isfinite(raw_grid).all()
+            or not np.isfinite(path_curves).all()
+            or not np.isfinite(selected).all()
+        )
+    ):
+        validation_errors.append("observable_response_inputs_nonfinite")
+    if not validation_errors and np.any(np.diff(raw_grid) <= 0.0):
+        validation_errors.append("raw_lambda_grid_not_strictly_increasing")
+    if not validation_errors and np.any(np.diff(selected) <= 0.0):
+        validation_errors.append("selected_lambdas_not_strictly_increasing")
+    if (
+        not validation_errors
+        and (
+            float(selected[0]) < float(raw_grid[0]) - 1e-12
+            or float(selected[-1]) > float(raw_grid[-1]) + 1e-12
+        )
+    ):
+        validation_errors.append("selected_lambdas_outside_raw_grid")
+
+    base_record = {
+        "policy": policy,
+        "lambda_span_used_as_hard_gate": False,
+        "thresholds": {
+            "minimum_adjacent_non_decreasing_path_fraction": float(
+                minimum_adjacent_non_decreasing_path_fraction
+            ),
+            "minimum_paired_standardized_separation": float(
+                minimum_paired_standardized_separation
+            ),
+        },
+        "selected_lambdas": selected.tolist(),
+        "qualification_path_count": int(
+            path_curves.shape[0]
+            if path_curves.ndim == 2
+            else 0
+        ),
+    }
+    if validation_errors:
+        return {
+            **base_record,
+            "accepted": False,
+            "reason_codes": ["observable_response_separation_gate_invalid"],
+            "validation_errors": list(dict.fromkeys(validation_errors)),
+            "monotone_path_fraction": None,
+            "minimum_adjacent_non_decreasing_path_fraction": None,
+            "minimum_paired_standardized_separation": None,
+            "adjacent_level_diagnostics": [],
+        }
+
+    selected_path_responses = np.asarray(
+        [
+            np.interp(selected, raw_grid, path_response)
+            for path_response in path_curves
+        ],
+        dtype=float,
+    )
+    response_scale = max(
+        float(np.max(np.abs(selected_path_responses))),
+        1.0,
+    )
+    numerical_tolerance = max(
+        32.0 * np.finfo(float).eps * response_scale,
+        1e-12,
+    )
+    adjacent_differences = np.diff(selected_path_responses, axis=1)
+    monotone_paths = np.all(
+        adjacent_differences >= -numerical_tolerance,
+        axis=1,
+    )
+    monotone_path_fraction = float(np.mean(monotone_paths))
+    adjacent_diagnostics: list[dict[str, Any]] = []
+    paired_standardized_separations: list[float] = []
+    adjacent_non_decreasing_fractions: list[float] = []
+    for level_index in range(selected.size - 1):
+        left = selected_path_responses[:, level_index]
+        right = selected_path_responses[:, level_index + 1]
+        left_std = float(np.std(left, ddof=1))
+        right_std = float(np.std(right, ddof=1))
+        pooled_path_std = float(
+            math.sqrt(0.5 * (left_std**2 + right_std**2))
+        )
+        mean_gap = float(np.mean(right) - np.mean(left))
+        paired_differences = right - left
+        paired_difference_std = float(
+            np.std(paired_differences, ddof=1)
+        )
+        paired_standard_error = float(
+            paired_difference_std / math.sqrt(path_curves.shape[0])
+        )
+        paired_standardized_separation = float(
+            mean_gap / max(paired_standard_error, numerical_tolerance)
+        )
+        pooled_standardized_separation = float(
+            mean_gap / max(pooled_path_std, numerical_tolerance)
+        )
+        non_decreasing_fraction = float(
+            np.mean(
+                adjacent_differences[:, level_index]
+                >= -numerical_tolerance
+            )
+        )
+        paired_standardized_separations.append(
+            paired_standardized_separation
+        )
+        adjacent_non_decreasing_fractions.append(
+            non_decreasing_fraction
+        )
+        adjacent_diagnostics.append(
+            {
+                "left_level_index": int(level_index),
+                "right_level_index": int(level_index + 1),
+                "left_lambda": float(selected[level_index]),
+                "right_lambda": float(selected[level_index + 1]),
+                "left_mean_response": float(np.mean(left)),
+                "right_mean_response": float(np.mean(right)),
+                "mean_response_gap": mean_gap,
+                "left_path_standard_deviation": left_std,
+                "right_path_standard_deviation": right_std,
+                "pooled_path_standard_deviation": pooled_path_std,
+                "pooled_level_standardized_separation_diagnostic": (
+                    pooled_standardized_separation
+                ),
+                "paired_difference_standard_deviation": (
+                    paired_difference_std
+                ),
+                "paired_difference_standard_error": paired_standard_error,
+                "paired_standardized_separation": (
+                    paired_standardized_separation
+                ),
+                "non_decreasing_path_fraction": non_decreasing_fraction,
+            }
+        )
+    minimum_paired_separation = float(
+        min(paired_standardized_separations)
+    )
+    minimum_adjacent_fraction = float(
+        min(adjacent_non_decreasing_fractions)
+    )
+    if (
+        minimum_adjacent_fraction + 1e-12
+        < minimum_adjacent_non_decreasing_path_fraction
+    ):
+        reason_codes.append(
+            "insufficient_adjacent_non_decreasing_path_fraction"
+        )
+    if (
+        minimum_paired_separation + 1e-12
+        < minimum_paired_standardized_separation
+    ):
+        reason_codes.append(
+            "insufficient_paired_observable_response_separation"
+        )
+    return {
+        **base_record,
+        "accepted": not reason_codes,
+        "reason_codes": reason_codes,
+        "validation_errors": [],
+        "path_direction_policy": (
+            "minimum_adjacent_non_decreasing_fraction"
+        ),
+        "monotonicity_numerical_tolerance": numerical_tolerance,
+        "monotone_path_count": int(np.sum(monotone_paths)),
+        "monotone_path_fraction": monotone_path_fraction,
+        "minimum_adjacent_non_decreasing_path_fraction": (
+            minimum_adjacent_fraction
+        ),
+        "minimum_paired_standardized_separation": (
+            minimum_paired_separation
+        ),
+        "full_path_monotone_fraction_is_diagnostic_only": True,
+        "adjacent_level_diagnostics": adjacent_diagnostics,
+    }
+
+
 def calibrate_capabilities(
     dataset: DatasetSpec,
     anchors: list[dict[str, Any]],
@@ -2503,6 +2820,7 @@ def calibrate_capabilities(
         primary_mapped_span_fraction: float | None = None
         secondary_mapped_span_fraction: float | None = None
         inverse_failure_reasons: dict[str, list[str]] = {}
+        observable_response_gates: dict[str, dict[str, Any]] = {}
         structural_reachability: dict[str, Any] | None = None
         if not unavailable_reasons:
             primary_lambdas = inverse_response_lambdas(
@@ -2523,20 +2841,26 @@ def calibrate_capabilities(
                 (secondary_lambdas[-1] - secondary_lambdas[0])
                 / max(float(secondary_grid[-1] - secondary_grid[0]), 1e-12)
             )
-            if (
-                primary_mapped_span_fraction
-                < MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
-            ):
-                unavailable_reasons.append(
-                    "real_reference_maps_to_insufficient_primary_lambda_span"
+            observable_gate_policy = (
+                OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY.get(
+                    capability_id
                 )
-            if (
-                secondary_mapped_span_fraction
-                < MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
-            ):
-                unavailable_reasons.append(
-                    "real_reference_maps_to_insufficient_secondary_lambda_span"
-                )
+            )
+            if observable_gate_policy is None:
+                if (
+                    primary_mapped_span_fraction
+                    < MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
+                ):
+                    unavailable_reasons.append(
+                        "real_reference_maps_to_insufficient_primary_lambda_span"
+                    )
+                if (
+                    secondary_mapped_span_fraction
+                    < MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
+                ):
+                    unavailable_reasons.append(
+                        "real_reference_maps_to_insufficient_secondary_lambda_span"
+                    )
             inverse_failure_reasons = {
                 "primary_inverse": inverse_mapping_hard_failure_reasons(
                     np.asarray(primary_targets, dtype=float),
@@ -2581,6 +2905,42 @@ def calibrate_capabilities(
                 unavailable_reasons.extend(
                     f"{family_name}:{reason}" for reason in reasons
                 )
+            if observable_gate_policy is not None:
+                for (
+                    family_name,
+                    family_support,
+                    family_lambdas,
+                ) in (
+                    (
+                        "primary",
+                        primary_support,
+                        primary_lambdas,
+                    ),
+                    (
+                        "secondary",
+                        secondary_support,
+                        secondary_lambdas,
+                    ),
+                ):
+                    gate = observable_response_separation_gate(
+                        family_support,
+                        family_lambdas,
+                        minimum_adjacent_non_decreasing_path_fraction=float(
+                            observable_gate_policy[
+                                "minimum_adjacent_non_decreasing_path_fraction"
+                            ]
+                        ),
+                        minimum_paired_standardized_separation=float(
+                            observable_gate_policy[
+                                "minimum_paired_standardized_separation"
+                            ]
+                        ),
+                    )
+                    observable_response_gates[family_name] = gate
+                    unavailable_reasons.extend(
+                        f"{family_name}_observable_response_gate:{reason}"
+                        for reason in gate["reason_codes"]
+                    )
         if (
             not unavailable_reasons
             and capability_id in STRUCTURAL_CAPABILITIES
@@ -2641,8 +3001,22 @@ def calibrate_capabilities(
                 "primary": primary_mapped_span_fraction,
                 "secondary": secondary_mapped_span_fraction,
             },
+            "mapped_lambda_span_usage": (
+                "diagnostic_only_observable_response_gate_replaces_threshold"
+                if capability_id
+                in OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY
+                else "legacy_hard_minimum"
+            ),
             "minimum_lambda_span_fraction_for_use": (
-                MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
+                None
+                if capability_id
+                in OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY
+                else MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
+            ),
+            "observable_response_separation_policy": (
+                OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY.get(
+                    capability_id
+                )
             ),
             "unavailable_reason_codes": unavailable_reasons,
             "formal_seed_inverse": False,
@@ -2665,6 +3039,9 @@ def calibrate_capabilities(
                 "accepted": not any(inverse_failure_reasons.values()),
                 "failure_reasons": inverse_failure_reasons,
             },
+            "selected_lambda_observable_separation_gate": (
+                observable_response_gates.get("primary")
+            ),
             "structural_gate_reachability": structural_reachability,
         }
         secondary_record = {
@@ -2683,6 +3060,9 @@ def calibrate_capabilities(
             "selected_target_values": list(secondary_selected_response),
             "matched_primary_target_values": (
                 primary_targets.tolist() if secondary_lambdas else []
+            ),
+            "selected_lambda_observable_separation_gate": (
+                observable_response_gates.get("secondary")
             ),
         }
         if unavailable_reasons:
@@ -2727,7 +3107,7 @@ def calibrate_capabilities(
         }
         available_capabilities.append(capability_id)
     return {
-        "schema_version": "paper_v8_capability_calibration.v12",
+        "schema_version": "paper_v8_capability_calibration.v14",
         "generator_version": GENERATOR_VERSION,
         "intensity_policy": {
             "policy_id": (
@@ -2741,6 +3121,20 @@ def calibrate_capabilities(
             "minimum_mapped_lambda_span_fraction": (
                 MINIMUM_MAPPED_LAMBDA_SPAN_FRACTION
             ),
+            "mapped_lambda_span_policy": {
+                "diagnostic_only_capabilities": sorted(
+                    OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY
+                ),
+                "legacy_hard_gate_capabilities": sorted(
+                    set(CAPABILITIES)
+                    - set(
+                        OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY
+                    )
+                ),
+                "observable_response_separation_by_capability": (
+                    OBSERVABLE_RESPONSE_SEPARATION_POLICY_BY_CAPABILITY
+                ),
+            },
             "generator_relative_fallback_allowed": False,
             "unavailable_cell_generation_policy": "skip",
         },

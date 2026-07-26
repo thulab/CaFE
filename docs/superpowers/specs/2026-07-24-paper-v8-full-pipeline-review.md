@@ -207,17 +207,19 @@ I1–I5 使用数据集×family 级标尺，不做逐正式 seed 的精确反解
 2. 用独立 qualification path pool 在 21 个 λ 点分别估计 primary 和 secondary
    family mean `lambda → realized feature` response curve；
 3. 取真实区间、primary support 和 secondary support 的共同交集。共同交集必须
-   覆盖真实 `q10–q90` span 的 10% 以上，且反解后在两个 family 中都必须覆盖各自
-   可用 λ support 的至少 25%；
+   覆盖真实 `q10–q90` span 的 10% 以上。raw λ span 仅作诊断；准入改由
+   qualification paths 上的 paired observable gate 决定：每一对相邻档至少
+   75% path 同向，且配对差分的标准化分离度至少为 3；
 4. 在共同交集内等距放置五个真实来源目标，并分别反解两个 family 的 λ；
 5. 正式 seed 按指定 seed index 生成不同 anchor、相位和 nuisance，但不重新
    计算 21 点曲线，也不因单样本偏离参考目标而拒绝。
 
 对结构能力还要在独立 qualification path bank 上，用 primary family 精确的
-selected-I5 λ 运行正式结构 hard gate。四种结构能力的 qualification path 必须
-100% 通过；否则会出现校准接受部分可达的结构能力、正式生成却在某个固定 seed
-耗尽候选预算的契约冲突。缺失路径、畸形结果或任一路径不通过均把当前 cell 标为
-unavailable。
+selected-I5 λ 运行与真实 observable 对齐的结构 gate。common factor 和
+cross-series 另外在 `λ=1` 运行盲正控：前者要求 joint-factor 反事实恢复，
+后者要求 driver/lag 恢复、增量预测和反事实恢复同时通过。四种结构能力的
+qualification path 必须 100% 通过；缺失路径、畸形结果或任一路径不通过均把
+当前 cell 标为 unavailable。
 该检查不运行 near-distance，也不通过扩大 path 数量掩盖系统性结构不可达。
 
 任一真实主特征或共同支持条件失败时，该 `dataset × capability` 记为 unavailable，
@@ -234,7 +236,7 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 差异只作非阻断诊断；只有 family mean response 退化或不可逆才依次扩到
 64、96，达到上限仍失败则显式终止。正式 seed 的编号、anchor、path、样本 ID
 和 sensitivity 身份保持确定性。最多五个候选 path 的重试只服务于数值合法性、
-启用时的 anti-copy gate，以及 strict common-factor/cross-series 结构正控，
+启用时的 anti-copy gate，以及 selected-dose paired construction gate，
 不服务于贴合真实特征目标。当前不自动把过窄的真实强度抬升到统一下限。
 
 ## 十种能力的当前生成与评分
@@ -245,7 +247,7 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 | multi-seasonal | sample-specific Fourier basis | `multi_period_score` | `seasonal_spectral_amplitude_relative_error` |
 | time-varying seasonality | modulated oscillator | `seasonal_amplitude_modulation` | `instantaneous_frequency_nmae` |
 | regime switching | deterministic duration motif | `regime_sparse_transition_score` | `regime_jump_nmae` |
-| nonlinear persistence | signed rational quadratic recurrence | `nonlinear_conditional_effect_size` | `nonlinear_recurrence_residual_nrmse` |
+| nonlinear persistence | centered bounded quadratic recurrence | `nonlinear_conditional_effect_size` | `nonlinear_recurrence_residual_nrmse` |
 | predictable intermittency | deterministic Gaussian event clock | `event_positive_residual_energy_share` | `event_window_nmae` |
 | common factor | dense dynamic factor with joint-state relay | `pca_top1_explained` | `common_component_nmae` |
 | hierarchical coherence | aggregate/contrast linear state space | `hierarchy_child_heterogeneity` | `child_contrast_nmae` |
@@ -337,10 +339,12 @@ anti-copy 尾部，而不是把单次查询的 p05 假阳性率重复应用到�
 MASE denominator，不加任意数值 floor，并在样本与 validation audit 中记录
 effective period 和 fallback 计数。
 
-cross-series strict gate 要求盲搜索找对 driver 与 lag、反事实正控恢复通过，并且
-声明边在 chronology holdout 上至少解释 50% 响应方差。`R² >= 0.5` 只承担
-“依赖强度不是微弱信号”的下限；结构识别本身由正确 edge/lag 和正控指标判断，
-不再用 `R² >= 0.8` 把“响应几乎纯线性”误当作“结构可识别”的必要条件。
+cross-series 的真实与合成坐标统一为公开 lag 范围 1–24 上的 history-only
+incremental gain，并用整段 panel 时间反向后的同规模搜索作为 paired null。
+selected-dose gate 要求声明边相对 responder 自身历史带来正的聚合 holdout
+gain，并通过反事实恢复；弱真实剂量下 driver/lag 的唯一识别只作诊断。独立的
+`λ=1` 强正控必须恢复 driver 与 lag、通过增量预测和反事实恢复。旧的
+source-only `R² >= 0.5` 与真实增量坐标不同量纲，已经移除。
 
 ## 推理协议
 

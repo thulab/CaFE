@@ -280,7 +280,7 @@ def main() -> int:
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v14",
+        "schema_version": "paper_v8_calibration_bundle.v15",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
@@ -358,9 +358,11 @@ def main() -> int:
                 "protocol_constant, or explicit protocol_fallback"
             ),
             "structural_identifiability": (
-                "selected-I5 primary-family reachability is qualified on "
-                "independent calibration paths without near-distance; formal "
-                "generated samples are checked again"
+                "selected-I5 primary-family reachability uses the "
+                "real-aligned observable and paired construction on "
+                "independent paths; common-factor and cross-series also "
+                "require a separate lambda-1 blind positive control; "
+                "near-distance is excluded from calibration"
             ),
             "response_inverse": (
                 "21-point primary and secondary family-mean responses over "

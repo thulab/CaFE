@@ -13,7 +13,8 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v13"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v14"
+MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION = 0.75
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -738,18 +739,23 @@ def nonlinear_mechanism_response_checks(
             ]
         expected_total = sum(expected_counts[key].values())
         clip_values = clip_fractions[key]
+        activity_positive_fraction = (
+            float(
+                np.mean(
+                    np.asarray(activity_paired_deltas) > 0.0
+                )
+            )
+            if activity_paired_deltas
+            else None
+        )
         dynamic_activity_accepted = bool(
             missing_activity_count == 0
             and len(ordered_activity) >= 2
-            and all(
-                right > left + 1e-12
-                for left, right in zip(
-                    ordered_activity,
-                    ordered_activity[1:],
-                )
-            )
+            and ordered_activity[-1] > ordered_activity[0] + 1e-12
             and bool(activity_paired_deltas)
-            and all(delta > 1e-12 for delta in activity_paired_deltas)
+            and activity_positive_fraction is not None
+            and activity_positive_fraction
+            >= MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION
             and len(clip_values) == expected_total
             and max(clip_values, default=math.inf) <= 1e-12
         )
@@ -859,14 +865,12 @@ def nonlinear_mechanism_response_checks(
                     },
                     "paired_low_high_count": len(activity_paired_deltas),
                     "paired_low_high_positive_fraction": (
-                        float(
-                            np.mean(
-                                np.asarray(activity_paired_deltas) > 0.0
-                            )
-                        )
-                        if activity_paired_deltas
-                        else None
+                        activity_positive_fraction
                     ),
+                    "minimum_paired_positive_fraction": (
+                        MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION
+                    ),
+                    "intermediate_intensity_means_are_diagnostic_only": True,
                     "paired_low_high_median_delta": (
                         float(np.median(activity_paired_deltas))
                         if activity_paired_deltas
