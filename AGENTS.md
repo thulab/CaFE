@@ -108,6 +108,16 @@ Redirect the command to an explicit log under `runtime/`, enable
 - the expected experiment process is running;
 - the log and status manifest are advancing without errors.
 
+After a managed background job finishes, inspect its exit status and final
+artifacts, then remove its completed `tmux` session so stale sessions do not
+accumulate.
+
+## Inference Services
+
+When manually probing an inference service with `curl`, set both `no_proxy`
+and `NO_PROXY` for the target host (and localhost where relevant) so the
+request does not pass through an HTTP proxy.
+
 ## Git and Safety
 
 Keep commits concise and task-scoped. Do not commit runtime datasets,
