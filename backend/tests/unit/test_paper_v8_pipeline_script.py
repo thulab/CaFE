@@ -1468,6 +1468,73 @@ def test_oracle_context_reuses_clean_parent_context_for_input_ablation():
     assert {row["context_length"] for row in oracle} == {168}
 
 
+def test_experiment_capability_rows_keep_fixed_and_oracle_separate():
+    analysis = load_script("analyze_paper_v8")
+    rows = []
+    for dataset_id, offset in (("first", 0.0), ("second", 0.2)):
+        for policy, model_values in (
+            ("fixed_l168", {"a": (1.0, 1), "b": (2.0, 2)}),
+            ("oracle_context", {"a": (0.8, 2), "b": (0.7, 1)}),
+        ):
+            for model_id, (accuracy, rank) in model_values.items():
+                rows.append(
+                    {
+                        "dataset_id": dataset_id,
+                        "context_policy": policy,
+                        "evaluation_table": "main",
+                        "generator_family_role": "primary",
+                        "capability_id": "trend",
+                        "model_id": model_id,
+                        "accuracy_score": accuracy + offset,
+                        "history_std_normalized_mae": accuracy + offset,
+                        "accuracy_rank": rank,
+                        "mechanism_score": accuracy + offset + 0.5,
+                        "mechanism_rank": rank,
+                    }
+                )
+
+    fixed = analysis.experiment_capability_rows(
+        rows,
+        context_policy="fixed_l168",
+        dataset_ids=["first", "second"],
+        models=["a", "b"],
+        capabilities=["trend"],
+    )
+    oracle = analysis.experiment_capability_rows(
+        rows,
+        context_policy="oracle_context",
+        dataset_ids=["first", "second"],
+        models=["a", "b"],
+        capabilities=["trend"],
+    )
+
+    fixed_by_model = {row["model_id"]: row for row in fixed}
+    oracle_by_model = {row["model_id"]: row for row in oracle}
+    assert fixed_by_model["a"]["accuracy_rank"] == 1
+    assert fixed_by_model["a"]["macro_mean_accuracy_score"] == pytest.approx(
+        1.1
+    )
+    assert oracle_by_model["b"]["accuracy_rank"] == 1
+    assert oracle_by_model["b"]["macro_mean_accuracy_score"] == pytest.approx(
+        0.8
+    )
+    assert {row["context_policy"] for row in fixed} == {"fixed_l168"}
+    assert {row["context_policy"] for row in oracle} == {"oracle_context"}
+
+
+def test_experiment_capability_rows_reject_incomplete_policy_coverage():
+    analysis = load_script("analyze_paper_v8")
+
+    with pytest.raises(ValueError, match="coverage mismatch"):
+        analysis.experiment_capability_rows(
+            [],
+            context_policy="oracle_context",
+            dataset_ids=["dataset"],
+            models=["model"],
+            capabilities=["trend"],
+        )
+
+
 def test_split_bank_requires_two_batches_for_stability_statistics():
     analysis = load_script("analyze_paper_v8")
     rows = []

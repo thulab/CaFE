@@ -137,6 +137,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-after", choices=STEPS, default="analysis")
     parser.add_argument("--resume-inference", action="store_true")
     parser.add_argument(
+        "--resume-analysis",
+        action="store_true",
+        help=(
+            "Reuse a complete analysis shard only after validating its "
+            "inference-manifest binding, requested models, and output files."
+        ),
+    )
+    parser.add_argument(
         "--upgrade-inference-execution-policy",
         action="store_true",
         help=(
@@ -190,17 +198,21 @@ def requested_dataset_ids(args: argparse.Namespace) -> list[str]:
 def validate_dataset_parallelism(
     *,
     dataset_workers: int,
+    start_index: int,
     stop_index: int,
 ) -> None:
     if dataset_workers < 1:
         raise ValueError("dataset_workers must be positive")
-    if (
-        dataset_workers > 1
-        and stop_index > STEPS.index("validation")
-    ):
+    preparation_only = stop_index <= STEPS.index("validation")
+    analysis_only = (
+        start_index == STEPS.index("analysis")
+        and stop_index == STEPS.index("analysis")
+    )
+    if dataset_workers > 1 and not (preparation_only or analysis_only):
         raise ValueError(
-            "dataset-level parallelism is preparation-only; use "
-            "--dataset-workers 1 when inference or analysis is selected"
+            "dataset-level parallelism supports preparation-only or "
+            "analysis-only ranges; use --dataset-workers 1 when inference "
+            "or a mixed inference/analysis range is selected"
         )
 
 
@@ -315,6 +327,45 @@ def model_major_inference_arguments(
         str(args.inference_preprocess_workers),
         *(["--resume"] if args.resume_inference else []),
     ]
+
+
+def experiment_analysis_arguments(
+    args: argparse.Namespace,
+    *,
+    experiment_root: Path,
+) -> list[str]:
+    return [
+        "--aggregate-experiment",
+        "--output-root",
+        str(experiment_root),
+        "--seed-start",
+        str(args.seed_start),
+        "--seed-count",
+        str(args.seed_count),
+        "--models",
+        *args.models,
+        *(
+            ["--reuse-existing-aggregate"]
+            if args.resume_analysis
+            else []
+        ),
+    ]
+
+
+def run_experiment_analysis(
+    args: argparse.Namespace,
+    *,
+    experiment_root: Path,
+    log_path: Path | None = None,
+) -> None:
+    run(
+        "analyze_paper_v8.py",
+        experiment_analysis_arguments(
+            args,
+            experiment_root=experiment_root,
+        ),
+        log_path=log_path,
+    )
 
 
 def protocol_config(
@@ -842,6 +893,220 @@ def run_parallel_preparation(
     return ordered("complete"), ordered("failed")
 
 
+def reusable_analysis_manifest(
+    experiment_root: Path,
+    *,
+    dataset_id: str,
+    seed_start: int,
+    seed_count: int,
+    models: list[str],
+) -> bool:
+    shard_name = f"seed_{seed_start:06d}_{seed_start + seed_count:06d}"
+    inference_manifest_path = (
+        experiment_root
+        / dataset_id
+        / "03_inference"
+        / shard_name
+        / "inference_manifest.json"
+    )
+    analysis_manifest_path = (
+        experiment_root
+        / dataset_id
+        / "04_analysis"
+        / shard_name
+        / "analysis_manifest.json"
+    )
+    if not inference_manifest_path.is_file() or not analysis_manifest_path.is_file():
+        return False
+    try:
+        inference_manifest = v8.read_json(inference_manifest_path)
+        analysis_manifest = v8.read_json(analysis_manifest_path)
+        if not bool(inference_manifest.get("complete")):
+            return False
+        if analysis_manifest.get("schema_version") != (
+            "paper_v8_analysis_manifest.v1"
+        ):
+            return False
+        if str(analysis_manifest.get("dataset_id")) != dataset_id:
+            return False
+        if list(analysis_manifest.get("models") or []) != list(models):
+            return False
+        if str(analysis_manifest.get("inference_manifest_sha256")) != (
+            v8.file_sha256(inference_manifest_path)
+        ):
+            return False
+        coverage = {
+            str(row.get("model_id")): row
+            for row in analysis_manifest.get("coverage", [])
+            if isinstance(row, dict)
+        }
+        for model_id in models:
+            row = coverage.get(model_id)
+            if row is None or int(row.get("missing_prediction_count", -1)) != 0:
+                return False
+        files = analysis_manifest.get("files")
+        if not isinstance(files, dict) or not files:
+            return False
+        for record in files.values():
+            if not isinstance(record, dict):
+                return False
+            path = Path(str(record.get("path", "")))
+            if (
+                not path.is_file()
+                or record.get("bytes") is None
+                or int(record["bytes"]) != path.stat().st_size
+                or not record.get("sha256")
+                or str(record["sha256"]) != v8.file_sha256(path)
+            ):
+                return False
+    except (KeyError, TypeError, ValueError, OSError):
+        return False
+    return True
+
+
+def execute_analysis_job(
+    args: argparse.Namespace,
+    dataset_id: str,
+    *,
+    experiment_root: Path,
+    log_path: Path,
+) -> dict[str, Any]:
+    started = time.monotonic()
+    if args.resume_analysis and reusable_analysis_manifest(
+        experiment_root,
+        dataset_id=dataset_id,
+        seed_start=args.seed_start,
+        seed_count=args.seed_count,
+        models=list(args.models),
+    ):
+        return {
+            "dataset_id": dataset_id,
+            "state": "complete",
+            "steps": ["analysis"],
+            "analysis_status": "already_complete",
+            "output_dir": str(experiment_root / dataset_id),
+            "log_path": str(log_path),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+        }
+    script, arguments = commands_for_dataset(
+        args,
+        dataset_id,
+        experiment_root=experiment_root,
+    )["analysis"]
+    try:
+        run(script, arguments, log_path=log_path)
+    except Exception as error:
+        return {
+            "dataset_id": dataset_id,
+            "state": "failed",
+            "steps": [],
+            "failed_step": "analysis",
+            "output_dir": str(experiment_root / dataset_id),
+            "log_path": str(log_path),
+            "elapsed_seconds": round(time.monotonic() - started, 3),
+            "error": f"{type(error).__name__}: {error}",
+        }
+    return {
+        "dataset_id": dataset_id,
+        "state": "complete",
+        "steps": ["analysis"],
+        "analysis_status": "computed",
+        "output_dir": str(experiment_root / dataset_id),
+        "log_path": str(log_path),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+    }
+
+
+def run_parallel_analysis(
+    args: argparse.Namespace,
+    dataset_ids: list[str],
+    *,
+    experiment_root: Path,
+    experiment_id: str,
+    protocol_sha256: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    outcomes: dict[str, dict[str, Any]] = {}
+    active: dict[Future[dict[str, Any]], str] = {}
+    next_index = 0
+    log_root = experiment_root / "analysis_logs"
+
+    def ordered(state: str) -> list[dict[str, Any]]:
+        return [
+            outcomes[dataset_id]
+            for dataset_id in dataset_ids
+            if outcomes.get(dataset_id, {}).get("state") == state
+        ]
+
+    def submit_available(executor: ThreadPoolExecutor) -> None:
+        nonlocal next_index
+        while (
+            len(active) < args.dataset_workers
+            and next_index < len(dataset_ids)
+        ):
+            dataset_id = dataset_ids[next_index]
+            next_index += 1
+            future = executor.submit(
+                execute_analysis_job,
+                args,
+                dataset_id,
+                experiment_root=experiment_root,
+                log_path=log_root / f"{dataset_id}.log",
+            )
+            active[future] = dataset_id
+
+    def write_running_status() -> None:
+        active_ids = [
+            dataset_id
+            for dataset_id in dataset_ids
+            if dataset_id in set(active.values())
+        ]
+        write_pipeline_status(
+            experiment_root,
+            experiment_id=experiment_id,
+            protocol_sha256=protocol_sha256,
+            state="running",
+            start_at=args.start_at,
+            stop_after=args.stop_after,
+            completed=ordered("complete"),
+            failed=ordered("failed"),
+            active_step="concurrent_analysis",
+            active_dataset_ids=active_ids,
+            active_jobs=[
+                {
+                    "dataset_id": dataset_id,
+                    "log_path": str(log_root / f"{dataset_id}.log"),
+                }
+                for dataset_id in active_ids
+            ],
+        )
+
+    with ThreadPoolExecutor(max_workers=args.dataset_workers) as executor:
+        submit_available(executor)
+        write_running_status()
+        while active:
+            done, _ = wait(set(active), return_when=FIRST_COMPLETED)
+            for future in done:
+                dataset_id = active.pop(future)
+                try:
+                    outcome = future.result()
+                except Exception as error:
+                    outcome = {
+                        "dataset_id": dataset_id,
+                        "state": "failed",
+                        "steps": [],
+                        "failed_step": "analysis_scheduler",
+                        "output_dir": str(experiment_root / dataset_id),
+                        "log_path": str(log_root / f"{dataset_id}.log"),
+                        "elapsed_seconds": None,
+                        "error": f"{type(error).__name__}: {error}",
+                    }
+                outcomes[dataset_id] = outcome
+                print(v8.canonical_json(outcome), flush=True)
+            submit_available(executor)
+            write_running_status()
+    return ordered("complete"), ordered("failed")
+
+
 def main() -> int:
     args = parse_args()
     dataset_ids = requested_dataset_ids(args)
@@ -895,6 +1160,7 @@ def main() -> int:
     validation_index = STEPS.index("validation")
     validate_dataset_parallelism(
         dataset_workers=args.dataset_workers,
+        start_index=start,
         stop_index=stop,
     )
     protocol = protocol_config(args, dataset_ids)
@@ -928,6 +1194,60 @@ def main() -> int:
         stop_after=args.stop_after,
         completed=completed,
     )
+    if start == STEPS.index("analysis") and stop == start:
+        completed, failed = run_parallel_analysis(
+            args,
+            dataset_ids,
+            experiment_root=experiment_root,
+            experiment_id=experiment_id,
+            protocol_sha256=manifest["protocol_sha256"],
+        )
+        if failed:
+            error_text = (
+                f"{len(failed)} of {len(dataset_ids)} dataset analysis "
+                "jobs failed"
+            )
+            write_pipeline_status(
+                experiment_root,
+                experiment_id=experiment_id,
+                protocol_sha256=manifest["protocol_sha256"],
+                state="failed",
+                start_at=args.start_at,
+                stop_after=args.stop_after,
+                completed=completed,
+                failed=failed,
+                error=error_text,
+            )
+            raise RuntimeError(error_text)
+        run_experiment_analysis(
+            args,
+            experiment_root=experiment_root,
+            log_path=(
+                experiment_root
+                / "analysis_logs"
+                / "experiment_summary.log"
+            ),
+        )
+        write_pipeline_status(
+            experiment_root,
+            experiment_id=experiment_id,
+            protocol_sha256=manifest["protocol_sha256"],
+            state="complete",
+            start_at=args.start_at,
+            stop_after=args.stop_after,
+            completed=completed,
+        )
+        print(
+            v8.canonical_json(
+                {
+                    "experiment_id": experiment_id,
+                    "protocol_sha256": manifest["protocol_sha256"],
+                    "dataset_count": len(dataset_ids),
+                    "output": str(experiment_root),
+                }
+            )
+        )
+        return 0
     if stop <= validation_index:
         completed, failed = run_parallel_preparation(
             args,
@@ -1045,6 +1365,13 @@ def main() -> int:
                 script, arguments = commands[step]
                 run(script, arguments)
                 completed_steps_by_dataset[dataset_id].append(step)
+            if step == "analysis":
+                active_dataset_id = None
+                active_step = "experiment_analysis"
+                run_experiment_analysis(
+                    args,
+                    experiment_root=experiment_root,
+                )
     except Exception as error:
         write_pipeline_status(
             experiment_root,

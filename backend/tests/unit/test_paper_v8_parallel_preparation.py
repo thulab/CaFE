@@ -197,15 +197,148 @@ def test_dataset_parallel_preparation_continues_after_one_failure(
     )["state"] == "complete"
 
 
-def test_dataset_parallel_preparation_is_rejected_for_inference():
+def test_dataset_parallelism_accepts_analysis_only_and_rejects_inference():
     pipeline = load_script("run_paper_v8_pipeline")
 
     assert pipeline.STEPS.index("inference") > pipeline.STEPS.index("validation")
-    with pytest.raises(ValueError, match="preparation-only"):
+    analysis_index = pipeline.STEPS.index("analysis")
+    pipeline.validate_dataset_parallelism(
+        dataset_workers=8,
+        start_index=analysis_index,
+        stop_index=analysis_index,
+    )
+    with pytest.raises(ValueError, match="analysis-only"):
         pipeline.validate_dataset_parallelism(
             dataset_workers=2,
+            start_index=pipeline.STEPS.index("inference"),
             stop_index=pipeline.STEPS.index("inference"),
         )
+
+
+def test_experiment_analysis_arguments_request_separate_aggregate():
+    pipeline = load_script("run_paper_v8_pipeline")
+    args = SimpleNamespace(
+        seed_start=4,
+        seed_count=8,
+        models=["a", "b"],
+        resume_analysis=True,
+    )
+
+    arguments = pipeline.experiment_analysis_arguments(
+        args,
+        experiment_root=Path("/tmp/experiment"),
+    )
+
+    assert arguments == [
+        "--aggregate-experiment",
+        "--output-root",
+        "/tmp/experiment",
+        "--seed-start",
+        "4",
+        "--seed-count",
+        "8",
+        "--models",
+        "a",
+        "b",
+        "--reuse-existing-aggregate",
+    ]
+
+
+def test_reusable_analysis_manifest_validates_binding_and_files(tmp_path):
+    pipeline = load_script("run_paper_v8_pipeline")
+    dataset_id = "gift_electricity_h"
+    shard_name = "seed_000000_000064"
+    inference_dir = tmp_path / dataset_id / "03_inference" / shard_name
+    analysis_dir = tmp_path / dataset_id / "04_analysis" / shard_name
+    inference_manifest_path = inference_dir / "inference_manifest.json"
+    result_path = analysis_dir / "scores.json"
+    pipeline.v8.write_json(inference_manifest_path, {"complete": True})
+    pipeline.v8.write_json(result_path, {"scores": []})
+    pipeline.v8.write_json(
+        analysis_dir / "analysis_manifest.json",
+        {
+            "schema_version": "paper_v8_analysis_manifest.v1",
+            "dataset_id": dataset_id,
+            "inference_manifest_sha256": pipeline.v8.file_sha256(
+                inference_manifest_path
+            ),
+            "models": ["Chronos-2"],
+            "coverage": [
+                {
+                    "model_id": "Chronos-2",
+                    "missing_prediction_count": 0,
+                }
+            ],
+            "files": {"scores": pipeline.v8.file_record(result_path)},
+        },
+    )
+
+    assert pipeline.reusable_analysis_manifest(
+        tmp_path,
+        dataset_id=dataset_id,
+        seed_start=0,
+        seed_count=64,
+        models=["Chronos-2"],
+    )
+
+    result_path.write_text('{"scores": ["changed"]}\n', encoding="utf-8")
+    assert not pipeline.reusable_analysis_manifest(
+        tmp_path,
+        dataset_id=dataset_id,
+        seed_start=0,
+        seed_count=64,
+        models=["Chronos-2"],
+    )
+
+
+def test_parallel_analysis_reuses_complete_dataset_and_computes_rest(
+    monkeypatch,
+    tmp_path,
+):
+    pipeline = load_script("run_paper_v8_pipeline")
+    calls: list[str] = []
+
+    def fake_reusable(_root, *, dataset_id, **_arguments):
+        return dataset_id == "first"
+
+    def fake_commands(_args, dataset_id, *, experiment_root):
+        assert experiment_root == tmp_path
+        return {"analysis": (f"{dataset_id}:analysis", [])}
+
+    def fake_run(script, _arguments, *, log_path=None):
+        assert log_path is not None
+        calls.append(script)
+
+    monkeypatch.setattr(
+        pipeline,
+        "reusable_analysis_manifest",
+        fake_reusable,
+    )
+    monkeypatch.setattr(pipeline, "commands_for_dataset", fake_commands)
+    monkeypatch.setattr(pipeline, "run", fake_run)
+    args = SimpleNamespace(
+        dataset_workers=2,
+        start_at="analysis",
+        stop_after="analysis",
+        resume_analysis=True,
+        seed_start=0,
+        seed_count=64,
+        models=["Chronos-2"],
+    )
+
+    completed, failed = pipeline.run_parallel_analysis(
+        args,
+        ["first", "second"],
+        experiment_root=tmp_path,
+        experiment_id="experiment",
+        protocol_sha256="protocol",
+    )
+
+    assert not failed
+    assert [item["dataset_id"] for item in completed] == ["first", "second"]
+    assert completed[0]["analysis_status"] == "already_complete"
+    assert completed[1]["analysis_status"] == "computed"
+    assert calls == ["second:analysis"]
 
 
 def test_structural_pair_failure_is_available_to_generation_retry(
