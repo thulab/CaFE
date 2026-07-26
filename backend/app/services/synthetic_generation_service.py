@@ -32,6 +32,11 @@ from app.services.synthetic_generator_conditioning import (
     select_balanced_profile_id,
 )
 from app.services.synthetic_near_distance_gate import evaluate_near_distance_gate, matching_calibrated_buckets
+from app.services.synthetic_normalization import (
+    normalize_covariates as _normalize_covariates,
+    standardize_by_context as _standardize_by_context,
+    standardize_hierarchy_by_context as _standardize_hierarchy_by_context,
+)
 
 
 @dataclass(frozen=True)
@@ -3258,38 +3263,6 @@ def _intensity_lambda(intensity: int) -> float:
 
 def _difficulty_lambda(difficulty: int) -> float:
     return _intensity_lambda(difficulty)
-
-
-def _standardize_by_context(values: np.ndarray, context_length: int) -> np.ndarray:
-    context = values[:context_length]
-    mean = context.mean(axis=0, keepdims=True)
-    std = context.std(axis=0, keepdims=True)
-    std = np.where(std > 1e-6, std, 1.0)
-    return (values - mean) / std
-
-
-def _standardize_hierarchy_by_context(values: np.ndarray, context_length: int) -> np.ndarray:
-    context = values[:context_length]
-    mean = context.mean(axis=0, keepdims=True)
-    centered = values - mean
-    scale = float(np.std(context[:, 0]))
-    if scale <= 1e-6:
-        scale = float(np.mean(np.std(context, axis=0)))
-    if scale <= 1e-6:
-        scale = 1.0
-    return centered / scale
-
-
-def _normalize_covariates(covariates: np.ndarray, context_length: int) -> np.ndarray:
-    normalized = covariates.copy()
-    for index in range(normalized.shape[1]):
-        column = normalized[:context_length, index]
-        if set(np.unique(normalized[:, index])).issubset({0.0, 1.0}):
-            continue
-        mean = float(column.mean())
-        std = float(column.std()) or 1.0
-        normalized[:, index] = (normalized[:, index] - mean) / std
-    return normalized
 
 
 def _realized_features(

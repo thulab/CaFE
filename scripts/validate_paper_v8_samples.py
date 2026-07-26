@@ -168,6 +168,9 @@ def mase_scale_audit(
 ) -> dict[str, Any]:
     by_capability: dict[str, list[float]] = {}
     period_counts: Counter[int] = Counter()
+    effective_period_counts: Counter[int] = Counter()
+    fallback_sample_count = 0
+    fallback_target_count = 0
     ratios: list[float] = []
     for row in rows:
         target = np.asarray(row["target"], dtype=float)
@@ -182,6 +185,19 @@ def mase_scale_audit(
             [],
         ).append(ratio)
         period_counts[int(row["mase_period"])] += 1
+        effective_periods = row.get(
+            "mase_scale_effective_period_by_target",
+            [int(row["mase_period"])] * int(row["target_dim"]),
+        )
+        effective_period_counts.update(
+            int(period) for period in effective_periods
+        )
+        fallback_indices = row.get(
+            "mase_scale_fallback_target_indices",
+            [],
+        )
+        fallback_sample_count += int(bool(fallback_indices))
+        fallback_target_count += len(fallback_indices)
 
     def summary(values: list[float]) -> dict[str, float]:
         array = np.asarray(values, dtype=float)
@@ -195,13 +211,20 @@ def mase_scale_audit(
 
     return {
         "policy": (
-            "diagnostic_only_no_denominator_floor; companion inference "
-            "metric=history_std_normalized_mae"
+            "seasonal_lag_with_per_target_lag1_degeneracy_fallback_v1; "
+            "no denominator floor; companion inference metric="
+            "history_std_normalized_mae"
         ),
         "mase_period_counts": {
             str(period): count
             for period, count in sorted(period_counts.items())
         },
+        "effective_period_by_target_counts": {
+            str(period): count
+            for period, count in sorted(effective_period_counts.items())
+        },
+        "fallback_sample_count": fallback_sample_count,
+        "fallback_target_count": fallback_target_count,
         "mase_scale_to_history_std": summary(ratios),
         "by_capability": {
             capability_id: summary(values)

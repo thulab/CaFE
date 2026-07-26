@@ -27,13 +27,29 @@ def load_common():
     return module
 
 
-def test_response_curve_uses_formal_logical_seed_anchor_bank(monkeypatch):
+def test_v8_common_uses_lightweight_normalization_module():
+    common = load_common()
+
+    assert common.standardize_by_context.__module__ == (
+        "app.services.synthetic_normalization"
+    )
+    assert common.standardize_hierarchy_by_context.__module__ == (
+        "app.services.synthetic_normalization"
+    )
+    assert common.normalize_covariates.__module__ == (
+        "app.services.synthetic_normalization"
+    )
+
+
+def test_response_curve_uses_independent_qualification_anchor_bank(
+    monkeypatch,
+):
     common = load_common()
     dataset = common.resolve_dataset("gift_electricity_h")
     anchors = [{"marker": index} for index in range(4)]
     selected: list[int] = []
 
-    def anchor_for_seed(
+    def anchor_for_calibration_path(
         values,
         *,
         dataset_id,
@@ -53,14 +69,20 @@ def test_response_curve_uses_formal_logical_seed_anchor_bank(monkeypatch):
         capability_id,
         family_role,
         lambda_value,
-        calibration_seed_index,
+        qualification_path_index,
     ):
         assert capability_id == "trend"
         assert family_role == "primary"
-        assert anchor["marker"] == calibration_seed_index
-        return {"curvature_abs": lambda_value}, {}
+        assert anchor["marker"] == qualification_path_index
+        return {
+            common.PRIMARY_TARGET_FEATURE[capability_id]: lambda_value
+        }, {}
 
-    monkeypatch.setattr(common, "anchor_for_seed", anchor_for_seed)
+    monkeypatch.setattr(
+        common,
+        "anchor_for_qualification_path",
+        anchor_for_calibration_path,
+    )
     monkeypatch.setattr(
         common,
         "generate_calibration_member",
@@ -76,11 +98,13 @@ def test_response_curve_uses_formal_logical_seed_anchor_bank(monkeypatch):
     )
 
     assert selected == [0, 1, 2, 3]
-    assert audit["path_anchor_policy"] == "formal_logical_seed_hash_v1"
-    assert audit["path_rng_policy"] == "formal_generation_path_v1"
+    assert audit["path_anchor_policy"] == (
+        "independent_qualification_anchor_hash_v1"
+    )
+    assert audit["path_rng_policy"] == "independent_qualification_path_v1"
 
 
-def test_calibration_member_reuses_formal_generation_path_rng(monkeypatch):
+def test_qualification_member_uses_independent_path_rng(monkeypatch):
     common = load_common()
     dataset = common.resolve_dataset("gift_electricity_h")
     observed: dict[str, float] = {}
@@ -149,10 +173,20 @@ def test_calibration_member_reuses_formal_generation_path_rng(monkeypatch):
         capability_id="trend",
         family_role="primary",
         lambda_value=0.5,
-        calibration_seed_index=seed_index,
+        qualification_path_index=seed_index,
     )
 
     expected_rng = np.random.default_rng(
+        common.stable_seed(
+            dataset.dataset_id,
+            "trend",
+            seed_index,
+            "qualification-path",
+            base=common.QUALIFICATION_PATH_SEED,
+        )
+    )
+    assert observed["first_random"] == float(expected_rng.random())
+    formal_rng = np.random.default_rng(
         common.stable_seed(
             dataset.dataset_id,
             "trend",
@@ -161,7 +195,7 @@ def test_calibration_member_reuses_formal_generation_path_rng(monkeypatch):
             base=common.GENERATION_PATH_SEED,
         )
     )
-    assert observed["first_random"] == float(expected_rng.random())
+    assert observed["first_random"] != float(formal_rng.random())
 
 
 def test_inverse_branch_excludes_raw_foldbacks_instead_of_enveloping_them():

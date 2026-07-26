@@ -1,37 +1,119 @@
 # Repository Guidelines
 
-## Project Structure & Module Organization
+## Current Scope
 
-This repository contains a TSBenchmark MVP with a FastAPI backend and Vue frontend. `backend/app/` holds backend code: `api/routes/`, `models/`, `schemas/`, `services/`, and `workers/`. `backend/tests/` contains pytest suites in `unit/`, `api/`, `e2e/`, and `fixtures/`. `frontend/src/` holds Vue code: `api/`, `components/wizard/`, `components/results/`, `components/ui/` (reusable Icon/StatusBadge/StateBlock), `composables/` (useTheme/useAsync/useModels), `lib/` (format helpers), `pages/`, `stores/` (`wizard`, `recents`), and `tests/`. The app shell (`App.vue`) uses self-rolled hash routing (no vue-router); theming is token-based in `styles.css` with light/dark via `[data-theme]`. `docs/` contains specs, plans, the user manual (`docs/manual/README.md`), the developer manual (`docs/developer/` — `README.md` index, `data-model.md`, `key-flows.md`), and `docs/reference/` (external reference docs synced from Feishu via `scripts/sync-feishu-docs.py`). `scripts/` contains local start/stop/status scripts and script tests.
+The repository is currently focused on the paper's synthetic time-series
+mechanism benchmark. The FastAPI/Vue MVP remains in the repository but is
+legacy context unless a task explicitly targets it.
 
-## Build, Test, and Development Commands
+Paper v8 is the only active experiment pipeline. Do not extend old v2-v7
+scripts when implementing new protocol behavior.
 
-- `./scripts/start-system.sh`: start backend and frontend locally.
-- `./scripts/status-system.sh`: show service PID/log status.
-- `./scripts/stop-system.sh`: stop both services.
-- `./scripts/stub-service.sh {start|stop|status}`: run the local timer-rest-service stub (`backend/stub_service/`) on `127.0.0.1:10810` for offline inference; the backend reaches it via `TSBENCHMARK_TIMER_SERVICE_BASE_URL` (set `TSBENCHMARK_MODEL_ADAPTER=stub` for the in-process stub instead).
-- `./scripts/baseline-run.sh [csv]`: spin up an isolated live backend (in-process deterministic stub), walk the full API chain with a real CSV (default `test/flow_template.csv`), and write a dated baseline record under `docs/superpowers/baselines/`; tears the backend down on exit.
-- `cd backend && uv run pytest`: run all backend tests.
-- `cd frontend && npm test`: run frontend Vitest suite.
-- `cd frontend && npm run test:e2e`: run frontend smoke test.
-- `bash scripts/tests/test_system_scripts.sh`: verify system scripts.
+## Paper v8 Core
 
-## Coding Style & Naming Conventions
+The formal flow is:
 
-Use clear boundaries: routes validate and delegate, services own behavior, and models stay persistence-only. Python uses 4-space indentation, type hints, and snake_case names. Vue/TypeScript uses PascalCase components and camelCase functions/state. Keep generated artifacts out of commits; `.venv/`, `node_modules/`, `runtime/`, and `.tsbenchmark-system/` are ignored.
+```text
+real-data calibration
+  -> deterministic synthetic generation
+  -> mechanism validation
+  -> model inference
+  -> capability and stability analysis
+```
 
-## Testing Guidelines
+Primary files:
 
-Backend uses pytest; name files `test_*.py` and keep fixtures under `backend/tests/fixtures/`. Frontend uses Vitest with Vue Testing Library; name files `*.test.ts`. Add or update tests for behavior changes, API contracts, CSV validation, run execution, or UI workflows. Run focused tests first, then the relevant full suite before handoff.
+- `scripts/paper_v8_pipeline_common.py`
+- `scripts/paper_v8_features.py`
+- `scripts/calibrate_paper_v8.py`
+- `scripts/generate_paper_v8_samples.py`
+- `scripts/validate_paper_v8_samples.py`
+- `scripts/run_paper_v8_inference.py`
+- `scripts/analyze_paper_v8.py`
+- `scripts/paper_v8_structured_baselines.py`
+- `backend/app/services/synthetic_v8_generation.py`
+- `backend/app/services/synthetic_v8_feature_gate.py`
+- `docs/superpowers/specs/2026-07-24-paper-v8-full-pipeline-review.md`
 
-## Agent-Specific Instructions
+The current protocol uses a 168-point real calibration history, a 336-point
+synthetic master history, a 48-point horizon, and 96/168/336 inference views.
+The fixed-context main table uses 168; oracle-context selects among the three
+views. Real-anchor forecasts are an auxiliary real-data table and never enter
+the synthetic mechanism ranking.
 
-Multi-agent work is allowed when tasks are independent or split by ownership, such as backend services, frontend components, docs, and tests. Give each agent a clear scope and disjoint write set. Avoid concurrent edits to the same file unless one integration agent owns the final merge. Each agent should report changed paths and verification commands.
+## Experiment Rules
 
-## Commit & Pull Request Guidelines
+- Real data supplies empirical feature references and generator nuisance
+  parameters. Family-level intensity uses the usable real/generator overlap
+  only when it spans enough controllable dose; otherwise it records a
+  generator-relative fallback. Synthetic futures in the main benchmark are
+  deterministic.
+- Compute calibration and realized features from history only.
+- Preserve paired seeds, anchors, nuisance paths, and normalization statistics
+  across intensity or counterfactual members.
+- Record every real-feature mapping and protocol fallback explicitly; never
+  hide a missing structural feature behind an unlabelled default.
+- Keep structural positive controls separate from foundation-model rankings.
+- Treat manifests as immutable protocol records. A schema or protocol change
+  requires a new experiment directory and regenerated artifacts.
+- `runtime/` is ignored but may contain expensive user experiments. Never
+  delete or overwrite it broadly.
 
-Existing history uses short messages such as `add plans`, `update entity doc`, and Chinese summaries. Keep commits concise and task-scoped. Pull requests should include a summary, tests run, UI screenshots when relevant, and notes for schema/API changes.
+## Editing and Testing
 
-## Security & Configuration Tips
+Python uses 4-space indentation, type hints, and snake_case names. Keep changes
+inside v8 files unless a shared helper must be corrected.
 
-The MVP assumes a local trusted environment. Do not commit runtime databases, uploaded CSVs, logs, or secrets. Use `TSBENCHMARK_RUNTIME_DIR`, `TSBENCHMARK_DATABASE_URL`, `TSBENCHMARK_BACKEND_PORT`, and `TSBENCHMARK_FRONTEND_PORT` for isolated local runs.
+Paper v8 scripts use lightweight research modules and must not depend on the
+database, API, or persistence service import graph. The repository has no
+root Python project, so use the backend uv project only as the dependency
+environment while keeping the working directory at the repository root:
+
+```bash
+uv run --project backend python scripts/calibrate_paper_v8.py ...
+uv run --project backend python scripts/generate_paper_v8_samples.py ...
+uv run --project backend python scripts/validate_paper_v8_samples.py ...
+uv run --project backend python scripts/run_paper_v8_pipeline.py ...
+```
+
+If a Paper v8 script unexpectedly requires `sqlmodel`, a database session, or
+an application store merely to import, treat that as a layering bug and
+remove the dependency instead of changing the execution environment.
+
+Backend pytest still uses the backend uv project. Run focused tests first, for
+example:
+
+```bash
+cd backend
+uv run pytest tests/unit/test_paper_v8_pipeline_script.py
+uv run pytest tests/unit/test_synthetic_v8_generation.py
+uv run pytest tests/unit/test_paper_v8_structured_baselines.py
+```
+
+Do not run the full backend suite, frontend tests, or start the web platform
+unless the user explicitly asks. For generator changes, also run the relevant
+`test_synthetic_formula_*.py` files and a small calibration/generation pilot.
+
+## Long-Running Jobs
+
+When starting a long-running or background experiment through a Codex tool
+shell, use a uniquely named detached `tmux` session. Do not use `nohup ... &`:
+the tool runtime may clean up that process tree when its parent shell exits,
+even when `nohup` is present.
+
+Redirect the command to an explicit log under `runtime/`, enable
+`remain-on-exit` when useful, and verify all three after launch:
+
+- `tmux list-panes` reports a live pane;
+- the expected experiment process is running;
+- the log and status manifest are advancing without errors.
+
+## Git and Safety
+
+Keep commits concise and task-scoped. Do not commit runtime datasets,
+predictions, service logs, model files, secrets, `.venv/`, or `node_modules/`.
+Preserve unrelated user changes in a dirty worktree. Avoid destructive git or
+filesystem commands.
+
+Multi-agent work is appropriate when write sets are disjoint. Assign ownership
+by pipeline layer and report changed paths plus verification commands.

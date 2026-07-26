@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,9 @@ from typing import Any
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["BLIS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 
 import paper_v8_pipeline_common as v8
 
@@ -28,6 +32,18 @@ def parse_args() -> argparse.Namespace:
         "--gift-eval-dir",
         type=Path,
         default=DEFAULT_GIFT_EVAL_DIR,
+        help=(
+            "Backward-compatible default source root for gift_arrow datasets."
+        ),
+    )
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        default=None,
+        help=(
+            "Root consumed by the selected dataset's registered real-data "
+            "adapter. Required for non-GIFT sources such as M5."
+        ),
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-anchors", type=int, default=256)
@@ -35,14 +51,18 @@ def parse_args() -> argparse.Namespace:
         "--calibration-seeds",
         type=int,
         default=v8.DEFAULT_CALIBRATION_PATH_COUNT,
+        help=(
+            "Independent qualification paths used only to estimate each "
+            "family-level response curve; these are not formal sample seeds."
+        ),
     )
     parser.add_argument(
         "--max-calibration-seeds",
         type=int,
         default=v8.MAX_CALIBRATION_PATH_COUNT,
         help=(
-            "Only used when the base response paths produce no usable "
-            "support or primary inverse."
+            "Only used when the base qualification paths produce no usable "
+            "family-level support."
         ),
     )
     parser.add_argument("--minimum-observed-fraction", type=float, default=0.5)
@@ -120,8 +140,8 @@ def calibrate_capabilities(
                 v8.canonical_json(
                     {
                         "dataset_id": dataset.dataset_id,
-                        "calibrating_capability": capability_id,
-                        "response_path_count": path_count,
+                        "qualifying_capability": capability_id,
+                        "qualification_path_count": path_count,
                     }
                 ),
                 flush=True,
@@ -131,6 +151,7 @@ def calibrate_capabilities(
 
     results: dict[str, dict[str, Any]] = {}
     maximum_workers = min(workers, len(capability_ids))
+    submission_order = v8.preparation_capability_order(capability_ids)
     with ProcessPoolExecutor(max_workers=maximum_workers) as executor:
         future_capabilities = {
             executor.submit(
@@ -140,7 +161,7 @@ def calibrate_capabilities(
                 capability_id=capability_id,
                 **keyword_arguments,
             ): capability_id
-            for capability_id in capability_ids
+            for capability_id in submission_order
         }
         for future in as_completed(future_capabilities):
             capability_id = future_capabilities[future]
@@ -152,8 +173,8 @@ def calibrate_capabilities(
                     {
                         "calibrated_capability": capability_id,
                         "dataset_id": dataset.dataset_id,
-                        "response_path_count": calibration[
-                            "response_calibration_seed_count"
+                        "qualification_path_count": calibration[
+                            "qualification_path_count"
                         ],
                     }
                 ),
@@ -163,6 +184,7 @@ def calibrate_capabilities(
 
 
 def main() -> int:
+    run_started = time.perf_counter()
     args = parse_args()
     if (
         args.max_anchors < 1
@@ -177,16 +199,38 @@ def main() -> int:
     if not 0.0 < args.minimum_observed_fraction <= 1.0:
         raise ValueError("minimum observed fraction must be in (0, 1]")
     dataset = v8.resolve_dataset(args.dataset_id)
+    if dataset.real_data_adapter != "gift_arrow" and args.source_root is None:
+        raise ValueError(
+            f"{dataset.dataset_id} uses adapter "
+            f"{dataset.real_data_adapter!r}; pass --source-root"
+        )
+    source_root = (
+        args.source_root.resolve()
+        if args.source_root is not None
+        else args.gift_eval_dir.resolve()
+    )
     output_dir = args.output_root.resolve() / dataset.dataset_id / "01_calibration"
+    anchor_started = time.perf_counter()
     anchors, source_metadata = v8.build_calibration_anchors(
         dataset,
-        gift_eval_dir=args.gift_eval_dir.resolve(),
+        source_root=source_root,
         maximum_anchors=args.max_anchors,
         minimum_observed_fraction=args.minimum_observed_fraction,
     )
+    anchor_extraction_seconds = time.perf_counter() - anchor_started
+    anchor_artifact_started = time.perf_counter()
+    real_forecast_masters = [
+        dict(anchor.pop("real_forecast_master")) for anchor in anchors
+    ]
     anchor_path = output_dir / "anchors.jsonl"
     v8.write_jsonl(anchor_path, anchors)
+    real_forecast_path = output_dir / "real_anchor_masters.jsonl"
+    v8.write_jsonl(real_forecast_path, real_forecast_masters)
+    anchor_artifact_seconds = (
+        time.perf_counter() - anchor_artifact_started
+    )
     capability_ids = tuple(args.capabilities)
+    capability_calibration_started = time.perf_counter()
     capability_calibration = calibrate_capabilities(
         dataset,
         anchors,
@@ -195,29 +239,51 @@ def main() -> int:
         calibration_seed_count=args.calibration_seeds,
         maximum_calibration_seed_count=args.max_calibration_seeds,
     )
+    capability_calibration_seconds = (
+        time.perf_counter() - capability_calibration_started
+    )
+    calibration_artifact_started = time.perf_counter()
     capability_path = output_dir / "capability_calibration.json"
     v8.write_json(capability_path, capability_calibration)
+    calibration_artifact_seconds = (
+        time.perf_counter() - calibration_artifact_started
+    )
+    elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v6",
+        "schema_version": "paper_v8_calibration_bundle.v10",
         "created_at": v8.utc_now(),
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset": source_metadata["dataset"],
         "source": source_metadata,
         "anchor_count": len(anchors),
+        "real_forecast_anchor_count": len(real_forecast_masters),
         "capabilities": list(args.capabilities),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
             "blas_threads_per_process": 1,
+            "timing_seconds": {
+                "anchor_extraction": anchor_extraction_seconds,
+                "anchor_artifact_write": anchor_artifact_seconds,
+                "capability_family_response_qualification": (
+                    capability_calibration_seconds
+                ),
+                "capability_calibration_artifact_write": (
+                    calibration_artifact_seconds
+                ),
+                "elapsed_before_bundle_write": (
+                    elapsed_before_bundle_write
+                ),
+            },
         },
-        "response_calibration_path_budget": {
+        "qualification_path_budget": {
             "policy": (
-                "formal_generation_seed_bank_"
-                "fixed_base_hard_failure_only_expansion_v2"
+                "independent_family_response_qualification_bank_"
+                "fixed_base_hard_failure_only_expansion_v1"
             ),
             "path_sampling": {
-                "anchor": "formal_logical_seed_hash_v1",
-                "rng": "formal_generation_path_v1",
+                "anchor": "independent_qualification_anchor_hash_v1",
+                "rng": "independent_qualification_path_v1",
                 "seed_start": 0,
             },
             "default": {
@@ -228,21 +294,48 @@ def main() -> int:
         },
         "feature_contract": {
             "background_features": (
-                "direct finite feature row from one real L504 anchor"
+                "direct finite feature row from one forecastable real L168 anchor"
+            ),
+            "feature_schema_version": v8.FEATURE_SCHEMA_VERSION,
+            "feature_measurement": (
+                "single history-only v8 feature vector; local trend evidence "
+                "uses the trailing 96 observations"
             ),
             "univariate_primary_strength": (
-                "dataset q10-q90 intersected with generator response support; "
+                "five targets use the usable overlap between dataset q10-q90 "
+                "and the primary family's mean response support; formal "
+                "seeds share this family-level lambda scale; "
                 "nonlinear persistence and predictable intermittency use "
                 "generator-known mechanism doses because their observable "
                 "proxies are not reliable inverse coordinates"
             ),
             "structural_primary_strength": (
-                "fixed cross-dataset evenly spaced realized-strength grid"
+                "common factor and cross-series use a native multivariate "
+                "q10-q90 range when available; declared hierarchy and "
+                "known-future-covariate adapters supply matched nuisance "
+                "coordinates while their primary dose remains internal; "
+                "missing structural inputs record an explicit fallback"
+            ),
+            "parameter_feature_provenance": (
+                "per-parameter real_univariate, real_native_multivariate, "
+                "real_declared_hierarchy, real_known_future_covariates, "
+                "protocol_constant, or explicit protocol_fallback"
             ),
             "structural_identifiability": "measured on generated samples only",
             "response_inverse": (
-                "longest contiguous strictly increasing raw branch; "
-                "selected lambdas replayed on the formal seed bank"
+                "21-point family-mean response over independent qualification "
+                "paths; formal seeds are never individually inverted"
+            ),
+            "realized_target_alignment": (
+                "diagnostic only; no per-sample target-error rejection"
+            ),
+            "real_feature_support_audit": (
+                "raw anchor min-max expanded around its midpoint to 1.2 "
+                "times the observed span; diagnostic only"
+            ),
+            "hard_generation_acceptance": (
+                "finite valid samples, optional near-copy DCR/NNDR, "
+                "batch intensity ordering, and mechanism structure"
             ),
             "removed_features": ["future_abs_covariate_target_corr"],
             "time_scale_semantics": {
@@ -250,7 +343,7 @@ def main() -> int:
                     "frequency-derived provenance"
                 ),
                 "feature_period": (
-                    "calendar season when two cycles fit L504, otherwise "
+                    "calendar season when two cycles fit L168, otherwise "
                     "observable profile dominant period"
                 ),
                 "generator_period": (
@@ -258,13 +351,19 @@ def main() -> int:
                     "anchor profile dominant period"
                 ),
                 "mase_period": (
-                    "calendar season when defined inside L504, otherwise "
+                    "calendar season when defined inside L168, otherwise "
                     "non-seasonal lag 1"
                 ),
             },
+            "real_anchor_forecast": (
+                "independent auxiliary table; every collected anchor stores "
+                "L168 history plus a held-out H48 future and never enters "
+                "synthetic mechanism ranking"
+            ),
         },
         "files": {
             "anchors": v8.file_record(anchor_path),
+            "real_anchor_masters": v8.file_record(real_forecast_path),
             "capability_calibration": v8.file_record(capability_path),
         },
     }
@@ -277,13 +376,19 @@ def main() -> int:
         }
     )
     v8.write_json(output_dir / "calibration_bundle.json", bundle)
+    total_seconds = time.perf_counter() - run_started
     print(
         v8.canonical_json(
             {
                 "dataset_id": dataset.dataset_id,
                 "anchor_count": len(anchors),
+                "real_forecast_anchor_count": len(real_forecast_masters),
                 "output": str(output_dir),
                 "bundle_content_sha256": bundle["bundle_content_sha256"],
+                "timing_seconds": {
+                    **bundle["execution"]["timing_seconds"],
+                    "total": total_seconds,
+                },
             }
         )
     )

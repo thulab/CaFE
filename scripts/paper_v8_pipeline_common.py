@@ -21,19 +21,20 @@ for import_path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
         os.sys.path.insert(0, str(import_path))
 
 from app.services.metric_service import seasonal_period_for_frequency  # noqa: E402
-from app.services.synthetic_generation_service import (  # noqa: E402
-    _normalize_covariates,
-    _realized_features,
-    _standardize_by_context,
-    _standardize_hierarchy_by_context,
+from app.services.synthetic_normalization import (  # noqa: E402
+    normalize_covariates,
+    standardize_by_context,
+    standardize_hierarchy_by_context,
 )
 from app.services.synthetic_generator_conditioning import (  # noqa: E402
     GeneratorConditioning,
     REAL_BOUNDED_INTENSITY_POLICY_ID,
 )
 from app.services.synthetic_v8_generation import (  # noqa: E402
+    CROSS_SERIES_MIN_HOLDOUT_R2,
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
+    REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
     add_observation_noise_to_history,
     derive_deterministic_parameters,
@@ -42,24 +43,35 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
     standardize_cross_series_counterfactual_member,
 )
 from paper_v2_transfer_common import impute_observed_window  # noqa: E402
+from paper_v8_features import (  # noqa: E402
+    FEATURE_SCHEMA_VERSION,
+    v8_feature_vector,
+)
+from paper_v8_real_data import (  # noqa: E402
+    RealSeriesRecord,
+    load_real_dataset,
+)
 from synthetic_feature_profile import (  # noqa: E402
     adjusted_r2,
-    feature_vector,
     file_sha256,
-    read_gift_arrow_targets,
     robust_scale,
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v8"
-CONTEXT_LENGTH = 504
+SCHEMA_VERSION = "paper_v8_pipeline.v14"
+REAL_CALIBRATION_CONTEXT_LENGTH = 168
+CONTEXT_LENGTH = 336
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
-VIEW_CONTEXT_LENGTHS = (96, 168, 336, 504)
+REAL_FORECAST_MASTER_LENGTH = REAL_CALIBRATION_CONTEXT_LENGTH + HORIZON
+VIEW_CONTEXT_LENGTHS = (96, 168, 336)
+FIXED_CONTEXT_LENGTH = 168
+MIN_REAL_FEATURE_COUNT = 12
 INTENSITIES = (1, 2, 3, 4, 5)
 QUANTILE_LEVELS = (0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95)
 CALIBRATION_SAMPLE_SEED = 2026072401
 GENERATION_PATH_SEED = 2026072403
+QUALIFICATION_PATH_SEED = 2026072601
 ROBUSTNESS_SEED = 2026072404
 ROBUSTNESS_NOISE_RATIO = 0.15
 DEFAULT_CALIBRATION_PATH_COUNT = 32
@@ -93,12 +105,44 @@ STRUCTURAL_CAPABILITIES = frozenset(
         "covariate_response",
     }
 )
-SYNTHETIC_DOSE_CAPABILITIES = STRUCTURAL_CAPABILITIES | frozenset(
-    {"nonlinear_persistence", "predictable_intermittency"}
+REAL_RANGE_ELIGIBLE_CAPABILITIES = frozenset(
+    {
+        "trend",
+        "multi_seasonal",
+        "time_varying_seasonality",
+        "regime_switching",
+        "common_factor",
+        "cross_series_dependence",
+    }
 )
+NATIVE_MULTIVARIATE_INTENSITY_CAPABILITIES = frozenset(
+    {"common_factor", "cross_series_dependence"}
+)
+INTERNAL_DOSE_CAPABILITIES = frozenset(
+    {
+        "nonlinear_persistence",
+        "predictable_intermittency",
+        "hierarchical_coherence",
+        "covariate_response",
+    }
+)
+
+
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
+PREPARATION_CAPABILITY_PRIORITY = (
+    "cross_series_dependence",
+    "common_factor",
+    "nonlinear_persistence",
+    "hierarchical_coherence",
+    "covariate_response",
+    "multi_seasonal",
+    "regime_switching",
+    "predictable_intermittency",
+    "time_varying_seasonality",
+    "trend",
+)
 PRIMARY_TARGET_FEATURE = {
-    "trend": "curvature_abs",
+    "trend": "local_polynomial_energy_share_w96",
     "multi_seasonal": "multi_period_score",
     "time_varying_seasonality": "seasonal_amplitude_modulation",
     "regime_switching": "regime_sparse_transition_score",
@@ -107,7 +151,7 @@ PRIMARY_TARGET_FEATURE = {
     # controlled dose and retain the observable proxy only as a diagnostic.
     "nonlinear_persistence": "nonlinear_strength",
     # Thresholded spike counts and event-clock R² are both zero-inflated on
-    # finite L504 windows.  The generator-known history event-component energy
+    # finite L336 windows.  The generator-known history event-component energy
     # share is continuous and exactly monotone in event prominence; clock
     # recoverability remains a separate observable structural diagnostic.
     "predictable_intermittency": "event_effect_energy_share",
@@ -123,6 +167,26 @@ PRIMARY_TARGET_FEATURE = {
     # the matched dose; incremental R² remains a descriptive audit feature.
     "covariate_response": "covariate_effect_variance_share",
 }
+
+
+def preparation_capability_order(
+    capability_ids: Iterable[str],
+) -> tuple[str, ...]:
+    priority = {
+        capability_id: index
+        for index, capability_id in enumerate(
+            PREPARATION_CAPABILITY_PRIORITY
+        )
+    }
+    return tuple(
+        sorted(
+            capability_ids,
+            key=lambda capability_id: (
+                priority.get(capability_id, len(priority)),
+                capability_id,
+            ),
+        )
+    )
 TARGET_DIM_BY_CAPABILITY = {
     capability: (
         5
@@ -149,6 +213,7 @@ class DatasetSpec:
     asset_name: str
     domain: str
     task_view_id: str = "univariate_background"
+    real_data_adapter: str = "gift_arrow"
 
 
 DATASET_REGISTRY = {
@@ -253,6 +318,13 @@ DATASET_REGISTRY = {
             "Web/CloudOps",
         ),
         DatasetSpec(
+            "gift_restaurant_d",
+            "Restaurant",
+            "restaurant",
+            "restaurant",
+            "Business",
+        ),
+        DatasetSpec(
             "gift_hierarchical_sales_d",
             "Hierarchical Sales",
             "hierarchical_sales/D",
@@ -286,6 +358,14 @@ DATASET_REGISTRY = {
             "temperature_rain_with_missing",
             "temperature_rain_with_missing",
             "Nature",
+        ),
+        DatasetSpec(
+            "m5_daily",
+            "M5 Forecasting Accuracy",
+            "m5/D",
+            ".",
+            "Business",
+            real_data_adapter="m5_csv",
         ),
     )
 }
@@ -404,7 +484,7 @@ def expand_native_records(
 def nonoverlapping_strata(
     series_length: int,
     *,
-    window_length: int = CONTEXT_LENGTH,
+    window_length: int = REAL_FORECAST_MASTER_LENGTH,
 ) -> list[tuple[int, int]]:
     capacity = int(series_length) // int(window_length)
     if capacity <= 0:
@@ -579,17 +659,16 @@ def calibration_period_policy(
 ) -> dict[str, Any]:
     """Separate calendar, feature, generator-profile, and MASE periods.
 
-    A sub-daily calendar season may be much longer than L504.  In that case it
+    A sub-daily calendar season may be much longer than L168.  In that case it
     remains provenance, the real-window spectral peak supplies an observable
     feature period, and non-seasonal MASE uses lag one.
     """
 
     history = np.asarray(standardized_history, dtype=float).reshape(-1)
     calendar_period = int(seasonal_period_for_frequency(frequency))
-    provisional = feature_vector(
+    provisional = v8_feature_vector(
         history[:, None],
         None,
-        context_length=CONTEXT_LENGTH,
     )
     raw_dominant = float(provisional.get("dominant_period", 24.0))
     if not math.isfinite(raw_dominant) or raw_dominant <= 0.0:
@@ -599,13 +678,13 @@ def calibration_period_policy(
             np.clip(
                 raw_dominant,
                 8.0,
-                CONTEXT_LENGTH / 3.0,
+                REAL_CALIBRATION_CONTEXT_LENGTH / 3.0,
             )
         )
     )
     calendar_feature_observable = bool(
         calendar_period >= 2
-        and 2 * calendar_period <= CONTEXT_LENGTH
+        and 2 * calendar_period <= REAL_CALIBRATION_CONTEXT_LENGTH
     )
     feature_period = (
         calendar_period
@@ -614,7 +693,7 @@ def calibration_period_policy(
     )
     mase_period = (
         calendar_period
-        if 1 <= calendar_period < CONTEXT_LENGTH
+        if 1 <= calendar_period < REAL_CALIBRATION_CONTEXT_LENGTH
         else 1
     )
     return {
@@ -622,8 +701,8 @@ def calibration_period_policy(
         "calendar_season_feature_observable": (
             calendar_feature_observable
         ),
-        "calendar_cycles_in_l504": float(
-            CONTEXT_LENGTH / max(calendar_period, 1)
+        "calendar_cycles_in_calibration_history": float(
+            REAL_CALIBRATION_CONTEXT_LENGTH / max(calendar_period, 1)
         ),
         "raw_profile_dominant_period": raw_dominant,
         "profile_period": profile_period,
@@ -637,7 +716,7 @@ def calibration_period_policy(
         "mase_period_source": (
             "calendar_season"
             if mase_period == calendar_period
-            else "nonseasonal_lag1_calendar_unobservable_in_l504"
+            else "nonseasonal_lag1_calendar_unobservable_in_l168"
         ),
     }
 
@@ -670,16 +749,207 @@ def summarize_feature_rows(
     return summary
 
 
+def _real_forecast_mase_scale(
+    standardized_history: np.ndarray,
+    requested_period: int,
+) -> tuple[int, float]:
+    history = np.asarray(standardized_history, dtype=float).reshape(-1)
+    period = int(requested_period)
+    if not 1 <= period < history.size:
+        period = 1
+    scale = float(np.mean(np.abs(history[period:] - history[:-period])))
+    if not math.isfinite(scale) or scale <= 1e-12:
+        period = 1
+        scale = float(np.mean(np.abs(np.diff(history))))
+    if not math.isfinite(scale) or scale <= 1e-12:
+        raise ValueError("real forecast anchor has no valid MASE scale")
+    return period, scale
+
+
+def _native_multivariate_features(
+    values: np.ndarray,
+    *,
+    start: int,
+    feature_period: int,
+    minimum_observed_fraction: float,
+) -> dict[str, float]:
+    native = np.asarray(values, dtype=float)
+    if native.ndim != 2 or native.shape[0] < 2:
+        return {}
+    history = native[
+        :,
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH,
+    ].T
+    if history.shape != (
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+        native.shape[0],
+    ):
+        return {}
+    standardized_channels: list[np.ndarray] = []
+    for channel in range(min(history.shape[1], 5)):
+        imputed, _observed = impute_observed_window(
+            history[:, channel],
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if imputed is None:
+            continue
+        try:
+            standardized, _location, _scale = standardize_history(imputed)
+        except ValueError:
+            continue
+        standardized_channels.append(standardized)
+    if len(standardized_channels) < 2:
+        return {}
+    panel = np.column_stack(standardized_channels)
+    features = v8_feature_vector(
+        panel,
+        feature_period,
+        include_cross_series_predictability=False,
+    )
+    if panel.shape[1] >= 2:
+        cross_features = v8_feature_vector(
+            panel[:, : min(panel.shape[1], 3)],
+            feature_period,
+            include_cross_series_predictability=True,
+            cross_series_max_lag=24,
+        )
+        for name in (
+            "lead_lag_peak_abs",
+            "lead_lag_peak_lag_abs",
+            "cross_series_incremental_r2",
+        ):
+            if name in cross_features:
+                features[name] = cross_features[name]
+    return features
+
+
+def _known_future_covariate_features(
+    target_values: np.ndarray,
+    covariates: np.ndarray | None,
+    *,
+    channel_index: int,
+    start: int,
+    feature_period: int,
+    minimum_observed_fraction: float,
+) -> dict[str, float]:
+    if covariates is None:
+        return {}
+    native = np.asarray(target_values, dtype=float)
+    channels = native if native.ndim == 2 else native.reshape(1, -1)
+    if not 0 <= channel_index < channels.shape[0]:
+        return {}
+    raw_history = channels[
+        channel_index,
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH,
+    ]
+    covariate_history = np.asarray(covariates, dtype=float)[
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH
+    ]
+    if (
+        raw_history.shape != (REAL_CALIBRATION_CONTEXT_LENGTH,)
+        or covariate_history.ndim != 2
+        or covariate_history.shape[0] != REAL_CALIBRATION_CONTEXT_LENGTH
+    ):
+        return {}
+    imputed, _observed = impute_observed_window(
+        raw_history,
+        minimum_observed_fraction=minimum_observed_fraction,
+    )
+    if imputed is None or not np.isfinite(covariate_history).all():
+        return {}
+    try:
+        standardized, _location, _scale = standardize_history(imputed)
+    except ValueError:
+        return {}
+    normalized_covariates = normalize_covariates(
+        covariate_history,
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+    )
+    return v8_feature_vector(
+        standardized[:, None],
+        feature_period,
+        covariates=normalized_covariates,
+    )
+
+
+def _declared_hierarchy_features(
+    hierarchy_values: np.ndarray | None,
+    hierarchy_kind: str | None,
+    *,
+    start: int,
+    feature_period: int,
+    minimum_observed_fraction: float,
+) -> dict[str, float]:
+    if hierarchy_values is None or hierarchy_kind is None:
+        return {}
+    native = np.asarray(hierarchy_values, dtype=float)
+    if native.ndim != 2 or native.shape[0] < 3:
+        return {}
+    history = native[
+        :,
+        start : start + REAL_CALIBRATION_CONTEXT_LENGTH,
+    ].T
+    if history.shape != (
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+        native.shape[0],
+    ):
+        return {}
+    imputed_channels: list[np.ndarray] = []
+    for channel in range(history.shape[1]):
+        imputed, _observed = impute_observed_window(
+            history[:, channel],
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if imputed is None:
+            return {}
+        imputed_channels.append(imputed)
+    panel = standardize_hierarchy_by_context(
+        np.column_stack(imputed_channels),
+        REAL_CALIBRATION_CONTEXT_LENGTH,
+    )
+    return v8_feature_vector(
+        panel,
+        feature_period,
+        hierarchy=hierarchy_kind,
+        include_cross_series_predictability=False,
+    )
+
+
 def build_calibration_anchors(
     dataset: DatasetSpec,
     *,
-    gift_eval_dir: Path,
+    gift_eval_dir: Path | None = None,
+    source_root: Path | None = None,
     maximum_anchors: int,
     sample_seed: int = CALIBRATION_SAMPLE_SEED,
     minimum_observed_fraction: float = 0.5,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    asset_path = gift_eval_dir / dataset.asset_name
-    frequency, native_records = read_gift_arrow_targets(asset_path)
+    resolved_root = source_root or gift_eval_dir
+    if resolved_root is None:
+        raise ValueError("Paper v8 calibration requires a real-data source root")
+    asset_path = resolved_root / dataset.asset_name
+    record_limit = (
+        max(64, min(256, int(math.ceil(maximum_anchors / 4))))
+        if dataset.real_data_adapter == "m5_csv"
+        else None
+    )
+    real_bundle = load_real_dataset(
+        dataset.real_data_adapter,
+        asset_path,
+        record_limit=record_limit,
+    )
+    frequency = real_bundle.frequency
+    native_records = [
+        (record.item_id, record.values)
+        for record in real_bundle.records
+    ]
+    record_by_item: dict[str, RealSeriesRecord] = {
+        record.item_id: record for record in real_bundle.records
+    }
+    native_by_item = {
+        str(item_id): np.asarray(values, dtype=float)
+        for item_id, values in native_records
+    }
     series = expand_native_records(native_records)
     candidates: list[tuple[int, int, int]] = []
     for series_index, (_series_id, _item_id, _channel, values) in enumerate(series):
@@ -697,34 +967,43 @@ def build_calibration_anchors(
         series_index, lower, upper = candidates[int(candidate_index)]
         series_id, item_id, channel_index, values = series[series_index]
         start = int(rng.integers(lower, upper + 1)) if upper > lower else int(lower)
-        raw = np.asarray(values[start : start + CONTEXT_LENGTH], dtype=float)
-        imputed, observed_fraction = impute_observed_window(
-            raw,
+        raw_master = np.asarray(
+            values[start : start + REAL_FORECAST_MASTER_LENGTH],
+            dtype=float,
+        )
+        if raw_master.size != REAL_FORECAST_MASTER_LENGTH:
+            rejected_missing += 1
+            continue
+        history, history_observed_fraction = impute_observed_window(
+            raw_master[:REAL_CALIBRATION_CONTEXT_LENGTH],
             minimum_observed_fraction=minimum_observed_fraction,
         )
-        if imputed is None:
+        future, future_observed_fraction = impute_observed_window(
+            raw_master[REAL_CALIBRATION_CONTEXT_LENGTH:],
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        if history is None or future is None:
             rejected_missing += 1
             continue
         try:
-            standardized, location, scale = standardize_history(imputed)
+            standardized_history, location, scale = standardize_history(history)
         except ValueError:
             rejected_uninformative += 1
             continue
         period_policy = calibration_period_policy(
             frequency,
-            standardized,
+            standardized_history,
         )
-        features = feature_vector(
-            standardized[:, None],
+        features = v8_feature_vector(
+            standardized_history[:, None],
             int(period_policy["feature_period"]),
-            context_length=CONTEXT_LENGTH,
         )
         (
             nonlinear_gain,
             nonlinear_detected_lag,
             nonlinear_candidate_lags,
         ) = v8_nonlinear_conditional_gain(
-            standardized,
+            standardized_history,
             int(period_policy["feature_period"]),
         )
         features["nonlinear_conditional_gain"] = nonlinear_gain
@@ -740,20 +1019,83 @@ def build_calibration_anchors(
             if math.isfinite(float(value))
             and name != "future_abs_covariate_target_corr"
         }
+        native_features = _native_multivariate_features(
+            native_by_item[item_id],
+            start=start,
+            feature_period=int(period_policy["feature_period"]),
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        finite_native_features = {
+            str(name): float(value)
+            for name, value in native_features.items()
+            if math.isfinite(float(value))
+        }
+        source_record = record_by_item[item_id]
+        covariate_features = _known_future_covariate_features(
+            source_record.values,
+            source_record.covariates,
+            channel_index=channel_index,
+            start=start,
+            feature_period=int(period_policy["feature_period"]),
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        finite_covariate_features = {
+            str(name): float(value)
+            for name, value in covariate_features.items()
+            if name
+            in set(
+                REQUIRED_REAL_FEATURES_BY_CAPABILITY[
+                    "covariate_response"
+                ]
+            )
+            if math.isfinite(float(value))
+            and name != "future_abs_covariate_target_corr"
+        }
+        hierarchy_features = _declared_hierarchy_features(
+            source_record.hierarchy_values,
+            source_record.hierarchy_kind,
+            start=start,
+            feature_period=int(period_policy["feature_period"]),
+            minimum_observed_fraction=minimum_observed_fraction,
+        )
+        finite_hierarchy_features = {
+            str(name): float(value)
+            for name, value in hierarchy_features.items()
+            if name
+            in {
+                *REQUIRED_REAL_FEATURES_BY_CAPABILITY[
+                    "hierarchical_coherence"
+                ],
+                "hierarchy_residual_mean_abs",
+                "hierarchy_aggregation_ratio",
+            }
+            if math.isfinite(float(value))
+        }
+        standardized_master = np.concatenate([history, future])
+        standardized_master = (standardized_master - location) / scale
+        try:
+            real_mase_period, real_mase_scale = _real_forecast_mase_scale(
+                standardized_history,
+                int(period_policy["mase_period"]),
+            )
+        except ValueError:
+            rejected_uninformative += 1
+            continue
         anchor_id = (
             f"{safe_id(dataset.dataset_id)}__{safe_id(item_id)}__"
             f"c{channel_index}__t{start}"
         )
         anchors.append(
             {
-                "schema_version": "paper_v8_calibration_anchor.v2",
+                "schema_version": "paper_v8_calibration_anchor.v4",
+                "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "anchor_id": anchor_id,
                 "dataset_id": dataset.dataset_id,
                 "config_id": dataset.config_id,
                 "task_view_id": dataset.task_view_id,
                 "profile_id": (
                     f"{dataset.dataset_id}__{dataset.task_view_id}__"
-                    f"L{CONTEXT_LENGTH}"
+                    f"L{REAL_CALIBRATION_CONTEXT_LENGTH}"
                 ),
                 "frequency": frequency,
                 # ``season_length`` remains the literal calendar period for
@@ -767,25 +1109,160 @@ def build_calibration_anchors(
                 "series_id": series_id,
                 "channel_id": channel_index,
                 "window_start": start,
-                "context_length": CONTEXT_LENGTH,
-                "observed_fraction": observed_fraction,
+                "context_length": REAL_CALIBRATION_CONTEXT_LENGTH,
+                "horizon": HORIZON,
+                "observed_fraction": history_observed_fraction,
+                "future_observed_fraction": future_observed_fraction,
                 "history_location": location,
                 "history_scale": scale,
                 "history_sha256": hashlib.sha256(
-                    np.asarray(imputed, dtype="<f8").tobytes()
+                    np.asarray(history, dtype="<f8").tobytes()
                 ).hexdigest(),
                 "features": finite_features,
+                "native_multivariate_features": finite_native_features,
+                "known_future_covariate_features": finite_covariate_features,
+                "declared_hierarchy_features": finite_hierarchy_features,
+                "structural_group_id": source_record.structural_group_id,
+                "covariate_column_names": list(
+                    source_record.covariate_names
+                ),
+                "hierarchy_kind": source_record.hierarchy_kind,
+                "feature_provenance": {
+                    **{
+                        name: "real_univariate_history_l168"
+                        for name in finite_features
+                    },
+                    **{
+                        name: "real_native_multivariate_history_l168"
+                        for name in finite_native_features
+                        if name not in finite_features
+                    },
+                    **{
+                        name: "real_known_future_covariates_history_l168"
+                        for name in finite_covariate_features
+                    },
+                    **{
+                        name: "real_declared_hierarchy_history_l168"
+                        for name in finite_hierarchy_features
+                    },
+                },
+                "feature_provenance_by_scope": {
+                    "real_univariate": sorted(finite_features),
+                    "real_native_multivariate": sorted(
+                        finite_native_features
+                    ),
+                    "real_known_future_covariates": sorted(
+                        finite_covariate_features
+                    ),
+                    "real_declared_hierarchy": sorted(
+                        finite_hierarchy_features
+                    ),
+                },
+                "real_forecast_master": {
+                    "schema_version": (
+                        "paper_v8_real_anchor_forecast_master.v1"
+                    ),
+                    "sample_id": f"v8real__{anchor_id}",
+                    "dataset_id": dataset.dataset_id,
+                    "config_id": dataset.config_id,
+                    "task_view_id": dataset.task_view_id,
+                    "anchor_id": anchor_id,
+                    "context_length": REAL_CALIBRATION_CONTEXT_LENGTH,
+                    "horizon": HORIZON,
+                    "target_dim": 1,
+                    "covariate_dim": 0,
+                    "target": standardized_master[:, None].tolist(),
+                    "covariates": None,
+                    "frequency": frequency,
+                    "calendar_season_length": int(
+                        period_policy["calendar_season_length"]
+                    ),
+                    "feature_period": int(period_policy["feature_period"]),
+                    "mase_period": real_mase_period,
+                    "mase_scale": real_mase_scale,
+                    "standardization": {
+                        "scope": "history_only_l168",
+                        "location": location,
+                        "scale": scale,
+                    },
+                    "history_sha256": hashlib.sha256(
+                        np.asarray(
+                            standardized_master[
+                                :REAL_CALIBRATION_CONTEXT_LENGTH
+                            ],
+                            dtype="<f8",
+                        ).tobytes()
+                    ).hexdigest(),
+                    "future_sha256": hashlib.sha256(
+                        np.asarray(
+                            standardized_master[
+                                REAL_CALIBRATION_CONTEXT_LENGTH:
+                            ],
+                            dtype="<f8",
+                        ).tobytes()
+                    ).hexdigest(),
+                },
             }
         )
         if len(anchors) >= target_count:
             break
     if not anchors:
         raise ValueError(f"{dataset.dataset_id} produced no valid v8 anchors")
-    arrow_files = sorted(asset_path.glob("data-*.arrow"))
+    univariate_profile = summarize_feature_rows(
+        anchor["features"] for anchor in anchors
+    )
+    native_multivariate_profile = summarize_feature_rows(
+        anchor["native_multivariate_features"]
+        for anchor in anchors
+        if anchor["native_multivariate_features"]
+    )
+    known_future_covariate_profile = summarize_feature_rows(
+        anchor["known_future_covariate_features"]
+        for anchor in anchors
+        if anchor["known_future_covariate_features"]
+    )
+    declared_hierarchy_profile = summarize_feature_rows(
+        anchor["declared_hierarchy_features"]
+        for anchor in anchors
+        if anchor["declared_hierarchy_features"]
+    )
+    feature_support: dict[str, dict[str, Any]] = {}
+    for scope, profile in (
+        ("real_univariate", univariate_profile),
+        ("real_native_multivariate", native_multivariate_profile),
+        ("real_known_future_covariates", known_future_covariate_profile),
+        ("real_declared_hierarchy", declared_hierarchy_profile),
+    ):
+        for name, summary in profile.items():
+            finite_count = int(summary["finite_count"])
+            candidate = {
+                "scope": scope,
+                "finite_count": finite_count,
+                "minimum_finite_count": MIN_REAL_FEATURE_COUNT,
+                "usable": finite_count >= MIN_REAL_FEATURE_COUNT,
+                "fallback_reason": (
+                    None
+                    if finite_count >= MIN_REAL_FEATURE_COUNT
+                    else "insufficient_finite_real_windows"
+                ),
+            }
+            existing = feature_support.get(name)
+            if existing is None or (
+                candidate["scope"] != "real_univariate"
+                and candidate["usable"]
+            ):
+                feature_support[name] = candidate
+    for anchor in anchors:
+        anchor["feature_support"] = feature_support
     metadata = {
         "dataset": asdict(dataset),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "real_data_adapter": real_bundle.adapter_id,
         "asset_path": str(asset_path),
-        "asset_files": [file_record(path) for path in arrow_files],
+        "asset_files": [
+            file_record(path) for path in real_bundle.asset_files
+        ],
+        "adapter_metadata": real_bundle.metadata,
         "frequency": frequency,
         "season_length": int(
             seasonal_period_for_frequency(frequency)
@@ -795,11 +1272,14 @@ def build_calibration_anchors(
                 seasonal_period_for_frequency(frequency)
             ),
             "calendar_feature_observable_rule": (
-                "at_least_two_complete_calendar_cycles_in_l504"
+                "at_least_two_complete_calendar_cycles_in_l168"
             ),
-            "profile_period_bounds": [8, CONTEXT_LENGTH // 3],
+            "profile_period_bounds": [
+                8,
+                REAL_CALIBRATION_CONTEXT_LENGTH // 3,
+            ],
             "mase_fallback": (
-                "lag1_when_calendar_period_is_not_defined_inside_l504"
+                "lag1_when_calendar_period_is_not_defined_inside_l168"
             ),
         },
         "accepted_feature_period_counts": {
@@ -829,9 +1309,17 @@ def build_calibration_anchors(
         "rejected_uninformative_count": rejected_uninformative,
         "minimum_observed_fraction": minimum_observed_fraction,
         "sample_seed": sample_seed,
+        "feature_profiles": {
+            "univariate": univariate_profile,
+            "native_multivariate": native_multivariate_profile,
+            "known_future_covariates": known_future_covariate_profile,
+            "declared_hierarchy": declared_hierarchy_profile,
+            "support": feature_support,
+        },
         "window_policy": (
-            "full-series non-overlapping capacity strata with deterministic "
-            "without-replacement selection and within-stratum jitter"
+            "forecastable L168+H48 non-overlapping capacity strata with "
+            "deterministic without-replacement selection and within-stratum "
+            "jitter"
         ),
     }
     return anchors, metadata
@@ -843,6 +1331,198 @@ def anchor_summary(features: dict[str, float]) -> dict[str, dict[str, float]]:
         for name, value in features.items()
         if math.isfinite(float(value))
     }
+
+
+def anchor_feature_values(
+    anchor: dict[str, Any],
+    *,
+    capability_id: str | None = None,
+) -> dict[str, float]:
+    values = {
+        str(name): float(value)
+        for name, value in anchor.get("features", {}).items()
+        if anchor.get("feature_support", {})
+        .get(name, {"usable": True})
+        .get("usable", True)
+        if math.isfinite(float(value))
+    }
+    scoped_field = {
+        "common_factor": "native_multivariate_features",
+        "cross_series_dependence": "native_multivariate_features",
+        "hierarchical_coherence": "declared_hierarchy_features",
+        "covariate_response": "known_future_covariate_features",
+    }.get(capability_id)
+    scoped_feature_names = (
+        set(REQUIRED_REAL_FEATURES_BY_CAPABILITY.get(capability_id, ()))
+        if scoped_field is not None
+        else set()
+    )
+    if scoped_field is not None:
+        values.update(
+            {
+                str(name): float(value)
+                for name, value in anchor.get(scoped_field, {}).items()
+                if name in scoped_feature_names
+                if anchor.get("feature_support", {})
+                .get(name, {"usable": True})
+                .get("usable", True)
+                if math.isfinite(float(value))
+            }
+        )
+    return values
+
+
+def real_intensity_feature_summary(
+    anchors: Iterable[dict[str, Any]],
+    *,
+    capability_id: str,
+) -> tuple[dict[str, float] | None, dict[str, Any]]:
+    """Resolve a semantically matched real feature range for one capability.
+
+    Univariate observable mechanisms use the ordinary anchor feature row.
+    Common-factor and cross-series strengths require a native multivariate
+    panel and therefore never fall back to a marginal feature with the same
+    name.  The remaining capabilities deliberately retain generator-known
+    doses until their real inputs have matching semantics (declared hierarchy,
+    known covariates, or a reliable nonlinear/event coordinate).
+    """
+
+    target_feature = PRIMARY_TARGET_FEATURE[capability_id]
+    if capability_id not in REAL_RANGE_ELIGIBLE_CAPABILITIES:
+        return None, {
+            "usable": False,
+            "scope": "protocol_internal",
+            "target_feature": target_feature,
+            "finite_count": 0,
+            "minimum_finite_count": MIN_REAL_FEATURE_COUNT,
+            "reason_code": "capability_requires_internal_mechanism_dose",
+        }
+    source_key = (
+        "native_multivariate_features"
+        if capability_id in NATIVE_MULTIVARIATE_INTENSITY_CAPABILITIES
+        else "features"
+    )
+    values = [
+        float(anchor[source_key][target_feature])
+        for anchor in anchors
+        if target_feature in anchor.get(source_key, {})
+        if math.isfinite(float(anchor[source_key][target_feature]))
+    ]
+    finite_count = len(values)
+    scope = (
+        "real_native_multivariate"
+        if source_key == "native_multivariate_features"
+        else "real_univariate"
+    )
+    if finite_count < MIN_REAL_FEATURE_COUNT:
+        return None, {
+            "usable": False,
+            "scope": scope,
+            "target_feature": target_feature,
+            "finite_count": finite_count,
+            "minimum_finite_count": MIN_REAL_FEATURE_COUNT,
+            "reason_code": "insufficient_finite_real_anchor_features",
+        }
+    summary = summarize_feature_rows(
+        [{target_feature: value} for value in values]
+    )[target_feature]
+    lower = float(summary["p10"])
+    upper = float(summary["p90"])
+    if upper <= lower + 1e-12:
+        return None, {
+            "usable": False,
+            "scope": scope,
+            "target_feature": target_feature,
+            "finite_count": finite_count,
+            "minimum_finite_count": MIN_REAL_FEATURE_COUNT,
+            "reason_code": "real_anchor_q10_q90_collapsed",
+            "summary": summary,
+        }
+    return summary, {
+        "usable": True,
+        "scope": scope,
+        "target_feature": target_feature,
+        "finite_count": finite_count,
+        "minimum_finite_count": MIN_REAL_FEATURE_COUNT,
+        "reason_code": None,
+        "summary": summary,
+    }
+
+
+def parameter_mapping_provenance(
+    mappings: Iterable[dict[str, Any]],
+    anchor: dict[str, Any],
+    *,
+    capability_id: str | None = None,
+) -> list[dict[str, Any]]:
+    support = anchor.get("feature_support", {})
+    univariate = {
+        name
+        for name in anchor.get("features", {})
+        if support.get(name, {"usable": True}).get("usable", True)
+    }
+    scoped_field, scoped_status = {
+        "common_factor": (
+            "native_multivariate_features",
+            "real_native_multivariate",
+        ),
+        "cross_series_dependence": (
+            "native_multivariate_features",
+            "real_native_multivariate",
+        ),
+        "hierarchical_coherence": (
+            "declared_hierarchy_features",
+            "real_declared_hierarchy",
+        ),
+        "covariate_response": (
+            "known_future_covariate_features",
+            "real_known_future_covariates",
+        ),
+    }.get(capability_id, ("", ""))
+    scoped = {
+        name
+        for name in anchor.get(scoped_field, {})
+        if scoped_field
+        if name
+        in set(REQUIRED_REAL_FEATURES_BY_CAPABILITY.get(capability_id, ()))
+        if support.get(name, {"usable": True}).get("usable", True)
+    }
+    output: list[dict[str, Any]] = []
+    for mapping in mappings:
+        row = dict(mapping)
+        source = str(row.get("source_feature", ""))
+        components = tuple(
+            part for part in source.split("/") if part
+        )
+        if source == "synthetic_protocol_constant":
+            status = "protocol_constant"
+            fallback_reason = None
+        elif components and all(
+            component in univariate | scoped
+            for component in components
+        ):
+            status = (
+                scoped_status
+                if any(component in scoped for component in components)
+                else "real_univariate"
+            )
+            fallback_reason = None
+        else:
+            status = "protocol_fallback"
+            missing = [
+                component
+                for component in components
+                if component not in univariate | scoped
+            ]
+            fallback_reason = (
+                "real_feature_unavailable:"
+                + ",".join(missing or [source or "unknown"])
+            )
+        row["source_status"] = status
+        row["fallback_used"] = status == "protocol_fallback"
+        row["fallback_reason"] = fallback_reason
+        output.append(row)
+    return output
 
 
 def build_conditioning(
@@ -906,11 +1586,11 @@ def standardize_generated_sample(
         )
         metadata["counterfactual_standardization"] = normalization
     elif capability_id == "hierarchical_coherence":
-        target = _standardize_hierarchy_by_context(target, CONTEXT_LENGTH)
+        target = standardize_hierarchy_by_context(target, CONTEXT_LENGTH)
     else:
-        target = _standardize_by_context(target, CONTEXT_LENGTH)
+        target = standardize_by_context(target, CONTEXT_LENGTH)
     if covariates is not None:
-        covariates = _normalize_covariates(covariates, CONTEXT_LENGTH)
+        covariates = normalize_covariates(covariates, CONTEXT_LENGTH)
     return np.asarray(target, dtype=float), (
         None if covariates is None else np.asarray(covariates, dtype=float)
     )
@@ -925,6 +1605,12 @@ def measured_features(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, float]:
     metadata = metadata or {}
+    target_history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
+    covariate_history = (
+        None
+        if covariates is None
+        else np.asarray(covariates, dtype=float)[:CONTEXT_LENGTH]
+    )
     measurement_period = int(season_length)
     if capability_id == "multi_seasonal":
         periods = metadata.get("periods") or []
@@ -959,23 +1645,14 @@ def measured_features(
         if capability_id == "hierarchical_coherence"
         else None
     )
-    values = _realized_features(
-        target,
-        covariates,
+    values = v8_feature_vector(
+        target_history,
         measurement_period,
-        CONTEXT_LENGTH,
-    )
-    values.update(
-        feature_vector(
-            target,
-            measurement_period,
-            covariates=covariates,
-            context_length=CONTEXT_LENGTH,
-            hierarchy=hierarchy,
-            include_cross_series_predictability=(
-                capability_id == "cross_series_dependence"
-            ),
-        )
+        covariates=covariate_history,
+        hierarchy=hierarchy,
+        include_cross_series_predictability=(
+            capability_id == "cross_series_dependence"
+        ),
     )
     if capability_id == "nonlinear_persistence":
         nonlinear_strength = float(
@@ -988,7 +1665,7 @@ def measured_features(
             nonlinear_detected_lag,
             nonlinear_candidate_lags,
         ) = v8_nonlinear_conditional_gain(
-            np.mean(target, axis=1),
+            np.mean(target_history, axis=1),
             measurement_period,
         )
         values["nonlinear_conditional_gain"] = nonlinear_gain
@@ -1002,7 +1679,7 @@ def measured_features(
         if actual_lag is not None:
             values["nonlinear_actual_lag_gain"] = (
                 v8_nonlinear_actual_lag_gain(
-                    np.mean(target, axis=1),
+                    np.mean(target_history, axis=1),
                     measurement_period,
                     int(actual_lag),
                 )
@@ -1034,13 +1711,23 @@ def generate_calibration_member(
     capability_id: str,
     family_role: str,
     lambda_value: float,
-    calibration_seed_index: int,
+    qualification_path_index: int,
 ) -> tuple[dict[str, float], dict[str, Any]]:
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
-        anchor_summary(anchor["features"]),
+        anchor_summary(
+            anchor_feature_values(
+                anchor,
+                capability_id=capability_id,
+            )
+        ),
         season_length=int(anchor["feature_period"]),
         context_length=CONTEXT_LENGTH,
+    )
+    mappings = parameter_mapping_provenance(
+        mappings,
+        anchor,
+        capability_id=capability_id,
     )
     conditioning = build_conditioning(
         dataset,
@@ -1050,15 +1737,14 @@ def generate_calibration_member(
         intensity_lambdas=(lambda_value,) * 5,
         parameters=parameters,
     )
-    rng = np.random.default_rng(
-        stable_seed(
-            dataset.dataset_id,
-            capability_id,
-            calibration_seed_index,
-            "generation-path",
-            base=GENERATION_PATH_SEED,
-        )
+    path_seed = stable_seed(
+        dataset.dataset_id,
+        capability_id,
+        qualification_path_index,
+        "qualification-path",
+        base=QUALIFICATION_PATH_SEED,
     )
+    rng = np.random.default_rng(path_seed)
     target, metadata, covariates = generate_deterministic_sample(
         capability_id,
         MASTER_LENGTH,
@@ -1243,7 +1929,7 @@ def monotone_response_curve(
         dtype=float,
     )
     for seed_index in range(calibration_seed_count):
-        anchor = anchor_for_seed(
+        anchor = anchor_for_qualification_path(
             anchors,
             dataset_id=dataset.dataset_id,
             capability_id=capability_id,
@@ -1256,7 +1942,7 @@ def monotone_response_curve(
                 capability_id=capability_id,
                 family_role=family_role,
                 lambda_value=float(lambda_value),
-                calibration_seed_index=seed_index,
+                qualification_path_index=seed_index,
             )
             path_responses[seed_index, lambda_index] = float(
                 features[target_feature]
@@ -1285,11 +1971,12 @@ def monotone_response_curve(
     ]
     support.update(
         {
-            "path_anchor_policy": "formal_logical_seed_hash_v1",
-            "path_rng_policy": "formal_generation_path_v1",
+            "path_anchor_policy": "independent_qualification_anchor_hash_v1",
+            "path_rng_policy": "independent_qualification_path_v1",
             "path_seed_start": 0,
             "raw_lambda_grid": full_grid.tolist(),
             "raw_response_curve": raw_response.tolist(),
+            "per_path_raw_response_curves": path_responses.tolist(),
         }
     )
     half = calibration_seed_count // 2
@@ -1419,46 +2106,6 @@ def inverse_response_lambdas(
     return tuple(float(value) for value in selected)
 
 
-def selected_lambda_mean_response(
-    dataset: DatasetSpec,
-    anchors: list[dict[str, Any]],
-    *,
-    capability_id: str,
-    family_role: str,
-    calibration_seed_count: int,
-    selected_lambdas: Iterable[float],
-) -> tuple[float, ...]:
-    values = tuple(float(value) for value in selected_lambdas)
-    path_responses = np.empty(
-        (calibration_seed_count, len(values)),
-        dtype=float,
-    )
-    target_feature = PRIMARY_TARGET_FEATURE[capability_id]
-    for seed_index in range(calibration_seed_count):
-        anchor = anchor_for_seed(
-            anchors,
-            dataset_id=dataset.dataset_id,
-            capability_id=capability_id,
-            seed_index=seed_index,
-        )
-        for lambda_index, lambda_value in enumerate(values):
-            features, _metadata = generate_calibration_member(
-                dataset,
-                anchor,
-                capability_id=capability_id,
-                family_role=family_role,
-                lambda_value=lambda_value,
-                calibration_seed_index=seed_index,
-            )
-            path_responses[seed_index, lambda_index] = float(
-                features[target_feature]
-            )
-    return tuple(
-        float(value)
-        for value in np.mean(path_responses, axis=0)
-    )
-
-
 def selected_response_hard_failure_reasons(
     response: Iterable[float],
 ) -> list[str]:
@@ -1492,6 +2139,13 @@ def calibrate_capabilities(
     for capability_id in capability_ids:
         if capability_id not in CAPABILITIES:
             raise ValueError(f"unsupported capability: {capability_id}")
+        real_feature_summary, real_feature_calibration = (
+            real_intensity_feature_summary(
+                anchors,
+                capability_id=capability_id,
+            )
+        )
+        uses_real_feature_range = real_feature_summary is not None
         initial_response_seed_count = int(calibration_seed_count)
         maximum_response_seed_count = (
             int(maximum_calibration_seed_count)
@@ -1542,75 +2196,138 @@ def calibrate_capabilities(
                 ),
             }
             if not any(hard_failure_reasons.values()):
-                if capability_id in SYNTHETIC_DOSE_CAPABILITIES:
+                primary_generator_interval = [
+                    float(primary_response[0]),
+                    float(primary_response[-1]),
+                ]
+                real_interval = None
+                real_overlap_interval = None
+                overlap_fraction = 0.0
+                uses_real_overlap = False
+                if uses_real_feature_range:
+                    real_lower = float(real_feature_summary["p10"])
+                    real_upper = float(real_feature_summary["p90"])
+                    real_interval = [real_lower, real_upper]
+                    overlap_lower = max(
+                        real_lower,
+                        primary_generator_interval[0],
+                    )
+                    overlap_upper = min(
+                        real_upper,
+                        primary_generator_interval[1],
+                    )
+                    real_span = real_upper - real_lower
+                    overlap_span = max(0.0, overlap_upper - overlap_lower)
+                    overlap_fraction = overlap_span / max(real_span, 1e-12)
+                    uses_real_overlap = bool(
+                        overlap_span > max(0.10 * real_span, 1e-9)
+                    )
+                    if overlap_span > 0.0:
+                        real_overlap_interval = [
+                            overlap_lower,
+                            overlap_upper,
+                        ]
+                if uses_real_overlap:
+                    assert real_overlap_interval is not None
                     primary_targets = np.linspace(
-                        float(primary_response[0]),
-                        float(primary_response[-1]),
+                        real_overlap_interval[0],
+                        real_overlap_interval[1],
+                        5,
+                    )
+                    calibration_status = (
+                        "family_mean_inverse_on_real_generator_overlap"
+                    )
+                    intensity_scope = (
+                        "dataset_real_generator_overlap_reference"
+                    )
+                else:
+                    primary_targets = np.linspace(
+                        primary_generator_interval[0],
+                        primary_generator_interval[1],
                         5,
                     )
                     if capability_id in STRUCTURAL_CAPABILITIES:
                         calibration_status = (
-                            "fixed_cross_dataset_even_realized_strength_grid"
+                            "generator_structural_relative_grid"
+                        )
+                        intensity_scope = (
+                            "generator_structural_fallback_grid"
                         )
                     elif capability_id == "nonlinear_persistence":
                         calibration_status = (
                             "generator_relative_nonlinear_coefficient_grid"
                         )
-                    else:
+                        intensity_scope = (
+                            "generator_nonlinear_coefficient_grid"
+                        )
+                    elif capability_id == "predictable_intermittency":
                         calibration_status = (
                             "generator_relative_continuous_event_dose_grid"
                         )
-                    real_interval = None
-                else:
-                    reference = feature_summary.get(target_feature)
-                    if reference is None:
-                        raise ValueError(
-                            f"real feature {target_feature} unavailable for "
-                            f"{dataset.dataset_id}/{capability_id}"
-                        )
-                    real_lower = float(reference["p10"])
-                    real_upper = float(reference["p90"])
-                    lower = max(
-                        real_lower,
-                        float(primary_response[0]),
-                    )
-                    upper = min(
-                        real_upper,
-                        float(primary_response[-1]),
-                    )
-                    if upper <= lower + 1e-10:
-                        lower, upper = (
-                            float(primary_response[0]),
-                            float(primary_response[-1]),
-                        )
-                        calibration_status = (
-                            "no_real_generator_intersection_"
-                            "generator_support_used"
+                        intensity_scope = (
+                            "generator_continuous_event_dose_grid"
                         )
                     else:
                         calibration_status = (
-                            "real_q10_q90_generator_intersection"
+                            "real_reference_unavailable_or_nonoverlapping_"
+                            "generator_relative_grid"
                         )
-                    primary_targets = np.linspace(lower, upper, 5)
-                    real_interval = [real_lower, real_upper]
+                        intensity_scope = "generator_relative_grid"
                 primary_lambdas = inverse_response_lambdas(
                     primary_grid,
                     primary_response,
                     primary_targets,
                 )
+                lambda_support_span = float(
+                    primary_grid[-1] - primary_grid[0]
+                )
+                mapped_lambda_span_fraction = (
+                    float(
+                        primary_lambdas[-1] - primary_lambdas[0]
+                    )
+                    / max(lambda_support_span, 1e-12)
+                    if uses_real_overlap
+                    else None
+                )
+                real_alignment_fallback_reason = None
+                if (
+                    uses_real_overlap
+                    and mapped_lambda_span_fraction is not None
+                    and mapped_lambda_span_fraction < 0.25
+                ):
+                    uses_real_overlap = False
+                    real_alignment_fallback_reason = (
+                        "real_reference_maps_to_less_than_"
+                        "quarter_of_family_lambda_support"
+                    )
+                    primary_targets = np.linspace(
+                        primary_generator_interval[0],
+                        primary_generator_interval[1],
+                        5,
+                    )
+                    primary_lambdas = inverse_response_lambdas(
+                        primary_grid,
+                        primary_response,
+                        primary_targets,
+                    )
+                    calibration_status = (
+                        "real_reference_lambda_span_compressed_"
+                        "generator_relative_grid"
+                    )
+                    intensity_scope = "generator_relative_grid"
                 hard_failure_reasons["primary_inverse"] = (
                     inverse_mapping_hard_failure_reasons(
                         np.asarray(primary_targets, dtype=float),
                         primary_lambdas,
                     )
                 )
-                primary_selected_response = selected_lambda_mean_response(
-                    dataset,
-                    anchors,
-                    capability_id=capability_id,
-                    family_role="primary",
-                    calibration_seed_count=response_seed_count,
-                    selected_lambdas=primary_lambdas,
+                primary_selected_response = tuple(
+                    float(value)
+                    for value in np.interp(
+                        np.asarray(primary_lambdas, dtype=float),
+                        primary_grid,
+                        primary_response,
+                    )
                 )
                 hard_failure_reasons["primary_selected_response"] = (
                     selected_response_hard_failure_reasons(
@@ -1631,12 +2348,31 @@ def calibrate_capabilities(
                 f"for {dataset.dataset_id}/{capability_id}: "
                 f"{hard_failure_reasons}"
             )
-        secondary_lambdas = inverse_response_lambdas(
-            secondary_grid,
-            secondary_response,
-            np.asarray(primary_targets, dtype=float),
+        secondary_covers_targets = bool(
+            float(primary_targets[0]) >= float(secondary_response[0]) - 1e-12
+            and float(primary_targets[-1])
+            <= float(secondary_response[-1]) + 1e-12
         )
-        secondary_status = "matched_primary_target_values"
+        if secondary_covers_targets:
+            secondary_lambdas = inverse_response_lambdas(
+                secondary_grid,
+                secondary_response,
+                np.asarray(primary_targets, dtype=float),
+            )
+            secondary_status = "family_mean_matched_primary_target_values"
+        else:
+            secondary_lambdas = tuple(
+                float(value)
+                for value in np.linspace(
+                    float(secondary_grid[0]),
+                    float(secondary_grid[-1]),
+                    5,
+                )
+            )
+            secondary_status = (
+                "primary_targets_outside_secondary_family_mean_support_"
+                "relative_grid_used"
+            )
         nonincreasing_secondary = any(
             right <= left + 1e-8
             for left, right in zip(
@@ -1673,17 +2409,26 @@ def calibrate_capabilities(
                     "fixed_relative_grid_used"
                 )
             )
+        secondary_selected_response = tuple(
+            float(value)
+            for value in np.interp(
+                np.asarray(secondary_lambdas, dtype=float),
+                secondary_grid,
+                secondary_response,
+            )
+        )
         capabilities[capability_id] = {
             "target_feature": target_feature,
-            "response_calibration_seed_count": response_seed_count,
-            "response_calibration_path_policy": {
+            "real_feature_calibration": real_feature_calibration,
+            "qualification_path_count": response_seed_count,
+            "qualification_path_policy": {
                 "policy": (
-                    "formal_generation_seed_bank_"
-                    "fixed_base_hard_failure_only_expansion_v2"
+                    "independent_family_response_qualification_bank_"
+                    "fixed_base_hard_failure_only_expansion_v1"
                 ),
                 "path_sampling": {
-                    "anchor": "formal_logical_seed_hash_v1",
-                    "rng": "formal_generation_path_v1",
+                    "anchor": "independent_qualification_anchor_hash_v1",
+                    "rng": "independent_qualification_path_v1",
                     "seed_start": 0,
                 },
                 "initial_path_count": initial_response_seed_count,
@@ -1699,21 +2444,30 @@ def calibrate_capabilities(
             "target_dim": TARGET_DIM_BY_CAPABILITY[capability_id],
             "primary_family": PRIMARY_FAMILY_BY_CAPABILITY[capability_id],
             "secondary_family": SECONDARY_FAMILY_BY_CAPABILITY[capability_id],
-            "intensity_calibration_scope": (
-                "generator_structural_relative_grid"
-                if capability_id in STRUCTURAL_CAPABILITIES
-                else (
-                    "generator_nonlinear_coefficient_grid"
-                    if capability_id == "nonlinear_persistence"
-                    else (
-                        "generator_continuous_event_dose_grid"
-                        if capability_id == "predictable_intermittency"
-                        else "dataset_real_feature_range"
-                    )
-                )
-            ),
+            "intensity_calibration_scope": intensity_scope,
             "calibration_status": calibration_status,
             "real_interval_q10_q90": real_interval,
+            "real_alignment_reference": {
+                "policy": (
+                    "real_q10_q90_is_auxiliary_reference_not_sample_gate"
+                ),
+                "real_reference_available": uses_real_feature_range,
+                "real_interval_q10_q90": real_interval,
+                "primary_family_mean_response_interval": (
+                    primary_generator_interval
+                ),
+                "overlap_interval": real_overlap_interval,
+                "overlap_fraction_of_real_q10_q90": overlap_fraction,
+                "used_for_family_targets": uses_real_overlap,
+                "minimum_overlap_fraction_for_use": 0.10,
+                "real_mapped_lambda_span_fraction": (
+                    mapped_lambda_span_fraction
+                ),
+                "minimum_lambda_span_fraction_for_use": 0.25,
+                "fallback_reason": real_alignment_fallback_reason,
+                "formal_seed_inverse": False,
+                "sample_level_alignment_enforced": False,
+            },
             "primary": {
                 "lambda_support": primary_support[
                     "effective_lambda_support"
@@ -1730,7 +2484,7 @@ def calibrate_capabilities(
                 ),
                 "selected_lambda_response_gate": {
                     "policy": (
-                        "formal_seed_bank_same_tolerance_as_generation_gate_v1"
+                        "qualification_bank_family_mean_response_v1"
                     ),
                     "accepted": True,
                 },
@@ -1744,21 +2498,24 @@ def calibrate_capabilities(
                 "lambda_grid": secondary_grid.tolist(),
                 "response_curve": secondary_response.tolist(),
                 "selected_lambdas": list(secondary_lambdas),
+                "selected_target_values": list(
+                    secondary_selected_response
+                ),
                 "matched_primary_target_values": np.asarray(
                     primary_targets, dtype=float
                 ).tolist(),
             },
         }
     return {
-        "schema_version": "paper_v8_capability_calibration.v5",
+        "schema_version": "paper_v8_capability_calibration.v7",
         "generator_version": GENERATOR_VERSION,
-        "response_path_sampling_policy": {
-            "anchor": "formal_logical_seed_hash_v1",
-            "rng": "formal_generation_path_v1",
+        "qualification_path_sampling_policy": {
+            "anchor": "independent_qualification_anchor_hash_v1",
+            "rng": "independent_qualification_path_v1",
             "seed_start": 0,
         },
-        "calibration_seed_count": calibration_seed_count,
-        "maximum_calibration_seed_count": (
+        "qualification_path_count": calibration_seed_count,
+        "maximum_qualification_path_count": (
             int(maximum_calibration_seed_count)
             if maximum_calibration_seed_count is not None
             else int(calibration_seed_count)
@@ -1773,15 +2530,64 @@ def mase_scales(
     *,
     season_length: int,
 ) -> tuple[float, list[float]]:
+    policy = mase_scale_policy(target, season_length=season_length)
+    return (
+        float(policy["scale"]),
+        [float(value) for value in policy["scale_by_target"]],
+    )
+
+
+def mase_scale_policy(
+    target: np.ndarray,
+    *,
+    season_length: int,
+) -> dict[str, Any]:
+    """Resolve finite MASE scales without flooring deterministic sequences.
+
+    An exactly seasonal deterministic history has a zero seasonal-naive
+    denominator even though its lag-one variation is well defined.  In that
+    degenerate case, use the standard non-seasonal MASE denominator for only
+    the affected target and record the effective period explicitly.
+    """
+
     history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
     period = int(season_length)
     if not 1 <= period < len(history):
-        raise ValueError("v8 MASE period must be defined inside L504")
+        raise ValueError("v8 MASE period must be defined inside L336")
     differences = np.abs(history[period:] - history[:-period])
     by_target = np.mean(differences, axis=0)
-    if not np.isfinite(by_target).all() or np.any(by_target <= 1e-12):
+    if not np.isfinite(by_target).all():
+        raise ValueError("v8 MASE denominator is non-finite")
+    effective_periods = np.full(by_target.shape, period, dtype=int)
+    fallback_mask = by_target <= 1e-12
+    if np.any(fallback_mask):
+        lag_one = np.mean(np.abs(np.diff(history, axis=0)), axis=0)
+        if (
+            not np.isfinite(lag_one[fallback_mask]).all()
+            or np.any(lag_one[fallback_mask] <= 1e-12)
+        ):
+            raise ValueError(
+                "v8 seasonal and lag-one MASE denominators are zero or "
+                "non-finite"
+            )
+        by_target[fallback_mask] = lag_one[fallback_mask]
+        effective_periods[fallback_mask] = 1
+    if np.any(by_target <= 1e-12):
         raise ValueError("v8 MASE denominator is zero or non-finite")
-    return float(np.mean(by_target)), [float(value) for value in by_target]
+    return {
+        "policy": "seasonal_lag_with_lag1_degeneracy_fallback_v1",
+        "requested_period": period,
+        "effective_period_by_target": [
+            int(value) for value in effective_periods
+        ],
+        "fallback_target_indices": [
+            int(index) for index in np.flatnonzero(fallback_mask)
+        ],
+        "scale": float(np.mean(by_target)),
+        "scale_by_target": [
+            float(value) for value in by_target
+        ],
+    }
 
 
 def target_and_covariate_sha256(
@@ -1813,6 +2619,23 @@ def anchor_for_seed(
     return anchors[index]
 
 
+def anchor_for_qualification_path(
+    anchors: list[dict[str, Any]],
+    *,
+    dataset_id: str,
+    capability_id: str,
+    seed_index: int,
+) -> dict[str, Any]:
+    index = stable_seed(
+        dataset_id,
+        capability_id,
+        seed_index,
+        "qualification-anchor",
+        base=QUALIFICATION_PATH_SEED,
+    ) % len(anchors)
+    return anchors[index]
+
+
 def generate_master_sample(
     dataset: DatasetSpec,
     anchor: dict[str, Any],
@@ -1824,17 +2647,33 @@ def generate_master_sample(
     seed_index: int,
     counterfactual_member: int | None,
     evaluation_table: str = "main",
+    generation_attempt: int = 0,
 ) -> dict[str, Any]:
+    if generation_attempt < 0:
+        raise ValueError("generation_attempt must be non-negative")
     parameters, mappings = derive_deterministic_parameters(
         capability_id,
-        anchor_summary(anchor["features"]),
+        anchor_summary(
+            anchor_feature_values(
+                anchor,
+                capability_id=capability_id,
+            )
+        ),
         season_length=int(anchor["feature_period"]),
         context_length=CONTEXT_LENGTH,
     )
+    mappings = parameter_mapping_provenance(
+        mappings,
+        anchor,
+        capability_id=capability_id,
+    )
     family_calibration = capability_calibration[family_role]
     lambdas = tuple(
-        float(value) for value in family_calibration["selected_lambdas"]
+        float(value)
+        for value in family_calibration["selected_lambdas"]
     )
+    if len(lambdas) != len(INTENSITIES):
+        raise ValueError("v8 intensity lambdas must contain five values")
     targets = tuple(
         float(value)
         for value in (
@@ -1851,12 +2690,23 @@ def generate_master_sample(
         parameters=parameters,
         target_values=targets,
     )
-    path_seed = stable_seed(
-        dataset.dataset_id,
-        capability_id,
-        seed_index,
-        "generation-path",
-        base=GENERATION_PATH_SEED,
+    path_seed = (
+        stable_seed(
+            dataset.dataset_id,
+            capability_id,
+            seed_index,
+            "generation-path",
+            base=GENERATION_PATH_SEED,
+        )
+        if generation_attempt == 0
+        else stable_seed(
+            dataset.dataset_id,
+            capability_id,
+            seed_index,
+            "generation-path-retry",
+            generation_attempt,
+            base=GENERATION_PATH_SEED,
+        )
     )
     target, metadata, covariates = generate_deterministic_sample(
         capability_id,
@@ -1883,10 +2733,12 @@ def generate_master_sample(
         season_length=conditioning.season_length,
         metadata=metadata,
     )
-    mase_scale, scale_by_target = mase_scales(
+    mase_policy = mase_scale_policy(
         target,
         season_length=int(anchor["mase_period"]),
     )
+    mase_scale = float(mase_policy["scale"])
+    scale_by_target = list(mase_policy["scale_by_target"])
     dataset_token = safe_id(dataset.dataset_id)
     pair_id = (
         f"v8__{dataset_token}__{capability_id}__{family_role}__"
@@ -1913,7 +2765,8 @@ def generate_master_sample(
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
-        "schema_version": "paper_v8_master_sample.v2",
+        "schema_version": "paper_v8_master_sample.v6",
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "sample_id": sample_id,
         "master_sample_id": sample_id,
         "paired_group_id": (
@@ -1965,8 +2818,8 @@ def generate_master_sample(
         "calendar_season_feature_observable": bool(
             anchor["calendar_season_feature_observable"]
         ),
-        "calendar_cycles_in_l504": float(
-            anchor["calendar_cycles_in_l504"]
+        "calendar_cycles_in_calibration_history": float(
+            anchor["calendar_cycles_in_calibration_history"]
         ),
         "feature_period": int(anchor["feature_period"]),
         "feature_period_source": str(anchor["feature_period_source"]),
@@ -1979,6 +2832,20 @@ def generate_master_sample(
         "target_feature_value": float(
             features[PRIMARY_TARGET_FEATURE[capability_id]]
         ),
+        "intensity_target_feature_value": float(
+            targets[intensity - 1]
+        ),
+        "intensity_lambda": float(lambdas[intensity - 1]),
+        "intensity_calibration": {
+            "policy": "dataset_family_mean_response_inverse_v1",
+            "scope": capability_calibration[
+                "intensity_calibration_scope"
+            ],
+            "formal_seed_inverse": False,
+            "sample_level_target_gate": False,
+            "selected_lambdas": list(lambdas),
+            "reference_target_values": list(targets),
+        },
         "realized_features": features,
         "sampled_generator_parameters": parameters,
         "parameter_mapping": mappings,
@@ -1986,6 +2853,12 @@ def generate_master_sample(
             "policy": "direct_real_anchor_feature_row",
             "anchor_id": anchor["anchor_id"],
             "path_seed": path_seed,
+            "generation_attempt": int(generation_attempt),
+            "attempt_rng_policy": (
+                "formal_generation_path_v1"
+                if generation_attempt == 0
+                else "stable_generation_path_retry_v1"
+            ),
         },
         "generation_metadata": metadata,
         "evaluation_table": evaluation_table,
@@ -1997,7 +2870,17 @@ def generate_master_sample(
         "mase_period_source": str(anchor["mase_period_source"]),
         "mase_scale": mase_scale,
         "mase_scale_by_target": scale_by_target,
-        "mase_scale_source": "clean_l504_history",
+        "mase_scale_effective_period_by_target": list(
+            mase_policy["effective_period_by_target"]
+        ),
+        "mase_scale_fallback_target_indices": list(
+            mase_policy["fallback_target_indices"]
+        ),
+        "mase_scale_policy": str(mase_policy["policy"]),
+        "mase_scale_source": (
+            "clean_l336_history_seasonal_lag_with_lag1_"
+            "degeneracy_fallback"
+        ),
         "target_sha256": target_hash,
         "future_sha256": hashlib.sha256(
             np.asarray(target[CONTEXT_LENGTH:], dtype="<f8").tobytes()
@@ -2220,7 +3103,7 @@ def master_view(
     if context_length not in VIEW_CONTEXT_LENGTHS:
         raise ValueError(f"unsupported v8 context view {context_length}")
     if int(master["context_length"]) != CONTEXT_LENGTH:
-        raise ValueError("v8 inference views require an L504 master")
+        raise ValueError("v8 inference views require an L336 master")
     start = CONTEXT_LENGTH - context_length
     target = np.asarray(master["target"], dtype=float)[start:]
     covariates = (
@@ -2229,7 +3112,7 @@ def master_view(
         else np.asarray(master["covariates"], dtype=float)[start:]
     )
     result = json.loads(json.dumps(master))
-    result["schema_version"] = "paper_v8_forecast_view.v1"
+    result["schema_version"] = "paper_v8_forecast_view.v2"
     result["source_master_sample_id"] = master["sample_id"]
     result["master_sample_id"] = master["sample_id"]
     result["sample_id"] = f"{master['sample_id']}__L{context_length}"
@@ -2237,7 +3120,7 @@ def master_view(
     result["context_length"] = context_length
     result["context_policy_candidates"] = list(VIEW_CONTEXT_LENGTHS)
     result["view_standardization_policy"] = (
-        "slice_exact_l504_standardized_master_without_restandardization"
+        "slice_exact_l336_standardized_master_without_restandardization"
     )
     result["target"] = target.tolist()
     result["covariates"] = (

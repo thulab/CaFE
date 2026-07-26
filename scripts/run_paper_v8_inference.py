@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,9 +20,8 @@ import httpx
 import msgpack
 import numpy as np
 import paper_v8_pipeline_common as v8
-import run_paper_e2_dynamic_stability as engine
 
-_JSON_RUN_MODEL_REQUESTS = engine.run_model_requests
+INPUT_ADAPTATION_POLICY_ID = "paper-v7-input-adaptation-v1"
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
@@ -36,7 +36,6 @@ DEFAULT_MODELS = (
     "moirai2",
     "Timer-3.5",
     "toto2.0",
-    "TimePFN",
 )
 MODEL_EXECUTION_CONFIG = {
     # Paper v8 has a fixed H=48 and runs on RTX 5090 services. These defaults
@@ -454,8 +453,12 @@ def build_endpoint_profiles(
 
 def endpoint_topology_cli_arguments(args: argparse.Namespace) -> list[str]:
     arguments = ["--devices", str(args.devices)]
+    endpoint_presets = endpoint_presets_with_defaults(
+        list(args.endpoints),
+        list(args.endpoint_preset),
+    )
     for option, values in (
-        ("--endpoint-preset", args.endpoint_preset),
+        ("--endpoint-preset", endpoint_presets),
         ("--endpoint-devices", args.endpoint_devices),
         ("--endpoint-capacity", args.endpoint_capacity),
         (
@@ -531,6 +534,285 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def safe_filename(value: str) -> str:
+    return "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in value
+    )
+
+
+def count_jsonl(path: Path) -> int:
+    return sum(1 for _row in v8.iter_jsonl(path))
+
+
+def relative_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(v8.REPO_ROOT.resolve()))
+    except ValueError:
+        return str(path.resolve())
+
+
+def parse_envelope(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError as error:
+        raise RuntimeError(
+            f"{response.request.url} returned non-json: {response.text[:200]}"
+        ) from error
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"{response.request.url} returned {response.status_code}: "
+            f"{payload.get('message', response.text)}"
+        )
+    if payload.get("code") not in (None, 200):
+        raise RuntimeError(
+            f"{response.request.url} returned code {payload.get('code')}: "
+            f"{payload.get('message')}"
+        )
+    return payload
+
+
+class TimerServiceClient:
+    def __init__(self, base_url: str, api_prefix: str, *, timeout_seconds: int):
+        self.base = base_url.rstrip("/") + "/" + api_prefix.strip("/")
+        self.client = httpx.Client(timeout=timeout_seconds, trust_env=False)
+        self.timeout_seconds = timeout_seconds
+
+    def close(self) -> None:
+        self.client.close()
+
+    def list_models(self) -> list[dict[str, Any]]:
+        return list(self._get("/models/list")["data"]["models"])
+
+    def list_loaded_models(self) -> list[dict[str, Any]]:
+        return list(self._get("/models/list_loaded")["data"]["models"])
+
+    def unload_all_loaded(self) -> None:
+        for model in self.list_loaded_models():
+            endpoints = model.get("endpoints") or []
+            if any(
+                str(endpoint.get("device", "")).lower() != "cpu"
+                for endpoint in endpoints
+            ):
+                self.unload_model(str(model["model_id"]))
+
+    def unload_model(self, model_id: str) -> None:
+        deadline = time.monotonic() + max(self.timeout_seconds, 600)
+        next_submit = time.monotonic()
+        last_transient_error: Exception | None = None
+        while True:
+            now = time.monotonic()
+            if now >= next_submit:
+                try:
+                    self._post(
+                        "/models/unload",
+                        {"model_id": model_id},
+                        timeout_seconds=max(self.timeout_seconds, 600),
+                    )
+                    last_transient_error = None
+                except RuntimeError as error:
+                    message = str(error).lower()
+                    if "409" in message and "not loaded" in message:
+                        return
+                    if not self._is_transient_control_error(error):
+                        raise
+                    last_transient_error = error
+                except (httpx.TimeoutException, httpx.TransportError) as error:
+                    last_transient_error = error
+                next_submit = time.monotonic() + 10
+
+            try:
+                state = self._loaded_state(model_id)
+            except (
+                RuntimeError,
+                httpx.TimeoutException,
+                httpx.TransportError,
+            ) as error:
+                if not self._is_transient_control_error(error):
+                    raise
+                last_transient_error = error
+                state = object()
+            if state is None:
+                return
+            if time.monotonic() >= deadline:
+                detail = (
+                    f"; last transient error: {last_transient_error}"
+                    if last_transient_error is not None
+                    else ""
+                )
+                raise TimeoutError(f"timed out unloading model {model_id}{detail}")
+            time.sleep(1)
+
+    def ensure_loaded(
+        self,
+        model_id: str,
+        *,
+        devices: str,
+        replicas_per_device: int,
+        timeout_seconds: int,
+    ) -> tuple[float, dict[str, Any]]:
+        started = time.monotonic()
+        device_indexes = [part.strip() for part in devices.split(",") if part.strip()]
+        expected_devices = {f"cuda:{index}" for index in device_indexes}
+        expected_endpoints = len(device_indexes) * replicas_per_device
+        deadline = time.monotonic() + timeout_seconds
+        next_submit = started
+        first_observation = True
+        last_control_error: Exception | None = None
+        while True:
+            state_unavailable = False
+            try:
+                state = self._loaded_state(model_id)
+            except (
+                RuntimeError,
+                httpx.TimeoutException,
+                httpx.TransportError,
+            ) as error:
+                if not self._is_transient_control_error(error):
+                    raise
+                last_control_error = error
+                state = None
+                state_unavailable = True
+
+            if state is not None:
+                status = str(state.get("status", "")).lower()
+                if status == "loaded":
+                    self._validate_loaded_topology(
+                        model_id,
+                        state,
+                        expected_devices=expected_devices,
+                        replicas_per_device=replicas_per_device,
+                        expected_endpoints=expected_endpoints,
+                    )
+                    elapsed = 0.0 if first_observation else time.monotonic() - started
+                    return elapsed, state
+                if status not in {"loading", "unloading", "pending", "queued"}:
+                    raise RuntimeError(
+                        f"model {model_id} entered unexpected state before becoming "
+                        f"ready: {state}"
+                    )
+            elif not state_unavailable and time.monotonic() >= next_submit:
+                try:
+                    self._post(
+                        "/models/load",
+                        {
+                            "model_id": model_id,
+                            "devices": devices,
+                            "replicas_per_device": replicas_per_device,
+                        },
+                        timeout_seconds=timeout_seconds,
+                    )
+                    last_control_error = None
+                except RuntimeError as error:
+                    if not (
+                        self._is_load_in_progress_error(error)
+                        or self._is_transient_control_error(error)
+                    ):
+                        raise
+                    last_control_error = error
+                except (httpx.TimeoutException, httpx.TransportError) as error:
+                    last_control_error = error
+                next_submit = time.monotonic() + 10
+
+            first_observation = False
+            if time.monotonic() >= deadline:
+                detail = (
+                    f"; last control error: {last_control_error}"
+                    if last_control_error is not None
+                    else ""
+                )
+                raise TimeoutError(f"timed out loading model {model_id}{detail}")
+            time.sleep(1)
+
+    @staticmethod
+    def _is_load_in_progress_error(error: Exception) -> bool:
+        message = str(error).lower()
+        return "409" in message and any(
+            marker in message
+            for marker in (
+                "already loaded",
+                "being loaded",
+                "loading",
+                "in progress",
+                "conflict",
+            )
+        )
+
+    @staticmethod
+    def _is_transient_control_error(error: Exception) -> bool:
+        if isinstance(error, (httpx.TimeoutException, httpx.TransportError)):
+            return True
+        message = str(error).lower()
+        return any(
+            marker in message
+            for marker in (
+                " 429",
+                " 502",
+                " 503",
+                " 504",
+                "coordinator unreachable",
+                "resource temporarily unavailable",
+                "timed out",
+                "timeout",
+            )
+        )
+
+    def _loaded_state(self, model_id: str) -> dict[str, Any] | None:
+        return next(
+            (
+                model
+                for model in self.list_loaded_models()
+                if str(model.get("model_id", "")).lower() == model_id.lower()
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _validate_loaded_topology(
+        model_id: str,
+        state: dict[str, Any],
+        *,
+        expected_devices: set[str],
+        replicas_per_device: int,
+        expected_endpoints: int,
+    ) -> None:
+        endpoints = list(state.get("endpoints") or [])
+        observed_devices = {str(endpoint.get("device")) for endpoint in endpoints}
+        per_device = {
+            device: sum(str(endpoint.get("device")) == device for endpoint in endpoints)
+            for device in expected_devices
+        }
+        pids = [endpoint.get("worker_pid") for endpoint in endpoints]
+        if (
+            state.get("status") != "loaded"
+            or len(endpoints) != expected_endpoints
+            or observed_devices != expected_devices
+            or any(count != replicas_per_device for count in per_device.values())
+            or len(set(pids)) != expected_endpoints
+        ):
+            raise RuntimeError(
+                f"model {model_id} loaded topology does not match frozen v8 config: "
+                f"expected_devices={sorted(expected_devices)}, "
+                f"replicas_per_device={replicas_per_device}, state={state}"
+            )
+
+    def _get(self, path: str) -> dict[str, Any]:
+        return parse_envelope(
+            self.client.get(self.base + path, timeout=self.timeout_seconds)
+        )
+
+    def _post(
+        self,
+        path: str,
+        body: dict[str, Any],
+        *,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        return parse_envelope(
+            self.client.post(self.base + path, json=body, timeout=timeout_seconds)
+        )
+
+
 def iter_forecast_samples(path: Path) -> Iterator[dict[str, Any]]:
     yield from v8.iter_jsonl(path)
 
@@ -541,7 +823,7 @@ def prediction_path_for(
     *,
     prediction_kind: str = "synthetic",
 ) -> Path:
-    return output_dir / "predictions" / f"{engine.safe_filename(model_id)}.jsonl"
+    return output_dir / "predictions" / f"{safe_filename(model_id)}.jsonl"
 
 
 def prediction_row(
@@ -559,6 +841,468 @@ def prediction_row(
         "model_id": model_id,
         "sample_id": sample["sample_id"],
         "forecast": values.tolist(),
+    }
+
+
+def model_supports_window(
+    model: dict[str, Any],
+    sample: dict[str, Any],
+) -> bool:
+    limits = model.get("forecast_limits") or {}
+    context = int(sample["context_length"])
+    horizon = int(sample["horizon"])
+    if context < int(limits.get("min_input_length") or 0):
+        return False
+    maximum_input = limits.get("max_input_length")
+    if maximum_input is not None and context > int(maximum_input):
+        return False
+    maximum_output = limits.get("max_output_length")
+    if maximum_output is not None and horizon > int(maximum_output):
+        return False
+    return True
+
+
+def model_supports_sample(
+    model: dict[str, Any],
+    sample: dict[str, Any],
+) -> bool:
+    limits = model.get("forecast_limits") or {}
+    if not model_supports_window(model, sample):
+        return False
+    horizon = int(sample["horizon"])
+    target_dim = int(sample["target_dim"])
+    covariate_dim = int(sample["covariate_dim"])
+    maximum_targets = limits.get("max_target_count")
+    if maximum_targets is not None and target_dim > int(maximum_targets):
+        return False
+    maximum_covariates = int(limits.get("max_covariate_count") or 0)
+    if covariate_dim > maximum_covariates:
+        return False
+    maximum_future_covariates = limits.get("max_future_covs_length")
+    if covariate_dim and maximum_future_covariates is None:
+        return False
+    if (
+        maximum_future_covariates is not None
+        and horizon > int(maximum_future_covariates)
+    ):
+        return False
+    return True
+
+
+def _supports_native_targets(
+    limits: dict[str, Any],
+    target_dim: int,
+) -> bool:
+    if target_dim <= 1:
+        return True
+    if "max_target_count" not in limits:
+        return False
+    maximum_targets = limits["max_target_count"]
+    return maximum_targets is None or target_dim <= int(maximum_targets)
+
+
+def _supports_native_covariates(
+    limits: dict[str, Any],
+    *,
+    covariate_dim: int,
+    horizon: int,
+) -> bool:
+    if covariate_dim <= 0:
+        return True
+    maximum_covariates = int(limits.get("max_covariate_count") or 0)
+    if covariate_dim > maximum_covariates:
+        return False
+    maximum_future = limits.get("max_future_covs_length")
+    return maximum_future is not None and horizon <= int(maximum_future)
+
+
+def input_adaptation_plan(
+    model: dict[str, Any],
+    sample: dict[str, Any],
+    *,
+    policy_id: str | None,
+) -> dict[str, Any] | None:
+    if not model_supports_window(model, sample):
+        return None
+    if policy_id not in {None, INPUT_ADAPTATION_POLICY_ID}:
+        raise ValueError(f"unknown input adaptation policy: {policy_id}")
+    if policy_id is None and not model_supports_sample(model, sample):
+        return None
+
+    limits = model.get("forecast_limits") or {}
+    target_dim = int(sample["target_dim"])
+    covariate_dim = int(sample["covariate_dim"])
+    horizon = int(sample["horizon"])
+    target_native = (
+        True if policy_id is None else _supports_native_targets(limits, target_dim)
+    )
+    covariates_native = (
+        True
+        if policy_id is None
+        else _supports_native_covariates(
+            limits,
+            covariate_dim=covariate_dim,
+            horizon=horizon,
+        )
+    )
+    if target_native:
+        target_mode = "native_univariate" if target_dim == 1 else "native_multivariate"
+    else:
+        target_mode = "independent_univariate"
+    if covariate_dim == 0:
+        covariate_mode = "none"
+    elif covariates_native:
+        covariate_mode = "native"
+    else:
+        covariate_mode = "omitted_unsupported"
+    target_request_count = target_dim if target_mode == "independent_univariate" else 1
+    return {
+        "policy_id": (
+            INPUT_ADAPTATION_POLICY_ID if policy_id is not None else "native-only"
+        ),
+        "target_mode": target_mode,
+        "covariate_mode": covariate_mode,
+        "adapted": (
+            target_mode == "independent_univariate"
+            or covariate_mode == "omitted_unsupported"
+        ),
+        "original_target_dim": target_dim,
+        "request_target_dim": (
+            1 if target_mode == "independent_univariate" else target_dim
+        ),
+        "target_request_count": target_request_count,
+        "original_covariate_dim": covariate_dim,
+        "request_covariate_dim": (
+            covariate_dim if covariate_mode == "native" else 0
+        ),
+    }
+
+
+def _target_column_names(sample: dict[str, Any]) -> list[str]:
+    target_dim = int(sample["target_dim"])
+    configured = sample.get("target_column_names")
+    if configured is None:
+        configured = sample.get("target_columns")
+    if configured is None:
+        return [f"target_{index}" for index in range(target_dim)]
+    names = [str(value) for value in configured]
+    if len(names) != target_dim or len(set(names)) != len(names):
+        raise ValueError("target_column_names must be unique and match target_dim")
+    return names
+
+
+def adapted_request_samples(
+    sample: dict[str, Any],
+    plan: dict[str, Any],
+) -> list[dict[str, Any]]:
+    target = np.asarray(sample["target"], dtype=float)
+    target_names = _target_column_names(sample)
+    if plan["target_mode"] == "independent_univariate":
+        target_indexes: list[int | None] = list(range(int(sample["target_dim"])))
+    else:
+        target_indexes = [None]
+    requests: list[dict[str, Any]] = []
+    for target_index in target_indexes:
+        child = dict(sample)
+        if target_index is not None:
+            child["target"] = target[:, target_index : target_index + 1].tolist()
+            child["target_dim"] = 1
+            child["target_column_names"] = [target_names[target_index]]
+            child["_adaptation_target_index"] = int(target_index)
+        else:
+            child["target_column_names"] = target_names
+            child["_adaptation_target_index"] = None
+        if plan["covariate_mode"] == "omitted_unsupported":
+            child["covariates"] = None
+            child["covariate_dim"] = 0
+            child["covariate_column_names"] = []
+        requests.append(child)
+    return requests
+
+
+def request_group_key(
+    sample: dict[str, Any],
+    *,
+    plan: dict[str, Any] | None = None,
+) -> tuple[Any, ...]:
+    base = (
+        sample["context_length"],
+        sample["horizon"],
+        sample["target_dim"],
+        sample["covariate_dim"],
+        sample["frequency"],
+    )
+    if plan is None or plan["policy_id"] == "native-only":
+        return base
+    return (
+        *base,
+        plan["target_request_count"],
+        plan["target_mode"],
+        plan["covariate_mode"],
+        plan["request_target_dim"],
+        plan["request_covariate_dim"],
+    )
+
+
+def request_group_sort_key(group: tuple[Any, ...]) -> tuple[Any, ...]:
+    context, horizon, target_dim, covariate_dim, frequency = group[:5]
+    request_covariate_dim = int(group[9]) if len(group) > 5 else int(covariate_dim)
+    return (
+        int(request_covariate_dim > 0),
+        int(context),
+        int(target_dim),
+        int(horizon),
+        str(frequency),
+    )
+
+
+def request_group_label(group: tuple[Any, ...]) -> str:
+    context, horizon, target_dim, covariate_dim, frequency = group[:5]
+    base = f"ctx{context}_h{horizon}_t{target_dim}_c{covariate_dim}_{frequency}"
+    if len(group) == 5:
+        return base
+    (
+        target_request_count,
+        target_mode,
+        covariate_mode,
+        request_target_dim,
+        request_covariate_dim,
+    ) = group[5:]
+    return (
+        f"{base}__{target_mode}__{covariate_mode}__"
+        f"requests{target_request_count}_t{request_target_dim}_"
+        f"c{request_covariate_dim}"
+    )
+
+
+def successful_sample_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    identifiers: set[str] = set()
+    for row in v8.iter_jsonl(path):
+        sample_id = str(row["sample_id"])
+        if sample_id in identifiers:
+            raise ValueError(
+                f"duplicate successful prediction for {sample_id} in {path}"
+            )
+        identifiers.add(sample_id)
+    return identifiers
+
+
+def summarize_model_input_adaptation(
+    sample_path: Path,
+    *,
+    model: dict[str, Any],
+    input_adaptation_policy: str | None,
+) -> dict[str, int]:
+    summary = {
+        "expected_original_view_count": 0,
+        "compatible_sample_count": 0,
+        "unsupported_window_view_count": 0,
+        "native_view_count": 0,
+        "adapted_view_count": 0,
+        "split_target_view_count": 0,
+        "covariates_omitted_view_count": 0,
+        "expected_http_request_count": 0,
+    }
+    for sample in iter_forecast_samples(sample_path):
+        summary["expected_original_view_count"] += 1
+        plan = input_adaptation_plan(
+            model,
+            sample,
+            policy_id=input_adaptation_policy,
+        )
+        if plan is None:
+            summary["unsupported_window_view_count"] += 1
+            continue
+        summary["compatible_sample_count"] += 1
+        summary["expected_http_request_count"] += int(plan["target_request_count"])
+        if plan["adapted"]:
+            summary["adapted_view_count"] += 1
+        else:
+            summary["native_view_count"] += 1
+        if plan["target_mode"] == "independent_univariate":
+            summary["split_target_view_count"] += 1
+        if plan["covariate_mode"] == "omitted_unsupported":
+            summary["covariates_omitted_view_count"] += 1
+    return summary
+
+
+def persisted_http_request_count(path: Path) -> int:
+    if not path.is_file():
+        return 0
+    total = 0
+    for row in v8.iter_jsonl(path):
+        adaptation = row.get("input_adaptation")
+        total += int(
+            adaptation.get("target_request_count", 1)
+            if isinstance(adaptation, dict)
+            else 1
+        )
+    return total
+
+
+def pending_request_group_counts(
+    sample_path: Path,
+    *,
+    model: dict[str, Any],
+    done: set[str],
+    input_adaptation_policy: str | None = None,
+) -> dict[tuple[Any, ...], int]:
+    counts: defaultdict[tuple[Any, ...], int] = defaultdict(int)
+    for sample in iter_forecast_samples(sample_path):
+        plan = input_adaptation_plan(
+            model,
+            sample,
+            policy_id=input_adaptation_policy,
+        )
+        if sample["sample_id"] in done or plan is None:
+            continue
+        counts[request_group_key(sample, plan=plan)] += 1
+    return dict(counts)
+
+
+def run_one_model(
+    client: TimerServiceClient,
+    model: dict[str, Any],
+    *,
+    output_dir: Path,
+    execution: dict[str, Any],
+    devices: str,
+    request_max_attempts: int,
+    forecast_timeout_seconds: int,
+    load_timeout_seconds: int,
+    keep_loaded: bool,
+    sample_path: Path | None = None,
+    prediction_kind: str = "synthetic",
+    status_filename: str = "model_status.json",
+    input_adaptation_policy: str | None = None,
+) -> dict[str, Any]:
+    sample_path = sample_path or output_dir / "samples.jsonl"
+    model_id = str(model["model_id"])
+    prediction_path = prediction_path_for(
+        output_dir,
+        model_id,
+        prediction_kind=prediction_kind,
+    )
+    done = successful_sample_ids(prediction_path)
+    adaptation_summary = summarize_model_input_adaptation(
+        sample_path,
+        model=model,
+        input_adaptation_policy=input_adaptation_policy,
+    )
+    compatible_count = adaptation_summary["compatible_sample_count"]
+    if len(done) > compatible_count:
+        raise ValueError(f"prediction file for {model_id} has too many unique samples")
+    if len(done) == compatible_count:
+        status_path = output_dir / status_filename
+        previous = (
+            v8.read_json(status_path).get("models", {}).get(model_id)
+            if status_path.is_file()
+            else None
+        )
+        if (
+            previous
+            and previous.get("status") == "complete"
+            and int(previous.get("succeeded_count", -1)) == compatible_count
+        ):
+            return previous
+        return {
+            "model_id": model_id,
+            "status": "complete",
+            **adaptation_summary,
+            "succeeded_count": compatible_count,
+            "succeeded_original_view_count": compatible_count,
+            "successful_http_request_count": persisted_http_request_count(
+                prediction_path
+            ),
+            "already_complete_on_entry": True,
+            "prediction_path": relative_path(prediction_path),
+            "elapsed_seconds": 0.0,
+        }
+
+    started = time.monotonic()
+    load_seconds = 0.0
+    failures = 0
+    bucket_stats: list[dict[str, Any]] = []
+    loaded_topology: dict[str, Any] | None = None
+    pending_groups = pending_request_group_counts(
+        sample_path,
+        model=model,
+        done=done,
+        input_adaptation_policy=input_adaptation_policy,
+    )
+    try:
+        if len(done) < compatible_count:
+            if not keep_loaded:
+                client.unload_all_loaded()
+            load_seconds, loaded_topology = client.ensure_loaded(
+                model_id,
+                devices=devices,
+                replicas_per_device=int(execution["replicas_per_device"]),
+                timeout_seconds=load_timeout_seconds,
+            )
+            with prediction_path.open("a", encoding="utf-8") as output_handle:
+                failure_path = (
+                    output_dir / "failures" / f"{safe_filename(model_id)}.jsonl"
+                )
+                if prediction_kind == "real":
+                    failure_path = (
+                        output_dir
+                        / "real_failures"
+                        / f"{safe_filename(model_id)}.jsonl"
+                    )
+                with failure_path.open("a", encoding="utf-8") as failure_handle:
+                    bucket_stats = asyncio.run(
+                        run_model_requests_v8(
+                            forecast_url=client.base + "/forecast",
+                            model_id=model_id,
+                            model=model,
+                            sample_path=sample_path,
+                            done=done,
+                            pending_groups=pending_groups,
+                            http_concurrency=int(execution["http_concurrency"]),
+                            timeout_seconds=forecast_timeout_seconds,
+                            max_attempts=request_max_attempts,
+                            output_handle=output_handle,
+                            failure_handle=failure_handle,
+                            compatible_count=compatible_count,
+                            initial_persisted=len(done),
+                            input_adaptation_policy=input_adaptation_policy,
+                        )
+                    )
+                    failures = sum(row["failed_count"] for row in bucket_stats)
+    finally:
+        if not keep_loaded:
+            try:
+                client.unload_model(model_id)
+            except Exception as error:  # noqa: BLE001
+                print(f"warning: failed to unload {model_id}: {error}", flush=True)
+
+    succeeded = count_jsonl(prediction_path) if prediction_path.exists() else 0
+    return {
+        "model_id": model_id,
+        "prediction_kind": prediction_kind,
+        "status": "complete" if succeeded == compatible_count else "incomplete",
+        **adaptation_summary,
+        "succeeded_count": succeeded,
+        "succeeded_original_view_count": succeeded,
+        "failed_request_count_this_attempt": failures,
+        "successful_http_request_count": persisted_http_request_count(prediction_path),
+        "attempted_http_request_count_this_attempt": sum(
+            int(row.get("attempted_http_request_count", 0)) for row in bucket_stats
+        ),
+        "execution": {
+            "devices": devices,
+            "replicas_per_device": int(execution["replicas_per_device"]),
+            "http_concurrency": int(execution["http_concurrency"]),
+            "tasks_per_http_request": 1,
+        },
+        "loaded_topology": loaded_topology,
+        "bucket_stats": bucket_stats,
+        "load_seconds": round(load_seconds, 3),
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "prediction_path": relative_path(prediction_path),
     }
 
 
@@ -715,21 +1459,8 @@ async def _run_model_requests_v8_serial(
 ) -> list[dict[str, Any]]:
     execution = MODEL_EXECUTION_CONFIG[model_id]
     if execution.get("transport") != "msgpack_bulk":
-        return await _JSON_RUN_MODEL_REQUESTS(
-            forecast_url=forecast_url,
-            model_id=model_id,
-            model=model,
-            sample_path=sample_path,
-            done=done,
-            pending_groups=pending_groups,
-            http_concurrency=http_concurrency,
-            timeout_seconds=timeout_seconds,
-            max_attempts=max_attempts,
-            output_handle=output_handle,
-            failure_handle=failure_handle,
-            compatible_count=compatible_count,
-            initial_persisted=initial_persisted,
-            input_adaptation_policy=input_adaptation_policy,
+        raise ValueError(
+            f"paper v8 requires msgpack_bulk transport for {model_id}"
         )
 
     task_batch_size = int(execution["task_batch_size"])
@@ -749,11 +1480,11 @@ async def _run_model_requests_v8_serial(
     ) as async_client:
         ordered_groups = sorted(
             pending_groups,
-            key=engine.request_group_sort_key,
+            key=request_group_sort_key,
         )
         for bucket_index, group_key in enumerate(ordered_groups, start=1):
             pending_count = pending_groups[group_key]
-            label = engine.request_group_label(group_key)
+            label = request_group_label(group_key)
             group_items: list[
                 tuple[
                     dict[str, Any],
@@ -762,7 +1493,7 @@ async def _run_model_requests_v8_serial(
                 ]
             ] = []
             for sample in iter_forecast_samples(sample_path):
-                plan = engine.input_adaptation_plan(
+                plan = input_adaptation_plan(
                     model,
                     sample,
                     policy_id=input_adaptation_policy,
@@ -770,14 +1501,14 @@ async def _run_model_requests_v8_serial(
                 if (
                     sample["sample_id"] in done
                     or plan is None
-                    or engine.request_group_key(sample, plan=plan) != group_key
+                    or request_group_key(sample, plan=plan) != group_key
                 ):
                     continue
                 group_items.append(
                     (
                         sample,
                         plan,
-                        engine.adapted_request_samples(sample, plan),
+                        adapted_request_samples(sample, plan),
                     )
                 )
             if len(group_items) != pending_count:
@@ -1016,7 +1747,7 @@ async def _run_model_requests_v8_group_scans(
             input_adaptation_policy=input_adaptation_policy,
         )
 
-    ordered_groups = sorted(pending_groups, key=engine.request_group_sort_key)
+    ordered_groups = sorted(pending_groups, key=request_group_sort_key)
     wave_size = min(http_concurrency, len(ordered_groups))
     all_stats: list[dict[str, Any]] = []
     for offset in range(0, len(ordered_groups), wave_size):
@@ -1075,28 +1806,15 @@ async def run_model_requests_v8(
     """Scan one shard once, then interleave homogeneous bulk requests."""
     execution = MODEL_EXECUTION_CONFIG[model_id]
     if execution.get("transport") != "msgpack_bulk":
-        return await _JSON_RUN_MODEL_REQUESTS(
-            forecast_url=forecast_url,
-            model_id=model_id,
-            model=model,
-            sample_path=sample_path,
-            done=done,
-            pending_groups=pending_groups,
-            http_concurrency=http_concurrency,
-            timeout_seconds=timeout_seconds,
-            max_attempts=max_attempts,
-            output_handle=output_handle,
-            failure_handle=failure_handle,
-            compatible_count=compatible_count,
-            initial_persisted=initial_persisted,
-            input_adaptation_policy=input_adaptation_policy,
+        raise ValueError(
+            f"paper v8 requires msgpack_bulk transport for {model_id}"
         )
 
     task_batch_size = int(execution["task_batch_size"])
-    ordered_groups = sorted(pending_groups, key=engine.request_group_sort_key)
+    ordered_groups = sorted(pending_groups, key=request_group_sort_key)
     states: dict[tuple[Any, ...], dict[str, Any]] = {
         group_key: {
-            "label": engine.request_group_label(group_key),
+            "label": request_group_label(group_key),
             "pending_count": int(pending_groups[group_key]),
             "items": [],
             "succeeded_count": 0,
@@ -1110,21 +1828,21 @@ async def run_model_requests_v8(
     }
 
     for sample in iter_forecast_samples(sample_path):
-        plan = engine.input_adaptation_plan(
+        plan = input_adaptation_plan(
             model,
             sample,
             policy_id=input_adaptation_policy,
         )
         if sample["sample_id"] in done or plan is None:
             continue
-        group_key = engine.request_group_key(sample, plan=plan)
+        group_key = request_group_key(sample, plan=plan)
         state = states.get(group_key)
         if state is not None:
             state["items"].append(
                 (
                     sample,
                     plan,
-                    engine.adapted_request_samples(sample, plan),
+                    adapted_request_samples(sample, plan),
                 )
             )
 
@@ -1337,17 +2055,119 @@ async def run_model_requests_v8(
     return bucket_stats
 
 
-def install_engine_hooks() -> None:
-    engine.iter_forecast_samples = iter_forecast_samples
-    engine.prediction_row = prediction_row
-    engine.prediction_path_for = prediction_path_for
-    engine.run_model_requests = run_model_requests_v8
+def validated_file_record_path(
+    record: dict[str, Any],
+    *,
+    label: str,
+    validate_row_count: bool = False,
+) -> Path:
+    """Resolve a manifest file record only after validating its content."""
+
+    path_value = record.get("path")
+    if not path_value:
+        raise ValueError(f"{label} file record is missing path")
+    path = Path(str(path_value))
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} file is missing: {path}")
+    expected_bytes = record.get("bytes")
+    if expected_bytes is None or int(expected_bytes) != path.stat().st_size:
+        raise ValueError(f"{label} file byte-size mismatch: {path}")
+    expected_sha256 = record.get("sha256")
+    if (
+        not expected_sha256
+        or str(expected_sha256) != v8.file_sha256(path)
+    ):
+        raise ValueError(f"{label} file hash mismatch: {path}")
+    if validate_row_count:
+        expected_rows = record.get("row_count")
+        if expected_rows is None:
+            raise ValueError(f"{label} file record is missing row_count")
+        observed_rows = count_jsonl(path)
+        if observed_rows != int(expected_rows):
+            raise ValueError(
+                f"{label} file row-count mismatch: "
+                f"{observed_rows} != {expected_rows}"
+            )
+    return path
+
+
+def formal_real_anchor_source_record(
+    calibration_bundle: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Require the auxiliary real-anchor source for a formal inference run."""
+
+    if calibration_bundle is None:
+        raise ValueError(
+            "formal Paper-v8 inference requires calibration_bundle.json "
+            "with real_anchor_masters"
+        )
+    record = calibration_bundle.get("files", {}).get(
+        "real_anchor_masters"
+    )
+    if not isinstance(record, dict):
+        raise ValueError(
+            "formal Paper-v8 inference calibration bundle is missing "
+            "files.real_anchor_masters"
+        )
+    validated_file_record_path(
+        record,
+        label="real-anchor source",
+    )
+    return record
+
+
+def validate_inference_task_manifest_files(
+    task_manifest: dict[str, Any],
+) -> Path:
+    """Validate the combined task and both independently consumed components."""
+
+    if task_manifest.get("schema_version") != (
+        "paper_v8_inference_task_manifest.v2"
+    ):
+        raise ValueError("unsupported Paper-v8 inference task manifest")
+    task_components = task_manifest.get("task_components")
+    if not isinstance(task_components, dict):
+        raise ValueError("inference task manifest is missing task_components")
+    component_paths: dict[str, Path] = {}
+    for name in ("synthetic", "real_anchors"):
+        record = task_components.get(name)
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"inference task manifest is missing {name} component"
+            )
+        component_paths[name] = validated_file_record_path(
+            record,
+            label=f"inference task component {name}",
+            validate_row_count=True,
+        )
+    task_record = task_manifest.get("task_file")
+    if not isinstance(task_record, dict):
+        raise ValueError("inference task manifest is missing task_file")
+    task_path = validated_file_record_path(
+        task_record,
+        label="combined inference task",
+        validate_row_count=True,
+    )
+    synthetic_count = int(task_components["synthetic"]["row_count"])
+    real_count = int(task_components["real_anchors"]["row_count"])
+    if synthetic_count != int(task_manifest.get("synthetic_view_count", -1)):
+        raise ValueError("synthetic inference task count disagrees with manifest")
+    if real_count != int(task_manifest.get("real_anchor_view_count", -1)):
+        raise ValueError("real-anchor inference task count disagrees with manifest")
+    if synthetic_count + real_count != int(
+        task_manifest.get("view_count", -1)
+    ):
+        raise ValueError("combined inference task count disagrees with components")
+    if int(task_record["row_count"]) != int(task_manifest["view_count"]):
+        raise ValueError("combined inference task record count mismatch")
+    return task_path
 
 
 def prepare_view_tasks(
     generation_manifest: dict[str, Any],
     *,
     inference_dir: Path,
+    calibration_bundle: dict[str, Any] | None = None,
 ) -> tuple[Path, dict[str, Any]]:
     source_records = [
         generation_manifest["files"]["clean"],
@@ -1357,33 +2177,124 @@ def prepare_view_tasks(
     masters = (
         row for record in source_records for row in v8.iter_jsonl(Path(record["path"]))
     )
+    synthetic_task_path = inference_dir / "synthetic_forecast_views.jsonl"
+    synthetic_view_count = v8.write_jsonl(
+        synthetic_task_path,
+        v8.iter_master_views(masters),
+    )
+    real_source_record = (
+        (calibration_bundle or {}).get("files", {}).get(
+            "real_anchor_masters"
+        )
+    )
+    if real_source_record is not None:
+        if not isinstance(real_source_record, dict):
+            raise ValueError("real-anchor source file record must be an object")
+        validated_file_record_path(
+            real_source_record,
+            label="real-anchor source",
+        )
+    real_task_path = inference_dir / "real_anchor_views.jsonl"
+
+    def real_anchor_tasks() -> Iterator[dict[str, Any]]:
+        if real_source_record is None:
+            return
+        for master in v8.iter_jsonl(Path(real_source_record["path"])):
+            row = dict(master)
+            row["schema_version"] = "paper_v8_real_anchor_forecast_view.v1"
+            row["evaluation_table"] = "real_anchor_forecast"
+            row["view_id"] = row["sample_id"]
+            row["context_policy"] = (
+                f"fixed_l{v8.REAL_CALIBRATION_CONTEXT_LENGTH}"
+            )
+            row["context_policy_candidates"] = [
+                v8.REAL_CALIBRATION_CONTEXT_LENGTH
+            ]
+            row["scoring_target_semantics"] = "held_out_real_future"
+            yield row
+
+    real_anchor_view_count = v8.write_jsonl(
+        real_task_path,
+        real_anchor_tasks(),
+    )
     task_path = inference_dir / "forecast_views.jsonl"
     view_count = v8.write_jsonl(
         task_path,
-        v8.iter_master_views(masters),
+        (
+            row
+            for path in (synthetic_task_path, real_task_path)
+            for row in v8.iter_jsonl(path)
+        ),
     )
     manifest = {
-        "schema_version": "paper_v8_inference_task_manifest.v1",
+        "schema_version": "paper_v8_inference_task_manifest.v2",
         "created_at": v8.utc_now(),
         "generation_config_sha256": generation_manifest["config_sha256"],
         "generation_files": source_records,
+        "calibration_bundle_content_sha256": (
+            None
+            if calibration_bundle is None
+            else calibration_bundle.get("bundle_content_sha256")
+        ),
+        "real_anchor_source": real_source_record,
         "context_lengths": list(v8.VIEW_CONTEXT_LENGTHS),
+        "fixed_context_length": v8.FIXED_CONTEXT_LENGTH,
+        "synthetic_view_count": synthetic_view_count,
+        "real_anchor_view_count": real_anchor_view_count,
         "view_count": view_count,
+        "task_components": {
+            "synthetic": {
+                **v8.file_record(synthetic_task_path),
+                "row_count": synthetic_view_count,
+            },
+            "real_anchors": {
+                **v8.file_record(real_task_path),
+                "row_count": real_anchor_view_count,
+            },
+        },
         "task_file": {
             **v8.file_record(task_path),
             "row_count": view_count,
         },
-        "mase_policy": "shared_clean_l504_denominator_across_views",
+        "mase_policy": (
+            "synthetic views share clean L336 denominator; real anchors use "
+            "their own clean "
+            f"L{v8.REAL_CALIBRATION_CONTEXT_LENGTH} history denominator"
+        ),
     }
     v8.write_json(inference_dir / "task_manifest.json", manifest)
     return task_path, manifest
+
+
+def write_real_anchor_prediction_subset(
+    canonical_prediction_path: Path,
+    *,
+    real_anchor_task_path: Path,
+    output_path: Path,
+) -> int:
+    """Materialize an auxiliary real-anchor result without duplicating tasks."""
+
+    real_ids = {
+        str(row["sample_id"])
+        for row in v8.iter_jsonl(real_anchor_task_path)
+    }
+    if not real_ids:
+        return v8.write_jsonl(output_path, ())
+    return v8.write_jsonl(
+        output_path,
+        (
+            row
+            for row in v8.iter_jsonl(canonical_prediction_path)
+            if str(row["sample_id"]) in real_ids
+        ),
+    )
 
 
 def health_catalog(
     endpoint: str,
     api_prefix: str,
 ) -> tuple[str, dict[str, dict[str, Any]]] | None:
-    client = engine.TimerServiceClient(endpoint, api_prefix, timeout_seconds=30)
+    client = TimerServiceClient(endpoint, api_prefix, timeout_seconds=30)
     try:
         catalog = {str(row["model_id"]): row for row in client.list_models()}
         return endpoint, catalog
@@ -1396,7 +2307,7 @@ def health_catalog(
 
 
 def model_root(inference_dir: Path, model_id: str) -> Path:
-    return inference_dir / "model_shards" / engine.safe_filename(model_id)
+    return inference_dir / "model_shards" / safe_filename(model_id)
 
 
 def model_part_root(
@@ -1481,10 +2392,44 @@ def cleanup_completed_model_intermediates(
     return removed_bytes
 
 
+def task_sample_ids(path: Path) -> set[str]:
+    sample_ids: set[str] = set()
+    for row in v8.iter_jsonl(path):
+        sample_id = str(row["sample_id"])
+        if sample_id in sample_ids:
+            raise ValueError(f"duplicate inference task sample_id: {sample_id}")
+        sample_ids.add(sample_id)
+    return sample_ids
+
+
+def canonical_prediction_sample_ids(
+    path: Path,
+    *,
+    model_id: str,
+) -> set[str]:
+    """Return canonical IDs while rejecting duplicate or foreign model rows."""
+
+    sample_ids: set[str] = set()
+    for row in v8.iter_jsonl(path):
+        observed_model = str(row.get("model_id", ""))
+        if observed_model != model_id:
+            raise ValueError(
+                f"canonical prediction model mismatch for {path}: "
+                f"{observed_model!r} != {model_id!r}"
+            )
+        sample_id = str(row["sample_id"])
+        if sample_id in sample_ids:
+            raise ValueError(
+                f"duplicate canonical prediction for {model_id}: {sample_id}"
+            )
+        sample_ids.add(sample_id)
+    return sample_ids
+
+
 def cached_complete_model_records(
     inference_dir: Path,
     *,
-    expected_view_count: int,
+    expected_sample_ids: set[str],
 ) -> dict[str, dict[str, Any]]:
     """Reuse a complete manifest when its canonical files are unchanged."""
 
@@ -1511,11 +2456,19 @@ def cached_complete_model_records(
         if (
             status.get("status") == "complete"
             and int(status.get("succeeded_original_view_count", -1))
-            == expected_view_count
-            and int(record.get("row_count", -1)) == expected_view_count
+            == len(expected_sample_ids)
+            and int(record.get("row_count", -1))
+            == len(expected_sample_ids)
             and Path(record.get("path", "")).resolve() == canonical_path.resolve()
             and canonical_path.is_file()
             and int(record.get("bytes", -1)) == canonical_path.stat().st_size
+            and str(record.get("sha256", ""))
+            == v8.file_sha256(canonical_path)
+            and canonical_prediction_sample_ids(
+                canonical_path,
+                model_id=model_id,
+            )
+            == expected_sample_ids
         ):
             cached[model_id] = dict(record)
     return cached
@@ -1528,7 +2481,7 @@ def _model_task_shard_manifest_path(
     return (
         inference_dir
         / "model_task_shards"
-        / engine.safe_filename(model_id)
+        / safe_filename(model_id)
         / "manifest.json"
     )
 
@@ -1730,7 +2683,7 @@ def run_service_queue(
     endpoint_profile: EndpointProfile,
 ) -> list[dict[str, Any]]:
     statuses: list[dict[str, Any]] = []
-    client = engine.TimerServiceClient(
+    client = TimerServiceClient(
         endpoint,
         args.api_prefix,
         timeout_seconds=30,
@@ -1769,7 +2722,7 @@ def run_service_queue(
                 )
             started = time.monotonic()
             try:
-                status = engine.run_one_model(
+                status = run_one_model(
                     client,
                     catalog[model_id],
                     output_dir=model_dir,
@@ -1782,7 +2735,7 @@ def run_service_queue(
                     sample_path=item.sample_path,
                     prediction_kind="synthetic",
                     status_filename="model_status.json",
-                    input_adaptation_policy=engine.INPUT_ADAPTATION_POLICY_ID,
+                    input_adaptation_policy=INPUT_ADAPTATION_POLICY_ID,
                 )
                 if execution.get("transport") == "msgpack_bulk":
                     bucket_stats = list(status.get("bucket_stats") or [])
@@ -1924,10 +2877,10 @@ def aggregate_model_statuses(
     for model_id in models:
         matching = [row for row in work_statuses if row.get("model_id") == model_id]
         canonical_path = prediction_path_for(
-            inference_dir / "model_shards" / engine.safe_filename(model_id),
+            inference_dir / "model_shards" / safe_filename(model_id),
             model_id,
         )
-        observed = engine.count_jsonl(canonical_path) if canonical_path.exists() else 0
+        observed = count_jsonl(canonical_path) if canonical_path.exists() else 0
         status: dict[str, Any] = {
             "model_id": model_id,
             "status": (
@@ -1952,7 +2905,7 @@ def aggregate_model_statuses(
         v8.write_json(
             inference_dir
             / "model_shards"
-            / engine.safe_filename(model_id)
+            / safe_filename(model_id)
             / "service_status.json",
             status,
         )
@@ -1967,7 +2920,7 @@ def merge_predictions(
     seen: set[tuple[str, str]] = set()
     for model_id in models:
         path = prediction_path_for(
-            inference_dir / "model_shards" / engine.safe_filename(model_id),
+            inference_dir / "model_shards" / safe_filename(model_id),
             model_id,
         )
         if not path.exists():
@@ -1989,7 +2942,7 @@ def _unload_accelerator_models(
     api_prefix: str,
 ) -> None:
     def unload(endpoint: str) -> None:
-        client = engine.TimerServiceClient(
+        client = TimerServiceClient(
             endpoint,
             api_prefix,
             timeout_seconds=30,
@@ -2160,11 +3113,27 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
     status_path = args.output_root.resolve() / "model_major_inference_status.json"
     completed: list[dict[str, Any]] = []
     status = {
-        "schema_version": "paper_v8_model_major_inference_status.v1",
+        "schema_version": "paper_v8_model_major_inference_status.v2",
         "started_at": v8.utc_now(),
         "state": "running",
         "dataset_ids": dataset_ids,
         "models": list(args.models),
+        "execution": {
+            "preprocess_workers": int(args.preprocess_workers),
+            "dataset_parallelism_by_model": {
+                model_id: int(
+                    MODEL_MAJOR_DATASET_PARALLELISM.get(model_id, 1)
+                )
+                for model_id in args.models
+            },
+            "request_concurrency_policy": (
+                "divide_each_endpoint_model_http_concurrency_by_the_number_"
+                "of_concurrent_datasets"
+            ),
+            "first_pending_dataset_role": (
+                "load_once_before_concurrent_dataset_batches"
+            ),
+        },
         "completed": completed,
     }
     v8.write_json(status_path, status)
@@ -2320,6 +3289,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
             "finished_at": v8.utc_now(),
             "active_model_id": None,
             "active_dataset_id": None,
+            "active_dataset_ids": [],
         }
     )
     v8.write_json(status_path, status)
@@ -2351,7 +3321,6 @@ def main() -> int:
         raise ValueError(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
-    install_engine_hooks()
     dataset = v8.resolve_dataset(args.dataset_id)
     dataset_root = args.output_root.resolve() / dataset.dataset_id
     generation_dir = dataset_root / "02_generation"
@@ -2362,6 +3331,15 @@ def main() -> int:
     if not validation["accepted"]:
         raise ValueError("generation validation is not accepted")
     generation_manifest = v8.read_json(generation_manifest_path)
+    calibration_bundle_path = (
+        dataset_root / "01_calibration" / "calibration_bundle.json"
+    )
+    calibration_bundle = (
+        v8.read_json(calibration_bundle_path)
+        if calibration_bundle_path.is_file()
+        else None
+    )
+    formal_real_anchor_source_record(calibration_bundle)
     inference_dir = dataset_root / "03_inference" / shard_name
     if inference_dir.exists() and not args.resume:
         expected_parent = (dataset_root / "03_inference").resolve()
@@ -2372,19 +3350,29 @@ def main() -> int:
     task_manifest_path = inference_dir / "task_manifest.json"
     if task_manifest_path.exists() and args.resume:
         task_manifest = v8.read_json(task_manifest_path)
-        task_path = Path(task_manifest["task_file"]["path"])
-        if v8.file_sha256(task_path) != task_manifest["task_file"]["sha256"]:
-            raise ValueError("existing inference task file hash mismatch")
+        task_path = validate_inference_task_manifest_files(task_manifest)
         if (
             task_manifest["generation_config_sha256"]
             != generation_manifest["config_sha256"]
         ):
             raise ValueError("resume generation config mismatch")
+        expected_calibration_sha256 = (
+            None
+            if calibration_bundle is None
+            else calibration_bundle.get("bundle_content_sha256")
+        )
+        if (
+            task_manifest.get("calibration_bundle_content_sha256")
+            != expected_calibration_sha256
+        ):
+            raise ValueError("resume calibration bundle mismatch")
     else:
         task_path, task_manifest = prepare_view_tasks(
             generation_manifest,
             inference_dir=inference_dir,
+            calibration_bundle=calibration_bundle,
         )
+        validate_inference_task_manifest_files(task_manifest)
 
     health_results: list[tuple[str, dict[str, dict[str, Any]]]] = []
     with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
@@ -2418,11 +3406,16 @@ def main() -> int:
         return 0
     work_statuses: list[dict[str, Any]] = []
     model_phases: list[dict[str, Any]] = []
+    expected_sample_ids = task_sample_ids(task_path)
     expected_view_count = int(task_manifest["view_count"])
+    if len(expected_sample_ids) != expected_view_count:
+        raise ValueError(
+            "combined inference task contains duplicate or missing sample IDs"
+        )
     cached_model_records = (
         cached_complete_model_records(
             inference_dir,
-            expected_view_count=expected_view_count,
+            expected_sample_ids=expected_sample_ids,
         )
         if args.resume
         else set()
@@ -2433,12 +3426,21 @@ def main() -> int:
             model_id,
         )
         manifest_cached = model_id in cached_model_records
+        canonical_matches_task = False
+        if args.resume and canonical_path.exists():
+            canonical_matches_task = (
+                canonical_prediction_sample_ids(
+                    canonical_path,
+                    model_id=model_id,
+                )
+                == expected_sample_ids
+            )
         if (
             args.resume
             and canonical_path.exists()
             and (
                 manifest_cached
-                or engine.count_jsonl(canonical_path) == expected_view_count
+                or canonical_matches_task
             )
         ):
             already_compact = manifest_cached or canonical_prediction_file_is_compact(
@@ -2570,7 +3572,16 @@ def main() -> int:
     stale_merged_path = inference_dir / "predictions.jsonl"
     stale_merged_path.unlink(missing_ok=True)
     prediction_files = []
+    real_anchor_prediction_files = []
     prediction_count = 0
+    real_anchor_prediction_count = 0
+    validate_inference_task_manifest_files(task_manifest)
+    real_anchor_task_path = Path(
+        task_manifest["task_components"]["real_anchors"]["path"]
+    )
+    expected_real_anchor_count = int(
+        task_manifest["real_anchor_view_count"]
+    )
     for model_id in args.models:
         path = prediction_path_for(
             model_root(inference_dir, model_id),
@@ -2591,6 +3602,30 @@ def main() -> int:
             }
         )
         prediction_count += expected_view_count
+        real_output_path = (
+            inference_dir
+            / "real_anchor_predictions"
+            / f"{safe_filename(model_id)}.jsonl"
+        )
+        observed_real_anchor_count = write_real_anchor_prediction_subset(
+            path,
+            real_anchor_task_path=real_anchor_task_path,
+            output_path=real_output_path,
+        )
+        if observed_real_anchor_count != expected_real_anchor_count:
+            raise RuntimeError(
+                f"{model_id} real-anchor prediction count mismatch: "
+                f"{observed_real_anchor_count} != "
+                f"{expected_real_anchor_count}"
+            )
+        real_anchor_prediction_files.append(
+            {
+                "model_id": model_id,
+                "row_count": observed_real_anchor_count,
+                **v8.file_record(real_output_path),
+            }
+        )
+        real_anchor_prediction_count += observed_real_anchor_count
     manifest = {
         "schema_version": "paper_v8_inference_manifest.v3",
         "created_at": v8.utc_now(),
@@ -2611,9 +3646,19 @@ def main() -> int:
         },
         "statuses": statuses,
         "predictions": {
-            "storage": "per_model_jsonl",
+            "storage": "per_model_jsonl_including_synthetic_and_real_tasks",
             "files": prediction_files,
             "row_count": prediction_count,
+            "synthetic_row_count_per_model": int(
+                task_manifest["synthetic_view_count"]
+            ),
+            "real_anchor": {
+                "storage": "separate_per_model_auxiliary_jsonl",
+                "files": real_anchor_prediction_files,
+                "row_count": real_anchor_prediction_count,
+                "rows_per_model": expected_real_anchor_count,
+                "included_in_mechanism_ranking": False,
+            },
         },
     }
     manifest["complete"] = all(

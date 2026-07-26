@@ -98,6 +98,9 @@ def test_common_factor_and_hierarchy_metrics_are_ideal_for_exact_forecasts():
                 "trend_slope_relative_abs_error": 0.0,
                 "trend_curvature_relative_abs_error": 0.0,
                 "trend_direction_accuracy": 1.0,
+                "trend_curvature_component_nrmse": 0.0,
+                "trend_curvature_sign_accuracy": 1.0,
+                "trend_curvature_magnitude_ratio": 1.0,
             },
         ),
         (
@@ -156,6 +159,19 @@ def test_univariate_mechanism_metrics_are_ideal_for_exact_forecast(
 
     for name, expected in expected_metrics.items():
         assert metrics[name] == pytest.approx(expected, abs=1e-9)
+
+
+def test_trend_curvature_component_reports_sign_and_magnitude_separately():
+    response = load_response_module()
+    time = np.linspace(-1.0, 1.0, 48)
+    truth = (time * time + 0.2 * time)[:, None]
+    forecast = (-0.5 * time * time + 0.2 * time)[:, None]
+
+    metrics = response.trend_recovery_metrics(truth, forecast)
+
+    assert metrics["trend_curvature_component_nrmse"] == pytest.approx(1.5)
+    assert metrics["trend_curvature_sign_accuracy"] == pytest.approx(0.0)
+    assert metrics["trend_curvature_magnitude_ratio"] == pytest.approx(0.5)
 
 
 def test_regime_and_event_metrics_are_ideal_for_exact_forecast():
@@ -282,12 +298,14 @@ def test_cross_lag_linear_probe_recovers_history_identifiable_effect():
     assert forecast[:, 1:] == pytest.approx(target[context:, 1:])
 
 
-def test_master_expansion_creates_four_views_of_one_cross_series_dgp():
+def test_master_expansion_creates_common_context_views_of_one_cross_series_dgp():
     response = load_response_module()
+    master_context = response.v8_common.CONTEXT_LENGTH
+    horizon = response.v8_common.HORIZON
     target, metadata, _ = response.v8_pilot.generate_deterministic_sample(
         "cross_series_dependence",
-        552,
-        504,
+        master_context + horizon,
+        master_context,
         3,
         24,
         5,
@@ -295,11 +313,11 @@ def test_master_expansion_creates_four_views_of_one_cross_series_dgp():
         counterfactual_variant=0,
     )
     target, _ = (
-        response.v8_pilot.standardize_cross_series_counterfactual_member(
-            target,
-            context_length=504,
-            metadata=metadata,
-        )
+            response.v8_pilot.standardize_cross_series_counterfactual_member(
+                target,
+                context_length=master_context,
+                metadata=metadata,
+            )
     )
     master = {
         "sample_id": "master",
@@ -307,8 +325,8 @@ def test_master_expansion_creates_four_views_of_one_cross_series_dgp():
         "paired_group_id": "group",
         "counterfactual_pair_id": "pair",
         "capability_id": "cross_series_dependence",
-        "context_length": 504,
-        "horizon": 48,
+        "context_length": master_context,
+        "horizon": horizon,
         "target_dim": 3,
         "target_feature": "cross_series_incremental_r2",
         "target": target.tolist(),
@@ -318,15 +336,12 @@ def test_master_expansion_creates_four_views_of_one_cross_series_dgp():
 
     views = response.expand_master_samples(
         [master],
-        context_lengths=(96, 168, 336, 504),
+        context_lengths=response.v8_common.VIEW_CONTEXT_LENGTHS,
     )
 
-    assert [row["context_length"] for row in views] == [
-        96,
-        168,
-        336,
-        504,
-    ]
+    assert [row["context_length"] for row in views] == list(
+        response.v8_common.VIEW_CONTEXT_LENGTHS
+    )
     assert all(
         np.asarray(row["target"]).shape
         == (row["context_length"] + 48, 3)
@@ -376,7 +391,7 @@ def test_master_context_audit_does_not_count_suffix_views_as_samples():
     response = load_response_module()
     predictions = []
     samples = []
-    for context_length in (96, 504):
+    for context_length in (96, 168):
         sample_id = f"master::L{context_length}"
         samples.append(
             {
@@ -413,7 +428,7 @@ def test_master_context_audit_does_not_count_suffix_views_as_samples():
 
     audit = response.master_context_audit(predictions, samples)
 
-    assert audit["context_length"] == 504
+    assert audit["context_length"] == 168
     assert audit["distinct_master_sample_count"] == 1
     aggregate = next(
         row

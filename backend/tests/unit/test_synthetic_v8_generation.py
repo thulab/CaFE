@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from app.services.synthetic_v8_generation import (
+    GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
     SECONDARY_FAMILY_BY_CAPABILITY,
@@ -20,12 +21,104 @@ from app.services.synthetic_v8_generation import (
 from app.services.synthetic_v8_feature_gate import (
     covariate_family_match_checks,
     nonlinear_mechanism_response_checks,
+    paired_off_target_selectivity_matrix,
 )
 
 
 def test_covariate_real_feature_contract_is_history_only():
     assert "future_abs_covariate_target_corr" not in (
         REQUIRED_REAL_FEATURES_BY_CAPABILITY["covariate_response"]
+    )
+
+
+def test_off_target_selectivity_matrix_is_paired_and_nonblocking():
+    rows = []
+    for capability_id, target_feature in (
+        ("trend", "local_polynomial_energy_share_w96"),
+        ("multi_seasonal", "multi_period_score"),
+        (
+            "time_varying_seasonality",
+            "seasonal_amplitude_modulation",
+        ),
+    ):
+        for seed in (2, 7):
+            for intensity in (1, 5):
+                dose = float(intensity)
+                if capability_id == "multi_seasonal":
+                    multi_period = dose + 0.01 * seed
+                    amplitude_modulation = 2.0 * dose
+                elif capability_id == "time_varying_seasonality":
+                    multi_period = 0.1 * dose
+                    amplitude_modulation = dose + 0.01 * seed
+                else:
+                    multi_period = 0.1 + 0.001 * dose
+                    amplitude_modulation = 0.2 + 0.001 * dose
+                rows.append(
+                    {
+                        "dataset_id": "demo",
+                        "capability_id": capability_id,
+                        "generator_family_role": "primary",
+                        "evaluation_table": "main",
+                        "counterfactual_member": None,
+                        "seed_index": seed,
+                        "intensity": intensity,
+                        "target_feature_value": dose,
+                        "realized_features": {
+                            target_feature: dose + 0.01 * seed,
+                            "local_polynomial_energy_share_w96": (
+                                dose + 0.01 * seed
+                                if capability_id == "trend"
+                                else 0.2 + 0.001 * dose
+                            ),
+                            "multi_period_score": multi_period,
+                            "seasonal_amplitude_modulation": (
+                                amplitude_modulation
+                            ),
+                        },
+                    }
+                )
+
+    result = paired_off_target_selectivity_matrix(rows)
+
+    assert len(result) == 1
+    assert result[0]["diagnostic_only"] is True
+    assert result[0]["blocking"] is False
+    assert result[0]["paired_seed_count_by_intervention"]["trend"] == 2
+    assert result[0]["normalization"] == (
+        "feature_owner_intervention_median_abs_paired_low_high_delta"
+    )
+    assert result[0]["feature_own_intervention_span"][
+        "local_polynomial_energy_share_w96"
+    ] == pytest.approx(4.0)
+    assert result[0]["feature_own_intervention_span"][
+        "pca_top1_explained"
+    ] is None
+    assert result[0]["normalized_absolute_delta_matrix"]["trend"][
+        "pca_top1_explained"
+    ] is None
+    assert result[0]["normalized_absolute_delta_matrix"]["trend"][
+        "local_polynomial_energy_share_w96"
+    ] == pytest.approx(1.0)
+    assert result[0]["normalized_absolute_delta_matrix"]["multi_seasonal"][
+        "multi_period_score"
+    ] == pytest.approx(1.0)
+    assert result[0]["normalized_absolute_delta_matrix"][
+        "time_varying_seasonality"
+    ]["seasonal_amplitude_modulation"] == pytest.approx(1.0)
+    assert result[0]["normalized_absolute_delta_matrix"]["multi_seasonal"][
+        "seasonal_amplitude_modulation"
+    ] == pytest.approx(2.0)
+    assert result[0]["selectivity_summary"]["multi_seasonal"][
+        "excluded_off_target_features"
+    ] == ["seasonal_amplitude_modulation"]
+    assert result[0]["selectivity_summary"]["multi_seasonal"][
+        "maximum_nonexception_off_target_feature"
+    ] == "local_polynomial_energy_share_w96"
+    assert (
+        result[0]["selectivity_summary"]["trend"][
+            "on_to_max_off_target_ratio"
+        ]
+        > 1.0
     )
 
 
@@ -223,6 +316,122 @@ def test_v8_nonlinear_families_use_matched_bounded_quadratic_doses():
 CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
 
 
+@pytest.mark.parametrize(
+    ("family_role", "expected_degree"),
+    (("primary", 2), ("secondary", 3)),
+)
+def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
+    family_role: str,
+    expected_degree: int,
+) -> None:
+    target, metadata, _ = generate_deterministic_sample(
+        "trend",
+        600,
+        504,
+        3,
+        24,
+        5,
+        np.random.default_rng(13),
+        family_role=family_role,
+    )
+
+    join = int(metadata["trend_join_index"])
+    design_stop = int(metadata["trend_design_stop_index"])
+    direction = np.asarray(metadata["direction_by_target"])
+    formal_differences = np.diff(target[:design_stop], axis=0)
+
+    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v4"
+    assert metadata["trend_local_evidence_window"] == 96
+    assert join == 408
+    assert metadata["trend_local_polynomial_degree"] == expected_degree
+    assert metadata["trend_continuity_order"] == 1
+    assert metadata["trend_prehistory_law"] == (
+        "linear_tangent_at_local_join"
+    )
+    assert metadata["trend_postforecast_law"] == (
+        "linear_tangent_at_design_horizon"
+    )
+    assert np.max(np.abs(np.diff(target[:join], n=2, axis=0))) < 1e-12
+    assert np.all(
+        formal_differences[: join - 1] * direction[None, :] > 0.0
+    )
+    assert max(
+        np.abs(
+            np.asarray(
+                metadata[
+                    "design_endpoint_derivative_ratio_by_target"
+                ]
+            )
+            - 1.0
+        )
+    ) > 0.20
+    assert metadata["slope_reversal_inside_design_window"] is True
+    assert np.max(
+        np.abs(np.diff(target[design_stop:], n=2, axis=0))
+    ) < 1e-12
+
+    local_coordinate = (
+        np.arange(join, design_stop, dtype=float) - join
+    ) / metadata["trend_local_evidence_window"]
+    for target_index in range(target.shape[1]):
+        coefficients = np.polyfit(
+            local_coordinate,
+            target[join:design_stop, target_index],
+            deg=expected_degree,
+        )
+        fitted = np.polyval(coefficients, local_coordinate)
+        assert np.max(
+            np.abs(fitted - target[join:design_stop, target_index])
+        ) < 1e-10
+        assert abs(coefficients[0]) > 1e-6
+
+
+@pytest.mark.parametrize("family_role", ("primary", "secondary"))
+def test_v8_seasonal_time_scales_are_identifiable_in_l96(
+    family_role: str,
+) -> None:
+    multi_metadata = generate_deterministic_sample(
+        "multi_seasonal",
+        552,
+        504,
+        1,
+        400,
+        5,
+        np.random.default_rng(17),
+        family_role=family_role,
+    )[1]
+    varying_metadata = generate_deterministic_sample(
+        "time_varying_seasonality",
+        552,
+        504,
+        1,
+        400,
+        5,
+        np.random.default_rng(19),
+        family_role=family_role,
+    )[1]
+
+    assert multi_metadata["period_evidence_window"] == 96
+    assert multi_metadata["periods"][0] <= 32
+    assert max(multi_metadata["periods"]) <= 48
+    assert min(
+        multi_metadata["cycles_in_shortest_evidence_window"]
+    ) >= 2.0
+    assert varying_metadata["period_evidence_window"] == 96
+    assert varying_metadata["primary_period"] <= 32
+    assert varying_metadata["modulation_period"] <= 96
+    assert (
+        varying_metadata["carrier_cycles_in_shortest_evidence_window"]
+        >= 3.0
+    )
+    assert (
+        varying_metadata[
+            "modulation_cycles_in_shortest_evidence_window"
+        ]
+        >= 1.0
+    )
+
+
 @pytest.mark.parametrize("capability_id", CAPABILITIES)
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
 def test_v8_families_are_clean_deterministic_and_prefix_invariant(
@@ -358,7 +567,16 @@ def test_v8_common_factor_requires_joint_code_to_recover_future(
     assert first_metadata["local_code_shape_orthogonalized"] is True
     assert first_metadata["main_task_is_dense_dynamic_factor"] is True
     assert first_metadata["code_strength"] < 1.0
-    assert len(first_metadata["code_shape"]) >= 24
+    assert 6 <= len(first_metadata["code_shape"]) <= 8
+    assert first_metadata["teaching_response_width"] == 8
+    assert (
+        first_metadata["historical_episode_count_in_shortest_suffix"]
+        >= 5
+    )
+    assert (
+        first_metadata["shortest_suffix_has_sufficient_teaching_evidence"]
+        is True
+    )
     assert first_metadata["dense_factor_strength"] > 0.0
     assert gate["joint_holdout_r2"] >= 0.80
     assert gate["best_single_channel_holdout_r2"] <= 0.80
@@ -366,6 +584,74 @@ def test_v8_common_factor_requires_joint_code_to_recover_future(
     assert gate["positive_control_effect_nrmse"] <= 1e-6
     assert gate["positive_control_effect_correlation"] >= 0.95
     assert gate["accepted"] is True
+
+    suffix_start = 504 - 96
+    suffix_metadata = deepcopy(first_metadata)
+    suffix_metadata["final_code_slice"] = [
+        int(value) - suffix_start
+        for value in suffix_metadata["final_code_slice"]
+    ]
+    suffix_metadata["historical_episodes"] = [
+        {
+            "code_slice": [
+                int(value) - suffix_start
+                for value in episode["code_slice"]
+            ],
+            "response_slice": [
+                int(value) - suffix_start
+                for value in episode["response_slice"]
+            ],
+        }
+        for episode in suffix_metadata["historical_episodes"]
+        if int(episode["code_slice"][0]) >= suffix_start
+        and int(episode["response_slice"][1]) <= 504
+    ]
+    suffix_gate = common_factor_identifiability_gate(
+        first[suffix_start:],
+        second[suffix_start:],
+        context_length=96,
+        metadata=suffix_metadata,
+        enforced=True,
+    )
+
+    assert len(suffix_metadata["historical_episodes"]) >= 5
+    assert suffix_gate["joint_holdout_r2"] >= 0.80
+    assert suffix_gate["joint_minus_best_single_holdout_r2"] >= 0.15
+    assert suffix_gate["accepted"] is True
+
+
+def test_v8_zero_strength_regime_background_is_deterministic_but_not_exactly_seasonal(
+) -> None:
+    first, metadata, _ = generate_deterministic_sample(
+        "regime_switching",
+        384,
+        336,
+        1,
+        24,
+        1,
+        np.random.default_rng(17),
+    )
+    repeated, _, _ = generate_deterministic_sample(
+        "regime_switching",
+        384,
+        336,
+        1,
+        24,
+        1,
+        np.random.default_rng(17),
+    )
+
+    texture = metadata["deterministic_texture"]
+    seasonal_scale = np.mean(
+        np.abs(first[24:336] - first[:312])
+    )
+
+    assert metadata["regime_strength"] == 0.0
+    assert np.array_equal(first, repeated)
+    assert texture["law"] == "deterministic_quasiperiodic_two_tone"
+    assert texture["period_ratio"] == pytest.approx(np.sqrt(2.0))
+    assert texture["future_process_noise_scale"] == 0.0
+    assert seasonal_scale > 1e-3
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
@@ -387,13 +673,20 @@ def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
     assert metadata["driver_index"] == 0
     assert metadata["responder_indices"] == [1, 2]
     assert delay in metadata["cross_lag_candidate_steps"]
-    assert delay >= 48
-    assert delay <= int(0.40 * 504)
-    assert (delay - 48) % metadata["cross_lag_step"] == 0
+    assert 8 <= delay <= 24
+    assert metadata["cross_lag_step"] == 1
     assert metadata["cross_lag_sampling_policy"] == (
-        "horizon_aligned_history_covered_lag"
+        "real_anchor_lag_clipped_to_l96_identifiable_range"
     )
-    assert metadata["history_covered_forecast_steps"] == 48
+    expected_effect_steps = (
+        delay if family_role == "primary" else delay + 2
+    )
+    assert metadata["history_covered_forecast_steps"] == (
+        expected_effect_steps
+    )
+    assert metadata["counterfactual_effect_forecast_steps"] == (
+        expected_effect_steps
+    )
     assert metadata["counterfactual_responder_history_invariant"] is True
     assert metadata["counterfactual_future_is_driver_determined"] is True
     assert metadata["future_only_shock_count"] == 0
@@ -475,7 +768,24 @@ def test_v8_cross_series_master_pair_remains_well_formed_in_all_suffix_views(
             second_view[context_length:, 1:],
         )
         assert context_length - delay >= 0
-        assert context_length - delay + 48 <= context_length
+        effect_steps = int(
+            first_metadata["counterfactual_effect_forecast_steps"]
+        )
+        assert context_length - delay + delay <= context_length
+        assert not np.array_equal(
+            first_view[
+                context_length : context_length + effect_steps,
+                1:,
+            ],
+            second_view[
+                context_length : context_length + effect_steps,
+                1:,
+            ],
+        )
+        assert np.array_equal(
+            first_view[context_length + effect_steps :, 1:],
+            second_view[context_length + effect_steps :, 1:],
+        )
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
