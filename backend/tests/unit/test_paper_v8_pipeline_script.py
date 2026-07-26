@@ -1742,6 +1742,231 @@ def test_input_ablation_comparison_uses_unchanged_focal_channel_metric():
     assert ablation["accuracy_delta"] == pytest.approx(0.1)
 
 
+def test_cross_effect_audit_scores_metadata_declared_active_prefix():
+    analysis = load_script("analyze_paper_v8")
+    context = 8
+    horizon = 4
+    first_target = np.zeros((context + horizon, 3))
+    second_target = first_target.copy()
+    second_target[context : context + 2, 1:] = 1.0
+    first = {
+        "dataset_id": "dataset",
+        "capability_id": "cross_series_dependence",
+        "generator_family_role": "primary",
+        "evaluation_table": "strict_counterfactual_audit",
+        "intensity": 5,
+        "seed_index": 0,
+        "context_length": context,
+        "horizon": horizon,
+        "target_dim": 3,
+        "target": first_target.tolist(),
+        "master_counterfactual_pair_id": "pair",
+        "generation_metadata": {
+            "responder_indices": [1, 2],
+            "counterfactual_effect_forecast_steps": 2,
+        },
+    }
+    second = {**first, "target": second_target.tolist()}
+    first_forecast = np.zeros((horizon, 3))
+    second_forecast = np.zeros((horizon, 3))
+    second_forecast[:2, 1:] = 1.0
+    second_forecast[2:, 1:] = 5.0
+
+    row = analysis.effect_row(
+        first,
+        first_forecast,
+        second,
+        second_forecast,
+        model_id="model",
+    )
+
+    assert row["active_prefix_steps"] == 2
+    assert row["active_prefix_source"].endswith(
+        "counterfactual_effect_forecast_steps"
+    )
+    assert row["active_effect_nrmse"] == pytest.approx(0.0)
+    assert row["counterfactual_effect_nrmse"] > 1.0
+    assert row["zero_tail_leakage_nrmse"] > 1.0
+
+
+def test_cross_effect_audit_keeps_legacy_full_horizon_fallback():
+    analysis = load_script("analyze_paper_v8")
+    sample = {
+        "dataset_id": "dataset",
+        "capability_id": "cross_series_dependence",
+        "generator_family_role": "primary",
+        "evaluation_table": "strict_counterfactual_audit",
+        "intensity": 5,
+        "seed_index": 0,
+        "context_length": 4,
+        "horizon": 2,
+        "target_dim": 2,
+        "target": np.zeros((6, 2)).tolist(),
+        "master_counterfactual_pair_id": "pair",
+        "generation_metadata": {"responder_indices": [1]},
+    }
+    second = np.zeros((6, 2))
+    second[4:, 1] = 1.0
+    row = analysis.effect_row(
+        sample,
+        np.zeros((2, 2)),
+        {**sample, "target": second.tolist()},
+        np.column_stack([np.zeros(2), np.ones(2)]),
+        model_id="model",
+    )
+
+    assert row["active_prefix_steps"] == 2
+    assert row["active_prefix_source"] == "legacy_full_horizon_fallback"
+    assert row["active_effect_nrmse"] == pytest.approx(
+        row["counterfactual_effect_nrmse"]
+    )
+
+
+def test_common_structured_assessment_requires_advantage_and_strict_recovery():
+    analysis = load_script("analyze_paper_v8")
+
+    def metric(model, table, value, seed):
+        metrics = {
+            "common_component_nmae": value,
+            "factor_trajectory_correlation": 0.9,
+        }
+        return {
+            "capability_id": "common_factor",
+            "model_id": model,
+            "context_length": 168,
+            "evaluation_table": table,
+            "seed_index": seed,
+            "metrics": metrics,
+            "input_adaptation": {
+                "structured_baseline": {"fallback_used": False}
+            },
+        }
+
+    metrics = []
+    effects = []
+    for seed in range(3):
+        metrics.extend(
+            [
+                metric("diagonal_ar", "main", 1.0, seed),
+                metric("dynamic_factor_var", "main", 0.95, seed),
+                metric(
+                    "dynamic_factor_var",
+                    "multivariate_input_ablation",
+                    1.2,
+                    seed,
+                ),
+            ]
+        )
+        effects.append(
+            {
+                "capability_id": "common_factor",
+                "model_id": "dynamic_factor_var",
+                "context_length": 168,
+                "counterfactual_effect_nrmse": 0.2,
+                "effect_correlation": 0.9,
+                "effect_amplitude_ratio": 1.0,
+            }
+        )
+    row = next(
+        item
+        for item in analysis._structured_context_curve(
+            metrics,
+            effects,
+            dataset_id="dataset",
+        )
+        if item["capability_id"] == "common_factor"
+        and item["context_length"] == 168
+    )
+
+    assert not row["structured_positive_control_passed"]
+    assert "no_10pct_advantage_over_diagonal_ar" in row["failure_codes"]
+    assert row["strict_effect_passed"] is True
+    assert row["strict_effect_assessment"] == (
+        "evaluated_as_blind_shared_fit_hard_gate"
+    )
+
+    for metric_row in metrics:
+        if (
+            metric_row["model_id"] == "dynamic_factor_var"
+            and metric_row["evaluation_table"] == "main"
+        ):
+            metric_row["metrics"]["common_component_nmae"] = 0.8
+    for effect in effects:
+        effect.update(
+            {
+                "counterfactual_effect_nrmse": 1.0,
+                "effect_correlation": 0.0,
+                "effect_amplitude_ratio": 0.0,
+            }
+        )
+    strict_failure = next(
+        item
+        for item in analysis._structured_context_curve(
+            metrics,
+            effects,
+            dataset_id="dataset",
+        )
+        if item["capability_id"] == "common_factor"
+        and item["context_length"] == 168
+    )
+    assert not strict_failure["structured_positive_control_passed"]
+    assert "strict_counterfactual_recovery_below_threshold" in (
+        strict_failure["failure_codes"]
+    )
+
+
+def test_multivariate_utilization_audit_marks_independent_adapter_reference():
+    analysis = load_script("analyze_paper_v8")
+
+    def main_row(model, target_mode):
+        return {
+            "dataset_id": "dataset",
+            "context_policy": "fixed_l168",
+            "evaluation_table": "main",
+            "generator_family_role": "primary",
+            "capability_id": "common_factor",
+            "model_id": model,
+            "seed_index": 0,
+            "intensity": 5,
+            "input_adaptation": {"target_mode": target_mode},
+        }
+
+    comparisons = [
+        {
+            "comparison_id": "multivariate_input_ablation",
+            "dataset_id": "dataset",
+            "context_policy": "fixed_l168",
+            "capability_id": "common_factor",
+            "model_id": "independent",
+            "accuracy_metric": "protected_target_nmae",
+            "accuracy_relative_delta": 0.0,
+            "matched_seed_count": 1,
+        }
+    ]
+    rows = analysis.multivariate_utilization_audit_rows(
+        [
+            main_row("independent", "independent_univariate"),
+            main_row("native", "native_multivariate"),
+        ],
+        [],
+        comparisons,
+        models=["independent", "native"],
+    )
+    by_model = {row["model_id"]: row for row in rows}
+
+    assert by_model["independent"]["audit_role"] == (
+        "independent_univariate_reference"
+    )
+    assert not by_model["independent"][
+        "eligible_for_multivariate_utilization_claim"
+    ]
+    assert by_model["native"]["audit_role"] == "multivariate_model"
+    assert by_model["native"][
+        "eligible_for_multivariate_utilization_claim"
+    ]
+    assert all(row["audit_has_no_ranking"] for row in rows)
+
+
 def test_inference_tasks_include_real_anchors_as_separate_auxiliary_table(
     monkeypatch,
     tmp_path,

@@ -157,11 +157,10 @@ PRIMARY_TARGET_FEATURE = {
     "predictable_intermittency": "event_effect_energy_share",
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
-    # Strength is calibrated by the strongest ordered lagged association.
-    # Correct edge/lag recovery and incremental prediction remain separate
-    # generated-sample gates; folding them into the dose coordinate made the
-    # five levels depend on a high-dimensional ridge design.
-    "cross_series_dependence": "lead_lag_peak_abs",
+    # Dose is the additional history-only predictive value contributed by
+    # other channels. Peak lag correlation remains a structural diagnostic,
+    # but is not allowed to saturate and stand in for forecast utilization.
+    "cross_series_dependence": "cross_series_incremental_r2",
     # A current-linear incremental R² is not family-neutral for nonlinear or
     # distributed-lag responses.  The generator-known history effect share is
     # the matched dose; incremental R² remains a descriptive audit feature.
@@ -3072,22 +3071,14 @@ def _shift_generation_metadata(
     result = json.loads(json.dumps(metadata))
     offset = CONTEXT_LENGTH - context_length
     if capability_id == "common_factor":
-        if "final_code_slice" in result:
-            result["final_code_slice"] = [
-                int(value) - offset for value in result["final_code_slice"]
-            ]
-        episodes = []
-        for episode in result.get("historical_episodes", []):
-            code = [int(value) - offset for value in episode["code_slice"]]
-            response = [
-                int(value) - offset for value in episode["response_slice"]
-            ]
-            if code[0] >= 0 and response[1] <= context_length:
-                episodes.append(
-                    {"code_slice": code, "response_slice": response}
-                )
-        result["historical_episodes"] = episodes
-        result["historical_episode_count_in_view"] = len(episodes)
+        for name in (
+            "final_code_slice",
+            "shared_state_evidence_slice",
+        ):
+            if name in result:
+                result[name] = [
+                    int(value) - offset for value in result[name]
+                ]
     elif capability_id == "cross_series_dependence":
         delay = int(result["cross_lag_steps"])
         result["counterfactual_driver_slice"] = [

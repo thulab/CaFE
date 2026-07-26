@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v4"
+GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v5"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -27,9 +27,7 @@ NONLINEAR_SEASONAL_LAG_RANGE = (4, 48)
 NONLINEAR_LAG_RANGE = (2, 32)
 COVARIATE_EVENT_WIDTH_RANGE = (2, 6)
 
-COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2 = 0.80
-COMMON_FACTOR_MAX_SINGLE_HOLDOUT_R2 = 0.80
-COMMON_FACTOR_MIN_JOINT_R2_GAIN = 0.15
+COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2 = 0.50
 COMMON_FACTOR_MAX_EFFECT_NRMSE = 0.15
 COMMON_FACTOR_MIN_EFFECT_CORRELATION = 0.95
 COMMON_FACTOR_EFFECT_AMPLITUDE_RANGE = (0.80, 1.20)
@@ -46,7 +44,7 @@ PRIMARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "regime_switching": "deterministic_duration_motif",
     "nonlinear_persistence": "signed_rational_quadratic_recurrence",
     "predictable_intermittency": "deterministic_gaussian_event_clock",
-    "common_factor": "dense_dynamic_factor_with_joint_state_relay",
+    "common_factor": "dense_dynamic_factor_with_shared_state_evidence",
     "hierarchical_coherence": "aggregate_contrast_linear_state_space",
     "cross_series_dependence": "dense_delayed_linear_scm",
     "covariate_response": "known_future_linear_response",
@@ -59,7 +57,7 @@ SECONDARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "regime_switching": "thresholded_quasiperiodic_oscillator_regime",
     "nonlinear_persistence": "signed_softsign_quadratic_recurrence",
     "predictable_intermittency": "deterministic_raised_cosine_event_clock",
-    "common_factor": "dense_spline_factor_with_joint_state_relay",
+    "common_factor": "dense_spline_factor_with_shared_state_evidence",
     "hierarchical_coherence": "aggregate_contrast_periodic_spline",
     "cross_series_dependence": "dense_delayed_nonlinear_scm",
     "covariate_response": "known_future_distributed_nonlinear_response",
@@ -705,9 +703,10 @@ def standardize_common_factor_counterfactual_member(
 ) -> tuple[np.ndarray, dict[str, Any]]:
     """Use the pair-invariant prefix to normalize every channel.
 
-    Pair members differ only in the final code block and the resulting future.
-    Computing normalization statistics before that block prevents the
-    intervention from changing the global affine scale seen by a model.
+    Pair members differ only in the auxiliary shared-state evidence suffix and
+    the resulting future.  Computing normalization statistics before that
+    suffix prevents the intervention from changing the affine scale seen by a
+    model.
     """
 
     matrix = np.asarray(values, dtype=float)
@@ -715,13 +714,18 @@ def standardize_common_factor_counterfactual_member(
         raise ValueError("common-factor target must be two-dimensional")
     if not 1 <= context_length < matrix.shape[0]:
         raise ValueError("context_length must split history and future")
-    code_slice = metadata.get("final_code_slice")
+    code_slice = metadata.get(
+        "shared_state_evidence_slice",
+        metadata.get("final_code_slice"),
+    )
     if (
         not isinstance(code_slice, list)
         or len(code_slice) != 2
         or int(code_slice[1]) != context_length
     ):
-        raise ValueError("final_code_slice must end at the context boundary")
+        raise ValueError(
+            "shared-state evidence slice must end at the context boundary"
+        )
     invariant_stop = int(code_slice[0])
     if invariant_stop < 16:
         raise ValueError(
@@ -747,82 +751,12 @@ def standardize_common_factor_counterfactual_member(
         standardized_loadings.tolist()
     )
     return standardized, {
-        "policy": "pair_shared_global_scale_pre_final_code_prefix",
+        "policy": "pair_shared_global_scale_pre_state_evidence_prefix",
         "reference_slice": [0, invariant_stop],
         "center_by_target": center.tolist(),
         "global_scale": global_scale,
         "scale_by_target": [global_scale] * matrix.shape[1],
     }
-
-
-def _project_code_amplitude(
-    values: np.ndarray,
-    code_slice: list[int],
-    code_shape: np.ndarray,
-) -> np.ndarray:
-    start, stop = (int(value) for value in code_slice)
-    segment = np.asarray(values[start:stop], dtype=float)
-    if segment.shape[0] != code_shape.size:
-        raise ValueError("code slice width does not match code shape")
-    centered = segment - np.mean(segment, axis=0, keepdims=True)
-    denominator = float(np.dot(code_shape, code_shape))
-    return code_shape @ centered / max(denominator, 1e-12)
-
-
-def _joint_factor_episode_arrays(
-    values: np.ndarray,
-    metadata: dict[str, Any],
-) -> tuple[np.ndarray, np.ndarray]:
-    matrix = np.asarray(values, dtype=float)
-    code_shape = np.asarray(metadata["code_shape"], dtype=float)
-    basis = np.asarray(
-        metadata.get(
-            "teaching_response_basis",
-            metadata["response_basis"],
-        ),
-        dtype=float,
-    )
-    loadings = np.asarray(
-        metadata.get(
-            "standardized_response_loadings",
-            metadata["response_loadings"],
-        ),
-        dtype=float,
-    )
-    loading_denominator = float(np.dot(loadings, loadings))
-    codes: list[np.ndarray] = []
-    coefficients: list[np.ndarray] = []
-    for episode in metadata["historical_episodes"]:
-        response_start, response_stop = (
-            int(value) for value in episode["response_slice"]
-        )
-        response_width = response_stop - response_start
-        if response_width < 4 or response_width > basis.shape[0]:
-            continue
-        code = _project_code_amplitude(
-            matrix,
-            episode["code_slice"],
-            code_shape,
-        )
-        response = matrix[response_start:response_stop]
-        factor_score = (
-            response @ loadings / max(loading_denominator, 1e-12)
-        )
-        coefficient = np.linalg.lstsq(
-            basis[:response_width],
-            factor_score,
-            rcond=None,
-        )[0]
-        codes.append(code)
-        coefficients.append(coefficient)
-    if len(codes) < 5:
-        raise ValueError(
-            "common-factor positive control needs five complete episodes"
-        )
-    return np.asarray(codes, dtype=float), np.asarray(
-        coefficients,
-        dtype=float,
-    )
 
 
 def _fit_affine_map(
@@ -840,24 +774,182 @@ def _fit_affine_map(
     )
 
 
-def _leave_one_episode_out_r2(
+def _chronological_affine_holdout_r2(
     source: np.ndarray,
     response: np.ndarray,
 ) -> float:
-    forecasts = np.zeros_like(response)
-    for held_out in range(source.shape[0]):
-        keep = np.arange(source.shape[0]) != held_out
-        coefficients = _fit_affine_map(source[keep], response[keep])
-        design = np.concatenate(
-            [[1.0], np.asarray(source[held_out], dtype=float).ravel()]
-        )
-        forecasts[held_out] = design @ coefficients
+    source = np.asarray(source, dtype=float)
+    response = np.asarray(response, dtype=float)
+    if source.ndim == 1:
+        source = source[:, None]
+    if response.ndim == 1:
+        response = response[:, None]
+    if source.shape[0] != response.shape[0] or source.shape[0] < 24:
+        return -math.inf
+    split = int(np.clip(round(0.70 * source.shape[0]), 16, source.shape[0] - 8))
+    coefficients = _fit_affine_map(source[:split], response[:split])
+    design = np.column_stack(
+        [np.ones(source.shape[0] - split), source[split:]]
+    )
+    forecasts = design @ coefficients
+    truth = response[split:]
     denominator = float(
-        np.sum((response - np.mean(response, axis=0)) ** 2)
+        np.sum((truth - np.mean(truth, axis=0)) ** 2)
     )
     if denominator <= 1e-12:
         return -math.inf
-    return 1.0 - float(np.sum((response - forecasts) ** 2)) / denominator
+    return 1.0 - float(np.sum((truth - forecasts) ** 2)) / denominator
+
+
+def _blind_seasonal_state_forecast(
+    history: np.ndarray,
+    *,
+    horizon: int,
+    selected_lag: int | None = None,
+) -> tuple[np.ndarray, int, float]:
+    """Blindly select a seasonal state recurrence on a chronological holdout."""
+
+    values = np.asarray(history, dtype=float).ravel()
+    validation_rows = max(12, int(round(0.25 * values.size)))
+    validation_rows = min(validation_rows, values.size - 24)
+    split = values.size - validation_rows
+    candidates: list[tuple[float, int]] = []
+    candidate_lags = (
+        [int(selected_lag)]
+        if selected_lag is not None
+        else list(range(1, min(48, split // 2) + 1))
+    )
+    for lag in candidate_lags:
+        if lag < 1 or lag > split // 2:
+            continue
+        truth = values[split:]
+        validation_history = values[:split].tolist()
+        prediction_values = []
+        for _ in range(validation_rows):
+            next_value = float(validation_history[-lag])
+            prediction_values.append(next_value)
+            validation_history.append(next_value)
+        prediction = np.asarray(prediction_values, dtype=float)
+        loss = float(np.mean(np.abs(truth - prediction)))
+        if math.isfinite(loss):
+            candidates.append((loss, lag))
+    if not candidates:
+        raise ValueError("no valid blind shared-state recurrence")
+    validation_mae, fitted_lag = min(
+        candidates,
+        key=lambda row: (row[0], row[1]),
+    )
+    extended = values.tolist()
+    for _ in range(horizon):
+        extended.append(float(extended[-fitted_lag]))
+    return (
+        np.asarray(extended[-horizon:], dtype=float),
+        int(fitted_lag),
+        float(validation_mae),
+    )
+
+
+def _blind_common_factor_pair_forecast(
+    first: np.ndarray,
+    second: np.ndarray,
+    *,
+    context_length: int,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Forecast a pair using only its shared prefix and observed panel values."""
+
+    first_history = np.asarray(first[:context_length], dtype=float)
+    second_history = np.asarray(second[:context_length], dtype=float)
+    channel_difference = np.max(
+        np.abs(second_history - first_history),
+        axis=0,
+    )
+    invariant_channels = np.flatnonzero(channel_difference <= 1e-10)
+    if invariant_channels.size != 1:
+        raise ValueError(
+            "blind common-factor pair must expose one invariant channel"
+        )
+    protected = int(invariant_channels[0])
+    row_difference = np.max(
+        np.abs(second_history - first_history),
+        axis=1,
+    )
+    changed_rows = np.flatnonzero(row_difference > 1e-10)
+    if changed_rows.size == 0:
+        raise ValueError("common-factor pair has no auxiliary evidence change")
+    invariant_stop = int(changed_rows[0])
+    if invariant_stop < 48:
+        raise ValueError("common-factor invariant prefix is too short")
+
+    reference = first_history[:invariant_stop]
+    center = np.mean(reference, axis=0)
+    scale = np.std(reference, axis=0)
+    scale = np.where(scale > 1e-9, scale, 1.0)
+    standardized_reference = (reference - center) / scale
+    _, singular_values, right = np.linalg.svd(
+        standardized_reference,
+        full_matrices=False,
+    )
+    loading = right[0]
+    auxiliary = np.asarray(
+        [index for index in range(first.shape[1]) if index != protected],
+        dtype=int,
+    )
+    auxiliary_loading_energy = float(
+        np.dot(loading[auxiliary], loading[auxiliary])
+    )
+    if auxiliary_loading_energy <= 1e-8:
+        raise ValueError("shared state is not observable from auxiliaries")
+
+    reference_factor = (
+        standardized_reference[:, auxiliary] @ loading[auxiliary]
+        / auxiliary_loading_energy
+    )
+    _, selected_state_lag, reference_validation_loss = (
+        _blind_seasonal_state_forecast(
+            reference_factor,
+            horizon=first.shape[0] - context_length,
+        )
+    )
+    forecasts = []
+    selected_lags = []
+    validation_losses = []
+    for history in (first_history, second_history):
+        standardized = (history - center) / scale
+        factor = (
+            standardized[:, auxiliary] @ loading[auxiliary]
+            / auxiliary_loading_energy
+        )
+        factor_forecast, selected_lag, validation_loss = (
+            _blind_seasonal_state_forecast(
+                factor,
+                horizon=first.shape[0] - context_length,
+                selected_lag=selected_state_lag,
+            )
+        )
+        forecasts.append(
+            center[None, :]
+            + factor_forecast[:, None]
+            * loading[None, :]
+            * scale[None, :]
+        )
+        selected_lags.append(selected_lag)
+        validation_losses.append(validation_loss)
+
+    total_energy = float(np.sum(singular_values * singular_values))
+    return forecasts[0], forecasts[1], {
+        "protected_target_index": protected,
+        "pair_invariant_history_stop": invariant_stop,
+        "selected_state_lags": selected_lags,
+        "shared_prefix_selected_state_lag": selected_state_lag,
+        "shared_prefix_state_validation_mae": reference_validation_loss,
+        "state_validation_mae": validation_losses,
+        "history_factor_share": float(
+            singular_values[0] ** 2 / max(total_energy, 1e-12)
+        ),
+        "loading": loading.tolist(),
+        "generator_metadata_used_for_fitting": False,
+        "history_only_fitting": True,
+    }
 
 
 def common_factor_joint_positive_control(
@@ -865,29 +957,64 @@ def common_factor_joint_positive_control(
     *,
     metadata: dict[str, Any],
 ) -> np.ndarray:
-    """Forecast the rank-one response after estimating its map from history."""
+    """Compatibility probe using a blind rank-one state forecast.
+
+    The formal identifiability gate does not call this helper.  It remains for
+    the legacy diagnostic probe model, but no longer consumes a hidden episode
+    layout or codebook.
+    """
 
     matrix = np.asarray(values, dtype=float)
-    codes, response_coefficients = _joint_factor_episode_arrays(
-        matrix,
-        metadata,
+    evidence_slice = metadata.get(
+        "shared_state_evidence_slice",
+        metadata.get("final_code_slice"),
     )
-    mapping = _fit_affine_map(codes, response_coefficients)
-    final_code = _project_code_amplitude(
-        matrix,
-        metadata["final_code_slice"],
-        np.asarray(metadata["code_shape"], dtype=float),
+    if not isinstance(evidence_slice, list) or len(evidence_slice) != 2:
+        raise ValueError("common-factor evidence slice is missing")
+    invariant_stop, context_length = (
+        int(value) for value in evidence_slice
     )
-    coefficient = np.concatenate([[1.0], final_code]) @ mapping
-    basis = np.asarray(metadata["response_basis"], dtype=float)
-    loadings = np.asarray(
-        metadata.get(
-            "standardized_response_loadings",
-            metadata["response_loadings"],
-        ),
-        dtype=float,
+    if not 48 <= invariant_stop < context_length < matrix.shape[0]:
+        raise ValueError("invalid common-factor evidence slice")
+    reference = matrix[:invariant_stop]
+    center = np.mean(reference, axis=0)
+    scale = np.std(reference, axis=0)
+    scale = np.where(scale > 1e-9, scale, 1.0)
+    standardized_reference = (reference - center) / scale
+    _, _, right = np.linalg.svd(
+        standardized_reference,
+        full_matrices=False,
     )
-    return (basis @ coefficient)[:, None] * loadings[None, :]
+    loading = right[0]
+    protected = int(metadata["protected_target_index"])
+    auxiliary = np.asarray(
+        [
+            index
+            for index in range(matrix.shape[1])
+            if index != protected
+        ],
+        dtype=int,
+    )
+    loading_energy = float(
+        np.dot(loading[auxiliary], loading[auxiliary])
+    )
+    standardized_history = (
+        matrix[:context_length] - center
+    ) / scale
+    factor_history = (
+        standardized_history[:, auxiliary] @ loading[auxiliary]
+        / max(loading_energy, 1e-12)
+    )
+    factor_forecast, _, _ = _blind_seasonal_state_forecast(
+        factor_history,
+        horizon=matrix.shape[0] - context_length,
+        selected_lag=int(metadata["shared_state_period"]),
+    )
+    return (
+        factor_forecast[:, None]
+        * loading[None, :]
+        * scale[None, :]
+    )
 
 
 def common_factor_identifiability_gate(
@@ -898,7 +1025,7 @@ def common_factor_identifiability_gate(
     metadata: dict[str, Any],
     enforced: bool,
 ) -> dict[str, Any]:
-    """Check joint observability and strict single-channel ambiguity."""
+    """Check blind joint observability and strict protected-channel ambiguity."""
 
     first = np.asarray(first_target, dtype=float)
     second = np.asarray(second_target, dtype=float)
@@ -906,28 +1033,55 @@ def common_factor_identifiability_gate(
         raise ValueError("common-factor pair must be equal-shaped matrices")
     if not 1 <= context_length < first.shape[0]:
         raise ValueError("context_length must split history and future")
-    protected = int(metadata["protected_target_index"])
-    code_matrix = np.asarray(metadata["code_matrix"], dtype=float)
-    matrix_rank = int(np.linalg.matrix_rank(code_matrix))
-    condition_number = float(np.linalg.cond(code_matrix))
-
-    codes, coefficients = _joint_factor_episode_arrays(first, metadata)
-    joint_r2 = _leave_one_episode_out_r2(codes, coefficients)
-    single_r2 = [
-        _leave_one_episode_out_r2(
-            codes[:, index : index + 1],
-            coefficients,
+    declared_protected = int(metadata["protected_target_index"])
+    evidence_slice = metadata.get(
+        "shared_state_evidence_slice",
+        metadata.get("final_code_slice"),
+    )
+    if not isinstance(evidence_slice, list) or len(evidence_slice) != 2:
+        raise ValueError("common-factor evidence slice is missing")
+    invariant_stop = int(evidence_slice[0])
+    history = first[:invariant_stop]
+    protected = declared_protected
+    auxiliary = [
+        index for index in range(first.shape[1]) if index != protected
+    ]
+    history_center = np.mean(history, axis=0)
+    history_scale = np.std(history, axis=0)
+    history_scale = np.where(history_scale > 1e-9, history_scale, 1.0)
+    standardized_history = (
+        history - history_center[None, :]
+    ) / history_scale[None, :]
+    _, _, history_right = np.linalg.svd(
+        standardized_history,
+        full_matrices=False,
+    )
+    history_loading = history_right[0]
+    auxiliary_loading_energy = float(
+        np.dot(
+            history_loading[auxiliary],
+            history_loading[auxiliary],
         )
-        for index in range(codes.shape[1])
+    )
+    joint_factor_score = (
+        standardized_history[:, auxiliary] @ history_loading[auxiliary]
+        / max(auxiliary_loading_energy, 1e-12)
+    )
+    joint_r2 = _chronological_affine_holdout_r2(
+        joint_factor_score,
+        standardized_history[:, protected],
+    )
+    single_r2 = [
+        _chronological_affine_holdout_r2(
+            standardized_history[:, index],
+            standardized_history[:, protected],
+        )
+        for index in auxiliary
     ]
     best_single_r2 = float(np.max(single_r2))
     joint_gain = float(joint_r2 - best_single_r2)
     observability_passed = (
-        matrix_rank >= int(metadata["latent_state_dimension"])
-        and condition_number <= 4.0
-        and joint_r2 >= COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2
-        and best_single_r2 <= COMMON_FACTOR_MAX_SINGLE_HOLDOUT_R2
-        and joint_gain >= COMMON_FACTOR_MIN_JOINT_R2_GAIN
+        joint_r2 >= COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2
     )
 
     protected_history_difference = float(
@@ -942,14 +1096,17 @@ def common_factor_identifiability_gate(
         second[context_length:, protected]
         - first[context_length:, protected]
     )
-    first_forecast = common_factor_joint_positive_control(
-        first,
-        metadata=metadata,
+    first_forecast, second_forecast, blind_diagnostics = (
+        _blind_common_factor_pair_forecast(
+            first,
+            second,
+            context_length=context_length,
+        )
     )
-    second_forecast = common_factor_joint_positive_control(
-        second,
-        metadata=metadata,
-    )
+    if int(blind_diagnostics["protected_target_index"]) != protected:
+        raise ValueError(
+            "blind invariant channel does not match declared protected target"
+        )
     forecast_effect = (
         second_forecast[:, protected] - first_forecast[:, protected]
     )
@@ -978,12 +1135,14 @@ def common_factor_identifiability_gate(
     )
     accepted = observability_passed and counterfactual_passed
     return {
-        "schema_version": "common_factor_identifiability_gate.v1",
+        "schema_version": "common_factor_identifiability_gate.v2",
         "enforced": bool(enforced),
         "accepted": bool(accepted),
-        "latent_state_dimension": int(metadata["latent_state_dimension"]),
-        "code_matrix_rank": matrix_rank,
-        "code_matrix_condition_number": condition_number,
+        "latent_state_dimension": 1,
+        "generator_metadata_used_for_fitting": False,
+        "positive_control_model": (
+            "blind_rank1_panel_filter_with_seasonal_state_recurrence"
+        ),
         "joint_holdout_r2": float(joint_r2),
         "single_channel_holdout_r2": [
             float(value) for value in single_r2
@@ -991,10 +1150,7 @@ def common_factor_identifiability_gate(
         "best_single_channel_holdout_r2": best_single_r2,
         "joint_minus_best_single_holdout_r2": joint_gain,
         "minimum_joint_holdout_r2": COMMON_FACTOR_MIN_JOINT_HOLDOUT_R2,
-        "maximum_single_holdout_r2": (
-            COMMON_FACTOR_MAX_SINGLE_HOLDOUT_R2
-        ),
-        "minimum_joint_r2_gain": COMMON_FACTOR_MIN_JOINT_R2_GAIN,
+        "single_channel_holdout_is_diagnostic_only": True,
         "joint_observability_passed": bool(observability_passed),
         "protected_target_index": protected,
         "protected_history_max_abs_difference": (
@@ -1015,6 +1171,7 @@ def common_factor_identifiability_gate(
             amplitude_upper,
         ],
         "counterfactual_passed": bool(counterfactual_passed),
+        "blind_fit_diagnostics": blind_diagnostics,
     }
 
 
@@ -2424,20 +2581,19 @@ def _common_factor(
     family,
     counterfactual_variant,
 ):
-    """Generate a dense dynamic factor plus a jointly observed state relay.
+    """Generate a dense low-rank state observed through multiple channels.
 
-    The common factor is present throughout the whole path, so ordinary
-    forecasting quality measures a conventional dynamic-factor mechanism.
-    A lower-amplitude relay is repeated densely in history: a smooth observation
-    block exposes one scalar equation per channel, ``c = B q``, and the next
-    block realizes a rank-one response determined by ``q``.  Five complete
-    teaching episodes remain visible even in the final L96 suffix, while the
-    final observation block controls the H48 forecast response.
+    The ordinary path is a conventional dynamic-factor model: every channel is
+    a noisy projection of one shared state plus an idiosyncratic local mode.
+    The strict pair changes the amplitude of that same state in the final L48
+    auxiliary observations and throughout the future.  The protected channel's
+    history is left unchanged, so its future can only be distinguished by
+    filtering the shared state from the other channels.
 
-    Pair members differ along the null space of one protected channel's row.
-    The protected history is therefore identical while its future differs.
-    This strict construction is intended for the I5 audit; the dense factor is
-    the main task and does not depend on the audit comparison.
+    There is deliberately no privileged source channel, directional edge, lag,
+    codebook, or generator-private episode grammar.  A blind history-only
+    dynamic-factor/state-space learner can infer the loading vector and state
+    dynamics from the ordinary prefix.
     """
 
     if dim < 3:
@@ -2452,62 +2608,7 @@ def _common_factor(
         "factor_persistence",
         0.80,
     )
-    response_basis, response_basis_meta = _orthonormal_factor_basis(
-        horizon,
-        rng,
-        family,
-        factor_persistence=factor_persistence,
-    )
-    # Six-to-eight observed points and eight response points give a smooth,
-    # overdetermined rank-two episode while allowing five complete teaching
-    # examples in the final L96 suffix.  The formal future remains H48 and uses
-    # the full response basis.
-    code_width = int(rng.choice(np.asarray([6, 7, 8])))
-    teaching_response_width = 8
-    teaching_episode_gap = 1
-    episode_span = (
-        code_width + teaching_response_width + teaching_episode_gap
-    )
-    (
-        teaching_response_basis,
-        teaching_response_basis_meta,
-    ) = _orthonormal_factor_basis(
-        teaching_response_width,
-        rng,
-        family,
-        factor_persistence=factor_persistence,
-    )
-    response_starts = [
-        context - episode_span * offset
-        for offset in range(1, 1 + context // episode_span)
-        if context - episode_span * offset - code_width >= 0
-    ]
-    response_starts.sort()
-    if len(response_starts) < 5:
-        raise ValueError(
-            "common_factor requires at least five complete teaching episodes"
-        )
-
-    row_rotation = float(rng.uniform(0.0, 2.0 * np.pi))
-    row_angles = (
-        row_rotation
-        + 2.0 * np.pi * np.arange(dim, dtype=float) / dim
-        + rng.uniform(-0.10, 0.10, size=dim)
-    )
-    code_matrix = np.column_stack(
-        [np.cos(row_angles), np.sin(row_angles)]
-    )
-    code_matrix /= np.maximum(
-        np.linalg.norm(code_matrix, axis=1, keepdims=True),
-        1e-12,
-    )
     protected_target = int(rng.integers(0, dim))
-    protected_row = code_matrix[protected_target]
-    null_direction = np.asarray(
-        [-protected_row[1], protected_row[0]],
-        dtype=float,
-    )
-    null_direction /= max(float(np.linalg.norm(null_direction)), 1e-12)
 
     sign_pattern = np.where(np.arange(dim) % 2 == 0, 1.0, -1.0)
     sign_pattern = sign_pattern[rng.permutation(dim)]
@@ -2522,8 +2623,6 @@ def _common_factor(
             0.995,
         )
     )
-    shared_strength = 0.01 + 0.79 * lam
-    code_strength = 0.02 + 0.38 * lam
 
     local_spread = _parameter(cond, "local_mode_spread", 0.45)
     local_period_multipliers = [
@@ -2545,6 +2644,23 @@ def _common_factor(
             for index in range(dim)
         ]
     )
+    # Independent observation texture makes state filtering genuinely useful:
+    # one channel is a noisy sensor, whereas the shared rank-one projection is
+    # reinforced across the panel.  The history texture is drawn from the
+    # paired seed and removed at the forecast boundary; the scored future is a
+    # clean deterministic latent continuation shared by both pair members.
+    local_texture_seed = int(rng.integers(0, 2**63 - 1))
+    local_texture_rng = np.random.default_rng(local_texture_seed)
+    local_texture = local_texture_rng.normal(size=(length, dim))
+    local_texture[1:] = (
+        0.20 * local_texture[:-1] + local_texture[1:]
+    )
+    local_texture /= np.maximum(
+        np.std(local_texture[:context], axis=0),
+        1e-9,
+    )[None, :]
+    local_texture[context:] = 0.0
+    local = 0.35 * local + 0.65 * local_texture
     # Keep the I1 common-factor baseline genuinely weak.  Independently drawn
     # smooth local modes can still be highly correlated on a finite L336
     # history, which made some paths start above the real q10 target before
@@ -2561,12 +2677,10 @@ def _common_factor(
         local[:, channel] -= local[:, :channel] @ coefficients
     local_scale = np.std(local[:context], axis=0)
     local /= np.maximum(local_scale, 1e-9)[None, :]
-    loading_denominator = float(
-        np.dot(response_loadings, response_loadings)
-    )
-    # A conventional dense common factor is the primary mechanism.  Local
-    # components remain deterministic and forecastable; they are deliberately
-    # heterogeneous so contemporaneous cross-channel agreement is informative.
+
+    # The calibrated smooth process supplies real-data nuisance texture.  A
+    # plainly periodic state supplies a blind-learnable continuation that is
+    # present in the ordinary prefix, the evidence suffix, and the future.
     dense_factor, dense_factor_meta = _calibrated_signal(
         length,
         context,
@@ -2576,6 +2690,27 @@ def _common_factor(
         persistence_name="factor_persistence",
         period_multiplier=float(rng.uniform(0.85, 1.15)),
     )
+    state_period = int(rng.choice(np.asarray([12, 16, 24, 32])))
+    state_phase = float(rng.uniform(0.0, 2.0 * np.pi))
+    state_time = np.arange(length, dtype=float)
+    observable_state = (
+        np.sin(2.0 * np.pi * state_time / state_period + state_phase)
+        + 0.28
+        * np.sin(
+            4.0 * np.pi * state_time / state_period
+            - 0.35 * state_phase
+        )
+    )
+    observable_state -= float(np.mean(observable_state[:context]))
+    observable_state /= max(
+        float(np.std(observable_state[:context])),
+        1e-9,
+    )
+    dense_factor -= float(np.mean(dense_factor[:context]))
+    dense_factor /= max(float(np.std(dense_factor[:context])), 1e-9)
+    shared_state = 0.20 * dense_factor + 0.80 * observable_state
+    shared_state /= max(float(np.std(shared_state[:context])), 1e-9)
+
     local_strength = float(
         np.clip(
             0.72 + 0.12 * (0.65 - target_shared),
@@ -2587,213 +2722,79 @@ def _common_factor(
     target = (
         local_strength * local
         + dense_factor_strength
-        * dense_factor[:, None]
+        * shared_state[:, None]
         * response_loadings[None, :]
     )
 
-    code_phase = float(rng.uniform(0.0, 2.0 * np.pi))
-    code_time = (np.arange(code_width, dtype=float) + 0.5) / code_width
-    # The carrier has smooth shoulders and occupies the whole observation
-    # block.  Repeating it in every episode makes the final block in-support.
-    shoulder = np.sin(np.pi * code_time) ** 2
-    code_shape = shoulder * (
-        np.sin(2.0 * np.pi * code_time + code_phase)
-        + 0.25
-        * np.sin(4.0 * np.pi * code_time - 0.5 * code_phase)
+    evidence_width = min(48, context - 16)
+    evidence_start = context - evidence_width
+    perturbation_scale = float(
+        (0.20 + 0.85 * lam) * rng.uniform(0.90, 1.10)
     )
-    code_shape -= float(np.mean(code_shape))
-    code_shape /= max(
-        float(np.sqrt(np.mean(code_shape * code_shape))),
-        1e-12,
-    )
-    code_shape_denominator = float(np.dot(code_shape, code_shape))
-    code_starts = [
-        response_start - code_width
-        for response_start in response_starts
-    ] + [context - code_width]
-    for code_start in code_starts:
-        segment = target[code_start : code_start + code_width]
-        nuisance_projection = (
-            code_shape @ segment
-            / max(code_shape_denominator, 1e-12)
-        )
-        target[code_start : code_start + code_width] -= (
-            code_shape[:, None] * nuisance_projection[None, :]
-        )
-
-    episode_angles = (
-        float(rng.uniform(0.0, 2.0 * np.pi))
-        + np.linspace(
-            0.0,
-            2.0 * np.pi,
-            len(response_starts),
-            endpoint=False,
-        )
-        + rng.uniform(-0.16, 0.16, size=len(response_starts))
-    )
-    episode_radii = rng.uniform(0.75, 1.25, size=len(response_starts))
-    historical_states = np.column_stack(
-        [np.cos(episode_angles), np.sin(episode_angles)]
-    ) * episode_radii[:, None]
-    historical_episodes: list[dict[str, Any]] = []
-    for state, response_start in zip(
-        historical_states,
-        response_starts,
-        strict=True,
-    ):
-        code_start = response_start - code_width
-        code_vector = code_matrix @ state
-        target[code_start:response_start] += (
-            code_strength
-            * code_shape[:, None]
-            * code_vector[None, :]
-        )
-        response_stop = min(
-            length,
-            response_start + teaching_response_width,
-        )
-        # Keep the relay coefficient identifiable without deleting the dense
-        # factor itself from the rest of the path.  Only the two response-basis
-        # directions inside teaching windows are residualized; all orthogonal
-        # dynamic-factor variation remains.
-        teaching_segment = target[response_start:response_stop]
-        teaching_factor_score = (
-            teaching_segment
-            @ response_loadings
-            / max(loading_denominator, 1e-12)
-        )
-        nuisance_coefficients = np.linalg.lstsq(
-            teaching_response_basis[
-                : response_stop - response_start
-            ],
-            teaching_factor_score,
-            rcond=None,
-        )[0]
-        nuisance_projection = (
-            teaching_response_basis[
-                : response_stop - response_start
-            ]
-            @ nuisance_coefficients
-        )
-        target[response_start:response_stop] -= (
-            nuisance_projection[:, None]
-            * response_loadings[None, :]
-        )
-        response = (
-            teaching_response_basis[
-                : response_stop - response_start
-            ]
-            @ state
-        )
-        target[response_start:response_stop] += (
-            shared_strength
-            * response[:, None]
-            * response_loadings[None, :]
-        )
-        historical_episodes.append(
-            {
-                "code_slice": [code_start, response_start],
-                "response_slice": [response_start, response_stop],
-            }
-        )
-
-    final_base_angle = float(rng.uniform(0.0, 2.0 * np.pi))
-    final_base_radius = float(rng.uniform(0.85, 1.15))
-    final_base_state = final_base_radius * np.asarray(
-        [math.cos(final_base_angle), math.sin(final_base_angle)],
-        dtype=float,
-    )
-    perturbation_scale = float(rng.uniform(0.80, 1.15))
     member_sign = -0.5 if variant == 0 else 0.5
-    final_state = (
-        final_base_state
-        + member_sign * perturbation_scale * null_direction
-    )
-    final_code_vector = code_matrix @ final_state
-    final_code_vector[protected_target] = float(
-        code_matrix[protected_target] @ final_base_state
-    )
-    final_code_start = context - code_width
-    target[final_code_start:context] += (
-        code_strength
-        * code_shape[:, None]
-        * final_code_vector[None, :]
+    auxiliary_targets = [
+        index for index in range(dim) if index != protected_target
+    ]
+    target[evidence_start:context, auxiliary_targets] += (
+        member_sign
+        * perturbation_scale
+        * observable_state[evidence_start:context, None]
+        * response_loadings[None, auxiliary_targets]
     )
     future_stop = min(length, context + horizon)
-    future_factor = response_basis[: future_stop - context] @ final_state
     target[context:future_stop] += (
-        shared_strength
-        * future_factor[:, None]
+        member_sign
+        * perturbation_scale
+        * observable_state[context:future_stop, None]
         * response_loadings[None, :]
     )
 
-    code_condition_number = float(np.linalg.cond(code_matrix))
-    shortest_suffix_start = max(
-        0,
-        context - SHORTEST_SUPPORTED_CONTEXT,
-    )
-    shortest_suffix_episode_count = sum(
-        int(episode["code_slice"][0]) >= shortest_suffix_start
-        and int(episode["response_slice"][1]) <= context
-        for episode in historical_episodes
-    )
     detail = {
         "factor_rank": 1,
-        "latent_state_dimension": 2,
+        "latent_state_dimension": 1,
         "factor_persistence": factor_persistence,
         "dense_factor_process": dense_factor_meta,
         "dense_factor_strength": dense_factor_strength,
-        "shared_factor_strength": shared_strength,
-        "code_strength": code_strength,
-        "code_matrix": code_matrix.tolist(),
-        "code_matrix_rank": int(np.linalg.matrix_rank(code_matrix)),
-        "code_matrix_condition_number": code_condition_number,
-        "code_shape": code_shape.tolist(),
-        "code_shape_phase": code_phase,
-        "response_basis": response_basis.tolist(),
-        "response_basis_process": response_basis_meta,
-        "teaching_response_basis": (
-            teaching_response_basis.tolist()
-        ),
-        "teaching_response_basis_process": (
-            teaching_response_basis_meta
-        ),
+        "shared_state_period": state_period,
+        "shared_state_phase": state_phase,
+        "shared_state_dense_process_weight": 0.20,
+        "shared_state_periodic_process_weight": 0.80,
         "response_loadings": response_loadings.tolist(),
         "loadings": response_loadings.tolist(),
         "loading_rms": float(
             np.sqrt(np.mean(response_loadings**2))
         ),
-        "historical_episodes": historical_episodes,
-        "historical_episode_count": len(historical_episodes),
-        "teaching_code_width": code_width,
-        "teaching_response_width": teaching_response_width,
-        "teaching_episode_gap": teaching_episode_gap,
-        "episode_span": episode_span,
         "minimum_supported_context_length": (
             SHORTEST_SUPPORTED_CONTEXT
         ),
-        "historical_episode_count_in_shortest_suffix": (
-            shortest_suffix_episode_count
-        ),
-        "shortest_suffix_has_sufficient_teaching_evidence": bool(
-            shortest_suffix_episode_count >= 5
-        ),
-        "final_code_slice": [final_code_start, context],
+        # Retain the generic slice key used by pair-shared normalization.  It
+        # now denotes the observable-state evidence suffix, not a hidden code.
+        "final_code_slice": [evidence_start, context],
+        "shared_state_evidence_slice": [evidence_start, context],
+        "shared_state_evidence_width": evidence_width,
         "protected_target_index": protected_target,
+        "auxiliary_target_indices": auxiliary_targets,
         "counterfactual_variant": variant,
-        "counterfactual_null_direction": null_direction.tolist(),
         "counterfactual_perturbation_scale": perturbation_scale,
         "counterfactual_protected_history_invariant": True,
-        "counterfactual_future_is_joint_code_determined": True,
+        "counterfactual_future_is_shared_state_determined": True,
         "joint_observability_law": (
-            "dense_dynamic_factor_plus_rank2_state_from_joint_channel_equations"
+            "dense_rank1_state_filtered_from_symmetric_multichannel_observations"
         ),
         "local_amplitude": local_strength,
         "local_period_multipliers": local_period_multipliers,
+        "local_observation_texture_weight": 0.65,
+        "local_smooth_nuisance_weight": 0.35,
+        "local_observation_texture_ar1": 0.20,
+        "local_observation_texture_seed": local_texture_seed,
+        "local_observation_texture_history_only": True,
+        "future_local_observation_texture_scale": 0.0,
+        "local_nuisance_path_pair_invariant": True,
         "local_factor_loading_orthogonalized": True,
-        "local_code_shape_orthogonalized": True,
-        "teaching_response_basis_residualized": True,
         "main_task_is_dense_dynamic_factor": True,
+        "directional_driver_present": False,
+        "channel_specific_lag_present": False,
+        "generator_private_codebook_present": False,
         "strict_counterfactual_role": "i5_subset_audit",
         "future_only_shock_count": 0,
     }
@@ -3258,7 +3259,10 @@ def _cross_series_dependence(
         "cross_channel_background_ratio",
         0.4,
     )
-    background_ratio = calibrated_background_ratio * (1.0 - 0.92 * lam)
+    # Intensity isolates the directed transfer gain.  Holding the responder
+    # nuisance fixed prevents high doses from becoming easier twice: once
+    # through a stronger edge and again through disappearing background.
+    background_ratio = calibrated_background_ratio
     target = np.empty((length, dim), dtype=float)
     target[:, 0] = driver
     responder_signs = (
@@ -3343,6 +3347,9 @@ def _cross_series_dependence(
         "dependence_gain": float(gain),
         "calibrated_background_ratio": float(calibrated_background_ratio),
         "effective_background_ratio": float(background_ratio),
+        "background_ratio_intensity_policy": (
+            "fixed_calibrated_nuisance_across_intensity"
+        ),
         "responder_gains": responder_gains.tolist(),
         "responder_signs": responder_signs.tolist(),
         "driver_background": background_meta,

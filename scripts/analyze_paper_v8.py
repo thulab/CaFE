@@ -232,6 +232,62 @@ def effect_channels(sample: dict[str, Any]) -> list[int]:
     return list(range(int(sample["target_dim"])))
 
 
+def cross_effect_prefix_steps(
+    sample: dict[str, Any],
+) -> tuple[int, str]:
+    """Resolve the history-covered cross-series effect window.
+
+    New samples declare the exact counterfactual support. Older v8 artifacts
+    may only expose the lag, or no support metadata at all; the latter retain
+    the historical full-horizon scoring behavior instead of becoming
+    unreadable.
+    """
+
+    horizon = int(sample["horizon"])
+    metadata = sample.get("generation_metadata") or {}
+    for name in (
+        "counterfactual_effect_forecast_steps",
+        "history_covered_forecast_steps",
+        "cross_lag_steps",
+    ):
+        value = metadata.get(name)
+        if value is None:
+            continue
+        steps = int(value)
+        if steps > 0:
+            return min(steps, horizon), f"generation_metadata.{name}"
+    future_slice = metadata.get("counterfactual_effect_future_slice")
+    if (
+        isinstance(future_slice, (list, tuple))
+        and len(future_slice) == 2
+    ):
+        steps = int(future_slice[1]) - int(future_slice[0])
+        if steps > 0:
+            return min(steps, horizon), (
+                "generation_metadata.counterfactual_effect_future_slice"
+            )
+    return horizon, "legacy_full_horizon_fallback"
+
+
+def _effect_metrics(
+    truth_effect: np.ndarray,
+    forecast_effect: np.ndarray,
+) -> tuple[float, float, float, float, float]:
+    truth_rms = float(np.sqrt(np.mean(truth_effect**2)))
+    forecast_rms = float(np.sqrt(np.mean(forecast_effect**2)))
+    nrmse = float(
+        np.sqrt(np.mean((forecast_effect - truth_effect) ** 2))
+        / max(truth_rms, 1e-12)
+    )
+    return (
+        nrmse,
+        response.safe_corr(truth_effect, forecast_effect),
+        forecast_rms / max(truth_rms, 1e-12),
+        truth_rms,
+        forecast_rms,
+    )
+
+
 def effect_row(
     first_sample: dict[str, Any],
     first_forecast: np.ndarray,
@@ -251,13 +307,17 @@ def effect_row(
     forecast_effect = (
         second_forecast[:, channels] - first_forecast[:, channels]
     )
-    truth_rms = float(np.sqrt(np.mean(truth_effect**2)))
-    forecast_rms = float(np.sqrt(np.mean(forecast_effect**2)))
-    nrmse = float(
-        np.sqrt(np.mean((forecast_effect - truth_effect) ** 2))
-        / max(truth_rms, 1e-12)
+    (
+        nrmse,
+        correlation,
+        amplitude_ratio,
+        truth_rms,
+        forecast_rms,
+    ) = _effect_metrics(
+        truth_effect,
+        forecast_effect,
     )
-    return {
+    row = {
         "schema_version": "paper_v8_counterfactual_effect.v1",
         "model_id": model_id,
         "dataset_id": first_sample["dataset_id"],
@@ -271,14 +331,44 @@ def effect_row(
             "master_counterfactual_pair_id"
         ],
         "counterfactual_effect_nrmse": nrmse,
-        "effect_correlation": response.safe_corr(
-            truth_effect,
-            forecast_effect,
-        ),
-        "effect_amplitude_ratio": forecast_rms / max(truth_rms, 1e-12),
+        "effect_correlation": correlation,
+        "effect_amplitude_ratio": amplitude_ratio,
         "truth_effect_rms": truth_rms,
         "forecast_effect_rms": forecast_rms,
     }
+    if str(first_sample["capability_id"]) != "cross_series_dependence":
+        return row
+
+    active, source = cross_effect_prefix_steps(first_sample)
+    (
+        active_nrmse,
+        active_correlation,
+        active_amplitude_ratio,
+        active_truth_rms,
+        active_forecast_rms,
+    ) = _effect_metrics(
+        truth_effect[:active],
+        forecast_effect[:active],
+    )
+    tail_forecast = forecast_effect[active:]
+    row.update(
+        {
+            "active_prefix_steps": active,
+            "active_prefix_source": source,
+            "active_effect_nrmse": active_nrmse,
+            "active_effect_correlation": active_correlation,
+            "active_effect_amplitude_ratio": active_amplitude_ratio,
+            "active_truth_effect_rms": active_truth_rms,
+            "active_forecast_effect_rms": active_forecast_rms,
+            "zero_tail_leakage_nrmse": (
+                float(np.sqrt(np.mean(tail_forecast**2)))
+                / max(active_truth_rms, 1e-12)
+                if tail_forecast.size
+                else 0.0
+            ),
+        }
+    )
+    return row
 
 
 def structured_cross_pair_effect(
@@ -296,48 +386,58 @@ def structured_cross_pair_effect(
         second_forecast,
         model_id="ridge_var",
     )
-    context = int(first_sample["context_length"])
-    channels = effect_channels(first_sample)
-    active = min(
-        int(diagnostics["counterfactual_active_prefix_steps"]),
-        int(first_sample["horizon"]),
-    )
-    first_target = np.asarray(first_sample["target"], dtype=float)
-    second_target = np.asarray(second_sample["target"], dtype=float)
-    truth_effect = (
-        second_target[context:, channels]
-        - first_target[context:, channels]
-    )
-    forecast_effect = (
-        second_forecast[:, channels] - first_forecast[:, channels]
-    )
-    active_truth = truth_effect[:active]
-    active_forecast = forecast_effect[:active]
-    active_rms = float(np.sqrt(np.mean(active_truth**2)))
-    forecast_active_rms = float(np.sqrt(np.mean(active_forecast**2)))
-    tail_forecast = forecast_effect[active:]
-    row.update(
-        {
-            "active_prefix_steps": active,
-            "active_effect_nrmse": float(
-                np.sqrt(np.mean((active_forecast - active_truth) ** 2))
-                / max(active_rms, 1e-12)
+    if row["active_prefix_source"] == "legacy_full_horizon_fallback":
+        active = min(
+            int(
+                diagnostics.get(
+                    "counterfactual_active_prefix_steps",
+                    first_sample["horizon"],
+                )
             ),
-            "active_effect_correlation": response.safe_corr(
-                active_truth,
-                active_forecast,
-            ),
-            "active_effect_amplitude_ratio": (
-                forecast_active_rms / max(active_rms, 1e-12)
-            ),
-            "zero_tail_leakage_nrmse": (
-                float(np.sqrt(np.mean(tail_forecast**2)))
-                / max(active_rms, 1e-12)
-                if tail_forecast.size
-                else 0.0
-            ),
-        }
-    )
+            int(first_sample["horizon"]),
+        )
+        context = int(first_sample["context_length"])
+        channels = effect_channels(first_sample)
+        first_target = np.asarray(first_sample["target"], dtype=float)
+        second_target = np.asarray(second_sample["target"], dtype=float)
+        truth_effect = (
+            second_target[context:, channels]
+            - first_target[context:, channels]
+        )
+        forecast_effect = (
+            second_forecast[:, channels] - first_forecast[:, channels]
+        )
+        (
+            active_nrmse,
+            active_correlation,
+            active_amplitude,
+            active_truth_rms,
+            active_forecast_rms,
+        ) = _effect_metrics(
+            truth_effect[:active],
+            forecast_effect[:active],
+        )
+        tail_forecast = forecast_effect[active:]
+        row.update(
+            {
+                "active_prefix_steps": active,
+                "active_prefix_source": (
+                    "structured_baseline."
+                    "counterfactual_active_prefix_steps"
+                ),
+                "active_effect_nrmse": active_nrmse,
+                "active_effect_correlation": active_correlation,
+                "active_effect_amplitude_ratio": active_amplitude,
+                "active_truth_effect_rms": active_truth_rms,
+                "active_forecast_effect_rms": active_forecast_rms,
+                "zero_tail_leakage_nrmse": (
+                    float(np.sqrt(np.mean(tail_forecast**2)))
+                    / max(active_truth_rms, 1e-12)
+                    if tail_forecast.size
+                    else 0.0
+                ),
+            }
+        )
     return row
 
 
@@ -584,11 +684,6 @@ def _structured_context_curve(
                 )
             )
             if capability == "common_factor":
-                failure_codes = [
-                    code
-                    for code in failure_codes
-                    if code != "no_10pct_advantage_over_diagonal_ar"
-                ]
                 if (
                     factor_correlation is None
                     or factor_correlation < 0.60
@@ -596,15 +691,13 @@ def _structured_context_curve(
                     failure_codes.append(
                         "shared_factor_trajectory_correlation_below_0_60"
                     )
-                hard_passed = not failure_codes
-            else:
-                if not strict_evaluable:
-                    failure_codes.append("fewer_than_4_strict_pairs")
-                elif not strict_passed:
-                    failure_codes.append(
-                        "strict_counterfactual_recovery_below_threshold"
-                    )
-                hard_passed = not failure_codes
+            if not strict_evaluable:
+                failure_codes.append("fewer_than_3_strict_pairs")
+            elif not strict_passed:
+                failure_codes.append(
+                    "strict_counterfactual_recovery_below_threshold"
+                )
+            hard_passed = not failure_codes
 
             output.append(
                 {
@@ -652,19 +745,15 @@ def _structured_context_curve(
                     "strict_metric_scope": (
                         "active_history_covered_prefix"
                         if capability == "cross_series_dependence"
-                        else "full_horizon_diagnostic_only"
+                        else "full_horizon"
                     ),
                     "zero_tail_leakage_nrmse_median": zero_tail_leakage,
                     "strict_effect_evaluable": strict_evaluable,
-                    "strict_effect_passed": (
-                        strict_passed
-                        if capability == "cross_series_dependence"
-                        else None
-                    ),
+                    "strict_effect_passed": strict_passed,
                     "strict_effect_assessment": (
                         "evaluated_as_active_prefix_plus_zero_tail"
                         if capability == "cross_series_dependence"
-                        else "not_applicable_to_standard_dynamic_factor_hard_gate"
+                        else "evaluated_as_blind_shared_fit_hard_gate"
                     ),
                     "structured_fit_fallback_rate": fallback_rate,
                     "historical_teaching_episode_count": (
@@ -703,6 +792,7 @@ def analyze_structured_positive_controls(
         tuple[str, str], tuple[dict[str, Any], np.ndarray]
     ] = {}
     pending_cross_samples: dict[str, dict[str, Any]] = {}
+    pending_common_samples: dict[str, dict[str, Any]] = {}
     coverage: dict[tuple[str, str], dict[str, int]] = defaultdict(
         lambda: {
             "forecast_count": 0,
@@ -719,6 +809,65 @@ def analyze_structured_positive_controls(
         for model_id in structured.baseline_ids_for(capability):
             pair_id = sample.get("counterfactual_pair_id")
             member = sample.get("counterfactual_member")
+            if (
+                capability == "common_factor"
+                and model_id == "dynamic_factor_var"
+                and sample.get("evaluation_table")
+                == "strict_counterfactual_audit"
+                and pair_id is not None
+                and member is not None
+            ):
+                key = str(pair_id)
+                if int(member) == 0:
+                    pending_common_samples[key] = sample
+                    continue
+                first_sample = pending_common_samples.pop(key, None)
+                if first_sample is None:
+                    continue
+                first_result, second_result = (
+                    structured.forecast_common_counterfactual_pair(
+                        first_sample,
+                        sample,
+                    )
+                )
+                for pair_sample, pair_result in (
+                    (first_sample, first_result),
+                    (sample, second_result),
+                ):
+                    pair_adaptation = {
+                        "target_mode": (
+                            "local_structured_positive_control_shared_pair_fit"
+                        ),
+                        "structured_baseline": pair_result.diagnostics,
+                        "historical_teaching_episode_count": 0,
+                    }
+                    metrics.append(
+                        metric_row(
+                            pair_sample,
+                            model_id=model_id,
+                            forecast=pair_result.forecast,
+                            input_adaptation=pair_adaptation,
+                        )
+                    )
+                    coverage[(capability, model_id)][
+                        "forecast_count"
+                    ] += 1
+                    coverage[(capability, model_id)][
+                        "fallback_count"
+                    ] += int(
+                        pair_result.diagnostics["fallback_used"]
+                    )
+                effects.append(
+                    effect_row(
+                        first_sample,
+                        first_result.forecast,
+                        sample,
+                        second_result.forecast,
+                        model_id=model_id,
+                    )
+                )
+                coverage[(capability, model_id)]["effect_count"] += 1
+                continue
             if (
                 capability == "cross_series_dependence"
                 and model_id == "ridge_var"
@@ -850,7 +999,9 @@ def analyze_structured_positive_controls(
             "ridge_alpha_candidates": list(
                 structured.RIDGE_ALPHA_CANDIDATES
             ),
-            "paired_members_fitted_independently": True,
+            "ordinary_samples_fitted_independently": True,
+            "strict_pairs_share_blind_fit": True,
+            "paired_members_fitted_independently": False,
             "generator_metadata_used_for_fitting": False,
             "fallback": (
                 "last_value_with_explicit_reason; assessment invalid above 1pct"
@@ -867,7 +1018,8 @@ def analyze_structured_positive_controls(
             "strict_effect_amplitude_ratio_range": [0.30, 1.70],
             "minimum_strict_nrmse_below_1_fraction": 0.75,
             "maximum_zero_tail_leakage_nrmse": 0.10,
-            "common_strict_effect_is_diagnostic_not_hard_gate": True,
+            "common_strict_effect_is_diagnostic_not_hard_gate": False,
+            "common_strict_effect_is_hard_gate": True,
         },
         "coverage": [
             {
@@ -1143,8 +1295,13 @@ def score_table(
             group,
             "normalized_mae_history_std",
         )
+        strict_effect_metric = (
+            "active_effect_nrmse"
+            if capability == "cross_series_dependence"
+            else "counterfactual_effect_nrmse"
+        )
         metric_name = (
-            "counterfactual_effect_nrmse"
+            strict_effect_metric
             if (
                 key[2] == "strict_counterfactual_audit"
                 and capability
@@ -1152,11 +1309,15 @@ def score_table(
             )
             else PRIMARY_MECHANISM_METRIC[capability]
         )
-        if metric_name == "counterfactual_effect_nrmse":
+        if key[2] == "strict_counterfactual_audit" and capability in {
+            "common_factor",
+            "cross_series_dependence",
+        }:
             mechanism_values = [
                 float(row[metric_name])
                 for row in effect_groups.get(key, [])
                 if int(row["intensity"]) == 5
+                and metric_name in row
             ]
         else:
             mechanism_values = [
@@ -1380,6 +1541,154 @@ def matched_comparison_rows(
                     ],
                 }
             )
+    return output
+
+
+def multivariate_utilization_audit_rows(
+    selected_rows: list[dict[str, Any]],
+    selected_effects: list[dict[str, Any]],
+    matched_comparisons: list[dict[str, Any]],
+    *,
+    models: list[str],
+) -> list[dict[str, Any]]:
+    """Build a non-ranking audit of actual cross-channel input use."""
+
+    capabilities = {"common_factor", "cross_series_dependence"}
+    main_groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = (
+        defaultdict(list)
+    )
+    for row in selected_rows:
+        if (
+            row["evaluation_table"] == "main"
+            and row["generator_family_role"] == "primary"
+            and row["capability_id"] in capabilities
+            and row["model_id"] in models
+        ):
+            main_groups[
+                (
+                    str(row["dataset_id"]),
+                    str(row["context_policy"]),
+                    str(row["capability_id"]),
+                    str(row["model_id"]),
+                )
+            ].append(row)
+    ablations = {
+        (
+            str(row["dataset_id"]),
+            str(row["context_policy"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        ): row
+        for row in matched_comparisons
+        if row["comparison_id"] == "multivariate_input_ablation"
+        and row["model_id"] in models
+        and row["capability_id"] in capabilities
+    }
+    strict_groups: dict[
+        tuple[str, str, str, str], list[dict[str, Any]]
+    ] = defaultdict(list)
+    for row in selected_effects:
+        if (
+            row["evaluation_table"] == "strict_counterfactual_audit"
+            and row["generator_family_role"] == "primary"
+            and row["capability_id"] in capabilities
+            and row["model_id"] in models
+            and int(row["intensity"]) == 5
+        ):
+            strict_groups[
+                (
+                    str(row["dataset_id"]),
+                    str(row["context_policy"]),
+                    str(row["capability_id"]),
+                    str(row["model_id"]),
+                )
+            ].append(row)
+
+    output: list[dict[str, Any]] = []
+    for key, group in sorted(main_groups.items()):
+        target_modes = sorted(
+            {
+                str((row.get("input_adaptation") or {}).get("target_mode"))
+                for row in group
+                if (row.get("input_adaptation") or {}).get("target_mode")
+            }
+        )
+        target_mode = (
+            target_modes[0] if len(target_modes) == 1 else "mixed_or_unknown"
+        )
+        is_independent_reference = target_mode == "independent_univariate"
+        ablation = ablations.get(key)
+        strict = strict_groups.get(key, [])
+        strict_nrmse_name = (
+            "active_effect_nrmse"
+            if key[2] == "cross_series_dependence"
+            else "counterfactual_effect_nrmse"
+        )
+        strict_correlation_name = (
+            "active_effect_correlation"
+            if key[2] == "cross_series_dependence"
+            else "effect_correlation"
+        )
+        strict_amplitude_name = (
+            "active_effect_amplitude_ratio"
+            if key[2] == "cross_series_dependence"
+            else "effect_amplitude_ratio"
+        )
+        output.append(
+            {
+                "schema_version": (
+                    "paper_v8_multivariate_utilization_audit.v1"
+                ),
+                "dataset_id": key[0],
+                "context_policy": key[1],
+                "capability_id": key[2],
+                "model_id": key[3],
+                "target_mode": target_mode,
+                "audit_role": (
+                    "independent_univariate_reference"
+                    if is_independent_reference
+                    else "multivariate_model"
+                ),
+                "eligible_for_multivariate_utilization_claim": (
+                    not is_independent_reference
+                    and target_mode == "native_multivariate"
+                ),
+                "audit_metrics_excluded_from_existing_main_ranking": True,
+                "audit_has_no_ranking": True,
+                "input_ablation_metric": (
+                    ablation["accuracy_metric"] if ablation else None
+                ),
+                "input_ablation_relative_degradation": (
+                    ablation["accuracy_relative_delta"]
+                    if ablation
+                    else None
+                ),
+                "input_ablation_matched_seed_count": (
+                    ablation["matched_seed_count"] if ablation else 0
+                ),
+                "strict_metric_scope": (
+                    "active_history_covered_prefix"
+                    if key[2] == "cross_series_dependence"
+                    else "full_horizon"
+                ),
+                "strict_effect_nrmse_median": _median(
+                    row[strict_nrmse_name]
+                    for row in strict
+                    if strict_nrmse_name in row
+                ),
+                "strict_effect_correlation_median": _median(
+                    row[strict_correlation_name]
+                    for row in strict
+                    if strict_correlation_name in row
+                ),
+                "strict_effect_amplitude_ratio_median": _median(
+                    row[strict_amplitude_name]
+                    for row in strict
+                    if strict_amplitude_name in row
+                ),
+                "strict_pair_count": len(strict),
+            }
+        )
     return output
 
 
@@ -1815,6 +2124,53 @@ def render_matched_report(
                         f"{delta(row['mechanism_relative_delta'])} |"
                     )
             lines.append("")
+    return "\n".join(lines)
+
+
+def render_multivariate_utilization_audit(
+    rows: list[dict[str, Any]],
+    *,
+    dataset_id: str,
+) -> str:
+    lines = [
+        "# Paper v8 多变量利用审计",
+        "",
+        f"- 数据集：`{dataset_id}`",
+        "- 本表不排名，也不改变现有 fixed-L168 / oracle 主能力排名。",
+        "- `independent_univariate_reference` 无法读取其他目标通道，仅作为单变量参考。",
+        "- 消融正 Δ 表示移除其他通道后焦点预测变差；strict effect NRMSE 越低越好。",
+        "",
+        "| policy | capability | model | role | input mode | "
+        "ablation Δ | strict scope | strict NRMSE | strict corr | pairs |",
+        "|---|---|---|---|---|---:|---|---:|---:|---:|",
+    ]
+
+    def value(number: float | None) -> str:
+        return "-" if number is None else f"{number:.3f}"
+
+    def delta(number: float | None) -> str:
+        return "-" if number is None else f"{number:+.1%}"
+
+    for row in sorted(
+        rows,
+        key=lambda item: (
+            item["context_policy"],
+            item["capability_id"],
+            item["audit_role"],
+            item["model_id"],
+        ),
+    ):
+        lines.append(
+            f"| {row['context_policy']} | {row['capability_id']} | "
+            f"{row['model_id']} | {row['audit_role']} | "
+            f"{row['target_mode']} | "
+            f"{delta(row['input_ablation_relative_degradation'])} | "
+            f"{row['strict_metric_scope']} | "
+            f"{value(row['strict_effect_nrmse_median'])} | "
+            f"{value(row['strict_effect_correlation_median'])} | "
+            f"{row['strict_pair_count']} |"
+        )
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -2327,6 +2683,12 @@ def main() -> int:
         selected_metrics,
         selected_effects,
     )
+    utilization_audit = multivariate_utilization_audit_rows(
+        selected_metrics,
+        selected_effects,
+        matched_comparisons,
+        models=list(args.models),
+    )
     split_rows = split_bank(
         selected_metrics,
         selected_effects,
@@ -2350,6 +2712,9 @@ def main() -> int:
     score_path = analysis_dir / "scores.json"
     split_path = analysis_dir / "split_bank.json"
     matched_path = analysis_dir / "matched_comparisons.json"
+    utilization_path = (
+        analysis_dir / "multivariate_utilization_audit.json"
+    )
     structured_path = analysis_dir / "structured_positive_controls.json"
     v8.write_jsonl(metric_path, selected_metrics)
     v8.write_jsonl(effect_path, selected_effects)
@@ -2358,6 +2723,16 @@ def main() -> int:
     v8.write_json(
         matched_path,
         {"matched_comparisons": matched_comparisons},
+    )
+    v8.write_json(
+        utilization_path,
+        {
+            "schema_version": (
+                "paper_v8_multivariate_utilization_audit_bundle.v1"
+            ),
+            "main_ranking_policy_unchanged": True,
+            "rows": utilization_audit,
+        },
     )
     v8.write_json(structured_path, structured_controls)
     report_path = analysis_dir / "REPORT_ZH.md"
@@ -2370,6 +2745,16 @@ def main() -> int:
     matched_report_path.write_text(
         render_matched_report(
             matched_comparisons,
+            dataset_id=dataset.dataset_id,
+        ),
+        encoding="utf-8",
+    )
+    utilization_report_path = (
+        analysis_dir / "MULTIVARIATE_UTILIZATION_AUDIT_ZH.md"
+    )
+    utilization_report_path.write_text(
+        render_multivariate_utilization_audit(
+            utilization_audit,
             dataset_id=dataset.dataset_id,
         ),
         encoding="utf-8",
@@ -2390,11 +2775,17 @@ def main() -> int:
             "scores": v8.file_record(score_path),
             "split_bank": v8.file_record(split_path),
             "matched_comparisons": v8.file_record(matched_path),
+            "multivariate_utilization_audit": v8.file_record(
+                utilization_path
+            ),
             "structured_positive_controls": v8.file_record(
                 structured_path
             ),
             "report": v8.file_record(report_path),
             "matched_report": v8.file_record(matched_report_path),
+            "multivariate_utilization_report": v8.file_record(
+                utilization_report_path
+            ),
         },
     }
     v8.write_json(analysis_dir / "analysis_manifest.json", manifest)

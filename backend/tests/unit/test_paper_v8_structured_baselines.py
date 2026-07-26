@@ -187,3 +187,63 @@ def test_shared_pair_ardl_recovers_active_effect_without_tail_leakage():
         truth_effect[:lag].ravel(),
         forecast_effect[:lag].ravel(),
     )[0, 1] > 0.99
+
+
+def test_common_shared_pair_dfm_is_blind_and_propagates_latent_state():
+    baselines = load_script("paper_v8_structured_baselines")
+    rng = np.random.default_rng(23)
+    context = 128
+    horizon = 12
+    invariant_stop = 112
+    factor = np.empty(context + horizon)
+    factor[0] = rng.normal()
+    for index in range(1, len(factor)):
+        factor[index] = 0.92 * factor[index - 1] + rng.normal(scale=0.08)
+    loadings = np.asarray([0.8, -1.0, 0.7, -0.6, 1.2])
+    base = factor[:, None] * loadings[None, :]
+    base += rng.normal(scale=0.02, size=base.shape)
+
+    targets = []
+    future_effects = []
+    for sign in (-1.0, 1.0):
+        target = base.copy()
+        latent_effect = np.zeros(context + horizon)
+        latent_effect[invariant_stop] = sign
+        for index in range(invariant_stop + 1, len(latent_effect)):
+            latent_effect[index] = 0.92 * latent_effect[index - 1]
+        target[invariant_stop:context, 1:] += (
+            latent_effect[invariant_stop:context, None]
+            * loadings[None, 1:]
+        )
+        target[context:] += (
+            latent_effect[context:, None] * loadings[None, :]
+        )
+        targets.append(target)
+        future_effects.append(latent_effect[context:])
+    samples = [
+        {
+            **sample(
+                "common_factor",
+                target,
+                context=context,
+                horizon=horizon,
+            ),
+            "evaluation_table": "strict_counterfactual_audit",
+            "generation_metadata": {"hidden_codebook": "must_not_be_used"},
+        }
+        for target in targets
+    ]
+
+    first, second = baselines.forecast_common_counterfactual_pair(*samples)
+    forecast_effect = second.forecast[:, 0] - first.forecast[:, 0]
+
+    assert not first.diagnostics["fallback_used"]
+    assert first.diagnostics["pair_invariant_history_stop"] == invariant_stop
+    assert first.diagnostics["pair_invariant_channel_indices"] == [0]
+    assert first.diagnostics["generator_metadata_used_for_fitting"] is False
+    assert first.diagnostics["counterfactual_residual_forecast_shared"] is True
+    assert np.sqrt(np.mean(forecast_effect**2)) > 0.01
+    assert np.corrcoef(
+        future_effects[1] - future_effects[0],
+        forecast_effect,
+    )[0, 1] > 0.8

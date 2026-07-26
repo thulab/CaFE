@@ -147,10 +147,10 @@ NUISANCE_FINGERPRINT_FIELDS = {
         "deterministic_texture",
     ),
     "common_factor": (
-        "code_matrix",
-        "response_basis_process",
         "response_loadings",
-        "episode_span",
+        "shared_state_period",
+        "shared_state_evidence_width",
+        "local_period_multipliers",
         "protected_target_index",
     ),
     "hierarchical_coherence": (
@@ -533,38 +533,15 @@ def suffix_view(
     metadata = deepcopy(row["generation_metadata"])
     if row["capability_id"] == "common_factor":
         master_start = CONTEXT_LENGTH - context_length
-        code_width = len(metadata["code_shape"])
-        metadata["final_code_slice"] = [
-            context_length - code_width,
-            context_length,
-        ]
-        shifted_episodes = []
-        for episode in metadata["historical_episodes"]:
-            code_start, code_stop = (
-                int(value) - master_start
-                for value in episode["code_slice"]
-            )
-            response_start, response_stop = (
-                int(value) - master_start
-                for value in episode["response_slice"]
-            )
-            if (
-                code_start >= 0
-                and response_stop <= context_length
-            ):
-                shifted_episodes.append(
-                    {
-                        "code_slice": [code_start, code_stop],
-                        "response_slice": [
-                            response_start,
-                            response_stop,
-                        ],
-                    }
-                )
-        metadata["historical_episodes"] = shifted_episodes
-        metadata["historical_episode_count_in_view"] = len(
-            shifted_episodes
-        )
+        for name in (
+            "final_code_slice",
+            "shared_state_evidence_slice",
+        ):
+            if name in metadata:
+                metadata[name] = [
+                    int(value) - master_start
+                    for value in metadata[name]
+                ]
     elif row["capability_id"] == "cross_series_dependence":
         delay = int(metadata["cross_lag_steps"])
         metadata["counterfactual_driver_slice"] = [

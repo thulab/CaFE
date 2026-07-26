@@ -1080,6 +1080,243 @@ def _dfm_forecast(history: np.ndarray, horizon: int) -> StructuredForecast:
         )
 
 
+def _pair_invariant_prefix_stop(
+    first_history: np.ndarray,
+    second_history: np.ndarray,
+) -> tuple[int, list[int]]:
+    if first_history.shape != second_history.shape:
+        raise ValueError("counterfactual pair histories must have equal shape")
+    reference_scale = max(
+        float(np.max(np.abs(first_history))),
+        float(np.max(np.abs(second_history))),
+        1.0,
+    )
+    tolerance = 1e-9 * reference_scale
+    absolute_difference = np.abs(second_history - first_history)
+    invariant_channels = np.flatnonzero(
+        np.max(absolute_difference, axis=0) <= tolerance
+    ).astype(int)
+    changed_rows = np.flatnonzero(
+        np.max(absolute_difference, axis=1) > tolerance
+    )
+    if not changed_rows.size:
+        raise ValueError("counterfactual pair has no changed history")
+    invariant_stop = int(changed_rows[0])
+    if invariant_stop < MIN_TRAINING_ROWS * 2:
+        raise ValueError("counterfactual invariant prefix is too short")
+    if not invariant_channels.size:
+        raise ValueError("counterfactual pair has no invariant channel")
+    return invariant_stop, invariant_channels.tolist()
+
+
+def forecast_common_counterfactual_pair(
+    first_sample: dict[str, Any],
+    second_sample: dict[str, Any],
+) -> tuple[StructuredForecast, StructuredForecast]:
+    """Blind shared-fit DFM forecast for a common-factor strict pair.
+
+    The common invariant prefix determines scaling, loadings, dynamics, and
+    residual model. Each member's changed history tail only updates its latent
+    factor state. A shared residual forecast prevents member-specific
+    idiosyncratic fits from cancelling the latent-state effect under audit.
+    """
+
+    model_id = "dynamic_factor_var"
+    first_target = np.asarray(first_sample["target"], dtype=float)
+    second_target = np.asarray(second_sample["target"], dtype=float)
+    context = int(first_sample["context_length"])
+    horizon = int(first_sample["horizon"])
+    if (
+        int(second_sample["context_length"]) != context
+        or int(second_sample["horizon"]) != horizon
+    ):
+        raise ValueError("counterfactual pair view shapes do not match")
+    first_history = first_target[:context]
+    second_history = second_target[:context]
+    diagnostics: dict[str, Any] = {
+        "history_only": True,
+        "context_length": context,
+        "horizon": horizon,
+        "target_dim": int(first_history.shape[1]),
+        "model_structure": "blind_shared_fit_dynamic_factor_var",
+        "generator_metadata_used_for_fitting": False,
+        "paired_members_share_fit": True,
+        "factor_rank_candidates": [1, 2],
+        "factor_dynamics": "ridge_var",
+        "residual_model": "shared_matched_diagonal_ar",
+        "validation_policy": "final_25pct_chronological_one_step",
+        "ridge_alpha_candidates": list(DFM_ALPHA_CANDIDATES),
+        "standardized_forecast_limit": STANDARDIZED_FORECAST_LIMIT,
+    }
+    try:
+        invariant_stop, invariant_channels = _pair_invariant_prefix_stop(
+            first_history,
+            second_history,
+        )
+        shared_prefix = first_history[:invariant_stop]
+        rank, lag, alpha, validation_mae, training_rows = _dfm_validation(
+            shared_prefix,
+            horizon=horizon,
+        )
+        center, scale = _standardizer(shared_prefix)
+        standardized_prefix = (shared_prefix - center) / scale
+        _, singular, right = np.linalg.svd(
+            standardized_prefix,
+            full_matrices=False,
+        )
+        loading = right[:rank]
+        prefix_factor = standardized_prefix @ loading.T
+        prefix_residual = standardized_prefix - prefix_factor @ loading
+
+        factor_coefficients = _fit_coefficients(
+            prefix_factor,
+            lag=lag,
+            alpha=alpha,
+            diagonal=False,
+        )
+        assert isinstance(factor_coefficients, np.ndarray)
+        (
+            factor_coefficients,
+            factor_radius_before,
+            factor_radius_after,
+            factor_stability_scale,
+        ) = _stable_var_coefficients(
+            factor_coefficients,
+            dimension=rank,
+            lag=lag,
+        )
+        residual_coefficients = _fit_coefficients(
+            prefix_residual,
+            lag=lag,
+            alpha=alpha,
+            diagonal=True,
+        )
+        assert isinstance(residual_coefficients, list)
+        (
+            residual_coefficients,
+            residual_radius_before,
+            residual_radius_after,
+            residual_stability_scale,
+        ) = _stable_diagonal_coefficients(
+            residual_coefficients,
+            lag=lag,
+        )
+
+        standardized_histories = [
+            (history - center) / scale
+            for history in (first_history, second_history)
+        ]
+        state_channels = [
+            index
+            for index in range(first_history.shape[1])
+            if index not in invariant_channels
+        ]
+        if len(state_channels) < rank:
+            raise ValueError(
+                "too few changed channels to filter the shared state"
+            )
+        state_loading = loading[:, state_channels]
+        state_loading_gram = state_loading @ state_loading.T
+        state_loading_inverse = np.linalg.pinv(state_loading_gram)
+        factor_histories = [
+            (
+                history[:, state_channels]
+                @ state_loading.T
+                @ state_loading_inverse
+            )
+            for history in standardized_histories
+        ]
+        residual_histories = [
+            history - factor @ loading
+            for history, factor in zip(
+                standardized_histories,
+                factor_histories,
+                strict=True,
+            )
+        ]
+        shared_residual_history = np.mean(
+            np.stack(residual_histories),
+            axis=0,
+        )
+        shared_residual_forecast = _recursive_forecast(
+            shared_residual_history,
+            residual_coefficients,
+            lag=lag,
+            diagonal=True,
+            horizon=horizon,
+        )
+        forecasts: list[np.ndarray] = []
+        for factor_history in factor_histories:
+            factor_forecast = _recursive_forecast(
+                factor_history,
+                factor_coefficients,
+                lag=lag,
+                diagonal=False,
+                horizon=horizon,
+            )
+            standardized_forecast = (
+                factor_forecast @ loading + shared_residual_forecast
+            )
+            forecast = center + standardized_forecast * scale
+            failure = _validate_forecast(
+                forecast,
+                center=center,
+                scale=scale,
+            )
+            if failure is not None:
+                raise FloatingPointError(failure)
+            forecasts.append(forecast)
+
+        total_energy = float(np.sum(singular * singular))
+        common_diagnostics = {
+            **diagnostics,
+            "schema_version": STRUCTURED_BASELINE_SCHEMA_VERSION,
+            "model_id": model_id,
+            "fit_status": "ok",
+            "fallback_used": False,
+            "fallback_reason": None,
+            "pair_invariant_history_stop": invariant_stop,
+            "pair_invariant_channel_indices": invariant_channels,
+            "state_filter_channel_indices": state_channels,
+            "selected_lag": int(lag),
+            "selected_factor_rank": int(rank),
+            "selected_ridge_alpha": float(alpha),
+            "validation_normalized_mae": float(validation_mae),
+            "validation_training_rows": int(training_rows),
+            "history_factor_share": float(
+                np.sum(singular[:rank] ** 2) / max(total_energy, 1e-12)
+            ),
+            "factor_var_spectral_radius_before": factor_radius_before,
+            "factor_var_spectral_radius_after": factor_radius_after,
+            "factor_var_stability_scale": factor_stability_scale,
+            "residual_ar_max_spectral_radius_before": residual_radius_before,
+            "residual_ar_max_spectral_radius_after": residual_radius_after,
+            "residual_ar_min_stability_scale": residual_stability_scale,
+            "counterfactual_residual_forecast_shared": True,
+        }
+        return (
+            StructuredForecast(forecasts[0], common_diagnostics),
+            StructuredForecast(forecasts[1], common_diagnostics),
+        )
+    except (ValueError, FloatingPointError, np.linalg.LinAlgError) as error:
+        reason = f"{type(error).__name__}:{error}"
+        first_result = _fallback(
+            first_history,
+            horizon,
+            model_id=model_id,
+            reason=reason,
+            diagnostics=diagnostics,
+        )
+        second_result = _fallback(
+            second_history,
+            horizon,
+            model_id=model_id,
+            reason=reason,
+            diagnostics=diagnostics,
+        )
+        return first_result, second_result
+
+
 def forecast(
     sample: dict[str, Any],
     model_id: str,

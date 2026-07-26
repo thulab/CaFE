@@ -13,7 +13,7 @@ from app.services.synthetic_v8_generation import (
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v6"
+SCHEMA_VERSION = "synthetic_v8_feature_gate.v7"
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
         "common_factor",
@@ -30,7 +30,7 @@ PRIMARY_FEATURE_BY_CAPABILITY = {
     "predictable_intermittency": "event_effect_energy_share",
     "common_factor": "pca_top1_explained",
     "hierarchical_coherence": "hierarchy_child_heterogeneity",
-    "cross_series_dependence": "lead_lag_peak_abs",
+    "cross_series_dependence": "cross_series_incremental_r2",
     "covariate_response": "covariate_effect_variance_share",
 }
 SELECTIVITY_EXCEPTIONS = (

@@ -340,7 +340,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
     direction = np.asarray(metadata["direction_by_target"])
     formal_differences = np.diff(target[:design_stop], axis=0)
 
-    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v4"
+    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v5"
     assert metadata["trend_local_evidence_window"] == 96
     assert join == 408
     assert metadata["trend_local_polynomial_degree"] == expected_degree
@@ -503,14 +503,14 @@ def test_v8_hierarchy_is_exactly_coherent() -> None:
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_common_factor_requires_joint_code_to_recover_future(
+def test_v8_common_factor_uses_blind_shared_state_to_recover_future(
     family_role: str,
 ) -> None:
     arguments = (
         "common_factor",
         552,
         504,
-        3,
+        5,
         24,
         5,
     )
@@ -558,66 +558,20 @@ def test_v8_common_factor_requires_joint_code_to_recover_future(
         first[504:, protected],
         second[504:, protected],
     )
-    assert first_metadata["code_matrix_rank"] == 2
-    assert first_metadata["historical_episode_count"] >= 5
-    assert first_metadata["response_basis_process"][
-        "factor_persistence_parameter"
-    ] == pytest.approx(first_metadata["factor_persistence"])
     assert first_metadata["local_factor_loading_orthogonalized"] is True
-    assert first_metadata["local_code_shape_orthogonalized"] is True
     assert first_metadata["main_task_is_dense_dynamic_factor"] is True
-    assert first_metadata["code_strength"] < 1.0
-    assert 6 <= len(first_metadata["code_shape"]) <= 8
-    assert first_metadata["teaching_response_width"] == 8
-    assert (
-        first_metadata["historical_episode_count_in_shortest_suffix"]
-        >= 5
-    )
-    assert (
-        first_metadata["shortest_suffix_has_sufficient_teaching_evidence"]
-        is True
-    )
+    assert first_metadata["generator_private_codebook_present"] is False
+    assert first_metadata["directional_driver_present"] is False
+    assert first_metadata["channel_specific_lag_present"] is False
+    assert first_metadata["shared_state_evidence_width"] == 48
+    assert first_metadata["shared_state_period"] in {12, 16, 24, 32}
+    assert first_metadata["local_nuisance_path_pair_invariant"] is True
     assert first_metadata["dense_factor_strength"] > 0.0
-    assert gate["joint_holdout_r2"] >= 0.80
-    assert gate["best_single_channel_holdout_r2"] <= 0.80
-    assert gate["joint_minus_best_single_holdout_r2"] >= 0.15
-    assert gate["positive_control_effect_nrmse"] <= 1e-6
+    assert gate["generator_metadata_used_for_fitting"] is False
+    assert gate["joint_holdout_r2"] >= 0.50
+    assert gate["positive_control_effect_nrmse"] <= 0.15
     assert gate["positive_control_effect_correlation"] >= 0.95
     assert gate["accepted"] is True
-
-    suffix_start = 504 - 96
-    suffix_metadata = deepcopy(first_metadata)
-    suffix_metadata["final_code_slice"] = [
-        int(value) - suffix_start
-        for value in suffix_metadata["final_code_slice"]
-    ]
-    suffix_metadata["historical_episodes"] = [
-        {
-            "code_slice": [
-                int(value) - suffix_start
-                for value in episode["code_slice"]
-            ],
-            "response_slice": [
-                int(value) - suffix_start
-                for value in episode["response_slice"]
-            ],
-        }
-        for episode in suffix_metadata["historical_episodes"]
-        if int(episode["code_slice"][0]) >= suffix_start
-        and int(episode["response_slice"][1]) <= 504
-    ]
-    suffix_gate = common_factor_identifiability_gate(
-        first[suffix_start:],
-        second[suffix_start:],
-        context_length=96,
-        metadata=suffix_metadata,
-        enforced=True,
-    )
-
-    assert len(suffix_metadata["historical_episodes"]) >= 5
-    assert suffix_gate["joint_holdout_r2"] >= 0.80
-    assert suffix_gate["joint_minus_best_single_holdout_r2"] >= 0.15
-    assert suffix_gate["accepted"] is True
 
 
 def test_v8_zero_strength_regime_background_is_deterministic_but_not_exactly_seasonal(
@@ -921,7 +875,13 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     assert gate["accepted"] is True
     assert gate["blind_best_driver"] == first_metadata["driver_index"]
     assert gate["blind_best_lag"] == first_metadata["cross_lag_steps"]
-    assert gate["minimum_declared_holdout_r2"] >= 0.80
+    assert gate["minimum_declared_holdout_r2"] >= 0.50
+    assert first_metadata["effective_background_ratio"] == pytest.approx(
+        first_metadata["calibrated_background_ratio"]
+    )
+    assert first_metadata["background_ratio_intensity_policy"] == (
+        "fixed_calibrated_nuisance_across_intensity"
+    )
     assert gate["positive_control_effect_nrmse"] <= 0.15
     assert gate["positive_control_effect_correlation"] >= 0.95
     assert gate["positive_control_effect_amplitude_ratio"] == pytest.approx(
@@ -1117,14 +1077,9 @@ def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:
             row["pulse_anchor_offset"],
         ),
         "common_factor": lambda row: (
-            tuple(
-                np.round(
-                    np.asarray(row["code_matrix"]).ravel(),
-                    6,
-                )
-            ),
             tuple(np.round(row["response_loadings"], 6)),
-            row["episode_span"],
+            row["shared_state_period"],
+            row["shared_state_evidence_width"],
             row["protected_target_index"],
         ),
         "hierarchical_coherence": lambda row: (

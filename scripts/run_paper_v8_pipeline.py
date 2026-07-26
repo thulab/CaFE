@@ -380,7 +380,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v7",
+        "schema_version": "paper_v8_experiment_protocol.v8",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -415,6 +415,12 @@ def protocol_config(
             ),
             "cross_series_minimum_history_holdout_r2": (
                 v8.CROSS_SERIES_MIN_HOLDOUT_R2
+            ),
+            "common_factor_identifiability": (
+                "blind_rank1_panel_filter_no_generator_private_codebook"
+            ),
+            "cross_series_intensity_coordinate": (
+                "history_only_incremental_r2_with_fixed_responder_nuisance"
             ),
             "family_intensity_scale": (
                 "one_family_mean_lambda_grid_per_dataset_no_formal_seed_inverse"

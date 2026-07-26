@@ -347,13 +347,10 @@ def local_baseline_kinds(sample: dict[str, Any]) -> tuple[str, ...]:
         sample["capability_id"] == "common_factor"
         and sample.get("evaluation_table", "main") == "main"
         and sample["generator_family_role"] == "primary"
-        and len(
-            sample["generation_metadata"].get(
-                "historical_episodes",
-                [],
-            )
+        and sample["generation_metadata"].get(
+            "shared_state_evidence_slice"
         )
-        >= 5
+        is not None
     ):
         kinds.append("common_factor_joint_probe")
     if (
