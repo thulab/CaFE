@@ -58,7 +58,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v14"
+SCHEMA_VERSION = "paper_v8_pipeline.v15"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
@@ -3022,12 +3022,19 @@ def robustness_sample(clean: dict[str, Any]) -> dict[str, Any]:
                 base=ROBUSTNESS_SEED,
             )
         ),
+        noise_scale_by_target=np.asarray(
+            clean["mase_scale_by_target"],
+            dtype=float,
+        ),
+        noise_scale_source=(
+            "clean_l336_mase_denominator_by_target"
+        ),
         preserve_additive_hierarchy=(
             clean["capability_id"] == "hierarchical_coherence"
         ),
     )
     result = json.loads(json.dumps(clean))
-    result["schema_version"] = "paper_v8_robustness_master_sample.v1"
+    result["schema_version"] = "paper_v8_robustness_master_sample.v2"
     result["sample_id"] = clean["sample_id"] + "__robust15"
     result["master_sample_id"] = result["sample_id"]
     result["clean_master_sample_id"] = clean["sample_id"]
@@ -3040,6 +3047,9 @@ def robustness_sample(clean: dict[str, Any]) -> dict[str, Any]:
     result["input_history_semantics"] = "noisy_observation"
     result["scoring_target_semantics"] = "clean_latent_future"
     result["observation_noise_scale"] = ROBUSTNESS_NOISE_RATIO
+    result["observation_noise_scale_policy"] = (
+        "ratio_times_clean_l336_mase_denominator_by_target"
+    )
     result["observation_noise_metadata"] = noise_metadata
     result["target"] = observed.tolist()
     result["target_sha256"] = target_and_covariate_sha256(

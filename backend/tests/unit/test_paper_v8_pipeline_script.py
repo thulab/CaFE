@@ -1270,6 +1270,63 @@ def test_exact_seasonal_mase_scale_uses_recorded_lag_one_fallback():
     assert scale_by_target == pytest.approx([expected])
 
 
+def test_robustness_sample_uses_clean_l336_mase_scale_by_target():
+    common = load_script("paper_v8_pipeline_common")
+    time = np.arange(common.MASTER_LENGTH, dtype=float)
+    target = np.column_stack(
+        (
+            0.01 * time,
+            np.sin(2.0 * np.pi * time / 24.0),
+        )
+    )
+    scale, scale_by_target = common.mase_scales(
+        target,
+        season_length=24,
+    )
+    clean = {
+        "schema_version": "test",
+        "sample_id": "v8__noise_scale",
+        "master_sample_id": "v8__noise_scale",
+        "paired_group_id": "v8__noise_scale",
+        "counterfactual_pair_id": None,
+        "capability_id": "trend",
+        "target": target.tolist(),
+        "covariates": None,
+        "mase_scale": scale,
+        "mase_scale_by_target": scale_by_target,
+    }
+
+    robust = common.robustness_sample(clean)
+    observed = np.asarray(robust["target"], dtype=float)
+    applied_noise_std = np.std(
+        observed[: common.CONTEXT_LENGTH]
+        - target[: common.CONTEXT_LENGTH],
+        axis=0,
+    )
+    metadata = robust["observation_noise_metadata"]
+
+    assert robust["schema_version"] == (
+        "paper_v8_robustness_master_sample.v2"
+    )
+    assert robust["observation_noise_scale_policy"] == (
+        "ratio_times_clean_l336_mase_denominator_by_target"
+    )
+    assert metadata["noise_scale_source"] == (
+        "clean_l336_mase_denominator_by_target"
+    )
+    assert metadata["requested_noise_scale_by_target"] == pytest.approx(
+        scale_by_target
+    )
+    assert applied_noise_std == pytest.approx(
+        common.ROBUSTNESS_NOISE_RATIO * np.asarray(scale_by_target),
+        rel=0.15,
+    )
+    assert np.array_equal(
+        observed[common.CONTEXT_LENGTH :],
+        target[common.CONTEXT_LENGTH :],
+    )
+
+
 @pytest.mark.parametrize(
     ("capability_id", "target_dim"),
     (("common_factor", 5), ("cross_series_dependence", 3)),

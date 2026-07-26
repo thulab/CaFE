@@ -72,14 +72,19 @@ def add_observation_noise_to_history(
     context_length: int,
     noise_ratio: float,
     rng: np.random.Generator,
+    noise_scale_by_target: np.ndarray | None = None,
+    noise_scale_source: str | None = None,
     preserve_additive_hierarchy: bool = False,
-) -> tuple[np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, dict[str, Any]]:
     """Corrupt only the visible history while retaining a clean future target.
 
     The returned array is deliberately shaped like an ordinary benchmark
     target: callers expose its noisy prefix to the model and score its untouched
-    suffix.  For additive hierarchies noise is sampled on children and the
-    parent prefix is recomputed, avoiding a second coherence intervention.
+    suffix.  Callers may provide a positive per-target scale so that the noise
+    dose is tied to an evaluation scale rather than the variance of a
+    nonstationary level.  For additive hierarchies noise is sampled on children
+    and the parent prefix is recomputed, avoiding a second coherence
+    intervention.
     """
 
     values = np.asarray(clean_target, dtype=float)
@@ -91,14 +96,45 @@ def add_observation_noise_to_history(
         raise ValueError("noise_ratio must be finite and non-negative")
     result = values.copy()
     history = values[:context_length]
-    scales = np.std(history, axis=0)
-    scales = np.where(scales > 1e-12, scales, 1.0)
+    if noise_scale_by_target is None:
+        requested_scales = np.std(history, axis=0)
+        requested_scales = np.where(
+            requested_scales > 1e-12,
+            requested_scales,
+            1.0,
+        )
+        resolved_scale_source = (
+            noise_scale_source or "clean_history_standard_deviation"
+        )
+    else:
+        requested_scales = np.asarray(
+            noise_scale_by_target,
+            dtype=float,
+        )
+        if requested_scales.shape != (values.shape[1],):
+            raise ValueError(
+                "noise_scale_by_target must have one value per target"
+            )
+        if (
+            not np.isfinite(requested_scales).all()
+            or np.any(requested_scales <= 1e-12)
+        ):
+            raise ValueError(
+                "noise_scale_by_target must be finite and strictly positive"
+            )
+        resolved_scale_source = (
+            noise_scale_source or "caller_provided_per_target_scale"
+        )
+    effective_scales = requested_scales.copy()
     if preserve_additive_hierarchy:
         if values.shape[1] < 3:
             raise ValueError("additive hierarchy requires parent plus children")
+        effective_scales[0] = float(
+            np.sqrt(np.sum(np.square(requested_scales[1:])))
+        )
         child_noise = rng.normal(
             size=(context_length, values.shape[1] - 1),
-        ) * (noise_ratio * scales[1:])[None, :]
+        ) * (noise_ratio * requested_scales[1:])[None, :]
         result[:context_length, 1:] += child_noise
         result[:context_length, 0] = np.sum(
             result[:context_length, 1:],
@@ -107,19 +143,48 @@ def add_observation_noise_to_history(
         applied_noise = result[:context_length] - history
     else:
         applied_noise = rng.normal(size=history.shape) * (
-            noise_ratio * scales
+            noise_ratio * requested_scales
         )[None, :]
         result[:context_length] += applied_noise
-    realized_ratio = float(
-        np.mean(np.std(applied_noise, axis=0) / np.maximum(scales, 1e-12))
+    applied_noise_std = np.std(applied_noise, axis=0)
+    realized_ratio_by_target = (
+        applied_noise_std / effective_scales
     )
-    return result, {
-        "requested_noise_to_history_std_ratio": float(noise_ratio),
-        "realized_noise_to_history_std_ratio": realized_ratio,
+    metadata: dict[str, Any] = {
+        "noise_scale_source": resolved_scale_source,
+        "requested_noise_to_scale_ratio": float(noise_ratio),
+        "realized_noise_to_scale_ratio": float(
+            np.mean(realized_ratio_by_target)
+        ),
+        "realized_noise_to_scale_ratio_by_target": [
+            float(value) for value in realized_ratio_by_target
+        ],
+        "requested_noise_scale_by_target": [
+            float(value) for value in requested_scales
+        ],
+        "effective_noise_scale_by_target": [
+            float(value) for value in effective_scales
+        ],
+        "applied_noise_std_by_target": [
+            float(value) for value in applied_noise_std
+        ],
+        "additive_hierarchy_parent_scale_policy": (
+            "root_sum_square_of_child_scales"
+            if preserve_additive_hierarchy
+            else None
+        ),
         "future_noise_max_abs": float(
             np.max(np.abs(result[context_length:] - values[context_length:]))
         ),
     }
+    if noise_scale_by_target is None:
+        metadata["requested_noise_to_history_std_ratio"] = float(
+            noise_ratio
+        )
+        metadata["realized_noise_to_history_std_ratio"] = float(
+            np.mean(realized_ratio_by_target)
+        )
+    return result, metadata
 
 
 REQUIRED_REAL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {

@@ -1190,19 +1190,29 @@ def test_v8_robustness_noise_changes_only_history_and_keeps_clean_future() -> No
         np.random.default_rng(29),
     )
 
+    noise_scale = np.asarray([0.4])
     observed, metadata = add_observation_noise_to_history(
         clean,
         context_length=504,
         noise_ratio=0.15,
         rng=np.random.default_rng(31),
+        noise_scale_by_target=noise_scale,
+        noise_scale_source="test_mase_denominator",
     )
 
     assert not np.array_equal(observed[:504], clean[:504])
     assert np.array_equal(observed[504:], clean[504:])
     assert metadata["future_noise_max_abs"] == 0.0
-    assert metadata["realized_noise_to_history_std_ratio"] == pytest.approx(
+    assert metadata["noise_scale_source"] == "test_mase_denominator"
+    assert metadata["requested_noise_scale_by_target"] == [0.4]
+    assert metadata["requested_noise_to_scale_ratio"] == 0.15
+    assert metadata["realized_noise_to_scale_ratio"] == pytest.approx(
         0.15,
         abs=0.02,
+    )
+    assert np.std(observed[:504] - clean[:504]) == pytest.approx(
+        0.15 * noise_scale[0],
+        abs=0.01,
     )
 
 
@@ -1217,11 +1227,14 @@ def test_v8_hierarchy_robustness_noise_preserves_observed_coherence() -> None:
         np.random.default_rng(37),
     )
 
-    observed, _ = add_observation_noise_to_history(
+    noise_scales = np.asarray([1.0, 0.2, 0.3, 0.4])
+    observed, metadata = add_observation_noise_to_history(
         clean,
         context_length=504,
         noise_ratio=0.15,
         rng=np.random.default_rng(41),
+        noise_scale_by_target=noise_scales,
+        noise_scale_source="test_mase_denominator",
         preserve_additive_hierarchy=True,
     )
 
@@ -1229,6 +1242,13 @@ def test_v8_hierarchy_robustness_noise_preserves_observed_coherence() -> None:
         np.abs(observed[:504, 0] - np.sum(observed[:504, 1:], axis=1))
     ) < 1e-12
     assert np.array_equal(observed[504:], clean[504:])
+    assert metadata["effective_noise_scale_by_target"][0] == pytest.approx(
+        np.sqrt(np.sum(np.square(noise_scales[1:])))
+    )
+    assert metadata["realized_noise_to_scale_ratio"] == pytest.approx(
+        0.15,
+        abs=0.02,
+    )
 
 
 @pytest.mark.parametrize("capability_id", CAPABILITIES)

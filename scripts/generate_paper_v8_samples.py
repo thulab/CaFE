@@ -726,7 +726,7 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "paper_v8_generation_config.v4",
+        "schema_version": "paper_v8_generation_config.v5",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": v8.GENERATOR_VERSION,
@@ -752,7 +752,12 @@ def main() -> int:
             "source": "clean_primary",
             "selected_seed_indexes": sorted(sensitivity_seeds),
             "intensities": [3, 5],
-            "history_noise_ratio": v8.ROBUSTNESS_NOISE_RATIO,
+            "noise_to_clean_mase_scale_ratio": (
+                v8.ROBUSTNESS_NOISE_RATIO
+            ),
+            "noise_scale_source": (
+                "clean_l336_mase_denominator_by_target"
+            ),
             "scoring_future": "clean_latent",
         },
         "input_ablation_policy": {
@@ -770,7 +775,7 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "paper_v8_generation_manifest.v4",
+        "schema_version": "paper_v8_generation_manifest.v5",
         "created_at": v8.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
