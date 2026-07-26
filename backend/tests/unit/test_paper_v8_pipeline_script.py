@@ -1759,6 +1759,73 @@ def test_oracle_context_uses_one_context_for_both_pair_members():
     assert {row["context_length"] for row in oracle} == {168}
 
 
+def test_covariate_response_score_uses_counterfactual_effect_rows():
+    analysis = load_script("analyze_paper_v8")
+    metric_row = {
+        "dataset_id": "dataset",
+        "context_policy": "fixed_l168",
+        "evaluation_table": "main",
+        "generator_family_role": "primary",
+        "capability_id": "covariate_response",
+        "model_id": "demo",
+        "seed_index": 0,
+        "intensity": 5,
+        "metrics": {
+            "mase": 0.4,
+            "normalized_mae_history_std": 0.3,
+        },
+    }
+    effect_row = {
+        "dataset_id": "dataset",
+        "context_policy": "fixed_l168",
+        "evaluation_table": "main",
+        "generator_family_role": "primary",
+        "capability_id": "covariate_response",
+        "model_id": "demo",
+        "seed_index": 0,
+        "intensity": 5,
+        "counterfactual_effect_nrmse": 0.25,
+    }
+
+    result = analysis.score_table([metric_row], [effect_row])
+
+    assert result[0]["mechanism_score"] == pytest.approx(0.25)
+    assert result[0]["mechanism_rank"] == 1
+
+
+def test_aggregate_completion_uses_bound_effect_rows_for_legacy_score():
+    analysis = load_script("analyze_paper_v8")
+    score = {
+        "dataset_id": "dataset",
+        "context_policy": "fixed_l168",
+        "evaluation_table": "main",
+        "generator_family_role": "primary",
+        "capability_id": "covariate_response",
+        "model_id": "demo",
+        "mechanism_metric": "counterfactual_effect_nrmse",
+        "mechanism_score": None,
+        "mechanism_rank": None,
+        "accuracy_score": 0.4,
+        "accuracy_rank": 1,
+        "is_reference_baseline": False,
+    }
+    effect = {
+        "dataset_id": "dataset",
+        "context_policy": "fixed_l168",
+        "evaluation_table": "main",
+        "generator_family_role": "primary",
+        "capability_id": "covariate_response",
+        "model_id": "demo",
+        "intensity": 5,
+        "counterfactual_effect_nrmse": 0.25,
+    }
+
+    analysis.complete_effect_level_mechanism_scores([score], [effect])
+
+    assert score["mechanism_score"] == pytest.approx(0.25)
+    assert score["mechanism_rank"] == 1
+
+
 def test_oracle_context_reuses_clean_parent_context_for_input_ablation():
     analysis = load_script("analyze_paper_v8")
     rows = []

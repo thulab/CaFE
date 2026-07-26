@@ -1309,16 +1309,13 @@ def score_table(
             )
             else PRIMARY_MECHANISM_METRIC[capability]
         )
-        if key[2] == "strict_counterfactual_audit" and capability in {
-            "common_factor",
-            "cross_series_dependence",
-        }:
-            mechanism_values = [
-                float(row[metric_name])
-                for row in effect_groups.get(key, [])
-                if int(row["intensity"]) == 5
-                and metric_name in row
-            ]
+        effect_mechanism_values = [
+            float(row[metric_name])
+            for row in effect_groups.get(key, [])
+            if int(row["intensity"]) == 5 and metric_name in row
+        ]
+        if effect_mechanism_values:
+            mechanism_values = effect_mechanism_values
         else:
             mechanism_values = [
                 float(row["metrics"][metric_name])
@@ -1356,6 +1353,54 @@ def score_table(
         )
     add_ranks(output)
     return output
+
+
+def complete_effect_level_mechanism_scores(
+    scores: list[dict[str, Any]],
+    effects: Iterable[dict[str, Any]],
+) -> None:
+    """Complete legacy missing mechanism scores from manifest-bound effects."""
+
+    grouped_effects: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(
+        list
+    )
+    for row in effects:
+        grouped_effects[
+            (
+                str(row["dataset_id"]),
+                str(row["context_policy"]),
+                str(row["evaluation_table"]),
+                str(row["generator_family_role"]),
+                str(row["capability_id"]),
+                str(row["model_id"]),
+            )
+        ].append(row)
+    completed = False
+    for row in scores:
+        if row.get("mechanism_score") is not None:
+            continue
+        metric_name = str(row.get("mechanism_metric") or "")
+        if not metric_name:
+            continue
+        key = (
+            str(row["dataset_id"]),
+            str(row["context_policy"]),
+            str(row["evaluation_table"]),
+            str(row["generator_family_role"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        )
+        values = [
+            float(effect[metric_name])
+            for effect in grouped_effects.get(key, [])
+            if int(effect["intensity"]) == 5 and metric_name in effect
+        ]
+        if not values:
+            continue
+        row["mechanism_score"] = float(np.mean(values))
+        completed = True
+    if completed:
+        add_ranks(scores)
 
 
 def add_ranks(rows: list[dict[str, Any]]) -> None:
@@ -2528,6 +2573,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         )
 
     all_scores: list[dict[str, Any]] = []
+    all_effects: list[dict[str, Any]] = []
     input_records: list[dict[str, Any]] = []
     capability_dataset_ids = {
         capability_id: [] for capability_id in capabilities
@@ -2568,6 +2614,20 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         if not isinstance(scores, list):
             raise ValueError(f"invalid dataset scores payload: {dataset_id}")
         all_scores.extend(scores)
+        effect_record = dataset_manifest.get("files", {}).get(
+            "counterfactual_effects"
+        )
+        if not isinstance(effect_record, dict):
+            raise ValueError(
+                f"dataset analysis is missing effects record: {dataset_id}"
+            )
+        effect_path = validated_file_record(
+            effect_record,
+            expected_path=(
+                dataset_analysis_dir / "counterfactual_effects.jsonl"
+            ),
+        )
+        all_effects.extend(v8.iter_jsonl(effect_path))
         generation_manifest_path = (
             experiment_root
             / dataset_id
@@ -2600,6 +2660,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                     dataset_manifest_path
                 ),
                 "scores_sha256": v8.file_sha256(score_path),
+                "counterfactual_effects_sha256": v8.file_sha256(effect_path),
                 "generation_manifest_path": str(
                     generation_manifest_path
                 ),
@@ -2610,6 +2671,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             }
         )
 
+    complete_effect_level_mechanism_scores(all_scores, all_effects)
     fixed_rows = experiment_capability_rows(
         all_scores,
         context_policy=FIXED_CONTEXT_POLICY,
@@ -2665,6 +2727,10 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         "aggregation_policy": (
             "equal_supported_dataset_macro_mean_with_mean_within_dataset_"
             "model_rank"
+        ),
+        "mechanism_score_completion_policy": (
+            "complete_missing_effect_level_scores_from_manifest_bound_"
+            "counterfactual_effects_without_mutating_dataset_analysis"
         ),
         "oracle_selection_policy": (
             "per_model_master_sample_minimum_mase_over_l96_l168_l336;"
