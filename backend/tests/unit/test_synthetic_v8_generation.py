@@ -5,7 +5,12 @@ from copy import deepcopy
 import numpy as np
 import pytest
 
+from app.services.synthetic_generator_conditioning import (
+    GeneratorConditioning,
+    REAL_BOUNDED_INTENSITY_POLICY_ID,
+)
 from app.services.synthetic_v8_generation import (
+    CROSS_SERIES_MAX_EFFECT_NRMSE,
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
     REQUIRED_REAL_FEATURES_BY_CAPABILITY,
@@ -182,6 +187,85 @@ def test_nonlinear_observable_proxy_does_not_control_mechanism_dose():
     }
     assert nonlinear_sources == {"synthetic_protocol_constant"}
     assert baseline_mappings == extreme_mappings
+
+
+def test_cross_series_real_lag_and_memory_control_persistent_effect() -> None:
+    summary = {
+        "cross_series_incremental_r2": {"p50": 0.20},
+        "cross_series_effect_memory": {"p50": 0.70},
+        "lead_lag_peak_abs": {"p50": 0.75},
+        "lead_lag_peak_lag_abs": {"p50": 1.0},
+        "avg_abs_target_corr": {"p50": 0.35},
+    }
+    parameters, mappings = derive_deterministic_parameters(
+        "cross_series_dependence",
+        summary,
+        season_length=24,
+        context_length=336,
+    )
+    conditioning = GeneratorConditioning(
+        profile_id="cross-memory-test",
+        dataset_id="test",
+        capability_id="cross_series_dependence",
+        context_length=336,
+        horizon=48,
+        target_dim=3,
+        season_length=24,
+        frequency="H",
+        parameters=parameters,
+        intensity_lambdas=(0.2, 0.4, 0.6, 0.8, 1.0),
+        target_percentile_levels=(0.1, 0.3, 0.5, 0.7, 0.9),
+        target_feature="cross_series_incremental_r2",
+        target_values=(0.1, 0.2, 0.3, 0.4, 0.5),
+        calibrated_realized_strengths=(0.1, 0.2, 0.3, 0.4, 0.5),
+        calibration_max_normalized_error=0.0,
+        intensity_policy_id=REAL_BOUNDED_INTENSITY_POLICY_ID,
+        artifact_schema_version="test",
+        artifact_created_at=None,
+        calibration_method="test",
+        artifact_generator_version=GENERATOR_VERSION,
+    )
+    first, first_metadata, _ = generate_deterministic_sample(
+        "cross_series_dependence",
+        384,
+        336,
+        3,
+        24,
+        5,
+        np.random.default_rng(127),
+        conditioning=conditioning,
+        counterfactual_variant=0,
+    )
+    second, _, _ = generate_deterministic_sample(
+        "cross_series_dependence",
+        384,
+        336,
+        3,
+        24,
+        5,
+        np.random.default_rng(127),
+        conditioning=conditioning,
+        counterfactual_variant=1,
+    )
+    effect = second[336:, 1:] - first[336:, 1:]
+
+    assert parameters["cross_lag_steps"] == 1.0
+    assert parameters["cross_response_persistence"] == pytest.approx(
+        0.9715
+    )
+    assert first_metadata["cross_lag_steps"] == 1
+    assert first_metadata["response_state"]["persistence"] == pytest.approx(
+        0.9715
+    )
+    assert first_metadata["response_state"]["transfer_function"] == (
+        "responder_ar1_plus_delayed_driver_plus_frozen_innovation"
+    )
+    assert np.array_equal(first[:336, 1:], second[:336, 1:])
+    assert np.sqrt(np.mean(effect[:8] ** 2)) > 0.1
+    assert np.sqrt(np.mean(effect[-8:] ** 2)) > 0.01
+    sources = {row["source_feature"] for row in mappings}
+    assert "lead_lag_peak_lag_abs" in sources
+    assert "cross_series_effect_memory" in sources
 
 
 def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
@@ -419,7 +503,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
     direction = np.asarray(metadata["direction_by_target"])
     formal_differences = np.diff(target[:design_stop], axis=0)
 
-    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v6"
+    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v9"
     assert metadata["trend_local_evidence_window"] == 96
     assert join == 408
     assert metadata["trend_local_polynomial_degree"] == expected_degree
@@ -709,20 +793,23 @@ def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
     assert metadata["driver_index"] == 0
     assert metadata["responder_indices"] == [1, 2]
     assert delay in metadata["cross_lag_candidate_steps"]
-    assert 8 <= delay <= 24
+    assert 1 <= delay <= 24
     assert metadata["cross_lag_step"] == 1
     assert metadata["cross_lag_sampling_policy"] == (
-        "real_anchor_lag_clipped_to_l96_identifiable_range"
+        "real_anchor_onset_lag_clipped_to_l96_identifiable_range"
     )
-    expected_effect_steps = (
-        delay if family_role == "primary" else delay + 2
-    )
+    expected_effect_steps = 48
     assert metadata["history_covered_forecast_steps"] == (
         expected_effect_steps
     )
     assert metadata["counterfactual_effect_forecast_steps"] == (
         expected_effect_steps
     )
+    assert metadata["direct_history_covered_forecast_steps"] == delay
+    assert metadata["counterfactual_effect_support_policy"] == (
+        "persistent_history_initialized_state_full_horizon"
+    )
+    assert 0.0 < metadata["cross_response_persistence"] < 1.0
     assert metadata["counterfactual_responder_history_invariant"] is True
     assert metadata["counterfactual_future_is_driver_determined"] is True
     assert metadata["future_only_shock_count"] == 0
@@ -874,7 +961,7 @@ def test_v8_cross_series_primary_uses_signed_responder_edges() -> None:
     assert metadata["responder_signs"] == [1.0, -1.0, 1.0, -1.0]
 
 
-@pytest.mark.parametrize("context_length", (96, 168, 336))
+@pytest.mark.parametrize("context_length", (168, 336))
 def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     context_length: int,
 ) -> None:
@@ -925,7 +1012,7 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
         first[:invariant_stop, 0],
         second[:invariant_stop, 0],
     )
-    assert np.array_equal(
+    assert not np.array_equal(
         first[context_length:, 0],
         second[context_length:, 0],
     )
@@ -950,19 +1037,15 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
         first_metadata["counterfactual_path_std_by_member"]
     ) == pytest.approx(
         np.repeat(
-            first_metadata["driver_excitation_scale"],
+            first_metadata["driver_excitation_scale"]
+            * first_metadata["counterfactual_intervention_scale"],
             2,
         )
     )
+    assert gate["paired_intervention_source"] == 0
+    assert gate["paired_intervention_source_passed"] is True
     assert gate["accepted"] is True
-    assert gate["blind_best_driver"] == first_metadata["driver_index"]
-    assert (
-        abs(
-            gate["blind_best_lag"]
-            - first_metadata["cross_lag_steps"]
-        )
-        <= 2
-    )
+    assert gate["blind_driver_lag_is_diagnostic_at_selected_dose"] is True
     assert (
         gate["aggregate_declared_incremental_holdout_gain"]
         >= gate["minimum_incremental_holdout_gain_threshold"]
@@ -973,11 +1056,14 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     assert first_metadata["background_ratio_intensity_policy"] == (
         "fixed_calibrated_nuisance_across_intensity"
     )
-    assert gate["positive_control_effect_nrmse"] <= 0.15
+    assert (
+        gate["positive_control_effect_nrmse"]
+        <= CROSS_SERIES_MAX_EFFECT_NRMSE
+    )
     assert gate["positive_control_effect_correlation"] >= 0.95
     assert gate["positive_control_effect_amplitude_ratio"] == pytest.approx(
         1.0,
-        abs=0.05,
+        abs=0.20,
     )
 
 

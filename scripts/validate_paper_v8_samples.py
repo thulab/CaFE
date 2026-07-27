@@ -101,6 +101,7 @@ def input_ablation_checks(
             observed = np.asarray(row["target"], dtype=float)
             latent = np.asarray(clean["target"], dtype=float)
             metadata = row["input_ablation_metadata"]
+            donor = clean_by_id.get(str(metadata["donor_sample_id"]))
             channels = [
                 int(value) for value in metadata["replaced_channels"]
             ]
@@ -113,6 +114,60 @@ def input_ablation_checks(
                 for index in range(int(row["target_dim"]))
                 if index not in channels
             ]
+            expected_scope = (
+                "replaced_segment"
+                if str(row["capability_id"]) == "common_factor"
+                else "pair_invariant_driver_prefix"
+            )
+            segment_match_declared = bool(
+                metadata.get("affine_matched_mean_and_std", False)
+            )
+            expected_segment: np.ndarray | None = None
+            if donor is not None:
+                donor_target = np.asarray(donor["target"], dtype=float)
+                expected_segment = np.empty(
+                    (stop - start, len(channels)),
+                    dtype=float,
+                )
+                for column, channel in enumerate(channels):
+                    if expected_scope == "replaced_segment":
+                        donor_values = donor_target[start:stop, channel]
+                        reference_values = latent[start:stop, channel]
+                        donor_center = float(np.mean(donor_values))
+                        donor_scale = float(np.std(donor_values))
+                        reference_center = float(np.mean(reference_values))
+                        reference_scale = float(np.std(reference_values))
+                        if donor_scale <= 1e-12:
+                            expected_segment[:, column] = reference_center
+                        else:
+                            expected_segment[:, column] = (
+                                (donor_values - donor_center)
+                                * reference_scale
+                                / donor_scale
+                                + reference_center
+                            )
+                    else:
+                        donor_context = (
+                            donor_target.shape[0] - int(donor["horizon"])
+                        )
+                        donor_start = donor_context - (stop - start)
+                        donor_reference = donor_target[
+                            :donor_start,
+                            channel,
+                        ]
+                        clean_reference = latent[:start, channel]
+                        expected_segment[:, column] = (
+                            (
+                                donor_target[
+                                    donor_start:donor_context,
+                                    channel,
+                                ]
+                                - float(np.mean(donor_reference))
+                            )
+                            * max(float(np.std(clean_reference)), 1e-12)
+                            / max(float(np.std(donor_reference)), 1e-12)
+                            + float(np.mean(clean_reference))
+                        )
             checks.update(
                 {
                     "future_exact": bool(
@@ -131,20 +186,52 @@ def input_ablation_checks(
                             latent[:context, untouched_channels],
                         )
                     ),
-                    "replaced_mean_matched": bool(
-                        np.allclose(
-                            np.mean(observed[start:stop, channels], axis=0),
-                            np.mean(latent[start:stop, channels], axis=0),
+                    "donor_parent_exists": donor is not None,
+                    "affine_reference_scope_valid": bool(
+                        metadata.get("affine_reference_scope")
+                        == expected_scope
+                    ),
+                    "segment_match_declaration_valid": bool(
+                        segment_match_declared
+                        == (expected_scope == "replaced_segment")
+                    ),
+                    "declared_segment_mean_matched": bool(
+                        not segment_match_declared
+                        or np.allclose(
+                            np.mean(
+                                observed[start:stop, channels],
+                                axis=0,
+                            ),
+                            np.mean(
+                                latent[start:stop, channels],
+                                axis=0,
+                            ),
                             atol=1e-10,
                             rtol=1e-10,
                         )
                     ),
-                    "replaced_std_matched": bool(
-                        np.allclose(
-                            np.std(observed[start:stop, channels], axis=0),
-                            np.std(latent[start:stop, channels], axis=0),
+                    "declared_segment_std_matched": bool(
+                        not segment_match_declared
+                        or np.allclose(
+                            np.std(
+                                observed[start:stop, channels],
+                                axis=0,
+                            ),
+                            np.std(
+                                latent[start:stop, channels],
+                                axis=0,
+                            ),
                             atol=1e-10,
                             rtol=1e-10,
+                        )
+                    ),
+                    "declared_affine_transform_exact": bool(
+                        expected_segment is not None
+                        and np.allclose(
+                            observed[start:stop, channels],
+                            expected_segment,
+                            atol=1e-12,
+                            rtol=1e-12,
                         )
                     ),
                     "mase_scale_reused": bool(
@@ -274,7 +361,7 @@ def main() -> int:
         and ablation_validation["accepted"]
     )
     report = {
-        "schema_version": "paper_v8_generation_validation.v1",
+        "schema_version": "paper_v8_generation_validation.v2",
         "created_at": v8.utc_now(),
         "dataset_id": dataset.dataset_id,
         "generation_manifest": str(manifest_path),

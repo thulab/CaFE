@@ -28,7 +28,7 @@ PRIMARY_MECHANISM_METRIC = {
     "predictable_intermittency": "event_window_nmae",
     "common_factor": "counterfactual_effect_nrmse",
     "hierarchical_coherence": "hierarchy_structure_nmae",
-    "cross_series_dependence": "active_effect_nrmse",
+    "cross_series_dependence": "counterfactual_effect_nrmse",
     "covariate_response": "counterfactual_effect_nrmse",
 }
 BASELINES = ("last_value", "seasonal_naive")
@@ -360,7 +360,7 @@ def effect_row(
         forecast_effect,
     )
     row = {
-        "schema_version": "paper_v8_counterfactual_effect.v1",
+        "schema_version": "paper_v8_counterfactual_effect.v2",
         "model_id": model_id,
         "dataset_id": first_sample["dataset_id"],
         "capability_id": first_sample["capability_id"],
@@ -408,6 +408,56 @@ def effect_row(
                 if tail_forecast.size
                 else 0.0
             ),
+        }
+    )
+    metadata = first_sample.get("generation_metadata") or {}
+    direct_steps = min(
+        max(
+            int(
+                metadata.get(
+                    "counterfactual_direct_driver_steps",
+                    metadata.get("cross_lag_steps", active),
+                )
+            ),
+            1,
+        ),
+        int(first_sample["horizon"]),
+    )
+    (
+        direct_nrmse,
+        direct_correlation,
+        direct_amplitude,
+        direct_truth_rms,
+        direct_forecast_rms,
+    ) = _effect_metrics(
+        truth_effect[:direct_steps],
+        forecast_effect[:direct_steps],
+    )
+    persistent_truth = truth_effect[direct_steps:]
+    persistent_forecast = forecast_effect[direct_steps:]
+    persistent_metrics = (
+        _effect_metrics(persistent_truth, persistent_forecast)
+        if persistent_truth.size
+        else (None, None, None, None, None)
+    )
+    row.update(
+        {
+            "direct_driver_prefix_steps": direct_steps,
+            "direct_effect_nrmse": direct_nrmse,
+            "direct_effect_correlation": direct_correlation,
+            "direct_effect_amplitude_ratio": direct_amplitude,
+            "direct_truth_effect_rms": direct_truth_rms,
+            "direct_forecast_effect_rms": direct_forecast_rms,
+            "persistent_tail_steps": int(
+                first_sample["horizon"] - direct_steps
+            ),
+            "persistent_tail_effect_nrmse": persistent_metrics[0],
+            "persistent_tail_effect_correlation": persistent_metrics[1],
+            "persistent_tail_effect_amplitude_ratio": (
+                persistent_metrics[2]
+            ),
+            "persistent_tail_truth_effect_rms": persistent_metrics[3],
+            "persistent_tail_forecast_effect_rms": persistent_metrics[4],
         }
     )
     return row
@@ -593,11 +643,7 @@ def _structured_context_curve(
             structure_effects = effect_groups[
                 (capability, structure_model, context)
             ]
-            strict_metric_prefix = (
-                "active_effect"
-                if capability == "cross_series_dependence"
-                else "counterfactual_effect"
-            )
+            strict_metric_prefix = "counterfactual_effect"
             strict_nrmse = _median(
                 row[f"{strict_metric_prefix}_nrmse"]
                 for row in structure_effects
@@ -605,9 +651,7 @@ def _structured_context_curve(
             strict_correlation = _median(
                 row[
                     (
-                        "active_effect_correlation"
-                        if capability == "cross_series_dependence"
-                        else "effect_correlation"
+                        "effect_correlation"
                     )
                 ]
                 for row in structure_effects
@@ -615,9 +659,7 @@ def _structured_context_curve(
             strict_amplitude = _median(
                 row[
                     (
-                        "active_effect_amplitude_ratio"
-                        if capability == "cross_series_dependence"
-                        else "effect_amplitude_ratio"
+                        "effect_amplitude_ratio"
                     )
                 ]
                 for row in structure_effects
@@ -717,13 +759,6 @@ def _structured_context_curve(
                 and 0.30 <= strict_amplitude <= 1.70
                 and strict_success_fraction is not None
                 and strict_success_fraction >= 0.75
-                and (
-                    capability != "cross_series_dependence"
-                    or (
-                        zero_tail_leakage is not None
-                        and zero_tail_leakage <= 0.10
-                    )
-                )
             )
             if capability == "common_factor":
                 if (
@@ -744,7 +779,7 @@ def _structured_context_curve(
             output.append(
                 {
                     "schema_version": (
-                        "paper_v8_structured_context_assessment.v1"
+                        "paper_v8_structured_context_assessment.v2"
                     ),
                     "dataset_id": dataset_id,
                     "capability_id": capability,
@@ -784,16 +819,12 @@ def _structured_context_curve(
                     "strict_effect_nrmse_below_1_fraction": (
                         strict_success_fraction
                     ),
-                    "strict_metric_scope": (
-                        "active_history_covered_prefix"
-                        if capability == "cross_series_dependence"
-                        else "full_horizon"
-                    ),
+                    "strict_metric_scope": "full_horizon",
                     "zero_tail_leakage_nrmse_median": zero_tail_leakage,
                     "strict_effect_evaluable": strict_evaluable,
                     "strict_effect_passed": strict_passed,
                     "strict_effect_assessment": (
-                        "evaluated_as_active_prefix_plus_zero_tail"
+                        "evaluated_as_full_horizon_shared_fit_hard_gate"
                         if capability == "cross_series_dependence"
                         else "evaluated_as_blind_shared_fit_hard_gate"
                     ),
@@ -1018,7 +1049,7 @@ def analyze_structured_positive_controls(
         dataset_id=dataset_id,
     )
     return {
-        "schema_version": "paper_v8_structured_positive_controls.v1",
+        "schema_version": "paper_v8_structured_positive_controls.v2",
         "dataset_id": dataset_id,
         "scope": {
             "generator_family_role": "primary",
@@ -1059,7 +1090,7 @@ def analyze_structured_positive_controls(
             "minimum_strict_effect_correlation": 0.60,
             "strict_effect_amplitude_ratio_range": [0.30, 1.70],
             "minimum_strict_nrmse_below_1_fraction": 0.75,
-            "maximum_zero_tail_leakage_nrmse": 0.10,
+            "legacy_maximum_zero_tail_leakage_nrmse": 0.10,
             "common_strict_effect_is_diagnostic_not_hard_gate": False,
             "common_strict_effect_is_hard_gate": True,
         },
@@ -1337,11 +1368,7 @@ def score_table(
             group,
             "normalized_mae_history_std",
         )
-        strict_effect_metric = (
-            "active_effect_nrmse"
-            if capability == "cross_series_dependence"
-            else "counterfactual_effect_nrmse"
-        )
+        strict_effect_metric = "counterfactual_effect_nrmse"
         metric_name = (
             strict_effect_metric
             if (
@@ -1780,25 +1807,13 @@ def multivariate_utilization_audit_rows(
         is_independent_reference = target_mode == "independent_univariate"
         ablation = ablations.get(key)
         strict = strict_groups.get(key, [])
-        strict_nrmse_name = (
-            "active_effect_nrmse"
-            if key[2] == "cross_series_dependence"
-            else "counterfactual_effect_nrmse"
-        )
-        strict_correlation_name = (
-            "active_effect_correlation"
-            if key[2] == "cross_series_dependence"
-            else "effect_correlation"
-        )
-        strict_amplitude_name = (
-            "active_effect_amplitude_ratio"
-            if key[2] == "cross_series_dependence"
-            else "effect_amplitude_ratio"
-        )
+        strict_nrmse_name = "counterfactual_effect_nrmse"
+        strict_correlation_name = "effect_correlation"
+        strict_amplitude_name = "effect_amplitude_ratio"
         output.append(
             {
                 "schema_version": (
-                    "paper_v8_multivariate_utilization_audit.v1"
+                    "paper_v8_multivariate_utilization_audit.v2"
                 ),
                 "dataset_id": key[0],
                 "context_policy": key[1],
@@ -1827,11 +1842,7 @@ def multivariate_utilization_audit_rows(
                 "input_ablation_matched_seed_count": (
                     ablation["matched_seed_count"] if ablation else 0
                 ),
-                "strict_metric_scope": (
-                    "active_history_covered_prefix"
-                    if key[2] == "cross_series_dependence"
-                    else "full_horizon"
-                ),
+                "strict_metric_scope": "full_horizon",
                 "strict_effect_nrmse_median": _median(
                     row[strict_nrmse_name]
                     for row in strict
@@ -2597,7 +2608,7 @@ def reusable_experiment_analysis_manifest(
     try:
         manifest = v8.read_json(manifest_path)
         if manifest.get("schema_version") != (
-            "paper_v8_experiment_analysis_manifest.v4"
+            "paper_v8_experiment_analysis_manifest.v5"
         ):
             return False
         if str(manifest.get("experiment_manifest_sha256")) != (
@@ -2735,7 +2746,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         )
         dataset_manifest = v8.read_json(dataset_manifest_path)
         if dataset_manifest.get("schema_version") != (
-            "paper_v8_analysis_manifest.v4"
+            "paper_v8_analysis_manifest.v5"
         ):
             raise ValueError(
                 f"unsupported dataset analysis manifest: {dataset_id}"
@@ -2863,7 +2874,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_experiment_analysis_manifest.v4",
+        "schema_version": "paper_v8_experiment_analysis_manifest.v5",
         "created_at": v8.utc_now(),
         "experiment_id": str(experiment_manifest["experiment_id"]),
         "experiment_manifest_sha256": v8.file_sha256(
@@ -3079,7 +3090,7 @@ def main() -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_analysis_manifest.v4",
+        "schema_version": "paper_v8_analysis_manifest.v5",
         "created_at": v8.utc_now(),
         "dataset_id": dataset.dataset_id,
         "source_experiment_root": str(source_experiment_root),

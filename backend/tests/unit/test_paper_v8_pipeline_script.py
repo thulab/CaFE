@@ -1843,6 +1843,12 @@ def test_multivariate_input_ablation_keeps_future_and_marginal_scale(
             "target": target.tolist(),
             "mase_scale": scale,
             "mase_scale_by_target": scale_by_target,
+            "mase_period": 24,
+            "target_feature_value": 0.1,
+            "intensity_lambda": 0.1,
+            "intensity_calibration": {
+                "scope": "dataset_real_generator_overlap_reference",
+            },
             "future_sha256": "future",
         }
 
@@ -1863,14 +1869,35 @@ def test_multivariate_input_ablation_keeps_future_and_marginal_scale(
         clean_target[start:stop, channels],
         ablated_target[start:stop, channels],
     )
-    assert np.mean(
-        clean_target[start:stop, channels],
-        axis=0,
-    ) == pytest.approx(np.mean(ablated_target[start:stop, channels], axis=0))
-    assert np.std(
-        clean_target[start:stop, channels],
-        axis=0,
-    ) == pytest.approx(np.std(ablated_target[start:stop, channels], axis=0))
+    if capability_id == "common_factor":
+        assert np.mean(
+            clean_target[start:stop, channels],
+            axis=0,
+        ) == pytest.approx(
+            np.mean(ablated_target[start:stop, channels], axis=0)
+        )
+        assert np.std(
+            clean_target[start:stop, channels],
+            axis=0,
+        ) == pytest.approx(
+            np.std(ablated_target[start:stop, channels], axis=0)
+        )
+    else:
+        reference = clean_target[:start, channels]
+        replacement = ablated_target[start:stop, channels]
+        standardized = (
+            replacement - np.mean(reference, axis=0)
+        ) / np.maximum(np.std(reference, axis=0), 1e-12)
+        assert np.max(np.abs(standardized)) < 5.0
+        assert metadata["affine_reference_scope"] == (
+            "pair_invariant_driver_prefix"
+        )
+    validator = load_script("validate_paper_v8_samples")
+    validation = validator.input_ablation_checks(
+        [clean, donor],
+        [ablated],
+    )
+    assert validation["accepted"]
 
 
 @pytest.mark.parametrize(
@@ -2046,7 +2073,7 @@ def test_common_and_cross_main_scores_use_all_seed_i5_pair_effects():
     scores = []
     for capability_id, metric_name in (
         ("common_factor", "counterfactual_effect_nrmse"),
-        ("cross_series_dependence", "active_effect_nrmse"),
+        ("cross_series_dependence", "counterfactual_effect_nrmse"),
     ):
         for model_id, factual_score, effect_score in (
             ("factual", 0.1, 0.9),
@@ -2100,7 +2127,7 @@ def test_common_and_cross_main_scores_use_all_seed_i5_pair_effects():
     }
     for capability_id, metric_name in (
         ("common_factor", "counterfactual_effect_nrmse"),
-        ("cross_series_dependence", "active_effect_nrmse"),
+        ("cross_series_dependence", "counterfactual_effect_nrmse"),
     ):
         assert main[(capability_id, "mechanistic")][
             "mechanism_score"
@@ -2128,7 +2155,7 @@ def test_primary_mechanism_pair_requires_full_factual_seed_coverage():
         "generator_family_role": "primary",
         "capability_id": "cross_series_dependence",
         "model_id": "model",
-        "mechanism_metric": "active_effect_nrmse",
+        "mechanism_metric": "counterfactual_effect_nrmse",
         "mechanism_score": 0.5,
         "mechanism_rank": 1,
         "intensities": [5],
@@ -2576,6 +2603,49 @@ def test_cross_effect_audit_keeps_legacy_full_horizon_fallback():
     assert row["active_effect_nrmse"] == pytest.approx(
         row["counterfactual_effect_nrmse"]
     )
+
+
+def test_cross_effect_audit_reports_full_horizon_persistent_tail():
+    analysis = load_script("analyze_paper_v8")
+    context = 8
+    horizon = 4
+    first_target = np.zeros((context + horizon, 2))
+    second_target = first_target.copy()
+    second_target[context:, 1] = [1.0, 0.8, 0.6, 0.4]
+    first = {
+        "dataset_id": "dataset",
+        "capability_id": "cross_series_dependence",
+        "generator_family_role": "primary",
+        "evaluation_table": "strict_counterfactual_audit",
+        "intensity": 5,
+        "seed_index": 0,
+        "context_length": context,
+        "horizon": horizon,
+        "target_dim": 2,
+        "target": first_target.tolist(),
+        "master_counterfactual_pair_id": "pair",
+        "generation_metadata": {
+            "responder_indices": [1],
+            "cross_lag_steps": 1,
+            "counterfactual_effect_forecast_steps": horizon,
+        },
+    }
+    second = {**first, "target": second_target.tolist()}
+    forecast = np.asarray(second_target[context:], dtype=float)
+    row = analysis.effect_row(
+        first,
+        np.zeros((horizon, 2)),
+        second,
+        forecast,
+        model_id="model",
+    )
+
+    assert row["counterfactual_effect_nrmse"] == pytest.approx(0.0)
+    assert row["active_prefix_steps"] == horizon
+    assert row["direct_driver_prefix_steps"] == 1
+    assert row["persistent_tail_steps"] == 3
+    assert row["persistent_tail_effect_nrmse"] == pytest.approx(0.0)
+    assert row["persistent_tail_truth_effect_rms"] > 0.0
 
 
 def test_common_structured_assessment_requires_advantage_and_strict_recovery():

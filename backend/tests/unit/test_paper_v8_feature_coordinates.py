@@ -108,3 +108,28 @@ def test_v8_feature_vector_uses_deterministic_corrected_xsd_coordinate() -> None
     assert first["cross_series_incremental_r2"] == pytest.approx(direct)
     assert second["cross_series_incremental_r2"] == pytest.approx(direct)
     assert first["v8_feature_history_length"] == 168.0
+
+
+def test_cross_series_effect_memory_distinguishes_persistent_transfer() -> None:
+    rng = np.random.default_rng(113)
+    driver = rng.normal(size=1024)
+    direct = np.zeros_like(driver)
+    direct[1:] = driver[:-1]
+    persistent = np.zeros_like(driver)
+    for index in range(1, len(driver)):
+        persistent[index] = (
+            0.96 * persistent[index - 1] + driver[index - 1]
+        )
+
+    direct_memory = features._paper_v8_cross_series_effect_memory(
+        np.column_stack([driver, direct]),
+        max_lag=24,
+    )
+    persistent_memory = features._paper_v8_cross_series_effect_memory(
+        np.column_stack([driver, persistent]),
+        max_lag=24,
+    )
+
+    assert direct_memory < 0.20
+    assert persistent_memory > 0.50
+    assert persistent_memory > direct_memory + 0.40

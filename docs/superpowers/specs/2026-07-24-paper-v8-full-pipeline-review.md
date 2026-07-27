@@ -217,7 +217,12 @@ I1–I5 使用数据集×family 级标尺，不做逐正式 seed 的精确反解
 对结构能力还要在独立 qualification path bank 上，用 primary family 精确的
 selected-I5 λ 运行与真实 observable 对齐的结构 gate。common factor 和
 cross-series 另外在 `λ=1` 运行盲正控：前者要求 joint-factor 反事实恢复，
-后者要求 driver/lag 恢复、增量预测和反事实恢复同时通过。四种结构能力的
+后者要求 pair 中唯一发生 history 干预的通道与声明 driver 一致、声明边带来
+增量预测收益，并且全 horizon 反事实恢复通过。单 history 的 driver/lag
+恢复保留为诊断：高度自相关 panel 中因果方向未必由观察分布唯一识别，不能把
+这种统计不可辨识误报成生成结构不可达。盲源诊断最大化所有 outgoing edge
+中的最小增量 gain，避免单条 responder-to-responder 捷径掩盖通向真实 driver
+的负边。四种结构能力的
 qualification path 必须 100% 通过；缺失路径、畸形结果或任一路径不通过均把
 当前 cell 标为 unavailable。
 该检查不运行 near-distance，也不通过扩大 path 数量掩盖系统性结构不可达。
@@ -251,7 +256,7 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 | predictable intermittency | deterministic Gaussian event clock | `event_positive_residual_energy_share` | `event_window_nmae` |
 | common factor | dense dynamic factor with joint-state relay | `pca_top1_explained` | protected-target paired `counterfactual_effect_nrmse` |
 | hierarchical coherence | aggregate/contrast linear state space | `hierarchy_child_heterogeneity` | `hierarchy_structure_nmae = child_contrast_nmae + coherence_nmae` |
-| cross-series dependence | dense delayed linear SCM | `cross_series_incremental_r2` | active-prefix paired `active_effect_nrmse` |
+| cross-series dependence | persistent delayed linear state SCM | `cross_series_incremental_r2` | full-horizon paired `counterfactual_effect_nrmse` |
 | covariate response | known-future linear response | `covariate_incremental_r2` | `counterfactual_effect_nrmse` |
 
 关键限定如下：
@@ -310,7 +315,9 @@ seed indexes = [seed_start, seed_start + seed_count)
 - Primary mechanism counterfactual：common/cross 的全部正式 seed、I5 配对表；
   其效应 NRMSE 进入正式机制排名。
 - Multivariate input ablation：common/cross 使用 matched donor 替换辅助输入，
-  保持受评 target history 与 future 不变，并做均值/标准差 affine matching。
+  保持受评 target history 与 future 不变。common 在替换段做均值/标准差
+  affine matching；cross 的替换段可能只有一个点，因此用 pair-invariant
+  driver prefix 估计 affine 变换，避免单点标准化把干预直接消掉。
 - Covariate main：counterfactual members 属于主能力构造。
 
 ### 必要 gate
@@ -349,9 +356,20 @@ effective period 和 fallback 计数。
 
 cross-series 的真实与合成坐标统一为公开 lag 范围 1–24 上的 history-only
 incremental gain，并用整段 panel 时间反向后的同规模搜索作为 paired null。
+真实 panel 还提取 `cross_series_effect_memory` 作为 nuisance coordinate，
+校准 responder state 的 persistence；它不替代主强度坐标。driver 是由真实
+`acf1` 校准的一阶冻结创新过程，最后 `d` 个 history 点接受 pair-specific
+innovation intervention，并按同一 driver 状态方程自然传播到 future。每个
+responder 直接遵循
+`y_t = rho * y_(t-1) + beta * x_(t-d) + epsilon_t`：真实 lag 决定起效时刻，
+真实 effect memory 决定延续程度，冻结 innovation path 在强度和 pair 间共享。
+因此 responder history 在 pair 内完全相同，而 history 初始化的 driver 与
+responder 状态共同把 effect 延续到完整 H48。结构正控从 history 拟合一阶、
+双 source-tap ARX recurrence，不读取生成系数。
 selected-dose gate 要求声明边相对 responder 自身历史带来正的聚合 holdout
 gain，并通过反事实恢复；弱真实剂量下 driver/lag 的唯一识别只作诊断。独立的
-`λ=1` 强正控必须恢复 driver 与 lag、通过增量预测和反事实恢复。旧的
+`λ=1` 强正控必须从 pair 观察到唯一 driver 干预、通过声明边增量预测和
+反事实恢复；单 history 的 driver/lag 恢复在强剂量下也只作可辨识性诊断。旧的
 source-only `R² >= 0.5` 与真实增量坐标不同量纲，已经移除。
 
 ## 推理协议
@@ -409,8 +427,9 @@ clean primary family，同时报告：
 - `oracle_context`；
 - `accuracy_score`：I1–I5 的 seed-group mean MASE；
 - `mechanism_score`：I5 的能力专属主机制误差；common factor 使用 protected
-  target 的全 horizon 配对 effect NRMSE，cross-series dependence 使用
-  history-covered active prefix 的 responder 配对 effect NRMSE；
+  target 的全 horizon 配对 effect NRMSE，cross-series dependence 也使用
+  responder 的全 horizon 配对 effect NRMSE；另外保留 direct-driver prefix
+  与 persistent tail 的分段诊断；
 - `accuracy_rank` 和 `mechanism_rank`，两者不合并成任意加权总分；
 - history-std normalized MAE 与 MASE denominator 分布作为尺度审计。
 
@@ -418,7 +437,7 @@ Reference baselines 显示分数但不进入 foundation-model 排名。Secondary
 observation-noise robustness 和 multivariate input ablation 分表报告，并与
 同 seed/intensity 的 clean primary 匹配比较。common/cross 的 paired
 counterfactual 表同时保留 correlation、amplitude ratio；cross 另报告
-zero-tail leakage，但这些诊断量不与 NRMSE 加权合并。
+direct-prefix/tail effect profile，但这些诊断量不与 NRMSE 加权合并。
 
 只需要正式模型 MASE 和机制分时，分析可显式使用 `scores_only` profile。
 它仍计算六个 foundation model 的 fixed/oracle MASE、十个能力的主机制分，
@@ -443,11 +462,13 @@ tau-b、Top-1 一致率和必要的 Top-3 overlap。它是当前实验内部的�
   相对 diagonal AR 的点误差改善只作诊断，不设统一 10% 硬阈值。
 - Common strict relay：标准 DFM 标记为 not applicable；生成器感知 oracle
   负责证明联立解码构造数学上可解。
-- Cross main：history-only、盲 source/lag 的 ridge VAR 与 diagonal AR 比较，
-  同时检查 input ablation。
-- Cross strict pair：使用一套 history-only shared-fit ARDL/VARX 参数应用于
-  两个 member，future driver 共享；分别报告 active prefix 的 NRMSE、
-  correlation、amplitude，以及理论零 effect tail 的 leakage。
+- Cross main：正文 effect reference 使用不知道生成机制的 history-only Full
+  Ridge-VAR，并与单变量/diagonal AR 比较；附录另保留盲 source/lag 的 sparse
+  ridge VAR 和 input ablation 诊断。
+- Cross strict pair：使用一套在 pair-invariant history 上拟合的 ARDL/VARX
+  参数应用于两个 member，各自从 observed driver state 递归 future；报告完整
+  H48 的 NRMSE、correlation、amplitude，以及 direct-prefix/persistent-tail
+  分段结果。
 
 Oracle gate 失败表示生成构造无效。Oracle 通过但结构基线不能利用相应输入时，
 优先诊断题面强度、context 和结构信息，而不是直接把失败归因于 foundation model。
@@ -466,6 +487,14 @@ Oracle gate 失败表示生成构造无效。Oracle 通过但结构基线不能�
 - Jena Weather 64-seed nonlinear 复测：observable primary 五档和 secondary
   I3/I5 递增，actual-lag primary/secondary gate、结构、robustness 与 ablation
   全部通过。
+- Jena Weather cross-series v31 复测：真实 history-only incremental-gain
+  q10–q90 为 `0–0.175`，两个 persistent delayed family 都得到五档真实校准
+  λ；32/32 qualification paths 通过 full-H48 结构 gate，effect NRMSE
+  范围 `0.015–0.144`、correlation `0.997–1.000`、amplitude ratio
+  `0.900–1.107`。8-seed near-distance generation 无重试且独立验证通过。
+  不读取生成机制的 L336 Full Ridge-VAR 在 8 个 I5 pairs 上 full-H48 effect
+  NRMSE 中位数为 `0.214`、correlation 中位数为 `0.992`、amplitude ratio
+  中位数为 `0.952`；最后 8 点真实 effect RMS 仍为最前 8 点的约 `50.5%`。
 - KDD 全链路并行 pilot：16 核、8 workers 下校准约 4.65 倍、生成约 4.96 倍
   加速，64-seed gate 全部通过；worker 数不进入科学协议。
 - ETT1 旧逐-seed conditional-inverse pilot 证明严格对齐在部分 generator

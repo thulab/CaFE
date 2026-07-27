@@ -321,7 +321,7 @@ def test_reusable_analysis_manifest_validates_binding_and_files(tmp_path):
     pipeline.v8.write_json(
         analysis_dir / "analysis_manifest.json",
         {
-            "schema_version": "paper_v8_analysis_manifest.v4",
+            "schema_version": "paper_v8_analysis_manifest.v5",
             "dataset_id": dataset_id,
             "inference_manifest_sha256": pipeline.v8.file_sha256(
                 inference_manifest_path

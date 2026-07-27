@@ -782,7 +782,7 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "paper_v8_generation_config.v8",
+        "schema_version": "paper_v8_generation_config.v9",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": v8.GENERATOR_VERSION,
@@ -825,7 +825,12 @@ def main() -> int:
             "capabilities": sorted(v8.INPUT_ABLATION_CAPABILITIES),
             "source": "clean_primary_main",
             "donor_policy": "next_seed_same_capability_and_intensity",
-            "marginal_matching": "affine_mean_and_std",
+            "marginal_matching": {
+                "common_factor": "replaced_segment_mean_and_std",
+                "cross_series_dependence": (
+                    "pair_invariant_driver_prefix_mean_and_std"
+                ),
+            },
             "scoring_future": "original_clean_latent",
         },
         "strict_counterfactual_policy": {
@@ -838,7 +843,7 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "paper_v8_generation_manifest.v8",
+        "schema_version": "paper_v8_generation_manifest.v9",
         "created_at": v8.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),

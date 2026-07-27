@@ -311,9 +311,9 @@ def baseline_forecast(sample: dict[str, Any], kind: str) -> np.ndarray:
         delay = int(metadata["cross_lag_steps"])
         driver = int(metadata["driver_index"])
         responders = [int(value) for value in metadata["responder_indices"]]
-        if delay < horizon or delay >= context:
+        if not 1 <= delay < context:
             raise ValueError(
-                "cross_lag_linear_probe requires horizon <= lag < context"
+                "cross_lag_linear_probe requires 1 <= lag < context"
             )
         # This positive control knows the protocol-level driver and lag, but
         # estimates every response coefficient from history only.  The fit
@@ -321,22 +321,48 @@ def baseline_forecast(sample: dict[str, Any], kind: str) -> np.ndarray:
         # members have exactly the same fit and can differ only through the
         # observed driver segment applied at forecast time.
         forecast = baseline_forecast(sample, "seasonal_naive")
-        training_driver = history[: context - delay, driver]
-        design = np.column_stack(
-            [np.ones(training_driver.size, dtype=float), training_driver]
-        )
-        future_driver = history[
-            context - delay : context - delay + horizon,
-            driver,
-        ]
+        start = max(delay + 1, 2)
         for responder in responders:
-            training_response = history[delay:context, responder]
-            intercept, slope = np.linalg.lstsq(
+            design = np.column_stack(
+                [
+                    np.ones(context - start, dtype=float),
+                    history[start - 1 : context - 1, responder],
+                    history[start - delay : context - delay, driver],
+                    history[
+                        start - delay - 1 :
+                        context - delay - 1,
+                        driver,
+                    ],
+                ]
+            )
+            (
+                intercept,
+                persistence,
+                slope,
+                previous_source_slope,
+            ) = np.linalg.lstsq(
                 design,
-                training_response,
+                history[start:context, responder],
                 rcond=None,
             )[0]
-            forecast[:, responder] = intercept + slope * future_driver
+            persistence = float(np.clip(persistence, -0.995, 0.995))
+            responder_extended = history[:, responder].tolist()
+            driver_extended = np.concatenate(
+                [history[:, driver], forecast[:, driver]]
+            )
+            for step in range(horizon):
+                value = (
+                    intercept
+                    + persistence * responder_extended[-1]
+                    + slope
+                    * driver_extended[context + step - delay]
+                    + previous_source_slope
+                    * driver_extended[
+                        context + step - delay - 1
+                    ]
+                )
+                forecast[step, responder] = value
+                responder_extended.append(float(value))
         return forecast
     raise ValueError(f"unknown local baseline: {kind}")
 

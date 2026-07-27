@@ -62,7 +62,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v26"
+SCHEMA_VERSION = "paper_v8_pipeline.v31"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
@@ -855,6 +855,7 @@ def _native_multivariate_features(
             "lead_lag_peak_abs",
             "lead_lag_peak_lag_abs",
             "cross_series_incremental_r2",
+            "cross_series_effect_memory",
         ):
             if name in cross_features:
                 features[name] = cross_features[name]
@@ -1989,7 +1990,7 @@ def structural_calibration_reachability(
             else:
                 strong_positive_control_passed = bool(
                     strong_dose_gate.get(
-                        "blind_driver_lag_passed",
+                        "paired_intervention_source_passed",
                         False,
                     )
                     and strong_dose_gate.get(
@@ -3609,19 +3610,40 @@ def multivariate_input_ablation_sample(
         ablation_type = "affine_matched_auxiliary_history_donor"
     else:
         driver = int(metadata["driver_index"])
-        delay = int(metadata["cross_lag_steps"])
-        start = context - delay
+        driver_slice = metadata.get("counterfactual_driver_slice")
+        if (
+            not isinstance(driver_slice, list)
+            or len(driver_slice) != 2
+            or int(driver_slice[1]) != context
+        ):
+            raise ValueError(
+                "cross-series input ablation requires a boundary-aligned "
+                "counterfactual driver slice"
+            )
+        start = int(driver_slice[0])
+        width = context - start
         replaced_channels = [driver]
         replaced_slice = [start, context]
-        target[start:context, driver] = _affine_match_history(
-            donor_target[
-                donor_target.shape[0] - int(donor["horizon"]) - delay :
-                donor_target.shape[0] - int(donor["horizon"]),
-                driver,
-            ],
-            target[start:context, driver],
+        donor_context = donor_target.shape[0] - int(donor["horizon"])
+        donor_start = donor_context - width
+        donor_reference = donor_target[:donor_start, driver]
+        clean_reference = target[:start, driver]
+        donor_center = float(np.mean(donor_reference))
+        donor_scale = max(float(np.std(donor_reference)), 1e-12)
+        clean_center = float(np.mean(clean_reference))
+        clean_scale = max(float(np.std(clean_reference)), 1e-12)
+        target[start:context, driver] = (
+            (
+                donor_target[donor_start:donor_context, driver]
+                - donor_center
+            )
+            * clean_scale
+            / donor_scale
+            + clean_center
         )
-        ablation_type = "affine_matched_forecast_covering_driver_donor"
+        ablation_type = (
+            "invariant_prefix_affine_matched_effect_trigger_driver_donor"
+        )
 
     result = json.loads(json.dumps(clean))
     result["schema_version"] = "paper_v8_input_ablation_sample.v1"
@@ -3641,7 +3663,14 @@ def multivariate_input_ablation_sample(
         "replaced_history_slice": replaced_slice,
         "focal_history_unchanged": True,
         "future_unchanged": True,
-        "affine_matched_mean_and_std": True,
+        "affine_matched_mean_and_std": (
+            capability_id == "common_factor"
+        ),
+        "affine_reference_scope": (
+            "replaced_segment"
+            if capability_id == "common_factor"
+            else "pair_invariant_driver_prefix"
+        ),
     }
     result["target"] = target.tolist()
     result["target_sha256"] = target_and_covariate_sha256(
@@ -3731,6 +3760,17 @@ def _shift_generation_metadata(
         result["counterfactual_driver_slice"] = [
             context_length - delay,
             context_length,
+        ]
+        effect_steps = int(
+            result.get("counterfactual_effect_forecast_steps", HORIZON)
+        )
+        result["counterfactual_effect_future_slice"] = [
+            context_length,
+            context_length + effect_steps,
+        ]
+        result["counterfactual_unaffected_future_slice"] = [
+            context_length + effect_steps,
+            context_length + HORIZON,
         ]
     elif capability_id == "regime_switching":
         result["cut_points"] = [

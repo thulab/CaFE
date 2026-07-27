@@ -443,7 +443,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v14",
+        "schema_version": "paper_v8_experiment_protocol.v19",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -1044,7 +1044,7 @@ def reusable_analysis_manifest(
         if not bool(inference_manifest.get("complete")):
             return False
         if analysis_manifest.get("schema_version") != (
-            "paper_v8_analysis_manifest.v4"
+            "paper_v8_analysis_manifest.v5"
         ):
             return False
         if str(analysis_manifest.get("dataset_id")) != dataset_id:

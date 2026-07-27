@@ -13,12 +13,13 @@ from synthetic_feature_profile import (
     regime_sparse_transition_score,
     ridge_holdout_prediction,
     robust_scale,
+    safe_corr,
     seasonal_modulation_features,
     spectral_time_scale_features,
 )
 
 
-FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v7"
+FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v8"
 LOCAL_TREND_WINDOW = 96
 LOCAL_TREND_HARMONIC_COUNT = 6
 LOCAL_TREND_MAX_REMOVED_PERIOD = 84.0
@@ -446,6 +447,67 @@ def _paper_v8_cross_series_incremental_r2(
     return float(np.mean(corrected))
 
 
+def _paper_v8_cross_series_effect_memory(
+    values: np.ndarray,
+    *,
+    max_lag: int,
+) -> float:
+    """Estimate post-onset cross-channel memory from a lag profile.
+
+    The strongest ordered source/destination edge defines the onset.  The
+    normalized absolute-correlation mass over the next twelve lags describes
+    how much of that edge persists after onset.  This is a bounded,
+    history-only nuisance coordinate; the generator maps it to a stable
+    response-state persistence rather than using an internal default.
+    """
+
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] < 2:
+        return 0.0
+    lag_limit = min(
+        max(2, int(max_lag)),
+        48,
+        max(2, matrix.shape[0] // 5),
+    )
+    scaled = np.column_stack(
+        [robust_scale(matrix[:, index]) for index in range(matrix.shape[1])]
+    )
+    best_peak = 0.0
+    best_profile: np.ndarray | None = None
+    best_lag = 0
+    for source in range(scaled.shape[1]):
+        for destination in range(scaled.shape[1]):
+            if source == destination:
+                continue
+            profile = np.asarray(
+                [
+                    abs(
+                        safe_corr(
+                            scaled[:-lag, source],
+                            scaled[lag:, destination],
+                        )
+                    )
+                    for lag in range(1, lag_limit + 1)
+                ],
+                dtype=float,
+            )
+            if not np.isfinite(profile).any():
+                continue
+            peak_index = int(np.nanargmax(profile))
+            peak = float(profile[peak_index])
+            if peak > best_peak:
+                best_peak = peak
+                best_profile = profile
+                best_lag = peak_index
+    if best_profile is None or best_peak <= 1e-8:
+        return 0.0
+    tail = best_profile[best_lag + 1 : best_lag + 13]
+    if not tail.size:
+        return 0.0
+    normalized_tail = np.clip(tail / best_peak, 0.0, 1.0)
+    return float(np.mean(normalized_tail))
+
+
 def v8_feature_vector(
     history: np.ndarray,
     season_length: int | None = None,
@@ -510,6 +572,12 @@ def v8_feature_vector(
                 ),
                 "cross_series_incremental_r2": (
                     _paper_v8_cross_series_incremental_r2(
+                        values,
+                        max_lag=xsd_max_lag,
+                    )
+                ),
+                "cross_series_effect_memory": (
+                    _paper_v8_cross_series_effect_memory(
                         values,
                         max_lag=xsd_max_lag,
                     )

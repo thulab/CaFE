@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 
-STRUCTURED_BASELINE_SCHEMA_VERSION = "paper_v8_structured_baseline.v1"
+STRUCTURED_BASELINE_SCHEMA_VERSION = "paper_v8_structured_baseline.v2"
 STRUCTURED_CAPABILITIES = frozenset(
     {"common_factor", "cross_series_dependence"}
 )
@@ -265,7 +265,7 @@ def _hub_design(
     cross_lag: int,
     own_lag: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    start = max(cross_lag, own_lag)
+    start = max(cross_lag + 1, own_lag)
     rows = []
     for index in range(start, len(values)):
         features = (
@@ -274,7 +274,14 @@ def _hub_design(
                 for offset in range(1, own_lag + 1)
             ]
             if destination == source
-            else [values[index - cross_lag, source]]
+            else [
+                *[
+                    values[index - offset, destination]
+                    for offset in range(1, own_lag + 1)
+                ],
+                values[index - cross_lag, source],
+                values[index - cross_lag - 1, source],
+            ]
         )
         rows.append(features)
     return np.asarray(rows, dtype=float), values[start:, destination]
@@ -317,7 +324,14 @@ def _predict_hub_one(
                 for offset in range(1, own_lag + 1)
             ]
             if destination == source
-            else [history[-cross_lag, source]]
+            else [
+                *[
+                    history[-offset, destination]
+                    for offset in range(1, own_lag + 1)
+                ],
+                history[-cross_lag, source],
+                history[-cross_lag - 1, source],
+            ]
         )
         predictions.append(
             float(
@@ -405,7 +419,7 @@ def _hub_chronological_validation(
                     if denominator > 1e-12
                     else -np.inf
                 )
-            score = float(np.mean(holdout_r2))
+            score = float(np.min(holdout_r2))
             if np.isfinite(score):
                 edge_candidates.append((score, source, cross_lag))
     if not edge_candidates:
@@ -649,7 +663,9 @@ def _hub_var_forecast(
         "context_length": int(len(history)),
         "horizon": int(horizon),
         "target_dim": int(history.shape[1]),
-        "model_structure": "blind_single_source_sparse_lag_hub_var",
+        "model_structure": (
+            "blind_single_source_two_tap_persistent_arx_hub_var"
+        ),
         "validation_policy": (
             "final_25pct_chronological_one_step_max_gain_over_diagonal_ar"
         ),
@@ -761,7 +777,9 @@ def forecast_cross_counterfactual_pair(
         "context_length": context,
         "horizon": horizon,
         "target_dim": int(first_history.shape[1]),
-        "model_structure": "blind_shared_fit_counterfactual_ardl",
+        "model_structure": (
+            "blind_shared_fit_counterfactual_two_tap_persistent_ardl"
+        ),
         "generator_metadata_used_for_fitting": False,
         "validation_policy": "blind_source_lag_holdout_r2_then_ridge",
         "lag_candidates": list(lag_candidates(invariant_stop, horizon)),
@@ -790,38 +808,25 @@ def forecast_cross_counterfactual_pair(
             own_lag=own_lag,
             alpha=alpha,
         )
-        source_extended = standardized_invariant[:, source : source + 1]
-        source_coefficients = [coefficients[source]]
-        shared_source_future = _recursive_forecast(
-            source_extended,
-            source_coefficients,
-            lag=own_lag,
-            diagonal=True,
-            horizon=horizon,
-        )[:, 0]
-
         forecasts = []
         for history in (first_history, second_history):
             standardized_history = (history - center) / scale
-            standardized_forecast = np.empty(
-                (horizon, history.shape[1]),
+            extended = standardized_history.copy()
+            member_forecast = []
+            for step in range(horizon):
+                next_value = _predict_hub_one(
+                    extended,
+                    coefficients,
+                    source=source,
+                    cross_lag=cross_lag,
+                    own_lag=own_lag,
+                )
+                member_forecast.append(next_value)
+                extended = np.vstack([extended, next_value])
+            standardized_forecast = np.asarray(
+                member_forecast,
                 dtype=float,
             )
-            standardized_forecast[:, source] = shared_source_future
-            for destination in range(history.shape[1]):
-                if destination == source:
-                    continue
-                coefficient = coefficients[destination]
-                for step in range(horizon):
-                    source_time = context - cross_lag + step
-                    source_value = (
-                        standardized_history[source_time, source]
-                        if source_time < context
-                        else shared_source_future[source_time - context]
-                    )
-                    standardized_forecast[step, destination] = (
-                        coefficient[0] + coefficient[1] * source_value
-                    )
             forecasts.append(center + standardized_forecast * scale)
         common_diagnostics = {
             **diagnostics,
@@ -837,10 +842,14 @@ def forecast_cross_counterfactual_pair(
             "validation_normalized_mae": float(validation_mae),
             "blind_edge_mean_holdout_r2": float(discovery_r2),
             "validation_training_rows": int(training_rows),
-            "counterfactual_active_prefix_steps": int(
+            "counterfactual_active_prefix_steps": int(horizon),
+            "counterfactual_direct_driver_steps": int(
                 min(cross_lag, horizon)
             ),
-            "counterfactual_tail_driver_forecast_shared": True,
+            "counterfactual_tail_driver_forecast_shared": False,
+            "counterfactual_driver_forecast_policy": (
+                "shared_coefficients_member_history_state"
+            ),
         }
         return (
             StructuredForecast(forecasts[0], common_diagnostics),

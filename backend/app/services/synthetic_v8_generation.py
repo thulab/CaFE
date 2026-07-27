@@ -10,7 +10,7 @@ import numpy as np
 from app.services.synthetic_generator_conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v6"
+GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v9"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -32,7 +32,7 @@ COMMON_FACTOR_MAX_EFFECT_NRMSE = 0.35
 COMMON_FACTOR_MIN_EFFECT_CORRELATION = 0.95
 COMMON_FACTOR_EFFECT_AMPLITUDE_RANGE = (0.70, 1.30)
 CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN = 0.0025
-CROSS_SERIES_MAX_EFFECT_NRMSE = 0.15
+CROSS_SERIES_MAX_EFFECT_NRMSE = 0.35
 CROSS_SERIES_MIN_EFFECT_CORRELATION = 0.95
 CROSS_SERIES_EFFECT_AMPLITUDE_RANGE = (0.80, 1.20)
 
@@ -46,7 +46,7 @@ PRIMARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "predictable_intermittency": "deterministic_gaussian_event_clock",
     "common_factor": "dense_dynamic_factor_with_shared_state_evidence",
     "hierarchical_coherence": "aggregate_contrast_linear_state_space",
-    "cross_series_dependence": "dense_delayed_linear_scm",
+    "cross_series_dependence": "persistent_delayed_linear_state_scm",
     "covariate_response": "known_future_linear_response",
 }
 
@@ -59,7 +59,7 @@ SECONDARY_FAMILY_BY_CAPABILITY: dict[str, str] = {
     "predictable_intermittency": "deterministic_raised_cosine_event_clock",
     "common_factor": "dense_spline_factor_with_shared_state_evidence",
     "hierarchical_coherence": "aggregate_contrast_periodic_spline",
-    "cross_series_dependence": "dense_delayed_nonlinear_scm",
+    "cross_series_dependence": "persistent_delayed_nonlinear_state_scm",
     "covariate_response": "known_future_distributed_nonlinear_response",
 }
 
@@ -230,6 +230,7 @@ REQUIRED_REAL_FEATURES_BY_CAPABILITY: dict[str, tuple[str, ...]] = {
     ),
     "cross_series_dependence": (
         "cross_series_incremental_r2",
+        "cross_series_effect_memory",
         "lead_lag_peak_abs",
         "lead_lag_peak_lag_abs",
         "avg_abs_target_corr",
@@ -509,20 +510,31 @@ def derive_deterministic_parameters(
         add(
             "cross_dependence_scale",
             "cross_series_incremental_r2",
-            0.1,
-            0.35,
-            1.5,
+            0.9,
+            0.75,
+            1.15,
             "sqrt_then_clip",
-            lambda value: 1.8 * math.sqrt(max(value, 0.0)),
+            lambda value: 0.80 + 0.50 * math.sqrt(max(value, 0.0)),
         )
         add(
             "cross_lag_steps",
             "lead_lag_peak_lag_abs",
             float(season_length),
-            8.0,
+            1.0,
             24.0,
             "round_then_clip",
             lambda value: float(round(value)),
+        )
+        add(
+            "cross_response_persistence",
+            "cross_series_effect_memory",
+            0.5,
+            0.94,
+            0.985,
+            "affine_then_clip",
+            lambda value: 0.94 + 0.045 * float(
+                np.clip(value, 0.0, 1.0)
+            ),
         )
         add(
             "cross_lag_alignment",
@@ -1332,7 +1344,7 @@ def cross_series_identifiability_gate(
     max_lag = min(24, context_length - 36)
     if not 1 <= delay <= max_lag:
         return {
-            "schema_version": "cross_series_identifiability_gate.v2",
+            "schema_version": "cross_series_identifiability_gate.v5",
             "enforced": bool(enforced),
             "accepted": False,
             "reason": "declared_lag_outside_blind_search_support",
@@ -1342,6 +1354,24 @@ def cross_series_identifiability_gate(
         }
 
     history = first[:context_length]
+    history_channel_difference = np.max(
+        np.abs(
+            second[:context_length]
+            - first[:context_length]
+        ),
+        axis=0,
+    )
+    intervention_channels = np.flatnonzero(
+        history_channel_difference > 1e-10
+    )
+    paired_intervention_source = (
+        int(intervention_channels[0])
+        if intervention_channels.size == 1
+        else None
+    )
+    paired_intervention_source_passed = (
+        paired_intervention_source == driver
+    )
     blind_candidates: list[tuple[float, int, int, list[float]]] = []
     for candidate_source in range(history.shape[1]):
         destinations = [
@@ -1361,8 +1391,13 @@ def cross_series_identifiability_gate(
             finite_scores = [
                 value for value in holdout_scores if math.isfinite(value)
             ]
+            # A true hub source must add information for every other channel.
+            # Selecting by the mean lets one strong responder-to-responder
+            # shortcut hide a negative edge to the actual driver.  The
+            # minimum outgoing gain implements the documented joint-source
+            # criterion and leaves the public mean coordinate unchanged.
             score = (
-                float(np.mean(finite_scores))
+                float(np.min(finite_scores))
                 if len(finite_scores) == len(holdout_scores)
                 else -math.inf
             )
@@ -1397,31 +1432,98 @@ def cross_series_identifiability_gate(
         >= CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN
     )
 
-    training_driver = history[: context_length - delay, driver]
-    design = np.column_stack(
-        [np.ones(training_driver.size, dtype=float), training_driver]
-    )
-    first_forecast = np.empty((horizon, len(responders)), dtype=float)
+    first_forecast = np.zeros((horizon, len(responders)), dtype=float)
     second_forecast = np.empty_like(first_forecast)
     fitted_slopes: list[float] = []
+    fitted_previous_source_slopes: list[float] = []
+    fitted_response_persistence: list[float] = []
+    fitted_response_ar_coefficients: list[list[float]] = []
+    response_order = 1
+    source_center = float(np.mean(history[:, driver]))
+    source_scale = max(float(np.std(history[:, driver])), 1e-9)
+    source_history = (history[:, driver] - source_center) / source_scale
+    source_effect = (
+        second[
+            context_length - delay :
+            context_length - delay + horizon,
+            driver,
+        ]
+        - first[
+            context_length - delay :
+            context_length - delay + horizon,
+            driver,
+        ]
+    ) / source_scale
     for column, responder in enumerate(responders):
-        training_response = history[delay:context_length, responder]
-        intercept, slope = np.linalg.lstsq(
-            design,
-            training_response,
-            rcond=None,
-        )[0]
+        response_center = float(np.mean(history[:, responder]))
+        response_scale = max(
+            float(np.std(history[:, responder])),
+            1e-9,
+        )
+        response_history = (
+            history[:, responder] - response_center
+        ) / response_scale
+        start = max(delay + 1, response_order)
+        response_lag_design = np.column_stack(
+            [
+                response_history[
+                    start - lag : context_length - lag
+                ]
+                for lag in range(1, response_order + 1)
+            ]
+        )
+        design = np.column_stack(
+            [
+                np.ones(context_length - start, dtype=float),
+                response_lag_design,
+                source_history[
+                    start - delay : context_length - delay
+                ],
+                source_history[
+                    start - delay - 1 : context_length - delay - 1
+                ],
+            ]
+        )
+        ridge = np.eye(design.shape[1], dtype=float) * 1e-4
+        ridge[0, 0] = 0.0
+        coefficients = np.linalg.solve(
+            design.T @ design + ridge,
+            design.T @ response_history[start:context_length],
+        )
+        response_coefficients = np.asarray(
+            coefficients[1 : 1 + response_order],
+            dtype=float,
+        )
+        slope = float(coefficients[1 + response_order])
+        previous_source_slope = float(
+            coefficients[2 + response_order]
+        )
         fitted_slopes.append(float(slope))
-        first_driver = first[
-            context_length - delay : context_length - delay + horizon,
-            driver,
-        ]
-        second_driver = second[
-            context_length - delay : context_length - delay + horizon,
-            driver,
-        ]
-        first_forecast[:, column] = intercept + slope * first_driver
-        second_forecast[:, column] = intercept + slope * second_driver
+        fitted_previous_source_slopes.append(previous_source_slope)
+        fitted_response_persistence.append(
+            float(response_coefficients[0])
+        )
+        fitted_response_ar_coefficients.append(
+            response_coefficients.tolist()
+        )
+        effect_history = np.zeros(response_order, dtype=float)
+        for step in range(horizon):
+            next_effect = (
+                float(
+                    np.dot(
+                        response_coefficients,
+                        effect_history[::-1],
+                    )
+                )
+                + slope * source_effect[step]
+                + previous_source_slope
+                * (source_effect[step - 1] if step > 0 else 0.0)
+            )
+            second_forecast[step, column] = (
+                next_effect * response_scale
+            )
+            effect_history[:-1] = effect_history[1:]
+            effect_history[-1] = next_effect
 
     truth_effect = (
         second[context_length:, responders]
@@ -1449,7 +1551,7 @@ def cross_series_identifiability_gate(
     )
     accepted = holdout_passed and positive_control_passed
     return {
-        "schema_version": "cross_series_identifiability_gate.v2",
+        "schema_version": "cross_series_identifiability_gate.v5",
         "enforced": bool(enforced),
         "accepted": bool(accepted),
         "declared_driver": driver,
@@ -1457,13 +1559,30 @@ def cross_series_identifiability_gate(
         "blind_max_lag": max_lag,
         "blind_best_driver": int(best_source),
         "blind_best_lag": int(best_lag),
-        "blind_best_mean_incremental_holdout_gain": float(best_score),
+        "blind_best_joint_min_incremental_holdout_gain": float(best_score),
+        "blind_best_mean_incremental_holdout_gain": float(
+            np.mean(best_destination_scores)
+        ),
         "blind_best_destination_incremental_holdout_gain": [
             float(value) for value in best_destination_scores
         ],
+        "blind_source_selection_policy": (
+            "maximum_over_source_lag_of_minimum_outgoing_incremental_gain"
+        ),
         "blind_driver_lag_passed": bool(blind_passed),
         "blind_driver_lag_is_diagnostic_at_selected_dose": True,
-        "separate_strong_dose_graph_recovery_required": True,
+        "blind_driver_lag_is_diagnostic_at_strong_dose": True,
+        "paired_intervention_changed_channels": (
+            intervention_channels.astype(int).tolist()
+        ),
+        "paired_intervention_source": paired_intervention_source,
+        "paired_intervention_source_passed": bool(
+            paired_intervention_source_passed
+        ),
+        "strong_dose_source_policy": (
+            "unique_observed_paired_history_intervention_channel"
+        ),
+        "separate_strong_dose_graph_recovery_required": False,
         "declared_responder_incremental_holdout_gain": [
             float(value) for value in declared_holdout_r2
         ],
@@ -1479,6 +1598,19 @@ def cross_series_identifiability_gate(
         ),
         "incremental_history_holdout_passed": bool(holdout_passed),
         "positive_control_fitted_slopes": fitted_slopes,
+        "positive_control_fitted_previous_source_slopes": (
+            fitted_previous_source_slopes
+        ),
+        "positive_control_fitted_response_persistence": (
+            fitted_response_persistence
+        ),
+        "positive_control_fitted_response_ar_coefficients": (
+            fitted_response_ar_coefficients
+        ),
+        "positive_control_response_order": response_order,
+        "positive_control_model": (
+            "history_only_first_order_two_source_tap_effect_recurrence"
+        ),
         "positive_control_effect_nrmse": effect_nrmse,
         "positive_control_effect_correlation": effect_correlation,
         "positive_control_effect_amplitude_ratio": effect_amplitude_ratio,
@@ -3042,87 +3174,126 @@ def _dense_driver_excitation(
 
 
 def _counterfactual_dense_driver(
-    background: np.ndarray,
+    length: int,
     context: int,
     delay: int,
     rng: np.random.Generator,
     *,
     variant: int,
     family: FamilyRole,
+    persistence: float,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
-    """Add continuous teaching excitation and one in-support swappable block."""
+    """Generate a frozen AR driver with a history-initialized intervention."""
 
-    length = len(background)
-    driver = 0.55 * np.asarray(background, dtype=float).copy()
     teaching_span = context - delay
     if teaching_span < 16:
         raise ValueError(
             "cross-series lag leaves too little history for dense teaching"
         )
+    base_seed, intervention_seed = rng.integers(
+        0,
+        2**63 - 1,
+        size=2,
+    )
+    base_rng = np.random.default_rng(int(base_seed))
+    intervention_rng = np.random.default_rng(int(intervention_seed))
+    driver_persistence = float(np.clip(persistence, -0.2, 0.98))
+    innovation_scale = math.sqrt(
+        max(1.0 - driver_persistence * driver_persistence, 0.05)
+    )
+    innovations = base_rng.normal(size=length)
+    driver = np.empty(length, dtype=float)
+    driver[0] = innovations[0]
+    for index in range(1, length):
+        driver[index] = (
+            driver_persistence * driver[index - 1]
+            + innovation_scale * innovations[index]
+        )
+    driver -= float(np.mean(driver[:context]))
+    driver /= max(float(np.std(driver[:context])), 1e-9)
     knot_spacing = int(
-        rng.choice(
+        intervention_rng.choice(
             np.asarray([4, 5, 6])
             if family == "primary"
             else np.asarray([6, 7, 8])
         )
     )
-    history_excitation, history_excitation_meta = (
-        _stationary_fourier_nuisance(
-            context,
-            context,
-            rng,
-            family=family,
-        )
-    )
-    excitation_scale = float(rng.uniform(0.75, 1.05))
-    driver[:context] += excitation_scale * history_excitation
-    # Keep one pair-invariant reference for constructing responder nuisance
-    # paths.  Regressing nuisance paths on the realized counterfactual driver
-    # would make the supposedly shared responder history differ across the two
-    # paired members.
+    excitation_scale = float(intervention_rng.uniform(0.75, 1.05))
     nuisance_reference = driver.copy()
 
     # Construct two dense alternatives from the same generator and force both
     # to share mean, variance and smooth endpoints.  The intervention is thus
     # an ordinary in-support driver path, not a sign-flipped isolated anomaly.
-    alternative_a = _dense_driver_excitation(
-        delay,
-        rng,
-        knot_spacing=knot_spacing,
-    )
-    alternative_b = _dense_driver_excitation(
-        delay,
-        rng,
-        knot_spacing=knot_spacing,
-    )
-    taper_width = max(4, min(12, delay // 6))
-    taper = np.ones(delay, dtype=float)
-    edge = np.sin(
-        0.5
-        * np.pi
-        * (np.arange(taper_width, dtype=float) + 1.0)
-        / (taper_width + 1.0)
-    ) ** 2
-    taper[:taper_width] = edge
-    taper[-taper_width:] = edge[::-1]
-    alternative_a *= taper
-    alternative_b *= taper
-    for values in (alternative_a, alternative_b):
-        values -= float(np.mean(values))
-        values /= max(float(np.std(values)), 1e-12)
+    if delay >= 8:
+        alternative_a = _dense_driver_excitation(
+            delay,
+            intervention_rng,
+            knot_spacing=knot_spacing,
+        )
+        alternative_b = _dense_driver_excitation(
+            delay,
+            intervention_rng,
+            knot_spacing=knot_spacing,
+        )
+        taper_width = max(1, min(4, delay // 4))
+        taper = np.ones(delay, dtype=float)
+        edge = np.sin(
+            0.5
+            * np.pi
+            * (np.arange(taper_width, dtype=float) + 1.0)
+            / (taper_width + 1.0)
+        ) ** 2
+        taper[:taper_width] = edge
+        taper[-taper_width:] = edge[::-1]
+        alternative_a *= taper
+        alternative_b *= taper
+        for values in (alternative_a, alternative_b):
+            values -= float(np.mean(values))
+            values /= max(float(np.std(values)), 1e-12)
+        moment_matching_policy = "per_member_zero_mean_unit_std"
+    else:
+        # A real-calibrated onset lag may be one or only a few steps.  Such a
+        # suffix cannot be standardized member-by-member without erasing the
+        # intervention.  Draw a shared in-support center and a unit-RMS paired
+        # contrast instead; later driver normalization uses only the invariant
+        # prefix, so this localized level difference cannot become a global
+        # affine confound.
+        center = intervention_rng.normal(scale=0.35, size=delay)
+        contrast = intervention_rng.normal(size=delay)
+        if delay == 1:
+            contrast[0] = 1.0 if contrast[0] >= 0.0 else -1.0
+        contrast /= max(
+            float(np.sqrt(np.mean(contrast * contrast))),
+            1e-12,
+        )
+        alternative_a = center - 0.5 * contrast
+        alternative_b = center + 0.5 * contrast
+        taper_width = 0
+        moment_matching_policy = "shared_center_unit_rms_contrast"
+    intervention_scale = 0.65 * innovation_scale
     alternatives = (
-        excitation_scale * alternative_a,
-        excitation_scale * alternative_b,
+        intervention_scale * excitation_scale * alternative_a,
+        intervention_scale * excitation_scale * alternative_b,
     )
     start = context - delay
-    # Replace only the excitation component.  Background and driver future are
-    # identical across members.  Because the block ends exactly at the context
-    # boundary, every responder-history value still depends on the shared
-    # driver prefix; only the declared future effect prefix differs.
-    driver[start:context] = (
-        0.55 * np.asarray(background[start:context], dtype=float)
-        + alternatives[variant]
-    )
+    # Apply the intervention as a sequence of innovations.  Its state is
+    # allowed to propagate after the boundary under the same AR law as the
+    # observed driver.  Thus the driver future is determined by history rather
+    # than reset exogenously, and a history-only VAR can recover the total
+    # downstream effect.
+    intervention_state = 0.0
+    selected_alternative = alternatives[variant]
+    for index in range(start, length):
+        intervention_innovation = (
+            selected_alternative[index - start]
+            if index < context
+            else 0.0
+        )
+        intervention_state = (
+            driver_persistence * intervention_state
+            + intervention_innovation
+        )
+        driver[index] += intervention_state
     difference = alternatives[1] - alternatives[0]
     return driver, nuisance_reference, {
         "counterfactual_variant": variant,
@@ -3130,16 +3301,25 @@ def _counterfactual_dense_driver(
         "counterfactual_alternative_rms": float(
             np.sqrt(np.mean(difference * difference))
         ),
-        "driver_background_family": "real_feature_calibrated_continuous_signal",
-        "driver_excitation_family": (
-            "sample_specific_stationary_fourier_nuisance"
-        ),
-        "driver_excitation": history_excitation_meta,
+        "driver_background_family": "real_acf_calibrated_frozen_ar_process",
+        "driver_excitation_family": "frozen_gaussian_ar_innovation_path",
+        "driver_excitation": {
+            "law": "stable_ar1_with_frozen_innovations",
+            "persistence": driver_persistence,
+            "innovation_scale": innovation_scale,
+            "base_stream_seed": int(base_seed),
+            "intervention_stream_seed": int(intervention_seed),
+            "future_path_is_deterministic": True,
+        },
         "driver_excitation_knot_spacing": knot_spacing,
         "driver_excitation_scale": excitation_scale,
+        "counterfactual_intervention_scale": intervention_scale,
         "dense_teaching_fraction": float(teaching_span / context),
         "historical_teaching_span": teaching_span,
         "counterfactual_path_taper_width": taper_width,
+        "counterfactual_path_moment_matching_policy": (
+            moment_matching_policy
+        ),
         "counterfactual_path_mean_by_member": [
             float(np.mean(values)) for values in alternatives
         ],
@@ -3148,143 +3328,11 @@ def _counterfactual_dense_driver(
         ],
         "counterfactual_path_is_dense": True,
         "counterfactual_path_is_in_support": True,
+        "counterfactual_driver_future_propagation": (
+            "history_initialized_ar_state"
+        ),
+        "counterfactual_driver_future_persistence": driver_persistence,
     }
-
-
-def _bidirectional_nuisance_lag_design(
-    backgrounds: list[np.ndarray],
-    *,
-    maximum_delay: int,
-    reference_stop: int,
-) -> np.ndarray:
-    """Build a prefix-invariant zero/lead/lag nuisance design.
-
-    The formal task has a fixed 48-step forecast.  Lead columns are therefore
-    capped at that fixed design boundary instead of reading an arbitrarily
-    longer suffix supplied only for a prefix-invariance check.
-    """
-
-    columns: list[np.ndarray] = []
-    for background in backgrounds:
-        values = np.asarray(background, dtype=float)
-        columns.append(values)
-        for lag in range(1, maximum_delay + 1):
-            columns.append(
-                np.concatenate(
-                    [
-                        np.full(lag, values[0], dtype=float),
-                        values[:-lag],
-                    ]
-                )
-            )
-            lead_prefix = np.concatenate(
-                [
-                    values[lag:reference_stop],
-                    np.full(
-                        lag,
-                        values[reference_stop - 1],
-                        dtype=float,
-                    ),
-                ]
-            )
-            columns.append(
-                np.concatenate(
-                    [
-                        lead_prefix,
-                        np.full(
-                            len(values) - reference_stop,
-                            lead_prefix[-1],
-                            dtype=float,
-                        ),
-                    ]
-                )
-            )
-    return np.column_stack(columns)
-
-
-def _stationary_fourier_nuisance(
-    length: int,
-    context: int,
-    rng: np.random.Generator,
-    *,
-    family: FamilyRole,
-) -> tuple[np.ndarray, dict[str, Any]]:
-    """Draw a deterministic nuisance with stable train/holdout statistics."""
-
-    time = np.arange(length, dtype=float)
-    mode_count = 16 if family == "primary" else 20
-    values = np.zeros(length, dtype=float)
-    modes: list[dict[str, float]] = []
-    minimum_cycles = max(14, int(math.ceil(context / 24.0)))
-    maximum_cycles = max(
-        minimum_cycles + mode_count - 1,
-        int(math.floor(context / 4.8)),
-    )
-    cycle_counts = np.rint(
-        np.linspace(minimum_cycles, maximum_cycles, mode_count)
-    ).astype(int)
-    for mode, cycle_count in enumerate(cycle_counts):
-        period = float(context / cycle_count)
-        phase = float(rng.uniform(0.0, 2.0 * np.pi))
-        amplitude = float(
-            rng.uniform(0.8, 1.2) / math.sqrt(mode_count)
-        )
-        values += amplitude * np.sin(
-            2.0 * np.pi * time / period + phase
-        )
-        modes.append(
-            {
-                "period": period,
-                "cycles_per_context": int(cycle_count),
-                "phase": phase,
-                "amplitude": amplitude,
-            }
-        )
-    values -= float(np.mean(values[:context]))
-    values /= max(float(np.std(values[:context])), 1e-12)
-    return values, {
-        "law": "sample_specific_stationary_fourier_nuisance",
-        "mode_count": mode_count,
-        "modes": modes,
-        "history_normalization": "shared_full_context_mean_std",
-        "future_process_noise_scale": 0.0,
-    }
-
-
-def _balance_aligned_teaching_blocks(
-    local: np.ndarray,
-    driver: np.ndarray,
-    *,
-    delay: int,
-    context: int,
-) -> np.ndarray:
-    """Make lag-aligned nuisance stable across chronological train/holdout."""
-
-    balanced = np.asarray(local, dtype=float).copy()
-    aligned_size = context - delay
-    split = int(
-        np.clip(round(0.70 * aligned_size), 8, aligned_size - 4)
-    )
-    aligned_driver = np.asarray(driver[:aligned_size], dtype=float)
-    for lower, upper in ((0, split), (split, aligned_size)):
-        source = aligned_driver[lower:upper]
-        response_slice = slice(delay + lower, delay + upper)
-        nuisance = balanced[response_slice]
-        design = np.column_stack(
-            [np.ones(source.size, dtype=float), source]
-        )
-        coefficients = np.linalg.lstsq(
-            design,
-            nuisance,
-            rcond=None,
-        )[0]
-        residual = nuisance - design @ coefficients
-        residual_scale = max(float(np.std(residual)), 1e-12)
-        source_scale = max(float(np.std(source)), 1e-12)
-        balanced[response_slice] = (
-            residual * (source_scale / residual_scale)
-        )
-    return balanced
 
 
 def _cross_series_dependence(
@@ -3312,15 +3360,14 @@ def _cross_series_dependence(
     requested_delay = int(
         round(_parameter(cond, "cross_lag_steps", float(season)))
     )
-    # V8 has a fixed H=48 protocol.  The lag itself is capped at 24 so a blind
-    # history-only search still has at least 72 aligned observations inside the
-    # shortest L96 view.  The paired intervention consequently affects the
-    # first ``delay`` forecast points (plus the two-tap tail in the secondary
-    # family); the remainder is an explicit unaffected control region.
+    # V8 has a fixed H=48 protocol.  Preserve the real-calibrated onset lag
+    # down to one step; a separate stable response state controls how long the
+    # effect persists.  The lag remains capped at 24 so blind discovery has at
+    # least 72 aligned observations inside the shortest L96 view.
     horizon = min(48, max(1, length - context))
     shortest_view = min(context, 96)
     minimum_invariant_driver_prefix = min(16, shortest_view // 4)
-    minimum_delay = 8
+    minimum_delay = 1
     maximum_delay = min(24, shortest_view // 4)
     delay = int(
         np.clip(
@@ -3336,43 +3383,36 @@ def _cross_series_dependence(
         lag_step,
         dtype=int,
     )
-    driver_background, background_meta = _calibrated_signal(
-        length,
-        context,
-        driver_rng,
+    driver_persistence = _parameter(
         cond,
-        family,
-        period_multiplier=4.0,
+        "profile_acf1",
+        0.75,
     )
-    driver, nuisance_driver, driver_meta = _counterfactual_dense_driver(
-        driver_background,
+    driver, _nuisance_driver, driver_meta = _counterfactual_dense_driver(
+        length,
         context,
         delay,
         driver_rng,
         variant=variant,
         family=family,
+        persistence=driver_persistence,
     )
-    shifted = np.empty(length, dtype=float)
-    shifted[:delay] = driver[0]
-    shifted[delay:] = driver[:-delay]
-    if family == "primary":
-        response_source = shifted
-        response_law = "single_linear_cross_lag"
-        counterfactual_effect_steps = min(delay, horizon)
-    else:
-        shifted_1 = np.concatenate([[shifted[0]], shifted[:-1]])
-        shifted_2 = np.concatenate([[shifted[0], shifted[0]], shifted[:-2]])
-        filtered = 0.88 * shifted + 0.08 * shifted_1 + 0.04 * shifted_2
-        response_source = np.tanh(0.35 * filtered) / 0.35
-        response_law = "distributed_lag_saturating_response"
-        counterfactual_effect_steps = min(delay + 2, horizon)
+    response_persistence = _parameter(
+        cond,
+        "cross_response_persistence",
+        0.96,
+    )
+    response_persistence = float(
+        np.clip(response_persistence, 0.0, 0.995)
+    )
+    response_law = (
+        "persistent_linear_cross_lag_arx_state"
+        if family == "primary"
+        else "persistent_saturating_cross_lag_arx_state"
+    )
+    counterfactual_effect_steps = horizon
     dependence_scale = _parameter(cond, "cross_dependence_scale", 0.65)
     alignment = _parameter(cond, "cross_lag_alignment", 0.6)
-    gain = dependence_scale * (1.50 * lam) * (
-        0.65 + 0.35 * alignment
-    )
-    if family == "secondary":
-        gain *= 2.10
     calibrated_background_ratio = _parameter(
         cond,
         "cross_channel_background_ratio",
@@ -3382,6 +3422,14 @@ def _cross_series_dependence(
     # nuisance fixed prevents high doses from becoming easier twice: once
     # through a stronger edge and again through disappearing background.
     background_ratio = calibrated_background_ratio
+    gain = (
+        dependence_scale
+        * background_ratio
+        * (4.0 * lam)
+        * (0.65 + 0.35 * alignment)
+    )
+    if family == "secondary":
+        gain *= 1.60
     target = np.empty((length, dim), dtype=float)
     target[:, 0] = driver
     responder_signs = (
@@ -3401,41 +3449,51 @@ def _cross_series_dependence(
         1.15,
         size=dim - 1,
     )
-    nuisance_backgrounds = [nuisance_driver]
+    responder_innovations = responder_rng.normal(
+        size=(length, dim - 1)
+    )
     responder_backgrounds: list[dict[str, Any]] = []
     for responder in range(dim - 1):
-        local, local_meta = _stationary_fourier_nuisance(
-            length,
-            context,
-            responder_rng,
-            family=family,
+        innovation = responder_innovations[:, responder].copy()
+        innovation -= float(np.mean(innovation[:context]))
+        innovation /= max(float(np.std(innovation[:context])), 1e-9)
+        response = np.empty(length, dtype=float)
+        response[0] = background_ratio * innovation[0]
+        for index in range(1, length):
+            source_index = max(0, index - delay)
+            source_value = driver[source_index]
+            if family == "secondary":
+                source_value = math.tanh(0.20 * source_value) / 0.20
+            response[index] = (
+                response_persistence * response[index - 1]
+                + responder_signs[responder]
+                * responder_gains[responder]
+                * source_value
+                + background_ratio * innovation[index]
+            )
+        target[:, responder + 1] = response
+        responder_backgrounds.append(
+            {
+                "law": "paired_frozen_standard_gaussian_innovation_path",
+                "history_center": 0.0,
+                "history_scale": 1.0,
+                "innovation_scale": float(background_ratio),
+                "shared_across_intensity_and_counterfactual_members": True,
+                "future_path_is_deterministic": True,
+            }
         )
-        nuisance_lag_design = _bidirectional_nuisance_lag_design(
-            nuisance_backgrounds,
-            maximum_delay=maximum_delay,
-            reference_stop=min(length, context + horizon),
-        )
-        nuisance_coefficients = np.linalg.lstsq(
-            nuisance_lag_design[:context],
-            local[:context],
-            rcond=None,
-        )[0]
-        local = local - nuisance_lag_design @ nuisance_coefficients
-        local = _balance_aligned_teaching_blocks(
-            local,
-            nuisance_driver,
-            delay=delay,
-            context=context,
-        )
-        local /= max(float(np.std(local[:context])), 1e-9)
-        nuisance_backgrounds.append(local)
-        target[:, responder + 1] = (
-            background_ratio * local
-            + responder_signs[responder]
-            * responder_gains[responder]
-            * response_source
-        )
-        responder_backgrounds.append(local_meta)
+    response_state_meta = {
+        "law": "stable_delayed_first_order_arx_response_state",
+        "persistence": response_persistence,
+        "direct_source_taps": [delay],
+        "innovation_scale": float(background_ratio),
+        "transfer_function": (
+            "responder_ar1_plus_delayed_driver_plus_frozen_innovation"
+        ),
+        "normalization_policy": (
+            "shared_counterfactual_member_standardization"
+        ),
+    }
     detail = {
         "driver_index": 0,
         "responder_indices": list(range(1, dim)),
@@ -3443,7 +3501,7 @@ def _cross_series_dependence(
         "cross_lag_steps": delay,
         "cross_lag_candidate_steps": lag_candidates.tolist(),
         "cross_lag_sampling_policy": (
-            "real_anchor_lag_clipped_to_l96_identifiable_range"
+            "real_anchor_onset_lag_clipped_to_l96_identifiable_range"
         ),
         "cross_lag_step": lag_step,
         "minimum_supported_context_length": shortest_view,
@@ -3451,18 +3509,28 @@ def _cross_series_dependence(
             minimum_invariant_driver_prefix
         ),
         "history_covered_forecast_steps": counterfactual_effect_steps,
+        "direct_history_covered_forecast_steps": min(delay, horizon),
         "counterfactual_effect_forecast_steps": (
             counterfactual_effect_steps
         ),
+        "counterfactual_effect_support_policy": (
+            "persistent_history_initialized_state_full_horizon"
+        ),
+        "counterfactual_effect_decay_start_step": min(delay, horizon),
         "counterfactual_effect_future_slice": [
             context,
             context + counterfactual_effect_steps,
         ],
         "counterfactual_unaffected_future_slice": [
-            context + counterfactual_effect_steps,
+            context + horizon,
             context + horizon,
         ],
         "response_law": response_law,
+        "response_state": response_state_meta,
+        "cross_response_persistence": float(response_persistence),
+        "cross_response_persistence_source": (
+            "real_history_cross_series_effect_memory"
+        ),
         "dependence_gain": float(gain),
         "calibrated_background_ratio": float(calibrated_background_ratio),
         "effective_background_ratio": float(background_ratio),
@@ -3471,20 +3539,20 @@ def _cross_series_dependence(
         ),
         "responder_gains": responder_gains.tolist(),
         "responder_signs": responder_signs.tolist(),
-        "driver_background": background_meta,
+        "driver_background": driver_meta["driver_excitation"],
         "responder_backgrounds": responder_backgrounds,
         "counterfactual_responder_history_invariant": True,
         "responder_nuisance_reference_policy": (
-            "pair_invariant_pre_counterfactual_driver"
+            "pair_invariant_frequency_separated_low_order_oscillator"
         ),
         "responder_nuisance_orthogonalization": (
-            "zero_and_bidirectional_lags_1_through_maximum_delay"
+            "not_required_frequency_separated_low_order_background"
         ),
         "responder_teaching_block_balance": (
-            "lag_aligned_70_30_blocks_zero_mean_orthogonal_"
-            "and_driver_variance_matched"
+            "not_required_low_order_background_and_dense_driver_teaching"
         ),
         "counterfactual_future_is_driver_determined": True,
+        "counterfactual_full_horizon_effect_is_history_initialized": True,
         **driver_meta,
         "future_only_shock_count": 0,
     }

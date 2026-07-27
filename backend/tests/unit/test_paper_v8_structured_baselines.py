@@ -142,27 +142,40 @@ def test_scope_is_primary_i5_and_rejects_other_samples():
     )
 
 
-def test_shared_pair_ardl_recovers_active_effect_without_tail_leakage():
+def test_shared_pair_ardl_recovers_history_propagated_full_horizon_effect():
     baselines = load_script("paper_v8_structured_baselines")
     rng = np.random.default_rng(17)
     context = 128
     horizon = 12
     lag = 8
-    base_driver = rng.normal(size=context + horizon)
+    driver_persistence = 0.72
+    innovations = rng.normal(size=context + horizon)
+    base_driver = np.empty(context + horizon)
+    base_driver[0] = innovations[0]
+    for index in range(1, len(base_driver)):
+        base_driver[index] = (
+            driver_persistence * base_driver[index - 1]
+            + innovations[index]
+        )
     drivers = []
     for sign in (-1.0, 1.0):
         driver = base_driver.copy()
-        driver[context - lag : context] += sign * np.linspace(
-            -1.0,
-            1.0,
-            lag,
-        )
-        driver[context:] = base_driver[context:]
+        state = 0.0
+        for index in range(context - lag, context + horizon):
+            shock = sign * 0.4 if index < context else 0.0
+            state = driver_persistence * state + shock
+            driver[index] += state
         drivers.append(driver)
     targets = []
     for driver in drivers:
-        shifted = np.concatenate([np.zeros(lag), driver[:-lag]])
-        targets.append(np.column_stack([driver, shifted, -0.8 * shifted]))
+        responses = np.zeros((context + horizon, 2))
+        for index in range(1, context + horizon):
+            source = driver[max(0, index - lag)]
+            responses[index, 0] = 0.20 * responses[index - 1, 0] + source
+            responses[index, 1] = (
+                0.10 * responses[index - 1, 1] - 0.8 * source
+            )
+        targets.append(np.column_stack([driver, responses]))
     samples = [
         {
             **sample(
@@ -182,11 +195,15 @@ def test_shared_pair_ardl_recovers_active_effect_without_tail_leakage():
 
     assert first.diagnostics["selected_source_channel"] == 0
     assert first.diagnostics["selected_lag"] == lag
-    np.testing.assert_allclose(forecast_effect[lag:], 0.0, atol=1e-10)
+    assert np.sqrt(np.mean(truth_effect[-4:] ** 2)) > 0.01
     assert np.corrcoef(
-        truth_effect[:lag].ravel(),
-        forecast_effect[:lag].ravel(),
-    )[0, 1] > 0.99
+        truth_effect.ravel(),
+        forecast_effect.ravel(),
+    )[0, 1] > 0.95
+    assert (
+        np.sqrt(np.mean((forecast_effect - truth_effect) ** 2))
+        / np.sqrt(np.mean(truth_effect**2))
+    ) < 0.25
 
 
 def test_common_shared_pair_dfm_is_blind_and_propagates_latent_state():
