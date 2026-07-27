@@ -40,6 +40,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument(
+        "--analysis-source-experiment-root",
+        type=Path,
+        default=None,
+        help=(
+            "For an analysis-only run, reuse immutable generation and "
+            "inference artifacts from this completed experiment."
+        ),
+    )
+    parser.add_argument(
         "--experiment-id",
         default=None,
         help=(
@@ -142,6 +151,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Reuse a complete analysis shard only after validating its "
             "inference-manifest binding, requested models, and output files."
+        ),
+    )
+    parser.add_argument(
+        "--analysis-profile",
+        choices=("full", "scores_only"),
+        default="full",
+        help=(
+            "Select full diagnostics or score-only analysis containing "
+            "model MASE and primary mechanism scores."
         ),
     )
     parser.add_argument(
@@ -298,7 +316,32 @@ def commands_for_dataset(
         ),
         "analysis": (
             "analyze_paper_v8.py",
-            [*common, *seed, "--models", *args.models],
+            [
+                *common,
+                *seed,
+                "--models",
+                *args.models,
+                "--analysis-profile",
+                str(getattr(args, "analysis_profile", "full")),
+                *(
+                    [
+                        "--source-experiment-root",
+                        str(
+                            getattr(
+                                args,
+                                "analysis_source_experiment_root",
+                            ).resolve()
+                        ),
+                    ]
+                    if getattr(
+                        args,
+                        "analysis_source_experiment_root",
+                        None,
+                    )
+                    is not None
+                    else []
+                ),
+            ],
         ),
     }
 
@@ -344,6 +387,26 @@ def experiment_analysis_arguments(
         str(args.seed_count),
         "--models",
         *args.models,
+        "--analysis-profile",
+        str(getattr(args, "analysis_profile", "full")),
+        *(
+            [
+                "--source-experiment-root",
+                str(
+                    getattr(
+                        args,
+                        "analysis_source_experiment_root",
+                    ).resolve()
+                ),
+            ]
+            if getattr(
+                args,
+                "analysis_source_experiment_root",
+                None,
+            )
+            is not None
+            else []
+        ),
         *(
             ["--reuse-existing-aggregate"]
             if args.resume_analysis
@@ -380,7 +443,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v11",
+        "schema_version": "paper_v8_experiment_protocol.v14",
         "pipeline_schema_version": v8.SCHEMA_VERSION,
         "generator_version": v8.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
@@ -443,6 +506,7 @@ def protocol_config(
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
+        "analysis_profile": str(getattr(args, "analysis_profile", "full")),
         "model_execution_config": {
             model_id: dict(v8_inference.MODEL_EXECUTION_CONFIG[model_id])
             for model_id in args.models
@@ -470,6 +534,46 @@ def protocol_config(
         "aggregation_policy": (
             "dataset-isolated outputs and reports; no implicit "
             "cross-dataset averaging"
+        ),
+        "primary_mechanism_score_policy": {
+            "hierarchical_coherence": (
+                "i5-child-contrast-nmae-plus-unit-weight-native-"
+                "coherence-nmae-penalty"
+            ),
+            "common_factor": (
+                "all-seed-i5-protected-target-paired-effect-nrmse"
+            ),
+            "cross_series_dependence": (
+                "all-seed-i5-active-history-covered-prefix-paired-effect-"
+                "nrmse"
+            ),
+            "factual_accuracy": (
+                "unchanged-single-member-i1-i5-seed-group-mean-mase"
+            ),
+        },
+        "analysis_source_experiment": (
+            {
+                "path": str(
+                    getattr(
+                        args,
+                        "analysis_source_experiment_root",
+                    ).resolve()
+                ),
+                "experiment_manifest_sha256": v8.file_sha256(
+                    getattr(
+                        args,
+                        "analysis_source_experiment_root",
+                    ).resolve()
+                    / "experiment_manifest.json"
+                ),
+            }
+            if getattr(
+                args,
+                "analysis_source_experiment_root",
+                None,
+            )
+            is not None
+            else None
         ),
     }
 
@@ -914,10 +1018,12 @@ def reusable_analysis_manifest(
     seed_start: int,
     seed_count: int,
     models: list[str],
+    source_experiment_root: Path | None = None,
+    analysis_profile: str = "full",
 ) -> bool:
     shard_name = f"seed_{seed_start:06d}_{seed_start + seed_count:06d}"
     inference_manifest_path = (
-        experiment_root
+        (source_experiment_root or experiment_root)
         / dataset_id
         / "03_inference"
         / shard_name
@@ -938,12 +1044,14 @@ def reusable_analysis_manifest(
         if not bool(inference_manifest.get("complete")):
             return False
         if analysis_manifest.get("schema_version") != (
-            "paper_v8_analysis_manifest.v1"
+            "paper_v8_analysis_manifest.v4"
         ):
             return False
         if str(analysis_manifest.get("dataset_id")) != dataset_id:
             return False
         if list(analysis_manifest.get("models") or []) != list(models):
+            return False
+        if analysis_manifest.get("analysis_profile") != analysis_profile:
             return False
         if str(analysis_manifest.get("inference_manifest_sha256")) != (
             v8.file_sha256(inference_manifest_path)
@@ -992,6 +1100,13 @@ def execute_analysis_job(
         seed_start=args.seed_start,
         seed_count=args.seed_count,
         models=list(args.models),
+        source_experiment_root=(
+            getattr(args, "analysis_source_experiment_root").resolve()
+            if getattr(args, "analysis_source_experiment_root", None)
+            is not None
+            else experiment_root
+        ),
+        analysis_profile=str(getattr(args, "analysis_profile", "full")),
     ):
         return {
             "dataset_id": dataset_id,
@@ -1174,6 +1289,14 @@ def main() -> int:
     stop = STEPS.index(args.stop_after)
     if stop < start:
         raise ValueError("stop-after must not precede start-at")
+    if args.analysis_source_experiment_root is not None and not (
+        start == STEPS.index("analysis")
+        and stop == STEPS.index("analysis")
+    ):
+        raise ValueError(
+            "--analysis-source-experiment-root requires an analysis-only "
+            "stage range"
+        )
     validation_index = STEPS.index("validation")
     validate_dataset_parallelism(
         dataset_workers=args.dataset_workers,

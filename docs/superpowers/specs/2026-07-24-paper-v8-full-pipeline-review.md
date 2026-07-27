@@ -249,13 +249,17 @@ anchor 和机制 realization 均不与正式生成 seed 对齐，也没有论文
 | regime switching | deterministic duration motif | `regime_sparse_transition_score` | `regime_jump_nmae` |
 | nonlinear persistence | centered bounded quadratic recurrence | `nonlinear_conditional_effect_size` | `nonlinear_recurrence_residual_nrmse` |
 | predictable intermittency | deterministic Gaussian event clock | `event_positive_residual_energy_share` | `event_window_nmae` |
-| common factor | dense dynamic factor with joint-state relay | `pca_top1_explained` | `common_component_nmae` |
-| hierarchical coherence | aggregate/contrast linear state space | `hierarchy_child_heterogeneity` | `child_contrast_nmae` |
-| cross-series dependence | dense delayed linear SCM | `cross_series_incremental_r2` | `responder_normalized_mae` |
+| common factor | dense dynamic factor with joint-state relay | `pca_top1_explained` | protected-target paired `counterfactual_effect_nrmse` |
+| hierarchical coherence | aggregate/contrast linear state space | `hierarchy_child_heterogeneity` | `hierarchy_structure_nmae = child_contrast_nmae + coherence_nmae` |
+| cross-series dependence | dense delayed linear SCM | `cross_series_incremental_r2` | active-prefix paired `active_effect_nrmse` |
 | covariate response | known-future linear response | `covariate_incremental_r2` | `counterfactual_effect_nrmse` |
 
 关键限定如下：
 
+- Hierarchy 的主机制分同时要求恢复 I5 子节点 contrast，并原生满足
+  `parent = sum(children)`；`coherence_nmae` 以 1.0 权重作为加和违约惩罚，
+  不与 contrast 取平均，因而完全一致时保留原 contrast 分，违反一致性只会
+  使机制分变差。两项原始指标继续单独报告。
 - Trend 最近 96 点和 H48 future 共用同一二次曲线，更早 history 使用连接点
   切线；secondary 是同样连接语义的受限 cubic。
 - Regime 的零强度背景使用周期比为 `sqrt(2)` 的确定性双频平滑纹理；它仍然
@@ -303,7 +307,8 @@ seed indexes = [seed_start, seed_start + seed_count)
 - Secondary sensitivity：stable-hash 选中的部分 seed，只在 I3/I5。
 - Observation-noise robustness：同一子集的 primary I3/I5，只给可见 history
   添加相对 history scale 为 0.15 的观测噪声，评分使用 clean latent future。
-- Strict counterfactual：common/cross 的抽样 seed、I5 独立诊断表。
+- Primary mechanism counterfactual：common/cross 的全部正式 seed、I5 配对表；
+  其效应 NRMSE 进入正式机制排名。
 - Multivariate input ablation：common/cross 使用 matched donor 替换辅助输入，
   保持受评 target history 与 future 不变，并做均值/标准差 affine matching。
 - Covariate main：counterfactual members 属于主能力构造。
@@ -403,13 +408,25 @@ clean primary family，同时报告：
 - `fixed_l168`；
 - `oracle_context`；
 - `accuracy_score`：I1–I5 的 seed-group mean MASE；
-- `mechanism_score`：I5 的能力专属主机制误差；
+- `mechanism_score`：I5 的能力专属主机制误差；common factor 使用 protected
+  target 的全 horizon 配对 effect NRMSE，cross-series dependence 使用
+  history-covered active prefix 的 responder 配对 effect NRMSE；
 - `accuracy_rank` 和 `mechanism_rank`，两者不合并成任意加权总分；
 - history-std normalized MAE 与 MASE denominator 分布作为尺度审计。
 
 Reference baselines 显示分数但不进入 foundation-model 排名。Secondary、
-observation-noise robustness、multivariate input ablation 和 strict
-counterfactual 分表报告，并与同 seed/intensity 的 clean primary 匹配比较。
+observation-noise robustness 和 multivariate input ablation 分表报告，并与
+同 seed/intensity 的 clean primary 匹配比较。common/cross 的 paired
+counterfactual 表同时保留 correlation、amplitude ratio；cross 另报告
+zero-tail leakage，但这些诊断量不与 NRMSE 加权合并。
+
+只需要正式模型 MASE 和机制分时，分析可显式使用 `scores_only` profile。
+它仍计算六个 foundation model 的 fixed/oracle MASE、十个能力的主机制分，
+以及 common/cross/covariate 主分所需的配对反事实 effect；不运行 reference
+baselines、结构正控、split-bank、matched comparison 或 multivariate
+utilization audit。被省略的分析会记录在 v4 analysis manifest 中，不能与
+`full` profile 静默复用。对既有不可变推理结果的重分析写入新的 experiment
+目录，并在 manifest 中绑定源 inference manifest hash。
 
 split-bank 以完整 `seed_index` group 为单位；I1–I5、pair members 和 context
 views 不拆开。当前产物可按 32/64/128 等完整 batch 报告相对得分差、Kendall

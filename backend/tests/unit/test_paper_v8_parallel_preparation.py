@@ -254,8 +254,58 @@ def test_experiment_analysis_arguments_request_separate_aggregate():
         "--models",
         "a",
         "b",
+        "--analysis-profile",
+        "full",
         "--reuse-existing-aggregate",
     ]
+
+
+def test_analysis_only_reuse_forwards_immutable_source_experiment(tmp_path):
+    pipeline = load_script("run_paper_v8_pipeline")
+    source = tmp_path / "source"
+    args = SimpleNamespace(
+        output_root=tmp_path,
+        gift_eval_dir=tmp_path,
+        source_root=None,
+        max_anchors=256,
+        calibration_seeds=32,
+        max_calibration_seeds=96,
+        max_generation_attempts=3,
+        near_distance_gate=True,
+        preparation_workers=1,
+        capabilities=["hierarchical_coherence"],
+        seed_start=0,
+        seed_count=64,
+        models=["Chronos-2"],
+        endpoints=["http://127.0.0.1:10810"],
+        devices="0,1",
+        endpoint_preset=[],
+        endpoint_devices=[],
+        endpoint_capacity=[],
+        endpoint_concurrency_scale=[],
+        endpoint_model_capacity=[],
+        endpoint_model_concurrency=[],
+        resume_inference=False,
+        resume_analysis=False,
+        analysis_profile="scores_only",
+        analysis_source_experiment_root=source,
+    )
+
+    commands = pipeline.commands_for_dataset(
+        args,
+        "gift_hierarchical_sales_d",
+        experiment_root=tmp_path / "derived",
+    )
+    aggregate = pipeline.experiment_analysis_arguments(
+        args,
+        experiment_root=tmp_path / "derived",
+    )
+
+    for arguments in (commands["analysis"][1], aggregate):
+        option = arguments.index("--source-experiment-root")
+        assert arguments[option + 1] == str(source.resolve())
+        profile_option = arguments.index("--analysis-profile")
+        assert arguments[profile_option + 1] == "scores_only"
 
 
 def test_reusable_analysis_manifest_validates_binding_and_files(tmp_path):
@@ -271,12 +321,13 @@ def test_reusable_analysis_manifest_validates_binding_and_files(tmp_path):
     pipeline.v8.write_json(
         analysis_dir / "analysis_manifest.json",
         {
-            "schema_version": "paper_v8_analysis_manifest.v1",
+            "schema_version": "paper_v8_analysis_manifest.v4",
             "dataset_id": dataset_id,
             "inference_manifest_sha256": pipeline.v8.file_sha256(
                 inference_manifest_path
             ),
             "models": ["Chronos-2"],
+            "analysis_profile": "full",
             "coverage": [
                 {
                     "model_id": "Chronos-2",

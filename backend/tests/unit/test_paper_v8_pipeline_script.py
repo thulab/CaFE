@@ -544,6 +544,55 @@ def test_sensitivity_seed_selection_is_prefix_stable():
     assert first == set()
 
 
+@pytest.mark.parametrize(
+    "capability_id",
+    ("common_factor", "cross_series_dependence"),
+)
+def test_primary_mechanism_pairs_are_generated_for_non_sensitivity_seeds(
+    monkeypatch,
+    capability_id,
+):
+    generation = load_script("generate_paper_v8_samples")
+    calls = []
+
+    def fake_generate(*_args, **kwargs):
+        calls.append(dict(kwargs))
+        return {
+            "evaluation_table": kwargs.get("evaluation_table", "main"),
+            "counterfactual_member": kwargs.get(
+                "counterfactual_member"
+            ),
+        }
+
+    monkeypatch.setattr(
+        generation.v8,
+        "generate_master_sample",
+        fake_generate,
+    )
+    rows = generation.clean_seed_bundle(
+        object(),
+        {},
+        {},
+        capability_id=capability_id,
+        seed_index=7,
+        sensitivity_seed=False,
+        generation_attempt=0,
+    )
+
+    assert len(rows) == 7
+    strict = [
+        row
+        for row in rows
+        if row["evaluation_table"] == "strict_counterfactual_audit"
+    ]
+    assert [row["counterfactual_member"] for row in strict] == [0, 1]
+    assert {
+        int(call["intensity"])
+        for call in calls
+        if call.get("evaluation_table") == "strict_counterfactual_audit"
+    } == {5}
+
+
 def test_generation_retries_a_numerically_invalid_candidate(monkeypatch):
     generation = load_script("generate_paper_v8_samples")
     dataset = SimpleNamespace(dataset_id="test_dataset")
@@ -1931,6 +1980,178 @@ def test_covariate_response_score_uses_counterfactual_effect_rows():
 
     assert result[0]["mechanism_score"] == pytest.approx(0.25)
     assert result[0]["mechanism_rank"] == 1
+
+
+def test_hierarchy_structure_score_adds_native_coherence_penalty():
+    analysis = load_script("analyze_paper_v8")
+
+    score = analysis.hierarchy_structure_nmae(
+        {
+            "child_contrast_nmae": 0.4,
+            "coherence_nmae": 0.15,
+        }
+    )
+
+    assert analysis.HIERARCHY_COHERENCE_PENALTY_WEIGHT == 1.0
+    assert score == pytest.approx(0.55)
+    assert (
+        analysis.hierarchy_structure_nmae(
+            {"child_contrast_nmae": 0.4}
+        )
+        is None
+    )
+
+
+def test_hierarchy_primary_score_uses_composite_i5_metric():
+    analysis = load_script("analyze_paper_v8")
+    rows = []
+    for intensity, contrast, coherence in (
+        (1, 0.1, 0.05),
+        (5, 0.4, 0.15),
+    ):
+        component_metrics = {
+            "child_contrast_nmae": contrast,
+            "coherence_nmae": coherence,
+        }
+        rows.append(
+            {
+                "dataset_id": "dataset",
+                "context_policy": "fixed_l168",
+                "evaluation_table": "main",
+                "generator_family_role": "primary",
+                "capability_id": "hierarchical_coherence",
+                "model_id": "demo",
+                "seed_index": 0,
+                "intensity": intensity,
+                "metrics": {
+                    "mase": 0.3,
+                    "normalized_mae_history_std": 0.2,
+                    "hierarchy_structure_nmae": (
+                        analysis.hierarchy_structure_nmae(
+                            component_metrics
+                        )
+                    ),
+                },
+            }
+        )
+
+    result = analysis.score_table(rows, [])
+
+    assert result[0]["mechanism_metric"] == "hierarchy_structure_nmae"
+    assert result[0]["mechanism_score"] == pytest.approx(0.55)
+
+
+def test_common_and_cross_main_scores_use_all_seed_i5_pair_effects():
+    analysis = load_script("analyze_paper_v8")
+    scores = []
+    for capability_id, metric_name in (
+        ("common_factor", "counterfactual_effect_nrmse"),
+        ("cross_series_dependence", "active_effect_nrmse"),
+    ):
+        for model_id, factual_score, effect_score in (
+            ("factual", 0.1, 0.9),
+            ("mechanistic", 0.9, 0.2),
+        ):
+            scores.extend(
+                [
+                    {
+                        "dataset_id": "dataset",
+                        "context_policy": "fixed_l168",
+                        "evaluation_table": "main",
+                        "generator_family_role": "primary",
+                        "capability_id": capability_id,
+                        "model_id": model_id,
+                        "mechanism_metric": "legacy_factual_metric",
+                        "mechanism_score": factual_score,
+                        "mechanism_rank": None,
+                        "accuracy_score": factual_score,
+                        "accuracy_rank": None,
+                        "seed_count": 64,
+                        "intensities": [1, 2, 3, 4, 5],
+                        "is_reference_baseline": False,
+                    },
+                    {
+                        "dataset_id": "dataset",
+                        "context_policy": "fixed_l168",
+                        "evaluation_table": (
+                            "strict_counterfactual_audit"
+                        ),
+                        "generator_family_role": "primary",
+                        "capability_id": capability_id,
+                        "model_id": model_id,
+                        "mechanism_metric": metric_name,
+                        "mechanism_score": effect_score,
+                        "mechanism_rank": None,
+                        "accuracy_score": factual_score,
+                        "accuracy_rank": None,
+                        "seed_count": 64,
+                        "intensities": [5],
+                        "is_reference_baseline": False,
+                    },
+                ]
+            )
+
+    analysis.promote_counterfactual_primary_mechanism_scores(scores)
+
+    main = {
+        (row["capability_id"], row["model_id"]): row
+        for row in scores
+        if row["evaluation_table"] == "main"
+    }
+    for capability_id, metric_name in (
+        ("common_factor", "counterfactual_effect_nrmse"),
+        ("cross_series_dependence", "active_effect_nrmse"),
+    ):
+        assert main[(capability_id, "mechanistic")][
+            "mechanism_score"
+        ] == pytest.approx(0.2)
+        assert main[(capability_id, "mechanistic")][
+            "mechanism_rank"
+        ] == 1
+        assert main[(capability_id, "factual")]["mechanism_rank"] == 2
+        assert main[(capability_id, "mechanistic")][
+            "mechanism_metric"
+        ] == metric_name
+        assert main[(capability_id, "mechanistic")][
+            "mechanism_seed_count"
+        ] == 64
+        assert main[(capability_id, "mechanistic")][
+            "mechanism_pairing_policy"
+        ] == "all_formal_seeds_i5_counterfactual_pair"
+
+
+def test_primary_mechanism_pair_requires_full_factual_seed_coverage():
+    analysis = load_script("analyze_paper_v8")
+    shared = {
+        "dataset_id": "dataset",
+        "context_policy": "fixed_l168",
+        "generator_family_role": "primary",
+        "capability_id": "cross_series_dependence",
+        "model_id": "model",
+        "mechanism_metric": "active_effect_nrmse",
+        "mechanism_score": 0.5,
+        "mechanism_rank": 1,
+        "intensities": [5],
+        "is_reference_baseline": False,
+    }
+
+    with pytest.raises(ValueError, match="coverage must match"):
+        analysis.promote_counterfactual_primary_mechanism_scores(
+            [
+                {
+                    **shared,
+                    "evaluation_table": "main",
+                    "seed_count": 64,
+                },
+                {
+                    **shared,
+                    "evaluation_table": (
+                        "strict_counterfactual_audit"
+                    ),
+                    "seed_count": 16,
+                },
+            ]
+        )
 
 
 def test_aggregate_completion_uses_bound_effect_rows_for_legacy_score():

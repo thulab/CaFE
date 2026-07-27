@@ -195,10 +195,7 @@ def clean_seed_bundle(
                     generation_attempt=generation_attempt,
                 )
             )
-    if (
-        capability_id in v8.STRICT_COUNTERFACTUAL_CAPABILITIES
-        and sensitivity_seed
-    ):
+    if capability_id in v8.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES:
         for member in (0, 1):
             rows.append(
                 v8.generate_master_sample(
@@ -785,7 +782,7 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "paper_v8_generation_config.v7",
+        "schema_version": "paper_v8_generation_config.v8",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": v8.GENERATOR_VERSION,
@@ -833,13 +830,15 @@ def main() -> int:
         },
         "strict_counterfactual_policy": {
             "capabilities": sorted(v8.STRICT_COUNTERFACTUAL_CAPABILITIES),
-            "selected_seed_indexes": sorted(sensitivity_seeds),
+            "selected_seed_indexes": seed_indexes,
             "intensities": [5],
             "evaluation_table": "strict_counterfactual_audit",
+            "ranking_role": "primary_mechanism_score",
+            "seed_policy": "all_formal_seeds",
         },
     }
     manifest = {
-        "schema_version": "paper_v8_generation_manifest.v7",
+        "schema_version": "paper_v8_generation_manifest.v8",
         "created_at": v8.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),

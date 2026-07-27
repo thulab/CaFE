@@ -18,6 +18,7 @@ import run_paper_v8_model_response as response
 DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
 FIXED_CONTEXT_LENGTH = v8.FIXED_CONTEXT_LENGTH
 FIXED_CONTEXT_POLICY = f"fixed_l{FIXED_CONTEXT_LENGTH}"
+HIERARCHY_COHERENCE_PENALTY_WEIGHT = 1.0
 PRIMARY_MECHANISM_METRIC = {
     "trend": "trend_curvature_component_nrmse",
     "multi_seasonal": "seasonal_spectral_amplitude_relative_error",
@@ -25,9 +26,9 @@ PRIMARY_MECHANISM_METRIC = {
     "regime_switching": "regime_jump_nmae",
     "nonlinear_persistence": "nonlinear_recurrence_residual_nrmse",
     "predictable_intermittency": "event_window_nmae",
-    "common_factor": "common_component_nmae",
-    "hierarchical_coherence": "child_contrast_nmae",
-    "cross_series_dependence": "responder_normalized_mae",
+    "common_factor": "counterfactual_effect_nrmse",
+    "hierarchical_coherence": "hierarchy_structure_nmae",
+    "cross_series_dependence": "active_effect_nrmse",
     "covariate_response": "counterfactual_effect_nrmse",
 }
 BASELINES = ("last_value", "seasonal_naive")
@@ -51,6 +52,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-id", default="gift_electricity_h")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument(
+        "--source-experiment-root",
+        type=Path,
+        default=None,
+        help=(
+            "Read immutable generation/inference inputs from another "
+            "experiment while writing a new analysis-only experiment."
+        ),
+    )
+    parser.add_argument(
         "--aggregate-experiment",
         action="store_true",
         help=(
@@ -68,6 +78,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, required=True)
+    parser.add_argument(
+        "--analysis-profile",
+        choices=("full", "scores_only"),
+        default="full",
+        help=(
+            "scores_only keeps model MASE and mechanism scores but omits "
+            "reference baselines, structured controls, split-bank, and "
+            "matched/utilization audits."
+        ),
+    )
     parser.add_argument(
         "--models",
         nargs="+",
@@ -185,6 +205,10 @@ def metric_row(
     input_adaptation: dict[str, Any] | None,
 ) -> dict[str, Any]:
     metrics = response.prediction_metrics(sample, forecast)
+    if str(sample["capability_id"]) == "hierarchical_coherence":
+        hierarchy_score = hierarchy_structure_nmae(metrics)
+        if hierarchy_score is not None:
+            metrics["hierarchy_structure_nmae"] = hierarchy_score
     target = np.asarray(sample["target"], dtype=float)
     context = int(sample["context_length"])
     mae = float(np.mean(np.abs(target[context:] - forecast)))
@@ -220,6 +244,24 @@ def metric_row(
         },
         "input_adaptation": input_adaptation,
     }
+
+
+def hierarchy_structure_nmae(
+    metrics: dict[str, Any],
+) -> float | None:
+    """Combine child allocation recovery with native additivity violation."""
+
+    contrast = metrics.get("child_contrast_nmae")
+    coherence = metrics.get("coherence_nmae")
+    if contrast is None or coherence is None:
+        return None
+    values = np.asarray([contrast, coherence], dtype=float)
+    if not np.all(np.isfinite(values)):
+        return None
+    return float(
+        values[0]
+        + HIERARCHY_COHERENCE_PENALTY_WEIGHT * values[1]
+    )
 
 
 def effect_channels(sample: dict[str, Any]) -> list[int]:
@@ -1403,6 +1445,80 @@ def complete_effect_level_mechanism_scores(
         add_ranks(scores)
 
 
+def promote_counterfactual_primary_mechanism_scores(
+    scores: list[dict[str, Any]],
+) -> None:
+    """Bind all-seed I5 pair effects to the factual main-table rows."""
+
+    capabilities = v8.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES
+    sources: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in scores:
+        if (
+            row["evaluation_table"] != "strict_counterfactual_audit"
+            or row["generator_family_role"] != "primary"
+            or row["capability_id"] not in capabilities
+        ):
+            continue
+        key = (
+            str(row["dataset_id"]),
+            str(row["context_policy"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        )
+        if key in sources:
+            raise ValueError(
+                "duplicate primary mechanism counterfactual score: "
+                + "/".join(key)
+            )
+        sources[key] = row
+
+    promoted = False
+    for row in scores:
+        if (
+            row["evaluation_table"] != "main"
+            or row["generator_family_role"] != "primary"
+            or row["capability_id"] not in capabilities
+        ):
+            continue
+        key = (
+            str(row["dataset_id"]),
+            str(row["context_policy"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        )
+        source = sources.get(key)
+        if source is None or source.get("mechanism_score") is None:
+            raise ValueError(
+                "missing all-seed I5 primary mechanism pair score: "
+                + "/".join(key)
+            )
+        accuracy_seed_count = int(row["seed_count"])
+        mechanism_seed_count = int(source["seed_count"])
+        if mechanism_seed_count != accuracy_seed_count:
+            raise ValueError(
+                "primary mechanism pair coverage must match factual seed "
+                f"coverage for {'/'.join(key)}: "
+                f"{mechanism_seed_count} != {accuracy_seed_count}"
+            )
+        row.update(
+            {
+                "mechanism_metric": source["mechanism_metric"],
+                "mechanism_score": float(source["mechanism_score"]),
+                "mechanism_seed_count": mechanism_seed_count,
+                "mechanism_intensities": list(source["intensities"]),
+                "mechanism_evaluation_table": (
+                    "strict_counterfactual_audit"
+                ),
+                "mechanism_pairing_policy": (
+                    "all_formal_seeds_i5_counterfactual_pair"
+                ),
+            }
+        )
+        promoted = True
+    if promoted:
+        add_ranks(scores)
+
+
 def add_ranks(rows: list[dict[str, Any]]) -> None:
     groups: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
@@ -1698,7 +1814,7 @@ def multivariate_utilization_audit_rows(
                     not is_independent_reference
                     and target_mode == "native_multivariate"
                 ),
-                "audit_metrics_excluded_from_existing_main_ranking": True,
+                "counterfactual_effect_is_primary_mechanism_score": True,
                 "audit_has_no_ranking": True,
                 "input_ablation_metric": (
                     ablation["accuracy_metric"] if ablation else None
@@ -1758,10 +1874,20 @@ def split_bank(
         and row["generator_family_role"] == "primary"
         and row["model_id"] in models
     ]
+    mechanism_probe_rows = [
+        row
+        for row in selected_rows
+        if row["evaluation_table"] == "strict_counterfactual_audit"
+        and row["generator_family_role"] == "primary"
+        and row["capability_id"]
+        in v8.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES
+        and row["model_id"] in models
+    ]
     official_effects = [
         row
         for row in selected_effects
-        if row["evaluation_table"] == "main"
+        if row["evaluation_table"]
+        in {"main", "strict_counterfactual_audit"}
         and row["generator_family_role"] == "primary"
         and row["model_id"] in models
     ]
@@ -1787,10 +1913,17 @@ def split_bank(
             if stop > seed_start + seed_count:
                 break
             scores = score_table(
-                official_rows,
+                [*official_rows, *mechanism_probe_rows],
                 official_effects,
                 seed_filter=set(range(start, stop)),
             )
+            promote_counterfactual_primary_mechanism_scores(scores)
+            scores = [
+                row
+                for row in scores
+                if row["evaluation_table"] == "main"
+                and row["generator_family_role"] == "primary"
+            ]
             batches.append(
                 {
                     "seed_start": start,
@@ -2456,6 +2589,7 @@ def reusable_experiment_analysis_manifest(
     dataset_ids: list[str],
     models: list[str],
     capabilities: list[str],
+    analysis_profile: str,
 ) -> bool:
     manifest_path = analysis_dir / "analysis_manifest.json"
     if not manifest_path.is_file():
@@ -2463,7 +2597,7 @@ def reusable_experiment_analysis_manifest(
     try:
         manifest = v8.read_json(manifest_path)
         if manifest.get("schema_version") != (
-            "paper_v8_experiment_analysis_manifest.v2"
+            "paper_v8_experiment_analysis_manifest.v4"
         ):
             return False
         if str(manifest.get("experiment_manifest_sha256")) != (
@@ -2475,6 +2609,8 @@ def reusable_experiment_analysis_manifest(
         if list(manifest.get("models") or []) != models:
             return False
         if list(manifest.get("capabilities") or []) != capabilities:
+            return False
+        if manifest.get("analysis_profile") != analysis_profile:
             return False
         inputs = manifest.get("inputs")
         if not isinstance(inputs, list) or [
@@ -2522,6 +2658,11 @@ def reusable_experiment_analysis_manifest(
 
 def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
     experiment_root = args.output_root.resolve()
+    source_experiment_root = (
+        args.source_experiment_root.resolve()
+        if args.source_experiment_root is not None
+        else experiment_root
+    )
     experiment_manifest_path = experiment_root / "experiment_manifest.json"
     experiment_manifest = v8.read_json(experiment_manifest_path)
     protocol = experiment_manifest.get("protocol")
@@ -2530,6 +2671,12 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
     dataset_ids = [str(value) for value in protocol["dataset_ids"]]
     models = [str(value) for value in protocol["models"]]
     capabilities = [str(value) for value in protocol["capabilities"]]
+    analysis_profile = str(protocol.get("analysis_profile", "full"))
+    if args.analysis_profile != analysis_profile:
+        raise ValueError(
+            "aggregate analysis profile must exactly match the experiment "
+            "protocol"
+        )
     if list(args.models) != models:
         raise ValueError(
             "aggregate models must exactly match the experiment protocol"
@@ -2551,6 +2698,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         dataset_ids=dataset_ids,
         models=models,
         capabilities=capabilities,
+        analysis_profile=analysis_profile,
     ):
         if not args.reuse_existing_aggregate:
             raise FileExistsError(
@@ -2587,7 +2735,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         )
         dataset_manifest = v8.read_json(dataset_manifest_path)
         if dataset_manifest.get("schema_version") != (
-            "paper_v8_analysis_manifest.v1"
+            "paper_v8_analysis_manifest.v4"
         ):
             raise ValueError(
                 f"unsupported dataset analysis manifest: {dataset_id}"
@@ -2599,6 +2747,10 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         if list(dataset_manifest.get("models") or []) != models:
             raise ValueError(
                 f"dataset analysis model mismatch: {dataset_id}"
+            )
+        if dataset_manifest.get("analysis_profile") != analysis_profile:
+            raise ValueError(
+                f"dataset analysis profile mismatch: {dataset_id}"
             )
         score_record = dataset_manifest.get("files", {}).get("scores")
         if not isinstance(score_record, dict):
@@ -2629,7 +2781,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         )
         all_effects.extend(v8.iter_jsonl(effect_path))
         generation_manifest_path = (
-            experiment_root
+            source_experiment_root
             / dataset_id
             / "02_generation"
             / f"manifest__{shard_name}.json"
@@ -2711,7 +2863,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_experiment_analysis_manifest.v2",
+        "schema_version": "paper_v8_experiment_analysis_manifest.v4",
         "created_at": v8.utc_now(),
         "experiment_id": str(experiment_manifest["experiment_id"]),
         "experiment_manifest_sha256": v8.file_sha256(
@@ -2722,6 +2874,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         "datasets": dataset_ids,
         "models": models,
         "capabilities": capabilities,
+        "analysis_profile": analysis_profile,
         "capability_dataset_ids": capability_dataset_ids,
         "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
         "aggregation_policy": (
@@ -2766,8 +2919,14 @@ def main() -> int:
     shard_name = (
         f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     )
+    experiment_root = args.output_root.resolve()
+    source_experiment_root = (
+        args.source_experiment_root.resolve()
+        if args.source_experiment_root is not None
+        else experiment_root
+    )
     inference_dir = (
-        args.output_root.resolve()
+        source_experiment_root
         / dataset.dataset_id
         / "03_inference"
         / shard_name
@@ -2784,7 +2943,12 @@ def main() -> int:
     all_metrics: list[dict[str, Any]] = []
     all_effects: list[dict[str, Any]] = []
     coverage: list[dict[str, Any]] = []
-    for model_id in [*args.models, *BASELINES]:
+    analysis_models = (
+        list(args.models)
+        if args.analysis_profile == "scores_only"
+        else [*args.models, *BASELINES]
+    )
+    for model_id in analysis_models:
         prediction_path = (
             inference_dir
             / "model_shards"
@@ -2817,32 +2981,49 @@ def main() -> int:
     selected_metrics, pair_context = selected_context_rows(all_metrics)
     selected_effects = selected_effect_rows(all_effects, pair_context)
     scores = score_table(selected_metrics, selected_effects)
-    matched_comparisons = matched_comparison_rows(
-        selected_metrics,
-        selected_effects,
-    )
-    utilization_audit = multivariate_utilization_audit_rows(
-        selected_metrics,
-        selected_effects,
-        matched_comparisons,
-        models=list(args.models),
-    )
-    split_rows = split_bank(
-        selected_metrics,
-        selected_effects,
-        models=list(args.models),
-        seed_start=args.seed_start,
-        seed_count=args.seed_count,
-    )
+    promote_counterfactual_primary_mechanism_scores(scores)
+    if args.analysis_profile == "scores_only":
+        matched_comparisons = []
+        utilization_audit = []
+        split_rows = []
+    else:
+        matched_comparisons = matched_comparison_rows(
+            selected_metrics,
+            selected_effects,
+        )
+        utilization_audit = multivariate_utilization_audit_rows(
+            selected_metrics,
+            selected_effects,
+            matched_comparisons,
+            models=list(args.models),
+        )
+        split_rows = split_bank(
+            selected_metrics,
+            selected_effects,
+            models=list(args.models),
+            seed_start=args.seed_start,
+            seed_count=args.seed_count,
+        )
     analysis_dir = (
-        args.output_root.resolve()
+        experiment_root
         / dataset.dataset_id
         / "04_analysis"
         / shard_name
     )
-    structured_controls = analyze_structured_positive_controls(
-        task_path,
-        dataset_id=dataset.dataset_id,
+    structured_controls = (
+        {
+            "schema_version": (
+                "paper_v8_structured_positive_controls_skipped.v1"
+            ),
+            "dataset_id": dataset.dataset_id,
+            "status": "not_requested",
+            "analysis_profile": args.analysis_profile,
+        }
+        if args.analysis_profile == "scores_only"
+        else analyze_structured_positive_controls(
+            task_path,
+            dataset_id=dataset.dataset_id,
+        )
     )
     structured_controls["created_at"] = v8.utc_now()
     metric_path = analysis_dir / "prediction_metrics.jsonl"
@@ -2868,7 +3049,7 @@ def main() -> int:
             "schema_version": (
                 "paper_v8_multivariate_utilization_audit_bundle.v1"
             ),
-            "main_ranking_policy_unchanged": True,
+            "counterfactual_effect_is_primary_mechanism_score": True,
             "rows": utilization_audit,
         },
     )
@@ -2898,13 +3079,29 @@ def main() -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_analysis_manifest.v1",
+        "schema_version": "paper_v8_analysis_manifest.v4",
         "created_at": v8.utc_now(),
         "dataset_id": dataset.dataset_id,
+        "source_experiment_root": str(source_experiment_root),
+        "source_inference_manifest_path": str(
+            inference_dir / "inference_manifest.json"
+        ),
         "inference_manifest_sha256": v8.file_sha256(
             inference_dir / "inference_manifest.json"
         ),
         "models": list(args.models),
+        "analysis_profile": args.analysis_profile,
+        "omitted_analyses": (
+            [
+                "reference_baselines",
+                "structured_positive_controls",
+                "split_bank",
+                "matched_comparisons",
+                "multivariate_utilization_audit",
+            ]
+            if args.analysis_profile == "scores_only"
+            else []
+        ),
         "coverage": coverage,
         "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
         "files": {

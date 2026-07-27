@@ -3,7 +3,7 @@
 
 The examples deliberately do not claim real-data calibration.  They use one
 auditable empirical background profile, the formal v8 primary generator
-families, the formal L504/H48 geometry, and a direct I1--I5 lambda grid.
+families, the formal L336/H48 geometry, and a direct I1--I5 lambda grid.
 """
 from __future__ import annotations
 
@@ -54,17 +54,16 @@ EXAMPLE_BASE_SEED = 2026072507
 
 plt.rcParams.update(
     {
-        "font.family": "sans-serif",
-        "font.sans-serif": [
-            "Noto Sans CJK SC",
-            "Noto Sans CJK JP",
-            "Microsoft YaHei",
-            "DejaVu Sans",
-        ],
+        "font.family": "serif",
+        "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+        "mathtext.fontset": "stix",
         "axes.unicode_minus": False,
         "axes.titleweight": "regular",
         "figure.dpi": 120,
         "savefig.dpi": 220,
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "svg.fonttype": "none",
     }
 )
 
@@ -222,8 +221,8 @@ FUTURE_COLOR = "#D97706"
 NEUTRAL = "#687386"
 MECHANISM_COLOR = "#C2410C"
 RELATION_COLOR = "#7C3AED"
-VIEW_START_COMPACT = 360
-VIEW_START_INDIVIDUAL = 336
+VIEW_START_COMPACT = max(0, v8.CONTEXT_LENGTH - 144)
+VIEW_START_INDIVIDUAL = max(0, v8.CONTEXT_LENGTH - 168)
 
 
 def parse_args() -> argparse.Namespace:
@@ -710,10 +709,21 @@ def add_mechanism_cue(
 
     elif capability_id == "cross_series_dependence":
         lag = int(metadata["cross_lag_steps"])
+        active_steps = min(
+            int(
+                metadata.get(
+                    "counterfactual_effect_forecast_steps",
+                    lag,
+                )
+            ),
+            horizon,
+        )
         driver = target[:, int(metadata["driver_index"])]
         responder = target[:, int(metadata["responder_indices"][0])]
-        source = driver[context - lag : context]
-        response = responder[context : context + horizon]
+        source = driver[
+            context - lag : context - lag + active_steps
+        ]
+        response = responder[context : context + active_steps]
         design = np.column_stack([source, np.ones_like(source)])
         scale, offset = np.linalg.lstsq(design, response, rcond=None)[0]
         shifted_driver = scale * source + offset
@@ -725,7 +735,7 @@ def add_mechanism_cue(
             linewidth=0,
         )
         ax.plot(
-            x[context : context + horizon],
+            x[context : context + active_steps],
             shifted_driver,
             color=RELATION_COLOR,
             linewidth=1.2 if compact else 1.8,
@@ -856,7 +866,13 @@ def plot_example(
     ax.tick_params(axis="y", left=False, labelleft=False)
     ax.tick_params(axis="x", colors="#687386", labelsize=7)
     ax.set_xticks([view_start, context, v8.MASTER_LENGTH - 1])
-    ax.set_xticklabels([str(view_start), "504", "552"])
+    ax.set_xticklabels(
+        [
+            str(view_start),
+            str(context),
+            str(v8.MASTER_LENGTH - 1),
+        ]
+    )
     ax.grid(axis="x", color="#E3E6EA", linewidth=0.6)
     if compact:
         ax.set_title(
@@ -918,7 +934,10 @@ def plot_example(
                 ncol=min(3, len(handles)),
             )
         ax.set_xlabel(
-            "Time index (recent context shown; forecast origin = 504)",
+            (
+                "Time index (recent context shown; forecast origin = "
+                f"{context})"
+            ),
             fontsize=9,
         )
 
@@ -1018,7 +1037,8 @@ def render_overview(
         0.5,
         0.025,
         (
-            "Illustrative only: formal v8 L504/H48 generators with an "
+            f"Illustrative only: formal v8 L{v8.CONTEXT_LENGTH}/"
+            f"H{v8.HORIZON} generators with an "
             "experience-based hourly profile; no real-data calibration."
         ),
         ha="center",
@@ -1026,7 +1046,7 @@ def render_overview(
         fontsize=8.5,
         color="#687386",
     )
-    for suffix in ("png", "svg"):
+    for suffix in ("png", "svg", "pdf"):
         fig.savefig(
             output_dir / f"paper-v8-capability-overview.{suffix}",
             bbox_inches="tight",
@@ -1079,10 +1099,12 @@ def render_individual(
         fontsize=8.5,
         color="#687386",
     )
-    output_path = (
-        output_dir / f"{example['spec']['capability_id']}.png"
-    )
-    fig.savefig(output_path, bbox_inches="tight", facecolor="white")
+    for suffix in ("png", "pdf"):
+        output_path = (
+            output_dir
+            / f"{example['spec']['capability_id']}.{suffix}"
+        )
+        fig.savefig(output_path, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
@@ -1177,9 +1199,13 @@ def main() -> int:
         "files": {
             "overview_png": "paper-v8-capability-overview.png",
             "overview_svg": "paper-v8-capability-overview.svg",
+            "overview_pdf": "paper-v8-capability-overview.pdf",
             "examples_json": "examples.json",
             "individual_pngs": [
                 f"{spec.capability_id}.png" for spec in CAPABILITIES
+            ],
+            "individual_pdfs": [
+                f"{spec.capability_id}.pdf" for spec in CAPABILITIES
             ],
         },
     }

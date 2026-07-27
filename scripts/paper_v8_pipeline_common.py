@@ -62,7 +62,7 @@ from synthetic_feature_profile import (  # noqa: E402
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v23"
+SCHEMA_VERSION = "paper_v8_pipeline.v26"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
@@ -99,6 +99,9 @@ COUNTERFACTUAL_CAPABILITIES = frozenset(
 MAIN_COUNTERFACTUAL_CAPABILITIES = frozenset({"covariate_response"})
 STRICT_COUNTERFACTUAL_CAPABILITIES = frozenset(
     {"common_factor", "cross_series_dependence"}
+)
+PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES = (
+    STRICT_COUNTERFACTUAL_CAPABILITIES
 )
 INPUT_ABLATION_CAPABILITIES = STRICT_COUNTERFACTUAL_CAPABILITIES
 STRUCTURAL_CAPABILITIES = frozenset(
@@ -1647,7 +1650,7 @@ def build_conditioning(
         calibrated_realized_strengths=tuple(float(value) for value in targets),
         calibration_max_normalized_error=0.0,
         intensity_policy_id=REAL_BOUNDED_INTENSITY_POLICY_ID,
-        artifact_schema_version="paper_v8_calibration_bundle.v15",
+        artifact_schema_version="paper_v8_calibration_bundle.v16",
         artifact_created_at=None,
         calibration_method="paper_v8_response_curve",
         artifact_generator_version=GENERATOR_VERSION,
@@ -3405,7 +3408,7 @@ def generate_master_sample(
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
-        "schema_version": "paper_v8_master_sample.v8",
+        "schema_version": "paper_v8_master_sample.v9",
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "sample_id": sample_id,
         "master_sample_id": sample_id,
