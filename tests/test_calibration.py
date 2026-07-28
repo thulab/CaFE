@@ -1,43 +1,27 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 
-
-REPO_ROOT = Path(__file__).parents[3]
-SCRIPT_DIR = REPO_ROOT / "scripts"
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+from cafe import protocol
 
 
 def load_common():
-    path = SCRIPT_DIR / "paper_v8_pipeline_common.py"
-    spec = importlib.util.spec_from_file_location(
-        "paper_v8_pipeline_common_alignment_test",
-        path,
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return protocol
 
 
-def test_v8_common_uses_lightweight_normalization_module():
+def test_cafe_common_uses_lightweight_normalization_module():
     common = load_common()
 
     assert common.standardize_by_context.__module__ == (
-        "app.services.synthetic_normalization"
+        "cafe.generation.normalization"
     )
     assert common.standardize_hierarchy_by_context.__module__ == (
-        "app.services.synthetic_normalization"
+        "cafe.generation.normalization"
     )
     assert common.normalize_covariates.__module__ == (
-        "app.services.synthetic_normalization"
+        "cafe.generation.normalization"
     )
 
 

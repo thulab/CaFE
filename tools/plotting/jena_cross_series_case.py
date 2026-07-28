@@ -15,9 +15,9 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 from matplotlib.patches import Patch  # noqa: E402
 
-import analyze_paper_v8 as analysis  # noqa: E402
-import paper_v8_pipeline_common as v8  # noqa: E402
-import paper_v8_structured_baselines as structured  # noqa: E402
+from cafe import protocol as cafe
+from cafe.analysis import runner as analysis
+from cafe.analysis import structured
 
 
 CAPABILITY_ID = "cross_series_dependence"
@@ -66,7 +66,7 @@ ROLE_COLORS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot the Paper v8 Jena Weather cross-series I5/L336 case study."
+            "Plot the CaFE Jena Weather cross-series I5/L336 case study."
         )
     )
     parser.add_argument(
@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
 def selected_samples(task_path: Path) -> list[dict[str, Any]]:
     return [
         sample
-        for sample in v8.iter_jsonl(task_path)
+        for sample in cafe.iter_jsonl(task_path)
         if sample.get("capability_id") == CAPABILITY_ID
         and sample.get("generator_family_role") == "primary"
         and int(sample.get("intensity", -1)) == INTENSITY
@@ -164,7 +164,7 @@ def foundation_rows(
         )
         predictions = {
             str(row["sample_id"]): row
-            for row in v8.iter_jsonl(prediction_path)
+            for row in cafe.iter_jsonl(prediction_path)
             if str(row["sample_id"]) in sample_ids
         }
         if len(predictions) != len(sample_ids):
@@ -648,7 +648,7 @@ def main() -> int:
         output_stem=output_stem,
     )
     summary = {
-        "schema_version": "paper_v8_jena_cross_series_case_figure.v2",
+        "schema_version": "cafe.jena_cross_series_case_figure.v1",
         "dataset_id": args.dataset_id,
         "capability_id": CAPABILITY_ID,
         "generator_family_role": "primary",

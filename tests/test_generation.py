@@ -1,15 +1,16 @@
 from __future__ import annotations
 
+import hashlib
 from copy import deepcopy
 
 import numpy as np
 import pytest
 
-from app.services.synthetic_generator_conditioning import (
+from cafe.calibration.conditioning import (
     GeneratorConditioning,
     REAL_BOUNDED_INTENSITY_POLICY_ID,
 )
-from app.services.synthetic_v8_generation import (
+from cafe.generation.families import (
     CROSS_SERIES_MAX_EFFECT_NRMSE,
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
@@ -23,12 +24,29 @@ from app.services.synthetic_v8_generation import (
     standardize_common_factor_counterfactual_member,
     standardize_cross_series_counterfactual_member,
 )
-from app.services.synthetic_v8_feature_gate import (
+from cafe.validation.mechanisms import (
     basic_sample_checks,
     covariate_family_match_checks,
     nonlinear_mechanism_response_checks,
     paired_off_target_selectivity_matrix,
 )
+
+
+def test_generator_golden_trend_hash() -> None:
+    target, _metadata, covariates = generate_deterministic_sample(
+        "trend",
+        384,
+        336,
+        3,
+        24,
+        5,
+        np.random.default_rng(20260728),
+    )
+
+    assert covariates is None
+    assert hashlib.sha256(np.asarray(target).tobytes()).hexdigest() == (
+        "9a86da669d2d3b89a1eac20c1728026c93bd1b2d3d063d54c8af10b7a11cf138"
+    )
 
 
 def test_basic_gate_rejects_non_real_intensity_grid() -> None:
@@ -430,7 +448,7 @@ def test_nonlinear_mechanism_gate_separates_injected_dose_from_exact_lag_r2():
     assert secondary["accepted"] is False
 
 
-def test_v8_nonlinear_families_use_matched_bounded_quadratic_doses():
+def test_cafe_nonlinear_families_use_matched_bounded_quadratic_doses():
     generated = {}
     for family_role in ("primary", "secondary"):
         for intensity in (1, 5):
@@ -483,7 +501,7 @@ CAPABILITIES = tuple(PRIMARY_FAMILY_BY_CAPABILITY)
     ("family_role", "expected_degree"),
     (("primary", 2), ("secondary", 3)),
 )
-def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
+def test_cafe_trend_uses_local_c1_polynomial_with_tangent_extensions(
     family_role: str,
     expected_degree: int,
 ) -> None:
@@ -503,7 +521,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
     direction = np.asarray(metadata["direction_by_target"])
     formal_differences = np.diff(target[:design_stop], axis=0)
 
-    assert GENERATOR_VERSION == "capts-paper-v8-family-calibrated-v9"
+    assert GENERATOR_VERSION == "cafe-deterministic-family-v1"
     assert metadata["trend_local_evidence_window"] == 96
     assert join == 408
     assert metadata["trend_local_polynomial_degree"] == expected_degree
@@ -550,7 +568,7 @@ def test_v8_trend_uses_local_c1_polynomial_with_tangent_extensions(
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_seasonal_time_scales_are_identifiable_in_l96(
+def test_cafe_seasonal_time_scales_are_identifiable_in_l96(
     family_role: str,
 ) -> None:
     multi_metadata = generate_deterministic_sample(
@@ -597,7 +615,7 @@ def test_v8_seasonal_time_scales_are_identifiable_in_l96(
 
 @pytest.mark.parametrize("capability_id", CAPABILITIES)
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_families_are_clean_deterministic_and_prefix_invariant(
+def test_cafe_families_are_clean_deterministic_and_prefix_invariant(
     capability_id: str,
     family_role: str,
 ) -> None:
@@ -650,7 +668,7 @@ def test_v8_families_are_clean_deterministic_and_prefix_invariant(
         assert np.array_equal(covariates, repeated_covariates)
 
 
-def test_v8_hierarchy_is_exactly_coherent() -> None:
+def test_cafe_hierarchy_is_exactly_coherent() -> None:
     target, metadata, _ = generate_deterministic_sample(
         "hierarchical_coherence",
         552,
@@ -666,7 +684,7 @@ def test_v8_hierarchy_is_exactly_coherent() -> None:
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_common_factor_uses_blind_shared_state_to_recover_future(
+def test_cafe_common_factor_uses_blind_shared_state_to_recover_future(
     family_role: str,
 ) -> None:
     arguments = (
@@ -740,7 +758,7 @@ def test_v8_common_factor_uses_blind_shared_state_to_recover_future(
     assert gate["accepted"] is True
 
 
-def test_v8_zero_strength_regime_background_is_deterministic_but_not_exactly_seasonal(
+def test_cafe_zero_strength_regime_background_is_deterministic_but_not_exactly_seasonal(
 ) -> None:
     first, metadata, _ = generate_deterministic_sample(
         "regime_switching",
@@ -775,7 +793,7 @@ def test_v8_zero_strength_regime_background_is_deterministic_but_not_exactly_sea
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
+def test_cafe_cross_series_dependence_has_observed_driver_for_future_response(
     family_role: str,
 ) -> None:
     target, metadata, _ = generate_deterministic_sample(
@@ -816,7 +834,7 @@ def test_v8_cross_series_dependence_has_observed_driver_for_future_response(
     assert np.std(target[504:, 1:]) > 1e-4
 
 
-def test_v8_cross_series_master_pair_remains_well_formed_in_all_suffix_views(
+def test_cafe_cross_series_master_pair_remains_well_formed_in_all_suffix_views(
 ) -> None:
     arguments = (
         "cross_series_dependence",
@@ -912,7 +930,7 @@ def test_v8_cross_series_master_pair_remains_well_formed_in_all_suffix_views(
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_cross_series_counterfactual_pair_has_identical_responder_history(
+def test_cafe_cross_series_counterfactual_pair_has_identical_responder_history(
     family_role: str,
 ) -> None:
     arguments = (
@@ -947,7 +965,7 @@ def test_v8_cross_series_counterfactual_pair_has_identical_responder_history(
     assert second_metadata["counterfactual_alternative_rms"] > 0.1
 
 
-def test_v8_cross_series_primary_uses_signed_responder_edges() -> None:
+def test_cafe_cross_series_primary_uses_signed_responder_edges() -> None:
     _, metadata, _ = generate_deterministic_sample(
         "cross_series_dependence",
         552,
@@ -962,7 +980,7 @@ def test_v8_cross_series_primary_uses_signed_responder_edges() -> None:
 
 
 @pytest.mark.parametrize("context_length", (168, 336))
-def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
+def test_cafe_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
     context_length: int,
 ) -> None:
     arguments = (
@@ -1068,7 +1086,7 @@ def test_v8_cross_series_pair_has_shared_scale_and_passes_identifiability_gate(
 
 
 @pytest.mark.parametrize("family_role", ("primary", "secondary"))
-def test_v8_covariate_counterfactual_pair_has_identical_history(
+def test_cafe_covariate_counterfactual_pair_has_identical_history(
     family_role: str,
 ) -> None:
     arguments = (
@@ -1106,7 +1124,7 @@ def test_v8_covariate_counterfactual_pair_has_identical_history(
 
 
 @pytest.mark.parametrize("intensity", (1, 2, 3, 4, 5))
-def test_v8_covariate_secondary_matches_primary_history_effect_dose(
+def test_cafe_covariate_secondary_matches_primary_history_effect_dose(
     intensity: int,
 ) -> None:
     arguments = (
@@ -1181,7 +1199,7 @@ def test_v8_covariate_secondary_matches_primary_history_effect_dose(
     )
 
 
-def test_v8_covariate_family_gate_rejects_scale_confounding() -> None:
+def test_cafe_covariate_family_gate_rejects_scale_confounding() -> None:
     metadata = {
         "effect_strength": 0.4,
         "baseline_process": {"motif_sha256": "same"},
@@ -1218,7 +1236,7 @@ def test_v8_covariate_family_gate_rejects_scale_confounding() -> None:
     assert rejected["mase_scale_relative_difference"] == pytest.approx(0.9)
 
 
-def test_v8_primary_nuisance_parameters_vary_across_seeds() -> None:
+def test_cafe_primary_nuisance_parameters_vary_across_seeds() -> None:
     target_dims = {
         "common_factor": 4,
         "hierarchical_coherence": 4,
@@ -1323,7 +1341,7 @@ def test_intermittency_event_energy_dose_is_strictly_monotone(
     assert all(0.0 < share < 1.0 for share in shares)
 
 
-def test_v8_robustness_noise_changes_only_history_and_keeps_clean_future() -> None:
+def test_cafe_robustness_noise_changes_only_history_and_keeps_clean_future() -> None:
     clean, _, _ = generate_deterministic_sample(
         "multi_seasonal",
         552,
@@ -1360,7 +1378,7 @@ def test_v8_robustness_noise_changes_only_history_and_keeps_clean_future() -> No
     )
 
 
-def test_v8_hierarchy_robustness_noise_preserves_observed_coherence() -> None:
+def test_cafe_hierarchy_robustness_noise_preserves_observed_coherence() -> None:
     clean, _, _ = generate_deterministic_sample(
         "hierarchical_coherence",
         552,

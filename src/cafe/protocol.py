@@ -14,23 +14,19 @@ from typing import Any, Callable, Iterable, Iterator
 import numpy as np
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BACKEND_ROOT = REPO_ROOT / "backend"
-for import_path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
-    if str(import_path) not in os.sys.path:
-        os.sys.path.insert(0, str(import_path))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-from app.services.metric_service import seasonal_period_for_frequency  # noqa: E402
-from app.services.synthetic_normalization import (  # noqa: E402
+from cafe.analysis.metrics import seasonal_period_for_frequency
+from cafe.generation.normalization import (
     normalize_covariates,
     standardize_by_context,
     standardize_hierarchy_by_context,
 )
-from app.services.synthetic_generator_conditioning import (  # noqa: E402
+from cafe.calibration.conditioning import (
     GeneratorConditioning,
     REAL_BOUNDED_INTENSITY_POLICY_ID,
 )
-from app.services.synthetic_v8_generation import (  # noqa: E402
+from cafe.generation.families import (
     CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN,
     GENERATOR_VERSION,
     PRIMARY_FAMILY_BY_CAPABILITY,
@@ -42,27 +38,27 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
     standardize_common_factor_counterfactual_member,
     standardize_cross_series_counterfactual_member,
 )
-from app.services.synthetic_v8_feature_gate import (  # noqa: E402
+from cafe.validation.mechanisms import (
     structural_calibration_member_gate,
     summarize_structural_calibration_reachability,
 )
-from paper_v2_transfer_common import impute_observed_window  # noqa: E402
-from paper_v8_features import (  # noqa: E402
+from cafe.data.imputation import impute_observed_window
+from cafe.features.profile import (
     FEATURE_SCHEMA_VERSION,
-    v8_feature_vector,
+    cafe_feature_vector,
 )
-from paper_v8_real_data import (  # noqa: E402
+from cafe.data.real import (
     RealSeriesRecord,
     load_real_dataset,
 )
-from synthetic_feature_profile import (  # noqa: E402
+from cafe.features.primitives import (
     adjusted_r2,
     file_sha256,
     robust_scale,
 )
 
 
-SCHEMA_VERSION = "paper_v8_pipeline.v31"
+SCHEMA_VERSION = "cafe.pipeline.v1"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
@@ -490,7 +486,7 @@ def resolve_dataset(dataset_id: str) -> DatasetSpec:
         return DATASET_REGISTRY[dataset_id]
     except KeyError as error:
         raise ValueError(
-            f"unknown v8 dataset {dataset_id!r}; registered="
+            f"unknown cafe dataset {dataset_id!r}; registered="
             f"{sorted(DATASET_REGISTRY)}"
         ) from error
 
@@ -535,7 +531,7 @@ def nonoverlapping_strata(
         segment_start = int(boundaries[index])
         latest_start = int(boundaries[index + 1] - window_length)
         if latest_start < segment_start:
-            raise ValueError("invalid v8 calibration stratum")
+            raise ValueError("invalid cafe calibration stratum")
         strata.append((segment_start, latest_start))
     return strata
 
@@ -609,21 +605,21 @@ def _v8_nonlinear_gain_at_lag(
     )
 
 
-def v8_nonlinear_conditional_gain(
+def cafe_nonlinear_conditional_gain(
     values: np.ndarray,
     season_length: int,
 ) -> tuple[float, int, tuple[int, ...]]:
     """Measure generic nonlinear persistence over plausible relative lags.
 
     The pre-v4 proxy fixed the nonlinear lag to ``season_length // 2`` and
-    added one sine-squared term.  V8 generators intentionally randomize their
+    added one sine-squared term.  CaFE generators intentionally randomize their
     actual lag and use either shifted-tanh or rational responses, so that proxy
     could react more strongly at I3 than I5 merely because a correlated,
     incorrect lag happened to fit one trajectory.
 
     Search a small, fixed set of season-relative lags and use quadratic/cubic
     terms.  This remains family-neutral and is also available for real windows,
-    while covering the smooth bounded response families used by V8 without
+    while covering the smooth bounded response families used by CaFE without
     consulting generator metadata.
     """
 
@@ -663,7 +659,7 @@ def v8_nonlinear_conditional_gain(
     return best_gain, best_lag, candidate_lags
 
 
-def v8_nonlinear_actual_lag_gain(
+def cafe_nonlinear_actual_lag_gain(
     values: np.ndarray,
     season_length: int,
     nonlinear_lag: int,
@@ -704,7 +700,7 @@ def calibration_period_policy(
 
     history = np.asarray(standardized_history, dtype=float).reshape(-1)
     calendar_period = int(seasonal_period_for_frequency(frequency))
-    provisional = v8_feature_vector(
+    provisional = cafe_feature_vector(
         history[:, None],
         None,
     )
@@ -839,13 +835,13 @@ def _native_multivariate_features(
     if len(standardized_channels) < 2:
         return {}
     panel = np.column_stack(standardized_channels)
-    features = v8_feature_vector(
+    features = cafe_feature_vector(
         panel,
         feature_period,
         include_cross_series_predictability=False,
     )
     if panel.shape[1] >= 2:
-        cross_features = v8_feature_vector(
+        cross_features = cafe_feature_vector(
             panel[:, : min(panel.shape[1], 3)],
             feature_period,
             include_cross_series_predictability=True,
@@ -887,7 +883,7 @@ def _hierarchy_children_feature_row(
         constructed,
         REAL_CALIBRATION_CONTEXT_LENGTH,
     )
-    features = v8_feature_vector(
+    features = cafe_feature_vector(
         standardized,
         feature_period,
         hierarchy="additive_first",
@@ -950,7 +946,7 @@ def _known_future_covariate_features(
         covariate_history,
         REAL_CALIBRATION_CONTEXT_LENGTH,
     )
-    return v8_feature_vector(
+    return cafe_feature_vector(
         standardized[:, None],
         feature_period,
         covariates=normalized_covariates,
@@ -1018,7 +1014,7 @@ def build_calibration_anchors(
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     resolved_root = source_root or gift_eval_dir
     if resolved_root is None:
-        raise ValueError("Paper v8 calibration requires a real-data source root")
+        raise ValueError("CaFE calibration requires a real-data source root")
     asset_path = resolved_root / dataset.asset_name
     record_limit = (
         max(64, min(256, int(math.ceil(maximum_anchors / 4))))
@@ -1086,7 +1082,7 @@ def build_calibration_anchors(
             frequency,
             standardized_history,
         )
-        features = v8_feature_vector(
+        features = cafe_feature_vector(
             standardized_history[:, None],
             int(period_policy["feature_period"]),
         )
@@ -1094,7 +1090,7 @@ def build_calibration_anchors(
             nonlinear_gain,
             nonlinear_detected_lag,
             nonlinear_candidate_lags,
-        ) = v8_nonlinear_conditional_gain(
+        ) = cafe_nonlinear_conditional_gain(
             standardized_history,
             int(period_policy["feature_period"]),
         )
@@ -1184,7 +1180,7 @@ def build_calibration_anchors(
         )
         anchors.append(
             {
-                "schema_version": "paper_v8_calibration_anchor.v6",
+                "schema_version": "cafe.calibration_anchor.v1",
                 "feature_schema_version": FEATURE_SCHEMA_VERSION,
                 "anchor_id": anchor_id,
                 "dataset_id": dataset.dataset_id,
@@ -1196,7 +1192,7 @@ def build_calibration_anchors(
                 ),
                 "frequency": frequency,
                 # ``season_length`` remains the literal calendar period for
-                # external provenance. V8 generation and evaluation consume
+                # external provenance. CaFE generation and evaluation consume
                 # the explicit fields below instead of overloading it.
                 "season_length": int(
                     period_policy["calendar_season_length"]
@@ -1268,7 +1264,7 @@ def build_calibration_anchors(
                 },
                 "real_forecast_master": {
                     "schema_version": (
-                        "paper_v8_real_anchor_forecast_master.v1"
+                        "cafe.real_anchor_forecast_master.v1"
                     ),
                     "sample_id": f"v8real__{anchor_id}",
                     "dataset_id": dataset.dataset_id,
@@ -1315,7 +1311,7 @@ def build_calibration_anchors(
         if len(anchors) >= target_count:
             break
     if not anchors:
-        raise ValueError(f"{dataset.dataset_id} produced no valid v8 anchors")
+        raise ValueError(f"{dataset.dataset_id} produced no valid cafe anchors")
     univariate_profile = summarize_feature_rows(
         anchor["features"] for anchor in anchors
     )
@@ -1651,9 +1647,9 @@ def build_conditioning(
         calibrated_realized_strengths=tuple(float(value) for value in targets),
         calibration_max_normalized_error=0.0,
         intensity_policy_id=REAL_BOUNDED_INTENSITY_POLICY_ID,
-        artifact_schema_version="paper_v8_calibration_bundle.v16",
+        artifact_schema_version="cafe.calibration_bundle.v1",
         artifact_created_at=None,
-        calibration_method="paper_v8_response_curve",
+        calibration_method="cafe.response_curve",
         artifact_generator_version=GENERATOR_VERSION,
     )
 
@@ -1739,7 +1735,7 @@ def measured_features(
         if capability_id == "hierarchical_coherence"
         else None
     )
-    values = v8_feature_vector(
+    values = cafe_feature_vector(
         target_history,
         measurement_period,
         covariates=covariate_history,
@@ -1761,7 +1757,7 @@ def measured_features(
             nonlinear_gain,
             nonlinear_detected_lag,
             nonlinear_candidate_lags,
-        ) = v8_nonlinear_conditional_gain(
+        ) = cafe_nonlinear_conditional_gain(
             np.mean(target_history, axis=1),
             measurement_period,
         )
@@ -1778,7 +1774,7 @@ def measured_features(
         actual_lag = metadata.get("nonlinear_lag")
         if actual_lag is not None:
             values["nonlinear_actual_lag_gain"] = (
-                v8_nonlinear_actual_lag_gain(
+                cafe_nonlinear_actual_lag_gain(
                     np.mean(target_history, axis=1),
                     measurement_period,
                     int(actual_lag),
@@ -2327,7 +2323,7 @@ def calibration_path_schedule(
     maximum_path_count: int,
 ) -> tuple[int, ...]:
     if initial_path_count < 1 or maximum_path_count < initial_path_count:
-        raise ValueError("invalid v8 calibration path budget")
+        raise ValueError("invalid cafe calibration path budget")
     counts = [int(initial_path_count)]
     while counts[-1] < maximum_path_count:
         counts.append(
@@ -3111,7 +3107,7 @@ def calibrate_capabilities(
         }
         available_capabilities.append(capability_id)
     return {
-        "schema_version": "paper_v8_capability_calibration.v14",
+        "schema_version": "cafe.capability_calibration.v1",
         "generator_version": GENERATOR_VERSION,
         "intensity_policy": {
             "policy_id": (
@@ -3188,11 +3184,11 @@ def mase_scale_policy(
     history = np.asarray(target, dtype=float)[:CONTEXT_LENGTH]
     period = int(season_length)
     if not 1 <= period < len(history):
-        raise ValueError("v8 MASE period must be defined inside L336")
+        raise ValueError("cafe MASE period must be defined inside L336")
     differences = np.abs(history[period:] - history[:-period])
     by_target = np.mean(differences, axis=0)
     if not np.isfinite(by_target).all():
-        raise ValueError("v8 MASE denominator is non-finite")
+        raise ValueError("cafe MASE denominator is non-finite")
     effective_periods = np.full(by_target.shape, period, dtype=int)
     fallback_mask = by_target <= 1e-12
     if np.any(fallback_mask):
@@ -3202,13 +3198,13 @@ def mase_scale_policy(
             or np.any(lag_one[fallback_mask] <= 1e-12)
         ):
             raise ValueError(
-                "v8 seasonal and lag-one MASE denominators are zero or "
+                "cafe seasonal and lag-one MASE denominators are zero or "
                 "non-finite"
             )
         by_target[fallback_mask] = lag_one[fallback_mask]
         effective_periods[fallback_mask] = 1
     if np.any(by_target <= 1e-12):
-        raise ValueError("v8 MASE denominator is zero or non-finite")
+        raise ValueError("cafe MASE denominator is zero or non-finite")
     return {
         "policy": "seasonal_lag_with_lag1_degeneracy_fallback_v1",
         "requested_period": period,
@@ -3317,7 +3313,7 @@ def generate_master_sample(
         for value in family_calibration["selected_lambdas"]
     )
     if len(lambdas) != len(INTENSITIES):
-        raise ValueError("v8 intensity lambdas must contain five values")
+        raise ValueError("cafe intensity lambdas must contain five values")
     targets = tuple(
         float(value)
         for value in (
@@ -3385,7 +3381,7 @@ def generate_master_sample(
     scale_by_target = list(mase_policy["scale_by_target"])
     dataset_token = safe_id(dataset.dataset_id)
     pair_id = (
-        f"v8__{dataset_token}__{capability_id}__{family_role}__"
+        f"cafe__{dataset_token}__{capability_id}__{family_role}__"
         f"i{intensity}__seed{seed_index:06d}"
         if (
             capability_id in COUNTERFACTUAL_CAPABILITIES
@@ -3404,17 +3400,17 @@ def generate_master_sample(
         else ""
     )
     sample_id = (
-        f"v8__{dataset_token}__{capability_id}__{family_role}__"
+        f"cafe__{dataset_token}__{capability_id}__{family_role}__"
         f"i{intensity}__seed{seed_index:06d}{member_suffix}{table_suffix}"
     )
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
-        "schema_version": "paper_v8_master_sample.v9",
+        "schema_version": "cafe.master_sample.v1",
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "sample_id": sample_id,
         "master_sample_id": sample_id,
         "paired_group_id": (
-            f"v8__{dataset_token}__{capability_id}__{family_role}__"
+            f"cafe__{dataset_token}__{capability_id}__{family_role}__"
             f"seed{seed_index:06d}"
         ),
         "counterfactual_pair_id": pair_id,
@@ -3646,7 +3642,7 @@ def multivariate_input_ablation_sample(
         )
 
     result = json.loads(json.dumps(clean))
-    result["schema_version"] = "paper_v8_input_ablation_sample.v1"
+    result["schema_version"] = "cafe.input_ablation_sample.v1"
     result["sample_id"] = clean["sample_id"] + "__mv_input_ablation"
     result["master_sample_id"] = result["sample_id"]
     result["clean_master_sample_id"] = clean["sample_id"]
@@ -3709,7 +3705,7 @@ def robustness_sample(clean: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     result = json.loads(json.dumps(clean))
-    result["schema_version"] = "paper_v8_robustness_master_sample.v2"
+    result["schema_version"] = "cafe.robustness_master_sample.v1"
     result["sample_id"] = clean["sample_id"] + "__robust15"
     result["master_sample_id"] = result["sample_id"]
     result["clean_master_sample_id"] = clean["sample_id"]
@@ -3789,9 +3785,9 @@ def master_view(
     context_length: int,
 ) -> dict[str, Any]:
     if context_length not in VIEW_CONTEXT_LENGTHS:
-        raise ValueError(f"unsupported v8 context view {context_length}")
+        raise ValueError(f"unsupported cafe context view {context_length}")
     if int(master["context_length"]) != CONTEXT_LENGTH:
-        raise ValueError("v8 inference views require an L336 master")
+        raise ValueError("cafe inference views require an L336 master")
     start = CONTEXT_LENGTH - context_length
     target = np.asarray(master["target"], dtype=float)[start:]
     covariates = (
@@ -3800,7 +3796,7 @@ def master_view(
         else np.asarray(master["covariates"], dtype=float)[start:]
     )
     result = json.loads(json.dumps(master))
-    result["schema_version"] = "paper_v8_forecast_view.v2"
+    result["schema_version"] = "cafe.forecast_view.v1"
     result["source_master_sample_id"] = master["sample_id"]
     result["master_sample_id"] = master["sample_id"]
     result["sample_id"] = f"{master['sample_id']}__L{context_length}"

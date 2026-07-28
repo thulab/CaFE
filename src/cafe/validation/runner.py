@@ -9,19 +9,19 @@ from typing import Any
 
 import numpy as np
 
-import paper_v8_pipeline_common as v8
-from app.services.synthetic_v8_feature_gate import (
+from cafe import protocol
+from cafe.validation.mechanisms import (
     basic_sample_checks,
     validate_sample_collection,
 )
 
 
-DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
+DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate a formal Paper v8 generated sample shard."
+        description="Validate a formal CaFE generated sample shard."
     )
     parser.add_argument("--dataset-id", default="gift_electricity_h")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -34,7 +34,7 @@ def validate_manifest_file(record: dict[str, Any]) -> None:
     path = Path(record["path"])
     if not path.is_file():
         raise FileNotFoundError(path)
-    if v8.file_sha256(path) != record["sha256"]:
+    if protocol.file_sha256(path) != record["sha256"]:
         raise ValueError(f"manifest hash mismatch: {path}")
 
 
@@ -322,7 +322,7 @@ def mase_scale_audit(
 
 def main() -> int:
     args = parse_args()
-    dataset = v8.resolve_dataset(args.dataset_id)
+    dataset = protocol.resolve_dataset(args.dataset_id)
     generation_dir = (
         args.output_root.resolve() / dataset.dataset_id / "02_generation"
     )
@@ -330,17 +330,17 @@ def main() -> int:
         f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     )
     manifest_path = generation_dir / f"manifest__{shard_name}.json"
-    manifest = v8.read_json(manifest_path)
+    manifest = protocol.read_json(manifest_path)
     for record in manifest["files"].values():
         validate_manifest_file(record)
     clean_rows = list(
-        v8.iter_jsonl(Path(manifest["files"]["clean"]["path"]))
+        protocol.iter_jsonl(Path(manifest["files"]["clean"]["path"]))
     )
     robustness_rows = list(
-        v8.iter_jsonl(Path(manifest["files"]["robustness"]["path"]))
+        protocol.iter_jsonl(Path(manifest["files"]["robustness"]["path"]))
     )
     ablation_rows = list(
-        v8.iter_jsonl(Path(manifest["files"]["input_ablations"]["path"]))
+        protocol.iter_jsonl(Path(manifest["files"]["input_ablations"]["path"]))
     )
     identifiers = [str(row["sample_id"]) for row in clean_rows]
     duplicate_ids = sorted(
@@ -361,11 +361,11 @@ def main() -> int:
         and ablation_validation["accepted"]
     )
     report = {
-        "schema_version": "paper_v8_generation_validation.v2",
-        "created_at": v8.utc_now(),
+        "schema_version": "cafe.generation_validation.v1",
+        "created_at": protocol.utc_now(),
         "dataset_id": dataset.dataset_id,
         "generation_manifest": str(manifest_path),
-        "generation_manifest_sha256": v8.file_sha256(manifest_path),
+        "generation_manifest_sha256": protocol.file_sha256(manifest_path),
         "clean_sample_count": len(clean_rows),
         "robustness_sample_count": len(robustness_rows),
         "input_ablation_sample_count": len(ablation_rows),
@@ -377,11 +377,11 @@ def main() -> int:
         "accepted": accepted,
     }
     report_path = generation_dir / f"validation__{shard_name}.json"
-    v8.write_json(report_path, report)
+    protocol.write_json(report_path, report)
     if not accepted:
-        raise ValueError(f"v8 generation validation failed: {report_path}")
+        raise ValueError(f"cafe generation validation failed: {report_path}")
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "accepted": True,
                 "clean_sample_count": len(clean_rows),

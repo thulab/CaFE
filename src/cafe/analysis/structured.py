@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 
-STRUCTURED_BASELINE_SCHEMA_VERSION = "paper_v8_structured_baseline.v2"
+STRUCTURED_BASELINE_SCHEMA_VERSION = "cafe.structured_baseline.v1"
 STRUCTURED_CAPABILITIES = frozenset(
     {"common_factor", "cross_series_dependence"}
 )

@@ -55,14 +55,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Plot fixed-L168 MASE densities for real anchors and intensity-3 "
-            "synthetic capability samples from a Paper v8 experiment."
+            "synthetic capability samples from a CaFE experiment."
         )
     )
     parser.add_argument(
         "--experiment-root",
         type=Path,
         required=True,
-        help="Paper v8 experiment directory containing gift_* dataset folders.",
+        help="CaFE experiment directory containing gift_* dataset folders.",
     )
     parser.add_argument(
         "--dataset-id",
@@ -97,7 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("runtime/paper_v8_figures"),
+        default=Path("runtime/cafe.figures"),
     )
     return parser.parse_args()
 
@@ -573,7 +573,7 @@ def plot_distributions(
 
     real_iqr = iqr(real)
     metadata = {
-        "schema_version": "paper_v8_mase_density_figure.v1",
+        "schema_version": "cafe.mase_density_figure.v1",
         "experiment_root": str(experiment_root.resolve()),
         "analysis_dir": str(analysis_dir.resolve()),
         "dataset_id": dataset_id,

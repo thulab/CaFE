@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lightweight dataset-local realism audits for Paper v8 samples.
+"""Lightweight dataset-local realism audits for CaFE samples.
 
 The gate intentionally has two narrow responsibilities:
 
@@ -21,7 +21,7 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 
 
-SCHEMA_VERSION = "paper_v8_realism_gate.v7"
+SCHEMA_VERSION = "cafe.realism_gate.v1"
 HISTORY_LENGTH = 168
 MINIMUM_ANCHOR_COUNT = 12
 DISTANCE_EPSILON = 1e-12

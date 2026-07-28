@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fine-tune Chronos-2 on Paper v8 seed batch A and evaluate on A/B.
+"""Fine-tune Chronos-2 on CaFE seed batch A and evaluate on A/B.
 
-Input JSONL files are produced by ``prepare_paper_v8_chronos_finetune.py``.
-The experiment follows the Paper v8 fixed-context main-table task (L168, H48)
+Input JSONL files are produced by ``experiments/finetuning/prepare.py``.
+The experiment follows the CaFE fixed-context main-table task (L168, H48)
 and evaluates the pretrained model plus regular checkpoints along one
 continuous full-fine-tuning trajectory on A.
 """
@@ -38,7 +38,7 @@ from chronos import Chronos2Pipeline
 
 CONTEXT_LENGTH = 168
 PREDICTION_LENGTH = 48
-EXPECTED_SCHEMA = "paper_v8_chronos_finetune_split.v1"
+EXPECTED_SCHEMA = "cafe.chronos_finetune_split.v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -436,7 +436,7 @@ def write_curve(rows: list[dict[str, Any]], output_dir: Path) -> None:
     error_ax.set_ylabel("MAE (lower is better)")
     error_ax.set_title(
         "Chronos-2 fine-tuned on seed batch A, evaluated on disjoint A/B\n"
-        "Paper v8 primary/main samples · fixed context L168 · horizon H48"
+        "CaFE primary/main samples · fixed context L168 · horizon H48"
     )
     error_ax.legend(frameon=True)
     improvement_ax.axhline(0.0, color="#667085", linewidth=1.0)

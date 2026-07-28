@@ -11,17 +11,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import paper_v8_pipeline_common as v8
-import run_paper_v8_inference as v8_inference
+from cafe import provenance
+from cafe import protocol
+from cafe.inference import runner as inference
 
-DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
-DEFAULT_MODELS = v8_inference.DEFAULT_MODELS
+DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
+DEFAULT_MODELS = inference.DEFAULT_MODELS
 STEPS = ("calibration", "generation", "validation", "inference", "analysis")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the complete formal Paper v8 pipeline."
+        description="Run the complete formal CaFE pipeline."
     )
     parser.add_argument(
         "--dataset-id",
@@ -52,8 +53,8 @@ def parse_args() -> argparse.Namespace:
         "--experiment-id",
         default=None,
         help=(
-            "Immutable experiment directory name. When omitted, derive one "
-            "from the generator version, protocol hash, and UTC start time."
+            "Stable experiment identity. When omitted, derive one from the "
+            "generator version, calibration-stage hash, and UTC start time."
         ),
     )
     parser.add_argument(
@@ -100,12 +101,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--calibration-seeds",
         type=int,
-        default=v8.DEFAULT_CALIBRATION_PATH_COUNT,
+        default=protocol.DEFAULT_CALIBRATION_PATH_COUNT,
     )
     parser.add_argument(
         "--max-calibration-seeds",
         type=int,
-        default=v8.MAX_CALIBRATION_PATH_COUNT,
+        default=protocol.MAX_CALIBRATION_PATH_COUNT,
     )
     parser.add_argument(
         "--max-generation-attempts",
@@ -128,8 +129,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--capabilities",
         nargs="+",
-        choices=v8.CAPABILITIES,
-        default=list(v8.CAPABILITIES),
+        choices=protocol.CAPABILITIES,
+        default=list(protocol.CAPABILITIES),
     )
     parser.add_argument(
         "--models",
@@ -139,9 +140,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--endpoints",
         nargs="+",
-        default=list(v8_inference.DEFAULT_ENDPOINTS),
+        default=list(inference.DEFAULT_ENDPOINTS),
     )
-    v8_inference.add_endpoint_topology_arguments(parser)
+    inference.add_endpoint_topology_arguments(parser)
     parser.add_argument("--start-at", choices=STEPS, default="calibration")
     parser.add_argument("--stop-after", choices=STEPS, default="analysis")
     parser.add_argument("--resume-inference", action="store_true")
@@ -162,39 +163,29 @@ def parse_args() -> argparse.Namespace:
             "model MASE and primary mechanism scores."
         ),
     )
-    parser.add_argument(
-        "--upgrade-inference-execution-policy",
-        action="store_true",
-        help=(
-            "Explicitly migrate an existing pre-inference experiment from an "
-            "older model execution/scheduling policy. An active preparation-"
-            "only run may continue; refuses if that run can enter inference "
-            "or after inference artifacts exist."
-        ),
-    )
     return parser.parse_args()
 
 
 def run(
-    script: str,
+    module: str,
     arguments: list[str],
     *,
     log_path: Path | None = None,
 ) -> None:
-    command = [sys.executable, str(v8.REPO_ROOT / "scripts" / script), *arguments]
+    command = [sys.executable, "-m", module, *arguments]
     print("+ " + " ".join(command), flush=True)
     if log_path is None:
-        subprocess.run(command, cwd=v8.REPO_ROOT / "backend", check=True)
+        subprocess.run(command, cwd=protocol.REPO_ROOT, check=True)
         return
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log:
         log.write(
-            f"\n[{v8.utc_now()}] + {' '.join(command)}\n"
+            f"\n[{protocol.utc_now()}] + {' '.join(command)}\n"
         )
         log.flush()
         subprocess.run(
             command,
-            cwd=v8.REPO_ROOT / "backend",
+            cwd=protocol.REPO_ROOT,
             stdout=log,
             stderr=subprocess.STDOUT,
             check=True,
@@ -207,9 +198,9 @@ def requested_dataset_ids(args: argparse.Namespace) -> list[str]:
         raise ValueError("use either --dataset-id or --dataset-ids, not both")
     values = list(args.dataset_ids or args.dataset_id or ["gift_electricity_h"])
     if len(values) != len(set(values)):
-        raise ValueError("v8 dataset ids must be unique")
+        raise ValueError("cafe dataset ids must be unique")
     for dataset_id in values:
-        v8.resolve_dataset(dataset_id)
+        protocol.resolve_dataset(dataset_id)
     return values
 
 
@@ -254,7 +245,7 @@ def commands_for_dataset(
     ]
     return {
         "calibration": (
-            "calibrate_paper_v8.py",
+            "cafe.calibration.runner",
             [
                 *common,
                 "--gift-eval-dir",
@@ -280,7 +271,7 @@ def commands_for_dataset(
             ],
         ),
         "generation": (
-            "generate_paper_v8_samples.py",
+            "cafe.generation.runner",
             [
                 *common,
                 *seed,
@@ -298,11 +289,11 @@ def commands_for_dataset(
             ],
         ),
         "validation": (
-            "validate_paper_v8_samples.py",
+            "cafe.validation.runner",
             [*common, *seed],
         ),
         "inference": (
-            "run_paper_v8_inference.py",
+            "cafe.inference.runner",
             [
                 *common,
                 *seed,
@@ -310,12 +301,12 @@ def commands_for_dataset(
                 *args.models,
                 "--endpoints",
                 *args.endpoints,
-                *v8_inference.endpoint_topology_cli_arguments(args),
+                *inference.endpoint_topology_cli_arguments(args),
                 *(["--resume"] if args.resume_inference else []),
             ],
         ),
         "analysis": (
-            "analyze_paper_v8.py",
+            "cafe.analysis.runner",
             [
                 *common,
                 *seed,
@@ -365,7 +356,7 @@ def model_major_inference_arguments(
         *args.models,
         "--endpoints",
         *args.endpoints,
-        *v8_inference.endpoint_topology_cli_arguments(args),
+        *inference.endpoint_topology_cli_arguments(args),
         "--preprocess-workers",
         str(args.inference_preprocess_workers),
         *(["--resume"] if args.resume_inference else []),
@@ -422,7 +413,7 @@ def run_experiment_analysis(
     log_path: Path | None = None,
 ) -> None:
     run(
-        "analyze_paper_v8.py",
+        "cafe.analysis.runner",
         experiment_analysis_arguments(
             args,
             experiment_root=experiment_root,
@@ -436,19 +427,19 @@ def protocol_config(
     dataset_ids: list[str],
 ) -> dict[str, Any]:
     missing_configs = sorted(
-        set(args.models) - set(v8_inference.MODEL_EXECUTION_CONFIG)
+        set(args.models) - set(inference.MODEL_EXECUTION_CONFIG)
     )
     if missing_configs:
         raise ValueError(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "paper_v8_experiment_protocol.v19",
-        "pipeline_schema_version": v8.SCHEMA_VERSION,
-        "generator_version": v8.GENERATOR_VERSION,
+        "schema_version": "cafe.experiment_protocol.v1",
+        "pipeline_schema_version": protocol.SCHEMA_VERSION,
+        "generator_version": protocol.GENERATOR_VERSION,
         "dataset_ids": list(dataset_ids),
         "real_data_adapters": {
-            dataset_id: v8.resolve_dataset(dataset_id).real_data_adapter
+            dataset_id: protocol.resolve_dataset(dataset_id).real_data_adapter
             for dataset_id in dataset_ids
         },
         "seed_start": int(args.seed_start),
@@ -478,7 +469,7 @@ def protocol_config(
                 "lambda1_blind_positive_controls"
             ),
             "cross_series_minimum_incremental_history_holdout_gain": (
-                v8.CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN
+                protocol.CROSS_SERIES_MIN_INCREMENTAL_HOLDOUT_GAIN
             ),
             "common_factor_identifiability": (
                 "pca_share_above_finite_panel_floor_at_selected_dose_plus_"
@@ -508,7 +499,7 @@ def protocol_config(
         "models": list(args.models),
         "analysis_profile": str(getattr(args, "analysis_profile", "full")),
         "model_execution_config": {
-            model_id: dict(v8_inference.MODEL_EXECUTION_CONFIG[model_id])
+            model_id: dict(inference.MODEL_EXECUTION_CONFIG[model_id])
             for model_id in args.models
         },
         "dataset_execution_policy": (
@@ -516,7 +507,7 @@ def protocol_config(
             "inference_remains_sequential_in_declared_order"
         ),
         "model_scheduling_policy": {
-            "policy_id": v8_inference.SCHEDULING_POLICY_ID,
+            "policy_id": inference.SCHEDULING_POLICY_ID,
             "phase_order": "models_in_declared_order",
             "service_collaboration": (
                 "all_compatible_services_run_deterministic_parts_of_each_model"
@@ -524,13 +515,13 @@ def protocol_config(
             "resume_part_identity": "preserved_when_service_count_changes",
         },
         "real_calibration_context_length": (
-            v8.REAL_CALIBRATION_CONTEXT_LENGTH
+            protocol.REAL_CALIBRATION_CONTEXT_LENGTH
         ),
-        "synthetic_master_context_length": v8.CONTEXT_LENGTH,
-        "fixed_context_length": v8.FIXED_CONTEXT_LENGTH,
-        "horizon": v8.HORIZON,
-        "view_context_lengths": list(v8.VIEW_CONTEXT_LENGTHS),
-        "intensities": list(v8.INTENSITIES),
+        "synthetic_master_context_length": protocol.CONTEXT_LENGTH,
+        "fixed_context_length": protocol.FIXED_CONTEXT_LENGTH,
+        "horizon": protocol.HORIZON,
+        "view_context_lengths": list(protocol.VIEW_CONTEXT_LENGTHS),
+        "intensities": list(protocol.INTENSITIES),
         "aggregation_policy": (
             "dataset-isolated outputs and reports; no implicit "
             "cross-dataset averaging"
@@ -559,12 +550,12 @@ def protocol_config(
                         "analysis_source_experiment_root",
                     ).resolve()
                 ),
-                "experiment_manifest_sha256": v8.file_sha256(
+                "experiment_sha256": protocol.file_sha256(
                     getattr(
                         args,
                         "analysis_source_experiment_root",
                     ).resolve()
-                    / "experiment_manifest.json"
+                    / "experiment.json"
                 ),
             }
             if getattr(
@@ -579,30 +570,98 @@ def protocol_config(
 
 
 def default_experiment_id(
-    protocol_sha256: str,
+    preparation_sha256: str,
     *,
     now: datetime | None = None,
 ) -> str:
     timestamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
-    generator_tag = v8.safe_id(v8.GENERATOR_VERSION)
-    return f"v8_{generator_tag}_{protocol_sha256[:12]}_{timestamp}"
+    generator_tag = protocol.safe_id(protocol.GENERATOR_VERSION)
+    return f"{generator_tag}_{preparation_sha256[:12]}_{timestamp}"
 
 
 def code_provenance() -> dict[str, Any]:
-    def git_value(*arguments: str) -> str | None:
-        try:
-            return subprocess.check_output(
-                ["git", *arguments],
-                cwd=v8.REPO_ROOT,
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip()
-        except (OSError, subprocess.CalledProcessError):
-            return None
+    return provenance.code_provenance(protocol.REPO_ROOT)
 
+
+def stage_protocol_configs(
+    full_protocol: dict[str, Any],
+    *,
+    endpoints: list[str],
+    endpoint_profiles: dict[str, dict[str, Any]],
+    preparation_execution: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    shared_structure = {
+        key: full_protocol[key]
+        for key in (
+            "pipeline_schema_version",
+            "dataset_ids",
+            "real_data_adapters",
+            "capabilities",
+            "real_calibration_context_length",
+            "synthetic_master_context_length",
+            "fixed_context_length",
+            "horizon",
+            "view_context_lengths",
+            "intensities",
+        )
+    }
     return {
-        "git_revision": git_value("rev-parse", "HEAD"),
-        "git_branch": git_value("branch", "--show-current"),
+        "calibration": {
+            "schema_version": "cafe.calibration_stage.v1",
+            **shared_structure,
+            "max_anchors": full_protocol["max_anchors"],
+            "calibration_seeds": full_protocol["calibration_seeds"],
+            "max_calibration_seeds": full_protocol["max_calibration_seeds"],
+            "calibration_path_policy": full_protocol["calibration_path_policy"],
+            "execution": preparation_execution,
+        },
+        "generation": {
+            "schema_version": "cafe.generation_stage.v1",
+            **shared_structure,
+            "generator_version": full_protocol["generator_version"],
+            "seed_start": full_protocol["seed_start"],
+            "seed_count": full_protocol["seed_count"],
+            "generation_acceptance": full_protocol["generation_acceptance"],
+            "mase_scale_policy": full_protocol["mase_scale_policy"],
+            "execution": preparation_execution,
+        },
+        "validation": {
+            "schema_version": "cafe.validation_stage.v1",
+            **shared_structure,
+            "generator_version": full_protocol["generator_version"],
+        },
+        "inference": {
+            "schema_version": "cafe.inference_stage.v1",
+            "dataset_ids": full_protocol["dataset_ids"],
+            "seed_start": full_protocol["seed_start"],
+            "seed_count": full_protocol["seed_count"],
+            "models": full_protocol["models"],
+            "model_execution_config": full_protocol["model_execution_config"],
+            "model_scheduling_policy": full_protocol["model_scheduling_policy"],
+            "view_context_lengths": full_protocol["view_context_lengths"],
+            "fixed_context_length": full_protocol["fixed_context_length"],
+            "horizon": full_protocol["horizon"],
+            "requested_endpoints": endpoints,
+            "endpoint_profiles": endpoint_profiles,
+        },
+        "analysis": {
+            "schema_version": "cafe.analysis_stage.v1",
+            "dataset_ids": full_protocol["dataset_ids"],
+            "seed_start": full_protocol["seed_start"],
+            "seed_count": full_protocol["seed_count"],
+            "models": full_protocol["models"],
+            "capabilities": full_protocol["capabilities"],
+            "analysis_profile": full_protocol["analysis_profile"],
+            "fixed_context_length": full_protocol["fixed_context_length"],
+            "view_context_lengths": full_protocol["view_context_lengths"],
+            "aggregation_policy": full_protocol["aggregation_policy"],
+            "primary_mechanism_score_policy": (
+                full_protocol["primary_mechanism_score_policy"]
+            ),
+            "analysis_source_experiment": (
+                full_protocol["analysis_source_experiment"]
+            ),
+        },
     }
 
 
@@ -610,162 +669,68 @@ def initialize_experiment(
     *,
     storage_root: Path,
     experiment_id: str,
-    protocol: dict[str, Any],
-    endpoints: list[str],
-    endpoint_profiles: dict[str, dict[str, Any]] | None = None,
-    preparation_execution: dict[str, Any] | None = None,
-    allow_inference_execution_upgrade: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
-    if v8.safe_id(experiment_id) != experiment_id:
+    if protocol.safe_id(experiment_id) != experiment_id:
         raise ValueError("experiment-id may contain only letters, digits, '_' and '-'")
     experiment_root = storage_root.resolve() / experiment_id
-    manifest_path = experiment_root / "experiment_manifest.json"
-    protocol_sha256 = v8.json_sha256(protocol)
-    manifest = {
-        "schema_version": "paper_v8_experiment_manifest.v1",
-        "experiment_id": experiment_id,
-        "created_at": v8.utc_now(),
-        "protocol_sha256": protocol_sha256,
-        "protocol": protocol,
-        "execution_environment": {
-            "requested_endpoints": list(endpoints),
-            "requested_endpoint_profiles": endpoint_profiles,
-            "preparation_execution": preparation_execution,
-            **code_provenance(),
-        },
-        "storage": {
-            "experiment_root": str(experiment_root),
-            "dataset_layout": (
-                "<dataset_id>/{01_calibration,02_generation,"
-                "03_inference,04_analysis}"
-            ),
-            "seed_shards": "append-only files named by [seed_start, seed_end)",
-            "cross_dataset_aggregation": "not_performed",
-        },
-    }
-    if manifest_path.exists():
-        existing = v8.read_json(manifest_path)
-        exact_match = (
-            existing.get("experiment_id") == experiment_id
-            and existing.get("protocol_sha256") == protocol_sha256
-            and existing.get("protocol") == protocol
-        )
-        if not exact_match and allow_inference_execution_upgrade:
-            existing = upgrade_inference_execution_policy(
-                experiment_root,
-                existing,
-                experiment_id=experiment_id,
-                protocol=protocol,
-                protocol_sha256=protocol_sha256,
-            )
-            exact_match = True
-        if not exact_match:
-            raise ValueError(
-                "existing experiment manifest does not match requested protocol"
-            )
-        return experiment_root, existing
-    if experiment_root.exists() and any(experiment_root.iterdir()):
+    existing_path = experiment_root / "experiment.json"
+    if experiment_root.exists() and any(experiment_root.iterdir()) and not existing_path.exists():
         raise ValueError(
             "refusing to use a non-empty experiment directory without "
-            "an experiment manifest"
+            "experiment.json"
         )
-    v8.write_json(manifest_path, manifest)
+    manifest = provenance.initialize_experiment(
+        experiment_root,
+        experiment_id=experiment_id,
+        created_at=protocol.utc_now(),
+    )
     return experiment_root, manifest
 
 
-def upgrade_inference_execution_policy(
+def initialize_stage_contracts(
     experiment_root: Path,
-    existing: dict[str, Any],
     *,
-    experiment_id: str,
-    protocol: dict[str, Any],
-    protocol_sha256: str,
-) -> dict[str, Any]:
-    """Explicitly migrate only the pre-inference execution policy.
-
-    Generation and analysis identities remain immutable.  The migration is
-    rejected once any inference file exists and records the complete prior
-    protocol/hash for auditability.
-    """
-
-    if existing.get("experiment_id") != experiment_id:
-        raise ValueError("cannot migrate a different experiment identity")
-    old_protocol = dict(existing.get("protocol") or {})
-    execution_keys = {
-        "model_execution_config",
-        "model_scheduling_policy",
-    }
-    old_identity = {
-        key: value for key, value in old_protocol.items() if key not in execution_keys
-    }
-    new_identity = {
-        key: value for key, value in protocol.items() if key not in execution_keys
-    }
-    if old_identity != new_identity:
-        raise ValueError(
-            "inference execution upgrade may not change generation or "
-            "analysis protocol fields"
-        )
-    status_path = experiment_root / "pipeline_status.json"
-    status: dict[str, Any] | None = None
-    if status_path.exists():
-        status = v8.read_json(status_path)
-        if status.get("state") == "running":
-            preparation_steps = {"calibration", "generation", "validation"}
-            active_step = status.get("active_step")
-            stop_after = status.get("stop_after")
-            if (
-                active_step
-                not in preparation_steps | {"concurrent_preparation"}
-                or stop_after not in preparation_steps
-                or status.get("protocol_sha256") != existing.get("protocol_sha256")
-            ):
+    stage_configs: dict[str, dict[str, Any]],
+    requested_steps: list[str],
+    analysis_source_experiment_root: Path | None = None,
+) -> dict[str, dict[str, Any]]:
+    contracts: dict[str, dict[str, Any]] = {}
+    for stage in requested_steps:
+        stage_index = STEPS.index(stage)
+        upstream: list[dict[str, Any]] = []
+        if stage_index:
+            previous_stage = STEPS[stage_index - 1]
+            previous_root = experiment_root
+            if stage == "analysis" and analysis_source_experiment_root is not None:
+                previous_root = analysis_source_experiment_root.resolve()
+            previous_path = (
+                previous_root / "stage_contracts" / f"{previous_stage}.json"
+            )
+            if not previous_path.is_file():
                 raise ValueError(
-                    "active pipeline may enter inference or does not match "
-                    "the recorded protocol; wait before upgrading the "
-                    "inference execution policy"
+                    f"{stage} requires the frozen {previous_stage} stage contract: "
+                    f"{previous_path}"
                 )
-    inference_files = [
-        path for path in experiment_root.glob("*/03_inference/**/*") if path.is_file()
-    ]
-    if inference_files:
-        raise ValueError(
-            "cannot upgrade inference execution policy after inference "
-            "artifacts exist"
+            upstream = provenance.upstream_records(
+                [previous_path],
+                relative_to=experiment_root,
+            )
+        contracts[stage] = provenance.ensure_stage_contract(
+            experiment_root,
+            stage=stage,
+            created_at=protocol.utc_now(),
+            repository_root=protocol.REPO_ROOT,
+            config=stage_configs[stage],
+            upstream=upstream,
         )
-    upgraded = dict(existing)
-    history = list(upgraded.get("protocol_history") or [])
-    history.append(
-        {
-            "changed_at": v8.utc_now(),
-            "reason": "explicit_pre_inference_execution_policy_upgrade",
-            "protocol_sha256": existing.get("protocol_sha256"),
-            "protocol": old_protocol,
-            "concurrent_preparation_status": (
-                status
-                if status is not None and status.get("state") == "running"
-                else None
-            ),
-        }
-    )
-    upgraded["protocol_history"] = history
-    upgraded["protocol"] = protocol
-    upgraded["protocol_sha256"] = protocol_sha256
-    environment = dict(upgraded.get("execution_environment") or {})
-    environment["inference_execution_upgrade"] = code_provenance()
-    upgraded["execution_environment"] = environment
-    v8.write_json(
-        experiment_root / "experiment_manifest.json",
-        upgraded,
-    )
-    return upgraded
+    return contracts
 
 
 def write_pipeline_status(
     experiment_root: Path,
     *,
     experiment_id: str,
-    protocol_sha256: str,
+    run_plan_sha256: str,
     state: str,
     start_at: str,
     stop_after: str,
@@ -777,13 +742,13 @@ def write_pipeline_status(
     failed: list[dict[str, Any]] | None = None,
     error: str | None = None,
 ) -> None:
-    v8.write_json(
+    protocol.write_json(
         experiment_root / "pipeline_status.json",
         {
-            "schema_version": "paper_v8_pipeline_status.v2",
-            "updated_at": v8.utc_now(),
+            "schema_version": "cafe.pipeline_status.v1",
+            "updated_at": protocol.utc_now(),
             "experiment_id": experiment_id,
-            "protocol_sha256": protocol_sha256,
+            "run_plan_sha256": run_plan_sha256,
             "state": state,
             "start_at": start_at,
             "stop_after": stop_after,
@@ -809,11 +774,11 @@ def write_dataset_preparation_status(
     elapsed_seconds: float | None = None,
     error: str | None = None,
 ) -> None:
-    v8.write_json(
+    protocol.write_json(
         experiment_root / dataset_id / "preparation_status.json",
         {
-            "schema_version": "paper_v8_dataset_preparation_status.v1",
-            "updated_at": v8.utc_now(),
+            "schema_version": "cafe.dataset_preparation_status.v1",
+            "updated_at": protocol.utc_now(),
             "dataset_id": dataset_id,
             "state": state,
             "requested_steps": requested_steps,
@@ -918,7 +883,7 @@ def run_parallel_preparation(
     *,
     experiment_root: Path,
     experiment_id: str,
-    protocol_sha256: str,
+    run_plan_sha256: str,
     steps: list[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Prepare datasets with a bounded, work-conserving process schedule."""
@@ -962,7 +927,7 @@ def run_parallel_preparation(
         write_pipeline_status(
             experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=protocol_sha256,
+            run_plan_sha256=run_plan_sha256,
             state="running",
             start_at=args.start_at,
             stop_after=args.stop_after,
@@ -1005,7 +970,7 @@ def run_parallel_preparation(
                         "error": f"{type(error).__name__}: {error}",
                     }
                 outcomes[dataset_id] = outcome
-                print(v8.canonical_json(outcome), flush=True)
+                print(protocol.canonical_json(outcome), flush=True)
             submit_available(executor)
             write_running_status()
     return ordered("complete"), ordered("failed")
@@ -1039,12 +1004,12 @@ def reusable_analysis_manifest(
     if not inference_manifest_path.is_file() or not analysis_manifest_path.is_file():
         return False
     try:
-        inference_manifest = v8.read_json(inference_manifest_path)
-        analysis_manifest = v8.read_json(analysis_manifest_path)
+        inference_manifest = protocol.read_json(inference_manifest_path)
+        analysis_manifest = protocol.read_json(analysis_manifest_path)
         if not bool(inference_manifest.get("complete")):
             return False
         if analysis_manifest.get("schema_version") != (
-            "paper_v8_analysis_manifest.v5"
+            "cafe.analysis_manifest.v1"
         ):
             return False
         if str(analysis_manifest.get("dataset_id")) != dataset_id:
@@ -1054,7 +1019,7 @@ def reusable_analysis_manifest(
         if analysis_manifest.get("analysis_profile") != analysis_profile:
             return False
         if str(analysis_manifest.get("inference_manifest_sha256")) != (
-            v8.file_sha256(inference_manifest_path)
+            protocol.file_sha256(inference_manifest_path)
         ):
             return False
         coverage = {
@@ -1078,7 +1043,7 @@ def reusable_analysis_manifest(
                 or record.get("bytes") is None
                 or int(record["bytes"]) != path.stat().st_size
                 or not record.get("sha256")
-                or str(record["sha256"]) != v8.file_sha256(path)
+                or str(record["sha256"]) != protocol.file_sha256(path)
             ):
                 return False
     except (KeyError, TypeError, ValueError, OSError):
@@ -1152,7 +1117,7 @@ def run_parallel_analysis(
     *,
     experiment_root: Path,
     experiment_id: str,
-    protocol_sha256: str,
+    run_plan_sha256: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     outcomes: dict[str, dict[str, Any]] = {}
     active: dict[Future[dict[str, Any]], str] = {}
@@ -1192,7 +1157,7 @@ def run_parallel_analysis(
         write_pipeline_status(
             experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=protocol_sha256,
+            run_plan_sha256=run_plan_sha256,
             state="running",
             start_at=args.start_at,
             stop_after=args.stop_after,
@@ -1230,7 +1195,7 @@ def run_parallel_analysis(
                         "error": f"{type(error).__name__}: {error}",
                     }
                 outcomes[dataset_id] = outcome
-                print(v8.canonical_json(outcome), flush=True)
+                print(protocol.canonical_json(outcome), flush=True)
             submit_available(executor)
             write_running_status()
     return ordered("complete"), ordered("failed")
@@ -1243,8 +1208,8 @@ def main() -> int:
         dataset_id
         for dataset_id in dataset_ids
         if (
-            v8.resolve_dataset(dataset_id).real_data_adapter
-            not in v8.GIFT_EVAL_REAL_DATA_ADAPTERS
+            protocol.resolve_dataset(dataset_id).real_data_adapter
+            not in protocol.GIFT_EVAL_REAL_DATA_ADAPTERS
         )
     ]
     if non_gift_datasets and args.source_root is None:
@@ -1256,11 +1221,11 @@ def main() -> int:
         raise ValueError("model ids must be unique")
     if len(args.endpoints) != len(set(args.endpoints)):
         raise ValueError("inference endpoints must be unique")
-    endpoint_presets = v8_inference.endpoint_presets_with_defaults(
+    endpoint_presets = inference.endpoint_presets_with_defaults(
         list(args.endpoints),
         list(args.endpoint_preset),
     )
-    endpoint_profiles = v8_inference.build_endpoint_profiles(
+    endpoint_profiles = inference.build_endpoint_profiles(
         list(args.endpoints),
         default_devices=args.devices,
         endpoint_presets=endpoint_presets,
@@ -1303,32 +1268,63 @@ def main() -> int:
         start_index=start,
         stop_index=stop,
     )
-    protocol = protocol_config(args, dataset_ids)
-    protocol_sha256 = v8.json_sha256(protocol)
-    experiment_id = args.experiment_id or default_experiment_id(protocol_sha256)
+    full_protocol = protocol_config(args, dataset_ids)
+    serialized_endpoint_profiles = {
+        endpoint: profile.as_dict()
+        for endpoint, profile in endpoint_profiles.items()
+    }
+    preparation_execution = {
+        "dataset_workers": int(args.dataset_workers),
+        "capability_workers_per_dataset": int(args.preparation_workers),
+        "maximum_capability_worker_processes": int(
+            args.dataset_workers * args.preparation_workers
+        ),
+    }
+    stage_configs = stage_protocol_configs(
+        full_protocol,
+        endpoints=list(args.endpoints),
+        endpoint_profiles=serialized_endpoint_profiles,
+        preparation_execution=preparation_execution,
+    )
+    preparation_sha256 = protocol.json_sha256(stage_configs["calibration"])
+    experiment_id = args.experiment_id or default_experiment_id(
+        preparation_sha256
+    )
     experiment_root, manifest = initialize_experiment(
         storage_root=args.output_root,
         experiment_id=experiment_id,
-        protocol=protocol,
-        endpoints=list(args.endpoints),
-        endpoint_profiles={
-            endpoint: profile.as_dict()
-            for endpoint, profile in endpoint_profiles.items()
-        },
-        preparation_execution={
-            "dataset_workers": int(args.dataset_workers),
-            "capability_workers_per_dataset": int(args.preparation_workers),
-            "maximum_capability_worker_processes": int(
-                args.dataset_workers * args.preparation_workers
-            ),
-        },
-        allow_inference_execution_upgrade=(args.upgrade_inference_execution_policy),
+    )
+    requested_steps = list(STEPS[start : stop + 1])
+    preparation_steps = {
+        "calibration",
+        "generation",
+        "validation",
+    }
+    initial_contract_steps = [
+        stage for stage in requested_steps if stage in preparation_steps
+    ]
+    if not initial_contract_steps:
+        initial_contract_steps = [requested_steps[0]]
+    contracts = initialize_stage_contracts(
+        experiment_root,
+        stage_configs=stage_configs,
+        requested_steps=initial_contract_steps,
+        analysis_source_experiment_root=args.analysis_source_experiment_root,
+    )
+    run_plan_sha256 = protocol.json_sha256(
+        {
+            "requested_steps": requested_steps,
+            "stage_configs": {
+                stage: stage_configs[stage] for stage in requested_steps
+            },
+            "launch_code": code_provenance(),
+        }
     )
     completed: list[dict[str, Any]] = []
     write_pipeline_status(
         experiment_root,
         experiment_id=experiment_id,
-        protocol_sha256=manifest["protocol_sha256"],
+        run_plan_sha256=run_plan_sha256,
         state="running",
         start_at=args.start_at,
         stop_after=args.stop_after,
@@ -1340,7 +1336,7 @@ def main() -> int:
             dataset_ids,
             experiment_root=experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=manifest["protocol_sha256"],
+            run_plan_sha256=run_plan_sha256,
         )
         if failed:
             error_text = (
@@ -1350,7 +1346,7 @@ def main() -> int:
             write_pipeline_status(
                 experiment_root,
                 experiment_id=experiment_id,
-                protocol_sha256=manifest["protocol_sha256"],
+                run_plan_sha256=run_plan_sha256,
                 state="failed",
                 start_at=args.start_at,
                 stop_after=args.stop_after,
@@ -1371,17 +1367,17 @@ def main() -> int:
         write_pipeline_status(
             experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=manifest["protocol_sha256"],
+            run_plan_sha256=run_plan_sha256,
             state="complete",
             start_at=args.start_at,
             stop_after=args.stop_after,
             completed=completed,
         )
         print(
-            v8.canonical_json(
+            protocol.canonical_json(
                 {
                     "experiment_id": experiment_id,
-                    "protocol_sha256": manifest["protocol_sha256"],
+                    "run_plan_sha256": run_plan_sha256,
                     "dataset_count": len(dataset_ids),
                     "output": str(experiment_root),
                 }
@@ -1394,7 +1390,7 @@ def main() -> int:
             dataset_ids,
             experiment_root=experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=manifest["protocol_sha256"],
+            run_plan_sha256=run_plan_sha256,
             steps=list(STEPS[start : stop + 1]),
         )
         if failed:
@@ -1405,7 +1401,7 @@ def main() -> int:
             write_pipeline_status(
                 experiment_root,
                 experiment_id=experiment_id,
-                protocol_sha256=manifest["protocol_sha256"],
+                run_plan_sha256=run_plan_sha256,
                 state="failed",
                 start_at=args.start_at,
                 stop_after=args.stop_after,
@@ -1417,17 +1413,17 @@ def main() -> int:
         write_pipeline_status(
             experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=manifest["protocol_sha256"],
+            run_plan_sha256=run_plan_sha256,
             state="complete",
             start_at=args.start_at,
             stop_after=args.stop_after,
             completed=completed,
         )
         print(
-            v8.canonical_json(
+            protocol.canonical_json(
                 {
                     "experiment_id": experiment_id,
-                    "protocol_sha256": manifest["protocol_sha256"],
+                    "run_plan_sha256": run_plan_sha256,
                     "dataset_count": len(dataset_ids),
                     "output": str(experiment_root),
                 }
@@ -1456,13 +1452,24 @@ def main() -> int:
     try:
         for step in STEPS[start : stop + 1]:
             active_step = step
+            if step not in contracts:
+                contracts.update(
+                    initialize_stage_contracts(
+                        experiment_root,
+                        stage_configs=stage_configs,
+                        requested_steps=[step],
+                        analysis_source_experiment_root=(
+                            args.analysis_source_experiment_root
+                        ),
+                    )
+                )
             if step == "inference":
                 active_dataset_id = None
                 active_dataset_ids = list(dataset_ids)
                 write_pipeline_status(
                     experiment_root,
                     experiment_id=experiment_id,
-                    protocol_sha256=manifest["protocol_sha256"],
+                    run_plan_sha256=run_plan_sha256,
                     state="running",
                     start_at=args.start_at,
                     stop_after=args.stop_after,
@@ -1471,7 +1478,7 @@ def main() -> int:
                     active_step=step,
                 )
                 run(
-                    "run_paper_v8_inference.py",
+                    "cafe.inference.runner",
                     model_major_inference_arguments(
                         args,
                         dataset_ids,
@@ -1489,7 +1496,7 @@ def main() -> int:
                 write_pipeline_status(
                     experiment_root,
                     experiment_id=experiment_id,
-                    protocol_sha256=manifest["protocol_sha256"],
+                    run_plan_sha256=run_plan_sha256,
                     state="running",
                     start_at=args.start_at,
                     stop_after=args.stop_after,
@@ -1516,7 +1523,7 @@ def main() -> int:
         write_pipeline_status(
             experiment_root,
             experiment_id=experiment_id,
-            protocol_sha256=manifest["protocol_sha256"],
+            run_plan_sha256=run_plan_sha256,
             state="failed",
             start_at=args.start_at,
             stop_after=args.stop_after,
@@ -1531,17 +1538,17 @@ def main() -> int:
     write_pipeline_status(
         experiment_root,
         experiment_id=experiment_id,
-        protocol_sha256=manifest["protocol_sha256"],
+        run_plan_sha256=run_plan_sha256,
         state="complete",
         start_at=args.start_at,
         stop_after=args.stop_after,
         completed=completed,
     )
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "experiment_id": experiment_id,
-                "protocol_sha256": manifest["protocol_sha256"],
+                "run_plan_sha256": run_plan_sha256,
                 "dataset_count": len(dataset_ids),
                 "output": str(experiment_root),
             }

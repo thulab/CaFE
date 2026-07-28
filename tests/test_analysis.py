@@ -1,25 +1,13 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import numpy as np
 
-
-SCRIPT_DIR = Path(__file__).parents[3] / "scripts"
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+from cafe.analysis import structured
 
 
 def load_script(name: str):
-    path = SCRIPT_DIR / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"{name}_test", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    assert name == "cafe.structured_baselines"
+    return structured
 
 
 def sample(
@@ -41,7 +29,7 @@ def sample(
 
 
 def test_ridge_var_recovers_history_covered_lag_better_than_diagonal_ar():
-    baselines = load_script("paper_v8_structured_baselines")
+    baselines = load_script("cafe.structured_baselines")
     rng = np.random.default_rng(7)
     context = 128
     horizon = 8
@@ -67,7 +55,7 @@ def test_ridge_var_recovers_history_covered_lag_better_than_diagonal_ar():
 
 
 def test_structured_forecast_is_history_only_and_deterministic():
-    baselines = load_script("paper_v8_structured_baselines")
+    baselines = load_script("cafe.structured_baselines")
     rng = np.random.default_rng(11)
     context = 96
     horizon = 12
@@ -97,7 +85,7 @@ def test_structured_forecast_is_history_only_and_deterministic():
 
 
 def test_rank1_dfm_reports_factor_fit_and_reconstructs_shared_signal():
-    baselines = load_script("paper_v8_structured_baselines")
+    baselines = load_script("cafe.structured_baselines")
     rng = np.random.default_rng(13)
     context = 128
     horizon = 8
@@ -126,7 +114,7 @@ def test_rank1_dfm_reports_factor_fit_and_reconstructs_shared_signal():
 
 
 def test_scope_is_primary_i5_and_rejects_other_samples():
-    baselines = load_script("paper_v8_structured_baselines")
+    baselines = load_script("cafe.structured_baselines")
     target = np.arange(108, dtype=float)[:, None]
     task = sample(
         "common_factor",
@@ -143,7 +131,7 @@ def test_scope_is_primary_i5_and_rejects_other_samples():
 
 
 def test_shared_pair_ardl_recovers_history_propagated_full_horizon_effect():
-    baselines = load_script("paper_v8_structured_baselines")
+    baselines = load_script("cafe.structured_baselines")
     rng = np.random.default_rng(17)
     context = 128
     horizon = 12
@@ -207,7 +195,7 @@ def test_shared_pair_ardl_recovers_history_propagated_full_horizon_effect():
 
 
 def test_common_shared_pair_dfm_is_blind_and_propagates_latent_state():
-    baselines = load_script("paper_v8_structured_baselines")
+    baselines = load_script("cafe.structured_baselines")
     rng = np.random.default_rng(23)
     context = 128
     horizon = 12

@@ -1,18 +1,9 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import numpy as np
 import pytest
 
-
-REPO_ROOT = Path(__file__).parents[3]
-SCRIPT_DIR = REPO_ROOT / "scripts"
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-import paper_v8_features as features  # noqa: E402
+from cafe.features import profile as features
 
 
 def _persistent_common_background(seed: int) -> np.ndarray:
@@ -40,7 +31,7 @@ def test_xsd_coordinate_removes_independent_search_floor() -> None:
             )
         )
         corrected.append(
-            features._paper_v8_cross_series_incremental_r2(
+            features._cafe_cross_series_incremental_r2(
                 values,
                 max_lag=48,
             )
@@ -53,7 +44,7 @@ def test_xsd_coordinate_removes_independent_search_floor() -> None:
 
 def test_xsd_coordinate_treats_reversible_common_background_as_null() -> None:
     scores = [
-        features._paper_v8_cross_series_incremental_r2(
+        features._cafe_cross_series_incremental_r2(
             _persistent_common_background(seed),
             max_lag=48,
         )
@@ -76,7 +67,7 @@ def test_xsd_coordinate_preserves_strong_directed_lag_monotonicity() -> None:
         response[lag:] += strength * driver[:-lag]
         values = np.column_stack([driver, response, distractors])
         scores.append(
-            features._paper_v8_cross_series_incremental_r2(
+            features._cafe_cross_series_incremental_r2(
                 values,
                 max_lag=48,
             )
@@ -87,19 +78,19 @@ def test_xsd_coordinate_preserves_strong_directed_lag_monotonicity() -> None:
     assert scores[-1] > 0.18
 
 
-def test_v8_feature_vector_uses_deterministic_corrected_xsd_coordinate() -> None:
+def test_cafe_feature_vector_uses_deterministic_corrected_xsd_coordinate() -> None:
     values = _persistent_common_background(27)
-    direct = features._paper_v8_cross_series_incremental_r2(
+    direct = features._cafe_cross_series_incremental_r2(
         values,
         max_lag=48,
     )
 
-    first = features.v8_feature_vector(
+    first = features.cafe_feature_vector(
         values,
         season_length=24,
         cross_series_max_lag=48,
     )
-    second = features.v8_feature_vector(
+    second = features.cafe_feature_vector(
         values,
         season_length=24,
         cross_series_max_lag=48,
@@ -107,7 +98,7 @@ def test_v8_feature_vector_uses_deterministic_corrected_xsd_coordinate() -> None
 
     assert first["cross_series_incremental_r2"] == pytest.approx(direct)
     assert second["cross_series_incremental_r2"] == pytest.approx(direct)
-    assert first["v8_feature_history_length"] == 168.0
+    assert first["cafe_feature_history_length"] == 168.0
 
 
 def test_cross_series_effect_memory_distinguishes_persistent_transfer() -> None:
@@ -121,11 +112,11 @@ def test_cross_series_effect_memory_distinguishes_persistent_transfer() -> None:
             0.96 * persistent[index - 1] + driver[index - 1]
         )
 
-    direct_memory = features._paper_v8_cross_series_effect_memory(
+    direct_memory = features._cafe_cross_series_effect_memory(
         np.column_stack([driver, direct]),
         max_lag=24,
     )
-    persistent_memory = features._paper_v8_cross_series_effect_memory(
+    persistent_memory = features._cafe_cross_series_effect_memory(
         np.column_stack([driver, persistent]),
         max_lag=24,
     )

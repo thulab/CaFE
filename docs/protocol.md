@@ -1,8 +1,8 @@
-# Paper v8 合成机制 Benchmark：Canonical 全流程决策
+# CaFE 合成机制 Benchmark：Canonical 全流程决策
 
 ## 文档地位
 
-本文档是 Paper v8 校准、生成、回验、推理和分析的唯一规范性决策文档。
+本文档是 CaFE 校准、生成、回验、推理和分析的唯一规范性决策文档。
 它只覆盖论文的合成数据研究，不覆盖 FastAPI/Vue 评测平台。
 
 本文档描述的是当前已冻结协议。代码和产物必须与本文一致；发生协议变更时，
@@ -33,7 +33,7 @@
 
 ## 研究目标与解释边界
 
-Paper v8 测量模型对十种时间序列机制的响应，而不是训练生成模型去复刻真实曲线。
+CaFE 测量模型对十种时间序列机制的响应，而不是训练生成模型去复刻真实曲线。
 
 - 真实数据用于校准经验形态、背景 nuisance 和可用参数尺度。
 - 合成结构是能力题面的主体；合成 future 完全由已知确定性机制产生。
@@ -50,7 +50,7 @@ Paper v8 测量模型对十种时间序列机制的响应，而不是训练生�
 ```text
 注册的真实数据 adapter（GIFT-Eval Arrow 或 M5 CSV）
   → 构造 forecastable real anchor pool
-  → 提取唯一的 history-only v8 feature profile
+  → 提取唯一的 history-only CaFE feature profile
   → 映射背景参数并标定 I1–I5
   → 生成 L336 + H48 deterministic masters
   → 生成机制与配对关系回验
@@ -63,21 +63,21 @@ Paper v8 测量模型对十种时间序列机制的响应，而不是训练生�
 
 | 文件 | 职责 |
 |---|---|
-| `scripts/run_paper_v8_pipeline.py` | 完整流程编排、不可变协议与步骤状态 |
-| `scripts/paper_v8_pipeline_common.py` | 公共协议常量、数据 registry、anchor、校准与 view 逻辑 |
-| `scripts/paper_v8_real_data.py` | 低耦合真实数据 adapter、统一记录与结构语义 |
-| `scripts/paper_v8_features.py` | 唯一的 history-only 特征实现 |
-| `scripts/calibrate_paper_v8.py` | 真实 anchor 和 capability calibration bundle |
-| `scripts/generate_paper_v8_samples.py` | clean、secondary、robustness 和 input ablation 样本 |
-| `scripts/validate_paper_v8_samples.py` | 生成合法性、配对关系、强度和尺度回验 |
-| `scripts/run_paper_v8_inference.py` | view 准备、多服务推理、断点恢复和严格合并 |
-| `scripts/analyze_paper_v8.py` | fixed/oracle 指标、排名、matched audit 与 split-bank |
-| `scripts/paper_v8_structured_baselines.py` | common/cross 结构正控 |
-| `backend/app/services/synthetic_v8_generation.py` | 十能力 primary/secondary 生成器 |
-| `backend/app/services/synthetic_v8_feature_gate.py` | 精简 feature/structure gate |
+| `src/cafe/pipeline.py` | 完整流程编排和阶段状态 |
+| `src/cafe/protocol.py` | 公共协议常量、registry、anchor、校准与 view 逻辑 |
+| `src/cafe/data/real.py` | 低耦合真实数据 adapter、统一记录与结构语义 |
+| `src/cafe/features/profile.py` | 唯一的 history-only 特征实现 |
+| `src/cafe/calibration/runner.py` | 真实 anchor 和 capability calibration bundle |
+| `src/cafe/generation/runner.py` | clean、secondary、robustness 和 input ablation 样本 |
+| `src/cafe/validation/runner.py` | 生成合法性、配对关系、强度和尺度回验 |
+| `src/cafe/inference/runner.py` | view 准备、多服务推理、断点恢复和严格合并 |
+| `src/cafe/analysis/runner.py` | fixed/oracle 指标、排名、matched audit 与 split-bank |
+| `src/cafe/analysis/structured.py` | common/cross 结构正控 |
+| `src/cafe/generation/families.py` | 十能力 primary/secondary 生成器 |
+| `src/cafe/validation/mechanisms.py` | 精简 feature/structure gate |
 
-旧 v2–v7 脚本和 `run_paper_v8_model_response.py` 的 standalone pilot/report
-不定义正式协议。正式分析仍复用的通用指标函数应保持与上述入口一致。
+拆仓前的 standalone pilot/report 不定义正式协议；其历史可通过
+`monorepo-cutover-2026-07-28` tag 追溯。
 
 ## 真实数据接入与 anchor
 
@@ -96,7 +96,7 @@ COVID Deaths 只有 212 点，Hospital 和 Car Parts 更短，无法稳定提供
 `168 history + 48 future`，当前不接入。
 
 registry 只声明 adapter id 和逻辑资产。读取、CSV/Arrow 解析及原生结构组织
-由 `paper_v8_real_data.py` 的注册 adapter 完成，anchor/calibration 不包含
+由 `src/cafe/data/real.py` 的注册 adapter 完成，anchor/calibration 不包含
 数据集格式分支。M5 adapter 使用 evaluation sales 和官方 calendar：
 
 - 同 store/category 的五个不同 active leaf 组成 native multivariate panel；
@@ -148,7 +148,7 @@ anchor，不复制窗口凑数。缺失值采用统一、可审计的轻量插�
 ### 唯一 history-only 特征实现
 
 所有真实校准、合成 realized feature 和对齐回验使用
-`scripts/paper_v8_features.py` 的 feature v6 定义。每个数据集保存唯一经验
+`src/cafe/features/profile.py` 的 feature v6 定义。每个数据集保存唯一经验
 feature matrix；p05、p10、p25、p50、p75、p90、p95 只是摘要，不再维护
 相互冲突的参数范围、强度范围和 gate 范围。
 
@@ -517,9 +517,15 @@ Oracle gate 失败表示生成构造无效。Oracle 通过但结构基线不能�
 正式根目录：
 
 ```text
-runtime/paper_exp/v8/
+runtime/experiments/
   <experiment_id>/
-    experiment_manifest.json
+    experiment.json
+    stage_contracts/
+      calibration.json
+      generation.json
+      validation.json
+      inference.json
+      analysis.json
     pipeline_status.json
     <dataset_id>/
       01_calibration/
@@ -557,14 +563,20 @@ runtime/paper_exp/v8/
           analysis_manifest.json
 ```
 
-`experiment_manifest.json` 保存完整科学协议、协议 hash、代码版本和存储约定，
-创建后不可覆盖。`pipeline_status.json` 是唯一允许原地更新的根状态文件。
-每一级 manifest 保存 schema/version、输入 hash、输出 hash、row count 和必要
-provenance，拒绝跨版本、跨生成器或跨 seed shard 静默合并。
+`experiment.json` 只冻结实验身份与存储布局，不提前冻结尚未执行阶段的代码和
+配置。每个 stage 在首次启动时创建独立、不可覆盖的 stage contract，保存本阶段
+配置、Git revision/dirty hash，并引用上游 stage contract 的文件 hash。因此可以
+在校准生成完成后，用后续 Git revision 继续推理或分析，而不改变上游 provenance。
+已经存在的 stage contract 不能用另一套代码或配置原地重定义；需要重跑该阶段时
+必须创建新的 experiment id。
+
+`pipeline_status.json` 是允许原地更新的运行状态文件。各阶段自己的产物 manifest
+继续保存输入 hash、输出 hash、row count 和必要 provenance，拒绝跨生成器或跨
+seed shard 静默合并。
 
 ## 明确 deferred
 
-以下工作不阻塞当前 v8：
+以下工作不阻塞当前 CaFE：
 
 - M5：后续作为一个逻辑数据集的 covariate、sibling panel、additive hierarchy
   三个 task views 接入；跨数据集汇总时只能计一次逻辑数据集权重。Hierarchy
@@ -585,7 +597,7 @@ provenance，拒绝跨版本、跨生成器或跨 seed shard 静默合并。
 
 ## 已废止设计
 
-以下历史设计不再属于 Paper v8 canonical 协议：
+以下历史设计不再属于 CaFE canonical 协议：
 
 - 真实校准和合成 master 使用 L504；
 - 96/168/336/504 四视野、`fixed_l504` 和共享 L504 denominator；

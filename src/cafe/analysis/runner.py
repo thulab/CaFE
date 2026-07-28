@@ -9,14 +9,14 @@ from typing import Any, Iterable
 
 import numpy as np
 
-import paper_v8_structured_baselines as structured
-import paper_v8_pipeline_common as v8
-import run_paper_e2_dynamic_stability as engine
-import run_paper_v8_model_response as response
+from cafe.analysis import structured
+from cafe import protocol
+from cafe.analysis import metrics
+from cafe.analysis import diagnostics
 
 
-DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
-FIXED_CONTEXT_LENGTH = v8.FIXED_CONTEXT_LENGTH
+DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
+FIXED_CONTEXT_LENGTH = protocol.FIXED_CONTEXT_LENGTH
 FIXED_CONTEXT_POLICY = f"fixed_l{FIXED_CONTEXT_LENGTH}"
 HIERARCHY_COHERENCE_PENALTY_WEIGHT = 1.0
 PRIMARY_MECHANISM_METRIC = {
@@ -45,7 +45,7 @@ SYNTHETIC_EVALUATION_TABLES = frozenset(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Analyze formal Paper v8 "
+            "Analyze formal CaFE "
             f"fixed-L{FIXED_CONTEXT_LENGTH}/oracle-context results."
         )
     )
@@ -116,14 +116,14 @@ def validated_synthetic_task_path(
     if (
         not expected_manifest_sha256
         or str(expected_manifest_sha256)
-        != v8.file_sha256(task_manifest_path)
+        != protocol.file_sha256(task_manifest_path)
     ):
         raise ValueError("analysis task manifest hash mismatch")
-    task_manifest = v8.read_json(task_manifest_path)
+    task_manifest = protocol.read_json(task_manifest_path)
     if task_manifest.get("schema_version") != (
-        "paper_v8_inference_task_manifest.v2"
+        "cafe.inference_task_manifest.v1"
     ):
-        raise ValueError("unsupported Paper-v8 inference task manifest")
+        raise ValueError("unsupported Paper-cafe inference task manifest")
     component = task_manifest.get("task_components", {}).get("synthetic")
     if not isinstance(component, dict):
         raise ValueError(
@@ -141,7 +141,7 @@ def validated_synthetic_task_path(
         raise ValueError("synthetic analysis task byte-size mismatch")
     if (
         not component.get("sha256")
-        or str(component["sha256"]) != v8.file_sha256(task_path)
+        or str(component["sha256"]) != protocol.file_sha256(task_path)
     ):
         raise ValueError("synthetic analysis task hash mismatch")
 
@@ -152,7 +152,7 @@ def validated_synthetic_task_path(
         )
     observed_rows = 0
     sample_ids: set[str] = set()
-    for row in v8.iter_jsonl(task_path):
+    for row in protocol.iter_jsonl(task_path):
         observed_rows += 1
         sample_id = str(row["sample_id"])
         if sample_id in sample_ids:
@@ -204,7 +204,7 @@ def metric_row(
     forecast: np.ndarray,
     input_adaptation: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    metrics = response.prediction_metrics(sample, forecast)
+    metrics = diagnostics.prediction_metrics(sample, forecast)
     if str(sample["capability_id"]) == "hierarchical_coherence":
         hierarchy_score = hierarchy_structure_nmae(metrics)
         if hierarchy_score is not None:
@@ -215,7 +215,7 @@ def metric_row(
     metrics["mae"] = mae
     metrics["mase"] = mae / float(sample["mase_scale"])
     return {
-        "schema_version": "paper_v8_prediction_metrics.v1",
+        "schema_version": "cafe.prediction_metrics.v1",
         "model_id": model_id,
         "sample_id": sample["sample_id"],
         "master_sample_id": sample["master_sample_id"],
@@ -279,7 +279,7 @@ def cross_effect_prefix_steps(
 ) -> tuple[int, str]:
     """Resolve the history-covered cross-series effect window.
 
-    New samples declare the exact counterfactual support. Older v8 artifacts
+    New samples declare the exact counterfactual support. Older cafe artifacts
     may only expose the lag, or no support metadata at all; the latter retain
     the historical full-horizon scoring behavior instead of becoming
     unreadable.
@@ -323,7 +323,7 @@ def _effect_metrics(
     )
     return (
         nrmse,
-        response.safe_corr(truth_effect, forecast_effect),
+        diagnostics.safe_corr(truth_effect, forecast_effect),
         forecast_rms / max(truth_rms, 1e-12),
         truth_rms,
         forecast_rms,
@@ -360,7 +360,7 @@ def effect_row(
         forecast_effect,
     )
     row = {
-        "schema_version": "paper_v8_counterfactual_effect.v2",
+        "schema_version": "cafe.counterfactual_effect.v1",
         "model_id": model_id,
         "dataset_id": first_sample["dataset_id"],
         "capability_id": first_sample["capability_id"],
@@ -606,7 +606,7 @@ def _structured_context_curve(
             if capability == "common_factor"
             else "responder_normalized_mae"
         )
-        for context in v8.VIEW_CONTEXT_LENGTHS:
+        for context in protocol.VIEW_CONTEXT_LENGTHS:
             structure_main = metric_groups[
                 (capability, structure_model, context, "main")
             ]
@@ -779,7 +779,7 @@ def _structured_context_curve(
             output.append(
                 {
                     "schema_version": (
-                        "paper_v8_structured_context_assessment.v2"
+                        "cafe.structured_context_assessment.v1"
                     ),
                     "dataset_id": dataset_id,
                     "capability_id": capability,
@@ -873,10 +873,10 @@ def analyze_structured_positive_controls(
             "effect_count": 0,
         }
     )
-    for sample in v8.iter_jsonl(task_path):
+    for sample in protocol.iter_jsonl(task_path):
         if not structured.is_structured_sample(sample):
             continue
-        if int(sample["context_length"]) not in v8.VIEW_CONTEXT_LENGTHS:
+        if int(sample["context_length"]) not in protocol.VIEW_CONTEXT_LENGTHS:
             continue
         capability = str(sample["capability_id"])
         for model_id in structured.baseline_ids_for(capability):
@@ -1049,7 +1049,7 @@ def analyze_structured_positive_controls(
         dataset_id=dataset_id,
     )
     return {
-        "schema_version": "paper_v8_structured_positive_controls.v2",
+        "schema_version": "cafe.structured_positive_controls.v1",
         "dataset_id": dataset_id,
         "scope": {
             "generator_family_role": "primary",
@@ -1060,7 +1060,7 @@ def analyze_structured_positive_controls(
             "evaluation_tables": sorted(
                 structured.STRUCTURED_EVALUATION_TABLES
             ),
-            "context_lengths": list(v8.VIEW_CONTEXT_LENGTHS),
+            "context_lengths": list(protocol.VIEW_CONTEXT_LENGTHS),
             "excluded_from_foundation_model_ranking": True,
         },
         "fit_policy": {
@@ -1119,7 +1119,7 @@ def analyze_one_model(
     predictions = (
         {
             str(row["sample_id"]): row
-            for row in v8.iter_jsonl(prediction_path)
+            for row in protocol.iter_jsonl(prediction_path)
         }
         if prediction_path is not None
         else {}
@@ -1130,7 +1130,7 @@ def analyze_one_model(
         str, tuple[dict[str, Any], np.ndarray]
     ] = {}
     missing = 0
-    for sample in v8.iter_jsonl(task_path):
+    for sample in protocol.iter_jsonl(task_path):
         if prediction_path is None:
             forecast = baseline_forecast(sample, model_id)
             adaptation = {"target_mode": "local_baseline"}
@@ -1477,7 +1477,7 @@ def promote_counterfactual_primary_mechanism_scores(
 ) -> None:
     """Bind all-seed I5 pair effects to the factual main-table rows."""
 
-    capabilities = v8.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES
+    capabilities = protocol.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES
     sources: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     for row in scores:
         if (
@@ -1813,7 +1813,7 @@ def multivariate_utilization_audit_rows(
         output.append(
             {
                 "schema_version": (
-                    "paper_v8_multivariate_utilization_audit.v2"
+                    "cafe.multivariate_utilization_audit.v1"
                 ),
                 "dataset_id": key[0],
                 "context_policy": key[1],
@@ -1891,7 +1891,7 @@ def split_bank(
         if row["evaluation_table"] == "strict_counterfactual_audit"
         and row["generator_family_role"] == "primary"
         and row["capability_id"]
-        in v8.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES
+        in protocol.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES
         and row["model_id"] in models
     ]
     official_effects = [
@@ -1904,7 +1904,7 @@ def split_bank(
     ]
     present_capabilities = [
         capability
-        for capability in v8.CAPABILITIES
+        for capability in protocol.CAPABILITIES
         if any(
             row["capability_id"] == capability
             for row in official_rows
@@ -2001,7 +2001,7 @@ def split_bank(
                             )
                             if len(common) < 2:
                                 continue
-                            tau = engine.kendall_tau_b(
+                            tau = metrics.kendall_tau_b(
                                 np.asarray(
                                     [
                                         rank_maps[left_index][name]
@@ -2120,7 +2120,7 @@ def render_report(
     dataset_id: str,
 ) -> str:
     lines = [
-        "# Paper v8 单数据集全链路测试",
+        "# CaFE 单数据集全链路测试",
         "",
         f"- 数据集：`{dataset_id}`",
         "- 主表：clean primary family；各 context 共用 clean master denominator。",
@@ -2135,7 +2135,7 @@ def render_report(
     ]
     present_capabilities = [
         capability
-        for capability in v8.CAPABILITIES
+        for capability in protocol.CAPABILITIES
         if any(row["capability_id"] == capability for row in official)
     ]
 
@@ -2245,7 +2245,7 @@ def render_matched_report(
     dataset_id: str,
 ) -> str:
     lines = [
-        "# Paper v8 matched sensitivity / robustness 审计",
+        "# CaFE matched sensitivity / robustness 审计",
         "",
         f"- 数据集：`{dataset_id}`",
         "- control 与 treatment 严格匹配 model、capability、seed、intensity 和 context policy。",
@@ -2322,7 +2322,7 @@ def render_multivariate_utilization_audit(
     dataset_id: str,
 ) -> str:
     lines = [
-        "# Paper v8 多变量利用审计",
+        "# CaFE 多变量利用审计",
         "",
         f"- 数据集：`{dataset_id}`",
         "- 本表不排名，也不改变现有 fixed-L168 / oracle 主能力排名。",
@@ -2382,7 +2382,7 @@ def validated_file_record(
         raise ValueError(f"analysis file byte-size mismatch: {path}")
     if (
         not record.get("sha256")
-        or str(record["sha256"]) != v8.file_sha256(path)
+        or str(record["sha256"]) != protocol.file_sha256(path)
     ):
         raise ValueError(f"analysis file hash mismatch: {path}")
     return path
@@ -2492,7 +2492,7 @@ def experiment_capability_rows(
             capability_rows.append(
                 {
                     "schema_version": (
-                        "paper_v8_experiment_capability_score.v1"
+                        "cafe.experiment_capability_score.v1"
                     ),
                     "context_policy": context_policy,
                     "capability_id": capability_id,
@@ -2546,7 +2546,7 @@ def render_experiment_capability_report(
     context_policy: str,
 ) -> str:
     lines = [
-        f"# Paper v8 {context_policy} 跨数据集能力表",
+        f"# CaFE {context_policy} 跨数据集能力表",
         "",
         f"- 实验：`{experiment_id}`",
         f"- Context policy：`{context_policy}`",
@@ -2561,7 +2561,7 @@ def render_experiment_capability_report(
     ]
     capabilities = [
         capability
-        for capability in v8.CAPABILITIES
+        for capability in protocol.CAPABILITIES
         if any(row["capability_id"] == capability for row in rows)
     ]
     for capability_id in capabilities:
@@ -2596,7 +2596,7 @@ def render_experiment_capability_report(
 def reusable_experiment_analysis_manifest(
     analysis_dir: Path,
     *,
-    experiment_manifest_path: Path,
+    stage_contract_path: Path,
     dataset_ids: list[str],
     models: list[str],
     capabilities: list[str],
@@ -2606,13 +2606,13 @@ def reusable_experiment_analysis_manifest(
     if not manifest_path.is_file():
         return False
     try:
-        manifest = v8.read_json(manifest_path)
+        manifest = protocol.read_json(manifest_path)
         if manifest.get("schema_version") != (
-            "paper_v8_experiment_analysis_manifest.v5"
+            "cafe.experiment_analysis_manifest.v1"
         ):
             return False
-        if str(manifest.get("experiment_manifest_sha256")) != (
-            v8.file_sha256(experiment_manifest_path)
+        if str(manifest.get("stage_contract_sha256")) != (
+            protocol.file_sha256(stage_contract_path)
         ):
             return False
         if list(manifest.get("datasets") or []) != dataset_ids:
@@ -2635,16 +2635,16 @@ def reusable_experiment_analysis_manifest(
             if (
                 not path.is_file()
                 or str(row.get("analysis_manifest_sha256")) != (
-                    v8.file_sha256(path)
+                    protocol.file_sha256(path)
                 )
             ):
                 return False
-            dataset_manifest = v8.read_json(path)
+            dataset_manifest = protocol.read_json(path)
             score_record = dataset_manifest.get("files", {}).get("scores")
             if not isinstance(score_record, dict):
                 return False
             score_path = validated_file_record(score_record)
-            if str(row.get("scores_sha256")) != v8.file_sha256(score_path):
+            if str(row.get("scores_sha256")) != protocol.file_sha256(score_path):
                 return False
             generation_path = Path(
                 str(row.get("generation_manifest_path", ""))
@@ -2652,7 +2652,7 @@ def reusable_experiment_analysis_manifest(
             if (
                 not generation_path.is_file()
                 or str(row.get("generation_manifest_sha256"))
-                != v8.file_sha256(generation_path)
+                != protocol.file_sha256(generation_path)
             ):
                 return False
         files = manifest.get("files")
@@ -2674,15 +2674,20 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         if args.source_experiment_root is not None
         else experiment_root
     )
-    experiment_manifest_path = experiment_root / "experiment_manifest.json"
-    experiment_manifest = v8.read_json(experiment_manifest_path)
-    protocol = experiment_manifest.get("protocol")
-    if not isinstance(protocol, dict):
-        raise ValueError("experiment manifest is missing protocol")
-    dataset_ids = [str(value) for value in protocol["dataset_ids"]]
-    models = [str(value) for value in protocol["models"]]
-    capabilities = [str(value) for value in protocol["capabilities"]]
-    analysis_profile = str(protocol.get("analysis_profile", "full"))
+    stage_contract_path = (
+        experiment_root / "stage_contracts" / "analysis.json"
+    )
+    analysis_contract = protocol.read_json(stage_contract_path)
+    experiment_record = protocol.read_json(experiment_root / "experiment.json")
+    analysis_config = analysis_contract.get("config")
+    if not isinstance(analysis_config, dict):
+        raise ValueError("analysis stage contract is missing config")
+    dataset_ids = [str(value) for value in analysis_config["dataset_ids"]]
+    models = [str(value) for value in analysis_config["models"]]
+    capabilities = [
+        str(value) for value in analysis_config["capabilities"]
+    ]
+    analysis_profile = str(analysis_config.get("analysis_profile", "full"))
     if args.analysis_profile != analysis_profile:
         raise ValueError(
             "aggregate analysis profile must exactly match the experiment "
@@ -2693,8 +2698,8 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             "aggregate models must exactly match the experiment protocol"
         )
     if (
-        int(protocol["seed_start"]) != args.seed_start
-        or int(protocol["seed_count"]) != args.seed_count
+        int(analysis_config["seed_start"]) != args.seed_start
+        or int(analysis_config["seed_count"]) != args.seed_count
     ):
         raise ValueError(
             "aggregate seed shard must exactly match the experiment protocol"
@@ -2705,7 +2710,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
     analysis_dir = experiment_root / "04_analysis" / shard_name
     if reusable_experiment_analysis_manifest(
         analysis_dir,
-        experiment_manifest_path=experiment_manifest_path,
+        stage_contract_path=stage_contract_path,
         dataset_ids=dataset_ids,
         models=models,
         capabilities=capabilities,
@@ -2717,7 +2722,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                 "pass --reuse-existing-aggregate to validate and reuse it"
             )
         print(
-            v8.canonical_json(
+            protocol.canonical_json(
                 {
                     "analysis_status": "already_complete",
                     "output": str(analysis_dir),
@@ -2744,9 +2749,9 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         dataset_manifest_path = (
             dataset_analysis_dir / "analysis_manifest.json"
         )
-        dataset_manifest = v8.read_json(dataset_manifest_path)
+        dataset_manifest = protocol.read_json(dataset_manifest_path)
         if dataset_manifest.get("schema_version") != (
-            "paper_v8_analysis_manifest.v5"
+            "cafe.analysis_manifest.v1"
         ):
             raise ValueError(
                 f"unsupported dataset analysis manifest: {dataset_id}"
@@ -2772,7 +2777,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             score_record,
             expected_path=dataset_analysis_dir / "scores.json",
         )
-        score_payload = v8.read_json(score_path)
+        score_payload = protocol.read_json(score_path)
         scores = score_payload.get("scores")
         if not isinstance(scores, list):
             raise ValueError(f"invalid dataset scores payload: {dataset_id}")
@@ -2790,14 +2795,14 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                 dataset_analysis_dir / "counterfactual_effects.jsonl"
             ),
         )
-        all_effects.extend(v8.iter_jsonl(effect_path))
+        all_effects.extend(protocol.iter_jsonl(effect_path))
         generation_manifest_path = (
             source_experiment_root
             / dataset_id
             / "02_generation"
             / f"manifest__{shard_name}.json"
         )
-        generation_manifest = v8.read_json(generation_manifest_path)
+        generation_manifest = protocol.read_json(generation_manifest_path)
         generated_capabilities = [
             str(value)
             for value in generation_manifest.get("config", {}).get(
@@ -2819,15 +2824,15 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             {
                 "dataset_id": dataset_id,
                 "analysis_manifest_path": str(dataset_manifest_path),
-                "analysis_manifest_sha256": v8.file_sha256(
+                "analysis_manifest_sha256": protocol.file_sha256(
                     dataset_manifest_path
                 ),
-                "scores_sha256": v8.file_sha256(score_path),
-                "counterfactual_effects_sha256": v8.file_sha256(effect_path),
+                "scores_sha256": protocol.file_sha256(score_path),
+                "counterfactual_effects_sha256": protocol.file_sha256(effect_path),
                 "generation_manifest_path": str(
                     generation_manifest_path
                 ),
-                "generation_manifest_sha256": v8.file_sha256(
+                "generation_manifest_sha256": protocol.file_sha256(
                     generation_manifest_path
                 ),
                 "generated_capabilities": generated_capabilities,
@@ -2855,12 +2860,12 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
     oracle_path = analysis_dir / "capability_scores_oracle_context.json"
     fixed_report_path = analysis_dir / "REPORT_FIXED_L168_ZH.md"
     oracle_report_path = analysis_dir / "REPORT_ORACLE_CONTEXT_ZH.md"
-    v8.write_json(fixed_path, {"scores": fixed_rows})
-    v8.write_json(oracle_path, {"scores": oracle_rows})
+    protocol.write_json(fixed_path, {"scores": fixed_rows})
+    protocol.write_json(oracle_path, {"scores": oracle_rows})
     fixed_report_path.write_text(
         render_experiment_capability_report(
             fixed_rows,
-            experiment_id=str(experiment_manifest["experiment_id"]),
+            experiment_id=str(experiment_record["experiment_id"]),
             context_policy=FIXED_CONTEXT_POLICY,
         ),
         encoding="utf-8",
@@ -2868,17 +2873,17 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
     oracle_report_path.write_text(
         render_experiment_capability_report(
             oracle_rows,
-            experiment_id=str(experiment_manifest["experiment_id"]),
+            experiment_id=str(experiment_record["experiment_id"]),
             context_policy="oracle_context",
         ),
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_experiment_analysis_manifest.v5",
-        "created_at": v8.utc_now(),
-        "experiment_id": str(experiment_manifest["experiment_id"]),
-        "experiment_manifest_sha256": v8.file_sha256(
-            experiment_manifest_path
+        "schema_version": "cafe.experiment_analysis_manifest.v1",
+        "created_at": protocol.utc_now(),
+        "experiment_id": str(experiment_record["experiment_id"]),
+        "stage_contract_sha256": protocol.file_sha256(
+            stage_contract_path
         ),
         "seed_start": args.seed_start,
         "seed_count": args.seed_count,
@@ -2902,15 +2907,15 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         ),
         "inputs": input_records,
         "files": {
-            "fixed_scores": v8.file_record(fixed_path),
-            "oracle_scores": v8.file_record(oracle_path),
-            "fixed_report": v8.file_record(fixed_report_path),
-            "oracle_report": v8.file_record(oracle_report_path),
+            "fixed_scores": protocol.file_record(fixed_path),
+            "oracle_scores": protocol.file_record(oracle_path),
+            "fixed_report": protocol.file_record(fixed_report_path),
+            "oracle_report": protocol.file_record(oracle_report_path),
         },
     }
-    v8.write_json(analysis_dir / "analysis_manifest.json", manifest)
+    protocol.write_json(analysis_dir / "analysis_manifest.json", manifest)
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "analysis_status": "computed",
                 "fixed_score_count": len(fixed_rows),
@@ -2926,7 +2931,7 @@ def main() -> int:
     args = parse_args()
     if args.aggregate_experiment:
         return aggregate_experiment_analysis(args)
-    dataset = v8.resolve_dataset(args.dataset_id)
+    dataset = protocol.resolve_dataset(args.dataset_id)
     shard_name = (
         f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     )
@@ -2942,7 +2947,7 @@ def main() -> int:
         / "03_inference"
         / shard_name
     )
-    inference_manifest = v8.read_json(
+    inference_manifest = protocol.read_json(
         inference_dir / "inference_manifest.json"
     )
     if not inference_manifest["complete"]:
@@ -2963,9 +2968,9 @@ def main() -> int:
         prediction_path = (
             inference_dir
             / "model_shards"
-            / engine.safe_filename(model_id)
+            / metrics.safe_filename(model_id)
             / "predictions"
-            / f"{engine.safe_filename(model_id)}.jsonl"
+            / f"{metrics.safe_filename(model_id)}.jsonl"
             if model_id not in BASELINES
             else None
         )
@@ -3024,7 +3029,7 @@ def main() -> int:
     structured_controls = (
         {
             "schema_version": (
-                "paper_v8_structured_positive_controls_skipped.v1"
+                "cafe.structured_positive_controls_skipped.v1"
             ),
             "dataset_id": dataset.dataset_id,
             "status": "not_requested",
@@ -3036,7 +3041,7 @@ def main() -> int:
             dataset_id=dataset.dataset_id,
         )
     )
-    structured_controls["created_at"] = v8.utc_now()
+    structured_controls["created_at"] = protocol.utc_now()
     metric_path = analysis_dir / "prediction_metrics.jsonl"
     effect_path = analysis_dir / "counterfactual_effects.jsonl"
     score_path = analysis_dir / "scores.json"
@@ -3046,25 +3051,25 @@ def main() -> int:
         analysis_dir / "multivariate_utilization_audit.json"
     )
     structured_path = analysis_dir / "structured_positive_controls.json"
-    v8.write_jsonl(metric_path, selected_metrics)
-    v8.write_jsonl(effect_path, selected_effects)
-    v8.write_json(score_path, {"scores": scores})
-    v8.write_json(split_path, {"split_bank": split_rows})
-    v8.write_json(
+    protocol.write_jsonl(metric_path, selected_metrics)
+    protocol.write_jsonl(effect_path, selected_effects)
+    protocol.write_json(score_path, {"scores": scores})
+    protocol.write_json(split_path, {"split_bank": split_rows})
+    protocol.write_json(
         matched_path,
         {"matched_comparisons": matched_comparisons},
     )
-    v8.write_json(
+    protocol.write_json(
         utilization_path,
         {
             "schema_version": (
-                "paper_v8_multivariate_utilization_audit_bundle.v1"
+                "cafe.multivariate_utilization_audit_bundle.v1"
             ),
             "counterfactual_effect_is_primary_mechanism_score": True,
             "rows": utilization_audit,
         },
     )
-    v8.write_json(structured_path, structured_controls)
+    protocol.write_json(structured_path, structured_controls)
     report_path = analysis_dir / "REPORT_ZH.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
@@ -3090,14 +3095,14 @@ def main() -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_analysis_manifest.v5",
-        "created_at": v8.utc_now(),
+        "schema_version": "cafe.analysis_manifest.v1",
+        "created_at": protocol.utc_now(),
         "dataset_id": dataset.dataset_id,
         "source_experiment_root": str(source_experiment_root),
         "source_inference_manifest_path": str(
             inference_dir / "inference_manifest.json"
         ),
-        "inference_manifest_sha256": v8.file_sha256(
+        "inference_manifest_sha256": protocol.file_sha256(
             inference_dir / "inference_manifest.json"
         ),
         "models": list(args.models),
@@ -3116,27 +3121,27 @@ def main() -> int:
         "coverage": coverage,
         "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
         "files": {
-            "prediction_metrics": v8.file_record(metric_path),
-            "counterfactual_effects": v8.file_record(effect_path),
-            "scores": v8.file_record(score_path),
-            "split_bank": v8.file_record(split_path),
-            "matched_comparisons": v8.file_record(matched_path),
-            "multivariate_utilization_audit": v8.file_record(
+            "prediction_metrics": protocol.file_record(metric_path),
+            "counterfactual_effects": protocol.file_record(effect_path),
+            "scores": protocol.file_record(score_path),
+            "split_bank": protocol.file_record(split_path),
+            "matched_comparisons": protocol.file_record(matched_path),
+            "multivariate_utilization_audit": protocol.file_record(
                 utilization_path
             ),
-            "structured_positive_controls": v8.file_record(
+            "structured_positive_controls": protocol.file_record(
                 structured_path
             ),
-            "report": v8.file_record(report_path),
-            "matched_report": v8.file_record(matched_report_path),
-            "multivariate_utilization_report": v8.file_record(
+            "report": protocol.file_record(report_path),
+            "matched_report": protocol.file_record(matched_report_path),
+            "multivariate_utilization_report": protocol.file_record(
                 utilization_report_path
             ),
         },
     }
-    v8.write_json(analysis_dir / "analysis_manifest.json", manifest)
+    protocol.write_json(analysis_dir / "analysis_manifest.json", manifest)
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "score_count": len(scores),
                 "split_bank_count": len(split_rows),

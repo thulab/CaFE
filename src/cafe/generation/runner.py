@@ -20,22 +20,22 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 
 import numpy as np
 
-import paper_v8_pipeline_common as v8
-import paper_v8_realism_gate as realism
-from app.services.synthetic_v8_generation import (
+from cafe import protocol
+from cafe.validation import realism
+from cafe.generation.families import (
     common_factor_identifiability_gate,
     cross_series_identifiability_gate,
 )
 
 
-DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
+DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
 DEFAULT_MAX_GENERATION_ATTEMPTS = 5
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate formal Paper v8 deterministic master samples."
+        description="Generate formal CaFE deterministic master samples."
     )
     parser.add_argument("--dataset-id", default="gift_electricity_h")
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
@@ -53,8 +53,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--capabilities",
         nargs="+",
-        choices=v8.CAPABILITIES,
-        default=list(v8.CAPABILITIES),
+        choices=protocol.CAPABILITIES,
+        default=list(protocol.CAPABILITIES),
     )
     parser.add_argument(
         "--secondary-modulus",
@@ -91,7 +91,7 @@ def selected_sensitivity_seeds(
     return {
         seed
         for seed in seed_indexes
-        if v8.stable_seed(dataset_id, seed, "sensitivity") % modulus == 0
+        if protocol.stable_seed(dataset_id, seed, "sensitivity") % modulus == 0
     }
 
 
@@ -144,33 +144,33 @@ def generation_path_seed(
     generation_attempt: int,
 ) -> int:
     if generation_attempt == 0:
-        return v8.stable_seed(
+        return protocol.stable_seed(
             dataset_id,
             capability_id,
             seed_index,
             "generation-path",
-            base=v8.GENERATION_PATH_SEED,
+            base=protocol.GENERATION_PATH_SEED,
         )
-    return v8.stable_seed(
+    return protocol.stable_seed(
         dataset_id,
         capability_id,
         seed_index,
         "generation-path-retry",
         generation_attempt,
-        base=v8.GENERATION_PATH_SEED,
+        base=protocol.GENERATION_PATH_SEED,
     )
 
 
 def members_for(capability_id: str) -> tuple[int | None, ...]:
     return (
         (0, 1)
-        if capability_id in v8.MAIN_COUNTERFACTUAL_CAPABILITIES
+        if capability_id in protocol.MAIN_COUNTERFACTUAL_CAPABILITIES
         else (None,)
     )
 
 
 def clean_seed_bundle(
-    dataset: v8.DatasetSpec,
+    dataset: protocol.DatasetSpec,
     anchor: dict[str, Any],
     capability_calibration: dict[str, Any],
     *,
@@ -180,10 +180,10 @@ def clean_seed_bundle(
     generation_attempt: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for intensity in v8.INTENSITIES:
+    for intensity in protocol.INTENSITIES:
         for member in members_for(capability_id):
             rows.append(
-                v8.generate_master_sample(
+                protocol.generate_master_sample(
                     dataset,
                     anchor,
                     capability_calibration,
@@ -195,10 +195,10 @@ def clean_seed_bundle(
                     generation_attempt=generation_attempt,
                 )
             )
-    if capability_id in v8.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES:
+    if capability_id in protocol.PRIMARY_MECHANISM_COUNTERFACTUAL_CAPABILITIES:
         for member in (0, 1):
             rows.append(
-                v8.generate_master_sample(
+                protocol.generate_master_sample(
                     dataset,
                     anchor,
                     capability_calibration,
@@ -215,7 +215,7 @@ def clean_seed_bundle(
         for intensity in (3, 5):
             for member in members_for(capability_id):
                 rows.append(
-                    v8.generate_master_sample(
+                    protocol.generate_master_sample(
                         dataset,
                         anchor,
                         capability_calibration,
@@ -275,7 +275,7 @@ def structural_seed_bundle_gate(
 
 
 def iter_clean_samples(
-    dataset: v8.DatasetSpec,
+    dataset: protocol.DatasetSpec,
     anchors: list[dict[str, Any]],
     calibration: dict[str, Any],
     *,
@@ -289,7 +289,7 @@ def iter_clean_samples(
     for capability_id in capability_ids:
         capability_calibration = calibration["capabilities"][capability_id]
         for seed_index in seed_indexes:
-            anchor = v8.anchor_for_seed(
+            anchor = protocol.anchor_for_seed(
                 anchors,
                 dataset_id=dataset.dataset_id,
                 capability_id=capability_id,
@@ -397,10 +397,10 @@ def iter_clean_samples(
                 break
             else:
                 raise RuntimeError(
-                    "Paper-v8 realism gates exhausted the fixed candidate "
+                    "Paper-cafe realism gates exhausted the fixed candidate "
                     f"budget for {dataset.dataset_id}/{capability_id}/"
                     f"seed={seed_index}: "
-                    f"{v8.canonical_json(audit_attempts)}"
+                    f"{protocol.canonical_json(audit_attempts)}"
                 )
 
 
@@ -410,7 +410,7 @@ def iter_input_ablations(
     groups: dict[tuple[str, int], list[dict[str, Any]]] = {}
     for row in clean_rows:
         if (
-            row["capability_id"] not in v8.INPUT_ABLATION_CAPABILITIES
+            row["capability_id"] not in protocol.INPUT_ABLATION_CAPABILITIES
             or row["generator_family_role"] != "primary"
             or row.get("evaluation_table", "main") != "main"
         ):
@@ -423,7 +423,7 @@ def iter_input_ablations(
             continue
         for index, clean in enumerate(rows):
             donor = rows[(index + 1) % len(rows)]
-            yield v8.multivariate_input_ablation_sample(clean, donor)
+            yield protocol.multivariate_input_ablation_sample(clean, donor)
 
 
 def summarize_real_alignment(
@@ -500,7 +500,7 @@ def summarize_real_alignment(
 
 
 def generate_capability_shard(
-    dataset: v8.DatasetSpec,
+    dataset: protocol.DatasetSpec,
     anchors: list[dict[str, Any]],
     calibration: dict[str, Any],
     *,
@@ -512,7 +512,7 @@ def generate_capability_shard(
     output_path: Path,
 ) -> tuple[str, int, list[dict[str, Any]]]:
     attempt_audits: list[dict[str, Any]] = []
-    count = v8.write_jsonl(
+    count = protocol.write_jsonl(
         output_path,
         iter_clean_samples(
             dataset,
@@ -543,7 +543,7 @@ def merge_jsonl_shards(
 
 
 def generate_clean_samples(
-    dataset: v8.DatasetSpec,
+    dataset: protocol.DatasetSpec,
     anchors: list[dict[str, Any]],
     calibration: dict[str, Any],
     *,
@@ -557,7 +557,7 @@ def generate_clean_samples(
 ) -> tuple[int, list[dict[str, Any]]]:
     if workers == 1 or len(capability_ids) == 1:
         attempt_audits: list[dict[str, Any]] = []
-        count = v8.write_jsonl(
+        count = protocol.write_jsonl(
             output_path,
             iter_clean_samples(
                 dataset,
@@ -577,9 +577,9 @@ def generate_clean_samples(
     counts: dict[str, int] = {}
     audits: dict[str, list[dict[str, Any]]] = {}
     maximum_workers = min(workers, len(capability_ids))
-    submission_order = v8.preparation_capability_order(capability_ids)
+    submission_order = protocol.preparation_capability_order(capability_ids)
     with tempfile.TemporaryDirectory(
-        prefix=".v8_capability_shards_",
+        prefix=".cafe_capability_shards_",
         dir=output_path.parent,
     ) as temporary_directory:
         temporary_root = Path(temporary_directory)
@@ -608,7 +608,7 @@ def generate_clean_samples(
                 counts[capability_id] = count
                 audits[capability_id] = capability_audits
                 print(
-                    v8.canonical_json(
+                    protocol.canonical_json(
                         {
                             "dataset_id": dataset.dataset_id,
                             "generated_capability": capability_id,
@@ -642,20 +642,20 @@ def main() -> int:
         raise ValueError("secondary modulus must be positive")
     if args.max_generation_attempts < 1:
         raise ValueError("max generation attempts must be positive")
-    dataset = v8.resolve_dataset(args.dataset_id)
+    dataset = protocol.resolve_dataset(args.dataset_id)
     dataset_root = args.output_root.resolve() / dataset.dataset_id
     calibration_dir = dataset_root / "01_calibration"
-    bundle = v8.read_json(calibration_dir / "calibration_bundle.json")
-    anchors = list(v8.iter_jsonl(calibration_dir / "anchors.jsonl"))
+    bundle = protocol.read_json(calibration_dir / "calibration_bundle.json")
+    anchors = list(protocol.iter_jsonl(calibration_dir / "anchors.jsonl"))
     real_anchor_masters = list(
-        v8.iter_jsonl(calibration_dir / "real_anchor_masters.jsonl")
+        protocol.iter_jsonl(calibration_dir / "real_anchor_masters.jsonl")
     )
-    calibration = v8.read_json(
+    calibration = protocol.read_json(
         calibration_dir / "capability_calibration.json"
     )
-    if bundle["generator_version"] != v8.GENERATOR_VERSION:
+    if bundle["generator_version"] != protocol.GENERATOR_VERSION:
         raise ValueError("calibration bundle generator version mismatch")
-    if bundle.get("pipeline_schema_version") != v8.SCHEMA_VERSION:
+    if bundle.get("pipeline_schema_version") != protocol.SCHEMA_VERSION:
         raise ValueError(
             "calibration bundle pipeline schema mismatch; regenerate the "
             "immutable calibration artifacts"
@@ -686,7 +686,7 @@ def main() -> int:
         raise ValueError(
             "none of the requested capabilities has a real-calibrated "
             "intensity grid; unavailable="
-            f"{v8.canonical_json(unavailable_capabilities)}"
+            f"{protocol.canonical_json(unavailable_capabilities)}"
         )
     gate_context = realism.build_realism_gate_context(
         anchors,
@@ -740,16 +740,16 @@ def main() -> int:
         ),
     }
     real_alignment_audit = summarize_real_alignment(
-        v8.iter_jsonl(clean_path)
+        protocol.iter_jsonl(clean_path)
     )
     attempt_path = (
         generation_dir / f"generation_attempts__{shard_name}.json"
     )
-    v8.write_json(
+    protocol.write_json(
         attempt_path,
         {
-            "schema_version": "paper_v8_generation_attempts.v1",
-            "created_at": v8.utc_now(),
+            "schema_version": "cafe.generation_attempts.v1",
+            "created_at": protocol.utc_now(),
             "dataset_id": dataset.dataset_id,
             "seed_start": args.seed_start,
             "seed_count": args.seed_count,
@@ -763,17 +763,17 @@ def main() -> int:
 
     derived_tables_started = time.perf_counter()
     ablation_path = shard_dir / f"{shard_name}__input_ablation.jsonl"
-    ablation_count = v8.write_jsonl(
+    ablation_count = protocol.write_jsonl(
         ablation_path,
-        iter_input_ablations(v8.iter_jsonl(clean_path)),
+        iter_input_ablations(protocol.iter_jsonl(clean_path)),
     )
 
     robustness_path = shard_dir / f"{shard_name}__robustness.jsonl"
-    robustness_count = v8.write_jsonl(
+    robustness_count = protocol.write_jsonl(
         robustness_path,
         (
-            v8.robustness_sample(row)
-            for row in v8.iter_jsonl(clean_path)
+            protocol.robustness_sample(row)
+            for row in protocol.iter_jsonl(clean_path)
             if row["generator_family_role"] == "primary"
             and row.get("evaluation_table", "main") == "main"
             and int(row["intensity"]) in {3, 5}
@@ -782,10 +782,10 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "paper_v8_generation_config.v9",
+        "schema_version": "cafe.generation_config.v1",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
-        "generator_version": v8.GENERATOR_VERSION,
+        "generator_version": protocol.GENERATOR_VERSION,
         "seed_start": args.seed_start,
         "seed_count": args.seed_count,
         "seed_indexes": seed_indexes,
@@ -814,7 +814,7 @@ def main() -> int:
             "selected_seed_indexes": sorted(sensitivity_seeds),
             "intensities": [3, 5],
             "noise_to_clean_mase_scale_ratio": (
-                v8.ROBUSTNESS_NOISE_RATIO
+                protocol.ROBUSTNESS_NOISE_RATIO
             ),
             "noise_scale_source": (
                 "clean_l336_mase_denominator_by_target"
@@ -822,7 +822,7 @@ def main() -> int:
             "scoring_future": "clean_latent",
         },
         "input_ablation_policy": {
-            "capabilities": sorted(v8.INPUT_ABLATION_CAPABILITIES),
+            "capabilities": sorted(protocol.INPUT_ABLATION_CAPABILITIES),
             "source": "clean_primary_main",
             "donor_policy": "next_seed_same_capability_and_intensity",
             "marginal_matching": {
@@ -834,7 +834,7 @@ def main() -> int:
             "scoring_future": "original_clean_latent",
         },
         "strict_counterfactual_policy": {
-            "capabilities": sorted(v8.STRICT_COUNTERFACTUAL_CAPABILITIES),
+            "capabilities": sorted(protocol.STRICT_COUNTERFACTUAL_CAPABILITIES),
             "selected_seed_indexes": seed_indexes,
             "intensities": [5],
             "evaluation_table": "strict_counterfactual_audit",
@@ -843,8 +843,8 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "paper_v8_generation_manifest.v9",
-        "created_at": v8.utc_now(),
+        "schema_version": "cafe.generation_manifest.v1",
+        "created_at": protocol.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
             "blas_threads_per_process": 1,
@@ -857,21 +857,21 @@ def main() -> int:
             },
         },
         "config": config,
-        "config_sha256": v8.json_sha256(config),
+        "config_sha256": protocol.json_sha256(config),
         "files": {
             "clean": {
-                **v8.file_record(clean_path),
+                **protocol.file_record(clean_path),
                 "row_count": clean_count,
             },
             "robustness": {
-                **v8.file_record(robustness_path),
+                **protocol.file_record(robustness_path),
                 "row_count": robustness_count,
             },
             "input_ablations": {
-                **v8.file_record(ablation_path),
+                **protocol.file_record(ablation_path),
                 "row_count": ablation_count,
             },
-            "generation_attempts": v8.file_record(attempt_path),
+            "generation_attempts": protocol.file_record(attempt_path),
         },
         "generation_attempt_summary": attempt_summary,
         "real_alignment_audit": {
@@ -882,10 +882,10 @@ def main() -> int:
         },
     }
     manifest_path = generation_dir / f"manifest__{shard_name}.json"
-    v8.write_json(manifest_path, manifest)
+    protocol.write_json(manifest_path, manifest)
     total_seconds = time.perf_counter() - run_started
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "dataset_id": dataset.dataset_id,
                 "clean_sample_count": clean_count,

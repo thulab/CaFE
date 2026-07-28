@@ -7,13 +7,13 @@ from typing import Any, Iterable, Mapping
 
 import numpy as np
 
-from app.services.synthetic_v8_generation import (
+from cafe.generation.families import (
     common_factor_identifiability_gate,
     cross_series_identifiability_gate,
 )
 
 
-SCHEMA_VERSION = "synthetic_v8_feature_gate.v15"
+SCHEMA_VERSION = "cafe.feature_gate.v1"
 MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION = 0.50
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {

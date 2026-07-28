@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Render illustrative Paper v8 capability curves from the formal generators.
+"""Render illustrative CaFE capability curves from the formal generators.
 
 The examples deliberately do not claim real-data calibration.  They use one
-auditable empirical background profile, the formal v8 primary generator
+auditable empirical background profile, the formal cafe primary generator
 families, the formal L336/H48 geometry, and a direct I1--I5 lambda grid.
 """
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -25,14 +24,10 @@ from matplotlib.lines import Line2D  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-BACKEND_ROOT = REPO_ROOT / "backend"
-for import_path in (BACKEND_ROOT, REPO_ROOT / "scripts"):
-    if str(import_path) not in sys.path:
-        sys.path.insert(0, str(import_path))
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-import paper_v8_pipeline_common as v8  # noqa: E402
-from app.services.synthetic_v8_generation import (  # noqa: E402
+from cafe import protocol as cafe
+from cafe.generation.families import (
     derive_deterministic_parameters,
     generate_deterministic_sample,
 )
@@ -41,10 +36,8 @@ from app.services.synthetic_v8_generation import (  # noqa: E402
 DEFAULT_OUTPUT_DIR = (
     REPO_ROOT
     / "docs"
-    / "superpowers"
-    / "baselines"
     / "figures"
-    / "paper-v8-capability-examples"
+    / "capability-examples"
 )
 EMPIRICAL_PROFILE_ID = "illustrative_empirical_hourly_profile_v1"
 EMPIRICAL_LAMBDAS = (0.0, 0.25, 0.5, 0.75, 1.0)
@@ -221,13 +214,13 @@ FUTURE_COLOR = "#D97706"
 NEUTRAL = "#687386"
 MECHANISM_COLOR = "#C2410C"
 RELATION_COLOR = "#7C3AED"
-VIEW_START_COMPACT = max(0, v8.CONTEXT_LENGTH - 144)
-VIEW_START_INDIVIDUAL = max(0, v8.CONTEXT_LENGTH - 168)
+VIEW_START_COMPACT = max(0, cafe.CONTEXT_LENGTH - 144)
+VIEW_START_INDIVIDUAL = max(0, cafe.CONTEXT_LENGTH - 168)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Render illustrative Paper v8 capability curves."
+        description="Render illustrative CaFE capability curves."
     )
     parser.add_argument(
         "--output-dir",
@@ -237,7 +230,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--intensity",
         type=int,
-        choices=v8.INTENSITIES,
+        choices=cafe.INTENSITIES,
         default=EXAMPLE_INTENSITY,
     )
     return parser.parse_args()
@@ -261,7 +254,7 @@ def empirical_summary() -> dict[str, dict[str, float]]:
 
 
 def generate_example(
-    dataset: v8.DatasetSpec,
+    dataset: cafe.DatasetSpec,
     spec: CapabilitySpec,
     *,
     intensity: int,
@@ -270,9 +263,9 @@ def generate_example(
         spec.capability_id,
         empirical_summary(),
         season_length=24,
-        context_length=v8.CONTEXT_LENGTH,
+        context_length=cafe.CONTEXT_LENGTH,
     )
-    conditioning = v8.build_conditioning(
+    conditioning = cafe.build_conditioning(
         dataset,
         capability_id=spec.capability_id,
         frequency="h",
@@ -284,8 +277,8 @@ def generate_example(
     seed = stable_example_seed(spec.capability_id)
     target, metadata, covariates = generate_deterministic_sample(
         spec.capability_id,
-        v8.MASTER_LENGTH,
-        v8.CONTEXT_LENGTH,
+        cafe.MASTER_LENGTH,
+        cafe.CONTEXT_LENGTH,
         conditioning.target_dim,
         conditioning.season_length,
         intensity,
@@ -294,13 +287,13 @@ def generate_example(
         family_role="primary",
         counterfactual_variant=0,
     )
-    target, covariates = v8.standardize_generated_sample(
+    target, covariates = cafe.standardize_generated_sample(
         spec.capability_id,
         target,
         covariates,
         metadata=metadata,
     )
-    features = v8.measured_features(
+    features = cafe.measured_features(
         spec.capability_id,
         target,
         covariates,
@@ -446,9 +439,9 @@ def add_mechanism_cue(
     capability_id = example["spec"]["capability_id"]
     metadata = example["metadata"]
     target = np.asarray(example["target"], dtype=float)
-    context = v8.CONTEXT_LENGTH
-    horizon = v8.HORIZON
-    x = np.arange(v8.MASTER_LENGTH)
+    context = cafe.CONTEXT_LENGTH
+    horizon = cafe.HORIZON
+    x = np.arange(cafe.MASTER_LENGTH)
     y_low, y_high = ax.get_ylim()
     y_span = y_high - y_low
     fontsize = 5.8 if compact else 8.0
@@ -504,7 +497,7 @@ def add_mechanism_cue(
         series = target[:, 0]
         envelope = analytic_envelope(series)
         center = float(np.mean(series))
-        visible = slice(view_start, v8.MASTER_LENGTH)
+        visible = slice(view_start, cafe.MASTER_LENGTH)
         for sign in (-1.0, 1.0):
             ax.plot(
                 x[visible],
@@ -552,7 +545,7 @@ def add_mechanism_cue(
             for point in metadata["cut_points"]
             if int(point) >= view_start
         ]
-        boundaries = [view_start] + cut_points + [v8.MASTER_LENGTH]
+        boundaries = [view_start] + cut_points + [cafe.MASTER_LENGTH]
         for index in range(len(boundaries) - 1):
             if index % 2 == 0:
                 ax.axvspan(
@@ -766,7 +759,7 @@ def add_mechanism_cue(
         covariates = np.asarray(example["covariates"], dtype=float)
         event_start = int(metadata["future_event_start"])
         event_width = int(metadata["event_width"])
-        event_end = min(event_start + event_width, v8.MASTER_LENGTH - 1)
+        event_end = min(event_start + event_width, cafe.MASTER_LENGTH - 1)
         ax.axvspan(
             event_start,
             event_end,
@@ -806,10 +799,10 @@ def plot_example(
     compact: bool,
     cluster_color: str,
 ) -> None:
-    context = v8.CONTEXT_LENGTH
-    horizon = v8.HORIZON
+    context = cafe.CONTEXT_LENGTH
+    horizon = cafe.HORIZON
     view_start = VIEW_START_COMPACT if compact else VIEW_START_INDIVIDUAL
-    x = np.arange(v8.MASTER_LENGTH)
+    x = np.arange(cafe.MASTER_LENGTH)
     ax.axvspan(
         context,
         context + horizon - 1,
@@ -844,7 +837,7 @@ def plot_example(
             linestyle="--" if covariate["label"] == "weather" else ":",
             alpha=0.68,
         )
-    ax.set_xlim(view_start, v8.MASTER_LENGTH - 1)
+    ax.set_xlim(view_start, cafe.MASTER_LENGTH - 1)
     all_values = np.column_stack(
         [channel["values"] for channel in channels]
         + [channel["values"] for channel in covariate_channels(example)]
@@ -865,12 +858,12 @@ def plot_example(
     ax.spines["bottom"].set_color("#C9CED6")
     ax.tick_params(axis="y", left=False, labelleft=False)
     ax.tick_params(axis="x", colors="#687386", labelsize=7)
-    ax.set_xticks([view_start, context, v8.MASTER_LENGTH - 1])
+    ax.set_xticks([view_start, context, cafe.MASTER_LENGTH - 1])
     ax.set_xticklabels(
         [
             str(view_start),
             str(context),
-            str(v8.MASTER_LENGTH - 1),
+            str(cafe.MASTER_LENGTH - 1),
         ]
     )
     ax.grid(axis="x", color="#E3E6EA", linewidth=0.6)
@@ -1028,7 +1021,7 @@ def render_overview(
         color="#654A73",
     )
     fig.suptitle(
-        "Paper v8 capability examples | mechanism-aware view | primary family | I5",
+        "CaFE capability examples | mechanism-aware view | primary family | I5",
         y=0.995,
         fontsize=13,
         color="#1E293B",
@@ -1037,8 +1030,8 @@ def render_overview(
         0.5,
         0.025,
         (
-            f"Illustrative only: formal v8 L{v8.CONTEXT_LENGTH}/"
-            f"H{v8.HORIZON} generators with an "
+            f"Illustrative only: formal cafe L{cafe.CONTEXT_LENGTH}/"
+            f"H{cafe.HORIZON} generators with an "
             "experience-based hourly profile; no real-data calibration."
         ),
         ha="center",
@@ -1048,7 +1041,7 @@ def render_overview(
     )
     for suffix in ("png", "svg", "pdf"):
         fig.savefig(
-            output_dir / f"paper-v8-capability-overview.{suffix}",
+            output_dir / f"cafe-capability-overview.{suffix}",
             bbox_inches="tight",
             facecolor="white",
         )
@@ -1138,7 +1131,7 @@ def main() -> int:
     args = parse_args()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    dataset = v8.DatasetSpec(
+    dataset = cafe.DatasetSpec(
         dataset_id="illustrative_empirical_profile",
         logical_name="Illustrative empirical hourly profile",
         config_id=EMPIRICAL_PROFILE_ID,
@@ -1165,15 +1158,15 @@ def main() -> int:
     examples_path.write_text(
         json.dumps(
             {
-                "schema_version": "paper_v8_capability_examples.v1",
-                "generator_version": v8.GENERATOR_VERSION,
+                "schema_version": "cafe.capability_examples.v1",
+                "generator_version": cafe.GENERATOR_VERSION,
                 "profile_id": EMPIRICAL_PROFILE_ID,
                 "calibration_semantics": (
                     "experience-based hourly background profile; "
                     "direct lambda grid; no real-data calibration"
                 ),
-                "context_length": v8.CONTEXT_LENGTH,
-                "horizon": v8.HORIZON,
+                "context_length": cafe.CONTEXT_LENGTH,
+                "horizon": cafe.HORIZON,
                 "intensity_lambdas": list(EMPIRICAL_LAMBDAS),
                 "selected_intensity": args.intensity,
                 "empirical_features": EMPIRICAL_FEATURES,
@@ -1190,16 +1183,16 @@ def main() -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_capability_example_manifest.v1",
-        "generator_version": v8.GENERATOR_VERSION,
+        "schema_version": "cafe.capability_example_manifest.v1",
+        "generator_version": cafe.GENERATOR_VERSION,
         "profile_id": EMPIRICAL_PROFILE_ID,
-        "context_length": v8.CONTEXT_LENGTH,
-        "horizon": v8.HORIZON,
+        "context_length": cafe.CONTEXT_LENGTH,
+        "horizon": cafe.HORIZON,
         "selected_intensity": args.intensity,
         "files": {
-            "overview_png": "paper-v8-capability-overview.png",
-            "overview_svg": "paper-v8-capability-overview.svg",
-            "overview_pdf": "paper-v8-capability-overview.pdf",
+            "overview_png": "cafe-capability-overview.png",
+            "overview_svg": "cafe-capability-overview.svg",
+            "overview_pdf": "cafe-capability-overview.pdf",
             "examples_json": "examples.json",
             "individual_pngs": [
                 f"{spec.capability_id}.png" for spec in CAPABILITIES

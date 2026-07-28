@@ -13,9 +13,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
-import analyze_paper_v8 as analysis  # noqa: E402
-import paper_v8_pipeline_common as v8  # noqa: E402
-import paper_v8_structured_baselines as structured  # noqa: E402
+from cafe import protocol as cafe
+from cafe.analysis import runner as analysis
+from cafe.analysis import structured
 
 
 CAPABILITY_ID = "cross_series_dependence"
@@ -51,7 +51,7 @@ def parse_args() -> argparse.Namespace:
 
 def strict_pairs(task_path: Path) -> dict[str, dict[int, dict[str, Any]]]:
     pairs: dict[str, dict[int, dict[str, Any]]] = {}
-    for sample in v8.iter_jsonl(task_path):
+    for sample in cafe.iter_jsonl(task_path):
         if not (
             sample.get("capability_id") == CAPABILITY_ID
             and sample.get("generator_family_role") == "primary"
@@ -88,7 +88,7 @@ def load_predictions(
     )
     return {
         str(row["sample_id"]): np.asarray(row["forecast"], dtype=float)
-        for row in v8.iter_jsonl(prediction_path)
+        for row in cafe.iter_jsonl(prediction_path)
     }
 
 
@@ -571,7 +571,7 @@ def main() -> int:
         output_stem=output_stem,
     )
     summary = {
-        "schema_version": "paper_v8_jena_cross_series_sample_figure.v1",
+        "schema_version": "cafe.jena_cross_series_sample_figure.v1",
         "dataset_id": args.dataset_id,
         "capability_id": CAPABILITY_ID,
         "intensity": INTENSITY,

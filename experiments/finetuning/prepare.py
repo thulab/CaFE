@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare disjoint Paper v8 seed batches for Chronos-2 fine-tuning.
+"""Prepare disjoint CaFE seed batches for Chronos-2 fine-tuning.
 
 The exported records use the fixed-context main-table task:
 
@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 
-SCHEMA_VERSION = "paper_v8_chronos_finetune_split.v1"
+SCHEMA_VERSION = "cafe.chronos_finetune_split.v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -193,7 +193,7 @@ def main() -> None:
     horizon = int(protocol["horizon"])
     if (master_context_length, fixed_context_length, horizon) != (336, 168, 48):
         raise ValueError(
-            "this exporter requires the Paper v8 336/168/48 protocol, found "
+            "this exporter requires the CaFE 336/168/48 protocol, found "
             f"{master_context_length}/{fixed_context_length}/{horizon}"
         )
 

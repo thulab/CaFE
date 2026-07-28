@@ -10,7 +10,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
 
-from synthetic_feature_profile import (
+from cafe.features.primitives import (
     M5_COVARIATE_PROVENANCE,
     M5_KNOWN_FUTURE_COVARIATES,
     file_sha256,
@@ -52,7 +52,7 @@ def register_real_data_adapter(
 ) -> Callable[[RealDataLoader], RealDataLoader]:
     def decorator(loader: RealDataLoader) -> RealDataLoader:
         if adapter_id in _LOADERS:
-            raise ValueError(f"duplicate Paper v8 real-data adapter {adapter_id!r}")
+            raise ValueError(f"duplicate CaFE real-data adapter {adapter_id!r}")
         _LOADERS[adapter_id] = loader
         return loader
 
@@ -69,13 +69,13 @@ def load_real_dataset(
         loader = _LOADERS[adapter_id]
     except KeyError as error:
         raise ValueError(
-            f"unknown Paper v8 real-data adapter {adapter_id!r}; "
+            f"unknown CaFE real-data adapter {adapter_id!r}; "
             f"registered={sorted(_LOADERS)}"
         ) from error
     bundle = loader(source_path.resolve(), record_limit)
     if not bundle.records:
         raise ValueError(
-            f"Paper v8 real-data adapter {adapter_id!r} returned no records"
+            f"CaFE real-data adapter {adapter_id!r} returned no records"
         )
     return bundle
 
@@ -529,7 +529,7 @@ def _m5_read_frames(
     )
     if len(day_columns) < 216:
         raise ValueError(
-            f"M5 sales history is too short for Paper v8: {len(day_columns)}"
+            f"M5 sales history is too short for CaFE: {len(day_columns)}"
         )
     identifier_columns = [
         "id",
@@ -594,7 +594,7 @@ def load_m5_csv(
         store_id = str(store_id_value)
         cat_id = str(cat_id_value)
         departments = sorted(str(value) for value in group["dept_id"].unique())
-        # The v8 hierarchy mechanism is a parent plus exactly two children.
+        # The cafe hierarchy mechanism is a parent plus exactly two children.
         # M5 HOBBIES and HOUSEHOLD expose this mapping directly; FOODS has
         # three departments and is therefore not silently projected.
         if len(departments) != 2:

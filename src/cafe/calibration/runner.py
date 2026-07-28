@@ -15,17 +15,17 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["BLIS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 
-import paper_v8_pipeline_common as v8
+from cafe import protocol
 
 
-DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
+DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 DEFAULT_GIFT_EVAL_DIR = Path("/root/xmy/gift-eval")
 DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build the formal Paper v8 real-data calibration bundle."
+        description="Build the formal CaFE real-data calibration bundle."
     )
     parser.add_argument("--dataset-id", default="gift_electricity_h")
     parser.add_argument(
@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--calibration-seeds",
         type=int,
-        default=v8.DEFAULT_CALIBRATION_PATH_COUNT,
+        default=protocol.DEFAULT_CALIBRATION_PATH_COUNT,
         help=(
             "Independent qualification paths used only to estimate each "
             "family-level response curve; these are not formal sample seeds."
@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-calibration-seeds",
         type=int,
-        default=v8.MAX_CALIBRATION_PATH_COUNT,
+        default=protocol.MAX_CALIBRATION_PATH_COUNT,
         help=(
             "Only used when the base qualification paths produce no usable "
             "family-level support."
@@ -78,21 +78,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--capabilities",
         nargs="+",
-        choices=v8.CAPABILITIES,
-        default=list(v8.CAPABILITIES),
+        choices=protocol.CAPABILITIES,
+        default=list(protocol.CAPABILITIES),
     )
     return parser.parse_args()
 
 
 def calibrate_one_capability(
-    dataset: v8.DatasetSpec,
+    dataset: protocol.DatasetSpec,
     anchors: list[dict[str, Any]],
     *,
     capability_id: str,
     calibration_seed_count: int,
     maximum_calibration_seed_count: int,
 ) -> dict[str, Any]:
-    return v8.calibrate_capabilities(
+    return protocol.calibrate_capabilities(
         dataset,
         anchors,
         calibration_seed_count=calibration_seed_count,
@@ -138,7 +138,7 @@ def merge_capability_calibrations(
 
 
 def calibrate_capabilities(
-    dataset: v8.DatasetSpec,
+    dataset: protocol.DatasetSpec,
     anchors: list[dict[str, Any]],
     *,
     capability_ids: tuple[str, ...],
@@ -151,12 +151,12 @@ def calibrate_capabilities(
         "maximum_calibration_seed_count": maximum_calibration_seed_count,
     }
     if workers == 1 or len(capability_ids) == 1:
-        return v8.calibrate_capabilities(
+        return protocol.calibrate_capabilities(
             dataset,
             anchors,
             capability_ids=capability_ids,
             progress_callback=lambda capability_id, path_count: print(
-                v8.canonical_json(
+                protocol.canonical_json(
                     {
                         "dataset_id": dataset.dataset_id,
                         "qualifying_capability": capability_id,
@@ -170,7 +170,7 @@ def calibrate_capabilities(
 
     results: dict[str, dict[str, Any]] = {}
     maximum_workers = min(workers, len(capability_ids))
-    submission_order = v8.preparation_capability_order(capability_ids)
+    submission_order = protocol.preparation_capability_order(capability_ids)
     with ProcessPoolExecutor(max_workers=maximum_workers) as executor:
         future_capabilities = {
             executor.submit(
@@ -188,7 +188,7 @@ def calibrate_capabilities(
             results[capability_id] = result
             calibration = result["capabilities"][capability_id]
             print(
-                v8.canonical_json(
+                protocol.canonical_json(
                     {
                         "calibrated_capability": capability_id,
                         "dataset_id": dataset.dataset_id,
@@ -224,10 +224,10 @@ def main() -> int:
         )
     if not 0.0 < args.minimum_observed_fraction <= 1.0:
         raise ValueError("minimum observed fraction must be in (0, 1]")
-    dataset = v8.resolve_dataset(args.dataset_id)
+    dataset = protocol.resolve_dataset(args.dataset_id)
     if (
         dataset.real_data_adapter
-        not in v8.GIFT_EVAL_REAL_DATA_ADAPTERS
+        not in protocol.GIFT_EVAL_REAL_DATA_ADAPTERS
         and args.source_root is None
     ):
         raise ValueError(
@@ -241,7 +241,7 @@ def main() -> int:
     )
     output_dir = args.output_root.resolve() / dataset.dataset_id / "01_calibration"
     anchor_started = time.perf_counter()
-    anchors, source_metadata = v8.build_calibration_anchors(
+    anchors, source_metadata = protocol.build_calibration_anchors(
         dataset,
         source_root=source_root,
         maximum_anchors=args.max_anchors,
@@ -253,9 +253,9 @@ def main() -> int:
         dict(anchor.pop("real_forecast_master")) for anchor in anchors
     ]
     anchor_path = output_dir / "anchors.jsonl"
-    v8.write_jsonl(anchor_path, anchors)
+    protocol.write_jsonl(anchor_path, anchors)
     real_forecast_path = output_dir / "real_anchor_masters.jsonl"
-    v8.write_jsonl(real_forecast_path, real_forecast_masters)
+    protocol.write_jsonl(real_forecast_path, real_forecast_masters)
     anchor_artifact_seconds = (
         time.perf_counter() - anchor_artifact_started
     )
@@ -274,16 +274,16 @@ def main() -> int:
     )
     calibration_artifact_started = time.perf_counter()
     capability_path = output_dir / "capability_calibration.json"
-    v8.write_json(capability_path, capability_calibration)
+    protocol.write_json(capability_path, capability_calibration)
     calibration_artifact_seconds = (
         time.perf_counter() - calibration_artifact_started
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "paper_v8_calibration_bundle.v16",
-        "created_at": v8.utc_now(),
-        "pipeline_schema_version": v8.SCHEMA_VERSION,
-        "generator_version": v8.GENERATOR_VERSION,
+        "schema_version": "cafe.calibration_bundle.v1",
+        "created_at": protocol.utc_now(),
+        "pipeline_schema_version": protocol.SCHEMA_VERSION,
+        "generator_version": protocol.GENERATOR_VERSION,
         "dataset": source_metadata["dataset"],
         "source": source_metadata,
         "anchor_count": len(anchors),
@@ -332,9 +332,9 @@ def main() -> int:
             "background_features": (
                 "direct finite feature row from one forecastable real L168 anchor"
             ),
-            "feature_schema_version": v8.FEATURE_SCHEMA_VERSION,
+            "feature_schema_version": protocol.FEATURE_SCHEMA_VERSION,
             "feature_measurement": (
-                "single history-only v8 feature vector; local trend evidence "
+                "single history-only cafe feature vector; local trend evidence "
                 "uses the trailing 96 observations"
             ),
             "univariate_primary_strength": (
@@ -406,12 +406,12 @@ def main() -> int:
             ),
         },
         "files": {
-            "anchors": v8.file_record(anchor_path),
-            "real_anchor_masters": v8.file_record(real_forecast_path),
-            "capability_calibration": v8.file_record(capability_path),
+            "anchors": protocol.file_record(anchor_path),
+            "real_anchor_masters": protocol.file_record(real_forecast_path),
+            "capability_calibration": protocol.file_record(capability_path),
         },
     }
-    bundle["bundle_content_sha256"] = v8.json_sha256(
+    bundle["bundle_content_sha256"] = protocol.json_sha256(
         {
             "dataset": bundle["dataset"],
             "source": bundle["source"],
@@ -419,10 +419,10 @@ def main() -> int:
             "generator_version": bundle["generator_version"],
         }
     )
-    v8.write_json(output_dir / "calibration_bundle.json", bundle)
+    protocol.write_json(output_dir / "calibration_bundle.json", bundle)
     total_seconds = time.perf_counter() - run_started
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "dataset_id": dataset.dataset_id,
                 "anchor_count": len(anchors),

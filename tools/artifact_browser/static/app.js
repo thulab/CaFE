@@ -189,7 +189,7 @@ function updateIndexStatus() {
   elements.indexDetail.textContent = `${formatInteger(index.sampleCount)} samples · ${formatInteger(index.predictionCount)} predictions indexed`;
   const experiment = state.meta.experiment;
   if (experiment) {
-    elements.experimentVersion.textContent = `PAPER EXP · ${String(experiment.version || "v8").toUpperCase()}`;
+    elements.experimentVersion.textContent = `CAFE · ${String(experiment.version || "CaFE").toUpperCase()}`;
     elements.experimentSubtitle.textContent = `${experiment.id} · ${experiment.sampleScope || "main/primary"} · 同一种子的五档强度`;
   }
 }

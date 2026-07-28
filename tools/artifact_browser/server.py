@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve an offline browser for Paper v7/v8 synthetic samples and forecasts.
+"""Serve an offline browser for CaFE synthetic samples and forecasts.
 
 The experiment artifacts are intentionally left in JSONL form.  A compact
 SQLite index stores byte offsets only, so the browser can seek directly to the
@@ -26,12 +26,12 @@ from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, urlparse
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ASSET_DIR = Path(__file__).with_suffix("").resolve()
-DEFAULT_DATA_DIR = REPO_ROOT / "runtime/paper_exp/v8"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+ASSET_DIR = Path(__file__).resolve().parent / "static"
+DEFAULT_DATA_DIR = REPO_ROOT / "runtime" / "experiments"
 DEFAULT_INDEX_NAME = ".sample-explorer-index.sqlite3"
 INDEX_SCHEMA_VERSION = "paper-sample-explorer.v1"
-V8_INDEX_SCHEMA_VERSION = "paper-v8-sample-explorer.v1"
+CAFE_INDEX_SCHEMA_VERSION = "cafe-sample-explorer.v1"
 DEFAULT_CONTEXTS = (96, 168, 336, 504)
 MODEL_ORDER = (
     "Chronos-2",
@@ -152,16 +152,16 @@ NUMBER_FIELDS = {
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Browse Paper v7/v8 synthetic samples and model forecasts."
+        description="Browse Paper v7/cafe synthetic samples and model forecasts."
     )
     parser.add_argument(
         "--data-dir",
         type=Path,
         default=DEFAULT_DATA_DIR,
         help=(
-            "A Paper v7 E2 directory, a Paper v8 experiment directory, or the "
-            "v8 parent directory (default: runtime/paper_exp/v8, newest "
-            "completed v8 experiment)."
+            "A Paper v7 E2 directory, a CaFE experiment directory, or the "
+            "cafe parent directory (default: runtime/experiments, newest "
+            "completed cafe experiment)."
         ),
     )
     parser.add_argument(
@@ -235,12 +235,12 @@ def is_v8_experiment_dir(data_dir: Path) -> bool:
 
 
 def resolve_data_dir(data_dir: Path) -> Path:
-    """Resolve a v7 directory or the newest completed v8 experiment."""
+    """Resolve a v7 directory or the newest completed cafe experiment."""
 
     resolved = data_dir.resolve()
     if (resolved / "samples.jsonl").is_file() or is_v8_experiment_dir(resolved):
         return resolved
-    if resolved.name == "v8" and resolved.is_dir():
+    if resolved.name == "cafe" and resolved.is_dir():
         candidates = [
             path
             for path in resolved.iterdir()
@@ -266,7 +266,7 @@ def resolve_data_dir(data_dir: Path) -> Path:
                 ),
             ).resolve()
     raise FileNotFoundError(
-        f"{resolved} is neither a Paper v7 data directory nor a Paper v8 "
+        f"{resolved} is neither a Paper v7 data directory nor a CaFE "
         "experiment directory"
     )
 
@@ -566,7 +566,7 @@ def _v8_artifact_path(configured: str | None, fallback: Path) -> Path:
             return candidate.resolve()
     if fallback.exists():
         return fallback.resolve()
-    raise FileNotFoundError(f"missing v8 artifact: {configured or fallback}")
+    raise FileNotFoundError(f"missing cafe artifact: {configured or fallback}")
 
 
 def discover_v8_artifacts(data_dir: Path) -> dict[str, Any]:
@@ -604,13 +604,13 @@ def discover_v8_artifacts(data_dir: Path) -> dict[str, Any]:
         common_shards = set.intersection(*shard_sets) if shard_sets else set()
         if len(common_shards) != 1:
             raise ValueError(
-                "v8 explorer requires exactly one common inference seed shard; "
+                "cafe explorer requires exactly one common inference seed shard; "
                 f"found {sorted(common_shards)}"
             )
         shard_name = next(iter(common_shards))
 
     if not dataset_ids:
-        raise FileNotFoundError(f"no v8 datasets found under {data_dir}")
+        raise FileNotFoundError(f"no cafe datasets found under {data_dir}")
 
     datasets: list[dict[str, Any]] = []
     common_models: list[str] | None = None
@@ -628,7 +628,7 @@ def discover_v8_artifacts(data_dir: Path) -> dict[str, Any]:
             (inference_dir / "inference_manifest.json").read_text(encoding="utf-8")
         )
         if not inference_manifest.get("complete"):
-            raise ValueError(f"incomplete v8 inference manifest: {dataset_id}")
+            raise ValueError(f"incomplete cafe inference manifest: {dataset_id}")
         predictions: list[dict[str, Any]] = []
         for descriptor in inference_manifest.get("predictions", {}).get("files", []):
             model_id = str(descriptor["model_id"])
@@ -664,7 +664,7 @@ def discover_v8_artifacts(data_dir: Path) -> dict[str, Any]:
             common_models = models
         elif models != common_models:
             raise ValueError(
-                f"v8 model set/order differs for {dataset_id}: {models} != "
+                f"cafe model set/order differs for {dataset_id}: {models} != "
                 f"{common_models}"
             )
         score_path = (
@@ -679,7 +679,7 @@ def discover_v8_artifacts(data_dir: Path) -> dict[str, Any]:
             }
         )
     return {
-        "schema_version": "paper-v8-sample-explorer-input.v1",
+        "schema_version": "cafe-sample-explorer-input.v1",
         "experiment_id": data_dir.name,
         "shard_name": shard_name,
         "datasets": datasets,
@@ -687,7 +687,7 @@ def discover_v8_artifacts(data_dir: Path) -> dict[str, Any]:
     }
 
 
-def v8_input_signature(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
+def cafe_input_signature(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
     signature: list[dict[str, Any]] = []
     for dataset in artifacts["datasets"]:
         signature.append(_file_signature(Path(dataset["task_path"])))
@@ -698,7 +698,7 @@ def v8_input_signature(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
     return signature
 
 
-def v8_index_is_valid(
+def cafe_index_is_valid(
     index_path: Path,
     artifacts: dict[str, Any],
 ) -> bool:
@@ -708,9 +708,9 @@ def v8_index_is_valid(
         with sqlite3.connect(index_path) as connection:
             metadata = dict(connection.execute("SELECT key, value FROM metadata"))
         return (
-            metadata.get("schema_version") == V8_INDEX_SCHEMA_VERSION
+            metadata.get("schema_version") == CAFE_INDEX_SCHEMA_VERSION
             and json.loads(metadata.get("input_signature", "null"))
-            == v8_input_signature(artifacts)
+            == cafe_input_signature(artifacts)
         )
     except (json.JSONDecodeError, OSError, sqlite3.DatabaseError):
         return False
@@ -811,7 +811,7 @@ def build_v8_index(
                 (sample_source_id, dataset_id, str(task_path.resolve())),
             )
             progress(
-                f"indexing v8 tasks {sample_source_id + 1}/"
+                f"indexing cafe tasks {sample_source_id + 1}/"
                 f"{len(artifacts['datasets'])}: {dataset_id}"
             )
             group_batch: list[tuple[Any, ...]] = []
@@ -875,7 +875,7 @@ def build_v8_index(
                             )
                         )
                     if sample_id in sample_ids:
-                        raise ValueError(f"duplicate v8 task sample_id: {sample_id}")
+                        raise ValueError(f"duplicate cafe task sample_id: {sample_id}")
                     sample_ids[sample_id] = (sample_ord, context_length)
                     view_batch.append(
                         (
@@ -950,7 +950,7 @@ def build_v8_index(
                         str(path.resolve()),
                     ),
                 )
-                progress(f"indexing v8 predictions: {dataset_id} / {model_id}")
+                progress(f"indexing cafe predictions: {dataset_id} / {model_id}")
                 batch: list[tuple[int, int, int, int, int]] = []
                 indexed_count = 0
                 with path.open("rb") as handle:
@@ -1004,9 +1004,9 @@ def build_v8_index(
             )
         ]
         metadata = {
-            "schema_version": V8_INDEX_SCHEMA_VERSION,
+            "schema_version": CAFE_INDEX_SCHEMA_VERSION,
             "input_signature": json.dumps(
-                v8_input_signature(artifacts), separators=(",", ":")
+                cafe_input_signature(artifacts), separators=(",", ":")
             ),
             "experiment_id": str(artifacts["experiment_id"]),
             "shard_name": str(artifacts["shard_name"]),
@@ -1029,7 +1029,7 @@ def build_v8_index(
     else:
         connection.close()
         os.replace(temporary, index_path)
-    progress(f"v8 index ready: {index_path} ({time.monotonic() - started:.1f}s)")
+    progress(f"cafe index ready: {index_path} ({time.monotonic() - started:.1f}s)")
 
 
 def ensure_v8_index(
@@ -1040,7 +1040,7 @@ def ensure_v8_index(
     progress: Callable[[str], None] = print,
 ) -> dict[str, Any]:
     artifacts = discover_v8_artifacts(data_dir)
-    if rebuild or not v8_index_is_valid(index_path, artifacts):
+    if rebuild or not cafe_index_is_valid(index_path, artifacts):
         build_v8_index(
             data_dir,
             index_path,
@@ -1048,7 +1048,7 @@ def ensure_v8_index(
             progress=progress,
         )
     else:
-        progress(f"using existing v8 index: {index_path}")
+        progress(f"using existing cafe index: {index_path}")
     return artifacts
 
 
@@ -1429,7 +1429,7 @@ def _prediction_metrics(
 
 
 class V8SampleExplorer:
-    """Read Paper v8 task views and per-dataset prediction shards."""
+    """Read CaFE task views and per-dataset prediction shards."""
 
     def __init__(
         self,
@@ -1519,7 +1519,7 @@ class V8SampleExplorer:
         return {
             "schemaVersion": "paper-sample-explorer.api.v2",
             "experiment": {
-                "version": "v8",
+                "version": "cafe",
                 "id": metadata.get("experiment_id", self.data_dir.name),
                 "shard": metadata.get("shard_name"),
                 "sampleScope": metadata.get("sample_scope"),
@@ -1593,7 +1593,7 @@ class V8SampleExplorer:
             ).fetchall()
             if len(sample_rows) != 5:
                 raise ValueError(
-                    f"v8 sample group has {len(sample_rows)} intensities, expected 5"
+                    f"cafe sample group has {len(sample_rows)} intensities, expected 5"
                 )
             sample_ordinals = [int(row["sample_ord"]) for row in sample_rows]
             sample_placeholders = ",".join("?" for _ in sample_ordinals)
@@ -1846,8 +1846,8 @@ def run(argv: list[str] | None = None) -> int:
         if args.index_path is not None
         else data_dir / DEFAULT_INDEX_NAME
     )
-    v8_layout = is_v8_experiment_dir(data_dir)
-    if v8_layout:
+    cafe_layout = is_v8_experiment_dir(data_dir)
+    if cafe_layout:
         artifacts = ensure_v8_index(
             data_dir,
             index_path,

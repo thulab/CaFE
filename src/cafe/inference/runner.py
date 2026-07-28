@@ -19,10 +19,10 @@ from typing import Any, Callable, Iterator, TypeVar
 import httpx
 import msgpack
 import numpy as np
-import paper_v8_pipeline_common as v8
+from cafe import protocol
 
-INPUT_ADAPTATION_POLICY_ID = "paper-v7-input-adaptation-v1"
-DEFAULT_OUTPUT_ROOT = v8.REPO_ROOT / "runtime" / "paper_exp" / "v8"
+INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v1"
+DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
     "http://192.168.99.17:10811",
@@ -38,7 +38,7 @@ DEFAULT_MODELS = (
     "toto2.0",
 )
 MODEL_EXECUTION_CONFIG = {
-    # Paper v8 has a fixed H=48 and runs on RTX 5090 services. These defaults
+    # CaFE has a fixed H=48 and runs on RTX 5090 services. These defaults
     # are for a dual-card endpoint; the x8 preset below overrides whole-service
     # concurrency while retaining the same tested per-GPU batch geometry.
     "Timer-3.5": {
@@ -481,7 +481,7 @@ def endpoint_topology_cli_arguments(args: argparse.Namespace) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run formal Paper v8 multi-service model inference."
+        description="Run formal CaFE multi-service model inference."
     )
     parser.add_argument("--dataset-id", default="gift_electricity_h")
     parser.add_argument(
@@ -542,12 +542,12 @@ def safe_filename(value: str) -> str:
 
 
 def count_jsonl(path: Path) -> int:
-    return sum(1 for _row in v8.iter_jsonl(path))
+    return sum(1 for _row in protocol.iter_jsonl(path))
 
 
 def relative_path(path: Path) -> str:
     try:
-        return str(path.resolve().relative_to(v8.REPO_ROOT.resolve()))
+        return str(path.resolve().relative_to(protocol.REPO_ROOT.resolve()))
     except ValueError:
         return str(path.resolve())
 
@@ -791,7 +791,7 @@ class TimerServiceClient:
             or len(set(pids)) != expected_endpoints
         ):
             raise RuntimeError(
-                f"model {model_id} loaded topology does not match frozen v8 config: "
+                f"model {model_id} loaded topology does not match frozen cafe config: "
                 f"expected_devices={sorted(expected_devices)}, "
                 f"replicas_per_device={replicas_per_device}, state={state}"
             )
@@ -814,7 +814,7 @@ class TimerServiceClient:
 
 
 def iter_forecast_samples(path: Path) -> Iterator[dict[str, Any]]:
-    yield from v8.iter_jsonl(path)
+    yield from protocol.iter_jsonl(path)
 
 
 def prediction_path_for(
@@ -837,7 +837,7 @@ def prediction_row(
     if values.shape != expected_shape:
         raise ValueError(f"forecast shape mismatch: {values.shape} != {expected_shape}")
     return {
-        "schema_version": "paper_v8_inference_prediction.v2",
+        "schema_version": "cafe.inference_prediction.v1",
         "model_id": model_id,
         "sample_id": sample["sample_id"],
         "forecast": values.tolist(),
@@ -1079,7 +1079,7 @@ def successful_sample_ids(path: Path) -> set[str]:
     if not path.exists():
         return set()
     identifiers: set[str] = set()
-    for row in v8.iter_jsonl(path):
+    for row in protocol.iter_jsonl(path):
         sample_id = str(row["sample_id"])
         if sample_id in identifiers:
             raise ValueError(
@@ -1132,7 +1132,7 @@ def persisted_http_request_count(path: Path) -> int:
     if not path.is_file():
         return 0
     total = 0
-    for row in v8.iter_jsonl(path):
+    for row in protocol.iter_jsonl(path):
         adaptation = row.get("input_adaptation")
         total += int(
             adaptation.get("target_request_count", 1)
@@ -1197,7 +1197,7 @@ def run_one_model(
     if len(done) == compatible_count:
         status_path = output_dir / status_filename
         previous = (
-            v8.read_json(status_path).get("models", {}).get(model_id)
+            protocol.read_json(status_path).get("models", {}).get(model_id)
             if status_path.is_file()
             else None
         )
@@ -1460,7 +1460,7 @@ async def _run_model_requests_v8_serial(
     execution = MODEL_EXECUTION_CONFIG[model_id]
     if execution.get("transport") != "msgpack_bulk":
         raise ValueError(
-            f"paper v8 requires msgpack_bulk transport for {model_id}"
+            f"paper cafe requires msgpack_bulk transport for {model_id}"
         )
 
     task_batch_size = int(execution["task_batch_size"])
@@ -1590,7 +1590,7 @@ async def _run_model_requests_v8_serial(
                                             "input_adaptation": plan,
                                             "failed_target_index": None,
                                             "transport": "msgpack_bulk",
-                                            "created_at": v8.utc_now(),
+                                            "created_at": protocol.utc_now(),
                                         },
                                         ensure_ascii=False,
                                         sort_keys=True,
@@ -1807,7 +1807,7 @@ async def run_model_requests_v8(
     execution = MODEL_EXECUTION_CONFIG[model_id]
     if execution.get("transport") != "msgpack_bulk":
         raise ValueError(
-            f"paper v8 requires msgpack_bulk transport for {model_id}"
+            f"paper cafe requires msgpack_bulk transport for {model_id}"
         )
 
     task_batch_size = int(execution["task_batch_size"])
@@ -1941,7 +1941,7 @@ async def run_model_requests_v8(
                                         "input_adaptation": plan,
                                         "failed_target_index": None,
                                         "transport": "msgpack_bulk",
-                                        "created_at": v8.utc_now(),
+                                        "created_at": protocol.utc_now(),
                                     },
                                     ensure_ascii=False,
                                     sort_keys=True,
@@ -2075,7 +2075,7 @@ def validated_file_record_path(
     expected_sha256 = record.get("sha256")
     if (
         not expected_sha256
-        or str(expected_sha256) != v8.file_sha256(path)
+        or str(expected_sha256) != protocol.file_sha256(path)
     ):
         raise ValueError(f"{label} file hash mismatch: {path}")
     if validate_row_count:
@@ -2098,7 +2098,7 @@ def formal_real_anchor_source_record(
 
     if calibration_bundle is None:
         raise ValueError(
-            "formal Paper-v8 inference requires calibration_bundle.json "
+            "formal Paper-cafe inference requires calibration_bundle.json "
             "with real_anchor_masters"
         )
     record = calibration_bundle.get("files", {}).get(
@@ -2106,7 +2106,7 @@ def formal_real_anchor_source_record(
     )
     if not isinstance(record, dict):
         raise ValueError(
-            "formal Paper-v8 inference calibration bundle is missing "
+            "formal Paper-cafe inference calibration bundle is missing "
             "files.real_anchor_masters"
         )
     validated_file_record_path(
@@ -2122,9 +2122,9 @@ def validate_inference_task_manifest_files(
     """Validate the combined task and both independently consumed components."""
 
     if task_manifest.get("schema_version") != (
-        "paper_v8_inference_task_manifest.v2"
+        "cafe.inference_task_manifest.v1"
     ):
-        raise ValueError("unsupported Paper-v8 inference task manifest")
+        raise ValueError("unsupported Paper-cafe inference task manifest")
     task_components = task_manifest.get("task_components")
     if not isinstance(task_components, dict):
         raise ValueError("inference task manifest is missing task_components")
@@ -2175,12 +2175,12 @@ def prepare_view_tasks(
         generation_manifest["files"]["input_ablations"],
     ]
     masters = (
-        row for record in source_records for row in v8.iter_jsonl(Path(record["path"]))
+        row for record in source_records for row in protocol.iter_jsonl(Path(record["path"]))
     )
     synthetic_task_path = inference_dir / "synthetic_forecast_views.jsonl"
-    synthetic_view_count = v8.write_jsonl(
+    synthetic_view_count = protocol.write_jsonl(
         synthetic_task_path,
-        v8.iter_master_views(masters),
+        protocol.iter_master_views(masters),
     )
     real_source_record = (
         (calibration_bundle or {}).get("files", {}).get(
@@ -2199,36 +2199,36 @@ def prepare_view_tasks(
     def real_anchor_tasks() -> Iterator[dict[str, Any]]:
         if real_source_record is None:
             return
-        for master in v8.iter_jsonl(Path(real_source_record["path"])):
+        for master in protocol.iter_jsonl(Path(real_source_record["path"])):
             row = dict(master)
-            row["schema_version"] = "paper_v8_real_anchor_forecast_view.v1"
+            row["schema_version"] = "cafe.real_anchor_forecast_view.v1"
             row["evaluation_table"] = "real_anchor_forecast"
             row["view_id"] = row["sample_id"]
             row["context_policy"] = (
-                f"fixed_l{v8.REAL_CALIBRATION_CONTEXT_LENGTH}"
+                f"fixed_l{protocol.REAL_CALIBRATION_CONTEXT_LENGTH}"
             )
             row["context_policy_candidates"] = [
-                v8.REAL_CALIBRATION_CONTEXT_LENGTH
+                protocol.REAL_CALIBRATION_CONTEXT_LENGTH
             ]
             row["scoring_target_semantics"] = "held_out_real_future"
             yield row
 
-    real_anchor_view_count = v8.write_jsonl(
+    real_anchor_view_count = protocol.write_jsonl(
         real_task_path,
         real_anchor_tasks(),
     )
     task_path = inference_dir / "forecast_views.jsonl"
-    view_count = v8.write_jsonl(
+    view_count = protocol.write_jsonl(
         task_path,
         (
             row
             for path in (synthetic_task_path, real_task_path)
-            for row in v8.iter_jsonl(path)
+            for row in protocol.iter_jsonl(path)
         ),
     )
     manifest = {
-        "schema_version": "paper_v8_inference_task_manifest.v2",
-        "created_at": v8.utc_now(),
+        "schema_version": "cafe.inference_task_manifest.v1",
+        "created_at": protocol.utc_now(),
         "generation_config_sha256": generation_manifest["config_sha256"],
         "generation_files": source_records,
         "calibration_bundle_content_sha256": (
@@ -2237,32 +2237,32 @@ def prepare_view_tasks(
             else calibration_bundle.get("bundle_content_sha256")
         ),
         "real_anchor_source": real_source_record,
-        "context_lengths": list(v8.VIEW_CONTEXT_LENGTHS),
-        "fixed_context_length": v8.FIXED_CONTEXT_LENGTH,
+        "context_lengths": list(protocol.VIEW_CONTEXT_LENGTHS),
+        "fixed_context_length": protocol.FIXED_CONTEXT_LENGTH,
         "synthetic_view_count": synthetic_view_count,
         "real_anchor_view_count": real_anchor_view_count,
         "view_count": view_count,
         "task_components": {
             "synthetic": {
-                **v8.file_record(synthetic_task_path),
+                **protocol.file_record(synthetic_task_path),
                 "row_count": synthetic_view_count,
             },
             "real_anchors": {
-                **v8.file_record(real_task_path),
+                **protocol.file_record(real_task_path),
                 "row_count": real_anchor_view_count,
             },
         },
         "task_file": {
-            **v8.file_record(task_path),
+            **protocol.file_record(task_path),
             "row_count": view_count,
         },
         "mase_policy": (
             "synthetic views share clean L336 denominator; real anchors use "
             "their own clean "
-            f"L{v8.REAL_CALIBRATION_CONTEXT_LENGTH} history denominator"
+            f"L{protocol.REAL_CALIBRATION_CONTEXT_LENGTH} history denominator"
         ),
     }
-    v8.write_json(inference_dir / "task_manifest.json", manifest)
+    protocol.write_json(inference_dir / "task_manifest.json", manifest)
     return task_path, manifest
 
 
@@ -2276,15 +2276,15 @@ def write_real_anchor_prediction_subset(
 
     real_ids = {
         str(row["sample_id"])
-        for row in v8.iter_jsonl(real_anchor_task_path)
+        for row in protocol.iter_jsonl(real_anchor_task_path)
     }
     if not real_ids:
-        return v8.write_jsonl(output_path, ())
-    return v8.write_jsonl(
+        return protocol.write_jsonl(output_path, ())
+    return protocol.write_jsonl(
         output_path,
         (
             row
-            for row in v8.iter_jsonl(canonical_prediction_path)
+            for row in protocol.iter_jsonl(canonical_prediction_path)
             if str(row["sample_id"]) in real_ids
         ),
     )
@@ -2320,7 +2320,7 @@ def model_part_root(
 
 def compact_prediction_row(row: dict[str, Any]) -> dict[str, Any]:
     compact = {
-        "schema_version": "paper_v8_inference_prediction.v2",
+        "schema_version": "cafe.inference_prediction.v1",
         "model_id": str(row["model_id"]),
         "sample_id": str(row["sample_id"]),
         "forecast": row["forecast"],
@@ -2350,9 +2350,9 @@ def canonical_prediction_file_is_compact(path: Path) -> bool:
 
 
 def compact_canonical_prediction_file(path: Path) -> int:
-    return v8.write_jsonl(
+    return protocol.write_jsonl(
         path,
-        (compact_prediction_row(row) for row in v8.iter_jsonl(path)),
+        (compact_prediction_row(row) for row in protocol.iter_jsonl(path)),
     )
 
 
@@ -2394,7 +2394,7 @@ def cleanup_completed_model_intermediates(
 
 def task_sample_ids(path: Path) -> set[str]:
     sample_ids: set[str] = set()
-    for row in v8.iter_jsonl(path):
+    for row in protocol.iter_jsonl(path):
         sample_id = str(row["sample_id"])
         if sample_id in sample_ids:
             raise ValueError(f"duplicate inference task sample_id: {sample_id}")
@@ -2410,7 +2410,7 @@ def canonical_prediction_sample_ids(
     """Return canonical IDs while rejecting duplicate or foreign model rows."""
 
     sample_ids: set[str] = set()
-    for row in v8.iter_jsonl(path):
+    for row in protocol.iter_jsonl(path):
         observed_model = str(row.get("model_id", ""))
         if observed_model != model_id:
             raise ValueError(
@@ -2436,9 +2436,9 @@ def cached_complete_model_records(
     manifest_path = inference_dir / "inference_manifest.json"
     if not manifest_path.is_file():
         return {}
-    manifest = v8.read_json(manifest_path)
+    manifest = protocol.read_json(manifest_path)
     if (
-        manifest.get("schema_version") != "paper_v8_inference_manifest.v3"
+        manifest.get("schema_version") != "cafe.inference_manifest.v1"
         or not manifest.get("complete")
     ):
         return {}
@@ -2463,7 +2463,7 @@ def cached_complete_model_records(
             and canonical_path.is_file()
             and int(record.get("bytes", -1)) == canonical_path.stat().st_size
             and str(record.get("sha256", ""))
-            == v8.file_sha256(canonical_path)
+            == protocol.file_sha256(canonical_path)
             and canonical_prediction_sample_ids(
                 canonical_path,
                 model_id=model_id,
@@ -2495,7 +2495,7 @@ def _model_task_shard_manifest_is_reusable(
 ) -> bool:
     if manifest.get("model_id") != model_id or manifest.get(
         "source_task_sha256"
-    ) != v8.file_sha256(task_path):
+    ) != protocol.file_sha256(task_path):
         return False
     if list(manifest.get("part_weights") or []) != part_weights:
         return False
@@ -2504,7 +2504,7 @@ def _model_task_shard_manifest_is_reusable(
         return False
     for part in parts:
         path = Path(part["path"])
-        if not path.is_file() or v8.file_sha256(path) != part["sha256"]:
+        if not path.is_file() or protocol.file_sha256(path) != part["sha256"]:
             return False
     return True
 
@@ -2535,7 +2535,7 @@ def prepare_model_task_shards(
         model_id,
     )
     if manifest_path.exists():
-        manifest = v8.read_json(manifest_path)
+        manifest = protocol.read_json(manifest_path)
         if _model_task_shard_manifest_is_reusable(
             manifest,
             model_id=model_id,
@@ -2551,10 +2551,10 @@ def prepare_model_task_shards(
     counts = [0] * part_count
     total_weight = sum(part_weights)
     try:
-        for row in v8.iter_jsonl(task_path):
+        for row in protocol.iter_jsonl(task_path):
             slot = (
-                v8.stable_seed(
-                    "paper_v8_model_task_shard",
+                protocol.stable_seed(
+                    "cafe.model_task_shard",
                     model_id,
                     str(row["sample_id"]),
                 )
@@ -2587,24 +2587,24 @@ def prepare_model_task_shards(
         {
             "part_index": index,
             "row_count": counts[index],
-            **v8.file_record(path),
+            **protocol.file_record(path),
         }
         for index, path in enumerate(part_paths)
     ]
     manifest = {
-        "schema_version": "paper_v8_model_task_shard_manifest.v2",
-        "created_at": v8.utc_now(),
+        "schema_version": "cafe.model_task_shard_manifest.v1",
+        "created_at": protocol.utc_now(),
         "model_id": model_id,
         "part_count": part_count,
         "part_weights": part_weights,
         "partition_policy": (
             "stable_hash_of_policy_model_and_sample_id_weighted_by_endpoint"
         ),
-        "source_task_sha256": v8.file_sha256(task_path),
+        "source_task_sha256": protocol.file_sha256(task_path),
         "source_task_row_count": sum(counts),
         "parts": parts,
     }
-    v8.write_json(manifest_path, manifest)
+    protocol.write_json(manifest_path, manifest)
     return manifest
 
 
@@ -2766,7 +2766,7 @@ def run_service_queue(
             status["sample_path"] = str(item.sample_path)
             status["endpoint_profile"] = endpoint_profile.as_dict()
             statuses.append(status)
-            v8.write_json(
+            protocol.write_json(
                 model_dir / "service_status.json",
                 status,
             )
@@ -2806,9 +2806,9 @@ def consolidate_model_predictions(
         if not path.exists():
             complete = False
             continue
-        part_rows = list(v8.iter_jsonl(path))
+        part_rows = list(protocol.iter_jsonl(path))
         expected_ids = {
-            str(row["sample_id"]) for row in v8.iter_jsonl(Path(part["path"]))
+            str(row["sample_id"]) for row in protocol.iter_jsonl(Path(part["path"]))
         }
         observed_ids = {str(row["sample_id"]) for row in part_rows}
         if len(part_rows) != int(part["row_count"]) or observed_ids != expected_ids:
@@ -2833,7 +2833,7 @@ def consolidate_model_predictions(
         model_root(inference_dir, model_id),
         model_id,
     )
-    written = v8.write_jsonl(
+    written = protocol.write_jsonl(
         canonical_path,
         (compact_prediction_row(row) for row in rows),
     )
@@ -2902,7 +2902,7 @@ def aggregate_model_statuses(
             if values:
                 status[field] = sum(values)
         output.append(status)
-        v8.write_json(
+        protocol.write_json(
             inference_dir
             / "model_shards"
             / safe_filename(model_id)
@@ -2925,7 +2925,7 @@ def merge_predictions(
         )
         if not path.exists():
             continue
-        for row in v8.iter_jsonl(path):
+        for row in protocol.iter_jsonl(path):
             key = (str(row["model_id"]), str(row["sample_id"]))
             if key in seen:
                 raise ValueError(f"duplicate inference prediction {key}")
@@ -2933,7 +2933,7 @@ def merge_predictions(
             rows.append(row)
     rows.sort(key=lambda row: (row["model_id"], row["sample_id"]))
     merged_path = inference_dir / "predictions.jsonl"
-    count = v8.write_jsonl(merged_path, rows)
+    count = protocol.write_jsonl(merged_path, rows)
     return merged_path, count
 
 
@@ -3015,7 +3015,7 @@ def _prepare_model_dataset(
             ),
             "--prepare-only",
         ],
-        cwd=v8.REPO_ROOT,
+        cwd=protocol.REPO_ROOT,
         check=True,
     )
 
@@ -3098,7 +3098,7 @@ def _run_model_dataset(
                 request_concurrency_divisor=request_concurrency_divisor,
             ),
         ],
-        cwd=v8.REPO_ROOT,
+        cwd=protocol.REPO_ROOT,
         check=True,
     )
 
@@ -3108,13 +3108,13 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
     if not dataset_ids:
         raise ValueError("--dataset-ids requires at least one dataset")
     for dataset_id in dataset_ids:
-        v8.resolve_dataset(dataset_id)
+        protocol.resolve_dataset(dataset_id)
 
     status_path = args.output_root.resolve() / "model_major_inference_status.json"
     completed: list[dict[str, Any]] = []
     status = {
-        "schema_version": "paper_v8_model_major_inference_status.v2",
-        "started_at": v8.utc_now(),
+        "schema_version": "cafe.model_major_inference_status.v1",
+        "started_at": protocol.utc_now(),
         "state": "running",
         "dataset_ids": dataset_ids,
         "models": list(args.models),
@@ -3136,7 +3136,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
         },
         "completed": completed,
     }
-    v8.write_json(status_path, status)
+    protocol.write_json(status_path, status)
     try:
         for model_index, model_id in enumerate(args.models, start=1):
             print(
@@ -3162,27 +3162,27 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
                         {
                             "model_id": model_id,
                             "dataset_id": dataset_id,
-                            "completed_at": v8.utc_now(),
+                            "completed_at": protocol.utc_now(),
                             "resumed": True,
                         }
                     )
                 else:
                     pending_dataset_ids.append(dataset_id)
             status["completed"] = completed
-            v8.write_json(status_path, status)
+            protocol.write_json(status_path, status)
 
             def record_completed(dataset_id: str) -> None:
                 completed.append(
                     {
                         "model_id": model_id,
                         "dataset_id": dataset_id,
-                        "completed_at": v8.utc_now(),
+                        "completed_at": protocol.utc_now(),
                     }
                 )
                 status["completed"] = completed
                 status["active_model_id"] = model_id
                 status["active_dataset_id"] = dataset_id
-                v8.write_json(status_path, status)
+                protocol.write_json(status_path, status)
 
             if pending_dataset_ids:
                 first_dataset_id = pending_dataset_ids.pop(0)
@@ -3204,7 +3204,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
                 divisor = len(batch)
                 status["active_model_id"] = model_id
                 status["active_dataset_ids"] = batch
-                v8.write_json(status_path, status)
+                protocol.write_json(status_path, status)
                 print(
                     f"{model_id}: concurrent dataset batch "
                     f"{offset // dataset_parallelism + 1}, "
@@ -3252,7 +3252,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
                         keep_loaded=False,
                     ),
                 ],
-                cwd=v8.REPO_ROOT,
+                cwd=protocol.REPO_ROOT,
                 check=True,
             )
 
@@ -3267,11 +3267,11 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
         status.update(
             {
                 "state": "failed",
-                "finished_at": v8.utc_now(),
+                "finished_at": protocol.utc_now(),
                 "error": f"{type(error).__name__}: {error}",
             }
         )
-        v8.write_json(status_path, status)
+        protocol.write_json(status_path, status)
         try:
             _unload_accelerator_models(list(args.endpoints), args.api_prefix)
         except Exception as cleanup_error:
@@ -3286,13 +3286,13 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
     status.update(
         {
             "state": "complete",
-            "finished_at": v8.utc_now(),
+            "finished_at": protocol.utc_now(),
             "active_model_id": None,
             "active_dataset_id": None,
             "active_dataset_ids": [],
         }
     )
-    v8.write_json(status_path, status)
+    protocol.write_json(status_path, status)
     return 0
 
 
@@ -3321,21 +3321,21 @@ def main() -> int:
         raise ValueError(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
-    dataset = v8.resolve_dataset(args.dataset_id)
+    dataset = protocol.resolve_dataset(args.dataset_id)
     dataset_root = args.output_root.resolve() / dataset.dataset_id
     generation_dir = dataset_root / "02_generation"
     shard_name = f"seed_{args.seed_start:06d}_{args.seed_start + args.seed_count:06d}"
     generation_manifest_path = generation_dir / f"manifest__{shard_name}.json"
     validation_path = generation_dir / f"validation__{shard_name}.json"
-    validation = v8.read_json(validation_path)
+    validation = protocol.read_json(validation_path)
     if not validation["accepted"]:
         raise ValueError("generation validation is not accepted")
-    generation_manifest = v8.read_json(generation_manifest_path)
+    generation_manifest = protocol.read_json(generation_manifest_path)
     calibration_bundle_path = (
         dataset_root / "01_calibration" / "calibration_bundle.json"
     )
     calibration_bundle = (
-        v8.read_json(calibration_bundle_path)
+        protocol.read_json(calibration_bundle_path)
         if calibration_bundle_path.is_file()
         else None
     )
@@ -3349,7 +3349,7 @@ def main() -> int:
     inference_dir.mkdir(parents=True, exist_ok=True)
     task_manifest_path = inference_dir / "task_manifest.json"
     if task_manifest_path.exists() and args.resume:
-        task_manifest = v8.read_json(task_manifest_path)
+        task_manifest = protocol.read_json(task_manifest_path)
         task_path = validate_inference_task_manifest_files(task_manifest)
         if (
             task_manifest["generation_config_sha256"]
@@ -3553,7 +3553,7 @@ def main() -> int:
             for row in model_phases
         )
         print(
-            v8.canonical_json(
+            protocol.canonical_json(
                 {
                     "complete": complete,
                     "dataset_manifest_deferred": True,
@@ -3597,7 +3597,7 @@ def main() -> int:
                 **(
                     cached_record
                     if cached_record is not None
-                    else v8.file_record(path)
+                    else protocol.file_record(path)
                 ),
             }
         )
@@ -3622,14 +3622,14 @@ def main() -> int:
             {
                 "model_id": model_id,
                 "row_count": observed_real_anchor_count,
-                **v8.file_record(real_output_path),
+                **protocol.file_record(real_output_path),
             }
         )
         real_anchor_prediction_count += observed_real_anchor_count
     manifest = {
-        "schema_version": "paper_v8_inference_manifest.v3",
-        "created_at": v8.utc_now(),
-        "task_manifest_sha256": v8.file_sha256(task_manifest_path),
+        "schema_version": "cafe.inference_manifest.v1",
+        "created_at": protocol.utc_now(),
+        "task_manifest_sha256": protocol.file_sha256(task_manifest_path),
         "models": list(args.models),
         "available_endpoints": sorted(catalogs),
         "endpoint_profiles": {
@@ -3664,9 +3664,9 @@ def main() -> int:
     manifest["complete"] = all(
         row.get("status") == "complete" for row in statuses
     ) and len(statuses) == len(args.models)
-    v8.write_json(inference_dir / "inference_manifest.json", manifest)
+    protocol.write_json(inference_dir / "inference_manifest.json", manifest)
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "complete": manifest["complete"],
                 "prediction_count": prediction_count,

@@ -10,18 +10,18 @@ from typing import Any, Iterable
 
 import numpy as np
 
-import paper_v8_pipeline_common as v8
-import run_paper_e2_dynamic_stability as engine
+from cafe import protocol
+from cafe.analysis import metrics
 
 
 SHARD_TEMPLATE = "seed_{seed_start:06d}_{seed_stop:06d}"
-FIXED_CONTEXT_POLICY = f"fixed_l{v8.FIXED_CONTEXT_LENGTH}"
+FIXED_CONTEXT_POLICY = f"fixed_l{protocol.FIXED_CONTEXT_LENGTH}"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Analyze auxiliary Paper v8 real-anchor MASE and compare its "
+            "Analyze auxiliary CaFE real-anchor MASE and compare its "
             "ranking with synthetic capability rankings."
         )
     )
@@ -48,7 +48,7 @@ def validated_record_path(
         raise ValueError(f"recorded byte size mismatch: {path}")
     if (
         not record.get("sha256")
-        or str(record["sha256"]) != v8.file_sha256(path)
+        or str(record["sha256"]) != protocol.file_sha256(path)
     ):
         raise ValueError(f"recorded sha256 mismatch: {path}")
     if expected_rows is not None and int(record.get("row_count", -1)) != (
@@ -64,7 +64,7 @@ def unique_rows_by_sample_id(
     expected_rows: int,
 ) -> dict[str, dict[str, Any]]:
     output: dict[str, dict[str, Any]] = {}
-    for row in v8.iter_jsonl(path):
+    for row in protocol.iter_jsonl(path):
         sample_id = str(row["sample_id"])
         if sample_id in output:
             raise ValueError(f"duplicate sample_id in {path}: {sample_id}")
@@ -134,7 +134,7 @@ def score_real_anchor_dataset(
             metric_rows.append(
                 {
                     "schema_version": (
-                        "paper_v8_real_anchor_prediction_metric.v1"
+                        "cafe.real_anchor_prediction_metric.v1"
                     ),
                     "dataset_id": dataset_id,
                     "model_id": model_id,
@@ -159,7 +159,7 @@ def score_real_anchor_dataset(
     ranks = competition_ranks(mean_mase)
     dataset_rows = [
         {
-            "schema_version": "paper_v8_real_anchor_dataset_score.v1",
+            "schema_version": "cafe.real_anchor_dataset_score.v1",
             "dataset_id": dataset_id,
             "model_id": model_id,
             "anchor_count": len(rows),
@@ -234,7 +234,7 @@ def kendall_for_models(
     models: list[str],
 ) -> float:
     return float(
-        engine.kendall_tau_b(
+        metrics.kendall_tau_b(
             np.asarray([left[model_id] for model_id in models], dtype=float),
             np.asarray(
                 [right[model_id] for model_id in models],
@@ -473,7 +473,7 @@ def ranking_comparison(
 
     return {
         "schema_version": (
-            "paper_v8_real_anchor_capability_ranking_comparison.v1"
+            "cafe.real_anchor_capability_ranking_comparison.v1"
         ),
         "scope": {
             "real_anchor_role": "auxiliary_real_data_accuracy_table",
@@ -535,7 +535,7 @@ def render_report(
     comparison: dict[str, Any],
 ) -> str:
     lines = [
-        "# Paper v8 real-anchor 预测与能力排名对比",
+        "# CaFE real-anchor 预测与能力排名对比",
         "",
         f"- 实验：`{experiment_id}`",
         "- real-anchor 是辅助真实数据 Accuracy 表，不进入 synthetic mechanism 排名。",
@@ -658,24 +658,27 @@ def render_report(
 def main() -> int:
     args = parse_args()
     experiment_root = args.experiment_root.resolve()
-    experiment_manifest_path = experiment_root / "experiment_manifest.json"
-    experiment_manifest = v8.read_json(experiment_manifest_path)
-    protocol = experiment_manifest["protocol"]
-    datasets = list(protocol["dataset_ids"])
-    models = list(args.models or protocol["models"])
+    stage_contract_path = (
+        experiment_root / "stage_contracts" / "analysis.json"
+    )
+    analysis_contract = protocol.read_json(stage_contract_path)
+    experiment_record = protocol.read_json(experiment_root / "experiment.json")
+    experiment_config = analysis_contract["config"]
+    datasets = list(experiment_config["dataset_ids"])
+    models = list(args.models or experiment_config["models"])
     if len(models) != len(set(models)):
         raise ValueError("model ids must be unique")
-    if set(models) - set(protocol["models"]):
+    if set(models) - set(experiment_config["models"]):
         raise ValueError("requested models are outside the experiment protocol")
     seed_start = (
         int(args.seed_start)
         if args.seed_start is not None
-        else int(protocol["seed_start"])
+        else int(experiment_config["seed_start"])
     )
     seed_count = (
         int(args.seed_count)
         if args.seed_count is not None
-        else int(protocol["seed_count"])
+        else int(experiment_config["seed_count"])
     )
     if seed_start < 0 or seed_count < 1:
         raise ValueError("invalid seed range")
@@ -706,14 +709,14 @@ def main() -> int:
             inference_dir / "inference_manifest.json"
         )
         task_manifest_path = inference_dir / "task_manifest.json"
-        inference_manifest = v8.read_json(inference_manifest_path)
+        inference_manifest = protocol.read_json(inference_manifest_path)
         if not bool(inference_manifest.get("complete")):
             raise ValueError(f"incomplete inference: {dataset_id}")
         if str(inference_manifest.get("task_manifest_sha256")) != (
-            v8.file_sha256(task_manifest_path)
+            protocol.file_sha256(task_manifest_path)
         ):
             raise ValueError(f"task manifest binding mismatch: {dataset_id}")
-        task_manifest = v8.read_json(task_manifest_path)
+        task_manifest = protocol.read_json(task_manifest_path)
         component = task_manifest["task_components"]["real_anchors"]
         expected_rows = int(component["row_count"])
         if expected_rows != int(task_manifest["real_anchor_view_count"]):
@@ -762,30 +765,30 @@ def main() -> int:
             experiment_root / dataset_id / "04_analysis" / shard_name
         )
         analysis_manifest_path = analysis_dir / "analysis_manifest.json"
-        analysis_manifest = v8.read_json(analysis_manifest_path)
+        analysis_manifest = protocol.read_json(analysis_manifest_path)
         scores_record = analysis_manifest["files"]["scores"]
         scores_path = validated_record_path(scores_record)
-        synthetic_scores = v8.read_json(scores_path)["scores"]
+        synthetic_scores = protocol.read_json(scores_path)["scores"]
         all_synthetic_scores.extend(synthetic_scores)
         all_synthetic_dataset_scores.extend(
             synthetic_dataset_rows(
                 synthetic_scores,
                 dataset_id=dataset_id,
                 models=models,
-                capabilities=list(protocol["capabilities"]),
+                capabilities=list(experiment_config["capabilities"]),
             )
         )
         inputs.append(
             {
                 "dataset_id": dataset_id,
                 "anchor_count": expected_rows,
-                "task_manifest_sha256": v8.file_sha256(
+                "task_manifest_sha256": protocol.file_sha256(
                     task_manifest_path
                 ),
-                "inference_manifest_sha256": v8.file_sha256(
+                "inference_manifest_sha256": protocol.file_sha256(
                     inference_manifest_path
                 ),
-                "analysis_manifest_sha256": v8.file_sha256(
+                "analysis_manifest_sha256": protocol.file_sha256(
                     analysis_manifest_path
                 ),
             }
@@ -798,22 +801,22 @@ def main() -> int:
         synthetic_dataset_scores=all_synthetic_dataset_scores,
         models=models,
         datasets=datasets,
-        capabilities=list(protocol["capabilities"]),
+        capabilities=list(experiment_config["capabilities"]),
     )
     output_dir.mkdir(parents=True, exist_ok=False)
     metric_path = output_dir / "real_anchor_metrics.jsonl"
     dataset_score_path = output_dir / "dataset_real_anchor_scores.json"
     comparison_path = output_dir / "ranking_comparison.json"
     report_path = output_dir / "REPORT_ZH.md"
-    v8.write_jsonl(metric_path, all_metrics)
-    v8.write_json(
+    protocol.write_jsonl(metric_path, all_metrics)
+    protocol.write_json(
         dataset_score_path,
         {"dataset_real_anchor_scores": all_dataset_scores},
     )
-    v8.write_json(comparison_path, comparison)
+    protocol.write_json(comparison_path, comparison)
     report_path.write_text(
         render_report(
-            experiment_id=str(experiment_manifest["experiment_id"]),
+            experiment_id=str(experiment_record["experiment_id"]),
             models=models,
             datasets=datasets,
             real_dataset_scores=all_dataset_scores,
@@ -822,11 +825,11 @@ def main() -> int:
         encoding="utf-8",
     )
     manifest = {
-        "schema_version": "paper_v8_real_anchor_posthoc_manifest.v1",
-        "created_at": v8.utc_now(),
-        "experiment_id": experiment_manifest["experiment_id"],
-        "experiment_manifest_sha256": v8.file_sha256(
-            experiment_manifest_path
+        "schema_version": "cafe.real_anchor_posthoc_manifest.v1",
+        "created_at": protocol.utc_now(),
+        "experiment_id": experiment_record["experiment_id"],
+        "stage_contract_sha256": protocol.file_sha256(
+            stage_contract_path
         ),
         "seed_start": seed_start,
         "seed_count": seed_count,
@@ -841,17 +844,17 @@ def main() -> int:
         },
         "inputs": inputs,
         "files": {
-            "real_anchor_metrics": v8.file_record(metric_path),
-            "dataset_real_anchor_scores": v8.file_record(
+            "real_anchor_metrics": protocol.file_record(metric_path),
+            "dataset_real_anchor_scores": protocol.file_record(
                 dataset_score_path
             ),
-            "ranking_comparison": v8.file_record(comparison_path),
-            "report": v8.file_record(report_path),
+            "ranking_comparison": protocol.file_record(comparison_path),
+            "report": protocol.file_record(report_path),
         },
     }
-    v8.write_json(output_dir / "analysis_manifest.json", manifest)
+    protocol.write_json(output_dir / "analysis_manifest.json", manifest)
     print(
-        v8.canonical_json(
+        protocol.canonical_json(
             {
                 "dataset_count": len(datasets),
                 "model_count": len(models),

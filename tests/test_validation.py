@@ -1,18 +1,10 @@
 from __future__ import annotations
 
 import pickle
-import sys
-from pathlib import Path
 
 import numpy as np
 
-
-REPO_ROOT = Path(__file__).parents[3]
-SCRIPT_DIR = REPO_ROOT / "scripts"
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
-
-import paper_v8_realism_gate as realism
+from cafe.validation import realism
 
 
 def anchor_rows(count: int = 12) -> list[dict]:

@@ -7,10 +7,10 @@ from typing import Any, Literal
 
 import numpy as np
 
-from app.services.synthetic_generator_conditioning import GeneratorConditioning
+from cafe.calibration.conditioning import GeneratorConditioning
 
 
-GENERATOR_VERSION = "capts-paper-v8-family-calibrated-v9"
+GENERATOR_VERSION = "cafe-deterministic-family-v1"
 FamilyRole = Literal["primary", "secondary"]
 
 BACKGROUND_PERIOD_RANGE = (8.0, 168.0)
@@ -3360,7 +3360,7 @@ def _cross_series_dependence(
     requested_delay = int(
         round(_parameter(cond, "cross_lag_steps", float(season)))
     )
-    # V8 has a fixed H=48 protocol.  Preserve the real-calibrated onset lag
+    # CaFE has a fixed H=48 protocol.  Preserve the real-calibrated onset lag
     # down to one step; a separate stable response state controls how long the
     # effect persists.  The lag remains capped at 24 so blind discovery has at
     # least 72 aligned observations inside the shortest L96 view.

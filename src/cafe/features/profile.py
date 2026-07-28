@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from synthetic_feature_profile import (
+from cafe.features.primitives import (
     feature_vector,
     lead_lag_peak_abs,
     lead_lag_peak_lag_abs,
@@ -19,7 +19,7 @@ from synthetic_feature_profile import (
 )
 
 
-FEATURE_SCHEMA_VERSION = "paper_v8_feature_vector.v8"
+FEATURE_SCHEMA_VERSION = "cafe.feature_vector.v1"
 LOCAL_TREND_WINDOW = 96
 LOCAL_TREND_HARMONIC_COUNT = 6
 LOCAL_TREND_MAX_REMOVED_PERIOD = 84.0
@@ -33,9 +33,9 @@ def _as_matrix(values: np.ndarray) -> np.ndarray:
     if matrix.ndim == 1:
         matrix = matrix[:, None]
     if matrix.ndim != 2 or matrix.shape[0] < 8:
-        raise ValueError("v8 feature history must be a [time, target] matrix")
+        raise ValueError("cafe feature history must be a [time, target] matrix")
     if not np.isfinite(matrix).all():
-        raise ValueError("v8 feature history must be finite")
+        raise ValueError("cafe feature history must be finite")
     return matrix
 
 
@@ -335,7 +335,7 @@ def _best_cross_series_holdout_gains(
 ) -> np.ndarray:
     """Return the searched directed-lag gain for each destination.
 
-    This is the compact Paper-v8 search model: a destination's own recent
+    This is the compact Paper-cafe search model: a destination's own recent
     history is the baseline and one source/lag candidate is added at a time.
     Keeping the per-destination results lets the caller pair the forward
     search with an identically searched null coordinate.
@@ -408,7 +408,7 @@ def _best_cross_series_holdout_gains(
     return gains
 
 
-def _paper_v8_cross_series_incremental_r2(
+def _cafe_cross_series_incremental_r2(
     values: np.ndarray,
     *,
     max_lag: int,
@@ -447,7 +447,7 @@ def _paper_v8_cross_series_incremental_r2(
     return float(np.mean(corrected))
 
 
-def _paper_v8_cross_series_effect_memory(
+def _cafe_cross_series_effect_memory(
     values: np.ndarray,
     *,
     max_lag: int,
@@ -508,7 +508,7 @@ def _paper_v8_cross_series_effect_memory(
     return float(np.mean(normalized_tail))
 
 
-def v8_feature_vector(
+def cafe_feature_vector(
     history: np.ndarray,
     season_length: int | None = None,
     *,
@@ -517,7 +517,7 @@ def v8_feature_vector(
     include_cross_series_predictability: bool = True,
     cross_series_max_lag: int | None = None,
 ) -> dict[str, float]:
-    """Return the sole Paper-v8 feature vector from visible history only.
+    """Return the sole Paper-cafe feature vector from visible history only.
 
     The caller cannot pass a context boundary: every row supplied here is
     treated as observed history.  Trend uses the most recent 96 observations;
@@ -534,7 +534,7 @@ def v8_feature_vector(
     if covariates is not None:
         covariate_values = _as_matrix(covariates)
         if covariate_values.shape[0] != values.shape[0]:
-            raise ValueError("v8 history covariates must align with target history")
+            raise ValueError("cafe history covariates must align with target history")
 
     output: dict[str, Any] = feature_vector(
         values,
@@ -571,13 +571,13 @@ def v8_feature_vector(
                     max_lag=xsd_max_lag,
                 ),
                 "cross_series_incremental_r2": (
-                    _paper_v8_cross_series_incremental_r2(
+                    _cafe_cross_series_incremental_r2(
                         values,
                         max_lag=xsd_max_lag,
                     )
                 ),
                 "cross_series_effect_memory": (
-                    _paper_v8_cross_series_effect_memory(
+                    _cafe_cross_series_effect_memory(
                         values,
                         max_lag=xsd_max_lag,
                     )
@@ -653,7 +653,7 @@ def v8_feature_vector(
             ]
         )
     )
-    output["v8_feature_history_length"] = float(values.shape[0])
+    output["cafe_feature_history_length"] = float(values.shape[0])
     return {
         str(name): float(value)
         for name, value in output.items()

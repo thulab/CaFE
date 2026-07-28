@@ -1,5 +1,8 @@
 import re
+import math
 from collections.abc import Iterable
+
+import numpy as np
 
 # Reason codes for an undefined MASE on a sample.
 MASE_REASON_FLAT_HISTORY = "flat_history"  # in-sample naive MAE scale == 0
@@ -62,6 +65,38 @@ def seasonal_period_for_frequency(frequency: str | None) -> int:
     if interval_seconds == week_seconds:
         return 52
     return 1
+
+
+def safe_filename(value: str) -> str:
+    return "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in value
+    )
+
+
+def kendall_tau_b(left: np.ndarray, right: np.ndarray) -> float:
+    left = np.asarray(left, dtype=float)
+    right = np.asarray(right, dtype=float)
+    concordant = discordant = ties_left = ties_right = 0
+    for first in range(len(left)):
+        for second in range(first + 1, len(left)):
+            delta_left = np.sign(left[first] - left[second])
+            delta_right = np.sign(right[first] - right[second])
+            if delta_left == 0 and delta_right == 0:
+                continue
+            if delta_left == 0:
+                ties_left += 1
+            elif delta_right == 0:
+                ties_right += 1
+            elif delta_left == delta_right:
+                concordant += 1
+            else:
+                discordant += 1
+    denominator = math.sqrt(
+        (concordant + discordant + ties_left)
+        * (concordant + discordant + ties_right)
+    )
+    return float((concordant - discordant) / denominator) if denominator else 0.0
 
 
 def resolve_mase_period(
