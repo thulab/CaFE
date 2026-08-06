@@ -10,6 +10,7 @@ FEV_TASK_REVISION = "6796a0c031e2fa99667ad836c9cf7e2d2c5b2112"
 FEV_TASKS_SHA256 = (
     "c7160f61a5e1ded66a3954ef1c514d55d13be18534b34fca817356312a6520a9"
 )
+FEV_CATEGORICAL_MISSING_LEVEL = "__cafe_missing_category__"
 
 
 @dataclass(frozen=True)

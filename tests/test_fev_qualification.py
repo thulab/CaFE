@@ -37,13 +37,23 @@ def test_discover_categorical_levels_counts_values_and_nulls(
     )
 
     assert result["holiday"] == {
-        "levels": ["local", "national", "none"],
-        "level_count": 3,
+        "levels": [
+            "local",
+            "national",
+            "none",
+            "__cafe_missing_category__",
+        ],
+        "observed_levels": ["local", "national", "none"],
+        "level_count": 4,
         "value_count": 5,
         "null_count": 1,
         "null_fraction": 0.2,
     }
-    assert result["event"]["levels"] == ["False", "True"]
+    assert result["event"]["levels"] == [
+        "False",
+        "True",
+        "__cafe_missing_category__",
+    ]
     assert result["event"]["null_count"] == 1
 
 

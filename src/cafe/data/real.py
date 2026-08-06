@@ -15,6 +15,7 @@ import pyarrow.ipc as pa_ipc
 import pyarrow.parquet as pa_parquet
 
 from cafe.data.fev_bench import (
+    FEV_CATEGORICAL_MISSING_LEVEL,
     FEV_BENCH_CONFIGS,
     FEV_DATASET_REPOSITORY,
     FEV_DATASET_REVISION,
@@ -214,25 +215,22 @@ def _fev_known_covariates(
                 "an invalid length"
             )
         values = np.asarray(
-            [None if value is None else str(value) for value in raw_values],
+            [
+                FEV_CATEGORICAL_MISSING_LEVEL
+                if value is None
+                else str(value)
+                for value in raw_values
+            ],
             dtype=object,
         )
-        unexpected = sorted(
-            {str(value) for value in values if value is not None} - set(levels)
-        )
+        unexpected = sorted(set(values) - set(levels))
         if unexpected:
             raise ValueError(
                 f"FEV categorical column {column!r} has unexpected levels: "
                 f"{unexpected}"
             )
-        missing = np.fromiter(
-            (value is None for value in values),
-            dtype=bool,
-            count=len(values),
-        )
         for level in levels:
             encoded = (values == level).astype(float)
-            encoded[missing] = np.nan
             columns.append(encoded)
             names.append(f"{column}={level}")
     return np.column_stack(columns), tuple(names)

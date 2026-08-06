@@ -205,7 +205,7 @@ def test_fev_parquet_adapter_accepts_anchored_calendar_frequency(
     assert bundle.frequency == "W-FRI"
 
 
-def test_fev_categorical_covariates_preserve_missingness_as_nan():
+def test_fev_categorical_covariates_encode_missingness_as_a_category():
     table = pa.table(
         {
             "known_cat": pa.array(
@@ -221,7 +221,14 @@ def test_fev_categorical_covariates_preserve_missingness_as_nan():
         target_columns=("target",),
         known_dynamic_columns=("known_cat",),
         categorical_dynamic_levels=(
-            ("known_cat", ("event", "none")),
+            (
+                "known_cat",
+                (
+                    "event",
+                    "none",
+                    fev_bench.FEV_CATEGORICAL_MISSING_LEVEL,
+                ),
+            ),
         ),
     )
 
@@ -232,11 +239,21 @@ def test_fev_categorical_covariates_preserve_missingness_as_nan():
         expected_length=3,
     )
 
-    assert names == ("known_cat=event", "known_cat=none")
+    assert names == (
+        "known_cat=event",
+        "known_cat=none",
+        "known_cat=__cafe_missing_category__",
+    )
     assert values is not None
     np.testing.assert_array_equal(
         values,
-        np.array([[0.0, 1.0], [np.nan, np.nan], [1.0, 0.0]]),
+        np.array(
+            [
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 0.0, 0.0],
+            ]
+        ),
     )
 
 

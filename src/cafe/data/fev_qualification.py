@@ -14,6 +14,7 @@ import pyarrow.parquet as pa_parquet
 from cafe import protocol
 from cafe.data import real
 from cafe.data.fev_bench import FEV_BENCH_CONFIGS
+from cafe.data.fev_bench import FEV_CATEGORICAL_MISSING_LEVEL
 from cafe.data.fev_bench import FevBenchConfig
 
 
@@ -48,9 +49,13 @@ def discover_categorical_levels(
                 for value in pc.unique(values).to_pylist()
                 if value is not None
             )
+        encoded_levels = sorted(levels)
+        if null_count:
+            encoded_levels.append(FEV_CATEGORICAL_MISSING_LEVEL)
         output[column] = {
-            "levels": sorted(levels),
-            "level_count": len(levels),
+            "levels": encoded_levels,
+            "observed_levels": sorted(levels),
+            "level_count": len(encoded_levels),
             "value_count": value_count,
             "null_count": null_count,
             "null_fraction": (
