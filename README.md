@@ -90,6 +90,22 @@ uv run cafe run \
   --stop-after generation
 ```
 
+Before expanding beyond the pilot, the metadata-only Phase 1 audit can inspect
+all 100 official task views without downloading the full Parquet corpus or
+starting calibration:
+
+```bash
+uv run python tools/data/audit_fev_bench.py \
+  --audit-id fev-full-phase1-YYYYMMDD
+```
+
+The immutable report under `runtime/fev_bench_audits/<audit-id>/` contains the
+96-config inventory, task-by-capability candidate matrix, pinned download
+manifest, duplicate-source flags, and workload estimates. A candidate cell is
+not a calibration result: actual sequence lengths, missingness, categorical
+levels, finite-window support, and structural feature support remain Phase 2
+checks.
+
 ## Stage provenance
 
 `experiment.json` fixes only the experiment identity and directory layout. It
