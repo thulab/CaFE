@@ -106,6 +106,21 @@ not a calibration result: actual sequence lengths, missingness, categorical
 levels, finite-window support, and structural feature support remain Phase 2
 checks.
 
+Phase 2 downloads and checksum-verifies the frozen 96-file manifest, then
+reuses CaFE's exact anchor and real-feature extraction path to resolve those
+checks:
+
+```bash
+uv run python tools/data/qualify_fev_bench.py \
+  --qualification-id fev-full-phase2-YYYYMMDD
+```
+
+The immutable report under `runtime/fev_bench_qualifications/` records actual
+length and missingness statistics, discovered categorical levels, usable
+anchor counts, and the data-qualified task-by-capability matrix. This stage
+does not run response-curve calibration or synthetic generation; an eligible
+cell can still fail the later calibration reachability gates.
+
 ## Stage provenance
 
 `experiment.json` fixes only the experiment identity and directory layout. It

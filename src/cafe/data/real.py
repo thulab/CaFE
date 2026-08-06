@@ -130,7 +130,7 @@ def _fev_config_for_path(asset_path: Path) -> FevBenchConfig:
         return FEV_BENCH_CONFIGS[asset_path.name]
     except KeyError as error:
         raise ValueError(
-            f"unsupported FEV-Bench pilot config directory {asset_path.name!r}; "
+            f"unsupported FEV-Bench config directory {asset_path.name!r}; "
             f"registered={sorted(FEV_BENCH_CONFIGS)}"
         ) from error
 
@@ -163,16 +163,18 @@ def _validate_fev_timestamps(
             f"FEV {config.config_id} row {row_index} has empty/invalid timestamps"
         )
     if len(index) > 1:
-        timestamp_nanoseconds = index.to_numpy(
-            dtype="datetime64[ns]",
-        ).astype(np.int64)
-        differences = np.diff(timestamp_nanoseconds)
-        expected_nanoseconds = {
-            "min": 60 * 1_000_000_000,
-            "h": 60 * 60 * 1_000_000_000,
-            "D": 24 * 60 * 60 * 1_000_000_000,
-        }[config.frequency]
-        if not np.all(differences == expected_nanoseconds):
+        try:
+            expected = pd.date_range(
+                start=index[0],
+                periods=len(index),
+                freq=config.frequency,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"FEV {config.config_id} has unsupported frequency "
+                f"{config.frequency!r}"
+            ) from error
+        if not index.equals(expected):
             raise ValueError(
                 f"FEV {config.config_id} row {row_index} is not regular "
                 f"at frequency {config.frequency!r}"
@@ -206,22 +208,32 @@ def _fev_known_covariates(
             names.append(column)
             continue
         raw_values = table.column(column)[row_index].as_py()
-        if len(raw_values) != expected_length or any(
-            value is None for value in raw_values
-        ):
+        if len(raw_values) != expected_length:
             raise ValueError(
                 f"FEV categorical column {column!r} row {row_index} has "
-                "an invalid length or missing values"
+                "an invalid length"
             )
-        values = np.asarray([str(value) for value in raw_values], dtype=object)
-        unexpected = sorted(set(values) - set(levels))
+        values = np.asarray(
+            [None if value is None else str(value) for value in raw_values],
+            dtype=object,
+        )
+        unexpected = sorted(
+            {str(value) for value in values if value is not None} - set(levels)
+        )
         if unexpected:
             raise ValueError(
                 f"FEV categorical column {column!r} has unexpected levels: "
                 f"{unexpected}"
             )
+        missing = np.fromiter(
+            (value is None for value in values),
+            dtype=bool,
+            count=len(values),
+        )
         for level in levels:
-            columns.append((values == level).astype(float))
+            encoded = (values == level).astype(float)
+            encoded[missing] = np.nan
+            columns.append(encoded)
             names.append(f"{column}={level}")
     return np.column_stack(columns), tuple(names)
 
@@ -259,8 +271,6 @@ def load_fev_parquet(
             f"FEV {config.config_id} size mismatch: expected "
             f"{config.size_bytes}, got {parquet_files[0].stat().st_size}"
         )
-    tables = [pa_parquet.read_table(path) for path in parquet_files]
-    table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
     required_columns = {
         "id",
         "timestamp",
@@ -269,17 +279,39 @@ def load_fev_parquet(
         *config.past_dynamic_columns,
         *config.static_columns,
     }
-    missing_columns = sorted(required_columns - set(table.column_names))
+    available_columns = {
+        column
+        for path in parquet_files
+        for column in pa_parquet.ParquetFile(path).schema_arrow.names
+    }
+    missing_columns = sorted(required_columns - available_columns)
     if missing_columns:
         raise ValueError(
             f"FEV {config.config_id} is missing columns: {missing_columns}"
         )
+    consumed_columns = sorted(
+        {
+            "id",
+            "timestamp",
+            *config.target_columns,
+            *config.known_dynamic_columns,
+        }
+    )
+    tables = [
+        pa_parquet.read_table(path, columns=consumed_columns)
+        for path in parquet_files
+    ]
+    table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
 
     item_ids = [str(value) for value in table.column("id").to_pylist()]
     if len(item_ids) != len(set(item_ids)):
         raise ValueError(f"FEV {config.config_id} contains duplicate item IDs")
     records: list[RealSeriesRecord] = []
     lengths: list[int] = []
+    target_value_count = 0
+    target_nonfinite_count = 0
+    covariate_value_count = 0
+    covariate_nonfinite_count = 0
     for row_index, item_id in enumerate(item_ids):
         timestamps = table.column("timestamp")[row_index].as_py()
         target_length = _validate_fev_timestamps(
@@ -298,12 +330,22 @@ def load_fev_parquet(
                 for column in config.target_columns
             ]
         )
+        target_value_count += int(target_values.size)
+        target_nonfinite_count += int(
+            target_values.size - np.count_nonzero(np.isfinite(target_values))
+        )
         covariates, covariate_names = _fev_known_covariates(
             table,
             row_index=row_index,
             config=config,
             expected_length=target_length,
         )
+        if covariates is not None:
+            covariate_value_count += int(covariates.size)
+            covariate_nonfinite_count += int(
+                covariates.size
+                - np.count_nonzero(np.isfinite(covariates))
+            )
         records.append(
             RealSeriesRecord(
                 item_id=item_id,
@@ -363,6 +405,20 @@ def load_fev_parquet(
             "minimum_length": min(lengths),
             "median_length": float(np.median(lengths)),
             "maximum_length": max(lengths),
+            "target_value_count": target_value_count,
+            "target_nonfinite_count": target_nonfinite_count,
+            "target_nonfinite_fraction": (
+                target_nonfinite_count / target_value_count
+                if target_value_count
+                else 0.0
+            ),
+            "known_covariate_value_count": covariate_value_count,
+            "known_covariate_nonfinite_count": covariate_nonfinite_count,
+            "known_covariate_nonfinite_fraction": (
+                covariate_nonfinite_count / covariate_value_count
+                if covariate_value_count
+                else 0.0
+            ),
             "asset_sha256": {
                 path.name: file_sha256(path) for path in parquet_files
             },

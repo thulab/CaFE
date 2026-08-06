@@ -48,6 +48,7 @@ from cafe.features.profile import (
     cafe_feature_vector,
 )
 from cafe.data.real import (
+    RealDatasetBundle,
     RealSeriesRecord,
     load_real_dataset,
 )
@@ -1093,6 +1094,7 @@ def build_calibration_anchors(
     maximum_anchors: int,
     sample_seed: int = CALIBRATION_SAMPLE_SEED,
     minimum_observed_fraction: float = 0.5,
+    real_bundle: RealDatasetBundle | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     resolved_root = source_root or gift_eval_dir
     if resolved_root is None:
@@ -1103,11 +1105,12 @@ def build_calibration_anchors(
         if dataset.real_data_adapter == "m5_csv"
         else None
     )
-    real_bundle = load_real_dataset(
-        dataset.real_data_adapter,
-        asset_path,
-        record_limit=record_limit,
-    )
+    if real_bundle is None:
+        real_bundle = load_real_dataset(
+            dataset.real_data_adapter,
+            asset_path,
+            record_limit=record_limit,
+        )
     frequency = real_bundle.frequency
     native_records = [
         (record.item_id, record.values)

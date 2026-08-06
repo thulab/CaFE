@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import datetime
 from datetime import timedelta
 from pathlib import Path
@@ -182,6 +183,61 @@ def test_fev_parquet_adapter_rejects_irregular_timestamps(
 
     with pytest.raises(ValueError, match="not regular"):
         real.load_real_dataset("fev_parquet", asset_path)
+
+
+def test_fev_parquet_adapter_accepts_anchored_calendar_frequency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    asset_path = tmp_path / "test_weekly_fev"
+    timestamps = [
+        datetime(2024, 1, 5) + timedelta(weeks=index) for index in range(4)
+    ]
+    _parquet_path, config = write_fev_parquet(
+        asset_path,
+        timestamps=timestamps,
+    )
+    config = replace(config, frequency="W-FRI")
+    monkeypatch.setitem(real.FEV_BENCH_CONFIGS, config.config_id, config)
+
+    bundle = real.load_real_dataset("fev_parquet", asset_path)
+
+    assert bundle.frequency == "W-FRI"
+
+
+def test_fev_categorical_covariates_preserve_missingness_as_nan():
+    table = pa.table(
+        {
+            "known_cat": pa.array(
+                [["none", None, "event"]],
+                type=pa.list_(pa.string()),
+            )
+        }
+    )
+    config = fev_bench.FevBenchConfig(
+        config_id="category-test",
+        source_path="unused.parquet",
+        frequency="D",
+        target_columns=("target",),
+        known_dynamic_columns=("known_cat",),
+        categorical_dynamic_levels=(
+            ("known_cat", ("event", "none")),
+        ),
+    )
+
+    values, names = real._fev_known_covariates(
+        table,
+        row_index=0,
+        config=config,
+        expected_length=3,
+    )
+
+    assert names == ("known_cat=event", "known_cat=none")
+    assert values is not None
+    np.testing.assert_array_equal(
+        values,
+        np.array([[0.0, 1.0], [np.nan, np.nan], [1.0, 0.0]]),
+    )
 
 
 def test_fev_pilot_registry_uses_local_parquet_adapter():
