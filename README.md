@@ -59,6 +59,37 @@ uv run cafe run \
 Runtime artifacts are written under `runtime/experiments/` and are ignored by
 Git.
 
+### FEV-Bench pilot data
+
+The first FEV-Bench integration pins nine representative configurations and
+downloads their Parquet assets into the ignored `data/fev-bench/` directory:
+
+```bash
+uv run python tools/data/download_fev_bench.py
+```
+
+Registered dataset IDs start with `fev_`. The adapter preserves native
+multivariate targets and exposes only task-declared known dynamic columns as
+future covariates. Past-only and static columns remain frozen in provenance but
+are not passed to the CaFE v1 inference contract. Calibration still uses the
+CaFE 168-point history and 48-point horizon, so these are FEV-derived CaFE
+calibrations rather than official FEV-Bench evaluations.
+
+For example:
+
+```bash
+uv run cafe run \
+  --experiment-id fev-pilot-smoke \
+  --dataset-id fev_solar_with_weather_1h \
+  --source-root data/fev-bench \
+  --seed-count 1 \
+  --max-anchors 12 \
+  --calibration-seeds 2 \
+  --max-calibration-seeds 2 \
+  --capabilities covariate_response \
+  --stop-after generation
+```
+
 ## Stage provenance
 
 `experiment.json` fixes only the experiment identity and directory layout. It

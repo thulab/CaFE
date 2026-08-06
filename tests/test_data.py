@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
+import pyarrow.parquet as pa_parquet
 import pytest
 
+from cafe import protocol
+from cafe.data import fev_bench
 from cafe.data import real
 
 
@@ -70,6 +75,131 @@ def write_arrow(asset_path: Path, rows: list[dict[str, object]]) -> Path:
         with pa_ipc.new_stream(sink, table.schema) as writer:
             writer.write_table(table)
     return arrow_path
+
+
+def write_fev_parquet(
+    asset_path: Path,
+    *,
+    timestamps: list[datetime] | None = None,
+) -> tuple[Path, fev_bench.FevBenchConfig]:
+    asset_path.mkdir(parents=True)
+    resolved_timestamps = timestamps or [
+        datetime(2024, 1, 1) + timedelta(hours=index) for index in range(4)
+    ]
+    parquet_path = asset_path / "train-00000-of-00001.parquet"
+    table = pa.table(
+        {
+            "id": pa.array(["item-1"]),
+            "timestamp": pa.array(
+                [resolved_timestamps],
+                type=pa.list_(pa.timestamp("ms")),
+            ),
+            "target_a": pa.array([[1.0, 2.0, 3.0, 4.0]]),
+            "target_b": pa.array([[4.0, 3.0, 2.0, 1.0]]),
+            "known": pa.array([[0.0, 1.0, 0.0, 1.0]]),
+            "known_cat": pa.array([["0", "a", "0", "a"]]),
+            "past": pa.array([[5.0, 6.0, 7.0, 8.0]]),
+            "static": pa.array(["group-a"]),
+        }
+    )
+    pa_parquet.write_table(table, parquet_path)
+    digest = hashlib.sha256(parquet_path.read_bytes()).hexdigest()
+    config = fev_bench.FevBenchConfig(
+        config_id=asset_path.name,
+        source_path=f"test/{parquet_path.name}",
+        frequency="h",
+        target_columns=("target_a", "target_b"),
+        known_dynamic_columns=("known", "known_cat"),
+        past_dynamic_columns=("past",),
+        static_columns=("static",),
+        categorical_dynamic_levels=(("known_cat", ("0", "a")),),
+        sha256=digest,
+        size_bytes=parquet_path.stat().st_size,
+    )
+    return parquet_path, config
+
+
+def test_fev_parquet_adapter_preserves_native_targets_and_known_covariates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    asset_path = tmp_path / "test_fev"
+    parquet_path, config = write_fev_parquet(asset_path)
+    monkeypatch.setitem(real.FEV_BENCH_CONFIGS, config.config_id, config)
+
+    bundle = real.load_real_dataset("fev_parquet", asset_path)
+
+    assert bundle.frequency == "h"
+    assert bundle.asset_files == (parquet_path,)
+    assert bundle.adapter_id == "fev_parquet"
+    assert len(bundle.records) == 1
+    record = bundle.records[0]
+    assert record.channel_ids == ("target_a", "target_b")
+    np.testing.assert_array_equal(
+        record.values,
+        np.array([[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]]),
+    )
+    assert record.covariate_names == (
+        "known",
+        "known_cat=0",
+        "known_cat=a",
+    )
+    assert record.covariate_kind == "known_future"
+    np.testing.assert_array_equal(
+        record.covariates,
+        np.array(
+            [
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+            ]
+        ),
+    )
+    assert bundle.metadata["past_dynamic_columns"] == ["past"]
+    assert bundle.metadata["static_columns"] == ["static"]
+    assert bundle.metadata["dataset_revision"] == (
+        fev_bench.FEV_DATASET_REVISION
+    )
+
+
+def test_fev_parquet_adapter_rejects_irregular_timestamps(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    asset_path = tmp_path / "test_irregular_fev"
+    timestamps = [
+        datetime(2024, 1, 1),
+        datetime(2024, 1, 1, 1),
+        datetime(2024, 1, 1, 3),
+        datetime(2024, 1, 1, 4),
+    ]
+    _parquet_path, config = write_fev_parquet(
+        asset_path,
+        timestamps=timestamps,
+    )
+    monkeypatch.setitem(real.FEV_BENCH_CONFIGS, config.config_id, config)
+
+    with pytest.raises(ValueError, match="not regular"):
+        real.load_real_dataset("fev_parquet", asset_path)
+
+
+def test_fev_pilot_registry_uses_local_parquet_adapter():
+    dataset_ids = {
+        "fev_ett_1h",
+        "fev_jena_weather_1h",
+        "fev_boomlet_1282",
+        "fev_uci_air_quality_1h",
+        "fev_solar_with_weather_1h",
+        "fev_proenfo_gfc14",
+        "fev_rohlik_orders_1d",
+        "fev_rossmann_1d",
+        "fev_hospital_admissions_1d",
+    }
+    for dataset_id in dataset_ids:
+        dataset = protocol.resolve_dataset(dataset_id)
+        assert dataset.real_data_adapter == "fev_parquet"
+        assert dataset.asset_name in fev_bench.FEV_BENCH_CONFIGS
 
 
 def write_promotion_csv(

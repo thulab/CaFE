@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+from dataclasses import asdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -9,6 +12,17 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
+import pyarrow.parquet as pa_parquet
+
+from cafe.data.fev_bench import (
+    FEV_BENCH_CONFIGS,
+    FEV_DATASET_REPOSITORY,
+    FEV_DATASET_REVISION,
+    FEV_TASK_REPOSITORY,
+    FEV_TASK_REVISION,
+    FEV_TASKS_SHA256,
+    FevBenchConfig,
+)
 
 from cafe.features.primitives import (
     M5_COVARIATE_PROVENANCE,
@@ -107,6 +121,251 @@ def load_gift_arrow(
             "record_selection": (
                 "source_order_prefix" if record_limit is not None else "all"
             ),
+        },
+    )
+
+
+def _fev_config_for_path(asset_path: Path) -> FevBenchConfig:
+    try:
+        return FEV_BENCH_CONFIGS[asset_path.name]
+    except KeyError as error:
+        raise ValueError(
+            f"unsupported FEV-Bench pilot config directory {asset_path.name!r}; "
+            f"registered={sorted(FEV_BENCH_CONFIGS)}"
+        ) from error
+
+
+def _fev_sequence(
+    table: pa.Table,
+    *,
+    row_index: int,
+    column: str,
+    expected_length: int,
+) -> np.ndarray:
+    values = np.asarray(table.column(column)[row_index].as_py(), dtype=float)
+    if values.ndim != 1 or values.shape != (expected_length,):
+        raise ValueError(
+            f"FEV column {column!r} row {row_index} has shape "
+            f"{values.shape}; expected {(expected_length,)}"
+        )
+    return values
+
+
+def _validate_fev_timestamps(
+    timestamps: list[Any],
+    *,
+    config: FevBenchConfig,
+    row_index: int,
+) -> int:
+    index = pd.DatetimeIndex(timestamps)
+    if index.empty or index.hasnans:
+        raise ValueError(
+            f"FEV {config.config_id} row {row_index} has empty/invalid timestamps"
+        )
+    if len(index) > 1:
+        timestamp_nanoseconds = index.to_numpy(
+            dtype="datetime64[ns]",
+        ).astype(np.int64)
+        differences = np.diff(timestamp_nanoseconds)
+        expected_nanoseconds = {
+            "min": 60 * 1_000_000_000,
+            "h": 60 * 60 * 1_000_000_000,
+            "D": 24 * 60 * 60 * 1_000_000_000,
+        }[config.frequency]
+        if not np.all(differences == expected_nanoseconds):
+            raise ValueError(
+                f"FEV {config.config_id} row {row_index} is not regular "
+                f"at frequency {config.frequency!r}"
+            )
+    return len(index)
+
+
+def _fev_known_covariates(
+    table: pa.Table,
+    *,
+    row_index: int,
+    config: FevBenchConfig,
+    expected_length: int,
+) -> tuple[np.ndarray | None, tuple[str, ...]]:
+    if not config.known_dynamic_columns:
+        return None, ()
+    categorical_levels = dict(config.categorical_dynamic_levels)
+    columns: list[np.ndarray] = []
+    names: list[str] = []
+    for column in config.known_dynamic_columns:
+        levels = categorical_levels.get(column)
+        if levels is None:
+            columns.append(
+                _fev_sequence(
+                    table,
+                    row_index=row_index,
+                    column=column,
+                    expected_length=expected_length,
+                )
+            )
+            names.append(column)
+            continue
+        raw_values = table.column(column)[row_index].as_py()
+        if len(raw_values) != expected_length or any(
+            value is None for value in raw_values
+        ):
+            raise ValueError(
+                f"FEV categorical column {column!r} row {row_index} has "
+                "an invalid length or missing values"
+            )
+        values = np.asarray([str(value) for value in raw_values], dtype=object)
+        unexpected = sorted(set(values) - set(levels))
+        if unexpected:
+            raise ValueError(
+                f"FEV categorical column {column!r} has unexpected levels: "
+                f"{unexpected}"
+            )
+        for level in levels:
+            columns.append((values == level).astype(float))
+            names.append(f"{column}={level}")
+    return np.column_stack(columns), tuple(names)
+
+
+@register_real_data_adapter("fev_parquet")
+def load_fev_parquet(
+    asset_path: Path,
+    record_limit: int | None,
+) -> RealDatasetBundle:
+    """Load one pinned FEV-Bench task view from local Parquet shards."""
+
+    config = _fev_config_for_path(asset_path)
+    if not asset_path.is_dir():
+        raise FileNotFoundError(f"FEV config directory not found: {asset_path}")
+    parquet_files = tuple(sorted(asset_path.glob("train-*.parquet")))
+    if not parquet_files:
+        raise FileNotFoundError(
+            f"FEV config {config.config_id} has no train-*.parquet shards"
+        )
+    expected_files = (asset_path / config.parquet_name,)
+    if parquet_files != expected_files:
+        raise ValueError(
+            f"FEV {config.config_id} assets do not match the pinned contract; "
+            f"expected={[path.name for path in expected_files]}, "
+            f"actual={[path.name for path in parquet_files]}"
+        )
+    actual_sha256 = file_sha256(parquet_files[0])
+    if actual_sha256 != config.sha256:
+        raise ValueError(
+            f"FEV {config.config_id} checksum mismatch: expected "
+            f"{config.sha256}, got {actual_sha256}"
+        )
+    if parquet_files[0].stat().st_size != config.size_bytes:
+        raise ValueError(
+            f"FEV {config.config_id} size mismatch: expected "
+            f"{config.size_bytes}, got {parquet_files[0].stat().st_size}"
+        )
+    tables = [pa_parquet.read_table(path) for path in parquet_files]
+    table = tables[0] if len(tables) == 1 else pa.concat_tables(tables)
+    required_columns = {
+        "id",
+        "timestamp",
+        *config.target_columns,
+        *config.known_dynamic_columns,
+        *config.past_dynamic_columns,
+        *config.static_columns,
+    }
+    missing_columns = sorted(required_columns - set(table.column_names))
+    if missing_columns:
+        raise ValueError(
+            f"FEV {config.config_id} is missing columns: {missing_columns}"
+        )
+
+    item_ids = [str(value) for value in table.column("id").to_pylist()]
+    if len(item_ids) != len(set(item_ids)):
+        raise ValueError(f"FEV {config.config_id} contains duplicate item IDs")
+    records: list[RealSeriesRecord] = []
+    lengths: list[int] = []
+    for row_index, item_id in enumerate(item_ids):
+        timestamps = table.column("timestamp")[row_index].as_py()
+        target_length = _validate_fev_timestamps(
+            timestamps,
+            config=config,
+            row_index=row_index,
+        )
+        target_values = np.vstack(
+            [
+                _fev_sequence(
+                    table,
+                    row_index=row_index,
+                    column=column,
+                    expected_length=target_length,
+                )
+                for column in config.target_columns
+            ]
+        )
+        covariates, covariate_names = _fev_known_covariates(
+            table,
+            row_index=row_index,
+            config=config,
+            expected_length=target_length,
+        )
+        records.append(
+            RealSeriesRecord(
+                item_id=item_id,
+                values=target_values,
+                channel_ids=config.target_columns,
+                covariates=covariates,
+                covariate_names=covariate_names,
+                covariate_kind=(
+                    "known_future" if covariates is not None else None
+                ),
+            )
+        )
+        lengths.append(target_length)
+
+    selected = (
+        records if record_limit is None else records[: int(record_limit)]
+    )
+    config_payload = json.dumps(
+        asdict(config),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return RealDatasetBundle(
+        frequency=config.frequency,
+        records=tuple(selected),
+        asset_files=parquet_files,
+        adapter_id="fev_parquet",
+        metadata={
+            "dataset_repository": FEV_DATASET_REPOSITORY,
+            "dataset_revision": FEV_DATASET_REVISION,
+            "task_repository": FEV_TASK_REPOSITORY,
+            "task_revision": FEV_TASK_REVISION,
+            "tasks_sha256": FEV_TASKS_SHA256,
+            "config_id": config.config_id,
+            "config_contract_sha256": hashlib.sha256(config_payload).hexdigest(),
+            "target_columns": list(config.target_columns),
+            "known_dynamic_columns": list(config.known_dynamic_columns),
+            "categorical_dynamic_levels": {
+                column: list(levels)
+                for column, levels in config.categorical_dynamic_levels
+            },
+            "known_covariate_output_columns": list(
+                records[0].covariate_names
+            ),
+            "past_dynamic_columns": list(config.past_dynamic_columns),
+            "past_dynamic_policy": (
+                "retained_in_source_provenance_not_exposed_as_known_future"
+            ),
+            "static_columns": list(config.static_columns),
+            "static_policy": "retained_in_source_provenance_not_used_by_cafe_v1",
+            "source_record_count": len(records),
+            "selected_record_count": len(selected),
+            "record_selection": (
+                "source_order_prefix" if record_limit is not None else "all"
+            ),
+            "minimum_length": min(lengths),
+            "median_length": float(np.median(lengths)),
+            "maximum_length": max(lengths),
+            "asset_sha256": {
+                path.name: file_sha256(path) for path in parquet_files
+            },
         },
     )
 
