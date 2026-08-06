@@ -21,7 +21,7 @@ import msgpack
 import numpy as np
 from cafe import protocol
 
-INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v1"
+INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v2-input-mode"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
@@ -30,6 +30,7 @@ DEFAULT_ENDPOINTS = (
     "http://192.168.99.89:10810",
 )
 DEFAULT_MODELS = (
+    "Timer-4.0",
     "Chronos-2",
     "timesfm2.5",
     "tirex2",
@@ -38,42 +39,49 @@ DEFAULT_MODELS = (
     "toto2.0",
 )
 MODEL_EXECUTION_CONFIG = {
-    # CaFE has a fixed H=48 and runs on RTX 5090 services. These defaults
-    # are for a dual-card endpoint; the x8 preset below overrides whole-service
-    # concurrency while retaining the same tested per-GPU batch geometry.
+    # CaFE has a fixed H=48 and runs on RTX 5090 services. These defaults were
+    # measured end-to-end on one four-card endpoint on 2026-08-04 using both
+    # the main native-target mix and a hierarchy/covariate request mix. The x8
+    # preset below overrides whole-service concurrency where applicable.
+    "Timer-4.0": {
+        "replicas_per_device": 4,
+        "http_concurrency": 32,
+        "task_batch_size": 192,
+        "transport": "msgpack_bulk",
+    },
     "Timer-3.5": {
         "replicas_per_device": 1,
-        "http_concurrency": 2,
+        "http_concurrency": 8,
         "task_batch_size": 1024,
         "transport": "msgpack_bulk",
     },
     "Chronos-2": {
         "replicas_per_device": 2,
-        "http_concurrency": 4,
+        "http_concurrency": 16,
         "task_batch_size": 192,
         "transport": "msgpack_bulk",
     },
     "moirai2": {
         "replicas_per_device": 1,
-        "http_concurrency": 2,
+        "http_concurrency": 8,
         "task_batch_size": 256,
         "transport": "msgpack_bulk",
     },
     "toto2.0": {
         "replicas_per_device": 2,
-        "http_concurrency": 4,
+        "http_concurrency": 16,
         "task_batch_size": 4,
         "transport": "msgpack_bulk",
     },
     "timesfm2.5": {
-        "replicas_per_device": 1,
-        "http_concurrency": 2,
-        "task_batch_size": 640,
+        "replicas_per_device": 4,
+        "http_concurrency": 32,
+        "task_batch_size": 64,
         "transport": "msgpack_bulk",
     },
     "tirex2": {
         "replicas_per_device": 1,
-        "http_concurrency": 2,
+        "http_concurrency": 8,
         "task_batch_size": 512,
         "transport": "msgpack_bulk",
     },
@@ -85,6 +93,7 @@ MODEL_EXECUTION_CONFIG = {
     },
 }
 MODEL_MAJOR_DATASET_PARALLELISM = {
+    "Timer-4.0": 2,
     "Chronos-2": 4,
     "timesfm2.5": 2,
     "tirex2": 2,
@@ -498,6 +507,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
     parser.add_argument("--api-prefix", default="/ai/api/v1")
+    parser.add_argument(
+        "--input-capability-contract",
+        type=Path,
+        default=None,
+        help=(
+            "Frozen inference stage contract containing the normalized live "
+            "model input capabilities."
+        ),
+    )
     add_endpoint_topology_arguments(parser)
     parser.add_argument("--load-timeout-seconds", type=int, default=1800)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
@@ -853,11 +871,17 @@ def model_supports_window(
     horizon = int(sample["horizon"])
     if context < int(limits.get("min_input_length") or 0):
         return False
-    maximum_input = limits.get("max_input_length")
-    if maximum_input is not None and context > int(maximum_input):
+    maximum_input = _normalize_unbounded_count(
+        limits.get("max_input_length"),
+        default=None,
+    )
+    if maximum_input is not None and context > maximum_input:
         return False
-    maximum_output = limits.get("max_output_length")
-    if maximum_output is not None and horizon > int(maximum_output):
+    maximum_output = _normalize_unbounded_count(
+        limits.get("max_output_length"),
+        default=None,
+    )
+    if maximum_output is not None and horizon > maximum_output:
         return False
     return True
 
@@ -866,54 +890,109 @@ def model_supports_sample(
     model: dict[str, Any],
     sample: dict[str, Any],
 ) -> bool:
-    limits = model.get("forecast_limits") or {}
     if not model_supports_window(model, sample):
         return False
     horizon = int(sample["horizon"])
     target_dim = int(sample["target_dim"])
     covariate_dim = int(sample["covariate_dim"])
-    maximum_targets = limits.get("max_target_count")
-    if maximum_targets is not None and target_dim > int(maximum_targets):
+    capability = resolve_input_capability(model)
+    maximum_targets = capability["max_target_count"]
+    if maximum_targets is not None and target_dim > maximum_targets:
         return False
-    maximum_covariates = int(limits.get("max_covariate_count") or 0)
-    if covariate_dim > maximum_covariates:
-        return False
-    maximum_future_covariates = limits.get("max_future_covs_length")
-    if covariate_dim and maximum_future_covariates is None:
-        return False
-    if (
-        maximum_future_covariates is not None
-        and horizon > int(maximum_future_covariates)
-    ):
-        return False
+    if covariate_dim:
+        maximum_covariates = capability["max_history_covariate_count"]
+        if maximum_covariates is not None and covariate_dim > maximum_covariates:
+            return False
+        if not capability["supports_future_covariates"]:
+            return False
+        maximum_future_length = capability["max_future_covariate_length"]
+        if maximum_future_length is not None and horizon > maximum_future_length:
+            return False
     return True
 
 
+def _normalize_unbounded_count(value: Any, *, default: int | None) -> int | None:
+    if value is None:
+        return default
+    normalized = int(value)
+    return None if normalized < 0 else normalized
+
+
+def resolve_input_capability(model: dict[str, Any]) -> dict[str, Any]:
+    """Normalize current and legacy Timer service input capability schemas."""
+
+    limits = model.get("forecast_limits") or {}
+    input_mode = limits.get("input_mode")
+    if isinstance(input_mode, dict):
+        source_schema = "input_mode"
+        maximum_targets = _normalize_unbounded_count(
+            input_mode.get("max_target_count"),
+            default=(None if "max_target_count" in input_mode else 1),
+        )
+        maximum_history_covariates = _normalize_unbounded_count(
+            input_mode.get("max_history_covariate_count"),
+            default=(None if "max_history_covariate_count" in input_mode else 0),
+        )
+        supports_future_covariates = bool(
+            input_mode.get("supports_future_covariates", False)
+        )
+        maximum_future_length = _normalize_unbounded_count(
+            limits.get("max_future_covs_length"),
+            default=None,
+        )
+    else:
+        source_schema = "legacy_forecast_limits"
+        maximum_targets = _normalize_unbounded_count(
+            limits.get("max_target_count"),
+            default=(None if "max_target_count" in limits else 1),
+        )
+        maximum_history_covariates = _normalize_unbounded_count(
+            limits.get("max_covariate_count"),
+            default=(None if "max_covariate_count" in limits else 0),
+        )
+        legacy_future_length = limits.get("max_future_covs_length")
+        supports_future_covariates = (
+            maximum_history_covariates != 0 and legacy_future_length is not None
+        )
+        maximum_future_length = _normalize_unbounded_count(
+            legacy_future_length,
+            default=None,
+        )
+    return {
+        "schema_version": "cafe.resolved_input_capability.v1",
+        "source_schema": source_schema,
+        "max_target_count": maximum_targets,
+        "max_history_covariate_count": maximum_history_covariates,
+        "supports_future_covariates": supports_future_covariates,
+        "max_future_covariate_length": maximum_future_length,
+    }
+
+
 def _supports_native_targets(
-    limits: dict[str, Any],
+    capability: dict[str, Any],
     target_dim: int,
 ) -> bool:
     if target_dim <= 1:
         return True
-    if "max_target_count" not in limits:
-        return False
-    maximum_targets = limits["max_target_count"]
-    return maximum_targets is None or target_dim <= int(maximum_targets)
+    maximum_targets = capability["max_target_count"]
+    return maximum_targets is None or target_dim <= maximum_targets
 
 
 def _supports_native_covariates(
-    limits: dict[str, Any],
+    capability: dict[str, Any],
     *,
     covariate_dim: int,
     horizon: int,
 ) -> bool:
     if covariate_dim <= 0:
         return True
-    maximum_covariates = int(limits.get("max_covariate_count") or 0)
-    if covariate_dim > maximum_covariates:
+    maximum_covariates = capability["max_history_covariate_count"]
+    if maximum_covariates is not None and covariate_dim > maximum_covariates:
         return False
-    maximum_future = limits.get("max_future_covs_length")
-    return maximum_future is not None and horizon <= int(maximum_future)
+    if not capability["supports_future_covariates"]:
+        return False
+    maximum_future = capability["max_future_covariate_length"]
+    return maximum_future is None or horizon <= maximum_future
 
 
 def input_adaptation_plan(
@@ -929,18 +1008,18 @@ def input_adaptation_plan(
     if policy_id is None and not model_supports_sample(model, sample):
         return None
 
-    limits = model.get("forecast_limits") or {}
+    capability = resolve_input_capability(model)
     target_dim = int(sample["target_dim"])
     covariate_dim = int(sample["covariate_dim"])
     horizon = int(sample["horizon"])
     target_native = (
-        True if policy_id is None else _supports_native_targets(limits, target_dim)
+        True if policy_id is None else _supports_native_targets(capability, target_dim)
     )
     covariates_native = (
         True
         if policy_id is None
         else _supports_native_covariates(
-            limits,
+            capability,
             covariate_dim=covariate_dim,
             horizon=horizon,
         )
@@ -972,9 +1051,8 @@ def input_adaptation_plan(
         ),
         "target_request_count": target_request_count,
         "original_covariate_dim": covariate_dim,
-        "request_covariate_dim": (
-            covariate_dim if covariate_mode == "native" else 0
-        ),
+        "request_covariate_dim": (covariate_dim if covariate_mode == "native" else 0),
+        "resolved_input_capability": capability,
     }
 
 
@@ -1459,9 +1537,7 @@ async def _run_model_requests_v8_serial(
 ) -> list[dict[str, Any]]:
     execution = MODEL_EXECUTION_CONFIG[model_id]
     if execution.get("transport") != "msgpack_bulk":
-        raise ValueError(
-            f"paper cafe requires msgpack_bulk transport for {model_id}"
-        )
+        raise ValueError(f"paper cafe requires msgpack_bulk transport for {model_id}")
 
     task_batch_size = int(execution["task_batch_size"])
     limits = httpx.Limits(
@@ -1806,9 +1882,7 @@ async def run_model_requests_v8(
     """Scan one shard once, then interleave homogeneous bulk requests."""
     execution = MODEL_EXECUTION_CONFIG[model_id]
     if execution.get("transport") != "msgpack_bulk":
-        raise ValueError(
-            f"paper cafe requires msgpack_bulk transport for {model_id}"
-        )
+        raise ValueError(f"paper cafe requires msgpack_bulk transport for {model_id}")
 
     task_batch_size = int(execution["task_batch_size"])
     ordered_groups = sorted(pending_groups, key=request_group_sort_key)
@@ -2073,10 +2147,7 @@ def validated_file_record_path(
     if expected_bytes is None or int(expected_bytes) != path.stat().st_size:
         raise ValueError(f"{label} file byte-size mismatch: {path}")
     expected_sha256 = record.get("sha256")
-    if (
-        not expected_sha256
-        or str(expected_sha256) != protocol.file_sha256(path)
-    ):
+    if not expected_sha256 or str(expected_sha256) != protocol.file_sha256(path):
         raise ValueError(f"{label} file hash mismatch: {path}")
     if validate_row_count:
         expected_rows = record.get("row_count")
@@ -2101,9 +2172,7 @@ def formal_real_anchor_source_record(
             "formal Paper-cafe inference requires calibration_bundle.json "
             "with real_anchor_masters"
         )
-    record = calibration_bundle.get("files", {}).get(
-        "real_anchor_masters"
-    )
+    record = calibration_bundle.get("files", {}).get("real_anchor_masters")
     if not isinstance(record, dict):
         raise ValueError(
             "formal Paper-cafe inference calibration bundle is missing "
@@ -2121,9 +2190,7 @@ def validate_inference_task_manifest_files(
 ) -> Path:
     """Validate the combined task and both independently consumed components."""
 
-    if task_manifest.get("schema_version") != (
-        "cafe.inference_task_manifest.v1"
-    ):
+    if task_manifest.get("schema_version") != ("cafe.inference_task_manifest.v1"):
         raise ValueError("unsupported Paper-cafe inference task manifest")
     task_components = task_manifest.get("task_components")
     if not isinstance(task_components, dict):
@@ -2132,9 +2199,7 @@ def validate_inference_task_manifest_files(
     for name in ("synthetic", "real_anchors"):
         record = task_components.get(name)
         if not isinstance(record, dict):
-            raise ValueError(
-                f"inference task manifest is missing {name} component"
-            )
+            raise ValueError(f"inference task manifest is missing {name} component")
         component_paths[name] = validated_file_record_path(
             record,
             label=f"inference task component {name}",
@@ -2154,9 +2219,7 @@ def validate_inference_task_manifest_files(
         raise ValueError("synthetic inference task count disagrees with manifest")
     if real_count != int(task_manifest.get("real_anchor_view_count", -1)):
         raise ValueError("real-anchor inference task count disagrees with manifest")
-    if synthetic_count + real_count != int(
-        task_manifest.get("view_count", -1)
-    ):
+    if synthetic_count + real_count != int(task_manifest.get("view_count", -1)):
         raise ValueError("combined inference task count disagrees with components")
     if int(task_record["row_count"]) != int(task_manifest["view_count"]):
         raise ValueError("combined inference task record count mismatch")
@@ -2175,7 +2238,9 @@ def prepare_view_tasks(
         generation_manifest["files"]["input_ablations"],
     ]
     masters = (
-        row for record in source_records for row in protocol.iter_jsonl(Path(record["path"]))
+        row
+        for record in source_records
+        for row in protocol.iter_jsonl(Path(record["path"]))
     )
     synthetic_task_path = inference_dir / "synthetic_forecast_views.jsonl"
     synthetic_view_count = protocol.write_jsonl(
@@ -2183,9 +2248,7 @@ def prepare_view_tasks(
         protocol.iter_master_views(masters),
     )
     real_source_record = (
-        (calibration_bundle or {}).get("files", {}).get(
-            "real_anchor_masters"
-        )
+        (calibration_bundle or {}).get("files", {}).get("real_anchor_masters")
     )
     if real_source_record is not None:
         if not isinstance(real_source_record, dict):
@@ -2204,9 +2267,7 @@ def prepare_view_tasks(
             row["schema_version"] = "cafe.real_anchor_forecast_view.v1"
             row["evaluation_table"] = "real_anchor_forecast"
             row["view_id"] = row["sample_id"]
-            row["context_policy"] = (
-                f"fixed_l{protocol.REAL_CALIBRATION_CONTEXT_LENGTH}"
-            )
+            row["context_policy"] = f"fixed_l{protocol.REAL_CALIBRATION_CONTEXT_LENGTH}"
             row["context_policy_candidates"] = [
                 protocol.REAL_CALIBRATION_CONTEXT_LENGTH
             ]
@@ -2275,8 +2336,7 @@ def write_real_anchor_prediction_subset(
     """Materialize an auxiliary real-anchor result without duplicating tasks."""
 
     real_ids = {
-        str(row["sample_id"])
-        for row in protocol.iter_jsonl(real_anchor_task_path)
+        str(row["sample_id"]) for row in protocol.iter_jsonl(real_anchor_task_path)
     }
     if not real_ids:
         return protocol.write_jsonl(output_path, ())
@@ -2304,6 +2364,54 @@ def health_catalog(
         return None
     finally:
         client.close()
+
+
+def validate_catalog_input_capabilities(
+    catalogs: dict[str, dict[str, dict[str, Any]]],
+    models: list[str],
+    *,
+    contract_path: Path | None,
+) -> dict[str, dict[str, Any]]:
+    expected: dict[str, dict[str, Any]] | None = None
+    if contract_path is not None:
+        contract = protocol.read_json(contract_path.resolve())
+        configured = contract.get("config", {}).get("resolved_model_input_capabilities")
+        if not isinstance(configured, dict):
+            raise ValueError(
+                "inference contract is missing resolved model input capabilities"
+            )
+        expected = {
+            str(model_id): dict(capability)
+            for model_id, capability in configured.items()
+        }
+
+    resolved: dict[str, dict[str, Any]] = {}
+    for model_id in models:
+        observations = [
+            (endpoint, resolve_input_capability(catalog[model_id]))
+            for endpoint, catalog in sorted(catalogs.items())
+            if model_id in catalog
+        ]
+        if not observations:
+            raise ValueError(f"model {model_id!r} unavailable on all services")
+        first = observations[0][1]
+        if any(value != first for _endpoint, value in observations[1:]):
+            raise ValueError(
+                f"inconsistent live input capabilities for {model_id}: "
+                + ", ".join(endpoint for endpoint, _value in observations)
+            )
+        if expected is not None:
+            if model_id not in expected:
+                raise ValueError(
+                    f"inference contract is missing input capability for {model_id}"
+                )
+            if first != expected[model_id]:
+                raise ValueError(
+                    f"live input capability changed after the inference contract "
+                    f"was frozen for {model_id}"
+                )
+        resolved[model_id] = first
+    return resolved
 
 
 def model_root(inference_dir: Path, model_id: str) -> Path:
@@ -2437,14 +2545,11 @@ def cached_complete_model_records(
     if not manifest_path.is_file():
         return {}
     manifest = protocol.read_json(manifest_path)
-    if (
-        manifest.get("schema_version") != "cafe.inference_manifest.v1"
-        or not manifest.get("complete")
-    ):
+    if manifest.get(
+        "schema_version"
+    ) != "cafe.inference_manifest.v1" or not manifest.get("complete"):
         return {}
-    statuses = {
-        str(row["model_id"]): row for row in manifest.get("statuses", [])
-    }
+    statuses = {str(row["model_id"]): row for row in manifest.get("statuses", [])}
     cached: dict[str, dict[str, Any]] = {}
     for record in manifest.get("predictions", {}).get("files", []):
         model_id = str(record["model_id"])
@@ -2457,13 +2562,11 @@ def cached_complete_model_records(
             status.get("status") == "complete"
             and int(status.get("succeeded_original_view_count", -1))
             == len(expected_sample_ids)
-            and int(record.get("row_count", -1))
-            == len(expected_sample_ids)
+            and int(record.get("row_count", -1)) == len(expected_sample_ids)
             and Path(record.get("path", "")).resolve() == canonical_path.resolve()
             and canonical_path.is_file()
             and int(record.get("bytes", -1)) == canonical_path.stat().st_size
-            and str(record.get("sha256", ""))
-            == protocol.file_sha256(canonical_path)
+            and str(record.get("sha256", "")) == protocol.file_sha256(canonical_path)
             and canonical_prediction_sample_ids(
                 canonical_path,
                 model_id=model_id,
@@ -2479,10 +2582,7 @@ def _model_task_shard_manifest_path(
     model_id: str,
 ) -> Path:
     return (
-        inference_dir
-        / "model_task_shards"
-        / safe_filename(model_id)
-        / "manifest.json"
+        inference_dir / "model_task_shards" / safe_filename(model_id) / "manifest.json"
     )
 
 
@@ -2994,6 +3094,13 @@ def _single_dataset_child_arguments(
     ]
     if keep_loaded:
         arguments.append("--keep-loaded-between-runs")
+    if args.input_capability_contract is not None:
+        arguments.extend(
+            (
+                "--input-capability-contract",
+                str(args.input_capability_contract.resolve()),
+            )
+        )
     return arguments
 
 
@@ -3121,9 +3228,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
         "execution": {
             "preprocess_workers": int(args.preprocess_workers),
             "dataset_parallelism_by_model": {
-                model_id: int(
-                    MODEL_MAJOR_DATASET_PARALLELISM.get(model_id, 1)
-                )
+                model_id: int(MODEL_MAJOR_DATASET_PARALLELISM.get(model_id, 1))
                 for model_id in args.models
             },
             "request_concurrency_policy": (
@@ -3388,6 +3493,11 @@ def main() -> int:
         raise RuntimeError("no inference service is available")
     health_results.sort(key=lambda item: item[0])
     catalogs = dict(health_results)
+    resolved_input_capabilities = validate_catalog_input_capabilities(
+        catalogs,
+        list(args.models),
+        contract_path=args.input_capability_contract,
+    )
     if args.prepare_only:
         for model_id in args.models:
             _work_assignments, shard_manifest = plan_model_phase(
@@ -3438,10 +3548,7 @@ def main() -> int:
         if (
             args.resume
             and canonical_path.exists()
-            and (
-                manifest_cached
-                or canonical_matches_task
-            )
+            and (manifest_cached or canonical_matches_task)
         ):
             already_compact = manifest_cached or canonical_prediction_file_is_compact(
                 canonical_path
@@ -3579,9 +3686,7 @@ def main() -> int:
     real_anchor_task_path = Path(
         task_manifest["task_components"]["real_anchors"]["path"]
     )
-    expected_real_anchor_count = int(
-        task_manifest["real_anchor_view_count"]
-    )
+    expected_real_anchor_count = int(task_manifest["real_anchor_view_count"])
     for model_id in args.models:
         path = prediction_path_for(
             model_root(inference_dir, model_id),
@@ -3644,14 +3749,21 @@ def main() -> int:
         "model_execution_config": {
             model_id: dict(MODEL_EXECUTION_CONFIG[model_id]) for model_id in args.models
         },
+        "input_capabilities": {
+            "adaptation_policy_id": INPUT_ADAPTATION_POLICY_ID,
+            "resolved": resolved_input_capabilities,
+            "stage_contract": (
+                None
+                if args.input_capability_contract is None
+                else protocol.file_record(args.input_capability_contract.resolve())
+            ),
+        },
         "statuses": statuses,
         "predictions": {
             "storage": "per_model_jsonl_including_synthetic_and_real_tasks",
             "files": prediction_files,
             "row_count": prediction_count,
-            "synthetic_row_count_per_model": int(
-                task_manifest["synthetic_view_count"]
-            ),
+            "synthetic_row_count_per_model": int(task_manifest["synthetic_view_count"]),
             "real_anchor": {
                 "storage": "separate_per_model_auxiliary_jsonl",
                 "files": real_anchor_prediction_files,

@@ -23,7 +23,7 @@
 | 合成 MASE denominator | 每个 clean L336 master history 计算一次；seasonal lag 退化时逐通道回退 lag-1；三个 view 共用 |
 | 真实 anchor MASE denominator | 每个真实 L168 history 独立计算 |
 | 每数据集 anchor 上限 | 256 个通过质量检查的窗口 |
-| 正式默认模型 | Chronos-2、TimesFM 2.5、TiRex2、Moirai 2、Timer 3.5、Toto 2.0 |
+| 正式默认模型 | Timer 4.0、Chronos-2、TimesFM 2.5、TiRex2、Moirai 2、Timer 3.5、Toto 2.0 |
 | 主生成 | clean、deterministic future、primary family |
 | 预测 horizon 内的新随机创新 | 无 |
 
@@ -376,12 +376,13 @@ source-only `R² >= 0.5` 与真实增量坐标不同量纲，已经移除。
 
 正式默认模型按下列顺序登记：
 
-1. Chronos-2
-2. TimesFM 2.5
-3. TiRex2
-4. Moirai 2
-5. Timer 3.5
-6. Toto 2.0
+1. Timer 4.0
+2. Chronos-2
+3. TimesFM 2.5
+4. TiRex2
+5. Moirai 2
+6. Timer 3.5
+7. Toto 2.0
 
 本地 `last_value` 和 `seasonal_naive` 只作参考，不参与 foundation-model
 正式排名。未进入默认集合的服务模型只有在命令行显式指定并具有 execution
@@ -406,14 +407,30 @@ sample/model 覆盖再合并。`--resume` 只跳过已验证成功任务；非 r
 
 多数据集推理默认使用 `--dataset-ids` 的 model-major controller：一个模型只
 加载一次并跑完全部数据集，再切换到下一个模型。任务预处理默认使用 16 个 CPU
-worker；Chronos-2/Toto 2.0 同时跑 4 个数据集，TimesFM 2.5/TiRex2/Moirai2/
-Timer 3.5 同时跑 2 个。并发数据集共享同一 endpoint 时，各子任务的 HTTP
+worker；Chronos-2/Toto 2.0 同时跑 4 个数据集，Timer 4.0/TimesFM 2.5/TiRex2/
+Moirai2/Timer 3.5 同时跑 2 个。并发数据集共享同一 endpoint 时，各子任务的 HTTP
 concurrency 按活跃数据集数等分，维持既定服务总并发上限。上述数值属于执行
 参数并写入 model-major status，不改变实验协议。
 
+推理阶段开始时读取服务 `forecast_limits.input_mode`，把 `-1` 规范化为无上限，
+并分别冻结 target 数量、history covariate 数量、future covariate 支持及其 horizon
+上限。缺少 `input_mode` 时才回退到旧版顶层字段。规范化结果进入 inference stage
+contract 和每条预测的 `input_adaptation`；运行中服务能力与已冻结合同不一致时
+立即拒绝继续。原生支持多目标的模型使用一次 multivariate 请求，仅明确声明单
+目标的模型才拆为 independent-univariate；协变量支持也独立判定，不再由旧版
+`max_covariate_count` 单字段推断。
+
+四张 RTX 5090 的本地服务执行参数以 2026-08-04 修复后的两类端到端 bulk
+基准为准：一类覆盖正式主请求形状，一类覆盖原生多目标、层级和协变量形状。
+Timer 4.0、TimesFM 2.5 为每卡 4 副本/总并发 32；Chronos-2、Toto 2.0 为
+每卡 2 副本/总并发 16；TiRex2、Moirai2、Timer 3.5 为每卡 1 副本/总并发 8。
+TimesFM 2.5 的任务批量为 64，其余任务批量沿用模型 execution config。全局配置
+按 20 数据集正式主负载定稿；层级/协变量复核用于确认输入路径和显存边界，不让
+唯一一个层级数据集覆盖其余 19 个数据集的主负载权重。
+
 校准、生成和回验允许按数据集并发；推荐在 16 核机器上使用 4 个数据集 job，
 每个 job 4 个 capability worker。推理在每个模型阶段内按声明顺序组成确定性
-数据集 batch；某个数据集的六模型都完成后即可独立下载和校验。并发度只写入
+数据集 batch；某个数据集的七模型都完成后即可独立下载和校验。并发度只写入
 execution provenance，不改变科学协议。
 
 ## 分析与报告
@@ -440,7 +457,7 @@ counterfactual 表同时保留 correlation、amplitude ratio；cross 另报告
 direct-prefix/tail effect profile，但这些诊断量不与 NRMSE 加权合并。
 
 只需要正式模型 MASE 和机制分时，分析可显式使用 `scores_only` profile。
-它仍计算六个 foundation model 的 fixed/oracle MASE、十个能力的主机制分，
+它仍计算七个 foundation model 的 fixed/oracle MASE、十个能力的主机制分，
 以及 common/cross/covariate 主分所需的配对反事实 effect；不运行 reference
 baselines、结构正控、split-bank、matched comparison 或 multivariate
 utilization audit。被省略的分析会记录在 v4 analysis manifest 中，不能与

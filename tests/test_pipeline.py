@@ -1,11 +1,262 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from cafe import provenance
+from cafe import pipeline
+from cafe.inference import runner as inference
+
+
+def test_timer4_is_a_formal_default_model() -> None:
+    assert "Timer-4.0" in inference.DEFAULT_MODELS
+    assert "Timer-4.0" in inference.MODEL_EXECUTION_CONFIG
+    assert inference.MODEL_EXECUTION_CONFIG["Timer-4.0"]["transport"] == "msgpack_bulk"
+
+
+def test_pipeline_defines_the_service_api_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["cafe.pipeline"])
+
+    args = pipeline.parse_args()
+
+    assert args.api_prefix == "/ai/api/v1"
+
+
+def test_pipeline_resolves_input_capabilities_from_the_live_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = live_input_mode_model(
+        "Timer-4.0",
+        max_targets=-1,
+        max_history_covariates=-1,
+        supports_future_covariates=True,
+    )
+    monkeypatch.setattr(
+        inference,
+        "health_catalog",
+        lambda endpoint, api_prefix: (endpoint, {"Timer-4.0": model}),
+    )
+    args = SimpleNamespace(
+        endpoints=["http://127.0.0.1:10810"],
+        api_prefix="/ai/api/v1",
+        models=["Timer-4.0"],
+    )
+
+    resolved = pipeline.resolve_stage_input_capabilities(args)
+
+    assert resolved == {
+        "Timer-4.0": inference.resolve_input_capability(model),
+    }
+
+
+def live_input_mode_model(
+    model_id: str,
+    *,
+    max_targets: int,
+    max_history_covariates: int,
+    supports_future_covariates: bool,
+) -> dict[str, object]:
+    return {
+        "model_id": model_id,
+        "forecast_limits": {
+            "min_input_length": 1,
+            "max_input_length": 16_384,
+            "max_output_length": 1_024,
+            "max_future_covs_length": 1_024,
+            "input_mode": {
+                "max_target_count": max_targets,
+                "max_history_covariate_count": max_history_covariates,
+                "supports_future_covariates": supports_future_covariates,
+                "max_static_covariate_count": 0,
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    (
+        "model",
+        "expected_target_mode",
+        "expected_covariate_mode",
+        "expected_request_count",
+    ),
+    [
+        (
+            live_input_mode_model(
+                "Timer-4.0",
+                max_targets=-1,
+                max_history_covariates=-1,
+                supports_future_covariates=True,
+            ),
+            "native_multivariate",
+            "native",
+            1,
+        ),
+        (
+            live_input_mode_model(
+                "Chronos-2",
+                max_targets=-1,
+                max_history_covariates=-1,
+                supports_future_covariates=True,
+            ),
+            "native_multivariate",
+            "native",
+            1,
+        ),
+        (
+            live_input_mode_model(
+                "tirex2",
+                max_targets=-1,
+                max_history_covariates=-1,
+                supports_future_covariates=True,
+            ),
+            "native_multivariate",
+            "native",
+            1,
+        ),
+        (
+            live_input_mode_model(
+                "toto2.0",
+                max_targets=-1,
+                max_history_covariates=0,
+                supports_future_covariates=False,
+            ),
+            "native_multivariate",
+            "omitted_unsupported",
+            1,
+        ),
+        (
+            live_input_mode_model(
+                "timesfm2.5",
+                max_targets=1,
+                max_history_covariates=-1,
+                supports_future_covariates=True,
+            ),
+            "independent_univariate",
+            "native",
+            5,
+        ),
+        (
+            live_input_mode_model(
+                "moirai2",
+                max_targets=1,
+                max_history_covariates=0,
+                supports_future_covariates=False,
+            ),
+            "independent_univariate",
+            "omitted_unsupported",
+            5,
+        ),
+        (
+            live_input_mode_model(
+                "Timer-3.5",
+                max_targets=1,
+                max_history_covariates=0,
+                supports_future_covariates=False,
+            ),
+            "independent_univariate",
+            "omitted_unsupported",
+            5,
+        ),
+    ],
+)
+def test_live_input_mode_drives_native_adaptation(
+    model: dict[str, object],
+    expected_target_mode: str,
+    expected_covariate_mode: str,
+    expected_request_count: int,
+) -> None:
+    sample = {
+        "context_length": 168,
+        "horizon": 48,
+        "target_dim": 5,
+        "covariate_dim": 2,
+    }
+
+    plan = inference.input_adaptation_plan(
+        model,
+        sample,
+        policy_id=inference.INPUT_ADAPTATION_POLICY_ID,
+    )
+
+    assert plan is not None
+    assert plan["target_mode"] == expected_target_mode
+    assert plan["covariate_mode"] == expected_covariate_mode
+    assert plan["target_request_count"] == expected_request_count
+    capability = plan["resolved_input_capability"]
+    assert capability["source_schema"] == "input_mode"
+    assert capability["max_target_count"] in {None, 1}
+    assert capability["max_history_covariate_count"] in {None, 0}
+
+
+def test_legacy_input_capability_fallback_normalizes_unbounded_counts() -> None:
+    model = {
+        "forecast_limits": {
+            "min_input_length": 1,
+            "max_input_length": 2_880,
+            "max_output_length": 720,
+            "max_target_count": None,
+            "max_covariate_count": -1,
+            "max_future_covs_length": 720,
+        }
+    }
+
+    capability = inference.resolve_input_capability(model)
+
+    assert capability == {
+        "schema_version": "cafe.resolved_input_capability.v1",
+        "source_schema": "legacy_forecast_limits",
+        "max_target_count": None,
+        "max_history_covariate_count": None,
+        "supports_future_covariates": True,
+        "max_future_covariate_length": 720,
+    }
+
+
+def test_live_capability_must_match_frozen_inference_contract(
+    tmp_path: Path,
+) -> None:
+    model = live_input_mode_model(
+        "Timer-4.0",
+        max_targets=-1,
+        max_history_covariates=-1,
+        supports_future_covariates=True,
+    )
+    capability = inference.resolve_input_capability(model)
+    contract_path = tmp_path / "inference.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "config": {
+                    "resolved_model_input_capabilities": {
+                        "Timer-4.0": capability,
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = inference.validate_catalog_input_capabilities(
+        {"http://127.0.0.1:10810": {"Timer-4.0": model}},
+        ["Timer-4.0"],
+        contract_path=contract_path,
+    )
+
+    assert resolved == {"Timer-4.0": capability}
+    model["forecast_limits"]["input_mode"]["max_target_count"] = 1
+    with pytest.raises(ValueError, match="changed after.*frozen"):
+        inference.validate_catalog_input_capabilities(
+            {"http://127.0.0.1:10810": {"Timer-4.0": model}},
+            ["Timer-4.0"],
+            contract_path=contract_path,
+        )
 
 
 def test_experiment_identity_does_not_freeze_future_stage_code(

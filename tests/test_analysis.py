@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from cafe.analysis import structured
+from cafe.analysis import diagnostics, structured
 
 
 def load_script(name: str):
@@ -26,6 +26,35 @@ def sample(
         "horizon": horizon,
         "target": target.tolist(),
     }
+
+
+def test_intermittent_recovery_metrics_handle_pulse_width() -> None:
+    context = 96
+    horizon = 12
+    target = np.zeros((context + horizon, 1), dtype=float)
+    target[context + 5, 0] = 2.0
+    forecast = target[context:].copy()
+    task = {
+        **sample(
+            "predictable_intermittency",
+            target,
+            context=context,
+            horizon=horizon,
+        ),
+        "generation_metadata": {
+            "pulse_centers": [context + 5],
+            "pulse_width": 1.5,
+        },
+    }
+
+    result = diagnostics.intermittent_recovery_metrics(
+        task,
+        target,
+        forecast,
+    )
+
+    assert result["event_peak_timing_widths"] == 0.0
+    assert result["event_window_nmae"] == 0.0
 
 
 def test_ridge_var_recovers_history_covered_lag_better_than_diagonal_ar():

@@ -6,7 +6,13 @@ import os
 import subprocess
 import sys
 import time
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    Future,
+    ThreadPoolExecutor,
+    as_completed,
+    wait,
+)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -122,8 +128,7 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=(
-            "Enable the anchor-internal DCR/NNDR anti-copy gate during "
-            "generation."
+            "Enable the anchor-internal DCR/NNDR anti-copy gate during " "generation."
         ),
     )
     parser.add_argument(
@@ -142,6 +147,7 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=list(inference.DEFAULT_ENDPOINTS),
     )
+    parser.add_argument("--api-prefix", default="/ai/api/v1")
     inference.add_endpoint_topology_arguments(parser)
     parser.add_argument("--start-at", choices=STEPS, default="calibration")
     parser.add_argument("--stop-after", choices=STEPS, default="analysis")
@@ -179,9 +185,7 @@ def run(
         return
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log:
-        log.write(
-            f"\n[{protocol.utc_now()}] + {' '.join(command)}\n"
-        )
+        log.write(f"\n[{protocol.utc_now()}] + {' '.join(command)}\n")
         log.flush()
         subprocess.run(
             command,
@@ -213,10 +217,9 @@ def validate_dataset_parallelism(
     if dataset_workers < 1:
         raise ValueError("dataset_workers must be positive")
     preparation_only = stop_index <= STEPS.index("validation")
-    analysis_only = (
-        start_index == STEPS.index("analysis")
-        and stop_index == STEPS.index("analysis")
-    )
+    analysis_only = start_index == STEPS.index(
+        "analysis"
+    ) and stop_index == STEPS.index("analysis")
     if dataset_workers > 1 and not (preparation_only or analysis_only):
         raise ValueError(
             "dataset-level parallelism supports preparation-only or "
@@ -301,6 +304,8 @@ def commands_for_dataset(
                 *args.models,
                 "--endpoints",
                 *args.endpoints,
+                "--api-prefix",
+                str(args.api_prefix),
                 *inference.endpoint_topology_cli_arguments(args),
                 *(["--resume"] if args.resume_inference else []),
             ],
@@ -356,9 +361,13 @@ def model_major_inference_arguments(
         *args.models,
         "--endpoints",
         *args.endpoints,
+        "--api-prefix",
+        str(args.api_prefix),
         *inference.endpoint_topology_cli_arguments(args),
         "--preprocess-workers",
         str(args.inference_preprocess_workers),
+        "--input-capability-contract",
+        str(experiment_root / "stage_contracts" / "inference.json"),
         *(["--resume"] if args.resume_inference else []),
     ]
 
@@ -398,11 +407,7 @@ def experiment_analysis_arguments(
             is not None
             else []
         ),
-        *(
-            ["--reuse-existing-aggregate"]
-            if args.resume_analysis
-            else []
-        ),
+        *(["--reuse-existing-aggregate"] if args.resume_analysis else []),
     ]
 
 
@@ -426,9 +431,7 @@ def protocol_config(
     args: argparse.Namespace,
     dataset_ids: list[str],
 ) -> dict[str, Any]:
-    missing_configs = sorted(
-        set(args.models) - set(inference.MODEL_EXECUTION_CONFIG)
-    )
+    missing_configs = sorted(set(args.models) - set(inference.MODEL_EXECUTION_CONFIG))
     if missing_configs:
         raise ValueError(
             "missing model execution configs: " + ", ".join(missing_configs)
@@ -497,6 +500,8 @@ def protocol_config(
         ),
         "capabilities": list(args.capabilities),
         "models": list(args.models),
+        "api_prefix": str(args.api_prefix),
+        "input_adaptation_policy": inference.INPUT_ADAPTATION_POLICY_ID,
         "analysis_profile": str(getattr(args, "analysis_profile", "full")),
         "model_execution_config": {
             model_id: dict(inference.MODEL_EXECUTION_CONFIG[model_id])
@@ -514,9 +519,7 @@ def protocol_config(
             ),
             "resume_part_identity": "preserved_when_service_count_changes",
         },
-        "real_calibration_context_length": (
-            protocol.REAL_CALIBRATION_CONTEXT_LENGTH
-        ),
+        "real_calibration_context_length": (protocol.REAL_CALIBRATION_CONTEXT_LENGTH),
         "synthetic_master_context_length": protocol.CONTEXT_LENGTH,
         "fixed_context_length": protocol.FIXED_CONTEXT_LENGTH,
         "horizon": protocol.HORIZON,
@@ -531,16 +534,11 @@ def protocol_config(
                 "i5-child-contrast-nmae-plus-unit-weight-native-"
                 "coherence-nmae-penalty"
             ),
-            "common_factor": (
-                "all-seed-i5-protected-target-paired-effect-nrmse"
-            ),
+            "common_factor": ("all-seed-i5-protected-target-paired-effect-nrmse"),
             "cross_series_dependence": (
-                "all-seed-i5-active-history-covered-prefix-paired-effect-"
-                "nrmse"
+                "all-seed-i5-active-history-covered-prefix-paired-effect-" "nrmse"
             ),
-            "factual_accuracy": (
-                "unchanged-single-member-i1-i5-seed-group-mean-mase"
-            ),
+            "factual_accuracy": ("unchanged-single-member-i1-i5-seed-group-mean-mase"),
         },
         "analysis_source_experiment": (
             {
@@ -567,6 +565,54 @@ def protocol_config(
             else None
         ),
     }
+
+
+def resolve_stage_input_capabilities(
+    args: argparse.Namespace,
+) -> dict[str, dict[str, Any]]:
+    """Resolve one consistent live input contract for every formal model."""
+
+    observed: dict[str, list[tuple[str, dict[str, Any]]]] = {
+        model_id: [] for model_id in args.models
+    }
+    with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
+        futures = {
+            executor.submit(
+                inference.health_catalog,
+                endpoint,
+                args.api_prefix,
+            ): endpoint
+            for endpoint in args.endpoints
+        }
+        for future in as_completed(futures):
+            result = future.result()
+            if result is None:
+                continue
+            endpoint, catalog = result
+            for model_id in args.models:
+                if model_id in catalog:
+                    observed[model_id].append(
+                        (
+                            endpoint,
+                            inference.resolve_input_capability(catalog[model_id]),
+                        )
+                    )
+
+    resolved: dict[str, dict[str, Any]] = {}
+    for model_id, rows in observed.items():
+        if not rows:
+            raise RuntimeError(
+                f"model {model_id!r} unavailable while freezing inference contract"
+            )
+        first = rows[0][1]
+        mismatched = [endpoint for endpoint, value in rows if value != first]
+        if mismatched:
+            raise ValueError(
+                f"inconsistent input capability for {model_id}: "
+                + ", ".join(endpoint for endpoint, _value in rows)
+            )
+        resolved[model_id] = first
+    return resolved
 
 
 def default_experiment_id(
@@ -638,10 +684,12 @@ def stage_protocol_configs(
             "models": full_protocol["models"],
             "model_execution_config": full_protocol["model_execution_config"],
             "model_scheduling_policy": full_protocol["model_scheduling_policy"],
+            "input_adaptation_policy": full_protocol["input_adaptation_policy"],
             "view_context_lengths": full_protocol["view_context_lengths"],
             "fixed_context_length": full_protocol["fixed_context_length"],
             "horizon": full_protocol["horizon"],
             "requested_endpoints": endpoints,
+            "requested_api_prefix": full_protocol["api_prefix"],
             "endpoint_profiles": endpoint_profiles,
         },
         "analysis": {
@@ -658,9 +706,7 @@ def stage_protocol_configs(
             "primary_mechanism_score_policy": (
                 full_protocol["primary_mechanism_score_policy"]
             ),
-            "analysis_source_experiment": (
-                full_protocol["analysis_source_experiment"]
-            ),
+            "analysis_source_experiment": (full_protocol["analysis_source_experiment"]),
         },
     }
 
@@ -674,7 +720,11 @@ def initialize_experiment(
         raise ValueError("experiment-id may contain only letters, digits, '_' and '-'")
     experiment_root = storage_root.resolve() / experiment_id
     existing_path = experiment_root / "experiment.json"
-    if experiment_root.exists() and any(experiment_root.iterdir()) and not existing_path.exists():
+    if (
+        experiment_root.exists()
+        and any(experiment_root.iterdir())
+        and not existing_path.exists()
+    ):
         raise ValueError(
             "refusing to use a non-empty experiment directory without "
             "experiment.json"
@@ -703,9 +753,7 @@ def initialize_stage_contracts(
             previous_root = experiment_root
             if stage == "analysis" and analysis_source_experiment_root is not None:
                 previous_root = analysis_source_experiment_root.resolve()
-            previous_path = (
-                previous_root / "stage_contracts" / f"{previous_stage}.json"
-            )
+            previous_path = previous_root / "stage_contracts" / f"{previous_stage}.json"
             if not previous_path.is_file():
                 raise ValueError(
                     f"{stage} requires the frozen {previous_stage} stage contract: "
@@ -902,10 +950,7 @@ def run_parallel_preparation(
 
     def submit_available(executor: ThreadPoolExecutor) -> None:
         nonlocal next_index
-        while (
-            len(active) < args.dataset_workers
-            and next_index < len(dataset_ids)
-        ):
+        while len(active) < args.dataset_workers and next_index < len(dataset_ids):
             dataset_id = dataset_ids[next_index]
             next_index += 1
             future = executor.submit(
@@ -939,9 +984,7 @@ def run_parallel_preparation(
                 {
                     "dataset_id": dataset_id,
                     "status_path": str(
-                        experiment_root
-                        / dataset_id
-                        / "preparation_status.json"
+                        experiment_root / dataset_id / "preparation_status.json"
                     ),
                     "log_path": str(log_root / f"{dataset_id}.log"),
                 }
@@ -1008,9 +1051,7 @@ def reusable_analysis_manifest(
         analysis_manifest = protocol.read_json(analysis_manifest_path)
         if not bool(inference_manifest.get("complete")):
             return False
-        if analysis_manifest.get("schema_version") != (
-            "cafe.analysis_manifest.v1"
-        ):
+        if analysis_manifest.get("schema_version") != ("cafe.analysis_manifest.v1"):
             return False
         if str(analysis_manifest.get("dataset_id")) != dataset_id:
             return False
@@ -1067,8 +1108,7 @@ def execute_analysis_job(
         models=list(args.models),
         source_experiment_root=(
             getattr(args, "analysis_source_experiment_root").resolve()
-            if getattr(args, "analysis_source_experiment_root", None)
-            is not None
+            if getattr(args, "analysis_source_experiment_root", None) is not None
             else experiment_root
         ),
         analysis_profile=str(getattr(args, "analysis_profile", "full")),
@@ -1133,10 +1173,7 @@ def run_parallel_analysis(
 
     def submit_available(executor: ThreadPoolExecutor) -> None:
         nonlocal next_index
-        while (
-            len(active) < args.dataset_workers
-            and next_index < len(dataset_ids)
-        ):
+        while len(active) < args.dataset_workers and next_index < len(dataset_ids):
             dataset_id = dataset_ids[next_index]
             next_index += 1
             future = executor.submit(
@@ -1214,8 +1251,7 @@ def main() -> int:
     ]
     if non_gift_datasets and args.source_root is None:
         raise ValueError(
-            "non-GIFT datasets require --source-root: "
-            + ", ".join(non_gift_datasets)
+            "non-GIFT datasets require --source-root: " + ", ".join(non_gift_datasets)
         )
     if len(args.models) != len(set(args.models)):
         raise ValueError("model ids must be unique")
@@ -1255,12 +1291,10 @@ def main() -> int:
     if stop < start:
         raise ValueError("stop-after must not precede start-at")
     if args.analysis_source_experiment_root is not None and not (
-        start == STEPS.index("analysis")
-        and stop == STEPS.index("analysis")
+        start == STEPS.index("analysis") and stop == STEPS.index("analysis")
     ):
         raise ValueError(
-            "--analysis-source-experiment-root requires an analysis-only "
-            "stage range"
+            "--analysis-source-experiment-root requires an analysis-only " "stage range"
         )
     validation_index = STEPS.index("validation")
     validate_dataset_parallelism(
@@ -1270,8 +1304,7 @@ def main() -> int:
     )
     full_protocol = protocol_config(args, dataset_ids)
     serialized_endpoint_profiles = {
-        endpoint: profile.as_dict()
-        for endpoint, profile in endpoint_profiles.items()
+        endpoint: profile.as_dict() for endpoint, profile in endpoint_profiles.items()
     }
     preparation_execution = {
         "dataset_workers": int(args.dataset_workers),
@@ -1287,9 +1320,7 @@ def main() -> int:
         preparation_execution=preparation_execution,
     )
     preparation_sha256 = protocol.json_sha256(stage_configs["calibration"])
-    experiment_id = args.experiment_id or default_experiment_id(
-        preparation_sha256
-    )
+    experiment_id = args.experiment_id or default_experiment_id(preparation_sha256)
     experiment_root, manifest = initialize_experiment(
         storage_root=args.output_root,
         experiment_id=experiment_id,
@@ -1304,6 +1335,13 @@ def main() -> int:
         stage for stage in requested_steps if stage in preparation_steps
     ]
     if not initial_contract_steps:
+        if requested_steps[0] == "inference":
+            stage_configs["inference"] = {
+                **stage_configs["inference"],
+                "resolved_model_input_capabilities": (
+                    resolve_stage_input_capabilities(args)
+                ),
+            }
         initial_contract_steps = [requested_steps[0]]
     contracts = initialize_stage_contracts(
         experiment_root,
@@ -1314,9 +1352,7 @@ def main() -> int:
     run_plan_sha256 = protocol.json_sha256(
         {
             "requested_steps": requested_steps,
-            "stage_configs": {
-                stage: stage_configs[stage] for stage in requested_steps
-            },
+            "stage_configs": {stage: stage_configs[stage] for stage in requested_steps},
             "launch_code": code_provenance(),
         }
     )
@@ -1340,8 +1376,7 @@ def main() -> int:
         )
         if failed:
             error_text = (
-                f"{len(failed)} of {len(dataset_ids)} dataset analysis "
-                "jobs failed"
+                f"{len(failed)} of {len(dataset_ids)} dataset analysis " "jobs failed"
             )
             write_pipeline_status(
                 experiment_root,
@@ -1358,11 +1393,7 @@ def main() -> int:
         run_experiment_analysis(
             args,
             experiment_root=experiment_root,
-            log_path=(
-                experiment_root
-                / "analysis_logs"
-                / "experiment_summary.log"
-            ),
+            log_path=(experiment_root / "analysis_logs" / "experiment_summary.log"),
         )
         write_pipeline_status(
             experiment_root,
@@ -1452,6 +1483,13 @@ def main() -> int:
     try:
         for step in STEPS[start : stop + 1]:
             active_step = step
+            if step == "inference":
+                stage_configs["inference"] = {
+                    **stage_configs["inference"],
+                    "resolved_model_input_capabilities": (
+                        resolve_stage_input_capabilities(args)
+                    ),
+                }
             if step not in contracts:
                 contracts.update(
                     initialize_stage_contracts(

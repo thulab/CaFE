@@ -92,6 +92,7 @@ def parse_args() -> argparse.Namespace:
         "--models",
         nargs="+",
         default=[
+            "Timer-4.0",
             "Chronos-2",
             "timesfm2.5",
             "tirex2",
@@ -2974,23 +2975,23 @@ def main() -> int:
             if model_id not in BASELINES
             else None
         )
-        metrics, effects, missing = analyze_one_model(
+        metric_rows, effects, missing = analyze_one_model(
             task_path,
             model_id=model_id,
             prediction_path=prediction_path,
         )
-        all_metrics.extend(metrics)
+        all_metrics.extend(metric_rows)
         all_effects.extend(effects)
         coverage.append(
             {
                 "model_id": model_id,
-                "metric_row_count": len(metrics),
+                "metric_row_count": len(metric_rows),
                 "effect_row_count": len(effects),
                 "missing_prediction_count": missing,
             }
         )
         print(
-            f"analyzed {model_id}: metrics={len(metrics)}, "
+            f"analyzed {model_id}: metrics={len(metric_rows)}, "
             f"effects={len(effects)}, missing={missing}",
             flush=True,
         )
