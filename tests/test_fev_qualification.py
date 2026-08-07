@@ -81,6 +81,11 @@ def test_qualification_summary_and_csv_use_data_level_statuses():
         "target_nonfinite_fraction": 0.01,
         "known_covariate_nonfinite_count": 0,
         "known_covariate_nonfinite_fraction": 0.0,
+        "hierarchy_view": {
+            "available": True,
+            "eligible_view_count": 3,
+            "attached_source_record_count": 6,
+        },
         "categorical_known_columns": [],
         "existing_cafe_source_overlaps": [],
         "anchor_error": None,
@@ -93,4 +98,6 @@ def test_qualification_summary_and_csv_use_data_level_statuses():
     assert summary["task_with_minimum_anchor_count"] == 1
     assert summary["eligible_capability_cells"] == len(protocol.CAPABILITIES)
     assert summary["task_with_target_missingness_count"] == 1
+    assert summary["task_with_declared_hierarchy_count"] == 1
     assert "eligible_via_existing_canonical_adapter" in matrix
+    assert ",3,6," in matrix

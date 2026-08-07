@@ -250,6 +250,9 @@ def qualify_task_view(
             "known_covariate_nonfinite_fraction": float(
                 adapter_metadata["known_covariate_nonfinite_fraction"]
             ),
+            "hierarchy_view": dict(
+                adapter_metadata.get("hierarchy_view", {"available": False})
+            ),
             "rejected_missing_count": int(
                 source_metadata.get("rejected_missing_count", 0)
             ),
@@ -299,6 +302,10 @@ def summarize_qualification(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "task_with_known_covariate_missingness_count": sum(
             int(row["known_covariate_nonfinite_count"]) > 0 for row in rows
         ),
+        "task_with_declared_hierarchy_count": sum(
+            bool(row.get("hierarchy_view", {}).get("available"))
+            for row in rows
+        ),
         "categorical_task_count": sum(
             bool(row["categorical_known_columns"]) for row in rows
         ),
@@ -327,6 +334,8 @@ def qualification_matrix_csv(rows: list[dict[str, Any]]) -> str:
         "accepted_anchor_count",
         "target_nonfinite_fraction",
         "known_covariate_nonfinite_fraction",
+        "hierarchy_view_count",
+        "hierarchy_attached_record_count",
         "existing_cafe_source_overlaps",
         "anchor_error",
         *protocol.CAPABILITIES,
@@ -341,6 +350,12 @@ def qualification_matrix_csv(rows: list[dict[str, Any]]) -> str:
                 "existing_cafe_source_overlaps": ";".join(
                     row["existing_cafe_source_overlaps"]
                 ),
+                "hierarchy_view_count": row.get("hierarchy_view", {}).get(
+                    "eligible_view_count", 0
+                ),
+                "hierarchy_attached_record_count": row.get(
+                    "hierarchy_view", {}
+                ).get("attached_source_record_count", 0),
                 **row["capability_status"],
             }
         )
