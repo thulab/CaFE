@@ -28,6 +28,7 @@ from cafe.data.fev_bench import FEV_TASK_REVISION
 from cafe.data.fev_bench import FEV_TASKS_SHA256
 from cafe.data.fev_qualification import qualification_matrix_csv
 from cafe.data.fev_qualification import qualify_task_view
+from cafe.data.fev_qualification import select_qualification_configs
 from cafe.data.fev_qualification import summarize_qualification
 from cafe.data.fev_qualification import write_jsonl
 
@@ -56,6 +57,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--download-workers", type=int, default=4)
     parser.add_argument("--maximum-anchors", type=int, default=256)
     parser.add_argument("--minimum-observed-fraction", type=float, default=0.5)
+    parser.add_argument(
+        "--config-id",
+        dest="config_ids",
+        action="append",
+        help=(
+            "Qualify only this config from the frozen Phase 1 inventory; "
+            "repeat for a deterministic subset. The default is all configs."
+        ),
+    )
     parser.add_argument(
         "--skip-download",
         action="store_true",
@@ -367,6 +377,11 @@ def main() -> int:
             f"incomplete: {output_dir}"
         )
     phase1, tasks, files = _verify_phase1(phase1_dir)
+    tasks, files = select_qualification_configs(
+        tasks,
+        files,
+        args.config_ids,
+    )
     files_by_config = {
         str(row["configs"][0]): row for row in files
     }
@@ -460,6 +475,9 @@ def main() -> int:
                 "minimum_finite_feature_count": protocol.MIN_REAL_FEATURE_COUNT,
                 "maximum_anchors": args.maximum_anchors,
                 "minimum_observed_fraction": args.minimum_observed_fraction,
+                "selected_config_ids": sorted(
+                    {str(row["config_id"]) for row in tasks}
+                ),
             },
         }
         partial_path.unlink()

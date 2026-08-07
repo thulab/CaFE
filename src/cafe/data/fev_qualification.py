@@ -18,6 +18,29 @@ from cafe.data.fev_bench import FEV_CATEGORICAL_MISSING_LEVEL
 from cafe.data.fev_bench import FevBenchConfig
 
 
+def select_qualification_configs(
+    tasks: list[dict[str, Any]],
+    files: list[dict[str, Any]],
+    config_ids: list[str] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not config_ids:
+        return tasks, files
+    selected_ids = set(config_ids)
+    available_ids = {str(row["config_id"]) for row in tasks}
+    unknown = sorted(selected_ids - available_ids)
+    if unknown:
+        raise ValueError(f"unknown FEV config IDs: {unknown}")
+    selected_tasks = [
+        row for row in tasks if str(row["config_id"]) in selected_ids
+    ]
+    selected_files = [
+        row
+        for row in files
+        if set(str(value) for value in row["configs"]) & selected_ids
+    ]
+    return selected_tasks, selected_files
+
+
 def discover_categorical_levels(
     parquet_path: Path,
     columns: list[str],
