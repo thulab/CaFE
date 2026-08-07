@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import asdict
 from dataclasses import dataclass, field
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,12 +18,14 @@ import pyarrow.parquet as pa_parquet
 from cafe.data.fev_bench import (
     FEV_CATEGORICAL_MISSING_LEVEL,
     FEV_BENCH_CONFIGS,
+    FEV_HIERARCHY_CONFIGS,
     FEV_DATASET_REPOSITORY,
     FEV_DATASET_REVISION,
     FEV_TASK_REPOSITORY,
     FEV_TASK_REVISION,
     FEV_TASKS_SHA256,
     FevBenchConfig,
+    FevHierarchyConfig,
 )
 
 from cafe.features.primitives import (
@@ -236,6 +239,180 @@ def _fev_known_covariates(
     return np.column_stack(columns), tuple(names)
 
 
+def _fev_static_value(table: pa.Table, column: str, row_index: int) -> str:
+    value = table.column(column)[row_index].as_py()
+    if value is None:
+        raise ValueError(
+            f"FEV hierarchy column {column!r} row {row_index} is null"
+        )
+    return str(value)
+
+
+def _fev_hierarchy_pairs(
+    children: list[str],
+    *,
+    contract: FevHierarchyConfig,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    ordered = sorted(children)
+    if contract.child_selection == "require_exactly_two":
+        return (
+            ([(ordered[0], ordered[1])], [])
+            if len(ordered) == 2
+            else ([], ordered)
+        )
+    if contract.child_selection == "sorted_nonoverlapping_pairs":
+        return (
+            [
+                (ordered[index], ordered[index + 1])
+                for index in range(0, len(ordered) - 1, 2)
+            ],
+            ordered[-1:] if len(ordered) % 2 else [],
+        )
+    raise ValueError(
+        f"unsupported FEV hierarchy child selection "
+        f"{contract.child_selection!r}"
+    )
+
+
+def _fev_hierarchy_assignments(
+    table: pa.Table,
+    records: list[RealSeriesRecord],
+    spans: list[tuple[pd.Timestamp, pd.Timestamp, int]],
+    *,
+    config: FevBenchConfig,
+    contract: FevHierarchyConfig,
+) -> tuple[dict[int, tuple[np.ndarray, str]], dict[str, Any]]:
+    if len(config.target_columns) != 1:
+        raise ValueError(
+            f"FEV hierarchy config {config.config_id} must have one target"
+        )
+    grouped: dict[tuple[str, ...], dict[str, list[int]]] = {}
+    for row_index in range(len(records)):
+        group_key = tuple(
+            _fev_static_value(table, column, row_index)
+            for column in contract.group_columns
+        )
+        child_key = _fev_static_value(
+            table,
+            contract.child_column,
+            row_index,
+        )
+        grouped.setdefault(group_key, {}).setdefault(child_key, []).append(
+            row_index
+        )
+
+    assignments: dict[int, tuple[np.ndarray, str]] = {}
+    view_count = 0
+    rejected_alignment_count = 0
+    unpaired_children: list[str] = []
+    for group_key, child_rows in sorted(grouped.items()):
+        pairs, unpaired = _fev_hierarchy_pairs(
+            list(child_rows),
+            contract=contract,
+        )
+        group_label = ",".join(
+            f"{column}={value}"
+            for column, value in zip(contract.group_columns, group_key)
+        )
+        unpaired_children.extend(
+            f"{group_label}:{child}" for child in unpaired
+        )
+        for left_child, right_child in pairs:
+            pair_rows = [
+                *child_rows[left_child],
+                *child_rows[right_child],
+            ]
+            starts = [spans[index][0] for index in pair_rows]
+            ends = [spans[index][1] for index in pair_rows]
+            lengths = [spans[index][2] for index in pair_rows]
+            if contract.time_alignment == "require_exact":
+                if (
+                    len(set(starts)) != 1
+                    or len(set(ends)) != 1
+                    or len(set(lengths)) != 1
+                ):
+                    rejected_alignment_count += 1
+                    continue
+                union_index = pd.date_range(
+                    start=starts[0],
+                    periods=lengths[0],
+                    freq=config.frequency,
+                )
+            elif contract.time_alignment == "regular_union_leading_zero":
+                # FEV trims leading all-zero M5 leaf history.  All leaves must
+                # still share the same terminal timestamp; only the declared
+                # leading-zero region may be restored for additive alignment.
+                if len(set(ends)) != 1:
+                    rejected_alignment_count += 1
+                    continue
+                union_index = pd.date_range(
+                    start=min(starts),
+                    end=ends[0],
+                    freq=config.frequency,
+                )
+            else:
+                raise ValueError(
+                    f"unsupported FEV hierarchy alignment "
+                    f"{contract.time_alignment!r}"
+                )
+
+            child_sums: list[np.ndarray] = []
+            valid = True
+            for child in (left_child, right_child):
+                aggregate = np.zeros(len(union_index), dtype=float)
+                for row_index in child_rows[child]:
+                    start_offset = int(
+                        union_index.get_indexer([spans[row_index][0]])[0]
+                    )
+                    row_length = spans[row_index][2]
+                    if (
+                        start_offset < 0
+                        or start_offset + row_length > len(union_index)
+                    ):
+                        valid = False
+                        break
+                    aggregate[
+                        start_offset : start_offset + row_length
+                    ] += records[row_index].values[0]
+                if not valid:
+                    break
+                child_sums.append(aggregate)
+            if not valid:
+                rejected_alignment_count += 1
+                continue
+
+            hierarchy = np.vstack(child_sums)
+            structural_group_id = (
+                f"fev:{config.config_id}:{group_label}:"
+                f"children={left_child}+{right_child}"
+            )
+            for row_index in pair_rows:
+                start_offset = int(
+                    union_index.get_indexer([spans[row_index][0]])[0]
+                )
+                row_length = spans[row_index][2]
+                assignments[row_index] = (
+                    hierarchy[:, start_offset : start_offset + row_length],
+                    structural_group_id,
+                )
+            view_count += 1
+
+    return assignments, {
+        "available": True,
+        "group_columns": list(contract.group_columns),
+        "child_column": contract.child_column,
+        "child_selection": contract.child_selection,
+        "time_alignment": contract.time_alignment,
+        "parent_policy": "exact_sum_of_two_declared_children",
+        "observed_parent_required": False,
+        "eligible_view_count": view_count,
+        "attached_source_record_count": len(assignments),
+        "rejected_alignment_count": rejected_alignment_count,
+        "unpaired_child_count": len(unpaired_children),
+        "unpaired_children": unpaired_children,
+    }
+
+
 @register_real_data_adapter("fev_parquet")
 def load_fev_parquet(
     asset_path: Path,
@@ -292,7 +469,12 @@ def load_fev_parquet(
             "id",
             "timestamp",
             *config.target_columns,
-            *config.known_dynamic_columns,
+            *(
+                config.known_dynamic_columns
+                if config.expose_known_dynamic_covariates
+                else ()
+            ),
+            *config.static_columns,
         }
     )
     tables = [
@@ -310,12 +492,20 @@ def load_fev_parquet(
     target_nonfinite_count = 0
     covariate_value_count = 0
     covariate_nonfinite_count = 0
+    timestamp_spans: list[tuple[pd.Timestamp, pd.Timestamp, int]] = []
     for row_index, item_id in enumerate(item_ids):
         timestamps = table.column("timestamp")[row_index].as_py()
         target_length = _validate_fev_timestamps(
             timestamps,
             config=config,
             row_index=row_index,
+        )
+        timestamp_spans.append(
+            (
+                pd.Timestamp(timestamps[0]),
+                pd.Timestamp(timestamps[-1]),
+                target_length,
+            )
         )
         target_values = np.vstack(
             [
@@ -332,12 +522,15 @@ def load_fev_parquet(
         target_nonfinite_count += int(
             target_values.size - np.count_nonzero(np.isfinite(target_values))
         )
-        covariates, covariate_names = _fev_known_covariates(
-            table,
-            row_index=row_index,
-            config=config,
-            expected_length=target_length,
-        )
+        if config.expose_known_dynamic_covariates:
+            covariates, covariate_names = _fev_known_covariates(
+                table,
+                row_index=row_index,
+                config=config,
+                expected_length=target_length,
+            )
+        else:
+            covariates, covariate_names = None, ()
         if covariates is not None:
             covariate_value_count += int(covariates.size)
             covariate_nonfinite_count += int(
@@ -358,6 +551,31 @@ def load_fev_parquet(
         )
         lengths.append(target_length)
 
+    hierarchy_contract = FEV_HIERARCHY_CONFIGS.get(config.config_id)
+    if hierarchy_contract is None:
+        hierarchy_metadata: dict[str, Any] = {"available": False}
+    else:
+        hierarchy_assignments, hierarchy_metadata = (
+            _fev_hierarchy_assignments(
+                table,
+                records,
+                timestamp_spans,
+                config=config,
+                contract=hierarchy_contract,
+            )
+        )
+        records = [
+            replace(
+                record,
+                hierarchy_values=hierarchy_assignments[row_index][0],
+                hierarchy_kind="children_only_additive",
+                structural_group_id=hierarchy_assignments[row_index][1],
+            )
+            if row_index in hierarchy_assignments
+            else record
+            for row_index, record in enumerate(records)
+        ]
+
     selected = (
         records if record_limit is None else records[: int(record_limit)]
     )
@@ -367,6 +585,16 @@ def load_fev_parquet(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
+    hierarchy_contract_payload = (
+        json.dumps(
+            asdict(hierarchy_contract),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if hierarchy_contract is not None
+        else None
+    )
     return RealDatasetBundle(
         frequency=config.frequency,
         records=tuple(selected),
@@ -380,8 +608,18 @@ def load_fev_parquet(
             "tasks_sha256": FEV_TASKS_SHA256,
             "config_id": config.config_id,
             "config_contract_sha256": hashlib.sha256(config_payload).hexdigest(),
+            "hierarchy_contract_sha256": (
+                hashlib.sha256(hierarchy_contract_payload).hexdigest()
+                if hierarchy_contract_payload is not None
+                else None
+            ),
             "target_columns": list(config.target_columns),
             "known_dynamic_columns": list(config.known_dynamic_columns),
+            "known_dynamic_policy": (
+                "exposed_as_known_future"
+                if config.expose_known_dynamic_covariates
+                else "retained_in_source_provenance_not_exposed_in_hierarchy_view"
+            ),
             "categorical_dynamic_levels": {
                 column: list(levels)
                 for column, levels in config.categorical_dynamic_levels
@@ -395,6 +633,7 @@ def load_fev_parquet(
             ),
             "static_columns": list(config.static_columns),
             "static_policy": "retained_in_source_provenance_not_used_by_cafe_v1",
+            "hierarchy_view": hierarchy_metadata,
             "source_record_count": len(records),
             "selected_record_count": len(selected),
             "record_selection": (

@@ -25,6 +25,7 @@ class FevBenchConfig:
     categorical_dynamic_levels: tuple[
         tuple[str, tuple[str, ...]], ...
     ] = ()
+    expose_known_dynamic_covariates: bool = True
     sha256: str = ""
     size_bytes: int = 0
 
@@ -33,9 +34,119 @@ class FevBenchConfig:
         return self.source_path.rsplit("/", 1)[-1]
 
 
+@dataclass(frozen=True)
+class FevHierarchyConfig:
+    """An explicit additive view derivable from FEV row metadata."""
+
+    group_columns: tuple[str, ...]
+    child_column: str
+    child_selection: str
+    time_alignment: str
+
+
+# These contracts use dataset-declared business identifiers only.  They do
+# not infer a hierarchy from correlations.  CaFE v1 evaluates a local
+# parent-plus-two-children structure, so groups with more children are paired
+# deterministically and M5's three-department FOODS groups are left out to
+# preserve the same official category/department contract as ``m5_csv``.
+FEV_HIERARCHY_CONFIGS = {
+    "m5_1D": FevHierarchyConfig(
+        group_columns=("store_id", "cat_id"),
+        child_column="dept_id",
+        child_selection="require_exactly_two",
+        time_alignment="regular_union_leading_zero",
+    ),
+    "favorita_stores_1D": FevHierarchyConfig(
+        group_columns=("store_nbr",),
+        child_column="family",
+        child_selection="sorted_nonoverlapping_pairs",
+        time_alignment="require_exact",
+    ),
+    "favorita_transactions_1D": FevHierarchyConfig(
+        group_columns=("state", "city"),
+        child_column="store_nbr",
+        child_selection="sorted_nonoverlapping_pairs",
+        time_alignment="require_exact",
+    ),
+}
+
+
 FEV_BENCH_CONFIGS = {
     config.config_id: config
     for config in (
+        FevBenchConfig(
+            config_id="m5_1D",
+            source_path="m5/1D/train-00000-of-00001.parquet",
+            frequency="D",
+            target_columns=("target",),
+            known_dynamic_columns=(
+                "sell_price",
+                "event_National",
+                "event_Religious",
+                "event_Cultural",
+                "snap_CA",
+                "event_Sporting",
+                "snap_WI",
+                "snap_TX",
+            ),
+            static_columns=(
+                "item_id",
+                "dept_id",
+                "cat_id",
+                "store_id",
+                "state_id",
+            ),
+            expose_known_dynamic_covariates=False,
+            sha256=(
+                "69fc4c0eba0003780a2ccb64bcf9b1b93764c36ae6853901c98dd5dd6b984599"
+            ),
+            size_bytes=83_801_693,
+        ),
+        FevBenchConfig(
+            config_id="favorita_stores_1D",
+            source_path=(
+                "favorita_stores/1D/train-00000-of-00001.parquet"
+            ),
+            frequency="D",
+            target_columns=("sales",),
+            known_dynamic_columns=("holiday", "onpromotion"),
+            past_dynamic_columns=("oil_price",),
+            static_columns=(
+                "store_nbr",
+                "family",
+                "city",
+                "state",
+                "type",
+                "cluster",
+            ),
+            expose_known_dynamic_covariates=False,
+            sha256=(
+                "67cb55451afdec909198a04a529f2d153db23e1dfcdee92d9423628ce5e4cf6b"
+            ),
+            size_bytes=7_374_782,
+        ),
+        FevBenchConfig(
+            config_id="favorita_transactions_1D",
+            source_path=(
+                "favorita_transactions/1D/train-00000-of-00001.parquet"
+            ),
+            frequency="D",
+            target_columns=("transactions",),
+            known_dynamic_columns=("holiday",),
+            past_dynamic_columns=("oil_price",),
+            static_columns=(
+                "store_nbr",
+                "city",
+                "state",
+                "type",
+                "cluster",
+            ),
+            expose_known_dynamic_covariates=False,
+            sha256=(
+                "1bbc5787a9e9a5a355bfc1a542ba4b0ae0283aba9e98539a2a9e5be6214d80df"
+            ),
+            size_bytes=196_330,
+        ),
         FevBenchConfig(
             config_id="ETT_1H",
             source_path="ETT/1H/train-00000-of-00001.parquet",

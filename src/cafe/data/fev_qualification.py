@@ -162,12 +162,11 @@ def qualify_task_view(
                 capability_status[capability_id] = metadata_status
                 continue
             if capability_id == "hierarchical_coherence":
-                capability_status[capability_id] = (
-                    "eligible_via_existing_canonical_adapter"
-                    if metadata_status == "use_existing_canonical_adapter"
-                    else metadata_status
-                )
-                continue
+                if metadata_status == "use_existing_canonical_adapter":
+                    capability_status[capability_id] = (
+                        "eligible_via_existing_canonical_adapter"
+                    )
+                    continue
             if not anchors:
                 capability_status[capability_id] = "rejected_no_usable_anchors"
                 continue

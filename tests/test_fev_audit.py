@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from cafe.data.fev_audit import build_fev_metadata_audit
+from cafe.data.fev_audit import _capability_statuses
 from cafe.data.fev_audit import config_inventory_csv
 from cafe.data.fev_audit import parse_fev_readme
 from cafe.data.fev_audit import parse_fev_tasks
@@ -123,3 +124,20 @@ def test_fev_audit_csv_outputs_include_all_capability_columns():
     assert "covariate_response" in task_csv.splitlines()[0]
     assert "candidate_requires_category_scan" in task_csv
     assert "calendar_offset" in config_csv
+
+
+def test_fev_audit_marks_declared_daily_hierarchies_as_candidates():
+    for config_id in (
+        "m5_1D",
+        "favorita_stores_1D",
+        "favorita_transactions_1D",
+    ):
+        statuses = _capability_statuses(
+            base_status="candidate",
+            schema_errors=[],
+            target_count=1,
+            known_dynamic_count=0,
+            categorical_known_count=0,
+            config_id=config_id,
+        )
+        assert statuses["hierarchical_coherence"] == "candidate"

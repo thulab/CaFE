@@ -120,6 +120,43 @@ def write_fev_parquet(
     return parquet_path, config
 
 
+def write_hierarchy_fev_parquet(
+    asset_path: Path,
+    *,
+    target_column: str,
+    rows: list[dict[str, object]],
+    static_columns: tuple[str, ...],
+) -> tuple[Path, fev_bench.FevBenchConfig]:
+    asset_path.mkdir(parents=True)
+    parquet_path = asset_path / "train-00000-of-00001.parquet"
+    table = pa.table(
+        {
+            "id": pa.array([row["id"] for row in rows]),
+            "timestamp": pa.array(
+                [row["timestamp"] for row in rows],
+                type=pa.list_(pa.timestamp("ms")),
+            ),
+            target_column: pa.array([row["target"] for row in rows]),
+            **{
+                column: pa.array([row[column] for row in rows])
+                for column in static_columns
+            },
+        }
+    )
+    pa_parquet.write_table(table, parquet_path)
+    digest = hashlib.sha256(parquet_path.read_bytes()).hexdigest()
+    config = fev_bench.FevBenchConfig(
+        config_id=asset_path.name,
+        source_path=f"test/{parquet_path.name}",
+        frequency="D",
+        target_columns=(target_column,),
+        static_columns=static_columns,
+        sha256=digest,
+        size_bytes=parquet_path.stat().st_size,
+    )
+    return parquet_path, config
+
+
 def test_fev_parquet_adapter_preserves_native_targets_and_known_covariates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -159,6 +196,9 @@ def test_fev_parquet_adapter_preserves_native_targets_and_known_covariates(
     )
     assert bundle.metadata["past_dynamic_columns"] == ["past"]
     assert bundle.metadata["static_columns"] == ["static"]
+    assert bundle.metadata["known_dynamic_policy"] == (
+        "exposed_as_known_future"
+    )
     assert bundle.metadata["dataset_revision"] == (
         fev_bench.FEV_DATASET_REVISION
     )
@@ -203,6 +243,147 @@ def test_fev_parquet_adapter_accepts_anchored_calendar_frequency(
     bundle = real.load_real_dataset("fev_parquet", asset_path)
 
     assert bundle.frequency == "W-FRI"
+
+
+def test_fev_m5_hierarchy_aggregates_departments_and_restores_leading_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    first_day = datetime(2024, 1, 1)
+    full_dates = [first_day + timedelta(days=index) for index in range(4)]
+    rows = [
+        {
+            "id": "item-a",
+            "timestamp": full_dates,
+            "target": [1.0, 2.0, 3.0, 4.0],
+            "item_id": "A",
+            "dept_id": "HOBBIES_1",
+            "cat_id": "HOBBIES",
+            "store_id": "CA_1",
+            "state_id": "CA",
+        },
+        {
+            "id": "item-b",
+            "timestamp": full_dates[1:],
+            "target": [10.0, 20.0, 30.0],
+            "item_id": "B",
+            "dept_id": "HOBBIES_1",
+            "cat_id": "HOBBIES",
+            "store_id": "CA_1",
+            "state_id": "CA",
+        },
+        {
+            "id": "item-c",
+            "timestamp": full_dates,
+            "target": [5.0, 6.0, 7.0, 8.0],
+            "item_id": "C",
+            "dept_id": "HOBBIES_2",
+            "cat_id": "HOBBIES",
+            "store_id": "CA_1",
+            "state_id": "CA",
+        },
+    ]
+    asset_path = tmp_path / "m5_1D"
+    _path, config = write_hierarchy_fev_parquet(
+        asset_path,
+        target_column="target",
+        rows=rows,
+        static_columns=(
+            "item_id",
+            "dept_id",
+            "cat_id",
+            "store_id",
+            "state_id",
+        ),
+    )
+    monkeypatch.setitem(real.FEV_BENCH_CONFIGS, config.config_id, config)
+
+    bundle = real.load_real_dataset("fev_parquet", asset_path)
+
+    assert bundle.metadata["hierarchy_view"]["eligible_view_count"] == 1
+    assert bundle.metadata["hierarchy_view"][
+        "attached_source_record_count"
+    ] == 3
+    first, trimmed, _third = bundle.records
+    assert first.hierarchy_kind == "children_only_additive"
+    np.testing.assert_array_equal(
+        first.hierarchy_values,
+        np.array([[1.0, 12.0, 23.0, 34.0], [5.0, 6.0, 7.0, 8.0]]),
+    )
+    np.testing.assert_array_equal(
+        trimmed.hierarchy_values,
+        np.array([[12.0, 23.0, 34.0], [6.0, 7.0, 8.0]]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("config_id", "target_column", "static_columns", "static_rows"),
+    [
+        (
+            "favorita_stores_1D",
+            "sales",
+            ("store_nbr", "family", "city", "state", "type", "cluster"),
+            [
+                (1.0, "A", "Quito", "Pichincha", "D", 1.0),
+                (1.0, "B", "Quito", "Pichincha", "D", 1.0),
+                (1.0, "C", "Quito", "Pichincha", "D", 1.0),
+            ],
+        ),
+        (
+            "favorita_transactions_1D",
+            "transactions",
+            ("store_nbr", "city", "state", "type", "cluster"),
+            [
+                (1.0, "Quito", "Pichincha", "D", 1.0),
+                (2.0, "Quito", "Pichincha", "D", 1.0),
+                (3.0, "Quito", "Pichincha", "D", 1.0),
+            ],
+        ),
+    ],
+)
+def test_fev_favorita_hierarchy_pairs_declared_siblings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    config_id: str,
+    target_column: str,
+    static_columns: tuple[str, ...],
+    static_rows: list[tuple[object, ...]],
+):
+    dates = [datetime(2024, 1, 1) + timedelta(days=index) for index in range(4)]
+    targets = ([1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [9.0] * 4)
+    rows = [
+        {
+            "id": f"item-{index}",
+            "timestamp": dates,
+            "target": targets[index],
+            **dict(zip(static_columns, static_values)),
+        }
+        for index, static_values in enumerate(static_rows)
+    ]
+    asset_path = tmp_path / config_id
+    _path, config = write_hierarchy_fev_parquet(
+        asset_path,
+        target_column=target_column,
+        rows=rows,
+        static_columns=static_columns,
+    )
+    monkeypatch.setitem(real.FEV_BENCH_CONFIGS, config.config_id, config)
+
+    bundle = real.load_real_dataset("fev_parquet", asset_path)
+
+    hierarchy = bundle.metadata["hierarchy_view"]
+    assert hierarchy["eligible_view_count"] == 1
+    assert hierarchy["attached_source_record_count"] == 2
+    assert hierarchy["unpaired_child_count"] == 1
+    np.testing.assert_array_equal(
+        bundle.records[0].hierarchy_values,
+        np.array(targets[:2]),
+    )
+    np.testing.assert_array_equal(
+        bundle.records[1].hierarchy_values,
+        np.array(targets[:2]),
+    )
+    assert bundle.records[2].hierarchy_values is None
 
 
 def test_fev_categorical_covariates_encode_missingness_as_a_category():
@@ -268,6 +449,9 @@ def test_fev_pilot_registry_uses_local_parquet_adapter():
         "fev_rohlik_orders_1d",
         "fev_rossmann_1d",
         "fev_hospital_admissions_1d",
+        "fev_m5_1d_hierarchy",
+        "fev_favorita_stores_1d_hierarchy",
+        "fev_favorita_transactions_1d_hierarchy",
     }
     for dataset_id in dataset_ids:
         dataset = protocol.resolve_dataset(dataset_id)

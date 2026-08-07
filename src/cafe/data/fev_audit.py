@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 
 from cafe.data.fev_bench import FEV_BENCH_CONFIGS
+from cafe.data.fev_bench import FEV_HIERARCHY_CONFIGS
 from cafe.protocol import CAPABILITIES
 from cafe.protocol import MIN_REAL_FEATURE_COUNT
 from cafe.protocol import REAL_FORECAST_MASTER_LENGTH
@@ -196,7 +197,11 @@ def _capability_statuses(
     statuses["hierarchical_coherence"] = (
         "use_existing_canonical_adapter"
         if config_id == "hierarchical_sales_1D"
-        else "not_applicable_no_explicit_hierarchy"
+        else (
+            base_status
+            if config_id in FEV_HIERARCHY_CONFIGS
+            else "not_applicable_no_explicit_hierarchy"
+        )
     )
     return statuses
 
