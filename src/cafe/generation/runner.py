@@ -26,6 +26,15 @@ from cafe.generation.families import (
     common_factor_identifiability_gate,
     cross_series_identifiability_gate,
 )
+from cafe.generation.real_counterfactuals import (
+    REAL_ANCHORED_ALPHAS,
+    REAL_ANCHORED_GENERATOR_VERSION,
+    available_capabilities as available_real_anchored_capabilities,
+    iter_real_anchored_samples,
+    real_anchored_assignments,
+    validate_availability_contract,
+    validate_contract_integrity,
+)
 
 
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
@@ -646,6 +655,24 @@ def main() -> int:
     dataset_root = args.output_root.resolve() / dataset.dataset_id
     calibration_dir = dataset_root / "01_calibration"
     bundle = protocol.read_json(calibration_dir / "calibration_bundle.json")
+    expected_bundle_content_sha256 = protocol.json_sha256(
+        {
+            "dataset": bundle["dataset"],
+            "source": bundle["source"],
+            "files": bundle["files"],
+            "generator_version": bundle["generator_version"],
+        }
+    )
+    if bundle.get("bundle_content_sha256") != (
+        expected_bundle_content_sha256
+    ):
+        raise ValueError("calibration bundle content hash mismatch")
+    for record in bundle.get("files", {}).values():
+        path = Path(record["path"])
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if protocol.file_sha256(path) != record["sha256"]:
+            raise ValueError(f"calibration bundle file hash mismatch: {path}")
     anchors = list(protocol.iter_jsonl(calibration_dir / "anchors.jsonl"))
     real_anchor_masters = list(
         protocol.iter_jsonl(calibration_dir / "real_anchor_masters.jsonl")
@@ -653,13 +680,87 @@ def main() -> int:
     calibration = protocol.read_json(
         calibration_dir / "capability_calibration.json"
     )
+    upstream_pipeline_schema = bundle.get("pipeline_schema_version")
+    if upstream_pipeline_schema not in {
+        "cafe.pipeline.v1",
+        protocol.SCHEMA_VERSION,
+    }:
+        raise ValueError(
+            "unsupported calibration bundle pipeline schema: "
+            f"{upstream_pipeline_schema!r}"
+        )
+    expected_bundle_schema = {
+        "cafe.pipeline.v1": "cafe.calibration_bundle.v1",
+        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v2",
+    }[upstream_pipeline_schema]
+    if bundle.get("schema_version") != expected_bundle_schema:
+        raise ValueError(
+            "calibration bundle schema does not match its pipeline schema: "
+            f"expected {expected_bundle_schema!r}"
+        )
+    real_anchored_file_keys = {
+        "real_anchored_backgrounds",
+        "real_anchored_contracts",
+        "real_anchored_availability",
+    }
+    present_real_anchored_file_keys = real_anchored_file_keys.intersection(
+        bundle.get("files", {})
+    )
+    if present_real_anchored_file_keys and (
+        present_real_anchored_file_keys != real_anchored_file_keys
+    ):
+        raise ValueError(
+            "calibration bundle contains an incomplete real-anchored "
+            "component"
+        )
+    real_anchored_files_present = bool(present_real_anchored_file_keys)
+    if (
+        upstream_pipeline_schema == "cafe.pipeline.v1"
+        and real_anchored_files_present
+    ):
+        raise ValueError(
+            "v1 calibration bundle must not declare the v2 real-anchored "
+            "component"
+        )
+    if (
+        upstream_pipeline_schema == protocol.SCHEMA_VERSION
+        and not real_anchored_files_present
+    ):
+        raise ValueError(
+            "v2 calibration bundle is missing the frozen real-anchored "
+            "component"
+        )
+    if real_anchored_files_present:
+        real_anchored_backgrounds = list(
+            protocol.iter_jsonl(
+                Path(bundle["files"]["real_anchored_backgrounds"]["path"])
+            )
+        )
+        real_anchored_contracts = list(
+            protocol.iter_jsonl(
+                Path(bundle["files"]["real_anchored_contracts"]["path"])
+            )
+        )
+        real_anchored_availability = protocol.read_json(
+            Path(bundle["files"]["real_anchored_availability"]["path"])
+        )
+        for contract_row in real_anchored_contracts:
+            validate_contract_integrity(contract_row)
+        validate_availability_contract(
+            real_anchored_availability,
+            real_anchored_contracts,
+        )
+    else:
+        real_anchored_backgrounds = []
+        real_anchored_contracts = []
+        real_anchored_availability = {
+            "schema_version": "cafe.real_anchored_availability.v1",
+            "benchmark_track": "real_anchored_counterfactual",
+            "dataset_id": dataset.dataset_id,
+            "cells": [],
+        }
     if bundle["generator_version"] != protocol.GENERATOR_VERSION:
         raise ValueError("calibration bundle generator version mismatch")
-    if bundle.get("pipeline_schema_version") != protocol.SCHEMA_VERSION:
-        raise ValueError(
-            "calibration bundle pipeline schema mismatch; regenerate the "
-            "immutable calibration artifacts"
-        )
 
     seed_indexes = list(
         range(args.seed_start, args.seed_start + args.seed_count)
@@ -682,10 +783,28 @@ def main() -> int:
             requested_capability_ids,
         )
     )
-    if not capability_ids:
+    real_anchored_capability_ids = tuple(
+        capability_id
+        for capability_id in available_real_anchored_capabilities(
+            real_anchored_availability
+        )
+        if capability_id in requested_capability_ids
+    )
+    real_anchored_assignment_map = real_anchored_assignments(
+        real_anchored_contracts,
+        capability_ids=real_anchored_capability_ids,
+        seed_indexes=seed_indexes,
+    )
+    generated_real_anchored_capability_ids = tuple(
+        capability_id
+        for capability_id in real_anchored_capability_ids
+        if real_anchored_assignment_map[capability_id]
+    )
+    if not capability_ids and not generated_real_anchored_capability_ids:
         raise ValueError(
-            "none of the requested capabilities has a real-calibrated "
-            "intensity grid; unavailable="
+            "none of the requested capabilities has a sample in this seed "
+            "range in either the synthetic or real-anchored track; "
+            "synthetic_unavailable="
             f"{protocol.canonical_json(unavailable_capabilities)}"
         )
     gate_context = realism.build_realism_gate_context(
@@ -695,20 +814,91 @@ def main() -> int:
         near_distance_enabled=bool(args.near_distance_gate),
     )
     clean_generation_started = time.perf_counter()
-    clean_count, attempt_audits = generate_clean_samples(
-        dataset,
-        anchors,
-        calibration,
-        capability_ids=capability_ids,
-        seed_indexes=seed_indexes,
-        sensitivity_seeds=sensitivity_seeds,
-        gate_context=gate_context,
-        max_generation_attempts=args.max_generation_attempts,
-        output_path=clean_path,
-        workers=args.workers,
-    )
+    if capability_ids:
+        clean_count, attempt_audits = generate_clean_samples(
+            dataset,
+            anchors,
+            calibration,
+            capability_ids=capability_ids,
+            seed_indexes=seed_indexes,
+            sensitivity_seeds=sensitivity_seeds,
+            gate_context=gate_context,
+            max_generation_attempts=args.max_generation_attempts,
+            output_path=clean_path,
+            workers=args.workers,
+        )
+    else:
+        clean_count = protocol.write_jsonl(clean_path, ())
+        attempt_audits = []
     clean_generation_seconds = (
         time.perf_counter() - clean_generation_started
+    )
+
+    real_anchored_started = time.perf_counter()
+    real_anchored_path = (
+        shard_dir / f"{shard_name}__real_anchored_counterfactual.jsonl"
+    )
+    real_anchored_count = protocol.write_jsonl(
+        real_anchored_path,
+        iter_real_anchored_samples(
+            real_anchored_backgrounds,
+            real_anchored_contracts,
+            capability_ids=real_anchored_capability_ids,
+            seed_indexes=seed_indexes,
+            alphas=REAL_ANCHORED_ALPHAS,
+        ),
+    )
+    expected_real_anchored_count = (
+        sum(
+            len(assignments)
+            for assignments in real_anchored_assignment_map.values()
+        )
+        * len(REAL_ANCHORED_ALPHAS)
+        * 2
+    )
+    if real_anchored_count != expected_real_anchored_count:
+        raise ValueError(
+            "real-anchored generation count disagrees with frozen "
+            f"availability: {real_anchored_count} != "
+            f"{expected_real_anchored_count}"
+        )
+    real_anchored_generation_seconds = (
+        time.perf_counter() - real_anchored_started
+    )
+    real_anchored_availability_path = generation_dir / (
+        f"real_anchored_availability__{shard_name}.json"
+    )
+    generation_real_anchored_availability = {
+        **real_anchored_availability,
+        "source_calibration_bundle_sha256": bundle["bundle_content_sha256"],
+        "requested_seed_indexes": seed_indexes,
+        "generated_capabilities": list(
+            generated_real_anchored_capability_ids
+        ),
+        "assigned_seed_indexes_by_capability": {
+            capability_id: [
+                seed_index for seed_index, _row in assignments
+            ]
+            for capability_id, assignments in (
+                real_anchored_assignment_map.items()
+            )
+        },
+        "effective_background_count_by_capability": {
+            capability_id: len(assignments)
+            for capability_id, assignments in (
+                real_anchored_assignment_map.items()
+            )
+        },
+        "background_sampling_policy": (
+            "frozen_global_seed_ordinal_permutation_without_replacement_"
+            "truncate_at_eligible_count_v1"
+        ),
+        "generated_master_count": real_anchored_count,
+        "dose_values": list(REAL_ANCHORED_ALPHAS),
+    }
+    protocol.write_json(
+        real_anchored_availability_path,
+        generation_real_anchored_availability,
     )
 
     failure_counts = Counter(
@@ -782,7 +972,7 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "cafe.generation_config.v1",
+        "schema_version": "cafe.generation_config.v2",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": protocol.GENERATOR_VERSION,
@@ -795,6 +985,36 @@ def main() -> int:
         "capability_selection_policy": (
             "generate_only_explicit_real_calibrated_intensity_grids_v1"
         ),
+        "benchmark_tracks": [
+            "deterministic_synthetic",
+            "real_anchored_counterfactual",
+        ],
+        "real_anchored_counterfactual": {
+            "generator_version": REAL_ANCHORED_GENERATOR_VERSION,
+            "calibrated_available_capabilities": list(
+                real_anchored_capability_ids
+            ),
+            "generated_capabilities": list(
+                generated_real_anchored_capability_ids
+            ),
+            "effective_background_count_by_capability": {
+                capability_id: len(assignments)
+                for capability_id, assignments in (
+                    real_anchored_assignment_map.items()
+                )
+            },
+            "background_sampling": (
+                "frozen_global_seed_ordinal_permutation_without_replacement_"
+                "truncate_at_eligible_count_v1"
+            ),
+            "alpha_grid": list(REAL_ANCHORED_ALPHAS),
+            "pairing": "baseline_alpha1_vs_treatment_each_alpha",
+            "normalization": "shared_unmodified_real_l336_history",
+            "anti_copy": (
+                "not_applicable_intentional_real_anchor_counterfactual"
+            ),
+            "included_in_synthetic_ranking": False,
+        },
         "realism_gate_policy": {
             **gate_context.policy_summary,
             "max_generation_attempts": args.max_generation_attempts,
@@ -843,13 +1063,16 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "cafe.generation_manifest.v1",
+        "schema_version": "cafe.generation_manifest.v2",
         "created_at": protocol.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
             "blas_threads_per_process": 1,
             "timing_seconds": {
                 "clean_generation_and_gates": clean_generation_seconds,
+                "real_anchored_generation": (
+                    real_anchored_generation_seconds
+                ),
                 "derived_table_generation": derived_tables_seconds,
                 "elapsed_before_manifest_write": (
                     time.perf_counter() - run_started
@@ -871,6 +1094,13 @@ def main() -> int:
                 **protocol.file_record(ablation_path),
                 "row_count": ablation_count,
             },
+            "real_anchored_counterfactuals": {
+                **protocol.file_record(real_anchored_path),
+                "row_count": real_anchored_count,
+            },
+            "real_anchored_availability": protocol.file_record(
+                real_anchored_availability_path
+            ),
             "generation_attempts": protocol.file_record(attempt_path),
         },
         "generation_attempt_summary": attempt_summary,
@@ -891,6 +1121,7 @@ def main() -> int:
                 "clean_sample_count": clean_count,
                 "robustness_sample_count": robustness_count,
                 "input_ablation_sample_count": ablation_count,
+                "real_anchored_sample_count": real_anchored_count,
                 "sensitivity_seed_count": len(sensitivity_seeds),
                 "retried_group_count": attempt_summary[
                     "retried_group_count"

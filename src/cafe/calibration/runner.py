@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -16,10 +17,16 @@ os.environ["BLIS_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 
 from cafe import protocol
+from cafe.data.real import load_real_dataset
+from cafe.generation.real_counterfactuals import (
+    REAL_ANCHORED_GENERATOR_VERSION,
+    fit_background_capability_contracts,
+    public_background,
+)
 
 
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
-DEFAULT_GIFT_EVAL_DIR = Path("/root/xmy/gift-eval")
+DEFAULT_GIFT_EVAL_DIR = protocol.REPO_ROOT / "data" / "gift-eval"
 DEFAULT_WORKERS = min(8, os.cpu_count() or 1)
 
 
@@ -240,12 +247,23 @@ def main() -> int:
         else args.gift_eval_dir.resolve()
     )
     output_dir = args.output_root.resolve() / dataset.dataset_id / "01_calibration"
+    record_limit = (
+        max(64, min(256, int(math.ceil(args.max_anchors / 4))))
+        if dataset.real_data_adapter == "m5_csv"
+        else None
+    )
+    real_bundle = load_real_dataset(
+        dataset.real_data_adapter,
+        source_root / dataset.asset_name,
+        record_limit=record_limit,
+    )
     anchor_started = time.perf_counter()
     anchors, source_metadata = protocol.build_calibration_anchors(
         dataset,
         source_root=source_root,
         maximum_anchors=args.max_anchors,
         minimum_observed_fraction=args.minimum_observed_fraction,
+        real_bundle=real_bundle,
     )
     anchor_extraction_seconds = time.perf_counter() - anchor_started
     anchor_artifact_started = time.perf_counter()
@@ -259,6 +277,50 @@ def main() -> int:
     anchor_artifact_seconds = (
         time.perf_counter() - anchor_artifact_started
     )
+    real_anchored_started = time.perf_counter()
+    private_backgrounds, real_anchored_source = (
+        protocol.build_real_anchored_backgrounds(
+            dataset,
+            source_root=source_root,
+            maximum_backgrounds=args.max_anchors,
+            minimum_observed_fraction=args.minimum_observed_fraction,
+            real_bundle=real_bundle,
+        )
+    )
+    real_anchored_contracts, real_anchored_availability = (
+        fit_background_capability_contracts(
+            private_backgrounds,
+            capability_ids=args.capabilities,
+        )
+    )
+    real_anchored_availability["dataset_id"] = dataset.dataset_id
+    for cell in real_anchored_availability["cells"]:
+        cell["dataset_id"] = dataset.dataset_id
+    real_anchored_backgrounds = [
+        public_background(background) for background in private_backgrounds
+    ]
+    real_anchored_background_path = (
+        output_dir / "real_anchored_backgrounds.jsonl"
+    )
+    protocol.write_jsonl(
+        real_anchored_background_path,
+        real_anchored_backgrounds,
+    )
+    real_anchored_contract_path = (
+        output_dir / "real_anchored_contracts.jsonl"
+    )
+    protocol.write_jsonl(
+        real_anchored_contract_path,
+        real_anchored_contracts,
+    )
+    real_anchored_availability_path = (
+        output_dir / "real_anchored_availability.json"
+    )
+    protocol.write_json(
+        real_anchored_availability_path,
+        real_anchored_availability,
+    )
+    real_anchored_seconds = time.perf_counter() - real_anchored_started
     capability_ids = tuple(args.capabilities)
     capability_calibration_started = time.perf_counter()
     capability_calibration = calibrate_capabilities(
@@ -280,7 +342,7 @@ def main() -> int:
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "cafe.calibration_bundle.v1",
+        "schema_version": "cafe.calibration_bundle.v2",
         "created_at": protocol.utc_now(),
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,
@@ -288,6 +350,11 @@ def main() -> int:
         "source": source_metadata,
         "anchor_count": len(anchors),
         "real_forecast_anchor_count": len(real_forecast_masters),
+        "real_anchored_background_count": len(real_anchored_backgrounds),
+        "real_anchored_contract_count": len(real_anchored_contracts),
+        "real_anchored_generator_version": REAL_ANCHORED_GENERATOR_VERSION,
+        "real_anchored_source": real_anchored_source,
+        "real_anchored_availability": real_anchored_availability,
         "requested_capabilities": list(args.capabilities),
         "capabilities": list(
             capability_calibration["available_capabilities"]
@@ -301,6 +368,9 @@ def main() -> int:
             "timing_seconds": {
                 "anchor_extraction": anchor_extraction_seconds,
                 "anchor_artifact_write": anchor_artifact_seconds,
+                "real_anchored_background_and_contracts": (
+                    real_anchored_seconds
+                ),
                 "capability_family_response_qualification": (
                     capability_calibration_seconds
                 ),
@@ -404,10 +474,47 @@ def main() -> int:
                 "L168 history plus a held-out H48 future and never enters "
                 "synthetic mechanism ranking"
             ),
+            "real_anchored_counterfactual": {
+                "benchmark_track": "real_anchored_counterfactual",
+                "fit_scope": "history_only_l504",
+                "model_visible_baseline": "suffix_l336_plus_real_h48",
+                "normalization": "shared_unmodified_real_l336_history",
+                "multi_seasonal_law": (
+                    "x_alpha=x+(alpha-1)*secondary_harmonic_sum; "
+                    "carrier fixed"
+                ),
+                "trend_law": (
+                    "x_alpha=x+(alpha-1)*local_trend_nonlinearity; "
+                    "level and linear trend fixed"
+                ),
+                "time_varying_seasonality_law": (
+                    "x_alpha=x+(alpha-1)*carrier_modulation_sidebands; "
+                    "carrier fixed"
+                ),
+                "regime_switching_law": (
+                    "x_alpha=x+(alpha-1)*history_joinpoint_level_shift; "
+                    "constant post-join extension"
+                ),
+                "future_semantics": (
+                    "observed real nuisance plus deterministic intervention"
+                ),
+                "ranking_separation": (
+                    "never included in deterministic synthetic scores"
+                ),
+            },
         },
         "files": {
             "anchors": protocol.file_record(anchor_path),
             "real_anchor_masters": protocol.file_record(real_forecast_path),
+            "real_anchored_backgrounds": protocol.file_record(
+                real_anchored_background_path
+            ),
+            "real_anchored_contracts": protocol.file_record(
+                real_anchored_contract_path
+            ),
+            "real_anchored_availability": protocol.file_record(
+                real_anchored_availability_path
+            ),
             "capability_calibration": protocol.file_record(capability_path),
         },
     }
@@ -427,6 +534,14 @@ def main() -> int:
                 "dataset_id": dataset.dataset_id,
                 "anchor_count": len(anchors),
                 "real_forecast_anchor_count": len(real_forecast_masters),
+                "real_anchored_background_count": len(
+                    real_anchored_backgrounds
+                ),
+                "real_anchored_available_capabilities": [
+                    cell["capability_id"]
+                    for cell in real_anchored_availability["cells"]
+                    if cell["status"] == "available"
+                ],
                 "output": str(output_dir),
                 "bundle_content_sha256": bundle["bundle_content_sha256"],
                 "timing_seconds": {

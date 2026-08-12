@@ -40,6 +40,11 @@ SYNTHETIC_EVALUATION_TABLES = frozenset(
         "strict_counterfactual_audit",
     }
 )
+REAL_ANCHORED_BENCHMARK_TRACK = "real_anchored_counterfactual"
+REAL_ANCHORED_COMPONENT_KEYS = (
+    "real_anchored_counterfactuals",
+    "real_anchored",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -121,9 +126,10 @@ def validated_synthetic_task_path(
     ):
         raise ValueError("analysis task manifest hash mismatch")
     task_manifest = protocol.read_json(task_manifest_path)
-    if task_manifest.get("schema_version") != (
-        "cafe.inference_task_manifest.v1"
-    ):
+    if task_manifest.get("schema_version") not in {
+        "cafe.inference_task_manifest.v1",
+        "cafe.inference_task_manifest.v2",
+    }:
         raise ValueError("unsupported Paper-cafe inference task manifest")
     component = task_manifest.get("task_components", {}).get("synthetic")
     if not isinstance(component, dict):
@@ -181,6 +187,248 @@ def validated_synthetic_task_path(
     return task_path, task_manifest
 
 
+def _real_anchored_component_record(
+    container: dict[str, Any],
+) -> dict[str, Any] | None:
+    for collection_name in (
+        "task_components",
+        "generation_components",
+        "components",
+    ):
+        collection = container.get(collection_name)
+        if not isinstance(collection, dict):
+            continue
+        for key in REAL_ANCHORED_COMPONENT_KEYS:
+            record = collection.get(key)
+            if isinstance(record, dict):
+                return record
+    for key in (
+        "real_anchored_generation_component",
+        "real_anchored_source",
+    ):
+        record = container.get(key)
+        if isinstance(record, dict):
+            return record
+    return None
+
+
+def _real_anchored_generation_record(
+    component: dict[str, Any],
+    task_manifest: dict[str, Any],
+    inference_manifest: dict[str, Any],
+) -> dict[str, Any] | None:
+    for key in (
+        "generation_component",
+        "source_generation_component",
+        "generation_source",
+    ):
+        record = component.get(key)
+        if isinstance(record, dict):
+            return record
+    for container in (task_manifest, inference_manifest):
+        for key in (
+            "real_anchored_generation_component",
+            "real_anchored_source",
+        ):
+            direct_record = container.get(key)
+            if isinstance(direct_record, dict):
+                return direct_record
+        record = _real_anchored_component_record(container)
+        if record is not None and record is not component:
+            return record
+        generation_files = container.get("generation_files")
+        if isinstance(generation_files, dict):
+            for key in REAL_ANCHORED_COMPONENT_KEYS:
+                candidate = generation_files.get(key)
+                if isinstance(candidate, dict):
+                    return candidate
+        if isinstance(generation_files, list):
+            for candidate in generation_files:
+                if not isinstance(candidate, dict):
+                    continue
+                identity = " ".join(
+                    str(candidate.get(name, ""))
+                    for name in ("name", "component", "benchmark_track", "path")
+                ).lower()
+                if "real_anchored" in identity:
+                    return candidate
+    return None
+
+
+def _validated_component_jsonl(
+    record: dict[str, Any],
+    *,
+    label: str,
+) -> Path:
+    path = Path(str(record.get("path", "")))
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} is missing: {path}")
+    if (
+        record.get("bytes") is None
+        or int(record["bytes"]) != path.stat().st_size
+    ):
+        raise ValueError(f"{label} byte-size mismatch")
+    if (
+        not record.get("sha256")
+        or str(record["sha256"]) != protocol.file_sha256(path)
+    ):
+        raise ValueError(f"{label} hash mismatch")
+    expected_rows = record.get("row_count")
+    if expected_rows is None:
+        raise ValueError(f"{label} is missing row_count")
+    observed_rows = sum(1 for _ in protocol.iter_jsonl(path))
+    if observed_rows != int(expected_rows):
+        raise ValueError(
+            f"{label} row-count mismatch: {observed_rows} != {expected_rows}"
+        )
+    return path
+
+
+def validated_optional_real_anchored_task_path(
+    inference_dir: Path,
+    inference_manifest: dict[str, Any],
+    task_manifest: dict[str, Any],
+) -> Path | None:
+    """Resolve the independently ranked real-anchored task when present.
+
+    The component is optional for backwards compatibility. Once a task
+    component is declared, however, its immutable generation source must also
+    be manifest-bound; silently treating arbitrary forecast rows as a real
+    anchored benchmark would defeat the track's provenance guarantee.
+    """
+
+    task_components = task_manifest.get("task_components")
+    if not isinstance(task_components, dict):
+        return None
+    component = next(
+        (
+            task_components[key]
+            for key in REAL_ANCHORED_COMPONENT_KEYS
+            if isinstance(task_components.get(key), dict)
+        ),
+        None,
+    )
+    if component is None:
+        return None
+    generation_record = _real_anchored_generation_record(
+        component,
+        task_manifest,
+        inference_manifest,
+    )
+    if generation_record is None:
+        raise ValueError(
+            "real-anchored task component is not bound to a generation "
+            "component"
+        )
+    _validated_component_jsonl(
+        generation_record,
+        label="real-anchored generation component",
+    )
+    task_path = _validated_component_jsonl(
+        component,
+        label="real-anchored inference task component",
+    )
+    try:
+        task_path.resolve().relative_to(inference_dir.resolve())
+    except ValueError as error:
+        raise ValueError(
+            "real-anchored inference task component is outside inference dir"
+        ) from error
+
+    expected_manifest_count = task_manifest.get(
+        "real_anchored_view_count"
+    )
+    if (
+        expected_manifest_count is not None
+        and int(expected_manifest_count) != int(component["row_count"])
+    ):
+        raise ValueError(
+            "real-anchored task count disagrees with task manifest"
+        )
+
+    sample_ids: set[str] = set()
+    pair_members: dict[str, dict[int, float]] = defaultdict(dict)
+    seed_backgrounds: dict[tuple[str, int], str] = {}
+    background_seeds: dict[tuple[str, str], int] = {}
+    fixed_context_present = False
+    for row in protocol.iter_jsonl(task_path):
+        sample_id = str(row.get("sample_id", ""))
+        if not sample_id or sample_id in sample_ids:
+            raise ValueError(
+                f"duplicate or empty real-anchored sample_id: {sample_id}"
+            )
+        sample_ids.add(sample_id)
+        if row.get("benchmark_track") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError(
+                "real-anchored task row lost its benchmark_track identity"
+            )
+        if row.get("evaluation_table") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError(
+                "real-anchored task row has an invalid evaluation_table"
+            )
+        context = int(row["context_length"])
+        fixed_context_present |= context == FIXED_CONTEXT_LENGTH
+        target = np.asarray(row["target"], dtype=float)
+        if target.ndim != 2 or not np.all(np.isfinite(target)):
+            raise ValueError("real-anchored task target must be finite 2D")
+        member = int(row.get("counterfactual_member", -1))
+        pair_id = row.get("counterfactual_pair_id")
+        if pair_id is None or member not in {0, 1}:
+            raise ValueError(
+                "real-anchored task rows require paired members 0 and 1"
+            )
+        mase_scale = float(row["mase_scale"])
+        if not math.isfinite(mase_scale) or mase_scale <= 0.0:
+            raise ValueError("real-anchored task has an invalid MASE scale")
+        members = pair_members[str(pair_id)]
+        if member in members:
+            raise ValueError(
+                f"duplicate real-anchored pair member: {pair_id}/{member}"
+            )
+        members[member] = mase_scale
+        capability_id = str(row["capability_id"])
+        seed_index = int(row["seed_index"])
+        background_id = str(row.get("background_id", ""))
+        if not background_id:
+            raise ValueError(
+                "real-anchored task row is missing background_id"
+            )
+        seed_key = (capability_id, seed_index)
+        prior_background = seed_backgrounds.setdefault(
+            seed_key,
+            background_id,
+        )
+        if prior_background != background_id:
+            raise ValueError(
+                "real-anchored seed maps to multiple backgrounds: "
+                f"{capability_id}/{seed_index}"
+            )
+        background_key = (capability_id, background_id)
+        prior_seed = background_seeds.setdefault(
+            background_key,
+            seed_index,
+        )
+        if prior_seed != seed_index:
+            raise ValueError(
+                "real-anchored background was recycled across seeds: "
+                f"{capability_id}/{background_id}"
+            )
+    for pair_id, members in pair_members.items():
+        if set(members) != {0, 1}:
+            raise ValueError(f"incomplete real-anchored pair: {pair_id}")
+        if not math.isclose(
+            members[0], members[1], rel_tol=1e-12, abs_tol=1e-12
+        ):
+            raise ValueError(
+                f"real-anchored pair does not share baseline MASE: {pair_id}"
+            )
+    if sample_ids and not fixed_context_present:
+        raise ValueError(
+            f"real-anchored task is missing fixed L{FIXED_CONTEXT_LENGTH} views"
+        )
+    return task_path
+
+
 def baseline_forecast(sample: dict[str, Any], model_id: str) -> np.ndarray:
     target = np.asarray(sample["target"], dtype=float)
     context = int(sample["context_length"])
@@ -217,6 +465,7 @@ def metric_row(
     metrics["mase"] = mae / float(sample["mase_scale"])
     return {
         "schema_version": "cafe.prediction_metrics.v1",
+        "benchmark_track": sample.get("benchmark_track"),
         "model_id": model_id,
         "sample_id": sample["sample_id"],
         "master_sample_id": sample["master_sample_id"],
@@ -233,6 +482,8 @@ def metric_row(
             "master_counterfactual_pair_id"
         ),
         "counterfactual_member": sample.get("counterfactual_member"),
+        "background_id": sample.get("background_id"),
+        "dose_value": sample.get("dose_value"),
         "clean_master_sample_id": sample.get("clean_master_sample_id"),
         "input_ablation_group_id": sample.get(
             "input_ablation_group_id"
@@ -339,6 +590,13 @@ def effect_row(
     *,
     model_id: str,
 ) -> dict[str, Any]:
+    first_member = int(first_sample.get("counterfactual_member", 0))
+    second_member = int(second_sample.get("counterfactual_member", 1))
+    if (first_member, second_member) != (0, 1):
+        raise ValueError(
+            "counterfactual effect requires baseline member 0 followed by "
+            "treatment member 1"
+        )
     context = int(first_sample["context_length"])
     channels = effect_channels(first_sample)
     first_target = np.asarray(first_sample["target"], dtype=float)
@@ -362,6 +620,7 @@ def effect_row(
     )
     row = {
         "schema_version": "cafe.counterfactual_effect.v1",
+        "benchmark_track": first_sample.get("benchmark_track"),
         "model_id": model_id,
         "dataset_id": first_sample["dataset_id"],
         "capability_id": first_sample["capability_id"],
@@ -373,12 +632,50 @@ def effect_row(
         "master_counterfactual_pair_id": first_sample[
             "master_counterfactual_pair_id"
         ],
+        "background_id": first_sample.get("background_id"),
+        "dose_value": second_sample.get("dose_value"),
         "counterfactual_effect_nrmse": nrmse,
         "effect_correlation": correlation,
         "effect_amplitude_ratio": amplitude_ratio,
         "truth_effect_rms": truth_rms,
         "forecast_effect_rms": forecast_rms,
     }
+    if (
+        first_sample.get("benchmark_track")
+        == REAL_ANCHORED_BENCHMARK_TRACK
+    ):
+        first_background = str(first_sample.get("background_id", ""))
+        second_background = str(second_sample.get("background_id", ""))
+        if (
+            not first_background
+            or first_background != second_background
+        ):
+            raise ValueError(
+                "real-anchored counterfactual members must share one "
+                "background"
+            )
+        first_scale = float(first_sample["mase_scale"])
+        second_scale = float(second_sample["mase_scale"])
+        if not math.isclose(
+            first_scale,
+            second_scale,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "real-anchored counterfactual members must share the "
+                "baseline MASE scale"
+            )
+        row.update(
+            {
+                "shared_baseline_mase_scale": first_scale,
+                "effect_mae_shared_baseline_mase": float(
+                    np.mean(np.abs(forecast_effect - truth_effect))
+                    / first_scale
+                ),
+                "effect_orientation": "treatment_member_1_minus_baseline_member_0",
+            }
+        )
     if str(first_sample["capability_id"]) != "cross_series_dependence":
         return row
 
@@ -1128,8 +1425,8 @@ def analyze_one_model(
     metrics: list[dict[str, Any]] = []
     effects: list[dict[str, Any]] = []
     pending_pairs: dict[
-        str, tuple[dict[str, Any], np.ndarray]
-    ] = {}
+        str, dict[int, tuple[dict[str, Any], np.ndarray]]
+    ] = defaultdict(dict)
     missing = 0
     for sample in protocol.iter_jsonl(task_path):
         if prediction_path is None:
@@ -1155,20 +1452,29 @@ def analyze_one_model(
         if pair_id is None or member is None:
             continue
         key = str(pair_id)
-        if int(member) == 0:
-            pending_pairs[key] = (sample, forecast)
-        else:
-            first = pending_pairs.pop(key, None)
-            if first is not None:
-                effects.append(
-                    effect_row(
-                        first[0],
-                        first[1],
-                        sample,
-                        forecast,
-                        model_id=model_id,
-                    )
+        member_index = int(member)
+        if member_index not in {0, 1}:
+            raise ValueError(
+                f"unsupported counterfactual member {member_index}"
+            )
+        if member_index in pending_pairs[key]:
+            raise ValueError(
+                f"duplicate counterfactual pair member: {key}/{member_index}"
+            )
+        pending_pairs[key][member_index] = (sample, forecast)
+        if set(pending_pairs[key]) == {0, 1}:
+            complete_pair = pending_pairs.pop(key)
+            first = complete_pair[0]
+            second = complete_pair[1]
+            effects.append(
+                effect_row(
+                    first[0],
+                    first[1],
+                    second[0],
+                    second[1],
+                    model_id=model_id,
                 )
+            )
     return metrics, effects, missing
 
 
@@ -1423,6 +1729,456 @@ def score_table(
         )
     add_ranks(output)
     return output
+
+
+def _real_anchored_background_groups(
+    rows: Iterable[dict[str, Any]],
+    *,
+    label: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Validate seed/background bijection and return authentic units."""
+
+    by_background: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    seed_to_background: dict[int, str] = {}
+    background_to_seed: dict[str, int] = {}
+    for row in rows:
+        background_id = str(row.get("background_id", ""))
+        if not background_id:
+            raise ValueError(
+                f"real-anchored {label} row is missing background_id"
+            )
+        seed_index = int(row["seed_index"])
+        prior_background = seed_to_background.setdefault(
+            seed_index,
+            background_id,
+        )
+        if prior_background != background_id:
+            raise ValueError(
+                f"real-anchored {label} seed maps to multiple backgrounds: "
+                f"{seed_index}"
+            )
+        prior_seed = background_to_seed.setdefault(
+            background_id,
+            seed_index,
+        )
+        if prior_seed != seed_index:
+            raise ValueError(
+                f"real-anchored {label} background was reused by seeds "
+                f"{prior_seed} and {seed_index}: {background_id}"
+            )
+        by_background[background_id].append(row)
+    return dict(by_background)
+
+
+def _real_anchored_background_mean_metric(
+    groups: dict[str, list[dict[str, Any]]],
+    metric_name: str,
+) -> float | None:
+    """Count a repeated pair baseline once within each real background."""
+
+    background_values: list[float] = []
+    for background_id, rows in groups.items():
+        expected_doses = {int(row["intensity"]) for row in rows}
+        seen_members: set[tuple[int, int]] = set()
+        baseline_values: list[float] = []
+        treatment_by_dose: dict[int, list[float]] = defaultdict(list)
+        for row in rows:
+            member = int(row["counterfactual_member"])
+            dose = int(row["intensity"])
+            member_key = (dose, member)
+            if member_key in seen_members:
+                raise ValueError(
+                    "duplicate real-anchored metric member within background: "
+                    f"{background_id}/dose={dose}/member={member}"
+                )
+            seen_members.add(member_key)
+            value = row.get("metrics", {}).get(metric_name)
+            if value is None or not math.isfinite(float(value)):
+                continue
+            if member == 0:
+                baseline_values.append(float(value))
+            elif member == 1:
+                treatment_by_dose[dose].append(float(value))
+            else:
+                raise ValueError(
+                    f"invalid real-anchored counterfactual member: {member}"
+                )
+        if (
+            len(baseline_values) != len(expected_doses)
+            or set(treatment_by_dose) != expected_doses
+            or any(
+                len(values) != 1
+                for values in treatment_by_dose.values()
+            )
+        ):
+            raise ValueError(
+                "real-anchored background metric is incomplete across "
+                f"baseline/doses: {background_id}/{metric_name}"
+            )
+        # The unmodified member is serialized once per dose for pairing, but
+        # it is one forecast path and receives one weight, not D weights.
+        path_values = [float(np.mean(baseline_values))]
+        path_values.extend(
+            float(np.mean(treatment_by_dose[dose]))
+            for dose in sorted(treatment_by_dose)
+        )
+        background_values.append(float(np.mean(path_values)))
+    return (
+        float(np.mean(background_values))
+        if background_values
+        else None
+    )
+
+
+def real_anchored_score_table(
+    rows: list[dict[str, Any]],
+    effects: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Score the real-anchored track without entering synthetic rankings."""
+
+    groups: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+    effect_groups: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(
+        list
+    )
+    for row in rows:
+        if row.get("benchmark_track") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError("foreign metric row in real-anchored scoring")
+        if int(row["context_length"]) != FIXED_CONTEXT_LENGTH:
+            raise ValueError("real-anchored scores are fixed-L168 only")
+        key = (
+            str(row["dataset_id"]),
+            str(row["context_policy"]),
+            str(row["evaluation_table"]),
+            str(row["generator_family_role"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        )
+        groups[key].append(row)
+    for row in effects:
+        if row.get("benchmark_track") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError("foreign effect row in real-anchored scoring")
+        if int(row["context_length"]) != FIXED_CONTEXT_LENGTH:
+            raise ValueError("real-anchored effects are fixed-L168 only")
+        key = (
+            str(row["dataset_id"]),
+            str(row["context_policy"]),
+            str(row["evaluation_table"]),
+            str(row["generator_family_role"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        )
+        effect_groups[key].append(row)
+
+    output: list[dict[str, Any]] = []
+    for key, group in sorted(groups.items()):
+        paired_effects = effect_groups.get(key, [])
+        metric_backgrounds = _real_anchored_background_groups(
+            group,
+            label="metric",
+        )
+        intensity_values = sorted(
+            {int(row["intensity"]) for row in group}
+        )
+        expected_members = {
+            (intensity, member)
+            for intensity in intensity_values
+            for member in (0, 1)
+        }
+        for background_id, background_rows in metric_backgrounds.items():
+            observed_members = {
+                (
+                    int(row["intensity"]),
+                    int(row["counterfactual_member"]),
+                )
+                for row in background_rows
+            }
+            if observed_members != expected_members:
+                raise ValueError(
+                    "real-anchored background has incomplete dose/member "
+                    f"coverage: {background_id}"
+                )
+        effect_backgrounds = _real_anchored_background_groups(
+            paired_effects,
+            label="effect",
+        )
+        if set(metric_backgrounds) != set(effect_backgrounds):
+            raise ValueError(
+                "real-anchored metric/effect background coverage mismatch: "
+                + "/".join(key)
+            )
+        maximum_dose = (
+            max(int(row["intensity"]) for row in paired_effects)
+            if paired_effects
+            else None
+        )
+        maximum_dose_effects = [
+            row
+            for row in paired_effects
+            if maximum_dose is not None
+            and int(row["intensity"]) == maximum_dose
+        ]
+        maximum_effects_by_background = _real_anchored_background_groups(
+            maximum_dose_effects,
+            label="maximum-dose effect",
+        )
+        if set(maximum_effects_by_background) != set(metric_backgrounds):
+            raise ValueError(
+                "real-anchored maximum-dose effect is incomplete by "
+                "background: " + "/".join(key)
+            )
+        mechanism_values = []
+        for background_id, background_effects in (
+            maximum_effects_by_background.items()
+        ):
+            if len(background_effects) != 1:
+                raise ValueError(
+                    "real-anchored maximum dose has duplicate effects for "
+                    f"background {background_id}"
+                )
+            value = float(
+                background_effects[0]["counterfactual_effect_nrmse"]
+            )
+            if math.isfinite(value):
+                mechanism_values.append(value)
+        if len(mechanism_values) != len(maximum_effects_by_background):
+            raise ValueError(
+                "real-anchored maximum-dose mechanism metric is incomplete "
+                "by background: " + "/".join(key)
+            )
+        shared_scales = {
+            float(row["shared_baseline_mase_scale"])
+            for row in maximum_dose_effects
+            if row.get("shared_baseline_mase_scale") is not None
+        }
+        output.append(
+            {
+                "schema_version": "cafe.real_anchored_score.v1",
+                "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+                "dataset_id": key[0],
+                "context_policy": key[1],
+                "evaluation_table": key[2],
+                "generator_family_role": key[3],
+                "capability_id": key[4],
+                "model_id": key[5],
+                "accuracy_score": _real_anchored_background_mean_metric(
+                    metric_backgrounds,
+                    "mase",
+                ),
+                "accuracy_metric": "mase",
+                "history_std_normalized_mae": (
+                    _real_anchored_background_mean_metric(
+                        metric_backgrounds,
+                        "normalized_mae_history_std",
+                    )
+                ),
+                "accuracy_statistical_unit": "authentic_real_background",
+                "accuracy_path_weighting": (
+                    "unmodified_baseline_once_plus_each_treatment_dose_"
+                    "once_within_background_then_equal_background_mean"
+                ),
+                "effective_background_count": len(metric_backgrounds),
+                "effective_background_ids_sha256": protocol.json_sha256(
+                    sorted(metric_backgrounds)
+                ),
+                "background_sampling_policy": (
+                    "without_replacement_seed_background_bijection"
+                ),
+                "serialized_metric_row_count": len(group),
+                "unique_forecast_path_count": len(metric_backgrounds)
+                * (1 + len(intensity_values)),
+                "mechanism_statistical_unit": (
+                    "authentic_real_background_at_maximum_dose"
+                ),
+                "mechanism_metric": "counterfactual_effect_nrmse",
+                "mechanism_score": (
+                    float(np.mean(mechanism_values))
+                    if mechanism_values
+                    else None
+                ),
+                "mechanism_intensity": maximum_dose,
+                "mechanism_dose_policy": "maximum_available_intervention_dose",
+                "mechanism_pair_count": len(maximum_dose_effects),
+                "mechanism_background_count": len(
+                    maximum_effects_by_background
+                ),
+                "mechanism_seed_count": len(
+                    {
+                        int(row["seed_index"])
+                        for row in maximum_dose_effects
+                    }
+                ),
+                "mase_scale_policy": (
+                    "shared_unmodified_real_background_history_by_pair"
+                ),
+                "shared_mase_scale_count": len(shared_scales),
+                "seed_count": len(
+                    {int(row["seed_index"]) for row in group}
+                ),
+                "intensities": sorted(
+                    intensity_values
+                ),
+                "ranking_scope": (
+                    "real_anchored_counterfactual_only_never_synthetic"
+                ),
+                "is_reference_baseline": key[5] in BASELINES,
+            }
+        )
+    add_ranks(output)
+    return output
+
+
+def analyze_real_anchored_track(
+    task_path: Path,
+    *,
+    model_ids: list[str],
+    inference_dir: Path,
+) -> dict[str, Any]:
+    """Analyze a validated real-anchored task at the fixed L168 policy."""
+
+    all_metrics: list[dict[str, Any]] = []
+    all_effects: list[dict[str, Any]] = []
+    coverage: list[dict[str, Any]] = []
+    for model_id in model_ids:
+        prediction_path = (
+            inference_dir
+            / "model_shards"
+            / metrics.safe_filename(model_id)
+            / "predictions"
+            / f"{metrics.safe_filename(model_id)}.jsonl"
+            if model_id not in BASELINES
+            else None
+        )
+        model_metrics, model_effects, missing = analyze_one_model(
+            task_path,
+            model_id=model_id,
+            prediction_path=prediction_path,
+        )
+        if model_id not in BASELINES and missing:
+            raise ValueError(
+                "real-anchored model predictions are incomplete: "
+                f"{model_id} missing {missing} task(s)"
+            )
+        all_metrics.extend(model_metrics)
+        all_effects.extend(model_effects)
+        model_backgrounds_by_capability: dict[str, set[str]] = defaultdict(
+            set
+        )
+        for row in model_metrics:
+            background_id = str(row.get("background_id", ""))
+            if background_id:
+                model_backgrounds_by_capability[
+                    str(row["capability_id"])
+                ].add(background_id)
+        coverage.append(
+            {
+                "model_id": model_id,
+                "metric_row_count": len(model_metrics),
+                "effect_row_count": len(model_effects),
+                "missing_prediction_count": missing,
+                "effective_background_count_by_capability": {
+                    capability_id: len(background_ids)
+                    for capability_id, background_ids in sorted(
+                        model_backgrounds_by_capability.items()
+                    )
+                },
+            }
+        )
+    selected_metrics = [
+        {**row, "context_policy": FIXED_CONTEXT_POLICY}
+        for row in all_metrics
+        if int(row["context_length"]) == FIXED_CONTEXT_LENGTH
+    ]
+    selected_effects = [
+        {**row, "context_policy": FIXED_CONTEXT_POLICY}
+        for row in all_effects
+        if int(row["context_length"]) == FIXED_CONTEXT_LENGTH
+    ]
+    background_ids_by_capability: dict[str, set[str]] = defaultdict(set)
+    for row in selected_metrics:
+        background_id = str(row.get("background_id", ""))
+        if background_id:
+            background_ids_by_capability[
+                str(row["capability_id"])
+            ].add(background_id)
+    effective_backgrounds = {
+        capability_id: {
+            "count": len(background_ids),
+            "ids_sha256": protocol.json_sha256(sorted(background_ids)),
+            "statistical_unit": "authentic_real_background",
+            "sampling_policy": "without_replacement_seed_background_bijection",
+        }
+        for capability_id, background_ids in sorted(
+            background_ids_by_capability.items()
+        )
+    }
+    return {
+        "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+        "context_policy": FIXED_CONTEXT_POLICY,
+        "prediction_metrics": selected_metrics,
+        "counterfactual_effects": selected_effects,
+        "effective_backgrounds_by_capability": effective_backgrounds,
+        "scores": real_anchored_score_table(
+            selected_metrics,
+            selected_effects,
+        ),
+        "coverage": coverage,
+    }
+
+
+def write_real_anchored_analysis(
+    analysis_dir: Path,
+    result: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    metric_path = analysis_dir / "real_anchored_prediction_metrics.jsonl"
+    effect_path = (
+        analysis_dir / "real_anchored_counterfactual_effects.jsonl"
+    )
+    score_path = analysis_dir / "real_anchored_scores.json"
+    metric_count = protocol.write_jsonl(
+        metric_path,
+        result["prediction_metrics"],
+    )
+    effect_count = protocol.write_jsonl(
+        effect_path,
+        result["counterfactual_effects"],
+    )
+    protocol.write_json(
+        score_path,
+        {
+            "schema_version": "cafe.real_anchored_scores.v1",
+            "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+            "ranking_scope": (
+                "independent_from_synthetic_capability_scores_and_ranks"
+            ),
+            "context_policy": FIXED_CONTEXT_POLICY,
+            "statistical_unit": "authentic_real_background",
+            "accuracy_path_weighting": (
+                "unmodified_baseline_once_plus_each_treatment_dose_once_"
+                "within_background_then_equal_background_mean"
+            ),
+            "effective_backgrounds_by_capability": result.get(
+                "effective_backgrounds_by_capability",
+                {},
+            ),
+            "mechanism_metric": "counterfactual_effect_nrmse",
+            "mechanism_dose_policy": "maximum_available_intervention_dose",
+            "scores": result["scores"],
+        },
+    )
+    return {
+        "prediction_metrics": {
+            **protocol.file_record(metric_path),
+            "row_count": metric_count,
+        },
+        "counterfactual_effects": {
+            **protocol.file_record(effect_path),
+            "row_count": effect_count,
+        },
+        "scores": {
+            **protocol.file_record(score_path),
+            "row_count": len(result["scores"]),
+        },
+    }
 
 
 def complete_effect_level_mechanism_scores(
@@ -2594,6 +3350,330 @@ def render_experiment_capability_report(
     return "\n".join(lines)
 
 
+def experiment_real_anchored_capability_rows(
+    scores: Iterable[dict[str, Any]],
+    *,
+    dataset_ids: list[str],
+    models: list[str],
+    capabilities: list[str],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Macro-average the optional real-anchored track independently.
+
+    A capability uses only datasets where that capability is present. Model
+    comparisons use the intersection of complete foundation-model rows across
+    those datasets, then recompute both dataset and aggregate ranks within that
+    common set. Reference baselines remain dataset diagnostics and never enter
+    this experiment-level table.
+    """
+
+    selected: list[dict[str, Any]] = []
+    allowed_datasets = set(dataset_ids)
+    allowed_capabilities = set(capabilities)
+    allowed_models = set(models)
+    for row in scores:
+        if row.get("benchmark_track") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError(
+                "foreign score row in experiment real-anchored aggregation"
+            )
+        if row.get("context_policy") != FIXED_CONTEXT_POLICY:
+            raise ValueError(
+                "experiment real-anchored aggregation is fixed-L168 only"
+            )
+        if row.get("evaluation_table") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError("invalid real-anchored evaluation table")
+        dataset_id = str(row.get("dataset_id"))
+        capability_id = str(row.get("capability_id"))
+        model_id = str(row.get("model_id"))
+        if dataset_id not in allowed_datasets:
+            raise ValueError(
+                f"unexpected real-anchored dataset: {dataset_id}"
+            )
+        if capability_id not in allowed_capabilities:
+            raise ValueError(
+                f"unexpected real-anchored capability: {capability_id}"
+            )
+        if model_id not in allowed_models:
+            if bool(row.get("is_reference_baseline")) or model_id in BASELINES:
+                continue
+            raise ValueError(
+                f"unexpected real-anchored model: {model_id}"
+            )
+        selected.append(row)
+
+    by_key: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in selected:
+        key = (
+            str(row["dataset_id"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+        )
+        if key in by_key:
+            raise ValueError(
+                "duplicate experiment real-anchored score: "
+                + "/".join(key)
+            )
+        by_key[key] = row
+
+    capability_order = [
+        capability_id
+        for capability_id in capabilities
+        if any(key[1] == capability_id for key in by_key)
+    ]
+    output: list[dict[str, Any]] = []
+    capability_summaries: list[dict[str, Any]] = []
+    for capability_id in capability_order:
+        supported_datasets = [
+            dataset_id
+            for dataset_id in dataset_ids
+            if any(
+                key[0] == dataset_id and key[1] == capability_id
+                for key in by_key
+            )
+        ]
+        common_models = [
+            model_id
+            for model_id in models
+            if all(
+                (
+                    (row := by_key.get(
+                        (dataset_id, capability_id, model_id)
+                    ))
+                    is not None
+                    and row.get("accuracy_score") is not None
+                    and row.get("mechanism_score") is not None
+                    and math.isfinite(float(row["accuracy_score"]))
+                    and math.isfinite(float(row["mechanism_score"]))
+                )
+                for dataset_id in supported_datasets
+            )
+        ]
+        effective_background_count_by_dataset: dict[str, int] = {}
+        effective_background_ids_sha256_by_dataset: dict[str, str] = {}
+        for dataset_id in supported_datasets:
+            coverage_rows = [
+                by_key[(dataset_id, capability_id, model_id)]
+                for model_id in common_models
+            ]
+            if not coverage_rows:
+                continue
+            counts = {
+                int(row["effective_background_count"])
+                for row in coverage_rows
+                if row.get("effective_background_count") is not None
+            }
+            hashes = {
+                str(row["effective_background_ids_sha256"])
+                for row in coverage_rows
+                if row.get("effective_background_ids_sha256")
+            }
+            if len(counts) != 1 or len(hashes) != 1:
+                raise ValueError(
+                    "real-anchored model rows disagree on effective "
+                    f"background coverage: {dataset_id}/{capability_id}"
+                )
+            background_count = next(iter(counts))
+            if background_count <= 0:
+                raise ValueError(
+                    "real-anchored effective background count must be "
+                    f"positive: {dataset_id}/{capability_id}"
+                )
+            for row in coverage_rows:
+                if int(row.get("seed_count", -1)) != background_count:
+                    raise ValueError(
+                        "real-anchored seed count is not the authentic "
+                        "background count: "
+                        f"{dataset_id}/{capability_id}/{row['model_id']}"
+                    )
+                if (
+                    int(row.get("mechanism_background_count", -1))
+                    != background_count
+                ):
+                    raise ValueError(
+                        "real-anchored mechanism coverage is not complete "
+                        "by background: "
+                        f"{dataset_id}/{capability_id}/{row['model_id']}"
+                    )
+            effective_background_count_by_dataset[dataset_id] = (
+                background_count
+            )
+            effective_background_ids_sha256_by_dataset[dataset_id] = (
+                next(iter(hashes))
+            )
+        capability_summary = {
+            "capability_id": capability_id,
+            "dataset_ids": supported_datasets,
+            "dataset_count": len(supported_datasets),
+            "common_models": common_models,
+            "common_model_count": len(common_models),
+            "effective_background_count_by_dataset": (
+                effective_background_count_by_dataset
+            ),
+            "effective_background_ids_sha256_by_dataset": (
+                effective_background_ids_sha256_by_dataset
+            ),
+            "total_authentic_background_units": sum(
+                effective_background_count_by_dataset.values()
+            ),
+            "dataset_weighting": "equal_dataset_macro_mean",
+            "within_dataset_statistical_unit": (
+                "equal_authentic_real_background"
+            ),
+            "model_set_policy": (
+                "intersection_of_complete_requested_model_rows_across_"
+                "present_datasets"
+            ),
+            "status": (
+                "aggregated" if common_models else "no_common_complete_models"
+            ),
+        }
+        capability_summaries.append(capability_summary)
+        if not common_models:
+            continue
+
+        dataset_ranks: dict[
+            tuple[str, str], dict[str, int]
+        ] = {}
+        for dataset_id in supported_datasets:
+            rows_by_model = {
+                model_id: by_key[(dataset_id, capability_id, model_id)]
+                for model_id in common_models
+            }
+            for score_name, rank_kind in (
+                ("accuracy_score", "accuracy"),
+                ("mechanism_score", "mechanism"),
+            ):
+                values = {
+                    model_id: float(row[score_name])
+                    for model_id, row in rows_by_model.items()
+                }
+                dataset_ranks[(dataset_id, rank_kind)] = {
+                    model_id: 1
+                    + sum(other < value for other in values.values())
+                    for model_id, value in values.items()
+                }
+
+        capability_rows: list[dict[str, Any]] = []
+        for model_id in common_models:
+            model_rows = [
+                by_key[(dataset_id, capability_id, model_id)]
+                for dataset_id in supported_datasets
+            ]
+            accuracy_values = [
+                float(row["accuracy_score"]) for row in model_rows
+            ]
+            mechanism_values = [
+                float(row["mechanism_score"]) for row in model_rows
+            ]
+            normalized_values = [
+                float(row["history_std_normalized_mae"])
+                for row in model_rows
+                if row.get("history_std_normalized_mae") is not None
+                and math.isfinite(
+                    float(row["history_std_normalized_mae"])
+                )
+            ]
+            accuracy_ranks = [
+                dataset_ranks[(dataset_id, "accuracy")][model_id]
+                for dataset_id in supported_datasets
+            ]
+            mechanism_ranks = [
+                dataset_ranks[(dataset_id, "mechanism")][model_id]
+                for dataset_id in supported_datasets
+            ]
+            capability_rows.append(
+                {
+                    "schema_version": (
+                        "cafe.experiment_real_anchored_capability_score.v1"
+                    ),
+                    "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+                    "ranking_scope": (
+                        "real_anchored_counterfactual_only_never_synthetic"
+                    ),
+                    "context_policy": FIXED_CONTEXT_POLICY,
+                    "capability_id": capability_id,
+                    "model_id": model_id,
+                    "dataset_count": len(supported_datasets),
+                    "dataset_ids": supported_datasets,
+                    "common_model_ids": common_models,
+                    "effective_background_count_by_dataset": (
+                        effective_background_count_by_dataset
+                    ),
+                    "effective_background_ids_sha256_by_dataset": (
+                        effective_background_ids_sha256_by_dataset
+                    ),
+                    "total_authentic_background_units": sum(
+                        effective_background_count_by_dataset.values()
+                    ),
+                    "macro_mean_accuracy_score": float(
+                        np.mean(accuracy_values)
+                    ),
+                    "accuracy_metric": "mase",
+                    "macro_mean_history_std_normalized_mae": (
+                        float(np.mean(normalized_values))
+                        if len(normalized_values) == len(model_rows)
+                        else None
+                    ),
+                    "mean_dataset_accuracy_rank": float(
+                        np.mean(accuracy_ranks)
+                    ),
+                    "accuracy_dataset_wins": sum(
+                        rank == 1 for rank in accuracy_ranks
+                    ),
+                    "macro_mean_mechanism_score": float(
+                        np.mean(mechanism_values)
+                    ),
+                    "mechanism_metric": "counterfactual_effect_nrmse",
+                    "mean_dataset_mechanism_rank": float(
+                        np.mean(mechanism_ranks)
+                    ),
+                    "mechanism_dataset_wins": sum(
+                        rank == 1 for rank in mechanism_ranks
+                    ),
+                    "aggregation_policy": "equal_dataset_macro_mean",
+                    "model_set_policy": (
+                        "common_complete_model_intersection"
+                    ),
+                }
+            )
+        for score_name, rank_name in (
+            ("macro_mean_accuracy_score", "accuracy_rank"),
+            ("macro_mean_mechanism_score", "mechanism_rank"),
+        ):
+            values = {
+                str(row["model_id"]): float(row[score_name])
+                for row in capability_rows
+            }
+            for row in capability_rows:
+                value = values[str(row["model_id"])]
+                row[rank_name] = 1 + sum(
+                    other < value for other in values.values()
+                )
+        output.extend(capability_rows)
+
+    summary = {
+        "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+        "status": (
+            "aggregated"
+            if output
+            else (
+                "no_common_complete_models"
+                if selected
+                else "component_absent"
+            )
+        ),
+        "included_in_synthetic_scores_or_ranks": False,
+        "context_policy": FIXED_CONTEXT_POLICY,
+        "dataset_ids": [
+            dataset_id
+            for dataset_id in dataset_ids
+            if any(row["dataset_id"] == dataset_id for row in selected)
+        ],
+        "capabilities": capability_summaries,
+        "score_count": len(output),
+    }
+    return output, summary
+
+
 def reusable_experiment_analysis_manifest(
     analysis_dir: Path,
     *,
@@ -2608,9 +3688,10 @@ def reusable_experiment_analysis_manifest(
         return False
     try:
         manifest = protocol.read_json(manifest_path)
-        if manifest.get("schema_version") != (
-            "cafe.experiment_analysis_manifest.v1"
-        ):
+        if manifest.get("schema_version") not in {
+            "cafe.experiment_analysis_manifest.v1",
+            "cafe.experiment_analysis_manifest.v2",
+        }:
             return False
         if str(manifest.get("stage_contract_sha256")) != (
             protocol.file_sha256(stage_contract_path)
@@ -2647,6 +3728,25 @@ def reusable_experiment_analysis_manifest(
             score_path = validated_file_record(score_record)
             if str(row.get("scores_sha256")) != protocol.file_sha256(score_path):
                 return False
+            real_score_record = dataset_manifest.get("files", {}).get(
+                "real_anchored_scores"
+            )
+            recorded_real_sha256 = row.get(
+                "real_anchored_scores_sha256"
+            )
+            if real_score_record is None:
+                if recorded_real_sha256 is not None:
+                    return False
+            else:
+                if not isinstance(real_score_record, dict):
+                    return False
+                real_score_path = validated_file_record(real_score_record)
+                if (
+                    recorded_real_sha256 is None
+                    or str(recorded_real_sha256)
+                    != protocol.file_sha256(real_score_path)
+                ):
+                    return False
             generation_path = Path(
                 str(row.get("generation_manifest_path", ""))
             )
@@ -2739,6 +3839,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
 
     all_scores: list[dict[str, Any]] = []
     all_effects: list[dict[str, Any]] = []
+    all_real_anchored_scores: list[dict[str, Any]] = []
     input_records: list[dict[str, Any]] = []
     capability_dataset_ids = {
         capability_id: [] for capability_id in capabilities
@@ -2751,9 +3852,10 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             dataset_analysis_dir / "analysis_manifest.json"
         )
         dataset_manifest = protocol.read_json(dataset_manifest_path)
-        if dataset_manifest.get("schema_version") != (
-            "cafe.analysis_manifest.v1"
-        ):
+        if dataset_manifest.get("schema_version") not in {
+            "cafe.analysis_manifest.v1",
+            "cafe.analysis_manifest.v2",
+        }:
             raise ValueError(
                 f"unsupported dataset analysis manifest: {dataset_id}"
             )
@@ -2797,6 +3899,70 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             ),
         )
         all_effects.extend(protocol.iter_jsonl(effect_path))
+        real_score_record = dataset_manifest.get("files", {}).get(
+            "real_anchored_scores"
+        )
+        real_score_path: Path | None = None
+        dataset_real_scores: list[dict[str, Any]] = []
+        if real_score_record is not None:
+            if dataset_manifest.get("schema_version") != (
+                "cafe.analysis_manifest.v2"
+            ):
+                raise ValueError(
+                    "real-anchored score records require dataset analysis "
+                    f"manifest v2: {dataset_id}"
+                )
+            if not isinstance(real_score_record, dict):
+                raise ValueError(
+                    f"invalid real-anchored score record: {dataset_id}"
+                )
+            real_score_path = validated_file_record(
+                real_score_record,
+                expected_path=(
+                    dataset_analysis_dir / "real_anchored_scores.json"
+                ),
+            )
+            real_score_payload = protocol.read_json(real_score_path)
+            if real_score_payload.get("schema_version") != (
+                "cafe.real_anchored_scores.v1"
+            ):
+                raise ValueError(
+                    f"unsupported real-anchored scores payload: {dataset_id}"
+                )
+            if real_score_payload.get("benchmark_track") != (
+                REAL_ANCHORED_BENCHMARK_TRACK
+            ):
+                raise ValueError(
+                    f"real-anchored score track mismatch: {dataset_id}"
+                )
+            raw_real_scores = real_score_payload.get("scores")
+            if not isinstance(raw_real_scores, list):
+                raise ValueError(
+                    f"invalid real-anchored scores payload: {dataset_id}"
+                )
+            dataset_real_scores = [
+                dict(row) for row in raw_real_scores
+                if isinstance(row, dict)
+            ]
+            if len(dataset_real_scores) != len(raw_real_scores):
+                raise ValueError(
+                    f"non-object real-anchored score row: {dataset_id}"
+                )
+            if (
+                real_score_record.get("row_count") is not None
+                and int(real_score_record["row_count"])
+                != len(dataset_real_scores)
+            ):
+                raise ValueError(
+                    f"real-anchored score row-count mismatch: {dataset_id}"
+                )
+            for row in dataset_real_scores:
+                if str(row.get("dataset_id")) != dataset_id:
+                    raise ValueError(
+                        "real-anchored dataset score binding mismatch: "
+                        f"{dataset_id}"
+                    )
+            all_real_anchored_scores.extend(dataset_real_scores)
         generation_manifest_path = (
             source_experiment_root
             / dataset_id
@@ -2830,6 +3996,17 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                 ),
                 "scores_sha256": protocol.file_sha256(score_path),
                 "counterfactual_effects_sha256": protocol.file_sha256(effect_path),
+                "real_anchored_scores_path": (
+                    None
+                    if real_score_path is None
+                    else str(real_score_path)
+                ),
+                "real_anchored_scores_sha256": (
+                    None
+                    if real_score_path is None
+                    else protocol.file_sha256(real_score_path)
+                ),
+                "real_anchored_score_count": len(dataset_real_scores),
                 "generation_manifest_path": str(
                     generation_manifest_path
                 ),
@@ -2857,12 +4034,57 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         capabilities=capabilities,
         capability_dataset_ids=capability_dataset_ids,
     )
+    real_anchored_rows, real_anchored_summary = (
+        experiment_real_anchored_capability_rows(
+            all_real_anchored_scores,
+            dataset_ids=dataset_ids,
+            models=models,
+            capabilities=capabilities,
+        )
+    )
+    real_anchored_component_dataset_ids = [
+        str(row["dataset_id"])
+        for row in input_records
+        if row.get("real_anchored_scores_path") is not None
+    ]
+    real_anchored_summary["component_dataset_ids"] = (
+        real_anchored_component_dataset_ids
+    )
+    if (
+        real_anchored_component_dataset_ids
+        and real_anchored_summary["status"] == "component_absent"
+    ):
+        real_anchored_summary["status"] = "component_present_no_scores"
     fixed_path = analysis_dir / "capability_scores_fixed_l168.json"
     oracle_path = analysis_dir / "capability_scores_oracle_context.json"
+    real_anchored_path = (
+        analysis_dir
+        / "capability_scores_real_anchored_fixed_l168.json"
+    )
     fixed_report_path = analysis_dir / "REPORT_FIXED_L168_ZH.md"
     oracle_report_path = analysis_dir / "REPORT_ORACLE_CONTEXT_ZH.md"
     protocol.write_json(fixed_path, {"scores": fixed_rows})
     protocol.write_json(oracle_path, {"scores": oracle_rows})
+    if real_anchored_component_dataset_ids:
+        protocol.write_json(
+            real_anchored_path,
+            {
+                "schema_version": (
+                    "cafe.experiment_real_anchored_capability_scores.v1"
+                ),
+                "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+                "context_policy": FIXED_CONTEXT_POLICY,
+                "ranking_scope": (
+                    "independent_from_synthetic_fixed_and_oracle_rankings"
+                ),
+                "aggregation_policy": (
+                    "equal_dataset_macro_mean_over_capability_present_"
+                    "datasets_with_common_complete_model_intersection"
+                ),
+                "summary": real_anchored_summary,
+                "scores": real_anchored_rows,
+            },
+        )
     fixed_report_path.write_text(
         render_experiment_capability_report(
             fixed_rows,
@@ -2879,8 +4101,18 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
         ),
         encoding="utf-8",
     )
+    experiment_files = {
+        "fixed_scores": protocol.file_record(fixed_path),
+        "oracle_scores": protocol.file_record(oracle_path),
+        "fixed_report": protocol.file_record(fixed_report_path),
+        "oracle_report": protocol.file_record(oracle_report_path),
+    }
+    if real_anchored_component_dataset_ids:
+        experiment_files["real_anchored_fixed_scores"] = (
+            protocol.file_record(real_anchored_path)
+        )
     manifest = {
-        "schema_version": "cafe.experiment_analysis_manifest.v1",
+        "schema_version": "cafe.experiment_analysis_manifest.v2",
         "created_at": protocol.utc_now(),
         "experiment_id": str(experiment_record["experiment_id"]),
         "stage_contract_sha256": protocol.file_sha256(
@@ -2906,13 +4138,9 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             "per_model_master_sample_minimum_mase_over_l96_l168_l336;"
             "counterfactual_pairs_share_context"
         ),
+        "real_anchored_counterfactual": real_anchored_summary,
         "inputs": input_records,
-        "files": {
-            "fixed_scores": protocol.file_record(fixed_path),
-            "oracle_scores": protocol.file_record(oracle_path),
-            "fixed_report": protocol.file_record(fixed_report_path),
-            "oracle_report": protocol.file_record(oracle_report_path),
-        },
+        "files": experiment_files,
     }
     protocol.write_json(analysis_dir / "analysis_manifest.json", manifest)
     print(
@@ -2921,6 +4149,7 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                 "analysis_status": "computed",
                 "fixed_score_count": len(fixed_rows),
                 "oracle_score_count": len(oracle_rows),
+                "real_anchored_score_count": len(real_anchored_rows),
                 "output": str(analysis_dir),
             }
         )
@@ -2957,6 +4186,11 @@ def main() -> int:
         inference_dir,
         inference_manifest,
     )
+    real_anchored_task_path = validated_optional_real_anchored_task_path(
+        inference_dir,
+        inference_manifest,
+        task_manifest,
+    )
     all_metrics: list[dict[str, Any]] = []
     all_effects: list[dict[str, Any]] = []
     coverage: list[dict[str, Any]] = []
@@ -2964,6 +4198,15 @@ def main() -> int:
         list(args.models)
         if args.analysis_profile == "scores_only"
         else [*args.models, *BASELINES]
+    )
+    real_anchored_result = (
+        analyze_real_anchored_track(
+            real_anchored_task_path,
+            model_ids=analysis_models,
+            inference_dir=inference_dir,
+        )
+        if real_anchored_task_path is not None
+        else None
     )
     for model_id in analysis_models:
         prediction_path = (
@@ -3026,6 +4269,11 @@ def main() -> int:
         / dataset.dataset_id
         / "04_analysis"
         / shard_name
+    )
+    real_anchored_files = (
+        write_real_anchored_analysis(analysis_dir, real_anchored_result)
+        if real_anchored_result is not None
+        else {}
     )
     structured_controls = (
         {
@@ -3095,8 +4343,38 @@ def main() -> int:
         ),
         encoding="utf-8",
     )
+    analysis_files = {
+        "prediction_metrics": protocol.file_record(metric_path),
+        "counterfactual_effects": protocol.file_record(effect_path),
+        "scores": protocol.file_record(score_path),
+        "split_bank": protocol.file_record(split_path),
+        "matched_comparisons": protocol.file_record(matched_path),
+        "multivariate_utilization_audit": protocol.file_record(
+            utilization_path
+        ),
+        "structured_positive_controls": protocol.file_record(
+            structured_path
+        ),
+        "report": protocol.file_record(report_path),
+        "matched_report": protocol.file_record(matched_report_path),
+        "multivariate_utilization_report": protocol.file_record(
+            utilization_report_path
+        ),
+    }
+    if real_anchored_files:
+        analysis_files.update(
+            {
+                "real_anchored_prediction_metrics": (
+                    real_anchored_files["prediction_metrics"]
+                ),
+                "real_anchored_counterfactual_effects": (
+                    real_anchored_files["counterfactual_effects"]
+                ),
+                "real_anchored_scores": real_anchored_files["scores"],
+            }
+        )
     manifest = {
-        "schema_version": "cafe.analysis_manifest.v1",
+        "schema_version": "cafe.analysis_manifest.v2",
         "created_at": protocol.utc_now(),
         "dataset_id": dataset.dataset_id,
         "source_experiment_root": str(source_experiment_root),
@@ -3120,31 +4398,42 @@ def main() -> int:
             else []
         ),
         "coverage": coverage,
-        "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
-        "files": {
-            "prediction_metrics": protocol.file_record(metric_path),
-            "counterfactual_effects": protocol.file_record(effect_path),
-            "scores": protocol.file_record(score_path),
-            "split_bank": protocol.file_record(split_path),
-            "matched_comparisons": protocol.file_record(matched_path),
-            "multivariate_utilization_audit": protocol.file_record(
-                utilization_path
+        "real_anchored_counterfactual": {
+            "status": (
+                "analyzed"
+                if real_anchored_result is not None
+                else "component_absent"
             ),
-            "structured_positive_controls": protocol.file_record(
-                structured_path
+            "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+            "included_in_synthetic_scores_or_ranks": False,
+            "context_policy": FIXED_CONTEXT_POLICY,
+            "coverage": (
+                []
+                if real_anchored_result is None
+                else real_anchored_result["coverage"]
             ),
-            "report": protocol.file_record(report_path),
-            "matched_report": protocol.file_record(matched_report_path),
-            "multivariate_utilization_report": protocol.file_record(
-                utilization_report_path
+            "effective_backgrounds_by_capability": (
+                {}
+                if real_anchored_result is None
+                else real_anchored_result[
+                    "effective_backgrounds_by_capability"
+                ]
             ),
+            "statistical_unit": "authentic_real_background",
         },
+        "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
+        "files": analysis_files,
     }
     protocol.write_json(analysis_dir / "analysis_manifest.json", manifest)
     print(
         protocol.canonical_json(
             {
                 "score_count": len(scores),
+                "real_anchored_score_count": (
+                    0
+                    if real_anchored_result is None
+                    else len(real_anchored_result["scores"])
+                ),
                 "split_bank_count": len(split_rows),
                 "output": str(analysis_dir),
             }

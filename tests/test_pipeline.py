@@ -376,3 +376,57 @@ def test_stage_contract_file_write_is_idempotent(tmp_path: Path) -> None:
 
     assert json.loads(path.read_text(encoding="utf-8")) == value
     provenance.write_json_once(path, value)
+
+
+def test_completed_v2_analysis_manifest_is_reusable(tmp_path: Path) -> None:
+    dataset_id = "gift_electricity_h"
+    shard_name = "seed_000000_000001"
+    inference_dir = (
+        tmp_path / dataset_id / "03_inference" / shard_name
+    )
+    analysis_dir = tmp_path / dataset_id / "04_analysis" / shard_name
+    inference_dir.mkdir(parents=True)
+    analysis_dir.mkdir(parents=True)
+    inference_manifest_path = inference_dir / "inference_manifest.json"
+    inference_manifest_path.write_text(
+        json.dumps({"complete": True}),
+        encoding="utf-8",
+    )
+    score_path = analysis_dir / "scores.json"
+    score_path.write_text("[]\n", encoding="utf-8")
+    analysis_manifest_path = analysis_dir / "analysis_manifest.json"
+    analysis_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "cafe.analysis_manifest.v2",
+                "dataset_id": dataset_id,
+                "models": ["naive_last"],
+                "analysis_profile": "full",
+                "inference_manifest_sha256": provenance.file_sha256(
+                    inference_manifest_path
+                ),
+                "coverage": [
+                    {
+                        "model_id": "naive_last",
+                        "missing_prediction_count": 0,
+                    }
+                ],
+                "files": {
+                    "scores": {
+                        "path": str(score_path),
+                        "bytes": score_path.stat().st_size,
+                        "sha256": provenance.file_sha256(score_path),
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert pipeline.reusable_analysis_manifest(
+        tmp_path,
+        dataset_id=dataset_id,
+        seed_start=0,
+        seed_count=1,
+        models=["naive_last"],
+    )

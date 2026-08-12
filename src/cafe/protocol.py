@@ -56,15 +56,23 @@ from cafe.features.primitives import (
     adjusted_r2,
     file_sha256,
     robust_scale,
+    truncate_gift_eval_official_test_tail,
 )
 
 
-SCHEMA_VERSION = "cafe.pipeline.v1"
+SCHEMA_VERSION = "cafe.pipeline.v2"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48
 MASTER_LENGTH = CONTEXT_LENGTH + HORIZON
 REAL_FORECAST_MASTER_LENGTH = REAL_CALIBRATION_CONTEXT_LENGTH + HORIZON
+REAL_ANCHORED_CONTEXT_LENGTH = CONTEXT_LENGTH
+REAL_ANCHORED_MASTER_LENGTH = REAL_ANCHORED_CONTEXT_LENGTH + HORIZON
+REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH = 504
+REAL_ANCHORED_SOURCE_WINDOW_LENGTH = (
+    REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH + HORIZON
+)
+REAL_ANCHORED_MINIMUM_FIT_OBSERVED_FRACTION = 0.90
 VIEW_CONTEXT_LENGTHS = (96, 168, 336)
 FIXED_CONTEXT_LENGTH = 168
 MIN_REAL_FEATURE_COUNT = 12
@@ -74,6 +82,7 @@ CALIBRATION_SAMPLE_SEED = 2026072401
 GENERATION_PATH_SEED = 2026072403
 QUALIFICATION_PATH_SEED = 2026072601
 ROBUSTNESS_SEED = 2026072404
+REAL_ANCHORED_SAMPLE_SEED = 2026081201
 ROBUSTNESS_NOISE_RATIO = 0.15
 DEFAULT_CALIBRATION_PATH_COUNT = 32
 MAX_CALIBRATION_PATH_COUNT = 96
@@ -625,6 +634,48 @@ def expand_native_records(
     return output
 
 
+def training_records_for_anchor_sampling(
+    dataset: DatasetSpec,
+    frequency: str,
+    records: list[tuple[str, np.ndarray]],
+) -> tuple[list[tuple[str, np.ndarray]], dict[str, Any]]:
+    """Exclude an official evaluation tail before drawing CaFE windows.
+
+    GIFT-Eval Arrow assets contain the evaluation tail used by the upstream
+    benchmark. CaFE constructs internal calibration and real-anchored windows
+    only from the preceding training segment. M4 uses its official single H48
+    horizon instead of GIFT-Eval's rolling short-term holdout rule.
+    """
+
+    if dataset.real_data_adapter not in GIFT_EVAL_REAL_DATA_ADAPTERS:
+        return records, {
+            "policy": "source_adapter_training_partition",
+            "excluded_tail_steps": 0,
+        }
+    if dataset.dataset_id == "gift_m4_hourly":
+        holdout_steps = HORIZON
+        truncated: list[tuple[str, np.ndarray]] = []
+        for item_id, values in records:
+            array = np.asarray(values, dtype=float)
+            if array.shape[-1] <= holdout_steps:
+                raise ValueError(
+                    f"M4 Hourly item {item_id!r} is shorter than H{holdout_steps}"
+                )
+            truncated.append((item_id, array[..., :-holdout_steps]))
+        return truncated, {
+            "policy": "m4_official_single_h48_test_tail_excluded",
+            "excluded_tail_steps": holdout_steps,
+        }
+    holdout_steps, truncated = truncate_gift_eval_official_test_tail(
+        frequency,
+        records,
+    )
+    return truncated, {
+        "policy": "gift_eval_short_term_official_test_tail_excluded",
+        "excluded_tail_steps": holdout_steps,
+    }
+
+
 def nonoverlapping_strata(
     series_length: int,
     *,
@@ -1139,10 +1190,15 @@ def build_calibration_anchors(
             record_limit=record_limit,
         )
     frequency = real_bundle.frequency
-    native_records = [
+    source_native_records = [
         (record.item_id, record.values)
         for record in real_bundle.records
     ]
+    native_records, official_holdout = training_records_for_anchor_sampling(
+        dataset,
+        frequency,
+        source_native_records,
+    )
     record_by_item: dict[str, RealSeriesRecord] = {
         record.item_id: record for record in real_bundle.records
     }
@@ -1378,6 +1434,8 @@ def build_calibration_anchors(
                     "schema_version": (
                         "cafe.real_anchor_forecast_master.v1"
                     ),
+                    "benchmark_track": "real_accuracy",
+                    "evaluation_table": "real_accuracy",
                     "sample_id": f"v8real__{anchor_id}",
                     "dataset_id": dataset.dataset_id,
                     "config_id": dataset.config_id,
@@ -1485,6 +1543,7 @@ def build_calibration_anchors(
             file_record(path) for path in real_bundle.asset_files
         ],
         "adapter_metadata": real_bundle.metadata,
+        "official_holdout": official_holdout,
         "frequency": frequency,
         "season_length": int(
             seasonal_period_for_frequency(frequency)
@@ -1522,7 +1581,8 @@ def build_calibration_anchors(
                 {int(anchor["mase_period"]) for anchor in anchors}
             )
         },
-        "native_record_count": len(native_records),
+        "native_record_count": len(source_native_records),
+        "training_record_count": len(native_records),
         "expanded_series_count": len(series),
         "stratum_count": len(candidates),
         "requested_anchor_limit": int(maximum_anchors),
@@ -1546,6 +1606,256 @@ def build_calibration_anchors(
         ),
     }
     return anchors, metadata
+
+
+def build_real_anchored_backgrounds(
+    dataset: DatasetSpec,
+    *,
+    source_root: Path,
+    maximum_backgrounds: int,
+    sample_seed: int = REAL_ANCHORED_SAMPLE_SEED,
+    minimum_observed_fraction: float = 0.5,
+    real_bundle: RealDatasetBundle | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Build authentic L336+H48 paths with a longer history-only fit prefix.
+
+    The model-visible history is always the trailing L336 portion of an L504
+    decomposition prefix. The held-out H48 is retained as an observed nuisance
+    realization; decomposition and intervention contracts never consume it.
+    """
+
+    asset_path = source_root / dataset.asset_name
+    record_limit = (
+        max(64, min(256, int(math.ceil(maximum_backgrounds / 4))))
+        if dataset.real_data_adapter == "m5_csv"
+        else None
+    )
+    if real_bundle is None:
+        real_bundle = load_real_dataset(
+            dataset.real_data_adapter,
+            asset_path,
+            record_limit=record_limit,
+        )
+    frequency = real_bundle.frequency
+    source_records = [
+        (record.item_id, record.values) for record in real_bundle.records
+    ]
+    training_records, official_holdout = training_records_for_anchor_sampling(
+        dataset,
+        frequency,
+        source_records,
+    )
+    series = expand_native_records(training_records)
+    candidates: list[tuple[int, int, int]] = []
+    for series_index, (_series_id, _item_id, _channel, values) in enumerate(
+        series
+    ):
+        for lower, upper in nonoverlapping_strata(
+            len(values),
+            window_length=REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+        ):
+            candidates.append((series_index, lower, upper))
+    target_count = min(len(candidates), int(maximum_backgrounds))
+    rng = np.random.default_rng(
+        stable_seed(dataset.dataset_id, sample_seed, base=sample_seed)
+    )
+    order = (
+        rng.permutation(len(candidates))
+        if candidates
+        else np.asarray([], dtype=int)
+    )
+    backgrounds: list[dict[str, Any]] = []
+    rejected_fit_missing = 0
+    rejected_future_missing = 0
+    rejected_uninformative = 0
+    fit_observed_threshold = max(
+        float(minimum_observed_fraction),
+        REAL_ANCHORED_MINIMUM_FIT_OBSERVED_FRACTION,
+    )
+    for candidate_index in order:
+        series_index, lower, upper = candidates[int(candidate_index)]
+        series_id, item_id, channel_index, values = series[series_index]
+        decomposition_start = (
+            int(rng.integers(lower, upper + 1))
+            if upper > lower
+            else int(lower)
+        )
+        source_window = np.asarray(
+            values[
+                decomposition_start : decomposition_start
+                + REAL_ANCHORED_SOURCE_WINDOW_LENGTH
+            ],
+            dtype=float,
+        )
+        if source_window.size != REAL_ANCHORED_SOURCE_WINDOW_LENGTH:
+            rejected_fit_missing += 1
+            continue
+        fit_history, fit_observed_fraction = impute_observed_window(
+            source_window[:REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH],
+            minimum_observed_fraction=fit_observed_threshold,
+        )
+        if fit_history is None:
+            rejected_fit_missing += 1
+            continue
+        raw_future = source_window[REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH:]
+        future_observed_fraction = float(np.mean(np.isfinite(raw_future)))
+        if future_observed_fraction < 1.0:
+            rejected_future_missing += 1
+            continue
+        future = np.asarray(raw_future, dtype=float)
+        visible_history = fit_history[-REAL_ANCHORED_CONTEXT_LENGTH:]
+        try:
+            standardized_history, location, scale = standardize_history(
+                visible_history
+            )
+        except ValueError:
+            rejected_uninformative += 1
+            continue
+        standardized_fit_history = (fit_history - location) / scale
+        standardized_future = (future - location) / scale
+        standardized_master = np.concatenate(
+            [standardized_history, standardized_future]
+        )[:, None]
+        feature_history = standardized_history[
+            -REAL_CALIBRATION_CONTEXT_LENGTH:
+        ]
+        period_policy = calibration_period_policy(frequency, feature_history)
+        mase_policy = mase_scale_policy(
+            standardized_master,
+            season_length=int(period_policy["mase_period"]),
+        )
+        context_start = (
+            decomposition_start
+            + REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            - REAL_ANCHORED_CONTEXT_LENGTH
+        )
+        forecast_origin = (
+            decomposition_start + REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+        )
+        background_id = (
+            f"{safe_id(dataset.dataset_id)}__{safe_id(item_id)}__"
+            f"c{channel_index}__o{forecast_origin}"
+        )
+        target_hash = hashlib.sha256(
+            np.asarray(standardized_master, dtype="<f8").tobytes()
+        ).hexdigest()
+        backgrounds.append(
+            {
+                "schema_version": "cafe.real_anchored_background_master.v1",
+                "background_id": background_id,
+                "sample_id": f"cafe_real_background__{background_id}",
+                "master_sample_id": f"cafe_real_background__{background_id}",
+                "dataset_id": dataset.dataset_id,
+                "config_id": dataset.config_id,
+                "task_view_id": dataset.task_view_id,
+                "item_id": item_id,
+                "series_id": series_id,
+                "channel_id": channel_index,
+                "decomposition_start": decomposition_start,
+                "context_start": context_start,
+                "forecast_origin": forecast_origin,
+                "decomposition_context_length": (
+                    REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                ),
+                "context_length": REAL_ANCHORED_CONTEXT_LENGTH,
+                "horizon": HORIZON,
+                "target_dim": 1,
+                "covariate_dim": 0,
+                "target": standardized_master.tolist(),
+                "covariates": None,
+                "frequency": frequency,
+                "season_length": int(
+                    period_policy["calendar_season_length"]
+                ),
+                **period_policy,
+                "fit_observed_fraction": fit_observed_fraction,
+                "history_observed_fraction": float(
+                    np.mean(
+                        np.isfinite(
+                            source_window[
+                                REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                                - REAL_ANCHORED_CONTEXT_LENGTH:
+                                REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                            ]
+                        )
+                    )
+                ),
+                "future_observed_fraction": future_observed_fraction,
+                "standardization": {
+                    "scope": "shared_unmodified_real_l336_history",
+                    "location": location,
+                    "scale": scale,
+                },
+                "mase_period": int(period_policy["mase_period"]),
+                "mase_period_source": str(
+                    period_policy["mase_period_source"]
+                ),
+                "mase_scale": float(mase_policy["scale"]),
+                "mase_scale_by_target": list(
+                    mase_policy["scale_by_target"]
+                ),
+                "mase_scale_effective_period_by_target": list(
+                    mase_policy["effective_period_by_target"]
+                ),
+                "mase_scale_fallback_target_indices": list(
+                    mase_policy["fallback_target_indices"]
+                ),
+                "mase_scale_policy": str(mase_policy["policy"]),
+                "mase_scale_source": "shared_unmodified_real_l336_history",
+                "intentional_real_anchor": True,
+                "future_randomness_semantics": (
+                    "observed_realization_not_deterministic_given_history"
+                ),
+                "scoring_target_semantics": (
+                    "held_out_real_future_shared_pair_nuisance"
+                ),
+                "decomposition_history_sha256": hashlib.sha256(
+                    np.asarray(
+                        standardized_fit_history,
+                        dtype="<f8",
+                    ).tobytes()
+                ).hexdigest(),
+                "history_sha256": hashlib.sha256(
+                    np.asarray(standardized_history, dtype="<f8").tobytes()
+                ).hexdigest(),
+                "future_sha256": hashlib.sha256(
+                    np.asarray(standardized_future, dtype="<f8").tobytes()
+                ).hexdigest(),
+                "target_sha256": target_hash,
+                # Private calibration-stage payload. The runner freezes a
+                # decomposition contract and removes this array before writing
+                # the public background artifact.
+                "_decomposition_history": standardized_fit_history.tolist(),
+            }
+        )
+        if len(backgrounds) >= target_count:
+            break
+    metadata = {
+        "schema_version": "cafe.real_anchored_background_bank.v1",
+        "dataset_id": dataset.dataset_id,
+        "frequency": frequency,
+        "official_holdout": official_holdout,
+        "source_window_length": REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+        "decomposition_context_length": (
+            REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+        ),
+        "model_context_length": REAL_ANCHORED_CONTEXT_LENGTH,
+        "horizon": HORIZON,
+        "fit_minimum_observed_fraction": fit_observed_threshold,
+        "future_requires_complete_observation": True,
+        "stratum_count": len(candidates),
+        "requested_background_limit": int(maximum_backgrounds),
+        "accepted_background_count": len(backgrounds),
+        "rejected_fit_missing_count": rejected_fit_missing,
+        "rejected_future_missing_count": rejected_future_missing,
+        "rejected_uninformative_count": rejected_uninformative,
+        "sampling_policy": (
+            "nonoverlapping_l504_h48_capacity_strata_with_deterministic_"
+            "without_replacement_selection_and_within_stratum_jitter"
+        ),
+        "sample_seed": sample_seed,
+    }
+    return backgrounds, metadata
 
 
 def anchor_summary(features: dict[str, float]) -> dict[str, dict[str, float]]:
@@ -3518,6 +3828,7 @@ def generate_master_sample(
     target_hash = target_and_covariate_sha256(target, covariates)
     return {
         "schema_version": "cafe.master_sample.v1",
+        "benchmark_track": "deterministic_synthetic",
         "feature_schema_version": FEATURE_SCHEMA_VERSION,
         "sample_id": sample_id,
         "master_sample_id": sample_id,

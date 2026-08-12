@@ -19,6 +19,15 @@ from typing import Any
 
 from cafe import provenance
 from cafe import protocol
+from cafe.generation.real_counterfactuals import (
+    REAL_ANCHORED_ALPHAS,
+    REAL_ANCHORED_GENERATOR_VERSION,
+    REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO,
+    REAL_ANCHORED_MINIMUM_CYCLES,
+    REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS,
+    REAL_ANCHORED_MINIMUM_FUTURE_COMPONENT_RMS_RATIO,
+    REAL_ANCHORED_SUPPORTED_CAPABILITIES,
+)
 from cafe.inference import runner as inference
 
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
@@ -66,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gift-eval-dir",
         type=Path,
-        default=Path("/root/xmy/gift-eval"),
+        default=protocol.REPO_ROOT / "data" / "gift-eval",
     )
     parser.add_argument(
         "--source-root",
@@ -437,9 +446,64 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "cafe.experiment_protocol.v1",
+        "schema_version": "cafe.experiment_protocol.v2",
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,
+        "benchmark_tracks": [
+            "real_accuracy",
+            "real_anchored_counterfactual",
+            "deterministic_synthetic",
+        ],
+        "real_anchored_protocol": {
+            "schema_version": "cafe.real_anchored_protocol.v1",
+            "generator_version": REAL_ANCHORED_GENERATOR_VERSION,
+            "supported_capabilities": list(
+                REAL_ANCHORED_SUPPORTED_CAPABILITIES
+            ),
+            "decomposition_fit_scope": "history_only_l504",
+            "decomposition_context_length": (
+                protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            ),
+            "model_master_context_length": (
+                protocol.REAL_ANCHORED_CONTEXT_LENGTH
+            ),
+            "forecast_horizon": protocol.HORIZON,
+            "rank_context_length": protocol.FIXED_CONTEXT_LENGTH,
+            "minimum_complete_cycles": REAL_ANCHORED_MINIMUM_CYCLES,
+            "minimum_controlled_component_rms_ratio": (
+                REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO
+            ),
+            "minimum_future_controlled_component_rms_ratio": (
+                REAL_ANCHORED_MINIMUM_FUTURE_COMPONENT_RMS_RATIO
+            ),
+            "future_controlled_component_gate": (
+                "history_only_analytic_h48_rms_relative_to_shared_l336_scale"
+            ),
+            "period_resolution": (
+                "calibration_carrier_plus_separated_history_fft_peaks_v1"
+            ),
+            "alpha_grid": list(REAL_ANCHORED_ALPHAS),
+            "multi_seasonal_intervention": (
+                "fixed_carrier_scale_secondary_harmonic_sum_v1"
+            ),
+            "trend_intervention": (
+                "fixed_level_and_linear_scale_c1_local_nonlinearity_w96_v1"
+            ),
+            "normalization": "shared_unmodified_real_l336_history",
+            "future_semantics": (
+                "observed_real_nuisance_plus_deterministic_intervention"
+            ),
+            "official_test_tail": (
+                "excluded_before_window_sampling_gift_short_term_or_m4_h48"
+            ),
+            "minimum_eligible_backgrounds": (
+                REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS
+            ),
+            "anti_copy_applicability": (
+                "not_applicable_intentional_real_anchor_counterfactual"
+            ),
+            "ranking": "separate_from_deterministic_synthetic",
+        },
         "dataset_ids": list(dataset_ids),
         "real_data_adapters": {
             dataset_id: protocol.resolve_dataset(dataset_id).real_data_adapter
@@ -649,11 +713,13 @@ def stage_protocol_configs(
             "horizon",
             "view_context_lengths",
             "intensities",
+            "benchmark_tracks",
+            "real_anchored_protocol",
         )
     }
     return {
         "calibration": {
-            "schema_version": "cafe.calibration_stage.v1",
+            "schema_version": "cafe.calibration_stage.v2",
             **shared_structure,
             "max_anchors": full_protocol["max_anchors"],
             "calibration_seeds": full_protocol["calibration_seeds"],
@@ -662,7 +728,7 @@ def stage_protocol_configs(
             "execution": preparation_execution,
         },
         "generation": {
-            "schema_version": "cafe.generation_stage.v1",
+            "schema_version": "cafe.generation_stage.v2",
             **shared_structure,
             "generator_version": full_protocol["generator_version"],
             "seed_start": full_protocol["seed_start"],
@@ -672,12 +738,12 @@ def stage_protocol_configs(
             "execution": preparation_execution,
         },
         "validation": {
-            "schema_version": "cafe.validation_stage.v1",
+            "schema_version": "cafe.validation_stage.v2",
             **shared_structure,
             "generator_version": full_protocol["generator_version"],
         },
         "inference": {
-            "schema_version": "cafe.inference_stage.v1",
+            "schema_version": "cafe.inference_stage.v2",
             "dataset_ids": full_protocol["dataset_ids"],
             "seed_start": full_protocol["seed_start"],
             "seed_count": full_protocol["seed_count"],
@@ -688,12 +754,16 @@ def stage_protocol_configs(
             "view_context_lengths": full_protocol["view_context_lengths"],
             "fixed_context_length": full_protocol["fixed_context_length"],
             "horizon": full_protocol["horizon"],
+            "benchmark_tracks": full_protocol["benchmark_tracks"],
+            "real_anchored_protocol": full_protocol[
+                "real_anchored_protocol"
+            ],
             "requested_endpoints": endpoints,
             "requested_api_prefix": full_protocol["api_prefix"],
             "endpoint_profiles": endpoint_profiles,
         },
         "analysis": {
-            "schema_version": "cafe.analysis_stage.v1",
+            "schema_version": "cafe.analysis_stage.v2",
             "dataset_ids": full_protocol["dataset_ids"],
             "seed_start": full_protocol["seed_start"],
             "seed_count": full_protocol["seed_count"],
@@ -702,6 +772,10 @@ def stage_protocol_configs(
             "analysis_profile": full_protocol["analysis_profile"],
             "fixed_context_length": full_protocol["fixed_context_length"],
             "view_context_lengths": full_protocol["view_context_lengths"],
+            "benchmark_tracks": full_protocol["benchmark_tracks"],
+            "real_anchored_protocol": full_protocol[
+                "real_anchored_protocol"
+            ],
             "aggregation_policy": full_protocol["aggregation_policy"],
             "primary_mechanism_score_policy": (
                 full_protocol["primary_mechanism_score_policy"]
@@ -1051,7 +1125,10 @@ def reusable_analysis_manifest(
         analysis_manifest = protocol.read_json(analysis_manifest_path)
         if not bool(inference_manifest.get("complete")):
             return False
-        if analysis_manifest.get("schema_version") != ("cafe.analysis_manifest.v1"):
+        if analysis_manifest.get("schema_version") not in {
+            "cafe.analysis_manifest.v1",
+            "cafe.analysis_manifest.v2",
+        }:
             return False
         if str(analysis_manifest.get("dataset_id")) != dataset_id:
             return False

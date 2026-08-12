@@ -133,6 +133,8 @@ ENDPOINT_PERFORMANCE_PRESETS = {
 SCHEDULING_POLICY_ID = (
     "model-major-weighted-endpoint-shards-interleaved-context-bulk-v2"
 )
+REAL_ANCHORED_GENERATION_FILE_KEY = "real_anchored_counterfactuals"
+REAL_ANCHORED_BENCHMARK_TRACK = "real_anchored_counterfactual"
 _PRINT_LOCK = threading.Lock()
 
 
@@ -2185,12 +2187,39 @@ def formal_real_anchor_source_record(
     return record
 
 
+def optional_real_anchored_source_record(
+    generation_manifest: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve the optional real-anchored generation component."""
+
+    files = generation_manifest.get("files")
+    if not isinstance(files, dict):
+        raise ValueError("generation manifest is missing files")
+    record = files.get(REAL_ANCHORED_GENERATION_FILE_KEY)
+    if record is None:
+        return None
+    if not isinstance(record, dict):
+        raise ValueError(
+            "generation manifest real-anchored source file record must be "
+            "an object"
+        )
+    validated_file_record_path(
+        record,
+        label="real-anchored counterfactual source",
+        validate_row_count=True,
+    )
+    return record
+
+
 def validate_inference_task_manifest_files(
     task_manifest: dict[str, Any],
 ) -> Path:
-    """Validate the combined task and both independently consumed components."""
+    """Validate the combined task and all independently consumed components."""
 
-    if task_manifest.get("schema_version") != ("cafe.inference_task_manifest.v1"):
+    if task_manifest.get("schema_version") not in {
+        "cafe.inference_task_manifest.v1",
+        "cafe.inference_task_manifest.v2",
+    }:
         raise ValueError("unsupported Paper-cafe inference task manifest")
     task_components = task_manifest.get("task_components")
     if not isinstance(task_components, dict):
@@ -2205,6 +2234,22 @@ def validate_inference_task_manifest_files(
             label=f"inference task component {name}",
             validate_row_count=True,
         )
+    real_anchored_record = task_components.get(
+        REAL_ANCHORED_GENERATION_FILE_KEY
+    )
+    if real_anchored_record is not None:
+        if not isinstance(real_anchored_record, dict):
+            raise ValueError(
+                "inference task manifest real-anchored component must be an "
+                "object"
+            )
+        component_paths[REAL_ANCHORED_GENERATION_FILE_KEY] = (
+            validated_file_record_path(
+                real_anchored_record,
+                label="inference task component real_anchored_counterfactuals",
+                validate_row_count=True,
+            )
+        )
     task_record = task_manifest.get("task_file")
     if not isinstance(task_record, dict):
         raise ValueError("inference task manifest is missing task_file")
@@ -2215,11 +2260,26 @@ def validate_inference_task_manifest_files(
     )
     synthetic_count = int(task_components["synthetic"]["row_count"])
     real_count = int(task_components["real_anchors"]["row_count"])
+    real_anchored_count = (
+        0
+        if real_anchored_record is None
+        else int(real_anchored_record["row_count"])
+    )
     if synthetic_count != int(task_manifest.get("synthetic_view_count", -1)):
         raise ValueError("synthetic inference task count disagrees with manifest")
     if real_count != int(task_manifest.get("real_anchor_view_count", -1)):
         raise ValueError("real-anchor inference task count disagrees with manifest")
-    if synthetic_count + real_count != int(task_manifest.get("view_count", -1)):
+    declared_real_anchored_count = int(
+        task_manifest.get("real_anchored_view_count", 0)
+    )
+    if real_anchored_count != declared_real_anchored_count:
+        raise ValueError(
+            "real-anchored inference task count disagrees with manifest"
+        )
+    if (
+        synthetic_count + real_count + real_anchored_count
+        != int(task_manifest.get("view_count", -1))
+    ):
         raise ValueError("combined inference task count disagrees with components")
     if int(task_record["row_count"]) != int(task_manifest["view_count"]):
         raise ValueError("combined inference task record count mismatch")
@@ -2246,6 +2306,41 @@ def prepare_view_tasks(
     synthetic_view_count = protocol.write_jsonl(
         synthetic_task_path,
         protocol.iter_master_views(masters),
+    )
+    real_anchored_source_record = optional_real_anchored_source_record(
+        generation_manifest
+    )
+    real_anchored_task_path = (
+        inference_dir / "real_anchored_forecast_views.jsonl"
+    )
+
+    def real_anchored_tasks() -> Iterator[dict[str, Any]]:
+        if real_anchored_source_record is None:
+            return
+        source_masters = protocol.iter_jsonl(
+            Path(real_anchored_source_record["path"])
+        )
+        for view in protocol.iter_master_views(
+            source_masters,
+            context_lengths=(protocol.FIXED_CONTEXT_LENGTH,),
+        ):
+            row = dict(view)
+            row["schema_version"] = (
+                "cafe.real_anchored_forecast_view.v1"
+            )
+            row["evaluation_table"] = REAL_ANCHORED_BENCHMARK_TRACK
+            row["benchmark_track"] = REAL_ANCHORED_BENCHMARK_TRACK
+            row["context_policy"] = (
+                f"fixed_l{protocol.FIXED_CONTEXT_LENGTH}"
+            )
+            row["context_policy_candidates"] = [
+                protocol.FIXED_CONTEXT_LENGTH
+            ]
+            yield row
+
+    real_anchored_view_count = protocol.write_jsonl(
+        real_anchored_task_path,
+        real_anchored_tasks(),
     )
     real_source_record = (
         (calibration_bundle or {}).get("files", {}).get("real_anchor_masters")
@@ -2283,43 +2378,60 @@ def prepare_view_tasks(
         task_path,
         (
             row
-            for path in (synthetic_task_path, real_task_path)
+            for path in (
+                synthetic_task_path,
+                real_anchored_task_path,
+                real_task_path,
+            )
             for row in protocol.iter_jsonl(path)
         ),
     )
+    task_components = {
+        "synthetic": {
+            **protocol.file_record(synthetic_task_path),
+            "row_count": synthetic_view_count,
+        },
+        "real_anchors": {
+            **protocol.file_record(real_task_path),
+            "row_count": real_anchor_view_count,
+        },
+    }
+    if real_anchored_source_record is not None:
+        task_components[REAL_ANCHORED_GENERATION_FILE_KEY] = {
+            **protocol.file_record(real_anchored_task_path),
+            "row_count": real_anchored_view_count,
+        }
     manifest = {
-        "schema_version": "cafe.inference_task_manifest.v1",
+        "schema_version": "cafe.inference_task_manifest.v2",
         "created_at": protocol.utc_now(),
         "generation_config_sha256": generation_manifest["config_sha256"],
-        "generation_files": source_records,
+        "generation_files": source_records + (
+            []
+            if real_anchored_source_record is None
+            else [real_anchored_source_record]
+        ),
         "calibration_bundle_content_sha256": (
             None
             if calibration_bundle is None
             else calibration_bundle.get("bundle_content_sha256")
         ),
         "real_anchor_source": real_source_record,
+        "real_anchored_source": real_anchored_source_record,
         "context_lengths": list(protocol.VIEW_CONTEXT_LENGTHS),
         "fixed_context_length": protocol.FIXED_CONTEXT_LENGTH,
         "synthetic_view_count": synthetic_view_count,
+        "real_anchored_view_count": real_anchored_view_count,
         "real_anchor_view_count": real_anchor_view_count,
         "view_count": view_count,
-        "task_components": {
-            "synthetic": {
-                **protocol.file_record(synthetic_task_path),
-                "row_count": synthetic_view_count,
-            },
-            "real_anchors": {
-                **protocol.file_record(real_task_path),
-                "row_count": real_anchor_view_count,
-            },
-        },
+        "task_components": task_components,
         "task_file": {
             **protocol.file_record(task_path),
             "row_count": view_count,
         },
         "mase_policy": (
-            "synthetic views share clean L336 denominator; real anchors use "
-            "their own clean "
+            "synthetic views share clean L336 denominator; real-anchored "
+            "counterfactual pairs share their unmodified real L336 history "
+            "denominator; real anchors use their own clean "
             f"L{protocol.REAL_CALIBRATION_CONTEXT_LENGTH} history denominator"
         ),
     }
@@ -3435,7 +3547,16 @@ def main() -> int:
     validation = protocol.read_json(validation_path)
     if not validation["accepted"]:
         raise ValueError("generation validation is not accepted")
+    if validation.get("generation_manifest_sha256") != (
+        protocol.file_sha256(generation_manifest_path)
+    ):
+        raise ValueError(
+            "generation validation is not bound to the current manifest"
+        )
     generation_manifest = protocol.read_json(generation_manifest_path)
+    real_anchored_source_record = optional_real_anchored_source_record(
+        generation_manifest
+    )
     calibration_bundle_path = (
         dataset_root / "01_calibration" / "calibration_bundle.json"
     )
@@ -3471,6 +3592,21 @@ def main() -> int:
             != expected_calibration_sha256
         ):
             raise ValueError("resume calibration bundle mismatch")
+        task_real_anchored_source = task_manifest.get(
+            "real_anchored_source"
+        )
+        expected_real_anchored_sha256 = (
+            None
+            if real_anchored_source_record is None
+            else real_anchored_source_record.get("sha256")
+        )
+        task_real_anchored_sha256 = (
+            None
+            if not isinstance(task_real_anchored_source, dict)
+            else task_real_anchored_source.get("sha256")
+        )
+        if task_real_anchored_sha256 != expected_real_anchored_sha256:
+            raise ValueError("resume real-anchored generation source mismatch")
     else:
         task_path, task_manifest = prepare_view_tasks(
             generation_manifest,
@@ -3760,10 +3896,21 @@ def main() -> int:
         },
         "statuses": statuses,
         "predictions": {
-            "storage": "per_model_jsonl_including_synthetic_and_real_tasks",
+            "storage": (
+                "per_model_jsonl_including_synthetic_real_anchored_and_"
+                "real_anchor_tasks"
+            ),
             "files": prediction_files,
             "row_count": prediction_count,
             "synthetic_row_count_per_model": int(task_manifest["synthetic_view_count"]),
+            "real_anchored_counterfactual": {
+                "storage": "included_in_canonical_per_model_jsonl",
+                "rows_per_model": int(
+                    task_manifest.get("real_anchored_view_count", 0)
+                ),
+                "included_in_synthetic_mechanism_ranking": False,
+                "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+            },
             "real_anchor": {
                 "storage": "separate_per_model_auxiliary_jsonl",
                 "files": real_anchor_prediction_files,

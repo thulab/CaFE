@@ -1,21 +1,35 @@
 # CaFE
 
-CaFE (Capability-Focused Extension) is the standalone research repository for
-the paper's deterministic synthetic time-series mechanism benchmark.
+CaFE (Capability-Focused Extension) is a benchmark-extension suite for
+time-series forecasting capability analysis. It keeps three scientifically
+separate tracks:
+
+- real-data forecast accuracy;
+- real-path-anchored capability counterfactuals;
+- deterministic synthetic mechanism tests.
 
 The canonical flow is:
 
 ```text
-real-data calibration
-  → deterministic synthetic generation
+real-data calibration and authentic background windows
+  → real-anchored counterfactuals + deterministic synthetic generation
   → mechanism validation
   → model inference
-  → capability and stability analysis
+  → track-separated capability and stability analysis
 ```
 
-The benchmark uses a 168-point real calibration history, a 336-point synthetic
-master history, a 48-point horizon, and 96/168/336 inference views. The fixed
-main table uses context 168; oracle context selects among the three views.
+The synthetic track uses a 168-point real calibration history, a 336-point
+master history, a 48-point horizon, and 96/168/336 inference views. The
+real-anchored track fits decomposition contracts on L504 history, exposes only
+the trailing L336 to the model, retains an observed real H48, and ranks only
+the fixed L168 view. Pair members share the unmodified real L336
+normalization/MASE reference. The two mechanism tracks never share scores or
+rankings.
+
+The first real-anchored implementation covers trend, multi-seasonality,
+time-varying carrier modulation sidebands, and observed regime level shifts. Other
+capabilities remain explicitly unavailable until their genuine synchronized
+panel, hierarchy, covariate, or residual-path contract is implemented.
 
 ## Install
 
@@ -58,6 +72,22 @@ uv run cafe run \
 
 Runtime artifacts are written under `runtime/experiments/` and are ignored by
 Git.
+
+GIFT-Eval assets downloaded under `data/gift-eval/` are used by default. The
+offline real-anchored qualification does not start model services or create
+pipeline artifacts:
+
+```bash
+uv run python tools/qualification/real_anchored.py \
+  --dataset-id gift_electricity_h \
+  --dataset-id gift_jena_weather_h \
+  --maximum-backgrounds 32
+```
+
+GIFT-Eval's official short-term test tail is removed before any CaFE window is
+sampled. M4 Hourly uses its official single H48 tail rule.
+Consequently these are GIFT-derived CaFE extension tasks, not a replacement
+for the official GIFT-Eval test-set leaderboard.
 
 ### FEV-Bench pilot data
 

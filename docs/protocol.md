@@ -1,9 +1,10 @@
-# CaFE 合成机制 Benchmark：Canonical 全流程决策
+# CaFE Benchmark Extension：Canonical 全流程决策
 
 ## 文档地位
 
 本文档是 CaFE 校准、生成、回验、推理和分析的唯一规范性决策文档。
-它只覆盖论文的合成数据研究，不覆盖 FastAPI/Vue 评测平台。
+它覆盖真实准确率、真实路径锚定反事实和确定性合成机制三条彼此隔离的研究轨，
+不覆盖 FastAPI/Vue 评测平台。
 
 本文档描述的是当前已冻结协议。代码和产物必须与本文一致；发生协议变更时，
 必须更新协议版本并创建新的不可变实验目录，不能静默复用旧产物。历史方案只在
@@ -15,6 +16,9 @@
 |---|---|
 | 真实 calibration history | 168 |
 | 真实 anchor held-out future | 48 |
+| real-anchored decomposition history | 504（history-only） |
+| real-anchored model master | trailing L336 + observed H48 |
+| real-anchored 主表 | `fixed_l168`，不进入 synthetic rank |
 | 合成 master history | 336 |
 | 合成 forecast horizon | 48 |
 | 推理 suffix views | 96 / 168 / 336 |
@@ -27,21 +31,32 @@
 | 主生成 | clean、deterministic future、primary family |
 | 预测 horizon 内的新随机创新 | 无 |
 
+“无新随机创新”只适用于 deterministic synthetic。real-anchored 的 H48 是真实
+观测到的 nuisance/innovation realization；给定 baseline 后，干预 delta 完全确定。
+
 `oracle_context` 是同一 master 的乐观视野上界，不替代固定视野的受控比较。
 反事实 pair 的两个 member 必须共用同一个 Oracle context；该 context 由 pair
 平均 MASE 选择。
 
 ## 研究目标与解释边界
 
-CaFE 测量模型对十种时间序列机制的响应，而不是训练生成模型去复刻真实曲线。
+CaFE 的意图是扩展已有真实 benchmark 的能力分析，而不是只训练或检验一个合成
+生成器。三条轨道回答不同问题：
 
-- 真实数据用于校准经验形态、背景 nuisance 和可用参数尺度。
+- `real_accuracy`：模型在未经修改的真实 H48 上是否准确；
+- `real_anchored_counterfactual`：在真实趋势、残差、尺度和 future nuisance 上只改变
+  一个声明机制后，模型能否恢复真实 effect；
+- `deterministic_synthetic`：机制构造本身是否可辨识，以及模型在纯净、完全确定题面
+  上的能力上界和 stress behavior。
+
+- 真实数据既用于校准经验形态和可用参数尺度，也直接提供 real-anchored baseline
+  的数值路径。
 - 合成结构是能力题面的主体；合成 future 完全由已知确定性机制产生。
 - 主表随机化样本参数、相位、符号、事件位置、载荷和 lag，但不在 forecast
   区间注入不可预测的过程创新。
 - 真实校准与合成回验只支持 construct alignment：
   “生成器是否落在合理经验尺度并正确实现目标机制”。
-- 真实 anchor 预测只提供外部 sanity check，不进入合成机制得分或排名。
+- 三轨分别出表、分别排名；不构造任意加权总分。真实轨结果绝不进入合成机制排名。
 - 不要求每个真实数据集天然具备层级、共同因子、跨序列因果或 known-future
   covariate 语义；但缺失校准结构时，对应 `dataset × capability` 不进入实验生成。
 
@@ -49,11 +64,12 @@ CaFE 测量模型对十种时间序列机制的响应，而不是训练生成模
 
 ```text
 注册的真实数据 adapter（GIFT-Eval Arrow 或 M5 CSV）
-  → 构造 forecastable real anchor pool
+  → 排除官方 benchmark test tail
+  → 构造 L168 calibration anchors 与 L504+H48 authentic backgrounds
   → 提取唯一的 history-only CaFE feature profile
-  → 映射背景参数并标定 I1–I5
-  → 生成 L336 + H48 deterministic masters
-  → 生成机制与配对关系回验
+  → 冻结真实分解/干预契约，同时标定 synthetic I1–I5
+  → 生成 real-anchored pairs 与 L336+H48 deterministic masters
+  → 分轨回验机制、配对关系、hash 与共享 normalization
   → 切出 L96/L168/L336 suffix views
   → 模型推理与真实 anchor 辅助预测
   → fixed-L168 / oracle-context 能力分析
@@ -68,7 +84,9 @@ CaFE 测量模型对十种时间序列机制的响应，而不是训练生成模
 | `src/cafe/data/real.py` | 低耦合真实数据 adapter、统一记录与结构语义 |
 | `src/cafe/features/profile.py` | 唯一的 history-only 特征实现 |
 | `src/cafe/calibration/runner.py` | 真实 anchor 和 capability calibration bundle |
-| `src/cafe/generation/runner.py` | clean、secondary、robustness 和 input ablation 样本 |
+| `src/cafe/generation/anchored.py` | history-only 真实分解与可解析外推契约 |
+| `src/cafe/generation/real_counterfactuals.py` | 真实路径干预、availability 与 paired masters |
+| `src/cafe/generation/runner.py` | real-anchored、clean、secondary、robustness 和 input ablation 样本 |
 | `src/cafe/validation/runner.py` | 生成合法性、配对关系、强度和尺度回验 |
 | `src/cafe/inference/runner.py` | view 准备、多服务推理、断点恢复和严格合并 |
 | `src/cafe/analysis/runner.py` | fixed/oracle 指标、排名、matched audit 与 split-bank |
@@ -142,6 +160,100 @@ anchor，不复制窗口凑数。缺失值采用统一、可审计的轻量插�
   dominant period；
 - `generator_period`：按各能力在 L336/H48 内的可识别性裁剪后的生成尺度；
 - `mase_period`：日历周期在 L168 内可定义时使用，否则明确回退为 lag 1。
+
+### Real-anchored authentic background 与干预契约
+
+real-anchored 不复用或拉伸 L168 calibration anchor，而是从已经排除官方测试尾段的
+source record 独立抽取：
+
+```text
+decomposition_fit = x[o-504:o]
+model_history     = x[o-336:o]
+real_future       = x[o:o+48]
+```
+
+分解只能读取 `decomposition_fit`；改变 `real_future` 不得改变 contract、period、
+join point 或 intervention delta。L504 中较早的 168 点只用于分解，模型 master
+仍为 L336+H48。future 必须 48/48 有真实观测；fit history 至少 90% 有观测，插补
+比例、三段 origin 和 hash 全部写入 calibration artifact。
+
+GIFT-Eval Arrow 本身包含官方 evaluation tail。所有 calibration/real-anchored
+strata 都必须先调用 registry 对应的 tail policy；普通 GIFT short-term 使用官方
+rolling holdout 长度，M4 Hourly 固定排除官方单个 H48。不能从 upstream benchmark
+test tail 抽取 CaFE calibration 或反事实任务。
+因此本轨是基于 GIFT source 的 CaFE capability extension，不等同于复现或替代
+GIFT-Eval 官方 test-set leaderboard；如报告官方准确率，必须另走官方 split，且
+不能把该 future 用于分解、availability 或剂量选择。
+
+baseline 先用未修改的 trailing L336 history 计算 location、scale 和 MASE
+denominator，随后同一 pair 的全部 α 共用这组 reference，禁止逐 member 重新
+z-score。真实 baseline（含其 residual 与 held-out innovation）逐点保留；只添加
+history-fitted component delta：
+
+\[
+x^{(c,\alpha)}_t=x_t+(\alpha-1)\widehat M^{(c)}_t,
+\qquad \alpha\in\{1.2,1.4,1.6,1.8,2.0\}.
+\]
+
+当前核心单变量定义至少包括：
+
+- multi-seasonal：joint harmonic regression 固定主 carrier，只令
+  \(\widehat M=S_{secondary}\)。P24 的 P8/P6 等整数高次谐波不能冒充次季节；
+  P168 等更长的独立频率可以保留；
+- trend：joint regression 同时吸收固定的 carrier/secondary nuisance，只令
+  \(\widehat M=T_{nonlinear,W96}\)。该二/三阶局部基在 join point 的值和一阶导均为
+  0，水平与线性切线不随 α 改变；
+- time-varying seasonality：从逐 carrier-cycle 的 amplitude envelope 中，只在
+  carrier 足够强、振幅变异和 envelope 主峰通过 history-only gate 时确定较慢的
+  modulation period。contract 只缩放 \(f_c-f_m\) 与 \(f_c+f_m\) sidebands，固定
+  carrier 本身，future 为有界周期外推；
+- regime switching：先去掉 history-only polynomial 与 harmonic nuisance，只在
+  fixed-L168 可见区内选择同时通过标准化 jump 和局部 SSE-reduction gate 的 join
+  point \(\tau\)。contract 只缩放 \(\beta 1[t\ge\tau]\)，join 后常数延续，不假定
+  future 会发生一个尚未观测的新 regime。
+
+α 是物理 component-amplitude dose，不冒充 synthetic 的 real-q10/q90 I1–I5。
+real-anchored sample 的 `target_feature` 固定为
+`real_anchored_intervention_rms`；原 synthetic feature coordinate 只作 provenance，
+不能把 intervention RMS 重新标成 `multi_period_score`、`trend_strength` 等经验特征。
+每个 dose 保存一对 `alpha=1` baseline 与 treatment；重复 baseline 是显式配对
+设计，validation 不将其误判为 synthetic duplicate。anti-copy 对此轨必须记录
+`not_applicable:intentional_real_anchor_counterfactual`，不能全局关闭 synthetic
+near-distance gate。
+
+每个 `dataset × capability × background` 在模型推理前冻结 availability；至少四个
+eligible backgrounds 才允许该 dataset-capability 进入当前轨道。未保存真实同步
+panel、hierarchy 或 known-future covariate path 的结构能力必须显式 unavailable，
+不能用真实标量或独立通道拼成“真实路径”。
+任何 controlled component 的 L504 history RMS，以及由该 history contract 解析
+外推到 H48 的 component RMS，都必须至少达到 baseline L336 scale 的 1%；后者
+不读取真实 future。这样既避免把数值上非零但实际上不可见的拟合项当作真实能力，
+也避免最大剂量的 truth effect 过小而令 effect NRMSE 失稳。
+
+真实 background 是统计单位，不能用多个 synthetic seed 重复包装来扩大样本量。
+每个 dataset-capability 先冻结 eligible background permutation，再以全实验
+`seed_index` 作为该 permutation 的全局 ordinal 做无放回分配；当 seed ordinal
+超过 eligible 数量时不再生成 real-anchored 样本。该映射不随 shard 边界改变，
+generation availability 必须保存各能力的 assigned seed indexes 与 effective
+background count。分析中的有效 N 因而等于不同真实 background 数，而不是请求的
+synthetic seed 数。
+
+real-anchored 的 absolute accuracy 与 mechanism effect 分开报告。对 pair：
+
+\[
+\Delta y=y^{treat}_{future}-y^{base}_{future},\qquad
+\Delta\hat y=\hat y^{treat}-\hat y^{base}.
+\]
+
+保存 treatment MASE、effect NRMSE、effect correlation、amplitude ratio 和以共享
+baseline MASE 归一化的 effect MAE。主机制 rank 只使用 fixed-L168 的最大可用
+dose effect NRMSE；结果写入独立 `real_anchored_scores.json`，不追加到
+`scores.json`，也不参与 synthetic experiment aggregate。
+accuracy 以 authentic background 为统计单位：序列化用于配对的重复 baseline
+只计一次，再与各 treatment dose 各计一次并先在 background 内平均，最后对
+background 等权。mechanism 在最大 dose 上每个 background 恰好一条 effect；
+dataset score 必须记录实际 background count 与 ID-set hash。experiment aggregate
+仍对可用 dataset 等权，不按某个 dataset 的 background 数量池化加权。
 
 ## 特征、真实校准与参数映射
 
@@ -548,6 +660,9 @@ runtime/experiments/
       01_calibration/
         anchors.jsonl
         real_anchor_masters.jsonl
+        real_anchored_backgrounds.jsonl
+        real_anchored_contracts.jsonl
+        real_anchored_availability.json
         capability_calibration.json
         calibration_bundle.json
       02_generation/
@@ -555,11 +670,14 @@ runtime/experiments/
           seed_<start>_<end>.jsonl
           seed_<start>_<end>__robustness.jsonl
           seed_<start>_<end>__input_ablation.jsonl
+          seed_<start>_<end>__real_anchored_counterfactual.jsonl
+        real_anchored_availability__seed_<start>_<end>.json
         manifest__seed_<start>_<end>.json
         validation__seed_<start>_<end>.json
       03_inference/
         seed_<start>_<end>/
           synthetic_forecast_views.jsonl
+          real_anchored_forecast_views.jsonl
           real_anchor_views.jsonl
           forecast_views.jsonl
           task_manifest.json
@@ -572,6 +690,9 @@ runtime/experiments/
           prediction_metrics.jsonl
           counterfactual_effects.jsonl
           scores.json
+          real_anchored_prediction_metrics.jsonl
+          real_anchored_counterfactual_effects.jsonl
+          real_anchored_scores.json
           split_bank.json
           matched_comparisons.json
           structured_positive_controls.json
@@ -590,6 +711,12 @@ runtime/experiments/
 `pipeline_status.json` 是允许原地更新的运行状态文件。各阶段自己的产物 manifest
 继续保存输入 hash、输出 hash、row count 和必要 provenance，拒绝跨生成器或跨
 seed shard 静默合并。
+
+多数据集 aggregate 也保持分轨：synthetic 继续写 fixed/oracle 两张能力表；
+real-anchored 只从各 dataset manifest v2 的独立 score record 读取，在该能力实际
+available 的数据集与完整 foundation-model 交集上等权聚合，写
+`capability_scores_real_anchored_fixed_l168.json`。两边的输入行、rank 和 manifest
+record 不互相复用。
 
 ## 明确 deferred
 
