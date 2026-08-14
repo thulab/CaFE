@@ -15,6 +15,7 @@ def anchored_sample(
     member: int,
     intensity: int = 4,
     mase_scale: float = 2.5,
+    background_index: int = 0,
 ) -> dict:
     context = runner.FIXED_CONTEXT_LENGTH
     horizon = 4
@@ -23,21 +24,26 @@ def anchored_sample(
     treatment_delta = np.zeros_like(baseline)
     treatment_delta[context:] = np.asarray([1.0, 2.0, 3.0, 4.0])
     target = baseline + member * treatment_delta
-    pair_id = f"real_pair_i{intensity}__L{context}"
-    master_pair_id = f"real_pair_i{intensity}"
+    pair_id = f"real_pair_b{background_index}_i{intensity}__L{context}"
+    master_pair_id = f"real_pair_b{background_index}_i{intensity}"
     return {
         "schema_version": "cafe.forecast_view.v1",
         "benchmark_track": runner.REAL_ANCHORED_BENCHMARK_TRACK,
-        "sample_id": f"real_sample_i{intensity}_m{member}__L{context}",
-        "master_sample_id": f"real_sample_i{intensity}_m{member}",
+        "sample_id": (
+            f"real_sample_b{background_index}_i{intensity}_m{member}"
+            f"__L{context}"
+        ),
+        "master_sample_id": (
+            f"real_sample_b{background_index}_i{intensity}_m{member}"
+        ),
         "dataset_id": "gift_electricity_h",
-        "config_id": "real_background_0",
+        "config_id": f"real_background_{background_index}",
         "capability_id": "multi_seasonal",
         "generator_family_role": "real_anchored",
         "evaluation_table": runner.REAL_ANCHORED_BENCHMARK_TRACK,
         "intensity": intensity,
-        "seed_index": 7,
-        "background_id": "real_background_0",
+        "seed_index": 7 + background_index,
+        "background_id": f"real_background_{background_index}",
         "dose_value": 1.0 if member == 0 else 1.0 + 0.2 * intensity,
         "context_length": context,
         "horizon": horizon,
@@ -58,6 +64,112 @@ def file_record(path: Path, *, row_count: int) -> dict:
     return {**protocol.file_record(path), "row_count": row_count}
 
 
+def test_hierarchy_qualification_is_projected_but_never_ranked(
+    tmp_path: Path,
+) -> None:
+    dataset_id = "gift_hierarchical_sales_t"
+    calibration_dir = tmp_path / dataset_id / "01_calibration"
+    qualification_path = (
+        calibration_dir / "structural_hierarchy_qualification.jsonl"
+    )
+    row = {
+        "dataset_id": dataset_id,
+        "background_id": "hierarchy-background-0",
+        "capability_id": "hierarchical_coherence",
+        "unavailable_reason": (
+            "qualification_only_generation_and_ranking_prohibited"
+        ),
+        "contract": {
+            "qualification_only": True,
+            "generation_eligible": False,
+            "ranking_eligible": False,
+            "contract_sha256": "b" * 64,
+            "fit_diagnostics": {
+                "qualification_passed": True,
+                "contrast_one_step_holdout_r2": [0.4, 0.6],
+                "zero_sum_component_max_abs": 1e-14,
+                "raw_negativity_audit_by_alpha": {
+                    "2.0": {
+                        "negative_value_count_by_child": [2, 0],
+                        "total_negative_value_count": 2,
+                        "minimum_augmented_child_value": -0.5,
+                    }
+                },
+            },
+        },
+    }
+    protocol.write_jsonl(qualification_path, [row])
+    files = {
+        "structural_hierarchy_qualification": file_record(
+            qualification_path,
+            row_count=1,
+        )
+    }
+    bundle = {
+        "dataset": {"dataset_id": dataset_id},
+        "source": {"kind": "fixture"},
+        "files": files,
+        "generator_version": protocol.GENERATOR_VERSION,
+    }
+    bundle["bundle_content_sha256"] = protocol.json_sha256(
+        {
+            "dataset": bundle["dataset"],
+            "source": bundle["source"],
+            "files": files,
+            "generator_version": bundle["generator_version"],
+        }
+    )
+    protocol.write_json(calibration_dir / "calibration_bundle.json", bundle)
+
+    summary = runner.hierarchy_qualification_summary(
+        tmp_path,
+        dataset_id=dataset_id,
+    )
+
+    assert summary["status"] == "qualified"
+    assert summary["qualification_background_count"] == 1
+    assert summary["passed_background_count"] == 1
+    assert summary["included_in_generation_or_ranking"] is False
+    assert summary["rows"][0][
+        "mean_contrast_one_step_holdout_r2"
+    ] == pytest.approx(0.5)
+    assert summary["raw_negativity_by_alpha"]["2.0"] == {
+        "backgrounds_with_negative_values": 1,
+        "total_negative_value_count": 2,
+        "minimum_augmented_child_value": -0.5,
+    }
+
+    failed = dict(row)
+    failed["contract"] = {
+        **row["contract"],
+        "fit_diagnostics": {
+            **row["contract"]["fit_diagnostics"],
+            "qualification_passed": False,
+        },
+    }
+    protocol.write_jsonl(qualification_path, [failed])
+    files["structural_hierarchy_qualification"] = file_record(
+        qualification_path,
+        row_count=1,
+    )
+    bundle["files"] = files
+    bundle["bundle_content_sha256"] = protocol.json_sha256(
+        {
+            "dataset": bundle["dataset"],
+            "source": bundle["source"],
+            "files": files,
+            "generator_version": bundle["generator_version"],
+        }
+    )
+    protocol.write_json(calibration_dir / "calibration_bundle.json", bundle)
+    failed_summary = runner.hierarchy_qualification_summary(
+        tmp_path,
+        dataset_id=dataset_id,
+    )
+    assert failed_summary["status"] == "qualification_failed"
+    assert failed_summary["passed_background_count"] == 0
+
+
 def test_optional_component_is_backward_compatible_when_absent(
     tmp_path: Path,
 ) -> None:
@@ -69,6 +181,29 @@ def test_optional_component_is_backward_compatible_when_absent(
         )
         is None
     )
+
+
+def test_legacy_real_anchored_generation_cannot_enter_v3_ranking(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "manifest__seed_000000_000001.json"
+    config = {
+        "schema_version": "cafe.generation_config.v2",
+        "real_anchored_counterfactual": {
+            "qualification_policy_sha256": None,
+        },
+    }
+    protocol.write_json(
+        path,
+        {
+            "schema_version": "cafe.generation_manifest.v2",
+            "config": config,
+            "config_sha256": protocol.json_sha256(config),
+        },
+    )
+
+    with pytest.raises(ValueError, match="legacy real-anchored generation"):
+        runner.validated_current_real_anchored_generation_protocol(path)
 
 
 def test_component_validation_binds_generation_and_shared_mase(
@@ -142,6 +277,57 @@ def test_component_validation_rejects_background_recycled_as_new_seed(
         )
 
 
+def test_component_validation_separates_formal_and_d2_seed_assignments(
+    tmp_path: Path,
+) -> None:
+    inference_dir = tmp_path / "inference"
+    generation_path = tmp_path / "real_anchored_masters.jsonl"
+    protocol.write_jsonl(generation_path, [{"master_sample_id": "master"}])
+    formal = [anchored_sample(member=member) for member in (0, 1)]
+    sensitivity = []
+    for sample in formal:
+        row = dict(sample)
+        row["sample_id"] = f"{sample['sample_id']}__d2"
+        row["master_sample_id"] = f"{sample['master_sample_id']}__d2"
+        row["counterfactual_pair_id"] = (
+            f"{sample['counterfactual_pair_id']}__d2"
+        )
+        row["master_counterfactual_pair_id"] = (
+            f"{sample['master_counterfactual_pair_id']}__d2"
+        )
+        row["background_id"] = "d2_background"
+        row["evaluation_table"] = (
+            runner.REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE
+        )
+        row["generator_family_role"] = "real_anchored_structural"
+        target = np.asarray(row["target"], dtype=float)
+        row["target"] = np.repeat(target, 2, axis=1).tolist()
+        row["target_dim"] = 2
+        row["mase_scale_by_target"] = [2.5, 2.5]
+        row["excluded_from_primary_score"] = True
+        sensitivity.append(row)
+    task_path = inference_dir / "real_anchored_forecast_views.jsonl"
+    protocol.write_jsonl(task_path, [*formal, *sensitivity])
+    manifest = {
+        "real_anchored_view_count": 4,
+        "task_components": {
+            "real_anchored_counterfactuals": {
+                **file_record(task_path, row_count=4),
+                "generation_component": file_record(
+                    generation_path,
+                    row_count=1,
+                ),
+            },
+        },
+    }
+
+    assert runner.validated_optional_real_anchored_task_path(
+        inference_dir,
+        {},
+        manifest,
+    ) == task_path
+
+
 def test_effect_is_treatment_minus_baseline_even_when_rows_are_reversed(
     tmp_path: Path,
 ) -> None:
@@ -197,31 +383,82 @@ def test_effect_rejects_pair_specific_mase_normalization() -> None:
         )
 
 
+def test_covariate_effect_scores_only_eligible_target_channels() -> None:
+    context = 3
+    baseline_target = np.zeros((context + 2, 2), dtype=float)
+    treatment_target = baseline_target.copy()
+    treatment_target[context:, 0] = 1.0
+    treatment_target[context:, 1] = 100.0
+    common = {
+        "benchmark_track": runner.REAL_ANCHORED_BENCHMARK_TRACK,
+        "dataset_id": "gift_fixture",
+        "capability_id": "covariate_response",
+        "generator_family_role": "real_anchored_structural",
+        "evaluation_table": runner.REAL_ANCHORED_BENCHMARK_TRACK,
+        "intensity": 4,
+        "seed_index": 0,
+        "context_length": context,
+        "target_dim": 2,
+        "master_counterfactual_pair_id": "covariate-pair",
+        "background_id": "background-0",
+        "dose_value": 1.0,
+        "mase_scale": 1.0,
+        "generation_metadata": {"eligible_target_indices": [0]},
+    }
+    baseline = {
+        **common,
+        "counterfactual_member": 0,
+        "target": baseline_target.tolist(),
+    }
+    treatment = {
+        **common,
+        "counterfactual_member": 1,
+        "dose_value": 1.8,
+        "target": treatment_target.tolist(),
+    }
+    baseline_forecast = np.zeros((2, 2), dtype=float)
+    treatment_forecast = np.zeros((2, 2), dtype=float)
+    treatment_forecast[:, 0] = 1.0
+
+    effect = runner.effect_row(
+        baseline,
+        baseline_forecast,
+        treatment,
+        treatment_forecast,
+        model_id="test-model",
+    )
+
+    assert effect["counterfactual_effect_nrmse"] == pytest.approx(0.0)
+    assert effect["truth_effect_rms"] == pytest.approx(1.0)
+
+
 def test_real_anchored_scores_use_maximum_available_dose_and_write_separately(
     tmp_path: Path,
 ) -> None:
     metrics = []
     effects = []
-    for intensity, nrmse in ((2, 0.8), (4, 0.2)):
-        for member in (0, 1):
-            member_sample = anchored_sample(
-                member=member,
-                intensity=intensity,
-            )
-            metric = runner.metric_row(
-                member_sample,
-                model_id="test-model",
-                forecast=np.asarray(
-                    member_sample["target"],
-                    dtype=float,
-                )[-4:],
-                input_adaptation=None,
-            )
-            metrics.append(
-                {**metric, "context_policy": runner.FIXED_CONTEXT_POLICY}
-            )
-        effects.append(
-            {
+    for background_index in range(4):
+        for intensity, nrmse in ((2, 0.8), (4, 0.2)):
+            for member in (0, 1):
+                member_sample = anchored_sample(
+                    member=member,
+                    intensity=intensity,
+                    background_index=background_index,
+                )
+                metric = runner.metric_row(
+                    member_sample,
+                    model_id="test-model",
+                    forecast=np.asarray(
+                        member_sample["target"],
+                        dtype=float,
+                    )[-4:],
+                    input_adaptation=None,
+                )
+                metrics.append(
+                    {**metric, "context_policy": runner.FIXED_CONTEXT_POLICY}
+                )
+            effects.append(
+                {
                 "benchmark_track": runner.REAL_ANCHORED_BENCHMARK_TRACK,
                 "dataset_id": "gift_electricity_h",
                 "context_policy": runner.FIXED_CONTEXT_POLICY,
@@ -231,13 +468,13 @@ def test_real_anchored_scores_use_maximum_available_dose_and_write_separately(
                 "model_id": "test-model",
                 "context_length": runner.FIXED_CONTEXT_LENGTH,
                 "intensity": intensity,
-                "seed_index": 7,
-                "background_id": "real_background_0",
+                "seed_index": 7 + background_index,
+                "background_id": f"real_background_{background_index}",
                 "dose_value": 1.0 + 0.2 * intensity,
                 "counterfactual_effect_nrmse": nrmse,
                 "shared_baseline_mase_scale": 2.5,
-            }
-        )
+                }
+            )
 
     scores = runner.real_anchored_score_table(metrics, effects)
     assert len(scores) == 1
@@ -257,6 +494,10 @@ def test_real_anchored_scores_use_maximum_available_dose_and_write_separately(
         "prediction_metrics",
         "counterfactual_effects",
         "scores",
+        "input_ablation_attribution",
+        "input_ablation_summary",
+        "sensitivity_effects",
+        "sensitivity_summary",
     }
     assert (tmp_path / "real_anchored_prediction_metrics.jsonl").is_file()
     assert (
@@ -273,12 +514,13 @@ def test_dataset_score_collapses_repeated_baseline_to_one_background_path(
 ) -> None:
     metric_rows = []
     effect_rows = []
-    for dose, treatment_mase, effect_nrmse in (
-        (1, 3.0, 0.5),
-        (2, 6.0, 0.25),
-    ):
-        for member, mase in ((0, 0.0), (1, treatment_mase)):
-            metric_rows.append(
+    for background_index in range(4):
+        for dose, treatment_mase, effect_nrmse in (
+            (1, 3.0, 0.5),
+            (2, 6.0, 0.25),
+        ):
+            for member, mase in ((0, 0.0), (1, treatment_mase)):
+                metric_rows.append(
                 {
                     "benchmark_track": (
                         runner.REAL_ANCHORED_BENCHMARK_TRACK
@@ -293,17 +535,17 @@ def test_dataset_score_collapses_repeated_baseline_to_one_background_path(
                     "model_id": "m1",
                     "context_length": runner.FIXED_CONTEXT_LENGTH,
                     "intensity": dose,
-                    "seed_index": 0,
-                    "background_id": "background-0",
+                    "seed_index": background_index,
+                    "background_id": f"background-{background_index}",
                     "counterfactual_member": member,
                     "metrics": {
                         "mase": mase,
                         "normalized_mae_history_std": mase,
                     },
-                }
-            )
-        effect_rows.append(
-            {
+                    }
+                )
+            effect_rows.append(
+                {
                 "benchmark_track": runner.REAL_ANCHORED_BENCHMARK_TRACK,
                 "dataset_id": "d1",
                 "context_policy": runner.FIXED_CONTEXT_POLICY,
@@ -313,24 +555,65 @@ def test_dataset_score_collapses_repeated_baseline_to_one_background_path(
                 "model_id": "m1",
                 "context_length": runner.FIXED_CONTEXT_LENGTH,
                 "intensity": dose,
-                "seed_index": 0,
-                "background_id": "background-0",
+                "seed_index": background_index,
+                "background_id": f"background-{background_index}",
                 "counterfactual_effect_nrmse": effect_nrmse,
                 "shared_baseline_mase_scale": 1.0,
-            }
-        )
+                }
+            )
 
     scores = runner.real_anchored_score_table(metric_rows, effect_rows)
 
     assert len(scores) == 1
     # One baseline plus the two treatment paths: (0 + 3 + 6) / 3.
     assert scores[0]["accuracy_score"] == pytest.approx(3.0)
-    assert scores[0]["effective_background_count"] == 1
-    assert scores[0]["seed_count"] == 1
-    assert scores[0]["serialized_metric_row_count"] == 4
-    assert scores[0]["unique_forecast_path_count"] == 3
-    assert scores[0]["mechanism_background_count"] == 1
+    assert scores[0]["effective_background_count"] == 4
+    assert scores[0]["seed_count"] == 4
+    assert scores[0]["serialized_metric_row_count"] == 16
+    assert scores[0]["unique_forecast_path_count"] == 12
+    assert scores[0]["mechanism_background_count"] == 4
     assert scores[0]["mechanism_score"] == pytest.approx(0.25)
+
+
+def test_dataset_score_does_not_rank_fewer_than_four_backgrounds() -> None:
+    metric_rows = []
+    effect_rows = []
+    for background_index in range(3):
+        for member in (0, 1):
+            sample = anchored_sample(
+                member=member,
+                background_index=background_index,
+            )
+            metric_rows.append(
+                {
+                    **runner.metric_row(
+                        sample,
+                        model_id="test-model",
+                        forecast=np.asarray(sample["target"], dtype=float)[-4:],
+                        input_adaptation=None,
+                    ),
+                    "context_policy": runner.FIXED_CONTEXT_POLICY,
+                }
+            )
+        effect_rows.append(
+            {
+                "benchmark_track": runner.REAL_ANCHORED_BENCHMARK_TRACK,
+                "dataset_id": "gift_electricity_h",
+                "context_policy": runner.FIXED_CONTEXT_POLICY,
+                "evaluation_table": runner.REAL_ANCHORED_BENCHMARK_TRACK,
+                "generator_family_role": "real_anchored",
+                "capability_id": "multi_seasonal",
+                "model_id": "test-model",
+                "context_length": runner.FIXED_CONTEXT_LENGTH,
+                "intensity": 4,
+                "seed_index": 7 + background_index,
+                "background_id": f"real_background_{background_index}",
+                "counterfactual_effect_nrmse": 0.0,
+                "shared_baseline_mase_scale": 2.5,
+            }
+        )
+
+    assert runner.real_anchored_score_table(metric_rows, effect_rows) == []
 
 
 def test_dataset_score_rejects_background_reuse_across_seeds() -> None:
@@ -371,12 +654,12 @@ def experiment_anchored_score(
         "history_std_normalized_mae": accuracy + 0.25,
         "mechanism_metric": "counterfactual_effect_nrmse",
         "mechanism_score": mechanism,
-        "effective_background_count": 2,
+        "effective_background_count": 4,
         "effective_background_ids_sha256": protocol.json_sha256(
-            [f"{dataset_id}-background-0", f"{dataset_id}-background-1"]
+            [f"{dataset_id}-background-{index}" for index in range(4)]
         ),
-        "mechanism_background_count": 2,
-        "seed_count": 2,
+        "mechanism_background_count": 4,
+        "seed_count": 4,
         "intensities": [1, 2, 3, 4, 5],
         "is_reference_baseline": False,
     }
@@ -402,10 +685,10 @@ def test_experiment_real_anchored_macro_uses_common_model_intersection() -> None
     assert summary["capabilities"][0]["common_models"] == ["m1", "m2"]
     assert summary["capabilities"][0][
         "effective_background_count_by_dataset"
-    ] == {"d1": 2, "d2": 2}
+    ] == {"d1": 4, "d2": 4}
     assert summary["capabilities"][0][
         "total_authentic_background_units"
-    ] == 4
+    ] == 8
     assert {row["model_id"] for row in rows} == {"m1", "m2"}
     by_model = {row["model_id"]: row for row in rows}
     assert by_model["m1"]["macro_mean_accuracy_score"] == pytest.approx(2.0)
@@ -517,12 +800,25 @@ def prepare_aggregate_experiment(
                 "files": files,
             },
         )
+        generation_config = {
+            "schema_version": "cafe.generation_config.v3",
+            "capabilities": ["multi_seasonal"],
+            "real_anchored_counterfactual": {
+                "upstream_real_anchored_protocol": protocol.SCHEMA_VERSION,
+                "qualification_policy_sha256": "a" * 64,
+                "legacy_upstream_component_policy": None,
+            },
+        }
         protocol.write_json(
             root
             / dataset_id
             / "02_generation"
             / f"manifest__{shard_name}.json",
-            {"config": {"capabilities": ["multi_seasonal"]}},
+            {
+                "schema_version": "cafe.generation_manifest.v3",
+                "config": generation_config,
+                "config_sha256": protocol.json_sha256(generation_config),
+            },
         )
     return Namespace(
         output_root=root,

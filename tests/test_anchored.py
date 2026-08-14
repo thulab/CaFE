@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Callable
 
@@ -8,11 +9,17 @@ import pytest
 
 from cafe.generation.anchored import (
     AnchoredDecompositionContract,
+    LEGACY_ANCHORED_CONTRACT_SCHEMA,
+    LEGACY_ANCHORED_DECOMPOSITION_METHOD,
+    LEGACY_REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA,
     anchored_pair_delta,
     apply_anchored_counterfactual,
     apply_real_anchored_contract,
     fit_anchored_decomposition,
     fit_real_anchored_contract,
+)
+from cafe.generation.real_anchored_policy import (
+    TIME_VARYING_SEASONALITY_BASIS_POLICY,
 )
 
 
@@ -187,7 +194,7 @@ def test_trend_scales_local_nonlinearity_not_level_or_linear_trend() -> None:
     assert np.linalg.norm(member.intervention[CONTEXT_LENGTH:]) > 0.0
 
 
-def test_time_varying_scales_only_bounded_carrier_sidebands() -> None:
+def test_time_varying_scales_only_constrained_symmetric_am() -> None:
     baseline = _time_varying_path()
     contract = fit_anchored_decomposition(
         baseline,
@@ -252,7 +259,45 @@ def test_time_varying_scales_only_bounded_carrier_sidebands() -> None:
     assert doses[0] == 0.0
     assert all(left < right for left, right in zip(doses, doses[1:]))
     assert restored == contract
-    assert len(contract.to_dict()["modulation_sidebands"]) == 2
+    payload = contract.to_dict()
+    assert payload["modulation_basis"] == (
+        TIME_VARYING_SEASONALITY_BASIS_POLICY
+    )
+    assert len(payload["modulation_sidebands"]) == 2
+    assert all(
+        row["amplitude_constraint"] == "equal_magnitude_symmetric_pair"
+        for row in payload["modulation_sidebands"]
+    )
+    assert not any("sideband" in name for name in contract.feature_names)
+
+    # Each target's AM component must be exactly one frozen carrier waveform
+    # times a two-parameter slow envelope.  Four freely phased sidebands cannot
+    # satisfy this coefficient relationship by construction.
+    coefficients = np.asarray(contract.coefficients, dtype=float)
+    time = np.arange(CONTEXT_LENGTH + HORIZON, dtype=float)
+    slow_phase = 2.0 * np.pi * time / MODULATION_PERIOD
+    expected_am = np.zeros_like(components.amplitude_modulation)
+    cosine_name = "carrier_h1_mod_p48_envelope_cos"
+    sine_name = "carrier_h1_mod_p48_envelope_sin"
+    cosine_index = contract.feature_names.index(cosine_name)
+    sine_index = contract.feature_names.index(sine_name)
+    for target_index, (carrier_phase,) in enumerate(
+        contract.modulation_carrier_phases_by_target
+    ):
+        carrier_wave = np.sin(
+            2.0 * np.pi * time / CARRIER_PERIOD + carrier_phase
+        )
+        envelope = (
+            coefficients[cosine_index, target_index] * np.cos(slow_phase)
+            + coefficients[sine_index, target_index] * np.sin(slow_phase)
+        )
+        expected_am[:, target_index] = carrier_wave * envelope
+    np.testing.assert_allclose(
+        components.amplitude_modulation,
+        expected_am,
+        rtol=0.0,
+        atol=1e-14,
+    )
 
 
 def test_regime_scales_only_history_joinpoint_constant_level_extension() -> None:
@@ -454,10 +499,13 @@ def test_new_capability_wrappers_freeze_required_history_parameters() -> None:
     assert np.isfinite(time_target).all()
     assert np.isfinite(regime_target).all()
     assert time_metadata["controlled_component"] == (
-        "carrier_amplitude_modulation_sidebands"
+        "carrier_phase_locked_symmetric_amplitude_modulation"
     )
     assert time_metadata["modulation_extension"] == (
-        "bounded_stationary_carrier_sidebands"
+        "bounded_symmetric_carrier_amplitude_modulation"
+    )
+    assert time_metadata["modulation_basis"] == (
+        TIME_VARYING_SEASONALITY_BASIS_POLICY
     )
     assert time_metadata["carrier_fixed"] is True
     assert time_metadata["secondary_fixed"] is True
@@ -559,6 +607,77 @@ def test_contract_json_round_trip_is_exact_and_tamper_evident() -> None:
         AnchoredDecompositionContract.from_dict(payload)
 
 
+def test_v2_contracts_remain_readable_and_applicable() -> None:
+    baseline = _real_path()[:, 0]
+    current = fit_real_anchored_contract(
+        baseline[:CONTEXT_LENGTH],
+        capability_id="multi_seasonal",
+        carrier_period=CARRIER_PERIOD,
+        secondary_periods=SECONDARY_PERIODS,
+        horizon=HORIZON,
+    )
+    legacy_decomposition = dict(current["decomposition_contract"])
+    legacy_decomposition.pop("contract_sha256")
+    legacy_decomposition["schema"] = LEGACY_ANCHORED_CONTRACT_SCHEMA
+    legacy_decomposition["decomposition_method"] = (
+        LEGACY_ANCHORED_DECOMPOSITION_METHOD
+    )
+    legacy_decomposition.pop("modulation_basis")
+    legacy_decomposition.pop("modulation_carrier_phases_by_target")
+    legacy_decomposition.pop("spectral_component_ownership")
+    legacy_decomposition["interventions"]["time_varying_seasonality"][
+        "law"
+    ] = "x_alpha=x+(alpha-1)*carrier_modulation_sidebands"
+    legacy_decomposition["contract_sha256"] = hashlib.sha256(
+        json.dumps(
+            legacy_decomposition,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    restored = AnchoredDecompositionContract.from_dict(legacy_decomposition)
+    assert restored.schema == LEGACY_ANCHORED_CONTRACT_SCHEMA
+
+    legacy_capability = dict(current)
+    legacy_capability.pop("capability_contract_sha256")
+    legacy_capability["schema"] = (
+        LEGACY_REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA
+    )
+    legacy_capability["decomposition_contract"] = legacy_decomposition
+    for field in (
+        "qualification_policy_id",
+        "qualification_policy_sha256",
+        "qualification_threshold_source",
+        "qualification_thresholds",
+        "minimum_visible_component_rms_ratio",
+        "visible_context_length",
+        "controlled_component_visible_history_rms",
+        "controlled_component_visible_context_length",
+        "minimum_visible_history_component_rms",
+    ):
+        legacy_capability.pop(field, None)
+    legacy_capability["capability_contract_sha256"] = hashlib.sha256(
+        json.dumps(
+            legacy_capability,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    identity, metadata = apply_real_anchored_contract(
+        baseline,
+        legacy_capability,
+        alpha=1.0,
+    )
+    np.testing.assert_array_equal(identity, baseline)
+    assert metadata["schema"] == (
+        LEGACY_REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA
+    )
+
+
 def test_calibration_and_generation_dict_wrappers_freeze_availability() -> None:
     baseline = _real_path()[:, 0]
     unavailable = fit_real_anchored_contract(
@@ -588,6 +707,29 @@ def test_calibration_and_generation_dict_wrappers_freeze_availability() -> None:
         "analytic_history_fitted_component_extension"
     )
 
+    visible_gated = fit_real_anchored_contract(
+        baseline[:CONTEXT_LENGTH],
+        capability_id="multi_seasonal",
+        carrier_period=CARRIER_PERIOD,
+        secondary_periods=SECONDARY_PERIODS,
+        horizon=HORIZON,
+        minimum_component_rms_ratio=0.0,
+        minimum_visible_component_rms_ratio=1e6,
+        visible_context_length=CONTEXT_LENGTH,
+        minimum_future_component_rms_ratio=0.0,
+    )
+    assert visible_gated["available"] is False
+    assert visible_gated["unavailable_reason"] == (
+        "controlled_visible_component_too_weak"
+    )
+    assert visible_gated["controlled_component_visible_context_length"] == (
+        CONTEXT_LENGTH
+    )
+    assert visible_gated["controlled_component_visible_history_rms"] > 0.0
+    assert visible_gated["qualification_thresholds"][
+        "visible_context_length"
+    ] == CONTEXT_LENGTH
+
     frozen = fit_real_anchored_contract(
         baseline[:CONTEXT_LENGTH],
         capability_id="multi_seasonal",
@@ -603,6 +745,12 @@ def test_calibration_and_generation_dict_wrappers_freeze_availability() -> None:
     )
 
     assert frozen["available"] is True
+    assert frozen["qualification_thresholds"] == {
+        "minimum_component_rms_ratio": 1e-8,
+        "minimum_visible_component_rms_ratio": 1e-8,
+        "visible_context_length": CONTEXT_LENGTH,
+        "minimum_future_component_rms_ratio": 1e-8,
+    }
     np.testing.assert_array_equal(target, baseline)
     assert metadata["output_units"] == "baseline_raw_units"
     assert metadata["carrier_fixed"] is True

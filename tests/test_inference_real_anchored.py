@@ -129,6 +129,39 @@ def test_prepare_view_tasks_preserves_legacy_two_component_manifest(
     )
 
 
+def test_prepare_view_tasks_preserves_real_anchored_auxiliary_table(
+    tmp_path: Path,
+) -> None:
+    generation_manifest = _empty_generation_manifest(tmp_path)
+    masters_path = tmp_path / "real_anchored_ablation.jsonl"
+    masters = [
+        _real_anchored_master("ablation-m0", 0),
+        _real_anchored_master("ablation-m1", 1),
+    ]
+    for row in masters:
+        row["evaluation_table"] = "real_anchored_input_ablation"
+    row_count = protocol.write_jsonl(masters_path, masters)
+    generation_manifest["files"][
+        inference.REAL_ANCHORED_GENERATION_FILE_KEY
+    ] = _file_record(masters_path, row_count=row_count)
+
+    _task_path, manifest = inference.prepare_view_tasks(
+        generation_manifest,
+        inference_dir=tmp_path / "inference",
+    )
+
+    component = manifest["task_components"][
+        inference.REAL_ANCHORED_GENERATION_FILE_KEY
+    ]
+    views = list(protocol.iter_jsonl(Path(component["path"])))
+    assert {row["evaluation_table"] for row in views} == {
+        "real_anchored_input_ablation"
+    }
+    assert {row["benchmark_track"] for row in views} == {
+        inference.REAL_ANCHORED_BENCHMARK_TRACK
+    }
+
+
 def test_real_anchored_component_hash_is_validated(tmp_path: Path) -> None:
     generation_manifest = _empty_generation_manifest(tmp_path)
     masters_path = tmp_path / "real_anchored.jsonl"

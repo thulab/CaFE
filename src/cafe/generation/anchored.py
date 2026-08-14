@@ -18,13 +18,30 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from cafe.generation.real_anchored_policy import (
+    QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+    REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+    TIME_VARYING_SEASONALITY_BASIS_POLICY,
+)
 
-ANCHORED_CONTRACT_SCHEMA = "cafe.real_anchored_decomposition.v2"
+
+ANCHORED_CONTRACT_SCHEMA = "cafe.real_anchored_decomposition.v3"
+LEGACY_ANCHORED_CONTRACT_SCHEMA = "cafe.real_anchored_decomposition.v2"
 REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA = (
+    "cafe.real_anchored_capability_contract.v3"
+)
+LEGACY_REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA = (
     "cafe.real_anchored_capability_contract.v2"
 )
-ANCHORED_DECOMPOSITION_METHOD = "joint_structural_fourier_lstsq_v2"
+ANCHORED_DECOMPOSITION_METHOD = (
+    "joint_structural_fourier_constrained_am_lstsq_v3"
+)
+LEGACY_ANCHORED_DECOMPOSITION_METHOD = (
+    "joint_structural_fourier_lstsq_v2"
+)
 ANCHORED_EXTENSION_METHOD = "analytic_absolute_time_basis_v1"
+CONSTRAINED_AM_BASIS = TIME_VARYING_SEASONALITY_BASIS_POLICY
+LEGACY_FREE_SIDEBAND_BASIS = "free_fourier_sidebands_v2"
 
 _SUPPORTED_CAPABILITIES = frozenset(
     {
@@ -140,6 +157,7 @@ def _modulation_sidebands(
     carrier_period: float,
     modulation_period: float | None,
     harmonics_per_period: int,
+    modulation_basis: str,
 ) -> list[dict[str, float | int | str]]:
     if modulation_period is None:
         return []
@@ -151,14 +169,24 @@ def _modulation_sidebands(
             ("lower", harmonic * carrier_frequency - modulation_frequency),
             ("upper", harmonic * carrier_frequency + modulation_frequency),
         ):
-            result.append(
-                {
-                    "carrier_harmonic": harmonic,
-                    "side": side,
-                    "frequency": frequency,
-                    "period": 1.0 / frequency,
-                }
-            )
+            row: dict[str, float | int | str] = {
+                "carrier_harmonic": harmonic,
+                "side": side,
+                "frequency": frequency,
+                "period": 1.0 / frequency,
+            }
+            if modulation_basis == CONSTRAINED_AM_BASIS:
+                row.update(
+                    {
+                        "amplitude_constraint": (
+                            "equal_magnitude_symmetric_pair"
+                        ),
+                        "phase_constraint": (
+                            "carrier_product_slow_envelope"
+                        ),
+                    }
+                )
+            result.append(row)
     return result
 
 
@@ -169,6 +197,7 @@ def _feature_names(
     secondary_periods: tuple[float, ...],
     harmonics_per_period: int,
     modulation_period: float | None,
+    modulation_basis: str,
     regime_join_index: int | None,
 ) -> tuple[str, ...]:
     names = ["level", "local_linear_trend"]
@@ -189,14 +218,26 @@ def _feature_names(
         label = _period_label(modulation_period)
         for harmonic in range(1, harmonics_per_period + 1):
             prefix = f"carrier_h{harmonic}_mod_p{label}"
-            names.extend(
-                (
-                    f"{prefix}_lower_sideband_sin",
-                    f"{prefix}_lower_sideband_cos",
-                    f"{prefix}_upper_sideband_sin",
-                    f"{prefix}_upper_sideband_cos",
+            if modulation_basis == CONSTRAINED_AM_BASIS:
+                names.extend(
+                    (
+                        f"{prefix}_envelope_cos",
+                        f"{prefix}_envelope_sin",
+                    )
                 )
-            )
+            elif modulation_basis == LEGACY_FREE_SIDEBAND_BASIS:
+                names.extend(
+                    (
+                        f"{prefix}_lower_sideband_sin",
+                        f"{prefix}_lower_sideband_cos",
+                        f"{prefix}_upper_sideband_sin",
+                        f"{prefix}_upper_sideband_cos",
+                    )
+                )
+            else:
+                raise ValueError(
+                    f"unsupported modulation basis {modulation_basis!r}"
+                )
     if regime_join_index is not None:
         names.append(f"regime_level_step_at_{regime_join_index}")
     return tuple(names)
@@ -214,6 +255,8 @@ def _basis_matrix(
     secondary_periods: tuple[float, ...],
     harmonics_per_period: int,
     modulation_period: float | None,
+    modulation_basis: str,
+    modulation_carrier_phases: tuple[float, ...],
     regime_join_index: int | None,
 ) -> np.ndarray:
     if length <= 0:
@@ -245,12 +288,34 @@ def _basis_matrix(
         carrier_frequency = 1.0 / carrier_period
         for harmonic in range(1, harmonics_per_period + 1):
             harmonic_frequency = harmonic * carrier_frequency
-            for sideband_frequency in (
-                harmonic_frequency - modulation_frequency,
-                harmonic_frequency + modulation_frequency,
-            ):
-                phase = 2.0 * np.pi * sideband_frequency * time
-                columns.extend((np.sin(phase), np.cos(phase)))
+            if modulation_basis == CONSTRAINED_AM_BASIS:
+                if len(modulation_carrier_phases) != harmonics_per_period:
+                    raise ValueError(
+                        "constrained AM requires one frozen carrier phase "
+                        "per harmonic"
+                    )
+                carrier_wave = np.sin(
+                    2.0 * np.pi * harmonic_frequency * time
+                    + float(modulation_carrier_phases[harmonic - 1])
+                )
+                slow_phase = 2.0 * np.pi * modulation_frequency * time
+                columns.extend(
+                    (
+                        carrier_wave * np.cos(slow_phase),
+                        carrier_wave * np.sin(slow_phase),
+                    )
+                )
+            elif modulation_basis == LEGACY_FREE_SIDEBAND_BASIS:
+                for sideband_frequency in (
+                    harmonic_frequency - modulation_frequency,
+                    harmonic_frequency + modulation_frequency,
+                ):
+                    phase = 2.0 * np.pi * sideband_frequency * time
+                    columns.extend((np.sin(phase), np.cos(phase)))
+            else:
+                raise ValueError(
+                    f"unsupported modulation basis {modulation_basis!r}"
+                )
     if regime_join_index is not None:
         columns.append((time >= float(regime_join_index)).astype(float))
     return np.column_stack(columns)
@@ -262,6 +327,7 @@ def _coefficient_slices(
     secondary_period_count: int,
     harmonics_per_period: int,
     has_modulation: bool,
+    modulation_basis: str,
     has_regime: bool,
 ) -> tuple[
     slice,
@@ -283,7 +349,14 @@ def _coefficient_slices(
         for index in range(secondary_period_count)
     )
     next_index = carrier.stop + secondary_period_count * width
-    modulation_width = 4 * harmonics_per_period if has_modulation else 0
+    if has_modulation:
+        modulation_width = (
+            2 * harmonics_per_period
+            if modulation_basis == CONSTRAINED_AM_BASIS
+            else 4 * harmonics_per_period
+        )
+    else:
+        modulation_width = 0
     modulation = slice(next_index, next_index + modulation_width)
     regime_width = 1 if has_regime else 0
     regime = slice(modulation.stop, modulation.stop + regime_width)
@@ -480,6 +553,8 @@ class AnchoredDecompositionContract:
     secondary_periods: tuple[float, ...]
     harmonics_per_period: int
     modulation_period: float | None
+    modulation_basis: str
+    modulation_carrier_phases_by_target: tuple[tuple[float, ...], ...]
     regime_join_index: int | None
     minimum_regime_segment_length: int
     minimum_cycles: float
@@ -503,7 +578,7 @@ class AnchoredDecompositionContract:
     extension_method: str = ANCHORED_EXTENSION_METHOD
 
     def _payload(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema": self.schema,
             "decomposition_method": self.decomposition_method,
             "extension_method": self.extension_method,
@@ -524,9 +599,14 @@ class AnchoredDecompositionContract:
                 carrier_period=self.carrier_period,
                 modulation_period=self.modulation_period,
                 harmonics_per_period=self.harmonics_per_period,
+                modulation_basis=self.modulation_basis,
             ),
             "modulation_extension": (
-                "bounded_stationary_carrier_sidebands"
+                (
+                    "bounded_symmetric_carrier_amplitude_modulation"
+                    if self.modulation_basis == CONSTRAINED_AM_BASIS
+                    else "bounded_stationary_carrier_sidebands"
+                )
                 if self.modulation_period is not None
                 else None
             ),
@@ -593,7 +673,15 @@ class AnchoredDecompositionContract:
                 },
                 "time_varying_seasonality": {
                     "law": (
-                        "x_alpha=x+(alpha-1)*carrier_modulation_sidebands"
+                        (
+                            "x_alpha=x+(alpha-1)*"
+                            "carrier_times_slow_amplitude_envelope"
+                        )
+                        if self.modulation_basis == CONSTRAINED_AM_BASIS
+                        else (
+                            "x_alpha=x+(alpha-1)*"
+                            "carrier_modulation_sidebands"
+                        )
                     ),
                     "fixed_components": [
                         "level_and_linear_trend",
@@ -617,6 +705,16 @@ class AnchoredDecompositionContract:
                 },
             },
         }
+        if self.schema == ANCHORED_CONTRACT_SCHEMA:
+            payload["modulation_basis"] = self.modulation_basis
+            payload["modulation_carrier_phases_by_target"] = [
+                list(row)
+                for row in self.modulation_carrier_phases_by_target
+            ]
+            payload["spectral_component_ownership"] = (
+                "shared_background_joint_design_v1"
+            )
+        return payload
 
     @property
     def contract_sha256(self) -> str:
@@ -642,13 +740,20 @@ class AnchoredDecompositionContract:
         expected_hash = payload.pop("contract_sha256", None)
         if not isinstance(expected_hash, str):
             raise ValueError("real-anchored contract has no integrity hash")
-        if payload.get("schema") != ANCHORED_CONTRACT_SCHEMA:
+        schema = str(payload.get("schema"))
+        if schema not in {
+            ANCHORED_CONTRACT_SCHEMA,
+            LEGACY_ANCHORED_CONTRACT_SCHEMA,
+        }:
             raise ValueError("unsupported real-anchored contract schema")
         if payload.get("history_only") is not True:
             raise ValueError("real-anchored decomposition must be history-only")
-        if payload.get("decomposition_method") != (
+        expected_method = (
             ANCHORED_DECOMPOSITION_METHOD
-        ):
+            if schema == ANCHORED_CONTRACT_SCHEMA
+            else LEGACY_ANCHORED_DECOMPOSITION_METHOD
+        )
+        if payload.get("decomposition_method") != expected_method:
             raise ValueError("unsupported real-anchored decomposition method")
         if payload.get("extension_method") != ANCHORED_EXTENSION_METHOD:
             raise ValueError("unsupported real-anchored extension method")
@@ -668,6 +773,21 @@ class AnchoredDecompositionContract:
                 None
                 if payload["modulation_period"] is None
                 else float(payload["modulation_period"])
+            ),
+            modulation_basis=(
+                str(payload["modulation_basis"])
+                if schema == ANCHORED_CONTRACT_SCHEMA
+                else LEGACY_FREE_SIDEBAND_BASIS
+            ),
+            modulation_carrier_phases_by_target=(
+                tuple(
+                    _float_tuple(row)
+                    for row in payload[
+                        "modulation_carrier_phases_by_target"
+                    ]
+                )
+                if schema == ANCHORED_CONTRACT_SCHEMA
+                else tuple()
             ),
             regime_join_index=(
                 None
@@ -708,7 +828,7 @@ class AnchoredDecompositionContract:
                 for source in payload["mase_scale_source_by_target"]
             ),
             history_sha256=str(payload["history_sha256"]),
-            schema=str(payload["schema"]),
+            schema=schema,
             decomposition_method=str(payload["decomposition_method"]),
             extension_method=str(payload["extension_method"]),
         )
@@ -722,9 +842,17 @@ class AnchoredDecompositionContract:
         return contract
 
     def _validate(self) -> None:
-        if self.schema != ANCHORED_CONTRACT_SCHEMA:
+        if self.schema not in {
+            ANCHORED_CONTRACT_SCHEMA,
+            LEGACY_ANCHORED_CONTRACT_SCHEMA,
+        }:
             raise ValueError("unsupported real-anchored contract schema")
-        if self.decomposition_method != ANCHORED_DECOMPOSITION_METHOD:
+        expected_method = (
+            ANCHORED_DECOMPOSITION_METHOD
+            if self.schema == ANCHORED_CONTRACT_SCHEMA
+            else LEGACY_ANCHORED_DECOMPOSITION_METHOD
+        )
+        if self.decomposition_method != expected_method:
             raise ValueError("unsupported real-anchored decomposition method")
         if self.extension_method != ANCHORED_EXTENSION_METHOD:
             raise ValueError("unsupported real-anchored extension method")
@@ -754,6 +882,36 @@ class AnchoredDecompositionContract:
             raise ValueError("trend_degree must be 2 or 3")
         if self.harmonics_per_period < 1:
             raise ValueError("harmonics_per_period must be positive")
+        expected_modulation_basis = (
+            CONSTRAINED_AM_BASIS
+            if self.schema == ANCHORED_CONTRACT_SCHEMA
+            else LEGACY_FREE_SIDEBAND_BASIS
+        )
+        if self.modulation_basis != expected_modulation_basis:
+            raise ValueError(
+                "modulation basis does not match decomposition schema"
+            )
+        if self.schema == ANCHORED_CONTRACT_SCHEMA:
+            expected_phase_shape = (
+                (self.target_dim, self.harmonics_per_period)
+                if self.modulation_period is not None
+                else (0,)
+            )
+            observed_phases = np.asarray(
+                self.modulation_carrier_phases_by_target,
+                dtype=float,
+            )
+            if observed_phases.shape != expected_phase_shape:
+                raise ValueError(
+                    "modulation carrier phases do not match target/harmonic "
+                    "shape"
+                )
+            if not np.isfinite(observed_phases).all():
+                raise ValueError("modulation carrier phases must be finite")
+        elif self.modulation_carrier_phases_by_target:
+            raise ValueError(
+                "legacy free-sideband contracts cannot carry AM phases"
+            )
         if self.minimum_regime_segment_length < 2:
             raise ValueError(
                 "minimum_regime_segment_length must be at least 2"
@@ -797,6 +955,7 @@ class AnchoredDecompositionContract:
             secondary_periods=self.secondary_periods,
             harmonics_per_period=self.harmonics_per_period,
             modulation_period=self.modulation_period,
+            modulation_basis=self.modulation_basis,
             regime_join_index=self.regime_join_index,
         )
         if self.feature_names != expected_names:
@@ -868,18 +1027,27 @@ class AnchoredDecompositionContract:
                 "component length must span the history and lie inside the "
                 "contracted forecast horizon"
             )
-        design = _basis_matrix(
-            total_length,
-            fit_start=self.fit_start,
-            fit_window=self.fit_window,
-            trend_start=self.trend_start,
-            trend_window=self.trend_window,
-            trend_degree=self.trend_degree,
-            carrier_period=self.carrier_period,
-            secondary_periods=self.secondary_periods,
-            harmonics_per_period=self.harmonics_per_period,
-            modulation_period=self.modulation_period,
-            regime_join_index=self.regime_join_index,
+        designs = tuple(
+            _basis_matrix(
+                total_length,
+                fit_start=self.fit_start,
+                fit_window=self.fit_window,
+                trend_start=self.trend_start,
+                trend_window=self.trend_window,
+                trend_degree=self.trend_degree,
+                carrier_period=self.carrier_period,
+                secondary_periods=self.secondary_periods,
+                harmonics_per_period=self.harmonics_per_period,
+                modulation_period=self.modulation_period,
+                modulation_basis=self.modulation_basis,
+                modulation_carrier_phases=(
+                    self.modulation_carrier_phases_by_target[target_index]
+                    if self.modulation_carrier_phases_by_target
+                    else tuple()
+                ),
+                regime_join_index=self.regime_join_index,
+            )
+            for target_index in range(self.target_dim)
         )
         coefficients = np.asarray(self.coefficients, dtype=float)
         (
@@ -894,17 +1062,23 @@ class AnchoredDecompositionContract:
             secondary_period_count=len(self.secondary_periods),
             harmonics_per_period=self.harmonics_per_period,
             has_modulation=self.modulation_period is not None,
+            modulation_basis=self.modulation_basis,
             has_regime=self.regime_join_index is not None,
         )
-        level_and_linear = (
-            design[:, linear_slice] @ coefficients[linear_slice]
-        )
-        trend_nonlinearity = (
-            design[:, nonlinear_slice] @ coefficients[nonlinear_slice]
-        )
-        carrier = design[:, carrier_slice] @ coefficients[carrier_slice]
+        def evaluate(component_slice: slice) -> np.ndarray:
+            return np.column_stack(
+                [
+                    design[:, component_slice]
+                    @ coefficients[component_slice, target_index]
+                    for target_index, design in enumerate(designs)
+                ]
+            )
+
+        level_and_linear = evaluate(linear_slice)
+        trend_nonlinearity = evaluate(nonlinear_slice)
+        carrier = evaluate(carrier_slice)
         secondary_by_period = tuple(
-            design[:, component_slice] @ coefficients[component_slice]
+            evaluate(component_slice)
             for component_slice in secondary_slices
         )
         secondary = (
@@ -913,12 +1087,12 @@ class AnchoredDecompositionContract:
             else np.zeros_like(carrier)
         )
         amplitude_modulation = (
-            design[:, modulation_slice] @ coefficients[modulation_slice]
+            evaluate(modulation_slice)
             if self.modulation_period is not None
             else np.zeros_like(carrier)
         )
         regime_level_shift = (
-            design[:, regime_slice] @ coefficients[regime_slice]
+            evaluate(regime_slice)
             if self.regime_join_index is not None
             else np.zeros_like(carrier)
         )
@@ -1075,12 +1249,72 @@ def fit_anchored_decomposition(
     )
     minimum_regime_segment_length = int(minimum_regime_segment_length)
     minimum_cycles = float(minimum_cycles)
+    modulation_basis = CONSTRAINED_AM_BASIS
+    modulation_carrier_phases_by_target: tuple[tuple[float, ...], ...]
+    if modulation_period is None:
+        modulation_carrier_phases_by_target = tuple()
+    else:
+        # Freeze one carrier phase per target/harmonic before introducing the
+        # slow envelope.  The final AM columns are products of that carrier
+        # waveform and sin/cos envelope coordinates.  This is a two-degree-
+        # of-freedom symmetric AM subspace, rather than four unrelated Fourier
+        # sidebands that can silently encode phase modulation.
+        preliminary_design = _basis_matrix(
+            context_length,
+            fit_start=fit_start,
+            fit_window=window,
+            trend_start=trend_start,
+            trend_window=local_trend_window,
+            trend_degree=int(trend_degree),
+            carrier_period=carrier_period,
+            secondary_periods=secondary,
+            harmonics_per_period=harmonics_per_period,
+            modulation_period=None,
+            modulation_basis=modulation_basis,
+            modulation_carrier_phases=tuple(),
+            regime_join_index=regime_join_index,
+        )[fit_start:context_length]
+        preliminary_coefficients, *_ = np.linalg.lstsq(
+            preliminary_design,
+            history[fit_start:context_length],
+            rcond=None,
+        )
+        _, _, preliminary_carrier_slice, _, _, _ = _coefficient_slices(
+            trend_degree=int(trend_degree),
+            secondary_period_count=len(secondary),
+            harmonics_per_period=harmonics_per_period,
+            has_modulation=False,
+            modulation_basis=modulation_basis,
+            has_regime=regime_join_index is not None,
+        )
+        phase_rows: list[tuple[float, ...]] = []
+        for target_index in range(history.shape[1]):
+            target_phases: list[float] = []
+            for harmonic_index in range(harmonics_per_period):
+                offset = preliminary_carrier_slice.start + 2 * harmonic_index
+                sine_coefficient = float(
+                    preliminary_coefficients[offset, target_index]
+                )
+                cosine_coefficient = float(
+                    preliminary_coefficients[offset + 1, target_index]
+                )
+                target_phases.append(
+                    float(
+                        math.atan2(
+                            cosine_coefficient,
+                            sine_coefficient,
+                        )
+                    )
+                )
+            phase_rows.append(tuple(target_phases))
+        modulation_carrier_phases_by_target = tuple(phase_rows)
     feature_names = _feature_names(
         trend_degree=trend_degree,
         carrier_period=carrier_period,
         secondary_periods=secondary,
         harmonics_per_period=harmonics_per_period,
         modulation_period=modulation_period,
+        modulation_basis=modulation_basis,
         regime_join_index=regime_join_index,
     )
     provisional = AnchoredDecompositionContract(
@@ -1096,6 +1330,10 @@ def fit_anchored_decomposition(
         secondary_periods=secondary,
         harmonics_per_period=harmonics_per_period,
         modulation_period=modulation_period,
+        modulation_basis=modulation_basis,
+        modulation_carrier_phases_by_target=(
+            modulation_carrier_phases_by_target
+        ),
         regime_join_index=regime_join_index,
         minimum_regime_segment_length=minimum_regime_segment_length,
         minimum_cycles=minimum_cycles,
@@ -1128,37 +1366,58 @@ def fit_anchored_decomposition(
     )
     provisional._validate()
 
-    design = _basis_matrix(
-        context_length,
-        fit_start=fit_start,
-        fit_window=window,
-        trend_start=trend_start,
-        trend_window=local_trend_window,
-        trend_degree=int(trend_degree),
-        carrier_period=carrier_period,
-        secondary_periods=secondary,
-        harmonics_per_period=harmonics_per_period,
-        modulation_period=modulation_period,
-        regime_join_index=regime_join_index,
-    )[fit_start:context_length]
-    if window < design.shape[1] + 2:
+    designs = tuple(
+        _basis_matrix(
+            context_length,
+            fit_start=fit_start,
+            fit_window=window,
+            trend_start=trend_start,
+            trend_window=local_trend_window,
+            trend_degree=int(trend_degree),
+            carrier_period=carrier_period,
+            secondary_periods=secondary,
+            harmonics_per_period=harmonics_per_period,
+            modulation_period=modulation_period,
+            modulation_basis=modulation_basis,
+            modulation_carrier_phases=(
+                modulation_carrier_phases_by_target[target_index]
+                if modulation_carrier_phases_by_target
+                else tuple()
+            ),
+            regime_join_index=regime_join_index,
+        )[fit_start:context_length]
+        for target_index in range(history.shape[1])
+    )
+    if window < designs[0].shape[1] + 2:
         raise ValueError(
             "fit_window must exceed the joint decomposition feature count by 2"
         )
-    coefficients, _, design_rank, singular_values = np.linalg.lstsq(
-        design,
-        history[fit_start:context_length],
-        rcond=None,
-    )
-    if int(design_rank) != design.shape[1]:
-        raise ValueError("joint decomposition design is rank deficient")
-    condition_number = float(singular_values[0] / singular_values[-1])
+    coefficient_columns: list[np.ndarray] = []
+    ranks: list[int] = []
+    condition_numbers: list[float] = []
+    fit_rmse_values: list[float] = []
+    for target_index, design in enumerate(designs):
+        target = history[fit_start:context_length, target_index]
+        target_coefficients, _, design_rank, singular_values = (
+            np.linalg.lstsq(design, target, rcond=None)
+        )
+        if int(design_rank) != design.shape[1]:
+            raise ValueError("joint decomposition design is rank deficient")
+        condition_numbers.append(
+            float(singular_values[0] / singular_values[-1])
+        )
+        fitted_target = design @ target_coefficients
+        fit_rmse_values.append(
+            float(np.sqrt(np.mean((target - fitted_target) ** 2)))
+        )
+        ranks.append(int(design_rank))
+        coefficient_columns.append(target_coefficients)
+    coefficients = np.column_stack(coefficient_columns)
+    condition_number = max(condition_numbers)
     if not math.isfinite(condition_number) or condition_number > 1e12:
         raise ValueError("joint decomposition design is ill-conditioned")
-    fitted = design @ coefficients
-    fit_rmse = np.sqrt(
-        np.mean((history[fit_start:context_length] - fitted) ** 2, axis=0)
-    )
+    design_rank = min(ranks)
+    fit_rmse = np.asarray(fit_rmse_values, dtype=float)
 
     normalization_mean = np.mean(reference, axis=0)
     normalization_scale = np.std(reference, axis=0)
@@ -1190,6 +1449,10 @@ def fit_anchored_decomposition(
         secondary_periods=secondary,
         harmonics_per_period=harmonics_per_period,
         modulation_period=modulation_period,
+        modulation_basis=modulation_basis,
+        modulation_carrier_phases_by_target=(
+            modulation_carrier_phases_by_target
+        ),
         regime_join_index=regime_join_index,
         minimum_regime_segment_length=minimum_regime_segment_length,
         minimum_cycles=minimum_cycles,
@@ -1334,8 +1597,18 @@ def fit_real_anchored_contract(
     minimum_cycles: float = 2.0,
     mase_period: int | None = None,
     minimum_component_rms_ratio: float = 1e-8,
+    minimum_visible_component_rms_ratio: float | None = None,
+    visible_context_length: int = 168,
     minimum_future_component_rms_ratio: float | None = None,
     reference_history: np.ndarray | None = None,
+    qualification_policy_id: str = (
+        REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA
+    ),
+    qualification_policy_sha256: str | None = None,
+    qualification_threshold_source: str = (
+        QUALIFICATION_THRESHOLD_SOURCE_POLICY
+    ),
+    qualification_thresholds: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Freeze a JSON-safe capability contract for one real history.
 
@@ -1348,6 +1621,12 @@ def fit_real_anchored_contract(
     values, _ = _as_2d(history, name="history")
     capability_id = str(capability_id)
     minimum_component_rms_ratio = float(minimum_component_rms_ratio)
+    minimum_visible_component_rms_ratio = (
+        minimum_component_rms_ratio
+        if minimum_visible_component_rms_ratio is None
+        else float(minimum_visible_component_rms_ratio)
+    )
+    visible_context_length = int(visible_context_length)
     minimum_future_component_rms_ratio = (
         minimum_component_rms_ratio
         if minimum_future_component_rms_ratio is None
@@ -1361,6 +1640,18 @@ def fit_real_anchored_contract(
             "minimum_component_rms_ratio must be finite and non-negative"
         )
     if (
+        not math.isfinite(minimum_visible_component_rms_ratio)
+        or minimum_visible_component_rms_ratio < 0.0
+    ):
+        raise ValueError(
+            "minimum_visible_component_rms_ratio must be finite and "
+            "non-negative"
+        )
+    if not 3 <= visible_context_length <= values.shape[0]:
+        raise ValueError(
+            "visible_context_length must lie inside the fit history"
+        )
+    if (
         not math.isfinite(minimum_future_component_rms_ratio)
         or minimum_future_component_rms_ratio < 0.0
     ):
@@ -1368,12 +1659,48 @@ def fit_real_anchored_contract(
             "minimum_future_component_rms_ratio must be finite and "
             "non-negative"
         )
+    if not isinstance(qualification_policy_id, str) or not (
+        qualification_policy_id
+    ):
+        raise ValueError("qualification_policy_id must be a non-empty string")
+    if qualification_threshold_source != QUALIFICATION_THRESHOLD_SOURCE_POLICY:
+        raise ValueError("unsupported qualification threshold source policy")
+    local_qualification_thresholds = {
+        "minimum_component_rms_ratio": minimum_component_rms_ratio,
+        "minimum_visible_component_rms_ratio": (
+            minimum_visible_component_rms_ratio
+        ),
+        "visible_context_length": visible_context_length,
+        "minimum_future_component_rms_ratio": (
+            minimum_future_component_rms_ratio
+        ),
+    }
+    if qualification_thresholds is None:
+        frozen_qualification_thresholds = local_qualification_thresholds
+    else:
+        frozen_qualification_thresholds = dict(qualification_thresholds)
+        for name, expected in local_qualification_thresholds.items():
+            observed = frozen_qualification_thresholds.get(name)
+            if not isinstance(observed, (int, float)) or float(observed) != (
+                float(expected)
+            ):
+                raise ValueError(
+                    f"qualification threshold {name!r} disagrees with fit args"
+                )
     source_hash = _source_values_sha256(values)
     base = {
         "schema": REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA,
         "capability_id": capability_id,
         "source_history_sha256": source_hash,
+        "qualification_policy_id": qualification_policy_id,
+        "qualification_policy_sha256": qualification_policy_sha256,
+        "qualification_threshold_source": qualification_threshold_source,
+        "qualification_thresholds": frozen_qualification_thresholds,
         "minimum_component_rms_ratio": minimum_component_rms_ratio,
+        "minimum_visible_component_rms_ratio": (
+            minimum_visible_component_rms_ratio
+        ),
+        "visible_context_length": visible_context_length,
         "minimum_future_component_rms_ratio": (
             minimum_future_component_rms_ratio
         ),
@@ -1472,8 +1799,14 @@ def fit_real_anchored_contract(
         dtype=float,
     )
     future_component = extended_component[decomposition.context_length :]
+    visible_component = np.asarray(history_component, dtype=float)[
+        -visible_context_length:
+    ]
     component_rms = float(
         np.sqrt(np.mean(np.asarray(history_component, dtype=float) ** 2))
+    )
+    visible_component_rms = float(
+        np.sqrt(np.mean(visible_component**2))
     )
     future_component_rms = float(
         np.sqrt(np.mean(future_component**2))
@@ -1482,15 +1815,23 @@ def fit_real_anchored_contract(
         np.mean(decomposition.normalization_scale_by_target)
     )
     threshold = float(minimum_component_rms_ratio) * reference_scale
+    visible_threshold = (
+        float(minimum_visible_component_rms_ratio) * reference_scale
+    )
     future_threshold = (
         float(minimum_future_component_rms_ratio) * reference_scale
     )
     gate_metrics = {
         "controlled_component_rms": component_rms,
         "controlled_component_history_rms": component_rms,
+        "controlled_component_visible_history_rms": visible_component_rms,
+        "controlled_component_visible_context_length": (
+            visible_context_length
+        ),
         "controlled_component_future_rms": future_component_rms,
         "minimum_component_rms": threshold,
         "minimum_history_component_rms": threshold,
+        "minimum_visible_history_component_rms": visible_threshold,
         "minimum_future_component_rms": future_threshold,
         "future_component_horizon": decomposition.horizon,
         "future_component_source": (
@@ -1501,8 +1842,10 @@ def fit_real_anchored_contract(
         math.isfinite(value)
         for value in (
             component_rms,
+            visible_component_rms,
             future_component_rms,
             threshold,
+            visible_threshold,
             future_threshold,
         )
     ):
@@ -1518,6 +1861,25 @@ def fit_real_anchored_contract(
                 "unavailable_detail": (
                     f"component_rms={component_rms:.12g}, "
                     f"threshold={threshold:.12g}"
+                ),
+                **gate_metrics,
+                "decomposition_contract": decomposition.to_dict(),
+                "decomposition_history_sha256": (
+                    decomposition.history_sha256
+                ),
+            }
+        )
+    if visible_component_rms <= visible_threshold:
+        return _finalize_capability_contract(
+            {
+                **base,
+                "available": False,
+                "unavailable_reason": (
+                    "controlled_visible_component_too_weak"
+                ),
+                "unavailable_detail": (
+                    f"visible_component_rms={visible_component_rms:.12g}, "
+                    f"threshold={visible_threshold:.12g}"
                 ),
                 **gate_metrics,
                 "decomposition_contract": decomposition.to_dict(),
@@ -1566,7 +1928,11 @@ def apply_real_anchored_contract(
     """Apply a calibration wrapper contract and return raw units plus metadata."""
 
     _verify_capability_contract(contract)
-    if contract.get("schema") != REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA:
+    capability_schema = str(contract.get("schema"))
+    if capability_schema not in {
+        REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA,
+        LEGACY_REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA,
+    }:
         raise ValueError("unsupported real-anchored capability contract schema")
     if contract.get("available") is not True:
         raise ValueError(
@@ -1603,12 +1969,24 @@ def apply_real_anchored_contract(
     metadata = member.metadata()
     metadata.update(
         {
-            "schema": REAL_ANCHORED_CAPABILITY_CONTRACT_SCHEMA,
+            "schema": capability_schema,
             "available": True,
             "capability_contract_sha256": contract[
                 "capability_contract_sha256"
             ],
             "source_history_sha256": source_hash,
+            "qualification_policy_id": contract.get(
+                "qualification_policy_id"
+            ),
+            "qualification_policy_sha256": contract.get(
+                "qualification_policy_sha256"
+            ),
+            "qualification_threshold_source": contract.get(
+                "qualification_threshold_source"
+            ),
+            "qualification_thresholds": contract.get(
+                "qualification_thresholds"
+            ),
             "decomposition_history_sha256": (
                 decomposition.history_sha256
             ),
@@ -1617,7 +1995,13 @@ def apply_real_anchored_contract(
                 "multi_seasonal": "secondary_harmonic_sum",
                 "trend": "local_trend_nonlinearity",
                 "time_varying_seasonality": (
-                    "carrier_amplitude_modulation_sidebands"
+                    (
+                        "carrier_phase_locked_symmetric_"
+                        "amplitude_modulation"
+                    )
+                    if decomposition.modulation_basis
+                    == CONSTRAINED_AM_BASIS
+                    else "carrier_amplitude_modulation_sidebands"
                 ),
                 "regime_switching": "history_joinpoint_level_shift",
             }[capability_id],
@@ -1631,8 +2015,14 @@ def apply_real_anchored_contract(
                 capability_id != "regime_switching"
             ),
             "modulation_period": decomposition.modulation_period,
+            "modulation_basis": decomposition.modulation_basis,
             "modulation_extension": (
-                "bounded_stationary_carrier_sidebands"
+                (
+                    "bounded_symmetric_carrier_amplitude_modulation"
+                    if decomposition.modulation_basis
+                    == CONSTRAINED_AM_BASIS
+                    else "bounded_stationary_carrier_sidebands"
+                )
                 if decomposition.modulation_period is not None
                 else None
             ),

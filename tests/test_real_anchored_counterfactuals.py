@@ -10,6 +10,8 @@ from cafe import protocol
 from cafe.data.real import RealDatasetBundle, RealSeriesRecord
 from cafe.features.primitives import gift_eval_short_term_test_holdout_steps
 from cafe.generation.real_counterfactuals import (
+    build_availability,
+    default_four_capability_qualification_policy,
     fit_background_capability_contracts,
     iter_real_anchored_samples,
     public_background,
@@ -18,7 +20,13 @@ from cafe.generation.real_counterfactuals import (
     resolve_history_periods,
     resolve_modulation_period,
     resolve_regime_joinpoint,
+    validate_availability_contract,
     validate_contract_integrity,
+)
+from cafe.generation.real_anchored_policy import (
+    QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+    REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+    TIME_VARYING_SEASONALITY_BASIS_POLICY,
 )
 
 
@@ -60,6 +68,17 @@ def _modulated_regime_path(
         future_offset
     )
     return values
+
+
+def _strong_modulated_path(length: int) -> np.ndarray:
+    time = np.arange(length, dtype=float)
+    envelope = 2.0 + 1.4 * np.sin(2.0 * np.pi * time / 168.0 + 0.2)
+    return (
+        10.0
+        + envelope * np.sin(2.0 * np.pi * time / 24.0 + 0.3)
+        + 0.8 * np.sin(2.0 * np.pi * time / 84.0 - 0.4)
+        + 0.02 * np.cos(time / 7.0)
+    )
 
 
 def _bundle(
@@ -302,10 +321,40 @@ def test_period_resolution_keeps_declared_carrier_and_finds_weekly_component(
     assert resolved["history_only"] is True
     assert resolved["history_length"] == 504
     assert resolved["carrier_period"] == 24.0
-    assert resolved["carrier_source"] == "calibration_feature_period"
+    assert resolved["carrier_source"] == (
+        "visible_calibration_feature_period"
+    )
+    assert resolved["carrier_visibility_passed"] is True
+    assert resolved["carrier_rms_ratio"] >= resolved[
+        "minimum_carrier_rms_ratio"
+    ]
     assert resolved["secondary_periods"] == [168.0]
     assert resolved["secondary_peaks"][0]["frequency_bin"] == 3.0
     assert resolved["secondary_peaks"][0]["power_share"] > 0.01
+
+
+def test_period_resolution_rejects_invisible_declared_carrier() -> None:
+    time = np.arange(
+        protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH,
+        dtype=float,
+    )
+    history = 2.0 * np.sin(2.0 * np.pi * time / 24.0 + 0.3)
+
+    resolved = resolve_history_periods(
+        history,
+        declared_carrier_period=48.0,
+    )
+
+    assert resolved["carrier_source"] == "history_spectral_peak_fallback"
+    assert resolved["carrier_period"] == pytest.approx(24.0)
+    assert resolved["declared_carrier_visibility"][
+        "carrier_rms_ratio"
+    ] < resolved["minimum_carrier_rms_ratio"]
+    with pytest.raises(ValueError, match="visibility gates"):
+        resolve_history_periods(
+            np.ones_like(history),
+            declared_carrier_period=24.0,
+        )
 
 
 def test_modulation_and_regime_resolvers_are_history_only_and_recover_signal(
@@ -363,6 +412,117 @@ def test_modulation_and_regime_resolvers_are_history_only_and_recover_signal(
     assert regime["available"] is True
     assert int(regime["regime_join_index"]) == pytest.approx(432, abs=1)
     assert int(regime["regime_join_index"]) in range(360, 481)
+    assert regime["step_over_ramp_sse_advantage"] >= regime[
+        "minimum_step_over_ramp_advantage"
+    ]
+    assert regime["join_stability_width"] <= regime[
+        "maximum_join_stability_width"
+    ]
+
+
+def test_regime_resolver_rejects_a_smooth_ramp() -> None:
+    length = protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+    time = np.arange(length, dtype=float)
+    ramp = 4.0 * np.clip((time - 408.0) / 48.0, 0.0, 1.0)
+    history = (
+        10.0
+        + 2.0 * np.sin(2.0 * np.pi * time / 24.0 + 0.2)
+        + ramp
+    )
+
+    resolved = resolve_regime_joinpoint(
+        history,
+        carrier_period=24.0,
+        secondary_periods=(),
+    )
+
+    assert resolved["available"] is False
+    assert resolved["unavailable_reason"] in {
+        "continuous_ramp_preferred_over_level_step",
+        "regime_joinpoint_not_locally_stable",
+    }
+
+
+def test_shared_ownership_excludes_am_sidebands_from_secondary_periods() -> None:
+    paths = [
+        _strong_modulated_path(protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH)
+    ]
+    backgrounds, _ = protocol.build_real_anchored_backgrounds(
+        _spec("fixture_strong_am_hourly"),
+        source_root=Path("/unused"),
+        maximum_backgrounds=1,
+        sample_seed=811,
+        real_bundle=_bundle(paths, adapter_id="fixture"),
+    )
+
+    rows, _ = fit_background_capability_contracts(
+        backgrounds,
+        capability_ids=("multi_seasonal", "time_varying_seasonality"),
+    )
+
+    assert all(row["available"] is True for row in rows)
+    for row in rows:
+        ownership = row["component_ownership"]
+        assert ownership["am_sideband_owned_peak_count"] >= 1
+        assert ownership["modulation_basis"] == (
+            TIME_VARYING_SEASONALITY_BASIS_POLICY
+        )
+        secondary = row["period_resolution"]["secondary_periods"]
+        assert any(float(period) == pytest.approx(84.0) for period in secondary)
+        assert not any(
+            float(period) == pytest.approx(21.0, abs=1.0)
+            or float(period) == pytest.approx(28.0, abs=1.0)
+            for period in secondary
+        )
+
+
+def test_frozen_qualification_policy_is_reused_by_available_and_unavailable_rows(
+) -> None:
+    paths = [_hourly_path(protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH)]
+    backgrounds, _ = protocol.build_real_anchored_backgrounds(
+        _spec("fixture_policy_hourly"),
+        source_root=Path("/unused"),
+        maximum_backgrounds=1,
+        sample_seed=812,
+        real_bundle=_bundle(paths, adapter_id="fixture"),
+    )
+    defaults = default_four_capability_qualification_policy()
+    default_thresholds = defaults["qualification_thresholds"]
+    frozen_policy: dict[str, object] = {
+        "schema_version": REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+        "threshold_source_policy": QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+        "capabilities": {
+            capability_id: {
+                "qualification_policy_id": (
+                    f"fixture.{capability_id}.reference.v1"
+                ),
+                "qualification_thresholds": dict(
+                    default_thresholds[capability_id]
+                ),
+            }
+            for capability_id in ("trend", "regime_switching")
+        },
+    }
+    frozen_policy["qualification_policy_sha256"] = protocol.json_sha256(
+        frozen_policy
+    )
+
+    rows, _ = fit_background_capability_contracts(
+        backgrounds,
+        capability_ids=("trend", "regime_switching"),
+        qualification_policy=frozen_policy,
+    )
+
+    assert {bool(row["available"]) for row in rows} == {False, True}
+    for row in rows:
+        capability_id = str(row["capability_id"])
+        expected = frozen_policy["capabilities"][capability_id]
+        assert row["qualification_policy_id"] == expected[
+            "qualification_policy_id"
+        ]
+        assert row["qualification_thresholds"] == expected[
+            "qualification_thresholds"
+        ]
 
 
 def test_public_background_reconstructs_full_source_and_contracts_are_available(
@@ -388,6 +548,40 @@ def test_public_background_reconstructs_full_source_and_contracts_are_available(
     assert all(row["available"] is True for row in contract_rows)
     for row in contract_rows:
         validate_contract_integrity(row)
+        assert row["qualification_policy_id"]
+        assert row["qualification_threshold_source"] == (
+            QUALIFICATION_THRESHOLD_SOURCE_POLICY
+        )
+        assert row["qualification_thresholds"][
+            "visible_context_length"
+        ] == protocol.FIXED_CONTEXT_LENGTH
+        assert row["controlled_component_visible_context_length"] == (
+            protocol.FIXED_CONTEXT_LENGTH
+        )
+    for background_id in {
+        str(row["background_id"]) for row in contract_rows
+    }:
+        selected = [
+            row
+            for row in contract_rows
+            if str(row["background_id"]) == background_id
+        ]
+        assert len(
+            {
+                row["contract"]["decomposition_contract"][
+                    "contract_sha256"
+                ]
+                for row in selected
+            }
+        ) == 1
+        assert len(
+            {
+                row["contract"]["decomposition_contract"][
+                    "spectral_component_ownership"
+                ]
+                for row in selected
+            }
+        ) == 1
 
     for private in private_backgrounds:
         public = public_background(private)
@@ -416,9 +610,14 @@ def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
         assert rms_gate["evaluated_background_count"] == len(backgrounds)
         assert rms_gate["future_horizon"] == protocol.HORIZON
         assert rms_gate["history_minimum_rms_ratios"] == [0.01]
+        assert rms_gate["visible_history_minimum_rms_ratios"] == [0.01]
+        assert rms_gate["visible_context_lengths"] == [
+            protocol.FIXED_CONTEXT_LENGTH
+        ]
         assert rms_gate["future_minimum_rms_ratios"] == [0.01]
         assert rms_gate["history_rms_range"] is not None
         assert rms_gate["future_rms_range"] is not None
+        assert rms_gate["visible_history_rms_range"] is not None
         assert rms_gate["future_threshold_range"] is not None
     alphas = (1.2, 1.6, 2.0)
     arguments = {
@@ -569,6 +768,21 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
             abs=1,
         )
         validate_contract_integrity(row)
+    for background_id in {
+        str(row["background_id"]) for row in contract_rows
+    }:
+        hashes = {
+            row["contract"]["decomposition_contract"]["contract_sha256"]
+            for row in contract_rows
+            if str(row["background_id"]) == background_id
+        }
+        assert len(hashes) == 1
+        assert all(
+            row["component_ownership"]["policy"]
+            == "shared_background_joint_design_v1"
+            for row in contract_rows
+            if str(row["background_id"]) == background_id
+        )
 
     alphas = (1.2, 1.6, 2.0)
     arguments = {
@@ -621,7 +835,10 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
         metadata = treatment["generation_metadata"]
         if treatment["capability_id"] == "time_varying_seasonality":
             assert metadata["controlled_component"] == (
-                "carrier_amplitude_modulation_sidebands"
+                "carrier_phase_locked_symmetric_amplitude_modulation"
+            )
+            assert metadata["modulation_basis"] == (
+                TIME_VARYING_SEASONALITY_BASIS_POLICY
             )
             assert metadata["modulation_period"] == pytest.approx(168.0, abs=1.0)
             assert metadata["amplitude_modulation_fixed"] is False
@@ -652,3 +869,30 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
                 rtol=0.0,
                 atol=2e-14,
             )
+
+
+def test_legacy_v1_availability_is_validated_without_redefining_it() -> None:
+    _backgrounds, contract_rows, availability = _four_background_bank()
+    legacy = build_availability(
+        contract_rows,
+        requested_capability_ids=("trend", "multi_seasonal"),
+        minimum_eligible_backgrounds=4,
+    )
+    legacy["schema_version"] = "cafe.real_anchored_availability.v1"
+    for cell in legacy["cells"]:
+        gate = cell["controlled_component_rms_gate"]
+        for field in (
+            "visible_history_source",
+            "visible_history_minimum_rms_ratios",
+            "visible_context_lengths",
+            "visible_history_rms_range",
+            "visible_history_threshold_range",
+        ):
+            gate.pop(field, None)
+
+    validate_availability_contract(legacy, contract_rows)
+    tampered = dict(legacy)
+    tampered["cells"] = [dict(cell) for cell in legacy["cells"]]
+    tampered["cells"][0]["eligible_background_count"] += 1
+    with pytest.raises(ValueError, match="disagree"):
+        validate_availability_contract(tampered, contract_rows)

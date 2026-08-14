@@ -30,10 +30,26 @@ from cafe.generation.real_counterfactuals import (
     REAL_ANCHORED_ALPHAS,
     REAL_ANCHORED_GENERATOR_VERSION,
     available_capabilities as available_real_anchored_capabilities,
+    iter_nonlinear_replay_sensitivity_samples,
     iter_real_anchored_samples,
     real_anchored_assignments,
     validate_availability_contract,
     validate_contract_integrity,
+)
+from cafe.generation.reference_bank import (
+    validate_evaluation_qualification_policy,
+    validate_real_anchored_reference_chain,
+)
+from cafe.generation.structural_real_counterfactuals import (
+    STRUCTURAL_ALPHAS,
+    STRUCTURAL_CAPABILITIES,
+    available_structural_capabilities,
+    available_structural_sensitivity_capabilities,
+    iter_mandatory_structural_input_ablation_tasks,
+    iter_structural_real_anchored_samples,
+    validate_structural_donor_commitment_manifest,
+    validate_structural_availability,
+    validate_structural_contract,
 )
 
 
@@ -683,6 +699,7 @@ def main() -> int:
     upstream_pipeline_schema = bundle.get("pipeline_schema_version")
     if upstream_pipeline_schema not in {
         "cafe.pipeline.v1",
+        "cafe.pipeline.v2",
         protocol.SCHEMA_VERSION,
     }:
         raise ValueError(
@@ -691,7 +708,8 @@ def main() -> int:
         )
     expected_bundle_schema = {
         "cafe.pipeline.v1": "cafe.calibration_bundle.v1",
-        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v2",
+        "cafe.pipeline.v2": "cafe.calibration_bundle.v2",
+        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v3",
     }[upstream_pipeline_schema]
     if bundle.get("schema_version") != expected_bundle_schema:
         raise ValueError(
@@ -722,14 +740,35 @@ def main() -> int:
             "v1 calibration bundle must not declare the v2 real-anchored "
             "component"
         )
-    if (
-        upstream_pipeline_schema == protocol.SCHEMA_VERSION
-        and not real_anchored_files_present
-    ):
+    if upstream_pipeline_schema in {
+        "cafe.pipeline.v2",
+        protocol.SCHEMA_VERSION,
+    } and not real_anchored_files_present:
         raise ValueError(
-            "v2 calibration bundle is missing the frozen real-anchored "
+            "v2/v3 calibration bundle is missing the frozen real-anchored "
             "component"
         )
+    v3_real_anchored_file_keys = {
+        "structural_real_anchored_backgrounds",
+        "structural_real_anchored_contracts",
+        "structural_real_anchored_donor_commitments",
+        "structural_real_anchored_availability",
+        "real_anchored_reference_backgrounds",
+        "structural_real_anchored_reference_backgrounds",
+        "real_anchored_reference_contracts",
+        "real_anchored_bank_split_audit",
+        "real_anchored_qualification_policy",
+        "structural_hierarchy_qualification",
+    }
+    if upstream_pipeline_schema == protocol.SCHEMA_VERSION:
+        missing_v3 = sorted(
+            v3_real_anchored_file_keys - set(bundle.get("files", {}))
+        )
+        if missing_v3:
+            raise ValueError(
+                "v3 calibration bundle is missing real-anchored files: "
+                + ", ".join(missing_v3)
+            )
     if real_anchored_files_present:
         real_anchored_backgrounds = list(
             protocol.iter_jsonl(
@@ -750,15 +789,135 @@ def main() -> int:
             real_anchored_availability,
             real_anchored_contracts,
         )
+        if upstream_pipeline_schema == protocol.SCHEMA_VERSION:
+            structural_backgrounds = list(
+                protocol.iter_jsonl(
+                    Path(
+                        bundle["files"][
+                            "structural_real_anchored_backgrounds"
+                        ]["path"]
+                    )
+                )
+            )
+            structural_contracts = list(
+                protocol.iter_jsonl(
+                    Path(
+                        bundle["files"][
+                            "structural_real_anchored_contracts"
+                        ]["path"]
+                    )
+                )
+            )
+            structural_by_id = {
+                str(row["background_id"]): row
+                for row in structural_backgrounds
+            }
+            for row in structural_contracts:
+                contract = row.get("contract")
+                if isinstance(contract, dict):
+                    validate_structural_contract(
+                        contract,
+                        structural_by_id[str(row["background_id"])],
+                    )
+            structural_donor_commitments = protocol.read_json(
+                Path(
+                    bundle["files"][
+                        "structural_real_anchored_donor_commitments"
+                    ]["path"]
+                )
+            )
+            validate_structural_donor_commitment_manifest(
+                structural_donor_commitments,
+                structural_backgrounds,
+                structural_contracts,
+                dataset_id=dataset.dataset_id,
+            )
+            structural_availability = protocol.read_json(
+                Path(
+                    bundle["files"][
+                        "structural_real_anchored_availability"
+                    ]["path"]
+                )
+            )
+            validate_structural_availability(
+                structural_availability,
+                structural_contracts,
+            )
+            qualification_policy = protocol.read_json(
+                Path(
+                    bundle["files"]["real_anchored_qualification_policy"][
+                        "path"
+                    ]
+                )
+            )
+            reference_backgrounds = list(
+                protocol.iter_jsonl(
+                    Path(
+                        bundle["files"][
+                            "real_anchored_reference_backgrounds"
+                        ]["path"]
+                    )
+                )
+            )
+            structural_reference_backgrounds = list(
+                protocol.iter_jsonl(
+                    Path(
+                        bundle["files"][
+                            "structural_real_anchored_reference_backgrounds"
+                        ]["path"]
+                    )
+                )
+            )
+            reference_contracts = list(
+                protocol.iter_jsonl(
+                    Path(
+                        bundle["files"][
+                            "real_anchored_reference_contracts"
+                        ]["path"]
+                    )
+                )
+            )
+            bank_split_audit = protocol.read_json(
+                Path(
+                    bundle["files"]["real_anchored_bank_split_audit"][
+                        "path"
+                    ]
+                )
+            )
+            validate_real_anchored_reference_chain(
+                [*real_anchored_backgrounds, *structural_backgrounds],
+                [
+                    *reference_backgrounds,
+                    *structural_reference_backgrounds,
+                ],
+                bank_split_audit,
+                qualification_policy,
+                reference_contract_rows=reference_contracts,
+            )
+            validate_evaluation_qualification_policy(
+                [*real_anchored_contracts, *structural_contracts],
+                qualification_policy,
+            )
+        else:
+            structural_backgrounds = []
+            structural_contracts = []
+            structural_donor_commitments = None
+            structural_availability = {}
+            qualification_policy = None
     else:
         real_anchored_backgrounds = []
         real_anchored_contracts = []
         real_anchored_availability = {
-            "schema_version": "cafe.real_anchored_availability.v1",
+            "schema_version": "cafe.real_anchored_availability.v2",
             "benchmark_track": "real_anchored_counterfactual",
             "dataset_id": dataset.dataset_id,
             "cells": [],
         }
+        structural_backgrounds = []
+        structural_contracts = []
+        structural_donor_commitments = None
+        structural_availability = {}
+        qualification_policy = None
     if bundle["generator_version"] != protocol.GENERATOR_VERSION:
         raise ValueError("calibration bundle generator version mismatch")
 
@@ -783,12 +942,16 @@ def main() -> int:
             requested_capability_ids,
         )
     )
-    real_anchored_capability_ids = tuple(
-        capability_id
-        for capability_id in available_real_anchored_capabilities(
-            real_anchored_availability
+    real_anchored_capability_ids = (
+        tuple(
+            capability_id
+            for capability_id in available_real_anchored_capabilities(
+                real_anchored_availability
+            )
+            if capability_id in requested_capability_ids
         )
-        if capability_id in requested_capability_ids
+        if upstream_pipeline_schema == protocol.SCHEMA_VERSION
+        else ()
     )
     real_anchored_assignment_map = real_anchored_assignments(
         real_anchored_contracts,
@@ -800,7 +963,129 @@ def main() -> int:
         for capability_id in real_anchored_capability_ids
         if real_anchored_assignment_map[capability_id]
     )
-    if not capability_ids and not generated_real_anchored_capability_ids:
+    available_structural_ids = set(
+        available_structural_capabilities(structural_availability)
+    )
+    available_structural_sensitivity_ids = set(
+        available_structural_sensitivity_capabilities(
+            structural_availability
+        )
+    )
+    structural_capability_ids = tuple(
+        capability_id
+        for capability_id in requested_capability_ids
+        if capability_id in STRUCTURAL_CAPABILITIES
+        and capability_id != "hierarchical_coherence"
+        and capability_id in available_structural_ids
+    )
+    structural_main_rows = list(
+        iter_structural_real_anchored_samples(
+            structural_backgrounds,
+            [
+                row
+                for row in structural_contracts
+                if row.get("capability_id") in structural_capability_ids
+            ],
+            alphas=STRUCTURAL_ALPHAS,
+            seed_indexes=seed_indexes,
+        )
+    )
+    structural_sensitivity_capability_ids = tuple(
+        capability_id
+        for capability_id in requested_capability_ids
+        if capability_id in {"common_factor", "cross_series_dependence"}
+        and capability_id in available_structural_sensitivity_ids
+    )
+    structural_sensitivity_rows = list(
+        iter_structural_real_anchored_samples(
+            structural_backgrounds,
+            [
+                row
+                for row in structural_contracts
+                if row.get("capability_id")
+                in structural_sensitivity_capability_ids
+            ],
+            alphas=STRUCTURAL_ALPHAS,
+            sensitivity=True,
+            seed_indexes=seed_indexes,
+        )
+    )
+    structural_donor_rows = list(
+        iter_structural_real_anchored_samples(
+            structural_backgrounds,
+            [
+                row
+                for row in structural_contracts
+                if row.get("capability_id") in structural_capability_ids
+            ],
+            alphas=STRUCTURAL_ALPHAS,
+            seed_indexes=range(len(structural_backgrounds)),
+        )
+    )
+    structural_sensitivity_donor_rows = list(
+        iter_structural_real_anchored_samples(
+            structural_backgrounds,
+            [
+                row
+                for row in structural_contracts
+                if row.get("capability_id")
+                in structural_sensitivity_capability_ids
+            ],
+            alphas=STRUCTURAL_ALPHAS,
+            sensitivity=True,
+            seed_indexes=range(len(structural_backgrounds)),
+        )
+    )
+    if (
+        structural_donor_rows or structural_sensitivity_donor_rows
+    ) and structural_donor_commitments is None:
+        raise ValueError(
+            "structural ablation donors lack calibration commitments"
+        )
+    structural_ablation_rows = list(
+        iter_mandatory_structural_input_ablation_tasks(
+            structural_main_rows,
+            donor_samples=structural_donor_rows,
+            donor_commitment_manifest=structural_donor_commitments,
+        )
+    )
+    structural_sensitivity_ablation_rows = list(
+        iter_mandatory_structural_input_ablation_tasks(
+            structural_sensitivity_rows,
+            donor_samples=structural_sensitivity_donor_rows,
+            donor_commitment_manifest=structural_donor_commitments,
+        )
+    )
+    del structural_donor_rows
+    del structural_sensitivity_donor_rows
+    for row in (
+        *structural_sensitivity_rows,
+        *structural_sensitivity_ablation_rows,
+    ):
+        row["excluded_from_primary_score"] = True
+        row["excluded_from_univariate_real_anchored_rank"] = True
+    nonlinear_replay_rows = list(
+        iter_nonlinear_replay_sensitivity_samples(
+            real_anchored_backgrounds,
+            real_anchored_contracts,
+            seed_indexes=seed_indexes,
+            alphas=REAL_ANCHORED_ALPHAS,
+        )
+    ) if "nonlinear_persistence" in real_anchored_capability_ids else []
+    generated_structural_capability_ids = tuple(
+        capability_id
+        for capability_id in structural_capability_ids
+        if any(
+            row["capability_id"] == capability_id
+            for row in structural_main_rows
+        )
+    )
+    if (
+        not capability_ids
+        and not generated_real_anchored_capability_ids
+        and not generated_structural_capability_ids
+        and not real_anchor_masters
+    ):
         raise ValueError(
             "none of the requested capabilities has a sample in this seed "
             "range in either the synthetic or real-anchored track; "
@@ -840,12 +1125,23 @@ def main() -> int:
     )
     real_anchored_count = protocol.write_jsonl(
         real_anchored_path,
-        iter_real_anchored_samples(
-            real_anchored_backgrounds,
-            real_anchored_contracts,
-            capability_ids=real_anchored_capability_ids,
-            seed_indexes=seed_indexes,
-            alphas=REAL_ANCHORED_ALPHAS,
+        (
+            row
+            for source in (
+                iter_real_anchored_samples(
+                    real_anchored_backgrounds,
+                    real_anchored_contracts,
+                    capability_ids=real_anchored_capability_ids,
+                    seed_indexes=seed_indexes,
+                    alphas=REAL_ANCHORED_ALPHAS,
+                ),
+                iter(structural_main_rows),
+                iter(structural_ablation_rows),
+                iter(structural_sensitivity_rows),
+                iter(structural_sensitivity_ablation_rows),
+                iter(nonlinear_replay_rows),
+            )
+            for row in source
         ),
     )
     expected_real_anchored_count = (
@@ -855,6 +1151,11 @@ def main() -> int:
         )
         * len(REAL_ANCHORED_ALPHAS)
         * 2
+        + len(structural_main_rows)
+        + len(structural_ablation_rows)
+        + len(structural_sensitivity_rows)
+        + len(structural_sensitivity_ablation_rows)
+        + len(nonlinear_replay_rows)
     )
     if real_anchored_count != expected_real_anchored_count:
         raise ValueError(
@@ -873,7 +1174,10 @@ def main() -> int:
         "source_calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "requested_seed_indexes": seed_indexes,
         "generated_capabilities": list(
-            generated_real_anchored_capability_ids
+            (
+                *generated_real_anchored_capability_ids,
+                *generated_structural_capability_ids,
+            )
         ),
         "assigned_seed_indexes_by_capability": {
             capability_id: [
@@ -894,11 +1198,85 @@ def main() -> int:
             "truncate_at_eligible_count_v1"
         ),
         "generated_master_count": real_anchored_count,
+        "generated_univariate_master_count": (
+            real_anchored_count
+            - len(structural_main_rows)
+            - len(structural_ablation_rows)
+            - len(structural_sensitivity_rows)
+            - len(structural_sensitivity_ablation_rows)
+            - len(nonlinear_replay_rows)
+        ),
+        "generated_structural_main_count": len(structural_main_rows),
+        "generated_structural_input_ablation_count": len(
+            structural_ablation_rows
+        ),
+        "generated_structural_sensitivity_main_count": len(
+            structural_sensitivity_rows
+        ),
+        "generated_structural_sensitivity_input_ablation_count": len(
+            structural_sensitivity_ablation_rows
+        ),
+        "generated_nonlinear_replay_sensitivity_count": len(
+            nonlinear_replay_rows
+        ),
+        "structural_input_ablation_policy": (
+            "mandatory_common_cross_separate_attribution_not_score_weighted"
+        ),
+        "hierarchical_coherence_generation_count": 0,
         "dose_values": list(REAL_ANCHORED_ALPHAS),
     }
     protocol.write_json(
         real_anchored_availability_path,
         generation_real_anchored_availability,
+    )
+    structural_real_anchored_availability_path = generation_dir / (
+        f"structural_real_anchored_availability__{shard_name}.json"
+    )
+    structural_assigned_seeds = {
+        capability_id: sorted(
+            {
+                int(row["seed_index"])
+                for row in structural_main_rows
+                if row["capability_id"] == capability_id
+            }
+        )
+        for capability_id in structural_capability_ids
+    }
+    generation_structural_availability = {
+        **structural_availability,
+        "source_calibration_bundle_sha256": bundle["bundle_content_sha256"],
+        "requested_seed_indexes": seed_indexes,
+        "generated_capabilities": list(
+            generated_structural_capability_ids
+        ),
+        "assigned_seed_indexes_by_capability": structural_assigned_seeds,
+        "effective_background_count_by_capability": {
+            capability_id: len(assigned)
+            for capability_id, assigned in structural_assigned_seeds.items()
+        },
+        "background_sampling_policy": (
+            "frozen_global_seed_ordinal_permutation_without_replacement_"
+            "truncate_at_eligible_count_v1"
+        ),
+        "generated_main_master_count": len(structural_main_rows),
+        "generated_input_ablation_master_count": len(
+            structural_ablation_rows
+        ),
+        "generated_sensitivity_capabilities": list(
+            structural_sensitivity_capability_ids
+        ),
+        "generated_sensitivity_main_master_count": len(
+            structural_sensitivity_rows
+        ),
+        "generated_sensitivity_input_ablation_master_count": len(
+            structural_sensitivity_ablation_rows
+        ),
+        "hierarchical_coherence_generation_count": 0,
+        "dose_values": list(STRUCTURAL_ALPHAS),
+    }
+    protocol.write_json(
+        structural_real_anchored_availability_path,
+        generation_structural_availability,
     )
 
     failure_counts = Counter(
@@ -972,7 +1350,7 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "cafe.generation_config.v2",
+        "schema_version": "cafe.generation_config.v3",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": protocol.GENERATOR_VERSION,
@@ -995,7 +1373,10 @@ def main() -> int:
                 real_anchored_capability_ids
             ),
             "generated_capabilities": list(
-                generated_real_anchored_capability_ids
+                (
+                    *generated_real_anchored_capability_ids,
+                    *generated_structural_capability_ids,
+                )
             ),
             "effective_background_count_by_capability": {
                 capability_id: len(assignments)
@@ -1013,6 +1394,71 @@ def main() -> int:
             "anti_copy": (
                 "not_applicable_intentional_real_anchor_counterfactual"
             ),
+            "qualification_policy_sha256": (
+                None
+                if qualification_policy is None
+                else qualification_policy["qualification_policy_sha256"]
+            ),
+            "qualification_threshold_source": (
+                (
+                    "independent_source_time_disjoint_reference_bank_never_"
+                    "evaluation_origins_v1"
+                )
+                if upstream_pipeline_schema == protocol.SCHEMA_VERSION
+                else None
+            ),
+            "upstream_real_anchored_protocol": upstream_pipeline_schema,
+            "legacy_upstream_component_policy": (
+                None
+                if upstream_pipeline_schema == protocol.SCHEMA_VERSION
+                else "validated_but_not_regenerated_or_ranked_as_v3"
+            ),
+            "structural_main_count": len(structural_main_rows),
+            "structural_input_ablation_count": len(
+                structural_ablation_rows
+            ),
+            "structural_sensitivity_capabilities": list(
+                structural_sensitivity_capability_ids
+            ),
+            "structural_sensitivity_main_count": len(
+                structural_sensitivity_rows
+            ),
+            "structural_sensitivity_input_ablation_count": len(
+                structural_sensitivity_ablation_rows
+            ),
+            "nonlinear_replay_sensitivity_count": len(
+                nonlinear_replay_rows
+            ),
+            "structural_input_ablation": (
+                "mandatory_common_cross_separate_attribution_never_score_"
+                "weighted_v1"
+            ),
+            "structural_donor_commitment": (
+                None
+                if structural_donor_commitments is None
+                else {
+                    "schema_version": structural_donor_commitments[
+                        "schema_version"
+                    ],
+                    "commitment_policy": structural_donor_commitments[
+                        "commitment_policy"
+                    ],
+                    "commitment_root_sha256": structural_donor_commitments[
+                        "commitment_root_sha256"
+                    ],
+                    "source_calibration_bundle_sha256": bundle[
+                        "bundle_content_sha256"
+                    ],
+                    "source_file_sha256": bundle["files"][
+                        "structural_real_anchored_donor_commitments"
+                    ]["sha256"],
+                }
+            ),
+            "formal_panel_minimum_dimension": 3,
+            "panel_d2_policy": (
+                "generated_auxiliary_sensitivity_never_formal_rank_v1"
+            ),
+            "hierarchy_policy": "qualification_only_zero_generation_rows",
             "included_in_synthetic_ranking": False,
         },
         "realism_gate_policy": {
@@ -1063,7 +1509,7 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "cafe.generation_manifest.v2",
+        "schema_version": "cafe.generation_manifest.v3",
         "created_at": protocol.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),
@@ -1100,6 +1546,28 @@ def main() -> int:
             },
             "real_anchored_availability": protocol.file_record(
                 real_anchored_availability_path
+            ),
+            "structural_real_anchored_availability": protocol.file_record(
+                structural_real_anchored_availability_path
+            ),
+            **(
+                {}
+                if structural_donor_commitments is None
+                else {
+                    "structural_donor_commitments": {
+                        **bundle["files"][
+                            "structural_real_anchored_donor_commitments"
+                        ],
+                        "commitment_root_sha256": (
+                            structural_donor_commitments[
+                                "commitment_root_sha256"
+                            ]
+                        ),
+                        "source_calibration_bundle_sha256": bundle[
+                            "bundle_content_sha256"
+                        ],
+                    }
+                }
             ),
             "generation_attempts": protocol.file_record(attempt_path),
         },

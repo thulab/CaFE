@@ -13,6 +13,9 @@ from cafe.analysis import structured
 from cafe import protocol
 from cafe.analysis import metrics
 from cafe.analysis import diagnostics
+from cafe.generation.real_anchored_policy import (
+    MINIMUM_FORMAL_BACKGROUND_COUNT,
+)
 
 
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
@@ -41,10 +44,84 @@ SYNTHETIC_EVALUATION_TABLES = frozenset(
     }
 )
 REAL_ANCHORED_BENCHMARK_TRACK = "real_anchored_counterfactual"
+REAL_ANCHORED_INPUT_ABLATION_TABLE = "real_anchored_input_ablation"
+REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE = (
+    "real_anchored_structural_sensitivity"
+)
+REAL_ANCHORED_STRUCTURAL_SENSITIVITY_ABLATION_TABLE = (
+    "real_anchored_structural_sensitivity_input_ablation"
+)
+REAL_ANCHORED_NONLINEAR_REPLAY_SENSITIVITY_TABLE = (
+    "real_anchored_nonlinear_replay_sensitivity"
+)
+REAL_ANCHORED_EVALUATION_TABLES = frozenset(
+    {
+        REAL_ANCHORED_BENCHMARK_TRACK,
+        REAL_ANCHORED_INPUT_ABLATION_TABLE,
+        REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE,
+        REAL_ANCHORED_STRUCTURAL_SENSITIVITY_ABLATION_TABLE,
+        REAL_ANCHORED_NONLINEAR_REPLAY_SENSITIVITY_TABLE,
+    }
+)
 REAL_ANCHORED_COMPONENT_KEYS = (
     "real_anchored_counterfactuals",
     "real_anchored",
 )
+
+
+def validated_current_real_anchored_generation_protocol(
+    generation_manifest_path: Path,
+    *,
+    task_manifest: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Reject legacy real-anchored tasks before they can be ranked as v3."""
+
+    manifest = protocol.read_json(generation_manifest_path)
+    if manifest.get("schema_version") != "cafe.generation_manifest.v3":
+        raise ValueError(
+            "legacy real-anchored generation cannot enter the v3 ranking"
+        )
+    config = manifest.get("config")
+    if not isinstance(config, dict) or config.get("schema_version") != (
+        "cafe.generation_config.v3"
+    ):
+        raise ValueError("real-anchored generation config is not v3")
+    config_sha256 = protocol.json_sha256(config)
+    if manifest.get("config_sha256") != config_sha256:
+        raise ValueError("real-anchored generation config hash mismatch")
+    if task_manifest is not None and task_manifest.get(
+        "generation_config_sha256"
+    ) != config_sha256:
+        raise ValueError(
+            "real-anchored inference task lost its generation-config binding"
+        )
+    real_config = config.get("real_anchored_counterfactual")
+    if not isinstance(real_config, dict):
+        raise ValueError("generation config lacks the real-anchored contract")
+    qualification_sha256 = real_config.get("qualification_policy_sha256")
+    if (
+        real_config.get("upstream_real_anchored_protocol")
+        != protocol.SCHEMA_VERSION
+        or real_config.get("legacy_upstream_component_policy") is not None
+        or not isinstance(qualification_sha256, str)
+        or len(qualification_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in qualification_sha256
+        )
+    ):
+        raise ValueError(
+            "legacy or unqualified real-anchored generation cannot be ranked"
+        )
+    return {
+        "generation_manifest_path": str(generation_manifest_path),
+        "generation_manifest_sha256": protocol.file_sha256(
+            generation_manifest_path
+        ),
+        "generation_config_sha256": config_sha256,
+        "upstream_real_anchored_protocol": protocol.SCHEMA_VERSION,
+        "qualification_policy_sha256": qualification_sha256,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -348,8 +425,8 @@ def validated_optional_real_anchored_task_path(
 
     sample_ids: set[str] = set()
     pair_members: dict[str, dict[int, float]] = defaultdict(dict)
-    seed_backgrounds: dict[tuple[str, int], str] = {}
-    background_seeds: dict[tuple[str, str], int] = {}
+    seed_backgrounds: dict[tuple[str, str, int], str] = {}
+    background_seeds: dict[tuple[str, str, str], int] = {}
     fixed_context_present = False
     for row in protocol.iter_jsonl(task_path):
         sample_id = str(row.get("sample_id", ""))
@@ -362,7 +439,7 @@ def validated_optional_real_anchored_task_path(
             raise ValueError(
                 "real-anchored task row lost its benchmark_track identity"
             )
-        if row.get("evaluation_table") != REAL_ANCHORED_BENCHMARK_TRACK:
+        if row.get("evaluation_table") not in REAL_ANCHORED_EVALUATION_TABLES:
             raise ValueError(
                 "real-anchored task row has an invalid evaluation_table"
             )
@@ -388,12 +465,22 @@ def validated_optional_real_anchored_task_path(
         members[member] = mase_scale
         capability_id = str(row["capability_id"])
         seed_index = int(row["seed_index"])
+        evaluation_table = str(row.get("evaluation_table", ""))
+        assignment_track = (
+            REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE
+            if evaluation_table
+            in {
+                REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE,
+                REAL_ANCHORED_STRUCTURAL_SENSITIVITY_ABLATION_TABLE,
+            }
+            else REAL_ANCHORED_BENCHMARK_TRACK
+        )
         background_id = str(row.get("background_id", ""))
         if not background_id:
             raise ValueError(
                 "real-anchored task row is missing background_id"
             )
-        seed_key = (capability_id, seed_index)
+        seed_key = (capability_id, assignment_track, seed_index)
         prior_background = seed_backgrounds.setdefault(
             seed_key,
             background_id,
@@ -403,7 +490,11 @@ def validated_optional_real_anchored_task_path(
                 "real-anchored seed maps to multiple backgrounds: "
                 f"{capability_id}/{seed_index}"
             )
-        background_key = (capability_id, background_id)
+        background_key = (
+            capability_id,
+            assignment_track,
+            background_id,
+        )
         prior_seed = background_seeds.setdefault(
             background_key,
             seed_index,
@@ -426,7 +517,10 @@ def validated_optional_real_anchored_task_path(
         raise ValueError(
             f"real-anchored task is missing fixed L{FIXED_CONTEXT_LENGTH} views"
         )
-    return task_path
+    # Legacy v1/v2 generation exposes an explicitly empty compatibility
+    # component.  It is valid provenance, but there is no real-anchored result
+    # to analyze or rank.
+    return task_path if sample_ids else None
 
 
 def baseline_forecast(sample: dict[str, Any], model_id: str) -> np.ndarray:
@@ -488,6 +582,28 @@ def metric_row(
         "input_ablation_group_id": sample.get(
             "input_ablation_group_id"
         ),
+        "input_ablation_source_sample_id": sample.get(
+            "input_ablation_source_sample_id"
+        ),
+        "input_ablation_source_pair_id": sample.get(
+            "input_ablation_source_pair_id"
+        ),
+        "input_ablation_source_paired_group_id": sample.get(
+            "input_ablation_source_paired_group_id"
+        ),
+        "sensitivity_source_sample_id": sample.get(
+            "sensitivity_source_sample_id"
+        ),
+        "sensitivity_source_pair_id": sample.get(
+            "sensitivity_source_pair_id"
+        ),
+        "sensitivity_source_paired_group_id": sample.get(
+            "sensitivity_source_paired_group_id"
+        ),
+        "donor_sample_id": sample.get("donor_sample_id"),
+        "excluded_from_primary_score": bool(
+            sample.get("excluded_from_primary_score", False)
+        ),
         "metrics": {
             str(name): float(value)
             for name, value in metrics.items()
@@ -520,10 +636,25 @@ def effect_channels(sample: dict[str, Any]) -> list[int]:
     capability = str(sample["capability_id"])
     metadata = sample["generation_metadata"]
     if capability == "common_factor":
-        return [int(metadata["protected_target_index"])]
-    if capability == "cross_series_dependence":
-        return [int(value) for value in metadata["responder_indices"]]
-    return list(range(int(sample["target_dim"])))
+        channels = [int(metadata["protected_target_index"])]
+    elif capability == "cross_series_dependence":
+        channels = [int(value) for value in metadata["responder_indices"]]
+    elif capability == "covariate_response":
+        channels = [
+            int(value) for value in metadata["eligible_target_indices"]
+        ]
+    else:
+        channels = list(range(int(sample["target_dim"])))
+    target_dim = int(sample["target_dim"])
+    if (
+        not channels
+        or len(channels) != len(set(channels))
+        or any(channel < 0 or channel >= target_dim for channel in channels)
+    ):
+        raise ValueError(
+            f"invalid effect-channel contract for {capability}: {channels}"
+        )
+    return channels
 
 
 def cross_effect_prefix_steps(
@@ -634,6 +765,21 @@ def effect_row(
         ],
         "background_id": first_sample.get("background_id"),
         "dose_value": second_sample.get("dose_value"),
+        "input_ablation_source_pair_id": first_sample.get(
+            "input_ablation_source_pair_id"
+        ),
+        "input_ablation_source_paired_group_id": first_sample.get(
+            "input_ablation_source_paired_group_id"
+        ),
+        "sensitivity_source_pair_id": first_sample.get(
+            "sensitivity_source_pair_id"
+        ),
+        "sensitivity_source_paired_group_id": first_sample.get(
+            "sensitivity_source_paired_group_id"
+        ),
+        "excluded_from_primary_score": bool(
+            first_sample.get("excluded_from_primary_score", False)
+        ),
         "counterfactual_effect_nrmse": nrmse,
         "effect_correlation": correlation,
         "effect_amplitude_ratio": amplitude_ratio,
@@ -1843,6 +1989,14 @@ def real_anchored_score_table(
     for row in rows:
         if row.get("benchmark_track") != REAL_ANCHORED_BENCHMARK_TRACK:
             raise ValueError("foreign metric row in real-anchored scoring")
+        if row.get("evaluation_table") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError(
+                "auxiliary real-anchored rows cannot enter primary scoring"
+            )
+        if bool(row.get("excluded_from_primary_score", False)):
+            raise ValueError(
+                "excluded real-anchored row reached primary scoring"
+            )
         if int(row["context_length"]) != FIXED_CONTEXT_LENGTH:
             raise ValueError("real-anchored scores are fixed-L168 only")
         key = (
@@ -1857,6 +2011,14 @@ def real_anchored_score_table(
     for row in effects:
         if row.get("benchmark_track") != REAL_ANCHORED_BENCHMARK_TRACK:
             raise ValueError("foreign effect row in real-anchored scoring")
+        if row.get("evaluation_table") != REAL_ANCHORED_BENCHMARK_TRACK:
+            raise ValueError(
+                "auxiliary real-anchored effect cannot enter primary scoring"
+            )
+        if bool(row.get("excluded_from_primary_score", False)):
+            raise ValueError(
+                "excluded real-anchored effect reached primary scoring"
+            )
         if int(row["context_length"]) != FIXED_CONTEXT_LENGTH:
             raise ValueError("real-anchored effects are fixed-L168 only")
         key = (
@@ -1876,6 +2038,11 @@ def real_anchored_score_table(
             group,
             label="metric",
         )
+        if len(metric_backgrounds) < MINIMUM_FORMAL_BACKGROUND_COUNT:
+            # A generation shard may intentionally be small for smoke tests or
+            # later suite-level composition. It is not a formal dataset score
+            # until at least four authentic backgrounds are present.
+            continue
         intensity_values = sorted(
             {int(row["intensity"]) for row in group}
         )
@@ -2027,6 +2194,343 @@ def real_anchored_score_table(
     return output
 
 
+def real_anchored_input_ablation_attribution(
+    effects: Iterable[dict[str, Any]],
+    *,
+    main_table: str = REAL_ANCHORED_BENCHMARK_TRACK,
+    ablation_table: str = REAL_ANCHORED_INPUT_ABLATION_TABLE,
+) -> dict[str, Any]:
+    """Compare structural main effects with their mandatory input ablations.
+
+    The audit is deliberately separate from the capability score: it asks
+    whether removing the declared donor/driver input worsens recovery of the
+    same truth effect.  It never changes, rescales, or weights the primary
+    counterfactual-effect NRMSE.
+    """
+
+    main: dict[tuple[str, ...], dict[str, Any]] = {}
+    ablated: list[dict[str, Any]] = []
+    for row in effects:
+        table = str(row.get("evaluation_table", ""))
+        capability_id = str(row.get("capability_id", ""))
+        if capability_id not in {"common_factor", "cross_series_dependence"}:
+            if table == ablation_table:
+                raise ValueError(
+                    "real-anchored input ablation is only defined for "
+                    "common_factor and cross_series_dependence"
+                )
+            continue
+        if table == main_table:
+            key = (
+                str(row["dataset_id"]),
+                capability_id,
+                str(row["model_id"]),
+                str(row.get("background_id", "")),
+                str(row.get("master_counterfactual_pair_id", "")),
+            )
+            if not key[-1] or key in main:
+                raise ValueError(
+                    "duplicate or unbound main structural real-anchored effect"
+                )
+            main[key] = row
+        elif table == ablation_table:
+            if not bool(row.get("excluded_from_primary_score", False)):
+                raise ValueError(
+                    "structural input ablation must be excluded from primary score"
+                )
+            ablated.append(row)
+
+    attribution_rows: list[dict[str, Any]] = []
+    seen_main_keys: set[tuple[str, ...]] = set()
+    for row in ablated:
+        source_pair_id = str(row.get("input_ablation_source_pair_id", ""))
+        key = (
+            str(row["dataset_id"]),
+            str(row["capability_id"]),
+            str(row["model_id"]),
+            str(row.get("background_id", "")),
+            source_pair_id,
+        )
+        source = main.get(key)
+        if source is None:
+            raise ValueError(
+                "structural input ablation has no matching main effect: "
+                + "/".join(key)
+            )
+        if key in seen_main_keys:
+            raise ValueError(
+                "structural main effect has multiple matched input ablations: "
+                + "/".join(key)
+            )
+        seen_main_keys.add(key)
+        main_truth_rms = float(source["truth_effect_rms"])
+        ablated_truth_rms = float(row["truth_effect_rms"])
+        if not math.isclose(
+            main_truth_rms,
+            ablated_truth_rms,
+            rel_tol=1e-10,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "input ablation changed the scored structural truth effect"
+            )
+        main_nrmse = float(source["counterfactual_effect_nrmse"])
+        ablated_nrmse = float(row["counterfactual_effect_nrmse"])
+        attribution_rows.append(
+            {
+                "schema_version": (
+                    "cafe.real_anchored_input_ablation_attribution.v1"
+                ),
+                "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+                "evaluation_table": ablation_table,
+                "dataset_id": key[0],
+                "capability_id": key[1],
+                "model_id": key[2],
+                "background_id": key[3],
+                "source_pair_id": source_pair_id,
+                "dose_index": int(row["intensity"]),
+                "dose_value": row.get("dose_value"),
+                "main_effect_nrmse": main_nrmse,
+                "ablated_effect_nrmse": ablated_nrmse,
+                "effect_nrmse_increase": ablated_nrmse - main_nrmse,
+                "effect_nrmse_ratio": (
+                    ablated_nrmse / max(main_nrmse, 1e-12)
+                ),
+                "main_forecast_effect_rms": float(
+                    source["forecast_effect_rms"]
+                ),
+                "ablated_forecast_effect_rms": float(
+                    row["forecast_effect_rms"]
+                ),
+                "truth_effect_rms": main_truth_rms,
+                "primary_score_weight": 0.0,
+                "interpretation": (
+                    "positive_nrmse_increase_supports_use_of_declared_"
+                    "structural_input"
+                ),
+            }
+        )
+
+    structural_main_keys = set(main)
+    if structural_main_keys != seen_main_keys:
+        missing = sorted(structural_main_keys - seen_main_keys)
+        raise ValueError(
+            "mandatory structural input ablations are incomplete: "
+            f"{len(missing)} missing main pair(s)"
+        )
+
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in attribution_rows:
+        grouped[
+            (
+                str(row["dataset_id"]),
+                str(row["capability_id"]),
+                str(row["model_id"]),
+            )
+        ].append(row)
+    summaries = []
+    for key, rows in sorted(grouped.items()):
+        maximum_dose = max(int(row["dose_index"]) for row in rows)
+        selected = [
+            row for row in rows if int(row["dose_index"]) == maximum_dose
+        ]
+        increases = [float(row["effect_nrmse_increase"]) for row in selected]
+        summaries.append(
+            {
+                "schema_version": (
+                    "cafe.real_anchored_input_ablation_summary.v1"
+                ),
+                "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+                "evaluation_table": ablation_table,
+                "dataset_id": key[0],
+                "capability_id": key[1],
+                "model_id": key[2],
+                "dose_policy": "maximum_available_intervention_dose",
+                "dose_index": maximum_dose,
+                "background_count": len(selected),
+                "mean_effect_nrmse_increase": float(np.mean(increases)),
+                "median_effect_nrmse_increase": float(np.median(increases)),
+                "fraction_effect_nrmse_increased": float(
+                    np.mean(np.asarray(increases) > 0.0)
+                ),
+                "included_in_primary_score_or_rank": False,
+            }
+        )
+    return {
+        "rows": attribution_rows,
+        "summaries": summaries,
+        "policy": (
+            "mandatory_common_cross_attribution_reported_separately_"
+            "never_score_weighted_v1"
+            if main_table == REAL_ANCHORED_BENCHMARK_TRACK
+            else "d2_panel_input_ablation_sensitivity_never_ranked_v1"
+        ),
+    }
+
+
+def real_anchored_sensitivity_analysis(
+    effects: Iterable[dict[str, Any]],
+) -> dict[str, Any]:
+    """Project auxiliary sensitivity tracks without producing ranks."""
+
+    effect_rows = list(effects)
+    sensitivity_tables = {
+        REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE,
+        REAL_ANCHORED_STRUCTURAL_SENSITIVITY_ABLATION_TABLE,
+        REAL_ANCHORED_NONLINEAR_REPLAY_SENSITIVITY_TABLE,
+    }
+    sensitivity_effects = [
+        row
+        for row in effect_rows
+        if str(row.get("evaluation_table", "")) in sensitivity_tables
+    ]
+    for row in sensitivity_effects:
+        if not bool(row.get("excluded_from_primary_score", False)):
+            raise ValueError(
+                "real-anchored sensitivity effects must be excluded from "
+                "primary scores"
+            )
+
+    structural_attribution = real_anchored_input_ablation_attribution(
+        effect_rows,
+        main_table=REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE,
+        ablation_table=(
+            REAL_ANCHORED_STRUCTURAL_SENSITIVITY_ABLATION_TABLE
+        ),
+    )
+
+    zero_innovation: dict[tuple[str, str, str, int], dict[str, Any]] = {}
+    replay_effects: list[dict[str, Any]] = []
+    for row in effect_rows:
+        if str(row.get("capability_id", "")) != "nonlinear_persistence":
+            continue
+        table = str(row.get("evaluation_table", ""))
+        key = (
+            str(row["dataset_id"]),
+            str(row["model_id"]),
+            str(row.get("background_id", "")),
+            int(row["intensity"]),
+        )
+        if table == REAL_ANCHORED_BENCHMARK_TRACK:
+            if key in zero_innovation:
+                raise ValueError(
+                    "duplicate nonlinear zero-innovation sensitivity source"
+                )
+            zero_innovation[key] = row
+        elif table == REAL_ANCHORED_NONLINEAR_REPLAY_SENSITIVITY_TABLE:
+            replay_effects.append(row)
+
+    nonlinear_rows: list[dict[str, Any]] = []
+    for replay in replay_effects:
+        key = (
+            str(replay["dataset_id"]),
+            str(replay["model_id"]),
+            str(replay.get("background_id", "")),
+            int(replay["intensity"]),
+        )
+        source = zero_innovation.get(key)
+        if source is None:
+            raise ValueError(
+                "nonlinear replay sensitivity has no zero-innovation source"
+            )
+        source_pair_id = str(
+            replay.get("sensitivity_source_pair_id") or ""
+        )
+        if source_pair_id and source_pair_id != str(
+            source.get("master_counterfactual_pair_id", "")
+        ):
+            raise ValueError(
+                "nonlinear replay sensitivity source-pair binding mismatch"
+            )
+        nonlinear_rows.append(
+            {
+                "schema_version": (
+                    "cafe.real_anchored_nonlinear_replay_comparison.v1"
+                ),
+                "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+                "evaluation_table": (
+                    REAL_ANCHORED_NONLINEAR_REPLAY_SENSITIVITY_TABLE
+                ),
+                "dataset_id": key[0],
+                "capability_id": "nonlinear_persistence",
+                "model_id": key[1],
+                "background_id": key[2],
+                "dose_index": key[3],
+                "dose_value": replay.get("dose_value"),
+                "zero_innovation_effect_nrmse": float(
+                    source["counterfactual_effect_nrmse"]
+                ),
+                "residual_replay_effect_nrmse": float(
+                    replay["counterfactual_effect_nrmse"]
+                ),
+                "effect_nrmse_difference": float(
+                    replay["counterfactual_effect_nrmse"]
+                    - source["counterfactual_effect_nrmse"]
+                ),
+                "zero_innovation_truth_effect_rms": float(
+                    source["truth_effect_rms"]
+                ),
+                "residual_replay_truth_effect_rms": float(
+                    replay["truth_effect_rms"]
+                ),
+                "included_in_primary_score_or_rank": False,
+            }
+        )
+
+    nonlinear_summaries: list[dict[str, Any]] = []
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for row in nonlinear_rows:
+        grouped[(str(row["dataset_id"]), str(row["model_id"]))].append(row)
+    for key, rows in sorted(grouped.items()):
+        maximum_dose = max(int(row["dose_index"]) for row in rows)
+        selected = [
+            row for row in rows if int(row["dose_index"]) == maximum_dose
+        ]
+        nonlinear_summaries.append(
+            {
+                "schema_version": (
+                    "cafe.real_anchored_nonlinear_replay_summary.v1"
+                ),
+                "dataset_id": key[0],
+                "capability_id": "nonlinear_persistence",
+                "model_id": key[1],
+                "dose_policy": "maximum_available_intervention_dose",
+                "dose_index": maximum_dose,
+                "background_count": len(selected),
+                "mean_zero_innovation_effect_nrmse": float(
+                    np.mean(
+                        [
+                            row["zero_innovation_effect_nrmse"]
+                            for row in selected
+                        ]
+                    )
+                ),
+                "mean_residual_replay_effect_nrmse": float(
+                    np.mean(
+                        [
+                            row["residual_replay_effect_nrmse"]
+                            for row in selected
+                        ]
+                    )
+                ),
+                "mean_effect_nrmse_difference": float(
+                    np.mean(
+                        [row["effect_nrmse_difference"] for row in selected]
+                    )
+                ),
+                "included_in_primary_score_or_rank": False,
+            }
+        )
+
+    return {
+        "effects": sensitivity_effects,
+        "structural_d2_input_ablation": structural_attribution,
+        "nonlinear_replay_comparisons": nonlinear_rows,
+        "nonlinear_replay_summaries": nonlinear_summaries,
+        "included_in_primary_score_or_rank": False,
+    }
+
+
 def analyze_real_anchored_track(
     task_path: Path,
     *,
@@ -2063,12 +2567,33 @@ def analyze_real_anchored_track(
         model_backgrounds_by_capability: dict[str, set[str]] = defaultdict(
             set
         )
+        primary_backgrounds_by_capability: dict[str, set[str]] = defaultdict(
+            set
+        )
+        sensitivity_backgrounds_by_capability: dict[
+            str, set[str]
+        ] = defaultdict(set)
         for row in model_metrics:
             background_id = str(row.get("background_id", ""))
             if background_id:
-                model_backgrounds_by_capability[
-                    str(row["capability_id"])
-                ].add(background_id)
+                capability_id = str(row["capability_id"])
+                model_backgrounds_by_capability[capability_id].add(
+                    background_id
+                )
+                if (
+                    row.get("evaluation_table")
+                    == REAL_ANCHORED_BENCHMARK_TRACK
+                    and not bool(
+                        row.get("excluded_from_primary_score", False)
+                    )
+                ):
+                    primary_backgrounds_by_capability[capability_id].add(
+                        background_id
+                    )
+                elif bool(row.get("excluded_from_primary_score", False)):
+                    sensitivity_backgrounds_by_capability[capability_id].add(
+                        background_id
+                    )
         coverage.append(
             {
                 "model_id": model_id,
@@ -2079,6 +2604,18 @@ def analyze_real_anchored_track(
                     capability_id: len(background_ids)
                     for capability_id, background_ids in sorted(
                         model_backgrounds_by_capability.items()
+                    )
+                },
+                "primary_background_count_by_capability": {
+                    capability_id: len(background_ids)
+                    for capability_id, background_ids in sorted(
+                        primary_backgrounds_by_capability.items()
+                    )
+                },
+                "auxiliary_background_count_by_capability": {
+                    capability_id: len(background_ids)
+                    for capability_id, background_ids in sorted(
+                        sensitivity_backgrounds_by_capability.items()
                     )
                 },
             }
@@ -2093,8 +2630,24 @@ def analyze_real_anchored_track(
         for row in all_effects
         if int(row["context_length"]) == FIXED_CONTEXT_LENGTH
     ]
+    primary_metrics = [
+        row
+        for row in selected_metrics
+        if row.get("evaluation_table") == REAL_ANCHORED_BENCHMARK_TRACK
+        and not bool(row.get("excluded_from_primary_score", False))
+    ]
+    primary_effects = [
+        row
+        for row in selected_effects
+        if row.get("evaluation_table") == REAL_ANCHORED_BENCHMARK_TRACK
+        and not bool(row.get("excluded_from_primary_score", False))
+    ]
+    input_ablation_attribution = real_anchored_input_ablation_attribution(
+        selected_effects
+    )
+    sensitivity = real_anchored_sensitivity_analysis(selected_effects)
     background_ids_by_capability: dict[str, set[str]] = defaultdict(set)
-    for row in selected_metrics:
+    for row in primary_metrics:
         background_id = str(row.get("background_id", ""))
         if background_id:
             background_ids_by_capability[
@@ -2118,9 +2671,11 @@ def analyze_real_anchored_track(
         "counterfactual_effects": selected_effects,
         "effective_backgrounds_by_capability": effective_backgrounds,
         "scores": real_anchored_score_table(
-            selected_metrics,
-            selected_effects,
+            primary_metrics,
+            primary_effects,
         ),
+        "input_ablation_attribution": input_ablation_attribution,
+        "sensitivity": sensitivity,
         "coverage": coverage,
     }
 
@@ -2134,6 +2689,18 @@ def write_real_anchored_analysis(
         analysis_dir / "real_anchored_counterfactual_effects.jsonl"
     )
     score_path = analysis_dir / "real_anchored_scores.json"
+    attribution_path = (
+        analysis_dir / "real_anchored_input_ablation_attribution.jsonl"
+    )
+    attribution_summary_path = (
+        analysis_dir / "real_anchored_input_ablation_summary.json"
+    )
+    sensitivity_effect_path = (
+        analysis_dir / "real_anchored_sensitivity_effects.jsonl"
+    )
+    sensitivity_summary_path = (
+        analysis_dir / "real_anchored_sensitivity_summary.json"
+    )
     metric_count = protocol.write_jsonl(
         metric_path,
         result["prediction_metrics"],
@@ -2165,6 +2732,41 @@ def write_real_anchored_analysis(
             "scores": result["scores"],
         },
     )
+    attribution = result.get("input_ablation_attribution", {})
+    attribution_rows = list(attribution.get("rows", []))
+    attribution_summaries = list(attribution.get("summaries", []))
+    attribution_count = protocol.write_jsonl(
+        attribution_path,
+        attribution_rows,
+    )
+    protocol.write_json(
+        attribution_summary_path,
+        {
+            "schema_version": (
+                "cafe.real_anchored_input_ablation_summaries.v1"
+            ),
+            "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+            "evaluation_table": REAL_ANCHORED_INPUT_ABLATION_TABLE,
+            "policy": attribution.get("policy"),
+            "included_in_primary_score_or_rank": False,
+            "summaries": attribution_summaries,
+        },
+    )
+    sensitivity = dict(result.get("sensitivity", {}))
+    sensitivity_effects = list(sensitivity.pop("effects", []))
+    sensitivity_effect_count = protocol.write_jsonl(
+        sensitivity_effect_path,
+        sensitivity_effects,
+    )
+    protocol.write_json(
+        sensitivity_summary_path,
+        {
+            "schema_version": "cafe.real_anchored_sensitivity_bundle.v1",
+            "benchmark_track": REAL_ANCHORED_BENCHMARK_TRACK,
+            "included_in_primary_score_or_rank": False,
+            **sensitivity,
+        },
+    )
     return {
         "prediction_metrics": {
             **protocol.file_record(metric_path),
@@ -2177,6 +2779,29 @@ def write_real_anchored_analysis(
         "scores": {
             **protocol.file_record(score_path),
             "row_count": len(result["scores"]),
+        },
+        "input_ablation_attribution": {
+            **protocol.file_record(attribution_path),
+            "row_count": attribution_count,
+        },
+        "input_ablation_summary": {
+            **protocol.file_record(attribution_summary_path),
+            "row_count": len(attribution_summaries),
+        },
+        "sensitivity_effects": {
+            **protocol.file_record(sensitivity_effect_path),
+            "row_count": sensitivity_effect_count,
+        },
+        "sensitivity_summary": {
+            **protocol.file_record(sensitivity_summary_path),
+            "row_count": (
+                len(
+                    sensitivity.get(
+                        "structural_d2_input_ablation", {}
+                    ).get("summaries", [])
+                )
+                + len(sensitivity.get("nonlinear_replay_summaries", []))
+            ),
         },
     }
 
@@ -3145,6 +3770,150 @@ def validated_file_record(
     return path
 
 
+def hierarchy_qualification_summary(
+    source_experiment_root: Path,
+    *,
+    dataset_id: str,
+) -> dict[str, Any]:
+    """Project the bundle-bound hierarchy audit into the analysis stage."""
+
+    calibration_dir = (
+        source_experiment_root / dataset_id / "01_calibration"
+    )
+    bundle_path = calibration_dir / "calibration_bundle.json"
+    bundle = protocol.read_json(bundle_path)
+    files = bundle.get("files")
+    if not isinstance(files, dict):
+        raise ValueError("calibration bundle is missing its file map")
+    expected_bundle_hash = protocol.json_sha256(
+        {
+            "dataset": bundle["dataset"],
+            "source": bundle["source"],
+            "files": files,
+            "generator_version": bundle["generator_version"],
+        }
+    )
+    if bundle.get("bundle_content_sha256") != expected_bundle_hash:
+        raise ValueError("calibration bundle content hash mismatch")
+    record = files.get("structural_hierarchy_qualification")
+    if not isinstance(record, dict):
+        return {
+            "schema_version": "cafe.hierarchy_qualification_summary.v1",
+            "dataset_id": dataset_id,
+            "status": "component_absent",
+            "qualification_background_count": 0,
+            "passed_background_count": 0,
+            "included_in_generation_or_ranking": False,
+            "rows": [],
+        }
+    path = validated_file_record(record)
+    rows = list(protocol.iter_jsonl(path))
+    if record.get("row_count") is not None and int(
+        record["row_count"]
+    ) != len(rows):
+        raise ValueError("hierarchy qualification row-count mismatch")
+    projected_rows: list[dict[str, Any]] = []
+    negativity_by_alpha: dict[str, dict[str, Any]] = {}
+    reason_counts: dict[str, int] = defaultdict(int)
+    for row in rows:
+        contract = row.get("contract")
+        diagnostics_payload = (
+            contract.get("fit_diagnostics")
+            if isinstance(contract, dict)
+            else None
+        )
+        if (
+            row.get("dataset_id") != dataset_id
+            or row.get("capability_id") != "hierarchical_coherence"
+            or not isinstance(contract, dict)
+            or contract.get("qualification_only") is not True
+            or contract.get("generation_eligible") is not False
+            or contract.get("ranking_eligible") is not False
+            or not isinstance(diagnostics_payload, dict)
+        ):
+            raise ValueError("invalid hierarchy qualification contract row")
+        qualification_passed = bool(
+            diagnostics_payload.get("qualification_passed") is True
+        )
+        reason = str(row.get("unavailable_reason") or "qualified")
+        reason_counts[reason] += 1
+        raw_negativity = diagnostics_payload.get(
+            "raw_negativity_audit_by_alpha"
+        )
+        if not isinstance(raw_negativity, dict):
+            raise ValueError("hierarchy qualification lacks negativity audit")
+        for alpha, audit in raw_negativity.items():
+            if not isinstance(audit, dict):
+                raise ValueError("invalid hierarchy raw-negativity audit")
+            summary = negativity_by_alpha.setdefault(
+                str(alpha),
+                {
+                    "backgrounds_with_negative_values": 0,
+                    "total_negative_value_count": 0,
+                    "minimum_augmented_child_value": math.inf,
+                },
+            )
+            negative_count = int(audit["total_negative_value_count"])
+            summary["backgrounds_with_negative_values"] += int(
+                negative_count > 0
+            )
+            summary["total_negative_value_count"] += negative_count
+            summary["minimum_augmented_child_value"] = min(
+                float(summary["minimum_augmented_child_value"]),
+                float(audit["minimum_augmented_child_value"]),
+            )
+        holdout_values = [
+            float(value)
+            for value in diagnostics_payload[
+                "contrast_one_step_holdout_r2"
+            ]
+        ]
+        projected_rows.append(
+            {
+                "background_id": str(row["background_id"]),
+                "qualification_passed": qualification_passed,
+                "mean_contrast_one_step_holdout_r2": (
+                    None
+                    if not holdout_values
+                    else float(np.mean(holdout_values))
+                ),
+                "zero_sum_component_max_abs": float(
+                    diagnostics_payload["zero_sum_component_max_abs"]
+                ),
+                "raw_negativity_audit_by_alpha": raw_negativity,
+                "contract_sha256": str(contract["contract_sha256"]),
+            }
+        )
+    passed_background_count = sum(
+        row["qualification_passed"] for row in projected_rows
+    )
+    status = (
+        "no_eligible_backgrounds"
+        if not projected_rows
+        else "qualified"
+        if passed_background_count == len(projected_rows)
+        else "qualification_failed"
+        if passed_background_count == 0
+        else "partially_qualified"
+    )
+    return {
+        "schema_version": "cafe.hierarchy_qualification_summary.v1",
+        "dataset_id": dataset_id,
+        "status": status,
+        "source_calibration_bundle_sha256": expected_bundle_hash,
+        "source_file": record,
+        "qualification_background_count": len(projected_rows),
+        "passed_background_count": passed_background_count,
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "raw_negativity_by_alpha": dict(sorted(negativity_by_alpha.items())),
+        "included_in_generation_or_ranking": False,
+        "policy": (
+            "qualification_only_until_nonnegative_raw_support_policy_is_frozen"
+        ),
+        "rows": projected_rows,
+    }
+
+
 def experiment_capability_rows(
     scores: Iterable[dict[str, Any]],
     *,
@@ -3472,10 +4241,10 @@ def experiment_real_anchored_capability_rows(
                     f"background coverage: {dataset_id}/{capability_id}"
                 )
             background_count = next(iter(counts))
-            if background_count <= 0:
+            if background_count < MINIMUM_FORMAL_BACKGROUND_COUNT:
                 raise ValueError(
-                    "real-anchored effective background count must be "
-                    f"positive: {dataset_id}/{capability_id}"
+                    "real-anchored effective background count is below the "
+                    f"formal minimum: {dataset_id}/{capability_id}"
                 )
             for row in coverage_rows:
                 if int(row.get("seed_count", -1)) != background_count:
@@ -3970,6 +4739,13 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
             / f"manifest__{shard_name}.json"
         )
         generation_manifest = protocol.read_json(generation_manifest_path)
+        real_anchored_generation_protocol = (
+            validated_current_real_anchored_generation_protocol(
+                generation_manifest_path
+            )
+            if dataset_real_scores
+            else None
+        )
         generated_capabilities = [
             str(value)
             for value in generation_manifest.get("config", {}).get(
@@ -4007,6 +4783,9 @@ def aggregate_experiment_analysis(args: argparse.Namespace) -> int:
                     else protocol.file_sha256(real_score_path)
                 ),
                 "real_anchored_score_count": len(dataset_real_scores),
+                "real_anchored_generation_protocol": (
+                    real_anchored_generation_protocol
+                ),
                 "generation_manifest_path": str(
                     generation_manifest_path
                 ),
@@ -4191,6 +4970,21 @@ def main() -> int:
         inference_manifest,
         task_manifest,
     )
+    real_anchored_generation_protocol = (
+        validated_current_real_anchored_generation_protocol(
+            source_experiment_root
+            / dataset.dataset_id
+            / "02_generation"
+            / f"manifest__{shard_name}.json",
+            task_manifest=task_manifest,
+        )
+        if real_anchored_task_path is not None
+        else None
+    )
+    hierarchy_qualification = hierarchy_qualification_summary(
+        source_experiment_root,
+        dataset_id=dataset.dataset_id,
+    )
     all_metrics: list[dict[str, Any]] = []
     all_effects: list[dict[str, Any]] = []
     coverage: list[dict[str, Any]] = []
@@ -4300,6 +5094,9 @@ def main() -> int:
         analysis_dir / "multivariate_utilization_audit.json"
     )
     structured_path = analysis_dir / "structured_positive_controls.json"
+    hierarchy_qualification_path = (
+        analysis_dir / "real_anchored_hierarchy_qualification.json"
+    )
     protocol.write_jsonl(metric_path, selected_metrics)
     protocol.write_jsonl(effect_path, selected_effects)
     protocol.write_json(score_path, {"scores": scores})
@@ -4319,6 +5116,10 @@ def main() -> int:
         },
     )
     protocol.write_json(structured_path, structured_controls)
+    protocol.write_json(
+        hierarchy_qualification_path,
+        hierarchy_qualification,
+    )
     report_path = analysis_dir / "REPORT_ZH.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(
@@ -4355,6 +5156,9 @@ def main() -> int:
         "structured_positive_controls": protocol.file_record(
             structured_path
         ),
+        "real_anchored_hierarchy_qualification": protocol.file_record(
+            hierarchy_qualification_path
+        ),
         "report": protocol.file_record(report_path),
         "matched_report": protocol.file_record(matched_report_path),
         "multivariate_utilization_report": protocol.file_record(
@@ -4371,6 +5175,18 @@ def main() -> int:
                     real_anchored_files["counterfactual_effects"]
                 ),
                 "real_anchored_scores": real_anchored_files["scores"],
+                "real_anchored_input_ablation_attribution": (
+                    real_anchored_files["input_ablation_attribution"]
+                ),
+                "real_anchored_input_ablation_summary": (
+                    real_anchored_files["input_ablation_summary"]
+                ),
+                "real_anchored_sensitivity_effects": (
+                    real_anchored_files["sensitivity_effects"]
+                ),
+                "real_anchored_sensitivity_summary": (
+                    real_anchored_files["sensitivity_summary"]
+                ),
             }
         )
     manifest = {
@@ -4420,6 +5236,49 @@ def main() -> int:
                 ]
             ),
             "statistical_unit": "authentic_real_background",
+            "source_generation_protocol": (
+                real_anchored_generation_protocol
+            ),
+            "structural_input_ablation": {
+                "status": (
+                    "analyzed"
+                    if real_anchored_result is not None
+                    and real_anchored_result.get(
+                        "input_ablation_attribution", {}
+                    ).get("rows")
+                    else "not_present"
+                ),
+                "capabilities": [
+                    "common_factor",
+                    "cross_series_dependence",
+                ],
+                "included_in_primary_score_or_rank": False,
+            },
+            "auxiliary_sensitivity": {
+                "status": (
+                    "analyzed"
+                    if real_anchored_result is not None
+                    and real_anchored_result.get("sensitivity", {}).get(
+                        "effects"
+                    )
+                    else "not_present"
+                ),
+                "tracks": [
+                    REAL_ANCHORED_STRUCTURAL_SENSITIVITY_TABLE,
+                    REAL_ANCHORED_NONLINEAR_REPLAY_SENSITIVITY_TABLE,
+                ],
+                "included_in_primary_score_or_rank": False,
+            },
+            "hierarchy_qualification": {
+                "status": hierarchy_qualification["status"],
+                "qualification_background_count": hierarchy_qualification[
+                    "qualification_background_count"
+                ],
+                "passed_background_count": hierarchy_qualification[
+                    "passed_background_count"
+                ],
+                "included_in_generation_or_ranking": False,
+            },
         },
         "context_policies": [FIXED_CONTEXT_POLICY, "oracle_context"],
         "files": analysis_files,

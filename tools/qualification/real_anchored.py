@@ -27,6 +27,14 @@ from cafe.generation.real_counterfactuals import (
     reconstruct_source_baseline,
     validate_contract_integrity,
 )
+from cafe.generation.real_anchored_policy import (
+    QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+)
+from cafe.generation.reference_bank import (
+    freeze_real_anchored_qualification_policy,
+    split_real_anchored_background_banks,
+    validate_evaluation_qualification_policy,
+)
 
 
 DEFAULT_SOURCE_ROOT = protocol.REPO_ROOT / "data" / "gift-eval"
@@ -186,13 +194,14 @@ def _audit_pairs(
         )
     monotone_dose_response = True
     proportional_dose_response = True
-    for rows in doses.values():
+    nonlinear_dynamic_contract = True
+    for (capability_id, _seed_index), rows in doses.items():
         rows.sort(key=lambda row: row[0])
         norms = [float(np.linalg.norm(delta)) for _alpha, delta in rows]
         monotone_dose_response &= all(
             left < right for left, right in zip(norms, norms[1:])
         )
-        if rows:
+        if rows and capability_id != "nonlinear_persistence":
             alpha, delta = rows[0]
             unit_delta = delta / (alpha - 1.0)
             proportional_dose_response &= all(
@@ -204,12 +213,36 @@ def _audit_pairs(
                 )
                 for candidate_alpha, candidate in rows[1:]
             )
+        elif rows:
+            nonlinear_rows = [
+                row
+                for pair in by_pair.values()
+                for row in pair
+                if row.get("capability_id") == "nonlinear_persistence"
+                and int(row.get("seed_index", -1)) == _seed_index
+                and int(row.get("counterfactual_member", -1)) == 1
+            ]
+            nonlinear_dynamic_contract &= bool(
+                nonlinear_rows
+                and all(
+                    row.get("generation_metadata", {}).get(
+                        "dose_response_law"
+                    )
+                    == "dynamic_recursive_nonproportional"
+                    and row.get("generation_metadata", {}).get(
+                        "future_innovation_policy"
+                    )
+                    == "zero_future_innovation_paired_rollout_v1"
+                    for row in nonlinear_rows
+                )
+            )
     checks = {
         "exact_pair_cardinality": exact_pair_cardinality,
         "exact_public_background_baselines": exact_baselines,
         "shared_pair_mase_and_normalization": shared_mase,
         "strictly_monotone_alpha_response": monotone_dose_response,
         "linear_alpha_delta_scaling": proportional_dose_response,
+        "nonlinear_dynamic_contract": nonlinear_dynamic_contract,
     }
     return {
         "status": "evaluated",
@@ -232,16 +265,49 @@ def qualify_dataset(
         raise ValueError(
             f"{dataset_id!r} is not backed by a GIFT-Eval real-data adapter"
         )
-    backgrounds, background_metadata = (
+    candidate_backgrounds, background_metadata = (
         protocol.build_real_anchored_backgrounds(
             dataset,
             source_root=source_root,
-            maximum_backgrounds=maximum_backgrounds,
+            # The public count is an evaluation-bank cap.  Qualification gets
+            # a separate, source-time-disjoint bank of the same maximum size.
+            maximum_backgrounds=2 * maximum_backgrounds,
         )
+    )
+    backgrounds, reference_backgrounds, bank_split_audit = (
+        split_real_anchored_background_banks(
+            candidate_backgrounds,
+            maximum_evaluation_backgrounds=maximum_backgrounds,
+            maximum_reference_backgrounds=maximum_backgrounds,
+            source_window_length=protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+        )
+    )
+    if not backgrounds or not reference_backgrounds:
+        raise ValueError(
+            f"{dataset_id!r} did not yield non-empty source-time-disjoint "
+            "reference and evaluation banks"
+        )
+    reference_contract_rows, _reference_availability = (
+        fit_background_capability_contracts(
+            reference_backgrounds,
+            capability_ids=REAL_ANCHORED_SUPPORTED_CAPABILITIES,
+        )
+    )
+    qualification_policy = freeze_real_anchored_qualification_policy(
+        reference_contract_rows,
+        reference_background_ids=[
+            str(row["background_id"]) for row in reference_backgrounds
+        ],
+        bank_split_audit=bank_split_audit,
     )
     contract_rows, availability = fit_background_capability_contracts(
         backgrounds,
         capability_ids=REAL_ANCHORED_SUPPORTED_CAPABILITIES,
+        qualification_policy=qualification_policy,
+    )
+    validate_evaluation_qualification_policy(
+        contract_rows,
+        qualification_policy,
     )
     for row in contract_rows:
         validate_contract_integrity(row)
@@ -362,8 +428,17 @@ def qualify_dataset(
         "dataset_id": dataset.dataset_id,
         "config_id": dataset.config_id,
         "real_data_adapter": dataset.real_data_adapter,
+        "source_candidate_background_count": len(candidate_backgrounds),
         "accepted_background_count": len(backgrounds),
+        "reference_background_count": len(reference_backgrounds),
         "requested_background_limit": maximum_backgrounds,
+        "qualification_threshold_source": (
+            QUALIFICATION_THRESHOLD_SOURCE_POLICY
+        ),
+        "qualification_policy_sha256": qualification_policy[
+            "qualification_policy_sha256"
+        ],
+        "reference_bank_split_audit": bank_split_audit,
         "official_holdout": background_metadata["official_holdout"],
         "rejection_counts": {
             key: background_metadata[key]
@@ -404,7 +479,7 @@ def main() -> int:
         for dataset_id in dataset_ids
     ]
     result = {
-        "schema_version": "cafe.real_anchored_offline_qualification.v1",
+        "schema_version": "cafe.real_anchored_offline_qualification.v2",
         "source_root": str(source_root),
         "requested_dataset_ids": list(dataset_ids),
         "maximum_backgrounds": arguments.maximum_backgrounds,

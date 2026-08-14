@@ -28,6 +28,10 @@ from cafe.generation.real_counterfactuals import (
     REAL_ANCHORED_MINIMUM_FUTURE_COMPONENT_RMS_RATIO,
     REAL_ANCHORED_SUPPORTED_CAPABILITIES,
 )
+from cafe.generation.real_anchored_policy import (
+    REAL_ANCHORED_PROTOCOL_SCHEMA,
+    protocol_decisions as real_anchored_protocol_decisions,
+)
 from cafe.inference import runner as inference
 
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
@@ -446,7 +450,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "cafe.experiment_protocol.v2",
+        "schema_version": "cafe.experiment_protocol.v3",
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,
         "benchmark_tracks": [
@@ -455,9 +459,10 @@ def protocol_config(
             "deterministic_synthetic",
         ],
         "real_anchored_protocol": {
-            "schema_version": "cafe.real_anchored_protocol.v1",
+            **real_anchored_protocol_decisions(),
+            "schema_version": REAL_ANCHORED_PROTOCOL_SCHEMA,
             "generator_version": REAL_ANCHORED_GENERATOR_VERSION,
-            "supported_capabilities": list(
+            "univariate_supported_capabilities": list(
                 REAL_ANCHORED_SUPPORTED_CAPABILITIES
             ),
             "decomposition_fit_scope": "history_only_l504",
@@ -489,6 +494,15 @@ def protocol_config(
             "trend_intervention": (
                 "fixed_level_and_linear_scale_c1_local_nonlinearity_w96_v1"
             ),
+            "time_varying_seasonality_intervention": (
+                "carrier_phase_locked_symmetric_constrained_am_v1"
+            ),
+            "nonlinear_future_innovation_main": (
+                "zero_future_innovation_paired_rollout_v1"
+            ),
+            "nonlinear_future_innovation_sensitivity": (
+                "history_residual_replay_qualification_only_v1"
+            ),
             "normalization": "shared_unmodified_real_l336_history",
             "future_semantics": (
                 "observed_real_nuisance_plus_deterministic_intervention"
@@ -501,6 +515,19 @@ def protocol_config(
             ),
             "anti_copy_applicability": (
                 "not_applicable_intentional_real_anchor_counterfactual"
+            ),
+            "qualification_bank": (
+                "source_time_disjoint_reference_bank_never_evaluation_"
+                "origins_v1"
+            ),
+            "formal_panel_minimum_dimension": 3,
+            "panel_d2_policy": "sensitivity_only_never_formal_rank",
+            "hierarchical_coherence_policy": (
+                "qualification_only_no_generation_no_formal_rank"
+            ),
+            "structural_input_ablation": (
+                "mandatory_common_cross_attribution_separate_not_score_"
+                "weighted_v1"
             ),
             "ranking": "separate_from_deterministic_synthetic",
         },
@@ -719,7 +746,7 @@ def stage_protocol_configs(
     }
     return {
         "calibration": {
-            "schema_version": "cafe.calibration_stage.v2",
+            "schema_version": "cafe.calibration_stage.v3",
             **shared_structure,
             "max_anchors": full_protocol["max_anchors"],
             "calibration_seeds": full_protocol["calibration_seeds"],
@@ -728,7 +755,7 @@ def stage_protocol_configs(
             "execution": preparation_execution,
         },
         "generation": {
-            "schema_version": "cafe.generation_stage.v2",
+            "schema_version": "cafe.generation_stage.v3",
             **shared_structure,
             "generator_version": full_protocol["generator_version"],
             "seed_start": full_protocol["seed_start"],
@@ -738,12 +765,12 @@ def stage_protocol_configs(
             "execution": preparation_execution,
         },
         "validation": {
-            "schema_version": "cafe.validation_stage.v2",
+            "schema_version": "cafe.validation_stage.v3",
             **shared_structure,
             "generator_version": full_protocol["generator_version"],
         },
         "inference": {
-            "schema_version": "cafe.inference_stage.v2",
+            "schema_version": "cafe.inference_stage.v3",
             "dataset_ids": full_protocol["dataset_ids"],
             "seed_start": full_protocol["seed_start"],
             "seed_count": full_protocol["seed_count"],
@@ -763,7 +790,7 @@ def stage_protocol_configs(
             "endpoint_profiles": endpoint_profiles,
         },
         "analysis": {
-            "schema_version": "cafe.analysis_stage.v2",
+            "schema_version": "cafe.analysis_stage.v3",
             "dataset_ids": full_protocol["dataset_ids"],
             "seed_start": full_protocol["seed_start"],
             "seed_count": full_protocol["seed_count"],

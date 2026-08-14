@@ -1,0 +1,617 @@
+{
+  "alpha_grid": [
+    1.2,
+    1.4,
+    1.6,
+    1.8,
+    2.0
+  ],
+  "alpha_one_role": "repeated_unmodified_real_baseline_not_a_dose_column",
+  "display_geometry": {
+    "fit_history": 504,
+    "history": 168,
+    "horizon": 48
+  },
+  "examples": [
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_ett1_h__item_0__c0__o14703",
+      "capability_id": "trend",
+      "channel_id": "0",
+      "contract_sha256": "71bb6d35c44674216544b617e2c19473bcd31b0fc61e0c864d21b79dc94e3d1c",
+      "controlled_component": "local_trend_nonlinearity",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 417804,
+          "path": "01_trend__five_doses.png",
+          "sha256": "b08ef7bc4f18b0c5ee3260a31e59395ce94261a7f43824f97b1302ea82de1cad"
+        },
+        "svg": {
+          "bytes": 136210,
+          "path": "01_trend__five_doses.svg",
+          "sha256": "0b95f004f5ed15cc13276a93bd5855ce8e0126df7db7f216329e671c9627c0dd"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 14703,
+      "is_model_prediction": false,
+      "item_id": "item_0",
+      "qualification_policy_sha256": "3579d40c2a4986e4515f9a2c37111e330317d3683a693be5521391bab4ce35fe",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "81651f80fddab9ad82f720f8066978aba151a1748504376e4a67036b90076f2f",
+      "source_file_records": {
+        "real_anchored_backgrounds": {
+          "bytes": 220981,
+          "sha256": "ffdd670d6568cc92c158231a40aaa6736a2902cc8fab6882e029b7ee0af053dc"
+        },
+        "real_anchored_contracts": {
+          "bytes": 1303728,
+          "sha256": "6fdc363caa7d97d0397179773dcd2f85f73ecafa02e13676a6bd379ab97caa11"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_ett1_h__item_0__c1__o11858",
+      "capability_id": "multi_seasonal",
+      "channel_id": "1",
+      "contract_sha256": "d12b550aaee2e976bb52c46f34b89e0804a4eaf47374a5ec9aed0e0a04c75fe5",
+      "controlled_component": "secondary_harmonic_sum",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 530275,
+          "path": "02_multi_seasonal__five_doses.png",
+          "sha256": "cc68584e1e484ac133853261d0d857ed27af560924c38c7fccd9f2913178eb4d"
+        },
+        "svg": {
+          "bytes": 148021,
+          "path": "02_multi_seasonal__five_doses.svg",
+          "sha256": "69733887b69048233b7d49494da0a015425987416093094eb2e50ba5ab83c0f6"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 11858,
+      "is_model_prediction": false,
+      "item_id": "item_0",
+      "qualification_policy_sha256": "3579d40c2a4986e4515f9a2c37111e330317d3683a693be5521391bab4ce35fe",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "81651f80fddab9ad82f720f8066978aba151a1748504376e4a67036b90076f2f",
+      "source_file_records": {
+        "real_anchored_backgrounds": {
+          "bytes": 220981,
+          "sha256": "ffdd670d6568cc92c158231a40aaa6736a2902cc8fab6882e029b7ee0af053dc"
+        },
+        "real_anchored_contracts": {
+          "bytes": 1303728,
+          "sha256": "6fdc363caa7d97d0397179773dcd2f85f73ecafa02e13676a6bd379ab97caa11"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_ett1_h__item_0__c0__o9597",
+      "capability_id": "time_varying_seasonality",
+      "channel_id": "0",
+      "contract_sha256": "c5dfdfe96c6a08c76ace20da2b740970527803051991aa1860952694c9205a2d",
+      "controlled_component": "carrier_phase_locked_symmetric_amplitude_modulation",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 517817,
+          "path": "03_time_varying_seasonality__five_doses.png",
+          "sha256": "55dc959198d176388822de24e8000d04491ef2bcf12a19d3402abc5ae54ec3fa"
+        },
+        "svg": {
+          "bytes": 154190,
+          "path": "03_time_varying_seasonality__five_doses.svg",
+          "sha256": "2921a0e0a9637d0d1adb8ef67cb1543c21716f89546ec50b9d1939aa1ebe88b1"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 9597,
+      "is_model_prediction": false,
+      "item_id": "item_0",
+      "qualification_policy_sha256": "3579d40c2a4986e4515f9a2c37111e330317d3683a693be5521391bab4ce35fe",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "81651f80fddab9ad82f720f8066978aba151a1748504376e4a67036b90076f2f",
+      "source_file_records": {
+        "real_anchored_backgrounds": {
+          "bytes": 220981,
+          "sha256": "ffdd670d6568cc92c158231a40aaa6736a2902cc8fab6882e029b7ee0af053dc"
+        },
+        "real_anchored_contracts": {
+          "bytes": 1303728,
+          "sha256": "6fdc363caa7d97d0397179773dcd2f85f73ecafa02e13676a6bd379ab97caa11"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_ett1_h__item_0__c2__o7883",
+      "capability_id": "regime_switching",
+      "channel_id": "2",
+      "contract_sha256": "b4b5031680bf8b96259c2624aaf61c349cf61f334d45fac61bd093c06c6116f8",
+      "controlled_component": "history_joinpoint_level_shift",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 441772,
+          "path": "04_regime_switching__five_doses.png",
+          "sha256": "e066454222cc040ca2e939386dc43d9bbd2a4a5e276a53adf23bba33adc2ef06"
+        },
+        "svg": {
+          "bytes": 139588,
+          "path": "04_regime_switching__five_doses.svg",
+          "sha256": "4f1832f0d8cba60d58c8cbd0dcb0a799b5e1773e3cbd78ac58754a53b2af8ac4"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 7883,
+      "is_model_prediction": false,
+      "item_id": "item_0",
+      "qualification_policy_sha256": "3579d40c2a4986e4515f9a2c37111e330317d3683a693be5521391bab4ce35fe",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "81651f80fddab9ad82f720f8066978aba151a1748504376e4a67036b90076f2f",
+      "source_file_records": {
+        "real_anchored_backgrounds": {
+          "bytes": 220981,
+          "sha256": "ffdd670d6568cc92c158231a40aaa6736a2902cc8fab6882e029b7ee0af053dc"
+        },
+        "real_anchored_contracts": {
+          "bytes": 1303728,
+          "sha256": "6fdc363caa7d97d0397179773dcd2f85f73ecafa02e13676a6bd379ab97caa11"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_ett1_h__item_0__c2__o11857",
+      "capability_id": "nonlinear_persistence",
+      "channel_id": "2",
+      "contract_sha256": "36ab3a87c292f21033011d575d8882bc6c13d475bfe370768a56a58a2526f635",
+      "controlled_component": "bounded_nonlinear_autoregressive_gain",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 596675,
+          "path": "05_nonlinear_persistence__five_doses.png",
+          "sha256": "9bfdb16ddc0d5545fcfbab723ff1ca7e4d1a9f681fbf891f98b4b0479e24d124"
+        },
+        "svg": {
+          "bytes": 153313,
+          "path": "05_nonlinear_persistence__five_doses.svg",
+          "sha256": "04d4d902884e2114d09460a2279a9501aee72bb68bace3809fc9fcb7c46b31b5"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 11857,
+      "is_model_prediction": false,
+      "item_id": "item_0",
+      "qualification_policy_sha256": "3579d40c2a4986e4515f9a2c37111e330317d3683a693be5521391bab4ce35fe",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "81651f80fddab9ad82f720f8066978aba151a1748504376e4a67036b90076f2f",
+      "source_file_records": {
+        "real_anchored_backgrounds": {
+          "bytes": 220981,
+          "sha256": "ffdd670d6568cc92c158231a40aaa6736a2902cc8fab6882e029b7ee0af053dc"
+        },
+        "real_anchored_contracts": {
+          "bytes": 1303728,
+          "sha256": "6fdc363caa7d97d0397179773dcd2f85f73ecafa02e13676a6bd379ab97caa11"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_electricity_h__MT_073__c0__o31816",
+      "capability_id": "predictable_intermittency",
+      "channel_id": "0",
+      "contract_sha256": "905ad4e868485d1d64f89f37aad748abeaacad9efbc81711bccca9ded81e65e4",
+      "controlled_component": "predictable_recurrent_positive_event_clock",
+      "dataset_id": "gift_electricity_h",
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 570013,
+          "path": "06_predictable_intermittency__five_doses.png",
+          "sha256": "aa83a942230f7f0697bf416e25e02646ae7d614dc414904d65b3d97c80eba780"
+        },
+        "svg": {
+          "bytes": 154154,
+          "path": "06_predictable_intermittency__five_doses.svg",
+          "sha256": "f6134f9b1b9e1f33dacaa02b9c5465e7214aa667f421ac4d5807b8923d0e919a"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 31816,
+      "is_model_prediction": false,
+      "item_id": "MT_073",
+      "qualification_policy_sha256": "9036f946a5a599967a8b881b76f71d4809b7d743c07ff88fff28eaecc43d3089",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "240935ef0973959b8683c9a1e41762c93d4c122442eaf52a067dfd6d153f3af2",
+      "source_file_records": {
+        "real_anchored_backgrounds": {
+          "bytes": 441343,
+          "sha256": "a30a9fcb83c06d213fc2395f513873ccbef4512682fd93dde491fbfb15e092c7"
+        },
+        "real_anchored_contracts": {
+          "bytes": 331662,
+          "sha256": "e14356fc78ced106274ca08702e794820d0c19ba7d28164698aa03008971ea51"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_ett1_h__item_0__panel__o15266",
+      "capability_id": "common_factor",
+      "contract_sha256": "488bc3270aadfd8b2a04218de74f2ecada8a44d828fd9bb8072a28166a1f0158",
+      "controlled_component": "rank1_shared_component",
+      "dataset_id": "gift_ett1_h",
+      "display_channel_indices": [
+        0,
+        2,
+        3
+      ],
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 988517,
+          "path": "07_common_factor__five_doses.png",
+          "sha256": "e724970116bc61c1e52e5a4a8b88423d8fe573bd17c1f21b397d00b569d9dba2"
+        },
+        "svg": {
+          "bytes": 266208,
+          "path": "07_common_factor__five_doses.svg",
+          "sha256": "cd7d2b2c0d6833b3fa6767561cbb33bfe121659148e553ecc204dce4227049ca"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 15266,
+      "is_model_prediction": false,
+      "item_id": "item_0",
+      "mandatory_input_ablation_not_shown": true,
+      "protected_target_index": 0,
+      "qualification_policy_sha256": "3579d40c2a4986e4515f9a2c37111e330317d3683a693be5521391bab4ce35fe",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "81651f80fddab9ad82f720f8066978aba151a1748504376e4a67036b90076f2f",
+      "source_file_records": {
+        "structural_real_anchored_backgrounds": {
+          "bytes": 811953,
+          "sha256": "9c54bc48727f3842bf8cd1f0e4ce42037da66075a2009af9190108c36d314b80"
+        },
+        "structural_real_anchored_contracts": {
+          "bytes": 2267743,
+          "sha256": "e95144f8f84ce4a6314acd0dea875d3e6c790bc9ce26440511d6744bb0bbb45d"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "aggregation_law": "node_0=sum(nodes_1_to_end)",
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_hierarchical_sales_d__hierarchical_sales-B1-31-32__panel__o1369",
+      "capability_id": "hierarchical_coherence",
+      "contract_sha256": "fb5f5b515ac4b00de8c33a77686f8201df60cccac74b37da809603c1b5b35459",
+      "controlled_component": "forecastable_zero_sum_hierarchical_contrast",
+      "dataset_id": "gift_hierarchical_sales_d",
+      "display_channel_indices": [
+        0,
+        1,
+        2
+      ],
+      "display_history": 168,
+      "display_horizon": 48,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 848049,
+          "path": "08_hierarchical_coherence__five_doses.png",
+          "sha256": "0e01a9d54089a12fc89aeeadefe68ac34d3fab3698afce769e2ac3f464d829d4"
+        },
+        "svg": {
+          "bytes": 264832,
+          "path": "08_hierarchical_coherence__five_doses.svg",
+          "sha256": "18b1966efb3076a405640a64d14eac606bdfd1ff3a2c9f24499155d214f11cef"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 1369,
+      "is_model_prediction": false,
+      "item_id": "hierarchical_sales:B1:31-32",
+      "qualification_policy_sha256": "2e1495d478b7820023acccd51e1cf5e585ab37d507d7b5e36ce4f712c1c2ded9",
+      "raw_negativity_audit_by_alpha": {
+        "1.2": {
+          "minimum_augmented_child_value": -1.7293953887703277,
+          "negative_value_count_by_child": [
+            57,
+            6
+          ],
+          "total_negative_value_count": 63
+        },
+        "1.4": {
+          "minimum_augmented_child_value": -4.4587907775406554,
+          "negative_value_count_by_child": [
+            75,
+            10
+          ],
+          "total_negative_value_count": 85
+        },
+        "1.6": {
+          "minimum_augmented_child_value": -7.188186166310986,
+          "negative_value_count_by_child": [
+            107,
+            18
+          ],
+          "total_negative_value_count": 125
+        },
+        "1.8": {
+          "minimum_augmented_child_value": -9.917581555081314,
+          "negative_value_count_by_child": [
+            133,
+            26
+          ],
+          "total_negative_value_count": 159
+        },
+        "2.0": {
+          "minimum_augmented_child_value": -12.646976943851643,
+          "negative_value_count_by_child": [
+            154,
+            32
+          ],
+          "total_negative_value_count": 186
+        }
+      },
+      "raw_units": true,
+      "real_future_used_only_for_post_fit_raw_negativity_audit": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "c8ace479ab9016afefd2453e48970b48bfa88762f252c2c45bebf975620646ac",
+      "source_file_records": {
+        "structural_hierarchy_qualification": {
+          "bytes": 944937,
+          "sha256": "8346a7a956dee2f0d549fed7ea880c491f776d7a3837a7676a1a923a241aa516"
+        },
+        "structural_real_anchored_backgrounds": {
+          "bytes": 1481237,
+          "sha256": "1f68b8135c57c52372224af26beec08959c7d90f209ff2c071eb959178b2fdb9"
+        }
+      },
+      "status": "qualification_only_no_forecast_task",
+      "target_future_used_for_contract_or_selection": false,
+      "zero_sum_component_max_abs": 0.0
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_bitbrains_rnd_h__rnd_68__panel__o553",
+      "capability_id": "cross_series_dependence",
+      "contract_sha256": "df171a2665b9135591c1d12f53d90527307f9de8ba9a03d10645e2c2b7056727",
+      "controlled_component": "linear_directed_predictive_transfer",
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "display_channel_indices": [
+        0,
+        1
+      ],
+      "display_history": 168,
+      "display_horizon": 48,
+      "driver_index": 0,
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 404232,
+          "path": "09_cross_series_dependence__five_doses.png",
+          "sha256": "5ab3628c2722e5f92e02ee56e348a0e9bcf65a6d195fc49339f21c12080cc383"
+        },
+        "svg": {
+          "bytes": 125789,
+          "path": "09_cross_series_dependence__five_doses.svg",
+          "sha256": "9099ed29425a8702b77fd678222b7e2deb216c0208f0dfb8b83e49ea8cf4f412"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 553,
+      "is_model_prediction": false,
+      "item_id": "rnd_68",
+      "lag": 6,
+      "mandatory_input_ablation_not_shown": true,
+      "qualification_policy_sha256": "5570ec429845e4289abec4372a292a148238264a331382714fdcd43e8edb3a9f",
+      "raw_units": true,
+      "responder_indices": [
+        1
+      ],
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "aac36224824de6b66e253fdb8c836352c4e7f65b8e734dab4df9cf4d5483a6e2",
+      "source_file_records": {
+        "structural_real_anchored_backgrounds": {
+          "bytes": 589767,
+          "sha256": "6e4e40db2dc287ff52b534137308a2c8fc32a301f306147c1d522687588017f2"
+        },
+        "structural_real_anchored_contracts": {
+          "bytes": 588607,
+          "sha256": "5b3cd8c1892b272dfa9f2368659f7e2405d48414bfba7a607d30169afb7fb580"
+        }
+      },
+      "status": "sensitivity_D2",
+      "target_future_used_for_contract_or_selection": false
+    },
+    {
+      "alpha_grid": [
+        1.2,
+        1.4,
+        1.6,
+        1.8,
+        2.0
+      ],
+      "background_bank_role": "evaluation",
+      "background_id": "gift_hierarchical_sales_d__hierarchical_sales-B1-3-4__panel__o661",
+      "capability_id": "covariate_response",
+      "contract_sha256": "9b9b14f67dd0e55e71d6b9c07aa98a9434a8d7ebca91ff03c541dd22b72adb72",
+      "controlled_component": "known_future_covariate_predictive_response",
+      "dataset_id": "gift_hierarchical_sales_d",
+      "display_channel_indices": [
+        0
+      ],
+      "display_covariate_index": 0,
+      "display_covariate_name": "PROMO_B1_3",
+      "display_history": 168,
+      "display_horizon": 48,
+      "eligible_target_indices": [
+        0
+      ],
+      "figure_seed": 2026081201,
+      "files": {
+        "png": {
+          "bytes": 442553,
+          "path": "10_covariate_response__five_doses.png",
+          "sha256": "5914faf0ffb3a2fcbb59e798577846804e864449a86fba3072173f94f4a15d7c"
+        },
+        "svg": {
+          "bytes": 125583,
+          "path": "10_covariate_response__five_doses.svg",
+          "sha256": "b733a2f45f48904ef1aa21f98839bd549ceefed8a4ed74eae67fd90738ffc782"
+        }
+      },
+      "fit_history": 504,
+      "forecast_origin": 661,
+      "is_model_prediction": false,
+      "item_id": "hierarchical_sales:B1:3-4",
+      "known_future_covariate_path_unchanged_across_doses": true,
+      "qualification_policy_sha256": "2e1495d478b7820023acccd51e1cf5e585ab37d507d7b5e36ce4f712c1c2ded9",
+      "raw_units": true,
+      "seed_index": 0,
+      "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+      "source_calibration_bundle_content_sha256": "c8ace479ab9016afefd2453e48970b48bfa88762f252c2c45bebf975620646ac",
+      "source_file_records": {
+        "structural_real_anchored_backgrounds": {
+          "bytes": 1481237,
+          "sha256": "1f68b8135c57c52372224af26beec08959c7d90f209ff2c071eb959178b2fdb9"
+        },
+        "structural_real_anchored_contracts": {
+          "bytes": 2226978,
+          "sha256": "a2ce62d7694432068fa0279bdbd74ed8b194cab104ad799bac317764c72b36b9"
+        }
+      },
+      "status": "formal",
+      "target_future_used_for_contract_or_selection": false
+    }
+  ],
+  "figure_seed": 2026081201,
+  "model_output_selection_policy": "prohibited",
+  "plotter_source_sha256": "f6efd6c61700fcdc67adf999a1a986fb38876434f58a076b91c7ad81674df51d",
+  "plotter_version": "cafe.real_anchored_example_plotter.v1",
+  "qualification_threshold_semantics": "protocol_constants_predeclared_then_verified_frozen_and_hash_bound_by_source_time_disjoint_reference_bank_not_learned_from_evaluation",
+  "schema_version": "cafe.real_anchored_example_figure_manifest.v1",
+  "selection_policy": "production_seed0_stable_background_permutation_no_future_or_model_selection_v1",
+  "target_future_selection_policy": "prohibited"
+}

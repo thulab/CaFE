@@ -26,10 +26,23 @@ the fixed L168 view. Pair members share the unmodified real L336
 normalization/MASE reference. The two mechanism tracks never share scores or
 rankings.
 
-The first real-anchored implementation covers trend, multi-seasonality,
-time-varying carrier modulation sidebands, and observed regime level shifts. Other
-capabilities remain explicitly unavailable until their genuine synchronized
-panel, hierarchy, covariate, or residual-path contract is implemented.
+The v3 real-anchored implementation supports nine formally rankable mechanisms:
+local nonlinear trend, independent multi-seasonality, constrained carrier AM,
+observed regime level shifts, nonlinear persistence, predictable intermittency,
+common factor, directed cross-series predictive transfer, and known-future
+covariate response. Availability remains dataset-specific. Formal panel tasks
+require native synchronized `D>=3` records; two-channel panels are sensitivity
+only and, when at least two distinct donor backgrounds exist, are emitted as a
+separately analyzed, never-ranked auxiliary track.
+The nonlinear history-residual replay is likewise emitted only as an auxiliary
+sensitivity track; zero-future-innovation remains the formal estimand.
+Hierarchical coherence is qualification-only until a raw-support/
+nonnegativity policy is frozen. Common/cross input ablations are mandatory
+attribution audits but never receive weight in the main score.
+
+Qualification thresholds are frozen from a source-time-disjoint reference bank.
+Final evaluation origins cannot tune them and reference windows are never emitted
+as inference tasks.
 
 ## Install
 

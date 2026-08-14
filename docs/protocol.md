@@ -202,15 +202,50 @@ x^{(c,\alpha)}_t=x_t+(\alpha-1)\widehat M^{(c)}_t,
   P168 等更长的独立频率可以保留；
 - trend：joint regression 同时吸收固定的 carrier/secondary nuisance，只令
   \(\widehat M=T_{nonlinear,W96}\)。该二/三阶局部基在 join point 的值和一阶导均为
-  0，水平与线性切线不随 α 改变；
+  0，水平与线性切线不随 α 改变。当前共享分解实现会先要求一个
+  history-resolved carrier 通过 visibility gate 以作为 nuisance；若 carrier
+  不可辨识，trend contract 也会显式 unavailable；
 - time-varying seasonality：从逐 carrier-cycle 的 amplitude envelope 中，只在
   carrier 足够强、振幅变异和 envelope 主峰通过 history-only gate 时确定较慢的
-  modulation period。contract 只缩放 \(f_c-f_m\) 与 \(f_c+f_m\) sidebands，固定
-  carrier 本身，future 为有界周期外推；
+  modulation period。contract 使用 phase-locked symmetric constrained AM；每个
+  carrier harmonic 只有 cosine/sine 两个 envelope 自由度，不再独立拟合四个自由
+  sideband 系数。carrier 本身固定，future 为有界周期外推；
 - regime switching：先去掉 history-only polynomial 与 harmonic nuisance，只在
   fixed-L168 可见区内选择同时通过标准化 jump 和局部 SSE-reduction gate 的 join
   point \(\tau\)。contract 只缩放 \(\beta 1[t\ge\tau]\)，join 后常数延续，不假定
   future 会发生一个尚未观测的新 regime。
+
+新增单变量能力：
+
+- predictable intermittency：从去 nuisance 的 L504 residual 冻结可预测 sparse
+  clock、event width 和 empirical pulse template，仅当 chronological timing 与
+  amplitude gates 通过时，令
+  \(x_t^{(\alpha)}=x_t+(\alpha-1)\widehat E_t\)；
+- nonlinear persistence：不是静态 additive scaling。L504 history 上冻结有界
+  nonlinear recurrence 与共享 innovation，正式 H48 从 baseline/treatment 终态做
+  zero-future-innovation paired rollout，再把 rollout 差加到真实 future。
+  history-residual replay 作为独立、明确排除主分数与排名的 sensitivity task；
+  主 validator 不要求 effect 对 \(\alpha\) 严格线性。
+
+结构能力使用原生同步 background，不把独立 item 或展开后的 channel 临时拼接：
+
+- common factor 与 directed cross-series predictive transfer 的正式 panel 固定
+  \(D\ge3\)；\(D=2\) 至少要有两个不同 donor background，才进入单独推理与汇总的
+  sensitivity track 并产生 matched input ablation，绝不进入主排名；cross 的结论是 predictive transfer，不是
+  observational causal edge；
+- covariate response 只允许 adapter 明确声明的 known-future input，剂量缩放响应
+  coefficient 而不是修改 covariate value；
+- common/cross 必须配套 `real_anchored_input_ablation`。ablation 与 main 使用相同
+  truth pair，单独报告 effect-NRMSE degradation，主分数权重严格为 0；
+- hierarchical coherence 当前只生成 qualification contract 与 raw negativity
+  audit，不创建正式 forecast task，也不进入 rank。
+
+资格阈值的数值由协议预声明，不从 reference bank 统计反解，也不用
+evaluation origins 调参。source-time-disjoint reference bank 只负责验证同一
+capability 的 threshold payload 与 policy id 一致，然后冻结其 hash。一个 native
+item 上时间重叠的窗口（含不同 channel）不能跨 reference/evaluation
+bank；最终 evaluation origin 只能复用该 policy id 与 threshold hash，
+reference rows 永远不进入推理。
 
 α 是物理 component-amplitude dose，不冒充 synthetic 的 real-q10/q90 I1–I5。
 real-anchored sample 的 `target_feature` 固定为
@@ -222,13 +257,19 @@ real-anchored sample 的 `target_feature` 固定为
 near-distance gate。
 
 每个 `dataset × capability × background` 在模型推理前冻结 availability；至少四个
-eligible backgrounds 才允许该 dataset-capability 进入当前轨道。未保存真实同步
+eligible authentic backgrounds 才允许该 dataset-capability 进入正式生成和排名轨道。
+hierarchical coherence 是明确例外：它只进入 qualification-only 审计，不使用
+\(N\ge4\) 开启一个它本就不存在的 formal task 或 rank。未保存真实同步
 panel、hierarchy 或 known-future covariate path 的结构能力必须显式 unavailable，
 不能用真实标量或独立通道拼成“真实路径”。
-任何 controlled component 的 L504 history RMS，以及由该 history contract 解析
-外推到 H48 的 component RMS，都必须至少达到 baseline L336 scale 的 1%；后者
-不读取真实 future。这样既避免把数值上非零但实际上不可见的拟合项当作真实能力，
-也避免最大剂量的 truth effect 过小而令 effect NRMSE 失稳。
+
+decomposition 与 dynamic/event contract 分别检查 L504 history、fixed-L168 可见区与
+history-only H48 外推的 component/effect RMS。structural contract 则在按 baseline
+L336 标准化后，检查 trailing L336 history 与 H48 component RMS，不把其统称为
+L504 history gate。上述非退化门限均为 baseline L336 scale 的 1%（结构标准化
+坐标中即 0.01），H48 gate 不读取真实 future。这样既避免把数值上非零但实际
+不可见的拟合项当作真实能力，也避免最大剂量的 truth effect 过小而令 effect NRMSE
+失稳。
 
 真实 background 是统计单位，不能用多个 synthetic seed 重复包装来扩大样本量。
 每个 dataset-capability 先冻结 eligible background permutation，再以全实验
@@ -458,8 +499,10 @@ near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有�
 anti-copy 尾部，而不是把单次查询的 p05 假阳性率重复应用到每个样本。单变量样本
 直接据此拒绝；多变量样本
 使用多数 channel 表决，避免把多个单变量比较中的任一偶然命中误判成整条多变量
-样本污染。它不使用 held-out，不参与参数标定，也不把“像不像真实曲线”当作生成
-质量目标；可用 `--no-near-distance-gate` 显式旁路并记录。
+样本污染。若可用真实 anchor masters 少于 12，或 pooled scale 退化，该 gate 会带
+原因记录为 `not_enforced`，不会伪造距离门限。它不使用 held-out，不参与参数标定，
+也不把“像不像真实曲线”当作生成质量目标；可用 `--no-near-distance-gate` 显式旁路并
+记录。
 
 合成 MASE 默认使用真实 anchor 给出的 seasonal lag。对完全确定、精确周期的
 通道，seasonal-naive history error 可能严格为零；该通道显式回退到标准 lag-1
@@ -663,6 +706,15 @@ runtime/experiments/
         real_anchored_backgrounds.jsonl
         real_anchored_contracts.jsonl
         real_anchored_availability.json
+        real_anchored_reference_backgrounds.jsonl
+        structural_real_anchored_reference_backgrounds.jsonl
+        real_anchored_reference_contracts.jsonl
+        structural_real_anchored_backgrounds.jsonl
+        structural_real_anchored_contracts.jsonl
+        structural_real_anchored_availability.json
+        structural_hierarchy_qualification.jsonl
+        real_anchored_bank_split_audit.json
+        real_anchored_qualification_policy.json
         capability_calibration.json
         calibration_bundle.json
       02_generation/
@@ -672,6 +724,7 @@ runtime/experiments/
           seed_<start>_<end>__input_ablation.jsonl
           seed_<start>_<end>__real_anchored_counterfactual.jsonl
         real_anchored_availability__seed_<start>_<end>.json
+        structural_real_anchored_availability__seed_<start>_<end>.json
         manifest__seed_<start>_<end>.json
         validation__seed_<start>_<end>.json
       03_inference/
@@ -693,6 +746,8 @@ runtime/experiments/
           real_anchored_prediction_metrics.jsonl
           real_anchored_counterfactual_effects.jsonl
           real_anchored_scores.json
+          real_anchored_input_ablation_attribution.jsonl
+          real_anchored_input_ablation_summary.json
           split_bank.json
           matched_comparisons.json
           structured_positive_controls.json
@@ -713,7 +768,7 @@ runtime/experiments/
 seed shard 静默合并。
 
 多数据集 aggregate 也保持分轨：synthetic 继续写 fixed/oracle 两张能力表；
-real-anchored 只从各 dataset manifest v2 的独立 score record 读取，在该能力实际
+real-anchored 只从各 dataset manifest v2/v3 的独立 score record 读取，在该能力实际
 available 的数据集与完整 foundation-model 交集上等权聚合，写
 `capability_scores_real_anchored_fixed_l168.json`。两边的输入行、rank 和 manifest
 record 不互相复用。

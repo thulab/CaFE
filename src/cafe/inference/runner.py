@@ -2326,9 +2326,12 @@ def prepare_view_tasks(
         ):
             row = dict(view)
             row["schema_version"] = (
-                "cafe.real_anchored_forecast_view.v1"
+                "cafe.real_anchored_forecast_view.v2"
             )
-            row["evaluation_table"] = REAL_ANCHORED_BENCHMARK_TRACK
+            row.setdefault(
+                "evaluation_table",
+                REAL_ANCHORED_BENCHMARK_TRACK,
+            )
             row["benchmark_track"] = REAL_ANCHORED_BENCHMARK_TRACK
             row["context_policy"] = (
                 f"fixed_l{protocol.FIXED_CONTEXT_LENGTH}"
@@ -3658,13 +3661,13 @@ def main() -> int:
         raise ValueError(
             "combined inference task contains duplicate or missing sample IDs"
         )
-    cached_model_records = (
+    cached_model_records: dict[str, dict[str, Any]] = (
         cached_complete_model_records(
             inference_dir,
             expected_sample_ids=expected_sample_ids,
         )
         if args.resume
-        else set()
+        else {}
     )
     for phase_index, model_id in enumerate(args.models):
         canonical_path = prediction_path_for(

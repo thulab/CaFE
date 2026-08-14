@@ -20,8 +20,29 @@ from cafe import protocol
 from cafe.data.real import load_real_dataset
 from cafe.generation.real_counterfactuals import (
     REAL_ANCHORED_GENERATOR_VERSION,
+    REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS,
+    build_availability,
     fit_background_capability_contracts,
     public_background,
+)
+from cafe.generation.real_anchored_policy import (
+    REAL_ANCHORED_FORMAL_CAPABILITIES,
+    REAL_ANCHORED_QUALIFICATION_ONLY_CAPABILITIES,
+    protocol_decisions as real_anchored_protocol_decisions,
+)
+from cafe.generation.reference_bank import (
+    build_combined_real_anchored_bank_split_audit,
+    freeze_real_anchored_qualification_policy,
+    split_real_anchored_background_banks,
+    unavailable_real_anchored_qualification_policy,
+    validate_evaluation_qualification_policy,
+)
+from cafe.generation.structural_real_counterfactuals import (
+    STRUCTURAL_CAPABILITIES,
+    build_structural_donor_commitment_manifest,
+    build_structural_real_anchored_backgrounds,
+    fit_structural_capability_contracts,
+    public_structural_background,
 )
 
 
@@ -278,20 +299,230 @@ def main() -> int:
         time.perf_counter() - anchor_artifact_started
     )
     real_anchored_started = time.perf_counter()
-    private_backgrounds, real_anchored_source = (
+    univariate_capabilities = tuple(
+        capability_id
+        for capability_id in args.capabilities
+        if capability_id not in STRUCTURAL_CAPABILITIES
+    )
+    structural_capabilities = tuple(
+        capability_id
+        for capability_id in args.capabilities
+        if capability_id in STRUCTURAL_CAPABILITIES
+    )
+    candidate_limit = max(2, 2 * int(args.max_anchors))
+    candidate_backgrounds, real_anchored_source = (
         protocol.build_real_anchored_backgrounds(
             dataset,
             source_root=source_root,
-            maximum_backgrounds=args.max_anchors,
+            maximum_backgrounds=candidate_limit,
             minimum_observed_fraction=args.minimum_observed_fraction,
             real_bundle=real_bundle,
         )
     )
-    real_anchored_contracts, real_anchored_availability = (
-        fit_background_capability_contracts(
-            private_backgrounds,
-            capability_ids=args.capabilities,
+    structural_candidates, structural_source = (
+        build_structural_real_anchored_backgrounds(
+            dataset,
+            source_root=source_root,
+            maximum_backgrounds=candidate_limit,
+            minimum_observed_fraction=args.minimum_observed_fraction,
+            real_bundle=real_bundle,
         )
+    )
+    (
+        combined_evaluation_backgrounds,
+        combined_reference_backgrounds,
+        combined_split_base_audit,
+    ) = split_real_anchored_background_banks(
+        [*candidate_backgrounds, *structural_candidates],
+        maximum_evaluation_backgrounds=2 * args.max_anchors,
+        maximum_reference_backgrounds=2 * args.max_anchors,
+        source_window_length=protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+    )
+    is_structural = lambda row: str(row.get("schema_version", "")).startswith(
+        "cafe.structural_real_background."
+    )
+    private_backgrounds = [
+        row for row in combined_evaluation_backgrounds
+        if not is_structural(row)
+    ][: args.max_anchors]
+    structural_private_backgrounds = [
+        row for row in combined_evaluation_backgrounds
+        if is_structural(row)
+    ][: args.max_anchors]
+    reference_private_backgrounds = [
+        row for row in combined_reference_backgrounds
+        if not is_structural(row)
+    ][: args.max_anchors]
+    structural_reference_private_backgrounds = [
+        row for row in combined_reference_backgrounds
+        if is_structural(row)
+    ][: args.max_anchors]
+    reference_univariate_contracts, _reference_univariate_availability = (
+        fit_background_capability_contracts(
+            reference_private_backgrounds,
+            capability_ids=univariate_capabilities,
+        )
+    )
+    reference_structural_contracts, _reference_structural_availability = (
+        fit_structural_capability_contracts(
+            structural_reference_private_backgrounds,
+            capability_ids=structural_capabilities,
+        )
+    )
+    reference_contracts = [
+        *reference_univariate_contracts,
+        *reference_structural_contracts,
+    ]
+    reference_background_ids = [
+        str(background["background_id"])
+        for background in (
+            *reference_private_backgrounds,
+            *structural_reference_private_backgrounds,
+        )
+    ]
+    combined_bank_split_audit = (
+        build_combined_real_anchored_bank_split_audit(
+            [*private_backgrounds, *structural_private_backgrounds],
+            [
+                *reference_private_backgrounds,
+                *structural_reference_private_backgrounds,
+            ],
+            base_split_audit=combined_split_base_audit,
+        )
+    )
+    reference_capability_ids = {
+        str(row["capability_id"]) for row in reference_contracts
+    }
+    qualified_univariate_capabilities = tuple(
+        capability_id
+        for capability_id in univariate_capabilities
+        if capability_id in reference_capability_ids
+    )
+    qualified_structural_capabilities = tuple(
+        capability_id
+        for capability_id in structural_capabilities
+        if capability_id in reference_capability_ids
+    )
+    if reference_contracts:
+        qualification_policy = freeze_real_anchored_qualification_policy(
+            reference_contracts,
+            reference_background_ids=reference_background_ids,
+            bank_split_audit=combined_bank_split_audit,
+        )
+        real_anchored_contracts, real_anchored_availability = (
+            fit_background_capability_contracts(
+                private_backgrounds,
+                capability_ids=qualified_univariate_capabilities,
+                qualification_policy=qualification_policy,
+            )
+        )
+        structural_contracts, qualified_structural_availability = (
+            fit_structural_capability_contracts(
+                structural_private_backgrounds,
+                capability_ids=qualified_structural_capabilities,
+                frozen_qualification_policy=qualification_policy,
+            )
+        )
+    else:
+        qualification_policy = unavailable_real_anchored_qualification_policy(
+            reference_background_ids=reference_background_ids,
+            bank_split_audit=combined_bank_split_audit,
+        )
+        real_anchored_contracts = []
+        structural_contracts = []
+        _unused_rows, qualified_structural_availability = (
+            fit_structural_capability_contracts((), capability_ids=())
+        )
+        del _unused_rows
+    real_anchored_availability = build_availability(
+        real_anchored_contracts,
+        requested_capability_ids=univariate_capabilities,
+        minimum_eligible_backgrounds=(
+            REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS
+        ),
+    )
+    missing_univariate_reference = sorted(
+        set(univariate_capabilities) - reference_capability_ids
+    )
+    if missing_univariate_reference:
+        real_anchored_availability["qualification_block_reason"] = (
+            "independent_reference_bank_unavailable"
+        )
+        real_anchored_availability[
+            "qualification_blocked_capabilities"
+        ] = missing_univariate_reference
+        for cell in real_anchored_availability["cells"]:
+            if cell["capability_id"] in missing_univariate_reference:
+                cell["reason_codes"] = sorted(
+                    {
+                        *cell["reason_codes"],
+                        "independent_reference_bank_unavailable",
+                    }
+                )
+    _unused_rows, structural_availability = fit_structural_capability_contracts(
+        (),
+        capability_ids=structural_capabilities,
+    )
+    del _unused_rows
+    if qualified_structural_capabilities:
+        qualified_cells = {
+            str(cell["capability_id"]): cell
+            for cell in qualified_structural_availability["cells"]
+        }
+        structural_availability[
+            "formal_background_count_by_capability"
+        ].update(
+            qualified_structural_availability[
+                "formal_background_count_by_capability"
+            ]
+        )
+        structural_availability[
+            "sensitivity_background_count_by_capability"
+        ].update(
+            qualified_structural_availability[
+                "sensitivity_background_count_by_capability"
+            ]
+        )
+        structural_availability[
+            "qualification_background_count_by_capability"
+        ].update(
+            qualified_structural_availability[
+                "qualification_background_count_by_capability"
+            ]
+        )
+        structural_availability["cells"] = [
+            qualified_cells.get(str(cell["capability_id"]), cell)
+            for cell in structural_availability["cells"]
+        ]
+        structural_availability["unavailable_reason_counts"] = (
+            qualified_structural_availability[
+                "unavailable_reason_counts"
+            ]
+        )
+    structural_availability["frozen_qualification_policy_sha256"] = (
+        qualification_policy["qualification_policy_sha256"]
+    )
+    missing_structural_reference = sorted(
+        set(structural_capabilities) - reference_capability_ids
+    )
+    if missing_structural_reference:
+        structural_availability["qualification_block_reason"] = (
+            "independent_reference_bank_unavailable"
+        )
+        structural_availability[
+            "qualification_blocked_capabilities"
+        ] = missing_structural_reference
+        for cell in structural_availability["cells"]:
+            if cell["capability_id"] in missing_structural_reference:
+                cell["reason_codes"] = sorted(
+                    {
+                        *cell["reason_codes"],
+                        "independent_reference_bank_unavailable",
+                    }
+                )
+    validate_evaluation_qualification_policy(
+        [*real_anchored_contracts, *structural_contracts],
+        qualification_policy,
     )
     real_anchored_availability["dataset_id"] = dataset.dataset_id
     for cell in real_anchored_availability["cells"]:
@@ -299,6 +530,25 @@ def main() -> int:
     real_anchored_backgrounds = [
         public_background(background) for background in private_backgrounds
     ]
+    structural_backgrounds = [
+        public_structural_background(background)
+        for background in structural_private_backgrounds
+    ]
+    reference_backgrounds = [
+        public_background(background)
+        for background in reference_private_backgrounds
+    ]
+    structural_reference_backgrounds = [
+        public_structural_background(background)
+        for background in structural_reference_private_backgrounds
+    ]
+    structural_donor_commitments = (
+        build_structural_donor_commitment_manifest(
+            structural_backgrounds,
+            structural_contracts,
+            dataset_id=dataset.dataset_id,
+        )
+    )
     real_anchored_background_path = (
         output_dir / "real_anchored_backgrounds.jsonl"
     )
@@ -319,6 +569,63 @@ def main() -> int:
     protocol.write_json(
         real_anchored_availability_path,
         real_anchored_availability,
+    )
+    structural_background_path = (
+        output_dir / "structural_real_anchored_backgrounds.jsonl"
+    )
+    protocol.write_jsonl(
+        structural_background_path,
+        structural_backgrounds,
+    )
+    structural_contract_path = (
+        output_dir / "structural_real_anchored_contracts.jsonl"
+    )
+    protocol.write_jsonl(structural_contract_path, structural_contracts)
+    structural_donor_commitment_path = (
+        output_dir / "structural_real_anchored_donor_commitments.json"
+    )
+    protocol.write_json(
+        structural_donor_commitment_path,
+        structural_donor_commitments,
+    )
+    structural_availability_path = (
+        output_dir / "structural_real_anchored_availability.json"
+    )
+    protocol.write_json(structural_availability_path, structural_availability)
+    reference_background_path = (
+        output_dir / "real_anchored_reference_backgrounds.jsonl"
+    )
+    protocol.write_jsonl(
+        reference_background_path,
+        reference_backgrounds,
+    )
+    structural_reference_background_path = (
+        output_dir / "structural_real_anchored_reference_backgrounds.jsonl"
+    )
+    protocol.write_jsonl(
+        structural_reference_background_path,
+        structural_reference_backgrounds,
+    )
+    reference_contract_path = (
+        output_dir / "real_anchored_reference_contracts.jsonl"
+    )
+    protocol.write_jsonl(reference_contract_path, reference_contracts)
+    bank_split_path = output_dir / "real_anchored_bank_split_audit.json"
+    protocol.write_json(bank_split_path, combined_bank_split_audit)
+    qualification_policy_path = (
+        output_dir / "real_anchored_qualification_policy.json"
+    )
+    protocol.write_json(qualification_policy_path, qualification_policy)
+    hierarchy_qualification_path = (
+        output_dir / "structural_hierarchy_qualification.jsonl"
+    )
+    hierarchy_qualification_count = protocol.write_jsonl(
+        hierarchy_qualification_path,
+        (
+            row
+            for row in structural_contracts
+            if row["capability_id"] == "hierarchical_coherence"
+        ),
     )
     real_anchored_seconds = time.perf_counter() - real_anchored_started
     capability_ids = tuple(args.capabilities)
@@ -342,7 +649,7 @@ def main() -> int:
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "cafe.calibration_bundle.v2",
+        "schema_version": "cafe.calibration_bundle.v3",
         "created_at": protocol.utc_now(),
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,
@@ -352,9 +659,22 @@ def main() -> int:
         "real_forecast_anchor_count": len(real_forecast_masters),
         "real_anchored_background_count": len(real_anchored_backgrounds),
         "real_anchored_contract_count": len(real_anchored_contracts),
+        "real_anchored_reference_background_count": len(
+            reference_backgrounds
+        ),
+        "real_anchored_reference_contract_count": len(reference_contracts),
+        "structural_real_anchored_background_count": len(
+            structural_backgrounds
+        ),
+        "structural_real_anchored_contract_count": len(structural_contracts),
         "real_anchored_generator_version": REAL_ANCHORED_GENERATOR_VERSION,
         "real_anchored_source": real_anchored_source,
         "real_anchored_availability": real_anchored_availability,
+        "structural_real_anchored_availability": structural_availability,
+        "real_anchored_protocol": real_anchored_protocol_decisions(),
+        "real_anchored_qualification_policy_sha256": qualification_policy[
+            "qualification_policy_sha256"
+        ],
         "requested_capabilities": list(args.capabilities),
         "capabilities": list(
             capability_calibration["available_capabilities"]
@@ -488,12 +808,35 @@ def main() -> int:
                     "level and linear trend fixed"
                 ),
                 "time_varying_seasonality_law": (
-                    "x_alpha=x+(alpha-1)*carrier_modulation_sidebands; "
-                    "carrier fixed"
+                    "x_alpha=x+(alpha-1)*phase_locked_symmetric_"
+                    "constrained_am_component; carrier phase fixed"
                 ),
                 "regime_switching_law": (
                     "x_alpha=x+(alpha-1)*history_joinpoint_level_shift; "
                     "constant post-join extension"
+                ),
+                "nonlinear_persistence_law": (
+                    "history_parameter_intervention_plus_zero_future_"
+                    "innovation_recursive_rollout_delta"
+                ),
+                "predictable_intermittency_law": (
+                    "x_alpha=x+(alpha-1)*history_fitted_sparse_clock_"
+                    "pulse_template"
+                ),
+                "structural_laws": (
+                    "authentic_synchronized_panel_or_known_future_"
+                    "covariate_components_with_d_ge_3_formal_gate"
+                ),
+                "hierarchy_policy": (
+                    "qualification_only_never_generated_or_ranked"
+                ),
+                "input_ablation_policy": (
+                    "mandatory_for_common_and_cross_reported_separately_"
+                    "not_score_weighted"
+                ),
+                "qualification_thresholds": (
+                    "frozen_on_source_time_disjoint_reference_bank; final_"
+                    "evaluation_origins_forbidden_for_tuning"
                 ),
                 "future_semantics": (
                     "observed real nuisance plus deterministic intervention"
@@ -515,6 +858,37 @@ def main() -> int:
             "real_anchored_availability": protocol.file_record(
                 real_anchored_availability_path
             ),
+            "structural_real_anchored_backgrounds": protocol.file_record(
+                structural_background_path
+            ),
+            "structural_real_anchored_contracts": protocol.file_record(
+                structural_contract_path
+            ),
+            "structural_real_anchored_donor_commitments": (
+                protocol.file_record(structural_donor_commitment_path)
+            ),
+            "structural_real_anchored_availability": protocol.file_record(
+                structural_availability_path
+            ),
+            "real_anchored_reference_backgrounds": protocol.file_record(
+                reference_background_path
+            ),
+            "structural_real_anchored_reference_backgrounds": (
+                protocol.file_record(structural_reference_background_path)
+            ),
+            "real_anchored_reference_contracts": protocol.file_record(
+                reference_contract_path
+            ),
+            "real_anchored_bank_split_audit": protocol.file_record(
+                bank_split_path
+            ),
+            "real_anchored_qualification_policy": protocol.file_record(
+                qualification_policy_path
+            ),
+            "structural_hierarchy_qualification": {
+                **protocol.file_record(hierarchy_qualification_path),
+                "row_count": hierarchy_qualification_count,
+            },
             "capability_calibration": protocol.file_record(capability_path),
         },
     }

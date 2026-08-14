@@ -14,6 +14,14 @@ from cafe.generation.real_counterfactuals import (
     build_availability,
     real_anchored_assignments,
 )
+from cafe.generation.reference_bank import (
+    build_combined_real_anchored_bank_split_audit,
+    freeze_real_anchored_qualification_policy,
+    split_real_anchored_background_banks,
+)
+from cafe.generation.structural_real_counterfactuals import (
+    build_structural_donor_commitment_manifest,
+)
 
 
 DATASET_ID = "gift_electricity_h"
@@ -59,18 +67,43 @@ def _write_calibration_bundle(
         "real_anchor_masters": protocol.file_record(real_anchors_path),
         "capability_calibration": protocol.file_record(calibration_path),
     }
+    reference_backgrounds: list[dict[str, Any]] = []
+    reference_contracts: list[dict[str, Any]] = []
+    combined_bank_split_audit: dict[str, Any] | None = None
     if include_real_anchored:
         backgrounds_path = calibration_dir / "real_anchored_backgrounds.jsonl"
         contracts_path = calibration_dir / "real_anchored_contracts.jsonl"
         availability_path = calibration_dir / "real_anchored_availability.json"
-        background_ids = [f"background_{index}" for index in range(4)]
-        backgrounds = [
+        candidate_backgrounds = [
             {
                 "dataset_id": DATASET_ID,
-                "background_id": background_id,
+                "background_id": f"background_{index}",
+                "item_id": f"item_{index}",
+                "decomposition_start": 0,
             }
-            for background_id in background_ids
+            for index in range(5)
         ]
+        if pipeline_schema_version == protocol.SCHEMA_VERSION:
+            backgrounds, reference_backgrounds, base_split_audit = (
+                split_real_anchored_background_banks(
+                    candidate_backgrounds,
+                    maximum_evaluation_backgrounds=4,
+                    maximum_reference_backgrounds=1,
+                    source_window_length=(
+                        protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH
+                    ),
+                )
+            )
+            combined_bank_split_audit = (
+                build_combined_real_anchored_bank_split_audit(
+                    backgrounds,
+                    reference_backgrounds,
+                    base_split_audit=base_split_audit,
+                )
+            )
+        else:
+            backgrounds = candidate_backgrounds[:4]
+        background_ids = [str(row["background_id"]) for row in backgrounds]
         contracts = [
             {
                 "schema_version": (
@@ -80,17 +113,45 @@ def _write_calibration_bundle(
                 "background_id": background_id,
                 "capability_id": CAPABILITY_ID,
                 "benchmark_track": "real_anchored_counterfactual",
+                "qualification_policy_id": "fixture.trend.v1",
+                "qualification_threshold_source": (
+                    "independent_source_time_disjoint_reference_bank_never_"
+                    "evaluation_origins_v1"
+                ),
+                "qualification_thresholds": {},
                 "available": True,
                 "unavailable_reason": None,
                 "contract": {},
             }
             for background_id in background_ids
         ]
+        if reference_backgrounds:
+            reference_contracts = [
+                {
+                    **contracts[0],
+                    "background_id": str(background["background_id"]),
+                }
+                for background in reference_backgrounds
+            ]
         availability = build_availability(
             contracts,
             requested_capability_ids=(CAPABILITY_ID,),
             minimum_eligible_backgrounds=4,
         )
+        if pipeline_schema_version == "cafe.pipeline.v2":
+            availability["schema_version"] = (
+                "cafe.real_anchored_availability.v1"
+            )
+            for cell in availability["cells"]:
+                gate = cell["controlled_component_rms_gate"]
+                for field in (
+                    "visible_history_source",
+                    "visible_history_minimum_rms_ratios",
+                    "visible_context_lengths",
+                    "visible_history_rms_range",
+                    "visible_history_threshold_range",
+                ):
+                    gate.pop(field, None)
         protocol.write_jsonl(backgrounds_path, backgrounds)
         protocol.write_jsonl(contracts_path, contracts)
         protocol.write_json(availability_path, availability)
@@ -107,11 +168,82 @@ def _write_calibration_bundle(
                 ),
             }
         )
+    if pipeline_schema_version == protocol.SCHEMA_VERSION:
+        for name in (
+            "structural_real_anchored_backgrounds",
+            "structural_real_anchored_contracts",
+            "structural_real_anchored_reference_backgrounds",
+            "structural_hierarchy_qualification",
+        ):
+            path = calibration_dir / f"{name}.jsonl"
+            protocol.write_jsonl(path, ())
+            files[name] = protocol.file_record(path)
+        donor_commitment_path = (
+            calibration_dir
+            / "structural_real_anchored_donor_commitments.json"
+        )
+        protocol.write_json(
+            donor_commitment_path,
+            build_structural_donor_commitment_manifest(
+                (),
+                (),
+                dataset_id=DATASET_ID,
+            ),
+        )
+        files["structural_real_anchored_donor_commitments"] = (
+            protocol.file_record(donor_commitment_path)
+        )
+        assert combined_bank_split_audit is not None
+        qualification_policy = freeze_real_anchored_qualification_policy(
+            reference_contracts,
+            reference_background_ids=[
+                str(row["background_id"])
+                for row in reference_backgrounds
+            ],
+            bank_split_audit=combined_bank_split_audit,
+        )
+        for name, payload in (
+            ("real_anchored_reference_backgrounds", reference_backgrounds),
+            ("real_anchored_reference_contracts", reference_contracts),
+        ):
+            path = calibration_dir / f"{name}.jsonl"
+            protocol.write_jsonl(path, payload)
+            files[name] = protocol.file_record(path)
+        if include_real_anchored:
+            for row in contracts:
+                row["qualification_policy_sha256"] = (
+                    qualification_policy["qualification_policy_sha256"]
+                )
+            protocol.write_jsonl(contracts_path, contracts)
+            files["real_anchored_contracts"] = protocol.file_record(
+                contracts_path
+            )
+        for name, payload in (
+            (
+                "structural_real_anchored_availability",
+                {"schema_version": "fixture", "cells": []},
+            ),
+            (
+                "real_anchored_bank_split_audit",
+                combined_bank_split_audit,
+            ),
+            (
+                "real_anchored_qualification_policy",
+                qualification_policy,
+            ),
+        ):
+            path = calibration_dir / f"{name}.json"
+            protocol.write_json(path, payload)
+            files[name] = protocol.file_record(path)
     bundle = {
         "schema_version": (
             "cafe.calibration_bundle.v1"
             if pipeline_schema_version == "cafe.pipeline.v1"
-            else "cafe.calibration_bundle.v2"
+            else (
+                "cafe.calibration_bundle.v3"
+                if pipeline_schema_version == protocol.SCHEMA_VERSION
+                else "cafe.calibration_bundle.v2"
+            )
         ),
         "pipeline_schema_version": pipeline_schema_version,
         "dataset": {"dataset_id": DATASET_ID},
@@ -304,6 +436,46 @@ def test_runner_without_replacement_counts_and_mapping_are_shard_invariant(
     assert len({str(row["background_id"]) for row in treatment_rows}) == 4
 
 
+def test_generation_rejects_bundle_rehashed_wrong_reference_set(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calibration_dir = _write_calibration_bundle(
+        tmp_path,
+        pipeline_schema_version=protocol.SCHEMA_VERSION,
+        include_real_anchored=True,
+        synthetic_available=False,
+    )
+    bundle_path = calibration_dir / "calibration_bundle.json"
+    bundle = protocol.read_json(bundle_path)
+    reference_path = Path(
+        bundle["files"]["real_anchored_reference_backgrounds"]["path"]
+    )
+    assert list(protocol.iter_jsonl(reference_path))
+    protocol.write_jsonl(reference_path, ())
+    bundle["files"]["real_anchored_reference_backgrounds"] = (
+        protocol.file_record(reference_path)
+    )
+    bundle["bundle_content_sha256"] = protocol.json_sha256(
+        {
+            "dataset": bundle["dataset"],
+            "source": bundle["source"],
+            "files": bundle["files"],
+            "generator_version": bundle["generator_version"],
+        }
+    )
+    protocol.write_json(bundle_path, bundle)
+    _install_lightweight_runner_fakes(monkeypatch)
+
+    with pytest.raises(ValueError, match="split audit disagrees"):
+        _run_generation(
+            monkeypatch,
+            tmp_path,
+            seed_start=0,
+            seed_count=1,
+        )
+
+
 def test_generation_accepts_legacy_v1_calibration_without_anchored_files(
     tmp_path: Path,
     monkeypatch,
@@ -335,6 +507,41 @@ def test_generation_accepts_legacy_v1_calibration_without_anchored_files(
     assert manifest["config"]["real_anchored_counterfactual"][
         "calibrated_available_capabilities"
     ] == []
+    assert manifest["config"]["capabilities"] == [CAPABILITY_ID]
+
+
+def test_generation_accepts_immutable_v2_anchored_availability(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_calibration_bundle(
+        tmp_path,
+        pipeline_schema_version="cafe.pipeline.v2",
+        include_real_anchored=True,
+        synthetic_available=True,
+    )
+    _install_lightweight_runner_fakes(monkeypatch)
+
+    manifest, availability, rows = _run_generation(
+        monkeypatch,
+        tmp_path,
+        seed_start=0,
+        seed_count=1,
+    )
+
+    assert rows == []
+    assert availability["schema_version"] == (
+        "cafe.real_anchored_availability.v1"
+    )
+    assert manifest["files"]["real_anchored_counterfactuals"][
+        "row_count"
+    ] == 0
+    assert manifest["config"]["real_anchored_counterfactual"][
+        "calibrated_available_capabilities"
+    ] == []
+    assert manifest["config"]["real_anchored_counterfactual"][
+        "legacy_upstream_component_policy"
+    ] == "validated_but_not_regenerated_or_ranked_as_v3"
     assert manifest["config"]["capabilities"] == [CAPABILITY_ID]
 
 

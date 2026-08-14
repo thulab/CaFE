@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import math
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -11,8 +12,44 @@ import numpy as np
 
 from cafe import protocol
 from cafe.generation.real_counterfactuals import (
+    REAL_ANCHORED_ALPHAS,
+    REAL_ANCHORED_BACKGROUND_SCHEMA,
     REAL_ANCHORED_MASTER_SCHEMA,
+    REAL_ANCHORED_SUPPORTED_CAPABILITIES,
     array_sha256,
+    available_capabilities as available_real_anchored_capabilities,
+    iter_nonlinear_replay_sensitivity_samples,
+    iter_real_anchored_samples,
+    validate_availability_contract,
+    validate_contract_integrity,
+)
+from cafe.generation.real_anchored_policy import (
+    NONLINEAR_FUTURE_INNOVATION_MAIN_POLICY,
+    NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY,
+    QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+)
+from cafe.generation.reference_bank import (
+    validate_evaluation_qualification_policy,
+    validate_real_anchored_reference_chain,
+)
+from cafe.generation.structural_real_counterfactuals import (
+    FORMAL_PANEL_MINIMUM_DIMENSION,
+    STRUCTURAL_ALPHAS,
+    STRUCTURAL_ABLATION_SCHEMA,
+    STRUCTURAL_BACKGROUND_SCHEMA,
+    STRUCTURAL_CAPABILITY_ROW_SCHEMA,
+    STRUCTURAL_CAPABILITIES,
+    STRUCTURAL_DONOR_COMMITMENT_ENTRY_SCHEMA,
+    STRUCTURAL_DONOR_COMMITMENT_POLICY,
+    STRUCTURAL_DONOR_COMMITMENT_SCHEMA,
+    STRUCTURAL_MASTER_SCHEMA,
+    available_structural_capabilities,
+    available_structural_sensitivity_capabilities,
+    _array_sha256 as structural_array_sha256,
+    iter_structural_real_anchored_samples,
+    validate_structural_availability,
+    validate_structural_contract,
+    validate_structural_donor_commitment_manifest,
 )
 from cafe.validation.mechanisms import (
     basic_sample_checks,
@@ -363,6 +400,973 @@ def _same_finite_float(*values: Any) -> bool:
     )
 
 
+def _validate_v3_reference_bank_chain(
+    bundle_files: dict[str, Any],
+    qualification_policy: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    required = {
+        "real_anchored_backgrounds",
+        "structural_real_anchored_backgrounds",
+        "real_anchored_reference_backgrounds",
+        "structural_real_anchored_reference_backgrounds",
+        "real_anchored_reference_contracts",
+        "real_anchored_bank_split_audit",
+    }
+    missing = sorted(required - set(bundle_files))
+    if missing:
+        raise ValueError(
+            "v3 calibration bundle lacks reference-bank evidence: "
+            + ", ".join(missing)
+        )
+
+    def rows(key: str) -> list[dict[str, Any]]:
+        return list(protocol.iter_jsonl(Path(bundle_files[key]["path"])))
+
+    univariate_evaluation_backgrounds = rows("real_anchored_backgrounds")
+    structural_evaluation_backgrounds = rows(
+        "structural_real_anchored_backgrounds"
+    )
+    validate_real_anchored_reference_chain(
+        [
+            *univariate_evaluation_backgrounds,
+            *structural_evaluation_backgrounds,
+        ],
+        [
+            *rows("real_anchored_reference_backgrounds"),
+            *rows("structural_real_anchored_reference_backgrounds"),
+        ],
+        protocol.read_json(
+            Path(bundle_files["real_anchored_bank_split_audit"]["path"])
+        ),
+        qualification_policy,
+        reference_contract_rows=rows("real_anchored_reference_contracts"),
+    )
+    return univariate_evaluation_backgrounds, structural_evaluation_backgrounds
+
+
+def _validated_structural_donor_commitments(
+    manifest: dict[str, Any],
+    *,
+    bundle: dict[str, Any],
+    expected_bundle_hash: str,
+    dataset_id: str,
+) -> dict[str, dict[str, Any]]:
+    """Load the calibration-bound donor sidecar and return trusted entries."""
+
+    files = manifest.get("files")
+    bundle_files = bundle.get("files")
+    config = manifest.get("config")
+    if not isinstance(files, dict) or not isinstance(bundle_files, dict):
+        raise ValueError("structural donor commitment file maps are invalid")
+    generation_record = files.get("structural_donor_commitments")
+    calibration_record = bundle_files.get(
+        "structural_real_anchored_donor_commitments"
+    )
+    if not isinstance(generation_record, dict) or not isinstance(
+        calibration_record,
+        dict,
+    ):
+        raise ValueError("structural donor commitment artifact is missing")
+    for field in ("path", "sha256", "bytes"):
+        if generation_record.get(field) != calibration_record.get(field):
+            raise ValueError(
+                "generation donor commitment is not the calibration artifact"
+            )
+    if generation_record.get("source_calibration_bundle_sha256") != (
+        expected_bundle_hash
+    ):
+        raise ValueError("donor commitment lost calibration bundle binding")
+    validate_manifest_file(generation_record)
+    sidecar = protocol.read_json(Path(generation_record["path"]))
+    if sidecar.get("schema_version") != STRUCTURAL_DONOR_COMMITMENT_SCHEMA:
+        raise ValueError("structural donor commitment schema is invalid")
+    if sidecar.get("commitment_policy") != STRUCTURAL_DONOR_COMMITMENT_POLICY:
+        raise ValueError("structural donor commitment policy changed")
+    if sidecar.get("dataset_id") != dataset_id:
+        raise ValueError("structural donor commitment dataset mismatch")
+    root_payload = dict(sidecar)
+    observed_root = root_payload.pop("commitment_root_sha256", None)
+    if observed_root != protocol.json_sha256(root_payload):
+        raise ValueError("structural donor commitment root mismatch")
+    entries = sidecar.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("structural donor commitment entries are missing")
+    if sidecar.get("entry_count") != len(entries):
+        raise ValueError("structural donor commitment entry count mismatch")
+    if sidecar.get("entries_sha256") != protocol.json_sha256(entries):
+        raise ValueError("structural donor commitment entries hash mismatch")
+    sample_ids = sorted(str(entry.get("sample_id", "")) for entry in entries)
+    if (
+        not all(sample_ids)
+        or len(sample_ids) != len(set(sample_ids))
+        or sidecar.get("eligible_donor_sample_ids_sha256")
+        != protocol.json_sha256(sample_ids)
+    ):
+        raise ValueError("structural donor commitment sample IDs are invalid")
+    trusted: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or entry.get("schema_version") != (
+            STRUCTURAL_DONOR_COMMITMENT_ENTRY_SCHEMA
+        ):
+            raise ValueError("structural donor commitment entry is invalid")
+        entry_payload = dict(entry)
+        entry_hash = entry_payload.pop("entry_sha256", None)
+        if entry_hash != protocol.json_sha256(entry_payload):
+            raise ValueError("structural donor commitment entry hash mismatch")
+        channel_hashes = entry.get("visible_history_by_channel_sha256")
+        if (
+            not _is_sha256(entry.get("visible_history_sha256"))
+            or not isinstance(channel_hashes, dict)
+            or set(channel_hashes)
+            != {str(index) for index in range(int(entry.get("target_dim", -1)))}
+            or not all(_is_sha256(value) for value in channel_hashes.values())
+        ):
+            raise ValueError("structural donor history commitment is invalid")
+        trusted[str(entry["sample_id"])] = entry
+
+    if not isinstance(config, dict):
+        raise ValueError("generation config is missing for donor commitment")
+    real_config = config.get("real_anchored_counterfactual")
+    declaration = (
+        real_config.get("structural_donor_commitment")
+        if isinstance(real_config, dict)
+        else None
+    )
+    expected_declaration = {
+        "schema_version": STRUCTURAL_DONOR_COMMITMENT_SCHEMA,
+        "commitment_policy": STRUCTURAL_DONOR_COMMITMENT_POLICY,
+        "commitment_root_sha256": observed_root,
+        "source_calibration_bundle_sha256": expected_bundle_hash,
+        "source_file_sha256": calibration_record.get("sha256"),
+    }
+    if declaration != expected_declaration:
+        raise ValueError("generation config donor commitment binding mismatch")
+    if generation_record.get("commitment_root_sha256") != observed_root:
+        raise ValueError("generation manifest donor commitment root mismatch")
+
+    background_record = bundle_files.get(
+        "structural_real_anchored_backgrounds"
+    )
+    contract_record = bundle_files.get("structural_real_anchored_contracts")
+    if not isinstance(background_record, dict) or not isinstance(
+        contract_record,
+        dict,
+    ):
+        raise ValueError(
+            "calibration bundle lacks structural donor source banks"
+        )
+    validate_structural_donor_commitment_manifest(
+        sidecar,
+        list(protocol.iter_jsonl(Path(background_record["path"]))),
+        list(protocol.iter_jsonl(Path(contract_record["path"]))),
+        dataset_id=dataset_id,
+    )
+    return trusted
+
+
+def _current_v3_row_replay_evidence(
+    *,
+    bundle_files: dict[str, Any],
+    config: dict[str, Any],
+    dataset_id: str,
+    seed_indexes: list[int],
+) -> dict[str, Any]:
+    """Recreate every declared v3 main row from bundle-bound calibration."""
+
+    required = {
+        "real_anchored_backgrounds",
+        "real_anchored_contracts",
+        "real_anchored_availability",
+        "structural_real_anchored_backgrounds",
+        "structural_real_anchored_contracts",
+        "structural_real_anchored_availability",
+    }
+    missing = sorted(required - set(bundle_files))
+    if missing:
+        raise ValueError(
+            "v3 calibration bundle lacks row replay evidence: "
+            + ", ".join(missing)
+        )
+
+    real_backgrounds = list(
+        protocol.iter_jsonl(
+            Path(bundle_files["real_anchored_backgrounds"]["path"])
+        )
+    )
+    real_contracts = list(
+        protocol.iter_jsonl(
+            Path(bundle_files["real_anchored_contracts"]["path"])
+        )
+    )
+    real_availability = protocol.read_json(
+        Path(bundle_files["real_anchored_availability"]["path"])
+    )
+    structural_backgrounds = list(
+        protocol.iter_jsonl(
+            Path(
+                bundle_files["structural_real_anchored_backgrounds"]["path"]
+            )
+        )
+    )
+    structural_contracts = list(
+        protocol.iter_jsonl(
+            Path(bundle_files["structural_real_anchored_contracts"]["path"])
+        )
+    )
+    structural_availability = protocol.read_json(
+        Path(bundle_files["structural_real_anchored_availability"]["path"])
+    )
+
+    def unique_backgrounds(
+        rows: list[dict[str, Any]],
+        *,
+        schema: str,
+        label: str,
+    ) -> dict[str, dict[str, Any]]:
+        mapped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            background_id = str(row.get("background_id", ""))
+            if (
+                row.get("schema_version") != schema
+                or row.get("dataset_id") != dataset_id
+                or not background_id
+                or background_id in mapped
+            ):
+                raise ValueError(f"{label} background bank identity is invalid")
+            mapped[background_id] = row
+        return mapped
+
+    real_by_id = unique_backgrounds(
+        real_backgrounds,
+        schema=REAL_ANCHORED_BACKGROUND_SCHEMA,
+        label="univariate",
+    )
+    structural_by_id = unique_backgrounds(
+        structural_backgrounds,
+        schema=STRUCTURAL_BACKGROUND_SCHEMA,
+        label="structural",
+    )
+
+    def raw_float64_sha256(values: np.ndarray) -> str:
+        return hashlib.sha256(
+            np.asarray(values, dtype="<f8").tobytes(order="C")
+        ).hexdigest()
+
+    for background in real_backgrounds:
+        try:
+            target = np.asarray(background["target"], dtype=float)
+            prefix = np.asarray(
+                background["decomposition_prefix"],
+                dtype=float,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "univariate replay background payload is invalid"
+            ) from error
+        if target.shape == (protocol.REAL_ANCHORED_MASTER_LENGTH, 1):
+            target_1d = target[:, 0]
+        elif target.shape == (protocol.REAL_ANCHORED_MASTER_LENGTH,):
+            target_1d = target
+        else:
+            raise ValueError("univariate replay background target shape is invalid")
+        prefix_length = (
+            protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            - protocol.REAL_ANCHORED_CONTEXT_LENGTH
+        )
+        if (
+            prefix.shape != (prefix_length,)
+            or not np.isfinite(prefix).all()
+            or not np.isfinite(target_1d).all()
+            or background.get("decomposition_prefix_sha256")
+            != array_sha256(prefix)
+        ):
+            raise ValueError("univariate replay background prefix is invalid")
+        decomposition_history = np.concatenate(
+            (
+                prefix,
+                target_1d[: protocol.REAL_ANCHORED_CONTEXT_LENGTH],
+            )
+        )
+        expected_hashes = {
+            "decomposition_history_sha256": raw_float64_sha256(
+                decomposition_history
+            ),
+            "history_sha256": raw_float64_sha256(
+                target_1d[: protocol.REAL_ANCHORED_CONTEXT_LENGTH]
+            ),
+            "future_sha256": raw_float64_sha256(
+                target_1d[protocol.REAL_ANCHORED_CONTEXT_LENGTH :]
+            ),
+            "target_sha256": raw_float64_sha256(target_1d),
+        }
+        if any(
+            background.get(field) != expected
+            for field, expected in expected_hashes.items()
+        ):
+            raise ValueError("univariate replay background hash is invalid")
+
+    for background in structural_backgrounds:
+        try:
+            target = np.asarray(background["target"], dtype=float)
+            target_dim = int(background["target_dim"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                "structural replay background payload is invalid"
+            ) from error
+        expected_shape = (
+            protocol.REAL_ANCHORED_MASTER_LENGTH,
+            target_dim,
+        )
+        if (
+            target_dim < 1
+            or target.shape != expected_shape
+            or not np.isfinite(target).all()
+            or background.get("target_sha256")
+            != structural_array_sha256(
+                target,
+                domain="structural_visible_target",
+            )
+            or background.get("future_sha256")
+            != structural_array_sha256(
+                target[protocol.REAL_ANCHORED_CONTEXT_LENGTH :],
+                domain="structural_real_future",
+            )
+        ):
+            raise ValueError("structural replay background target is invalid")
+        covariates = background.get("known_future_covariates")
+        if isinstance(covariates, dict):
+            try:
+                covariate_target = np.asarray(
+                    covariates["target"],
+                    dtype=float,
+                )
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "structural replay covariate payload is invalid"
+                ) from error
+            if (
+                covariates.get("kind") != "known_future"
+                or covariate_target.ndim != 2
+                or covariate_target.shape[0]
+                != protocol.REAL_ANCHORED_MASTER_LENGTH
+                or covariate_target.shape[1] < 1
+                or not np.isfinite(covariate_target).all()
+                or covariates.get("target_sha256")
+                != structural_array_sha256(
+                    covariate_target,
+                    domain="structural_known_future_visible",
+                )
+            ):
+                raise ValueError(
+                    "structural replay covariate payload is invalid"
+                )
+
+    real_contract_identities: set[tuple[str, str]] = set()
+    for row in real_contracts:
+        background_id = str(row.get("background_id", ""))
+        capability_id = str(row.get("capability_id", ""))
+        background = real_by_id.get(background_id)
+        identity = (capability_id, background_id)
+        if (
+            background is None
+            or row.get("schema_version")
+            != "cafe.real_anchored_background_capability.v3"
+            or row.get("dataset_id") != dataset_id
+            or capability_id not in REAL_ANCHORED_SUPPORTED_CAPABILITIES
+            or identity in real_contract_identities
+            or row.get("source_history_sha256")
+            != background.get("decomposition_history_sha256")
+        ):
+            raise ValueError("univariate contract/background binding is invalid")
+        real_contract_identities.add(identity)
+        validate_contract_integrity(row)
+
+    structural_contract_identities: set[tuple[str, str]] = set()
+    for row in structural_contracts:
+        background_id = str(row.get("background_id", ""))
+        capability_id = str(row.get("capability_id", ""))
+        background = structural_by_id.get(background_id)
+        contract = row.get("contract")
+        identity = (capability_id, background_id)
+        if (
+            background is None
+            or row.get("schema_version") != STRUCTURAL_CAPABILITY_ROW_SCHEMA
+            or row.get("dataset_id") != dataset_id
+            or capability_id not in STRUCTURAL_CAPABILITIES
+            or identity in structural_contract_identities
+            or not isinstance(contract, dict)
+            or contract.get("capability_id") != capability_id
+            or contract.get("background_id") != background_id
+        ):
+            if row.get("generation_eligible") is True:
+                raise ValueError(
+                    "eligible structural contract/background binding is invalid"
+                )
+            continue
+        structural_contract_identities.add(identity)
+        validate_structural_contract(contract, background)
+    validate_availability_contract(real_availability, real_contracts)
+    validate_structural_availability(
+        structural_availability,
+        structural_contracts,
+    )
+
+    requested = config.get("requested_capabilities")
+    real_config = config.get("real_anchored_counterfactual")
+    if (
+        not isinstance(requested, list)
+        or not all(isinstance(value, str) for value in requested)
+        or len(requested) != len(set(requested))
+        or not isinstance(real_config, dict)
+    ):
+        raise ValueError("v3 generation capability request is invalid")
+    available_real = tuple(
+        capability_id
+        for capability_id in available_real_anchored_capabilities(
+            real_availability
+        )
+        if capability_id in requested
+    )
+    available_structural = tuple(
+        capability_id
+        for capability_id in requested
+        if capability_id in available_structural_capabilities(
+            structural_availability
+        )
+        and capability_id != "hierarchical_coherence"
+    )
+    sensitivity_fields = (
+        "structural_sensitivity_capabilities",
+        "structural_sensitivity_main_count",
+        "structural_sensitivity_input_ablation_count",
+        "nonlinear_replay_sensitivity_count",
+    )
+    if not all(
+        field in real_config for field in sensitivity_fields
+    ):
+        raise ValueError(
+            "v3 auxiliary sensitivity declaration is incomplete"
+        )
+    raw_sensitivity_capabilities = real_config.get(
+        "structural_sensitivity_capabilities",
+        [],
+    )
+    if (
+        not isinstance(raw_sensitivity_capabilities, list)
+        or not all(
+            isinstance(value, str)
+            for value in raw_sensitivity_capabilities
+        )
+        or len(raw_sensitivity_capabilities)
+        != len(set(raw_sensitivity_capabilities))
+    ):
+        raise ValueError("v3 structural sensitivity capabilities are invalid")
+    sensitivity_capabilities = tuple(raw_sensitivity_capabilities)
+    available_sensitivity = set(
+        available_structural_sensitivity_capabilities(
+            structural_availability
+        )
+    )
+    expected_sensitivity_capabilities = tuple(
+        capability_id
+        for capability_id in requested
+        if capability_id in {"common_factor", "cross_series_dependence"}
+        and capability_id in available_sensitivity
+    )
+    sensitivity_available = {
+        str(row.get("capability_id"))
+        for row in structural_contracts
+        if row.get("sensitivity_available") is True
+    }
+    if sensitivity_capabilities != expected_sensitivity_capabilities or any(
+        capability_id not in {"common_factor", "cross_series_dependence"}
+        or capability_id not in requested
+        or capability_id not in available_sensitivity
+        or capability_id not in sensitivity_available
+        for capability_id in sensitivity_capabilities
+    ):
+        raise ValueError(
+            "v3 structural sensitivity capability is not contract-eligible"
+        )
+    if real_config.get("calibrated_available_capabilities") != list(
+        available_real
+    ):
+        raise ValueError("v3 calibrated capability declaration is not replayable")
+
+    real_expected = list(
+        iter_real_anchored_samples(
+            real_backgrounds,
+            real_contracts,
+            capability_ids=available_real,
+            seed_indexes=seed_indexes,
+            alphas=REAL_ANCHORED_ALPHAS,
+        )
+    )
+    nonlinear_replay_expected = (
+        list(
+            iter_nonlinear_replay_sensitivity_samples(
+                real_backgrounds,
+                real_contracts,
+                seed_indexes=seed_indexes,
+                alphas=REAL_ANCHORED_ALPHAS,
+            )
+        )
+        if "nonlinear_persistence" in available_real
+        else []
+    )
+    structural_expected = list(
+        iter_structural_real_anchored_samples(
+            structural_backgrounds,
+            [
+                row
+                for row in structural_contracts
+                if row.get("capability_id") in available_structural
+            ],
+            alphas=STRUCTURAL_ALPHAS,
+            seed_indexes=seed_indexes,
+        )
+    )
+    structural_sensitivity_expected = list(
+        iter_structural_real_anchored_samples(
+            structural_backgrounds,
+            [
+                row
+                for row in structural_contracts
+                if row.get("capability_id") in sensitivity_capabilities
+                and row.get("sensitivity_available") is True
+            ],
+            alphas=STRUCTURAL_ALPHAS,
+            sensitivity=True,
+            seed_indexes=seed_indexes,
+        )
+    )
+    for row in structural_sensitivity_expected:
+        row["excluded_from_primary_score"] = True
+    generated_real = tuple(
+        capability_id
+        for capability_id in available_real
+        if any(
+            row.get("capability_id") == capability_id
+            for row in real_expected
+        )
+    )
+    generated_structural = tuple(
+        capability_id
+        for capability_id in available_structural
+        if any(
+            row.get("capability_id") == capability_id
+            for row in structural_expected
+        )
+    )
+    expected_generated = [*generated_real, *generated_structural]
+    if real_config.get("generated_capabilities") != expected_generated:
+        raise ValueError("v3 generated capability declaration is not replayable")
+    if real_config.get("structural_main_count") != len(structural_expected):
+        raise ValueError("v3 structural main count is not replayable")
+    if real_config.get("nonlinear_replay_sensitivity_count", 0) != len(
+        nonlinear_replay_expected
+    ):
+        raise ValueError("v3 nonlinear replay count is not replayable")
+    if (
+        real_config.get("structural_sensitivity_main_count")
+        != len(structural_sensitivity_expected)
+        or real_config.get("structural_sensitivity_input_ablation_count")
+        != len(structural_sensitivity_expected)
+    ):
+        raise ValueError("v3 structural sensitivity count is not replayable")
+
+    def by_sample_id(
+        rows: list[dict[str, Any]],
+        *,
+        label: str,
+    ) -> dict[str, dict[str, Any]]:
+        mapped = {str(row.get("sample_id", "")): row for row in rows}
+        if "" in mapped or len(mapped) != len(rows):
+            raise ValueError(f"{label} replay produced duplicate sample IDs")
+        return mapped
+
+    return {
+        "schema_version": "cafe.real_anchored_row_replay_evidence.v1",
+        "dataset_id": dataset_id,
+        "seed_indexes": list(seed_indexes),
+        "univariate_expected_rows": by_sample_id(
+            real_expected,
+            label="univariate",
+        ),
+        "nonlinear_replay_expected_rows": by_sample_id(
+            nonlinear_replay_expected,
+            label="nonlinear replay sensitivity",
+        ),
+        "structural_expected_rows": by_sample_id(
+            structural_expected,
+            label="structural",
+        ),
+        "structural_sensitivity_expected_rows": by_sample_id(
+            structural_sensitivity_expected,
+            label="structural sensitivity",
+        ),
+    }
+
+
+def validate_generation_manifest_contract(
+    manifest: dict[str, Any],
+    *,
+    manifest_path: Path,
+    calibration_dir: Path,
+    dataset_id: str,
+    seed_start: int,
+    seed_count: int,
+    replay_evidence_out: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate generation identity and v3 upstream bindings before row reads."""
+
+    if replay_evidence_out is not None:
+        replay_evidence_out.clear()
+    schema = manifest.get("schema_version")
+    schema_pairs = {
+        "cafe.generation_manifest.v1": "cafe.generation_config.v1",
+        "cafe.generation_manifest.v2": "cafe.generation_config.v2",
+        "cafe.generation_manifest.v3": "cafe.generation_config.v3",
+    }
+    if schema not in schema_pairs:
+        raise ValueError(f"unsupported generation manifest schema: {schema!r}")
+    config = manifest.get("config")
+    if not isinstance(config, dict):
+        raise ValueError("generation manifest config must be an object")
+    if config.get("schema_version") != schema_pairs[schema]:
+        raise ValueError(
+            "generation config schema does not match manifest schema"
+        )
+    if manifest.get("config_sha256") != protocol.json_sha256(config):
+        raise ValueError("generation manifest config hash mismatch")
+
+    expected_seed_indexes = list(range(seed_start, seed_start + seed_count))
+    identity = {
+        "dataset_id": dataset_id,
+        "seed_start": seed_start,
+        "seed_count": seed_count,
+    }
+    for field, expected in identity.items():
+        if config.get(field) != expected:
+            raise ValueError(
+                f"generation config {field} disagrees with validation CLI"
+            )
+        if field in manifest and manifest[field] != expected:
+            raise ValueError(
+                f"generation manifest {field} disagrees with validation CLI"
+            )
+    if config.get("seed_indexes") != expected_seed_indexes:
+        raise ValueError("generation config seed indexes disagree with shard")
+    expected_name = (
+        f"manifest__seed_{seed_start:06d}_"
+        f"{seed_start + seed_count:06d}.json"
+    )
+    if manifest_path.name != expected_name:
+        raise ValueError("generation manifest filename disagrees with shard")
+    if not _is_sha256(config.get("calibration_bundle_sha256")):
+        raise ValueError("generation config calibration bundle hash is invalid")
+    files = manifest.get("files")
+    if not isinstance(files, dict):
+        raise ValueError("generation manifest files must be an object")
+    required_base_files = {"clean", "robustness", "input_ablations"}
+    missing_base = sorted(required_base_files - set(files))
+    if missing_base:
+        raise ValueError(
+            "generation manifest is missing required files: "
+            + ", ".join(missing_base)
+        )
+    if schema != "cafe.generation_manifest.v3":
+        return config
+
+    required_v3_files = {
+        "real_anchored_counterfactuals",
+        "real_anchored_availability",
+        "structural_real_anchored_availability",
+    }
+    missing_v3 = sorted(required_v3_files - set(files))
+    if missing_v3:
+        raise ValueError(
+            "v3 generation manifest is missing bound artifacts: "
+            + ", ".join(missing_v3)
+        )
+    real_config = config.get("real_anchored_counterfactual")
+    if not isinstance(real_config, dict):
+        raise ValueError("v3 generation config lacks real-anchored contract")
+    upstream_pipeline_schema = real_config.get(
+        "upstream_real_anchored_protocol"
+    )
+    supported_upstream_schemas = {
+        "cafe.pipeline.v1",
+        "cafe.pipeline.v2",
+        protocol.SCHEMA_VERSION,
+    }
+    if upstream_pipeline_schema not in supported_upstream_schemas:
+        raise ValueError("v3 generation config has unsupported upstream protocol")
+    if real_config.get("included_in_synthetic_ranking") is not False:
+        raise ValueError("real-anchored track entered the synthetic ranking")
+    if real_config.get("formal_panel_minimum_dimension") != 3:
+        raise ValueError("v3 generation config changed the formal panel minimum")
+    if real_config.get("hierarchy_policy") != (
+        "qualification_only_zero_generation_rows"
+    ):
+        raise ValueError("v3 generation config changed hierarchy policy")
+
+    bundle_path = calibration_dir / "calibration_bundle.json"
+    if not bundle_path.is_file():
+        raise FileNotFoundError(bundle_path)
+    bundle = protocol.read_json(bundle_path)
+    expected_bundle_schema = {
+        "cafe.pipeline.v1": "cafe.calibration_bundle.v1",
+        "cafe.pipeline.v2": "cafe.calibration_bundle.v2",
+        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v3",
+    }[upstream_pipeline_schema]
+    if bundle.get("schema_version") != expected_bundle_schema:
+        raise ValueError(
+            "calibration bundle schema does not match generation upstream"
+        )
+    if bundle.get("pipeline_schema_version") != upstream_pipeline_schema:
+        raise ValueError(
+            "calibration bundle pipeline schema does not match generation upstream"
+        )
+    try:
+        expected_bundle_hash = protocol.json_sha256(
+            {
+                "dataset": bundle["dataset"],
+                "source": bundle["source"],
+                "files": bundle["files"],
+                "generator_version": bundle["generator_version"],
+            }
+        )
+    except KeyError as error:
+        raise ValueError(
+            "calibration bundle lacks content-hash fields"
+        ) from error
+    if bundle.get("bundle_content_sha256") != expected_bundle_hash:
+        raise ValueError("calibration bundle content hash mismatch")
+    if config.get("calibration_bundle_sha256") != expected_bundle_hash:
+        raise ValueError("generation config is not bound to calibration bundle")
+    bundle_dataset = bundle.get("dataset")
+    if not isinstance(bundle_dataset, dict) or bundle_dataset.get(
+        "dataset_id"
+    ) != dataset_id:
+        raise ValueError("calibration bundle dataset binding mismatch")
+
+    bundle_files = bundle.get("files")
+    if not isinstance(bundle_files, dict):
+        raise ValueError("calibration bundle files must be an object")
+    for record in bundle_files.values():
+        if not isinstance(record, dict):
+            raise ValueError("calibration bundle has an invalid file record")
+        validate_manifest_file(record)
+
+    for key in (
+        "real_anchored_availability",
+        "structural_real_anchored_availability",
+    ):
+        record = files.get(key)
+        if not isinstance(record, dict):
+            raise ValueError(f"generation manifest has invalid {key} record")
+        validate_manifest_file(record)
+    real_availability = protocol.read_json(
+        Path(files["real_anchored_availability"]["path"])
+    )
+    structural_availability = protocol.read_json(
+        Path(files["structural_real_anchored_availability"]["path"])
+    )
+    for name, availability in (
+        ("real", real_availability),
+        ("structural", structural_availability),
+    ):
+        if availability.get("source_calibration_bundle_sha256") != (
+            expected_bundle_hash
+        ):
+            raise ValueError(
+                f"{name} availability lost calibration bundle binding"
+            )
+        if availability.get("requested_seed_indexes") != expected_seed_indexes:
+            raise ValueError(f"{name} availability seed binding mismatch")
+    generated_capabilities = real_config.get("generated_capabilities")
+    if not isinstance(generated_capabilities, list) or (
+        real_availability.get("generated_capabilities")
+        != generated_capabilities
+    ):
+        raise ValueError("real availability capability binding mismatch")
+    if real_config.get("nonlinear_replay_sensitivity_count", 0) != (
+        real_availability.get(
+            "generated_nonlinear_replay_sensitivity_count",
+            0,
+        )
+    ):
+        raise ValueError("nonlinear replay availability binding mismatch")
+    structural_generated = structural_availability.get(
+        "generated_capabilities"
+    )
+    if not isinstance(structural_generated, list) or not set(
+        structural_generated
+    ).issubset(set(generated_capabilities)):
+        raise ValueError("structural availability capability binding mismatch")
+    real_record = files["real_anchored_counterfactuals"]
+    real_row_count = real_record.get("row_count")
+    if not isinstance(real_row_count, int) or real_row_count < 0:
+        raise ValueError("v3 real-anchored row count is invalid")
+    if real_availability.get("generated_master_count") != real_row_count:
+        raise ValueError("real availability row-count binding mismatch")
+    if real_config.get("structural_main_count") != (
+        structural_availability.get("generated_main_master_count")
+    ):
+        raise ValueError("structural main count binding mismatch")
+    if real_config.get("structural_input_ablation_count") != (
+        structural_availability.get("generated_input_ablation_master_count")
+    ):
+        raise ValueError("structural ablation count binding mismatch")
+    sensitivity_binding_fields = {
+        "structural_sensitivity_capabilities": (
+            "generated_sensitivity_capabilities"
+        ),
+        "structural_sensitivity_main_count": (
+            "generated_sensitivity_main_master_count"
+        ),
+        "structural_sensitivity_input_ablation_count": (
+            "generated_sensitivity_input_ablation_master_count"
+        ),
+    }
+    if any(field in real_config for field in sensitivity_binding_fields):
+        if any(
+            real_config.get(config_field)
+            != structural_availability.get(availability_field)
+            for config_field, availability_field in (
+                sensitivity_binding_fields.items()
+            )
+        ):
+            raise ValueError(
+                "structural sensitivity availability binding mismatch"
+            )
+    if real_availability.get("hierarchical_coherence_generation_count") != 0 or (
+        structural_availability.get("hierarchical_coherence_generation_count")
+        != 0
+    ):
+        raise ValueError("hierarchy rows were declared in v3 availability")
+
+    if upstream_pipeline_schema in {"cafe.pipeline.v1", "cafe.pipeline.v2"}:
+        if files.get("structural_donor_commitments") is not None:
+            raise ValueError("legacy generation declared donor commitments")
+        if real_config.get("structural_donor_commitment") is not None:
+            raise ValueError("legacy generation config declared donor commitments")
+        if real_config.get("qualification_policy_sha256") is not None:
+            raise ValueError("legacy generation config declared a v3 qualification")
+        if real_config.get("qualification_threshold_source") is not None:
+            raise ValueError(
+                "legacy generation config declared a v3 threshold source"
+            )
+        if real_config.get("legacy_upstream_component_policy") != (
+            "validated_but_not_regenerated_or_ranked_as_v3"
+        ):
+            raise ValueError("legacy generation component policy changed")
+        if generated_capabilities != [] or structural_generated != []:
+            raise ValueError("legacy upstream generated real-anchored capabilities")
+        if real_row_count != 0 or real_availability.get(
+            "generated_master_count"
+        ) != 0:
+            raise ValueError("legacy upstream generated real-anchored rows")
+        if real_config.get("structural_main_count") != 0 or real_config.get(
+            "structural_input_ablation_count"
+        ) != 0:
+            raise ValueError("legacy upstream generated structural rows")
+        if structural_availability.get("generated_main_master_count") != 0 or (
+            structural_availability.get(
+                "generated_input_ablation_master_count"
+            )
+            != 0
+        ):
+            raise ValueError("legacy structural availability declared rows")
+        if structural_availability.get(
+            "frozen_qualification_policy_sha256"
+        ) is not None:
+            raise ValueError(
+                "legacy structural availability declared a v3 qualification"
+            )
+        return config
+
+    qualification_hash = real_config.get("qualification_policy_sha256")
+    if not _is_sha256(qualification_hash):
+        raise ValueError("v3 generation config qualification hash is invalid")
+    if real_config.get("qualification_threshold_source") != (
+        QUALIFICATION_THRESHOLD_SOURCE_POLICY
+    ):
+        raise ValueError("v3 generation qualification threshold source changed")
+    if real_config.get("legacy_upstream_component_policy") is not None:
+        raise ValueError("v3 generation config unexpectedly declares legacy mode")
+    policy_record = bundle_files.get("real_anchored_qualification_policy")
+    if not isinstance(policy_record, dict):
+        raise ValueError("calibration bundle lacks qualification policy file")
+    qualification_policy = protocol.read_json(Path(policy_record["path"]))
+    if qualification_policy.get("qualification_policy_sha256") != (
+        qualification_hash
+    ):
+        raise ValueError("generation config qualification policy mismatch")
+    if bundle.get("real_anchored_qualification_policy_sha256") != (
+        qualification_hash
+    ):
+        raise ValueError("calibration bundle qualification policy mismatch")
+    if structural_availability.get(
+        "frozen_qualification_policy_sha256"
+    ) != qualification_hash:
+        raise ValueError("structural availability qualification binding mismatch")
+    _validate_v3_reference_bank_chain(bundle_files, qualification_policy)
+    evaluation_contracts = [
+        *protocol.iter_jsonl(
+            Path(bundle_files["real_anchored_contracts"]["path"])
+        ),
+        *protocol.iter_jsonl(
+            Path(
+                bundle_files["structural_real_anchored_contracts"]["path"]
+            )
+        ),
+    ]
+    validate_evaluation_qualification_policy(
+        evaluation_contracts,
+        qualification_policy,
+    )
+    _validated_structural_donor_commitments(
+        manifest,
+        bundle=bundle,
+        expected_bundle_hash=expected_bundle_hash,
+        dataset_id=dataset_id,
+    )
+    replay_evidence = _current_v3_row_replay_evidence(
+        bundle_files=bundle_files,
+        config=config,
+        dataset_id=dataset_id,
+        seed_indexes=expected_seed_indexes,
+    )
+    expected_main_count = len(
+        replay_evidence["univariate_expected_rows"]
+    ) + len(replay_evidence["structural_expected_rows"]) + len(
+        replay_evidence["structural_sensitivity_expected_rows"]
+    ) + len(
+        replay_evidence["nonlinear_replay_expected_rows"]
+    )
+    structural_ablation_count = real_config.get(
+        "structural_input_ablation_count"
+    )
+    sensitivity_ablation_count = real_config.get(
+        "structural_sensitivity_input_ablation_count",
+        0,
+    )
+    if (
+        not isinstance(structural_ablation_count, int)
+        or not isinstance(sensitivity_ablation_count, int)
+        or expected_main_count
+        + structural_ablation_count
+        + sensitivity_ablation_count
+        != real_row_count
+    ):
+        raise ValueError("v3 real-anchored row count is not replayable")
+    if replay_evidence_out is not None:
+        replay_evidence_out.update(replay_evidence)
+    return config
+
+
 def _exact_shared(
     rows: list[dict[str, Any]],
     fields: tuple[str, ...],
@@ -394,10 +1398,111 @@ def _metadata_exact_shared(
     )
 
 
-def real_anchored_counterfactual_checks(
+def _upstream_main_row_replay_checks(
+    row: dict[str, Any],
+    *,
+    target: np.ndarray | None,
+    expected: dict[str, Any] | None,
+) -> dict[str, bool]:
+    """Compare a main row with the calibration-bound deterministic replay."""
+
+    if expected is None:
+        return {
+            "upstream_replay_sample_exists": False,
+            "upstream_background_assignment_exact": False,
+            "upstream_contract_binding_exact": False,
+            "upstream_baseline_target_exact": False,
+            "upstream_treatment_target_replay_exact": False,
+            "upstream_full_row_replay_exact": False,
+        }
+    try:
+        expected_target = np.asarray(expected.get("target"), dtype=float)
+    except (TypeError, ValueError):
+        expected_target = np.empty((0, 0), dtype=float)
+    targets_exact = bool(
+        target is not None
+        and target.shape == expected_target.shape
+        and np.array_equal(target, expected_target)
+    )
+    metadata = row.get("generation_metadata")
+    expected_metadata = expected.get("generation_metadata")
+    contract_fields = (
+        "contract_sha256",
+        "capability_contract_sha256",
+        "source_history_sha256",
+        "decomposition_history_sha256",
+    )
+    expected_contract_fields = (
+        tuple(
+            field
+            for field in contract_fields
+            if isinstance(expected_metadata, dict)
+            and field in expected_metadata
+        )
+    )
+    contract_exact = bool(
+        expected_contract_fields
+        and isinstance(metadata, dict)
+        and isinstance(expected_metadata, dict)
+        and row.get("parameter_sampling")
+        == expected.get("parameter_sampling")
+        and all(
+            metadata.get(field) == expected_metadata.get(field)
+            for field in expected_contract_fields
+        )
+    )
+    member = row.get("counterfactual_member")
+    return {
+        "upstream_replay_sample_exists": True,
+        "upstream_background_assignment_exact": bool(
+            row.get("dataset_id") == expected.get("dataset_id")
+            and row.get("capability_id") == expected.get("capability_id")
+            and row.get("seed_index") == expected.get("seed_index")
+            and row.get("background_id") == expected.get("background_id")
+            and row.get("anchor_id") == expected.get("anchor_id")
+        ),
+        "upstream_contract_binding_exact": contract_exact,
+        "upstream_baseline_target_exact": bool(
+            member != 0 or targets_exact
+        ),
+        "upstream_treatment_target_replay_exact": bool(
+            member != 1 or targets_exact
+        ),
+        "upstream_full_row_replay_exact": row == expected,
+    }
+
+
+def _upstream_replay_coverage_failures(
+    rows: list[dict[str, Any]],
+    expected_rows: dict[str, dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if expected_rows is None:
+        return []
+    observed = {str(row.get("sample_id", "")) for row in rows}
+    expected = set(expected_rows)
+    failures: list[dict[str, Any]] = []
+    if expected - observed:
+        failures.append(
+            {
+                "reason": "missing_calibration_replay_rows",
+                "sample_ids": sorted(expected - observed),
+            }
+        )
+    if observed - expected:
+        failures.append(
+            {
+                "reason": "unexpected_rows_without_calibration_replay",
+                "sample_ids": sorted(observed - expected),
+            }
+        )
+    return failures
+
+
+def _univariate_real_anchored_counterfactual_checks(
     rows: list[dict[str, Any]],
     *,
     expected_row_count: int | None = None,
+    expected_replay_rows: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Validate the intentional-real-anchor counterfactual component.
 
@@ -452,11 +1557,22 @@ def real_anchored_counterfactual_checks(
         )
         if target_valid:
             targets[id(row)] = target
+        expected_replay = (
+            None
+            if expected_replay_rows is None
+            else expected_replay_rows.get(sample_id)
+        )
 
         member_valid = isinstance(member, int) and member in (0, 1)
+        current_schema = row.get("schema_version") == REAL_ANCHORED_MASTER_SCHEMA
         dose_index = row.get("dose_index")
         dose_index_valid = bool(
-            isinstance(dose_index, int) and dose_index >= 1
+            isinstance(dose_index, int)
+            and dose_index >= 1
+            and (
+                not current_schema
+                or dose_index <= len(REAL_ANCHORED_ALPHAS)
+            )
         )
         alpha_values = (
             calibration.get("selected_alphas")
@@ -473,6 +1589,10 @@ def real_anchored_counterfactual_checks(
             and all(
                 float(right) > float(left)
                 for left, right in zip(alpha_values, alpha_values[1:])
+            )
+            and (
+                not current_schema
+                or alpha_values == list(REAL_ANCHORED_ALPHAS)
             )
         )
         alpha = row.get("dose_value")
@@ -615,7 +1735,10 @@ def real_anchored_counterfactual_checks(
         )
         checks = {
             "schema_valid": row.get("schema_version")
-            == REAL_ANCHORED_MASTER_SCHEMA,
+            in {
+                "cafe.real_anchored_counterfactual_master.v1",
+                REAL_ANCHORED_MASTER_SCHEMA,
+            },
             "track_valid": bool(
                 row.get("benchmark_track")
                 == "real_anchored_counterfactual"
@@ -684,6 +1807,14 @@ def real_anchored_counterfactual_checks(
                 "reason_code": "intentional_real_anchor_counterfactual",
             },
         }
+        if expected_replay_rows is not None:
+            checks.update(
+                _upstream_main_row_replay_checks(
+                    row,
+                    target=target if target_valid else None,
+                    expected=expected_replay,
+                )
+            )
         if not all(checks.values()):
             row_failures.append(
                 {
@@ -743,6 +1874,14 @@ def real_anchored_counterfactual_checks(
         "reference_history_policy",
         "controlled_component",
         "carrier_fixed",
+        "dose_response_law",
+        "future_innovation_policy",
+        "future_innovation_sha256",
+        "history_innovation_policy",
+        "history_innovation_sha256",
+        "history_residual_replay_policy",
+        "history_residual_replay_sensitivity_alpha2_rms",
+        "dose_response_qualification",
     )
     for pair_id, pair_rows in sorted(by_pair.items()):
         members = [row.get("counterfactual_member") for row in pair_rows]
@@ -935,6 +2074,79 @@ def real_anchored_counterfactual_checks(
             for rms, alpha in zip(metadata_rms, treatment_alphas)
             if alpha > 1.0
         ]
+        capability_id = (
+            str(group_rows[0].get("capability_id", ""))
+            if group_rows
+            else ""
+        )
+        nonlinear_dynamic = capability_id == "nonlinear_persistence"
+        current_group_schema = any(
+            row.get("schema_version") == REAL_ANCHORED_MASTER_SCHEMA
+            for row in group_rows
+        )
+        nonlinear_metadata = [
+            pair["treatment"].get("generation_metadata", {})
+            for pair in ordered_pairs
+        ]
+        nonlinear_expected_rms: list[float] = []
+        nonlinear_expected_future_rms: list[float] = []
+        nonlinear_contract_fields_valid = bool(nonlinear_metadata)
+        if nonlinear_dynamic:
+            for alpha, metadata in zip(
+                treatment_alphas,
+                nonlinear_metadata,
+                strict=False,
+            ):
+                qualification = metadata.get("dose_response_qualification")
+                selected = (
+                    next(
+                        (
+                            row
+                            for row in qualification
+                            if _same_finite_float(row.get("alpha"), alpha)
+                        ),
+                        None,
+                    )
+                    if isinstance(qualification, list)
+                    else None
+                )
+                nonlinear_contract_fields_valid = bool(
+                    nonlinear_contract_fields_valid
+                    and metadata.get("dose_response_law")
+                    == "dynamic_recursive_nonproportional"
+                    and metadata.get("future_innovation_policy")
+                    == "zero_future_innovation_paired_rollout_v1"
+                    and metadata.get("history_innovation_policy")
+                    == "shared_observed_one_step_innovations"
+                    and metadata.get("dynamic_contract_replay_verified") is True
+                    and _is_sha256(metadata.get("history_innovation_sha256"))
+                    and _is_sha256(metadata.get("future_innovation_sha256"))
+                    and metadata.get("future_component_source")
+                    == "paired_zero_innovation_dynamic_rollout"
+                    and metadata.get("history_residual_replay_policy")
+                    == "history_residual_replay_qualification_only_v1"
+                    and _finite_float(
+                        metadata.get(
+                            "history_residual_replay_sensitivity_alpha2_rms"
+                        )
+                    )
+                    and float(
+                        metadata[
+                            "history_residual_replay_sensitivity_alpha2_rms"
+                        ]
+                    )
+                    >= 0.0
+                    and isinstance(selected, dict)
+                    and _finite_float(selected.get("intervention_rms"))
+                    and _finite_float(selected.get("future_effect_rms"))
+                )
+                if isinstance(selected, dict):
+                    nonlinear_expected_rms.append(
+                        float(selected["intervention_rms"])
+                    )
+                    nonlinear_expected_future_rms.append(
+                        float(selected["future_effect_rms"])
+                    )
         checks = {
             "group_id_nonempty": bool(group_id),
             "group_references_shared": bool(
@@ -948,6 +2160,10 @@ def real_anchored_counterfactual_checks(
                 selected_alphas
                 and len(ordered_pairs) == len(selected_alphas)
                 and len(group_rows) == 2 * len(selected_alphas)
+            ),
+            "frozen_treatment_grid_exact": bool(
+                not current_group_schema
+                or selected_alphas == list(REAL_ANCHORED_ALPHAS)
             ),
             "dose_indexes_match_grid": dose_indexes
             == list(range(1, len(selected_alphas) + 1)),
@@ -975,29 +2191,90 @@ def real_anchored_counterfactual_checks(
                 )
             ),
             "delta_is_linear_in_alpha_minus_one": bool(
-                scaled_deltas
-                and len(scaled_deltas) == len(ordered_pairs)
-                and all(
-                    np.allclose(
-                        delta,
-                        scaled_deltas[0],
-                        rtol=1e-10,
-                        atol=1e-12,
+                nonlinear_dynamic
+                or (
+                    scaled_deltas
+                    and len(scaled_deltas) == len(ordered_pairs)
+                    and all(
+                        np.allclose(
+                            delta,
+                            scaled_deltas[0],
+                            rtol=1e-10,
+                            atol=1e-12,
+                        )
+                        for delta in scaled_deltas[1:]
                     )
-                    for delta in scaled_deltas[1:]
                 )
             ),
             "metadata_rms_is_linear_in_alpha_minus_one": bool(
-                scaled_metadata_rms
-                and len(scaled_metadata_rms) == len(ordered_pairs)
-                and all(
-                    math.isclose(
-                        value,
-                        scaled_metadata_rms[0],
-                        rel_tol=1e-10,
-                        abs_tol=1e-12,
+                nonlinear_dynamic
+                or (
+                    scaled_metadata_rms
+                    and len(scaled_metadata_rms) == len(ordered_pairs)
+                    and all(
+                        math.isclose(
+                            value,
+                            scaled_metadata_rms[0],
+                            rel_tol=1e-10,
+                            abs_tol=1e-12,
+                        )
+                        for value in scaled_metadata_rms[1:]
                     )
-                    for value in scaled_metadata_rms[1:]
+                )
+            ),
+            "nonlinear_dynamic_contract_valid": bool(
+                not nonlinear_dynamic
+                or (
+                    nonlinear_contract_fields_valid
+                    and len(nonlinear_expected_rms) == len(delta_rms)
+                    and all(
+                        math.isclose(
+                            observed,
+                            expected,
+                            rel_tol=1e-10,
+                            abs_tol=1e-12,
+                        )
+                        for observed, expected in zip(
+                            delta_rms,
+                            nonlinear_expected_rms,
+                            strict=False,
+                        )
+                    )
+                    and all(
+                        math.isclose(
+                            float(metadata.get("future_effect_rms")),
+                            expected,
+                            rel_tol=1e-10,
+                            abs_tol=1e-12,
+                        )
+                        for metadata, expected in zip(
+                            nonlinear_metadata,
+                            nonlinear_expected_future_rms,
+                            strict=False,
+                        )
+                    )
+                    and all(
+                        math.isclose(
+                            float(metadata.get("future_effect_rms")),
+                            float(
+                                np.sqrt(
+                                    np.mean(
+                                        pair["delta"][
+                                            protocol.REAL_ANCHORED_CONTEXT_LENGTH :
+                                        ]
+                                        ** 2
+                                    )
+                                )
+                            ),
+                            rel_tol=1e-10,
+                            abs_tol=1e-12,
+                        )
+                        for pair, metadata in zip(
+                            ordered_pairs,
+                            nonlinear_metadata,
+                            strict=False,
+                        )
+                    )
                 )
             ),
         }
@@ -1055,6 +2332,10 @@ def real_anchored_counterfactual_checks(
     manifest_row_count_matches = bool(
         expected_row_count is None or expected_row_count == len(rows)
     )
+    upstream_replay_coverage_failures = _upstream_replay_coverage_failures(
+        rows,
+        expected_replay_rows,
+    )
     accepted = bool(
         manifest_row_count_matches
         and not duplicate_sample_ids
@@ -1064,9 +2345,10 @@ def real_anchored_counterfactual_checks(
         and not group_failures
         and not repeated_background_failures
         and not seed_assignment_failures
+        and not upstream_replay_coverage_failures
     )
     return {
-        "schema_version": "cafe.real_anchored_validation.v1",
+        "schema_version": "cafe.real_anchored_validation.v2",
         "status": "evaluated",
         "accepted": accepted,
         "sample_count": len(rows),
@@ -1081,6 +2363,9 @@ def real_anchored_counterfactual_checks(
         "paired_group_failures": group_failures,
         "repeated_background_failures": repeated_background_failures,
         "seed_assignment_failures": seed_assignment_failures,
+        "upstream_replay_coverage_failures": (
+            upstream_replay_coverage_failures
+        ),
         "effective_background_count_by_capability": {
             capability_id: len(
                 {
@@ -1110,6 +2395,2078 @@ def real_anchored_counterfactual_checks(
     }
 
 
+def _finite_matrix(value: Any) -> np.ndarray | None:
+    try:
+        matrix = np.asarray(value, dtype=float)
+    except (TypeError, ValueError):
+        return None
+    if matrix.ndim != 2 or not np.isfinite(matrix).all():
+        return None
+    return matrix
+
+
+def _nonlinear_replay_sensitivity_checks(
+    rows: list[dict[str, Any]],
+    *,
+    source_main_rows: list[dict[str, Any]],
+    expected_replay_rows: dict[str, dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Validate the excluded history-residual-replay auxiliary track."""
+
+    expected_length = (
+        protocol.REAL_ANCHORED_CONTEXT_LENGTH + protocol.HORIZON
+    )
+    context = protocol.REAL_ANCHORED_CONTEXT_LENGTH
+    sources = {
+        str(row.get("sample_id", "")): row for row in source_main_rows
+    }
+    row_failures: list[dict[str, Any]] = []
+    pair_failures: list[dict[str, Any]] = []
+    group_failures: list[dict[str, Any]] = []
+    targets: dict[str, np.ndarray] = {}
+    by_pair: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for row_index, row in enumerate(rows):
+        sample_id = str(row.get("sample_id", ""))
+        source_id = str(row.get("sensitivity_source_sample_id", ""))
+        source = sources.get(source_id)
+        pair_id = str(row.get("counterfactual_pair_id", ""))
+        group_id = str(row.get("paired_group_id", ""))
+        member = row.get("counterfactual_member")
+        member_valid = isinstance(member, int) and member in (0, 1)
+        target = _finite_matrix(row.get("target"))
+        target_valid = bool(
+            target is not None and target.shape == (expected_length, 1)
+        )
+        if target_valid:
+            assert target is not None
+            targets[sample_id] = target
+        source_target = (
+            None
+            if source is None
+            else _finite_matrix(source.get("target"))
+        )
+        metadata = row.get("generation_metadata")
+        source_metadata = (
+            source.get("generation_metadata")
+            if isinstance(source, dict)
+            else None
+        )
+        expected = (
+            None
+            if expected_replay_rows is None
+            else expected_replay_rows.get(sample_id)
+        )
+        calibration = row.get("intensity_calibration")
+        selected_alphas = (
+            calibration.get("selected_alphas")
+            if isinstance(calibration, dict)
+            else None
+        )
+        alpha = row.get("dose_value")
+        sampled = row.get("sampled_generator_parameters")
+        exposed_alphas = (
+            alpha,
+            row.get("intensity_lambda"),
+            metadata.get("alpha") if isinstance(metadata, dict) else None,
+            sampled.get("alpha") if isinstance(sampled, dict) else None,
+        )
+        source_identity_exact = bool(
+            source is not None
+            and source.get("evaluation_table")
+            == "real_anchored_counterfactual"
+            and source.get("capability_id") == "nonlinear_persistence"
+            and row.get("sensitivity_source_pair_id")
+            == source.get("counterfactual_pair_id")
+            and row.get("sensitivity_source_paired_group_id")
+            == source.get("paired_group_id")
+            and pair_id
+            == f"{source.get('counterfactual_pair_id')}__nonlinear_replay"
+            and group_id
+            == f"{source.get('paired_group_id')}__nonlinear_replay"
+            and sample_id == f"{source_id}__nonlinear_replay"
+            and all(
+                row.get(field) == source.get(field)
+                for field in (
+                    "dataset_id",
+                    "capability_id",
+                    "seed_index",
+                    "dose_index",
+                    "counterfactual_member",
+                    "background_id",
+                    "anchor_id",
+                    "parameter_sampling",
+                    "intensity_calibration",
+                )
+            )
+        )
+        source_contract_exact = bool(
+            isinstance(metadata, dict)
+            and isinstance(source_metadata, dict)
+            and all(
+                metadata.get(field) == source_metadata.get(field)
+                for field in (
+                    "contract_sha256",
+                    "capability_contract_sha256",
+                    "source_history_sha256",
+                    "decomposition_history_sha256",
+                    "history_innovation_policy",
+                    "history_innovation_sha256",
+                )
+            )
+            and source_metadata.get("future_innovation_policy")
+            == NONLINEAR_FUTURE_INNOVATION_MAIN_POLICY
+        )
+        checks = {
+            "schema_valid": row.get("schema_version")
+            == REAL_ANCHORED_MASTER_SCHEMA,
+            "track_valid": bool(
+                row.get("benchmark_track")
+                == "real_anchored_counterfactual"
+                and row.get("evaluation_table")
+                == "real_anchored_nonlinear_replay_sensitivity"
+                and row.get("generator_family_role") == "real_anchored"
+                and row.get("capability_id") == "nonlinear_persistence"
+            ),
+            "excluded_from_primary_score": row.get(
+                "excluded_from_primary_score"
+            )
+            is True,
+            "source_main_binding_exact": source_identity_exact,
+            "source_contract_binding_exact": source_contract_exact,
+            "sample_identity_valid": bool(
+                source_identity_exact
+                and row.get("master_sample_id") == sample_id
+                and row.get("baseline_sample_id")
+                == f"{row.get('sensitivity_source_pair_id')}__m0__nonlinear_replay"
+            ),
+            "member_valid": member_valid,
+            "fixed_shape_valid": bool(
+                target_valid
+                and row.get("context_length") == context
+                and row.get("horizon") == protocol.HORIZON
+                and row.get("target_dim") == 1
+                and row.get("covariate_dim") == 0
+                and row.get("covariates") is None
+            ),
+            "target_hash_matches": bool(
+                target_valid
+                and target is not None
+                and row.get("target_sha256")
+                == protocol.target_and_covariate_sha256(target, None)
+            ),
+            "future_hash_matches": bool(
+                target_valid
+                and target is not None
+                and row.get("future_sha256") == array_sha256(target[context:])
+            ),
+            "history_matches_zero_innovation_source": bool(
+                target_valid
+                and target is not None
+                and source_target is not None
+                and source_target.shape == target.shape
+                and np.array_equal(target[:context], source_target[:context])
+            ),
+            "residual_replay_policy_valid": bool(
+                isinstance(metadata, dict)
+                and metadata.get("future_innovation_policy")
+                == NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
+                and metadata.get("history_residual_replay_policy")
+                == NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
+                and metadata.get("sensitivity_role")
+                == "history_residual_replay_auxiliary"
+                and _is_sha256(metadata.get("future_innovation_sha256"))
+            ),
+            "frozen_treatment_grid_exact": selected_alphas
+            == list(REAL_ANCHORED_ALPHAS),
+            "dose_and_alpha_valid": bool(
+                member_valid
+                and isinstance(row.get("dose_index"), int)
+                and 1 <= int(row["dose_index"]) <= len(REAL_ANCHORED_ALPHAS)
+                and row.get("intensity") == row.get("dose_index")
+                and row.get("dose_parameter") == "alpha"
+                and _same_finite_float(*exposed_alphas)
+                and (
+                    _same_finite_float(alpha, 1.0)
+                    if member == 0
+                    else _same_finite_float(
+                        alpha,
+                        REAL_ANCHORED_ALPHAS[int(row["dose_index"]) - 1],
+                    )
+                )
+            ),
+            **_upstream_main_row_replay_checks(
+                row,
+                target=target if target_valid else None,
+                expected=expected,
+            ),
+        }
+        if not all(checks.values()):
+            row_failures.append(
+                {
+                    "row_index": row_index,
+                    "sample_id": sample_id,
+                    "checks": checks,
+                }
+            )
+        by_pair[pair_id].append(row)
+        by_group[group_id].append(row)
+
+    complete_pairs: dict[str, dict[str, Any]] = {}
+    for pair_id, pair_rows in sorted(by_pair.items()):
+        members = [row.get("counterfactual_member") for row in pair_rows]
+        complete = bool(
+            len(pair_rows) == 2
+            and members.count(0) == 1
+            and members.count(1) == 1
+        )
+        checks = {
+            "exactly_two_members": complete,
+            "pair_fields_shared": _exact_shared(
+                pair_rows,
+                (
+                    "counterfactual_pair_id",
+                    "paired_group_id",
+                    "baseline_sample_id",
+                    "sensitivity_source_pair_id",
+                    "sensitivity_source_paired_group_id",
+                    "dataset_id",
+                    "capability_id",
+                    "seed_index",
+                    "dose_index",
+                    "background_id",
+                    "anchor_id",
+                    "intensity_calibration",
+                    "excluded_from_primary_score",
+                ),
+            ),
+        }
+        if complete:
+            baseline = next(
+                row for row in pair_rows if row["counterfactual_member"] == 0
+            )
+            treatment = next(
+                row for row in pair_rows if row["counterfactual_member"] == 1
+            )
+            baseline_target = targets.get(str(baseline.get("sample_id", "")))
+            treatment_target = targets.get(str(treatment.get("sample_id", "")))
+            if baseline_target is None or treatment_target is None:
+                checks["pair_targets_valid"] = False
+            else:
+                delta = treatment_target - baseline_target
+                delta_rms = float(np.sqrt(np.mean(delta**2)))
+                checks.update(
+                    {
+                        "baseline_member_exact": bool(
+                            _same_finite_float(baseline.get("dose_value"), 1.0)
+                            and baseline.get("intervention_delta_sha256")
+                            == array_sha256(np.zeros_like(baseline_target))
+                        ),
+                        "treatment_delta_hash_exact": treatment.get(
+                            "intervention_delta_sha256"
+                        )
+                        == array_sha256(delta),
+                        "treatment_delta_nonzero": delta_rms > 0.0,
+                        "target_feature_matches_pair_delta": bool(
+                            _finite_float(treatment.get("target_feature_value"))
+                            and _same_finite_float(
+                                treatment.get("target_feature_value"),
+                                treatment.get(
+                                    "intensity_target_feature_value"
+                                ),
+                                treatment.get("generation_metadata", {}).get(
+                                    "intervention_rms"
+                                ),
+                            )
+                            and math.isclose(
+                                float(treatment["target_feature_value"]),
+                                delta_rms,
+                                rel_tol=1e-10,
+                                abs_tol=1e-12,
+                            )
+                        ),
+                    }
+                )
+                complete_pairs[pair_id] = {
+                    "baseline": baseline,
+                    "treatment": treatment,
+                    "baseline_target": baseline_target,
+                }
+        if not all(checks.values()):
+            pair_failures.append(
+                {"counterfactual_pair_id": pair_id, "checks": checks}
+            )
+
+    for group_id, group_rows in sorted(by_group.items()):
+        pairs = sorted(
+            (
+                pair
+                for pair in complete_pairs.values()
+                if pair["baseline"].get("paired_group_id") == group_id
+            ),
+            key=lambda pair: int(pair["treatment"].get("dose_index", -1)),
+        )
+        dose_indexes = [
+            int(pair["treatment"].get("dose_index", -1)) for pair in pairs
+        ]
+        treatment_alphas = [
+            float(pair["treatment"].get("dose_value", math.nan))
+            for pair in pairs
+        ]
+        baselines = [pair["baseline_target"] for pair in pairs]
+        checks = {
+            "complete_frozen_grid": bool(
+                len(group_rows) == 2 * len(REAL_ANCHORED_ALPHAS)
+                and len(pairs) == len(REAL_ANCHORED_ALPHAS)
+                and dose_indexes
+                == list(range(1, len(REAL_ANCHORED_ALPHAS) + 1))
+                and treatment_alphas == list(REAL_ANCHORED_ALPHAS)
+            ),
+            "duplicate_baselines_are_exact": bool(
+                baselines
+                and all(
+                    np.array_equal(values, baselines[0])
+                    for values in baselines[1:]
+                )
+            ),
+            "one_zero_innovation_source_group": bool(
+                len(
+                    {
+                        row.get("sensitivity_source_paired_group_id")
+                        for row in group_rows
+                    }
+                )
+                == 1
+            ),
+        }
+        if not all(checks.values()):
+            group_failures.append(
+                {"paired_group_id": group_id, "checks": checks}
+            )
+
+    coverage_failures = _upstream_replay_coverage_failures(
+        rows,
+        expected_replay_rows,
+    )
+    accepted = not any(
+        (row_failures, pair_failures, group_failures, coverage_failures)
+    )
+    return {
+        "accepted": accepted,
+        "sample_count": len(rows),
+        "pair_count": len(by_pair),
+        "paired_group_count": len(by_group),
+        "row_failures": row_failures,
+        "pair_failures": pair_failures,
+        "paired_group_failures": group_failures,
+        "upstream_replay_coverage_failures": coverage_failures,
+        "effective_background_count_by_capability": {},
+    }
+
+
+def _structural_mase_reference_valid(
+    row: dict[str, Any],
+    *,
+    target_dim: int,
+) -> bool:
+    scales = row.get("mase_scale_by_target")
+    effective_periods = row.get("mase_scale_effective_period_by_target")
+    fallback_indices = row.get("mase_scale_fallback_target_indices")
+    period = row.get("mase_period")
+    if not (
+        isinstance(scales, list)
+        and len(scales) == target_dim
+        and scales
+        and all(_finite_float(value) and float(value) > 0.0 for value in scales)
+        and _finite_float(row.get("mase_scale"))
+        and math.isclose(
+            float(row["mase_scale"]),
+            float(np.mean(np.asarray(scales, dtype=float))),
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
+        and isinstance(period, int)
+        and 1 <= period < protocol.REAL_ANCHORED_CONTEXT_LENGTH
+        and isinstance(effective_periods, list)
+        and len(effective_periods) == target_dim
+        and all(
+            isinstance(value, int) and value in {1, period}
+            for value in effective_periods
+        )
+        and isinstance(fallback_indices, list)
+        and len(fallback_indices) == len(set(fallback_indices))
+        and all(
+            isinstance(index, int)
+            and 0 <= index < target_dim
+            and effective_periods[index] == 1
+            for index in fallback_indices
+        )
+        and isinstance(row.get("mase_scale_policy"), str)
+        and bool(row["mase_scale_policy"])
+        and row.get("mase_scale_source")
+        == "shared_unmodified_real_l336_history"
+    ):
+        return False
+    return True
+
+
+def _structural_standardization_valid(
+    row: dict[str, Any],
+    *,
+    target_dim: int,
+) -> bool:
+    standardization = row.get("shared_standardization")
+    if not isinstance(standardization, dict):
+        return False
+    centers = standardization.get("center_by_target")
+    scales = standardization.get("scale_by_target")
+    return bool(
+        standardization.get("scope")
+        == "shared_unmodified_real_l336_history"
+        and isinstance(centers, list)
+        and len(centers) == target_dim
+        and all(_finite_float(value) for value in centers)
+        and isinstance(scales, list)
+        and len(scales) == target_dim
+        and all(_finite_float(value) and float(value) > 0.0 for value in scales)
+        and standardization.get("member_specific") is False
+    )
+
+
+def _structural_real_anchored_checks(
+    main_rows: list[dict[str, Any]],
+    ablation_rows: list[dict[str, Any]],
+    *,
+    donor_commitment_entries: dict[str, dict[str, Any]] | None = None,
+    donor_commitment_root_sha256: str | None = None,
+    expected_replay_rows: dict[str, dict[str, Any]] | None = None,
+    expected_sensitivity_replay_rows: (
+        dict[str, dict[str, Any]] | None
+    ) = None,
+) -> dict[str, Any]:
+    """Validate formal and explicitly excluded structural auxiliary rows."""
+
+    expected_length = (
+        protocol.REAL_ANCHORED_CONTEXT_LENGTH + protocol.HORIZON
+    )
+    row_failures: list[dict[str, Any]] = []
+    pair_failures: list[dict[str, Any]] = []
+    group_failures: list[dict[str, Any]] = []
+    ablation_failures: list[dict[str, Any]] = []
+    targets: dict[str, np.ndarray] = {}
+    covariates: dict[str, np.ndarray | None] = {}
+    by_pair: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    structural_capabilities = {
+        "common_factor",
+        "cross_series_dependence",
+        "covariate_response",
+    }
+    mandatory_ablation_capabilities = {
+        "common_factor",
+        "cross_series_dependence",
+    }
+    committed_successor_by_sample: dict[str, str] = {}
+    if donor_commitment_entries is not None:
+        commitment_cells: dict[tuple[Any, ...], list[dict[str, Any]]] = (
+            defaultdict(list)
+        )
+        for entry in donor_commitment_entries.values():
+            key = (
+                str(entry.get("dataset_id", "")),
+                str(entry.get("capability_id", "")),
+                int(entry.get("dose_index", -1)),
+                int(entry.get("counterfactual_member", -1)),
+                int(entry.get("target_dim", -1)),
+                str(entry.get("evaluation_table", "")),
+            )
+            commitment_cells[key].append(entry)
+        for entries in commitment_cells.values():
+            ordered = sorted(
+                entries,
+                key=lambda entry: (
+                    int(entry["seed_index"]),
+                    str(entry["background_id"]),
+                    str(entry["sample_id"]),
+                ),
+            )
+            if len({str(entry["background_id"]) for entry in ordered}) < 2:
+                continue
+            by_background = {
+                str(entry["background_id"]): index
+                for index, entry in enumerate(ordered)
+            }
+            for entry in ordered:
+                index = by_background[str(entry["background_id"])]
+                committed_successor_by_sample[str(entry["sample_id"])] = str(
+                    ordered[(index + 1) % len(ordered)]["sample_id"]
+                )
+
+    for row_index, row in enumerate(main_rows):
+        sample_id = str(row.get("sample_id", ""))
+        pair_id = str(row.get("counterfactual_pair_id", ""))
+        group_id = str(row.get("paired_group_id", ""))
+        capability_id = str(row.get("capability_id", ""))
+        evaluation_table = row.get("evaluation_table")
+        sensitivity_row = (
+            evaluation_table == "real_anchored_structural_sensitivity"
+        )
+        member = row.get("counterfactual_member")
+        target_dim = row.get("target_dim")
+        covariate_dim = row.get("covariate_dim")
+        target = _finite_matrix(row.get("target"))
+        raw_covariates = row.get("covariates")
+        covariate = (
+            None
+            if raw_covariates is None
+            else _finite_matrix(raw_covariates)
+        )
+        target_valid = bool(
+            isinstance(target_dim, int)
+            and target_dim >= 1
+            and target is not None
+            and target.shape == (expected_length, target_dim)
+        )
+        covariate_valid = bool(
+            isinstance(covariate_dim, int)
+            and covariate_dim >= 0
+            and (
+                (covariate_dim == 0 and raw_covariates is None)
+                or (
+                    covariate_dim > 0
+                    and covariate is not None
+                    and covariate.shape == (expected_length, covariate_dim)
+                )
+            )
+        )
+        if target_valid:
+            assert target is not None
+            targets[sample_id] = target
+        if covariate_valid:
+            covariates[sample_id] = covariate
+        expected_replay = (
+            None
+            if (
+                expected_sensitivity_replay_rows is None
+                if sensitivity_row
+                else expected_replay_rows is None
+            )
+            else (
+                expected_sensitivity_replay_rows.get(sample_id)
+                if sensitivity_row
+                else expected_replay_rows.get(sample_id)
+            )
+        )
+
+        metadata = row.get("generation_metadata")
+        parameter_sampling = row.get("parameter_sampling")
+        sampled_parameters = row.get("sampled_generator_parameters")
+        standardization_valid = bool(
+            isinstance(target_dim, int)
+            and _structural_standardization_valid(
+                row,
+                target_dim=target_dim,
+            )
+        )
+        mase_valid = bool(
+            isinstance(target_dim, int)
+            and _structural_mase_reference_valid(
+                row,
+                target_dim=target_dim,
+            )
+        )
+        background_id = str(row.get("background_id", ""))
+        contract_hash = (
+            metadata.get("contract_sha256")
+            if isinstance(metadata, dict)
+            else None
+        )
+        contract_valid = bool(
+            isinstance(metadata, dict)
+            and metadata.get("capability_id") == capability_id
+            and background_id
+            and row.get("anchor_id") == background_id
+            and isinstance(parameter_sampling, dict)
+            and parameter_sampling.get("background_id") == background_id
+            and parameter_sampling.get("contract_sha256") == contract_hash
+            and _is_sha256(contract_hash)
+            and metadata.get("target_future_used_for_delta") is False
+        )
+        truth_delta = (
+            _finite_matrix(metadata.get("truth_delta"))
+            if isinstance(metadata, dict)
+            else None
+        )
+        truth_delta_valid = bool(
+            target_valid
+            and truth_delta is not None
+            and target is not None
+            and truth_delta.shape == target.shape
+            and _is_sha256(metadata.get("truth_delta_sha256"))
+        )
+        member_valid = isinstance(member, int) and member in (0, 1)
+        alpha = row.get("dose_value")
+        exposed_alphas = (
+            alpha,
+            row.get("intensity_lambda"),
+            row.get("applied_alpha"),
+            metadata.get("alpha") if isinstance(metadata, dict) else None,
+            (
+                sampled_parameters.get("alpha")
+                if isinstance(sampled_parameters, dict)
+                else None
+            ),
+        )
+        expected_alpha = bool(
+            member_valid
+            and _same_finite_float(*exposed_alphas)
+            and (
+                _same_finite_float(alpha, 1.0)
+                if member == 0
+                else _finite_float(alpha) and float(alpha) > 1.0
+            )
+        )
+        calibration = row.get("intensity_calibration")
+        selected_alphas = (
+            calibration.get("selected_alphas")
+            if isinstance(calibration, dict)
+            else None
+        )
+        alpha_grid_valid = bool(
+            isinstance(selected_alphas, list)
+            and selected_alphas
+            and all(
+                _finite_float(value) and float(value) > 1.0
+                for value in selected_alphas
+            )
+            and all(
+                float(right) > float(left)
+                for left, right in zip(
+                    selected_alphas,
+                    selected_alphas[1:],
+                )
+            )
+            and selected_alphas == list(STRUCTURAL_ALPHAS)
+        )
+        panel_dimension_valid = bool(
+            isinstance(target_dim, int)
+            and (
+                target_dim == 2
+                if sensitivity_row
+                else (
+                    target_dim >= FORMAL_PANEL_MINIMUM_DIMENSION
+                    if capability_id in mandatory_ablation_capabilities
+                    else target_dim >= 1
+                )
+            )
+        )
+        sensitivity_contract_eligible = bool(
+            not sensitivity_row
+            or (
+                capability_id in mandatory_ablation_capabilities
+                and expected_replay is not None
+                and expected_replay.get("evaluation_table")
+                == "real_anchored_structural_sensitivity"
+                and expected_replay.get("target_dim") == 2
+            )
+        )
+        covariate_names = row.get("covariate_column_names")
+        eligible_target_indices = (
+            metadata.get("eligible_target_indices")
+            if isinstance(metadata, dict)
+            else None
+        )
+        known_future_covariate_contract_valid = bool(
+            capability_id != "covariate_response"
+            or (
+                isinstance(covariate_dim, int)
+                and covariate_dim > 0
+                and covariate_valid
+                and covariate is not None
+                and isinstance(covariate_names, list)
+                and len(covariate_names) == covariate_dim
+                and all(
+                    isinstance(name, str) and bool(name)
+                    for name in covariate_names
+                )
+                and isinstance(metadata, dict)
+                and metadata.get(
+                    "known_future_covariate_path_used_for_delta"
+                )
+                is True
+                and metadata.get("target_future_used_for_delta") is False
+                and metadata.get("controlled_component")
+                == "known_future_covariate_predictive_response"
+                and isinstance(eligible_target_indices, list)
+                and bool(eligible_target_indices)
+                and isinstance(target_dim, int)
+                and all(
+                    isinstance(index, int) and 0 <= index < target_dim
+                    for index in eligible_target_indices
+                )
+            )
+        )
+        mandatory = row.get("mandatory_input_ablation")
+        mandatory_valid = capability_id not in mandatory_ablation_capabilities
+        if capability_id in mandatory_ablation_capabilities:
+            assessed = (
+                mandatory.get("assessed_target_indices")
+                if isinstance(mandatory, dict)
+                else None
+            )
+            ablated = (
+                mandatory.get("ablated_input_indices")
+                if isinstance(mandatory, dict)
+                else None
+            )
+            mandatory_valid = bool(
+                isinstance(target_dim, int)
+                and isinstance(mandatory, dict)
+                and mandatory.get("required") is True
+                and mandatory.get("evaluation_table")
+                == "real_anchored_input_ablation"
+                and mandatory.get("target_future_unchanged") is True
+                and mandatory.get("excluded_from_primary_score") is True
+                and mandatory.get(
+                    "reported_as_separate_attribution_audit"
+                )
+                is True
+                and isinstance(assessed, list)
+                and assessed
+                and isinstance(ablated, list)
+                and ablated
+                and not (set(assessed) & set(ablated))
+                and all(
+                    isinstance(index, int) and 0 <= index < target_dim
+                    for index in (*assessed, *ablated)
+                )
+            )
+
+        target_hash_matches = bool(
+            target_valid
+            and covariate_valid
+            and target is not None
+            and row.get("target_sha256")
+            == protocol.target_and_covariate_sha256(target, covariate)
+        )
+        future_hash_matches = bool(
+            target_valid
+            and target is not None
+            and row.get("future_sha256")
+            == array_sha256(
+                target[protocol.REAL_ANCHORED_CONTEXT_LENGTH :]
+            )
+        )
+        checks = {
+            "schema_valid": row.get("schema_version")
+            == STRUCTURAL_MASTER_SCHEMA,
+            "track_valid": bool(
+                row.get("benchmark_track")
+                == "real_anchored_counterfactual"
+                and evaluation_table
+                == (
+                    "real_anchored_structural_sensitivity"
+                    if sensitivity_row
+                    else "real_anchored_counterfactual"
+                )
+                and row.get("generator_family_role")
+                == "real_anchored_structural"
+            ),
+            "formal_capability_valid": capability_id
+            in structural_capabilities,
+            "hierarchy_formal_row_prohibited": capability_id
+            != "hierarchical_coherence",
+            "formal_dimension_valid_for_capability": panel_dimension_valid,
+            "formal_panel_dimension_valid": panel_dimension_valid,
+            "sensitivity_contract_eligible": (
+                sensitivity_contract_eligible
+            ),
+            "known_future_covariate_contract_valid": (
+                known_future_covariate_contract_valid
+            ),
+            "sample_id_valid": bool(
+                sample_id
+                and member_valid
+                and sample_id == f"{pair_id}__m{member}"
+                and row.get("master_sample_id") == sample_id
+                and row.get("baseline_sample_id") == f"{pair_id}__m0"
+            ),
+            "pair_id_valid": bool(pair_id and group_id),
+            "member_valid": member_valid,
+            "fixed_shape_valid": bool(
+                row.get("context_length")
+                == protocol.REAL_ANCHORED_CONTEXT_LENGTH
+                and row.get("horizon") == protocol.HORIZON
+                and target_valid
+                and covariate_valid
+            ),
+            "target_hash_matches": target_hash_matches,
+            "future_hash_matches": future_hash_matches,
+            "alpha_exposure_consistent": expected_alpha,
+            "dose_index_valid": bool(
+                isinstance(row.get("dose_index"), int)
+                and 1
+                <= int(row["dose_index"])
+                <= len(STRUCTURAL_ALPHAS)
+                and row.get("intensity") == row.get("dose_index")
+                and row.get("dose_parameter") == "alpha"
+                and _same_finite_float(row.get("baseline_dose_value"), 1.0)
+            ),
+            "alpha_grid_valid": alpha_grid_valid,
+            "normalization_reference_valid": standardization_valid,
+            "mase_reference_valid": mase_valid,
+            "contract_and_background_valid": contract_valid,
+            "truth_delta_contract_valid": truth_delta_valid,
+            "mandatory_input_ablation_declared": mandatory_valid,
+            "primary_score_policy_valid": bool(
+                row.get("excluded_from_primary_score") is True
+                if sensitivity_row
+                else row.get("excluded_from_primary_score") is not True
+            ),
+            "anti_copy_explicitly_not_applicable": row.get("anti_copy_gate")
+            == {
+                "status": "not_applicable",
+                "reason_code": "intentional_real_anchor_counterfactual",
+            },
+        }
+        if (
+            sensitivity_row
+            or expected_replay_rows is not None
+            or expected_sensitivity_replay_rows is not None
+        ):
+            checks.update(
+                _upstream_main_row_replay_checks(
+                    row,
+                    target=target if target_valid else None,
+                    expected=expected_replay,
+                )
+            )
+        if not all(checks.values()):
+            row_failures.append(
+                {
+                    "row_index": row_index,
+                    "sample_id": sample_id,
+                    "checks": checks,
+                }
+            )
+        by_pair[pair_id].append(row)
+        by_group[group_id].append(row)
+
+    complete_pairs: dict[str, dict[str, Any]] = {}
+    pair_shared_fields = (
+        "counterfactual_pair_id",
+        "paired_group_id",
+        "baseline_sample_id",
+        "dataset_id",
+        "capability_id",
+        "seed_index",
+        "dose_index",
+        "intensity",
+        "background_id",
+        "anchor_id",
+        "target_dim",
+        "covariate_dim",
+        "covariates",
+        "shared_standardization",
+        "mase_period",
+        "mase_scale",
+        "mase_scale_by_target",
+        "mase_scale_effective_period_by_target",
+        "mase_scale_fallback_target_indices",
+        "mase_scale_policy",
+        "mase_scale_source",
+        "parameter_sampling",
+        "intensity_calibration",
+        "mandatory_input_ablation",
+        "evaluation_table",
+        "excluded_from_primary_score",
+    )
+    metadata_shared_fields = (
+        "capability_id",
+        "contract_sha256",
+        "controlled_component",
+        "target_future_used_for_delta",
+        "known_future_covariate_path_used_for_delta",
+        "mandatory_input_ablation",
+        "protected_target_index",
+        "response_loadings",
+        "driver_index",
+        "responder_indices",
+        "cross_lag_steps",
+        "eligible_target_indices",
+    )
+    for pair_id, pair_rows in sorted(by_pair.items()):
+        members = [row.get("counterfactual_member") for row in pair_rows]
+        complete = bool(
+            len(pair_rows) == 2
+            and members.count(0) == 1
+            and members.count(1) == 1
+        )
+        checks: dict[str, bool] = {
+            "exactly_two_members": complete,
+            "pair_fields_shared": _exact_shared(
+                pair_rows,
+                pair_shared_fields,
+            ),
+            "metadata_references_shared": _metadata_exact_shared(
+                pair_rows,
+                metadata_shared_fields,
+            ),
+        }
+        if complete:
+            baseline = next(
+                row
+                for row in pair_rows
+                if row["counterfactual_member"] == 0
+            )
+            treatment = next(
+                row
+                for row in pair_rows
+                if row["counterfactual_member"] == 1
+            )
+            baseline_target = targets.get(str(baseline.get("sample_id", "")))
+            treatment_target = targets.get(str(treatment.get("sample_id", "")))
+            if baseline_target is None or treatment_target is None:
+                checks["pair_targets_valid"] = False
+            else:
+                delta = treatment_target - baseline_target
+                delta_rms = float(np.sqrt(np.mean(delta**2)))
+                baseline_truth = _finite_matrix(
+                    baseline.get("generation_metadata", {}).get("truth_delta")
+                )
+                treatment_truth = _finite_matrix(
+                    treatment.get("generation_metadata", {}).get("truth_delta")
+                )
+                checks.update(
+                    {
+                        "baseline_member_exact": bool(
+                            _same_finite_float(baseline.get("dose_value"), 1.0)
+                            and _same_finite_float(
+                                baseline.get("target_feature_value"),
+                                0.0,
+                            )
+                            and baseline_truth is not None
+                            and np.array_equal(
+                                baseline_truth,
+                                np.zeros_like(baseline_target),
+                            )
+                        ),
+                        "treatment_truth_delta_exact": bool(
+                            treatment_truth is not None
+                            and treatment_truth.shape == delta.shape
+                            and np.allclose(
+                                treatment_truth,
+                                delta,
+                                rtol=1e-12,
+                                atol=1e-12,
+                            )
+                        ),
+                        "treatment_delta_nonzero": delta_rms > 0.0,
+                        "target_feature_matches_pair_delta": bool(
+                            _finite_float(
+                                treatment.get("target_feature_value")
+                            )
+                            and _same_finite_float(
+                                treatment.get("target_feature_value"),
+                                treatment.get("intensity_target_feature_value"),
+                            )
+                            and math.isclose(
+                                float(treatment["target_feature_value"]),
+                                delta_rms,
+                                rel_tol=1e-12,
+                                abs_tol=1e-12,
+                            )
+                        ),
+                    }
+                )
+                complete_pairs[pair_id] = {
+                    "baseline": baseline,
+                    "treatment": treatment,
+                    "baseline_target": baseline_target,
+                    "delta": delta,
+                    "delta_rms": delta_rms,
+                }
+        if not all(checks.values()):
+            pair_failures.append(
+                {
+                    "counterfactual_pair_id": pair_id,
+                    "checks": checks,
+                }
+            )
+
+    group_shared_fields = (
+        "paired_group_id",
+        "dataset_id",
+        "capability_id",
+        "seed_index",
+        "background_id",
+        "anchor_id",
+        "target_dim",
+        "covariate_dim",
+        "covariates",
+        "shared_standardization",
+        "mase_period",
+        "mase_scale",
+        "mase_scale_by_target",
+        "mase_scale_effective_period_by_target",
+        "mase_scale_fallback_target_indices",
+        "mase_scale_policy",
+        "mase_scale_source",
+        "parameter_sampling",
+        "intensity_calibration",
+        "mandatory_input_ablation",
+        "evaluation_table",
+        "excluded_from_primary_score",
+    )
+    for group_id, group_rows in sorted(by_group.items()):
+        group_pairs = [
+            pair
+            for pair in complete_pairs.values()
+            if pair["baseline"].get("paired_group_id") == group_id
+        ]
+        try:
+            ordered = sorted(
+                group_pairs,
+                key=lambda pair: int(pair["treatment"]["dose_index"]),
+            )
+            dose_indexes = [
+                int(pair["treatment"]["dose_index"]) for pair in ordered
+            ]
+            alphas = [float(pair["treatment"]["dose_value"]) for pair in ordered]
+            selected_alphas = [
+                float(value)
+                for value in group_rows[0]["intensity_calibration"][
+                    "selected_alphas"
+                ]
+            ]
+            rms_values = [float(pair["delta_rms"]) for pair in ordered]
+        except (KeyError, TypeError, ValueError, IndexError):
+            ordered = []
+            dose_indexes = []
+            alphas = []
+            selected_alphas = []
+            rms_values = []
+        baseline_targets = [
+            np.asarray(pair["baseline_target"], dtype=float) for pair in ordered
+        ]
+        scaled_deltas = [
+            np.asarray(pair["delta"], dtype=float) / (alpha - 1.0)
+            for pair, alpha in zip(ordered, alphas)
+            if alpha > 1.0
+        ]
+        checks = {
+            "group_id_nonempty": bool(group_id),
+            "group_references_shared": bool(
+                _exact_shared(group_rows, group_shared_fields)
+                and _metadata_exact_shared(
+                    group_rows,
+                    metadata_shared_fields,
+                )
+            ),
+            "complete_pair_count_matches_grid": bool(
+                selected_alphas
+                and len(ordered) == len(selected_alphas)
+                and len(group_rows) == 2 * len(selected_alphas)
+            ),
+            "frozen_treatment_grid_exact": (
+                selected_alphas == list(STRUCTURAL_ALPHAS)
+            ),
+            "dose_indexes_match_grid": dose_indexes
+            == list(range(1, len(selected_alphas) + 1)),
+            "treatment_alphas_match_grid": alphas == selected_alphas,
+            "duplicate_baselines_are_exact": bool(
+                baseline_targets
+                and all(
+                    np.array_equal(target, baseline_targets[0])
+                    for target in baseline_targets[1:]
+                )
+            ),
+            "delta_rms_strictly_increases": bool(
+                rms_values
+                and all(
+                    right > left
+                    for left, right in zip(rms_values, rms_values[1:])
+                )
+            ),
+            "delta_is_linear_in_alpha_minus_one": bool(
+                scaled_deltas
+                and len(scaled_deltas) == len(ordered)
+                and all(
+                    np.allclose(
+                        delta,
+                        scaled_deltas[0],
+                        rtol=1e-10,
+                        atol=1e-12,
+                    )
+                    for delta in scaled_deltas[1:]
+                )
+            ),
+        }
+        if not all(checks.values()):
+            group_failures.append(
+                {
+                    "paired_group_id": group_id,
+                    "dose_indexes": dose_indexes,
+                    "treatment_alphas": alphas,
+                    "delta_rms": rms_values,
+                    "checks": checks,
+                }
+            )
+
+    main_by_sample = {
+        str(row.get("sample_id", "")): row for row in main_rows
+    }
+    ablations_by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row_index, row in enumerate(ablation_rows):
+        sample_id = str(row.get("sample_id", ""))
+        source_id = str(row.get("input_ablation_source_sample_id", ""))
+        source = main_by_sample.get(source_id)
+        donor_id = str(row.get("donor_sample_id", ""))
+        donor = main_by_sample.get(donor_id)
+        target = _finite_matrix(row.get("target"))
+        row_covariate = (
+            None
+            if row.get("covariates") is None
+            else _finite_matrix(row.get("covariates"))
+        )
+        metadata = row.get("input_ablation_metadata")
+        contract = row.get("mandatory_input_ablation")
+        checks: dict[str, bool] = {
+            "schema_valid": bool(
+                row.get("schema_version") == STRUCTURAL_MASTER_SCHEMA
+                and row.get("input_ablation_schema_version")
+                == STRUCTURAL_ABLATION_SCHEMA
+            ),
+            "track_valid": bool(
+                row.get("benchmark_track")
+                == "real_anchored_counterfactual"
+                and row.get("evaluation_table")
+                == (
+                    "real_anchored_structural_sensitivity_input_ablation"
+                    if source is not None
+                    and source.get("evaluation_table")
+                    == "real_anchored_structural_sensitivity"
+                    else "real_anchored_input_ablation"
+                )
+            ),
+            "source_main_exists": source is not None,
+            "frozen_treatment_grid_exact": bool(
+                isinstance(row.get("intensity_calibration"), dict)
+                and row["intensity_calibration"].get("selected_alphas")
+                == list(STRUCTURAL_ALPHAS)
+                and isinstance(row.get("dose_index"), int)
+                and 1
+                <= int(row["dose_index"])
+                <= len(STRUCTURAL_ALPHAS)
+            ),
+            "excluded_from_primary_score": bool(
+                row.get("excluded_from_primary_score") is True
+                and isinstance(metadata, dict)
+                and metadata.get("excluded_from_primary_score") is True
+                and metadata.get(
+                    "reported_as_separate_attribution_audit"
+                )
+                is True
+            ),
+        }
+        if source is not None:
+            source_target = targets.get(source_id)
+            source_covariate = covariates.get(source_id)
+            assessed = (
+                [int(value) for value in contract["assessed_target_indices"]]
+                if isinstance(contract, dict)
+                and isinstance(contract.get("assessed_target_indices"), list)
+                else []
+            )
+            ablated = (
+                [int(value) for value in contract["ablated_input_indices"]]
+                if isinstance(contract, dict)
+                and isinstance(contract.get("ablated_input_indices"), list)
+                else []
+            )
+            unchanged = [
+                index
+                for index in range(int(source.get("target_dim", 0)))
+                if index not in ablated
+            ]
+            arrays_valid = bool(
+                source_target is not None
+                and target is not None
+                and source_target.shape == target.shape
+            )
+            context = protocol.REAL_ANCHORED_CONTEXT_LENGTH
+            donor_background_id = str(row.get("donor_background_id", ""))
+            donor_seed_index = row.get("donor_seed_index")
+            expected_donor_sample_id = (
+                f"cafe_structural_cf__"
+                f"{protocol.safe_id(str(source['dataset_id']))}__"
+                f"{source['capability_id']}__"
+                f"{protocol.safe_id(donor_background_id)}__"
+                f"a{source['dose_index']}__m"
+                f"{source['counterfactual_member']}"
+            )
+            donor_history_payload = (
+                metadata.get("donor_visible_history_by_channel")
+                if isinstance(metadata, dict)
+                else None
+            )
+            affine_payload = (
+                metadata.get("affine_match_by_channel")
+                if isinstance(metadata, dict)
+                else None
+            )
+            expected_channel_keys = {str(channel) for channel in ablated}
+            donor_channels_valid = bool(
+                isinstance(donor_history_payload, dict)
+                and set(donor_history_payload) == expected_channel_keys
+            )
+            donor_channel_arrays: dict[int, np.ndarray] = {}
+            if donor_channels_valid:
+                for channel in ablated:
+                    try:
+                        donor_channel = np.asarray(
+                            donor_history_payload[str(channel)],
+                            dtype=float,
+                        )
+                    except (TypeError, ValueError):
+                        donor_channels_valid = False
+                        break
+                    if (
+                        donor_channel.shape != (context,)
+                        or not np.isfinite(donor_channel).all()
+                    ):
+                        donor_channels_valid = False
+                        break
+                    donor_channel_arrays[channel] = donor_channel
+            donor_matrix = (
+                np.column_stack(
+                    [donor_channel_arrays[channel] for channel in ablated]
+                )
+                if donor_channels_valid and ablated
+                else None
+            )
+            committed_entry = (
+                None
+                if donor_commitment_entries is None
+                else donor_commitment_entries.get(donor_id)
+            )
+            committed_channels = (
+                committed_entry.get("visible_history_by_channel_sha256")
+                if isinstance(committed_entry, dict)
+                else None
+            )
+            upstream_metadata = (
+                metadata.get("donor_upstream_commitment")
+                if isinstance(metadata, dict)
+                else None
+            )
+            upstream_commitment_valid = bool(
+                isinstance(committed_entry, dict)
+                and isinstance(committed_channels, dict)
+                and donor_matrix is not None
+                and isinstance(upstream_metadata, dict)
+                and _is_sha256(donor_commitment_root_sha256)
+                and row.get("structural_donor_commitment_root_sha256")
+                == donor_commitment_root_sha256
+                and row.get("donor_structural_commitment_entry_sha256")
+                == committed_entry.get("entry_sha256")
+                and upstream_metadata.get("manifest_schema_version")
+                == STRUCTURAL_DONOR_COMMITMENT_SCHEMA
+                and upstream_metadata.get("commitment_policy")
+                == STRUCTURAL_DONOR_COMMITMENT_POLICY
+                and upstream_metadata.get("commitment_root_sha256")
+                == donor_commitment_root_sha256
+                and upstream_metadata.get("entry_sha256")
+                == committed_entry.get("entry_sha256")
+                and committed_entry.get("sample_id") == donor_id
+                and committed_entry.get("dataset_id")
+                == source.get("dataset_id")
+                and committed_entry.get("background_id")
+                == donor_background_id
+                and committed_entry.get("capability_id")
+                == source.get("capability_id")
+                and committed_entry.get("dose_index")
+                == source.get("dose_index")
+                and committed_entry.get("counterfactual_member")
+                == source.get("counterfactual_member")
+                and committed_entry.get("evaluation_table")
+                == source.get("evaluation_table")
+                and committed_entry.get("seed_index") == donor_seed_index
+                and committed_entry.get("target_dim")
+                == source.get("target_dim")
+                and committed_entry.get("context_length") == context
+                and committed_successor_by_sample.get(source_id) == donor_id
+                and (
+                    donor is None
+                    or committed_entry.get("source_contract_sha256")
+                    == donor.get("generation_metadata", {}).get(
+                        "contract_sha256"
+                    )
+                )
+                and committed_entry.get(
+                    "source_structural_background_target_sha256"
+                )
+                == (
+                    donor.get("source_structural_background_target_sha256")
+                    if donor is not None
+                    else committed_entry.get(
+                        "source_structural_background_target_sha256"
+                    )
+                )
+                and all(
+                    committed_channels.get(str(channel))
+                    == array_sha256(donor_channel_arrays[channel])
+                    for channel in ablated
+                )
+            )
+            affine_statistics_valid = bool(
+                isinstance(affine_payload, dict)
+                and set(affine_payload) == expected_channel_keys
+                and arrays_valid
+                and donor_channels_valid
+            )
+            affine_replacement_valid = affine_statistics_valid
+            if affine_statistics_valid:
+                assert source_target is not None
+                assert target is not None
+                for channel in ablated:
+                    statistics = affine_payload.get(str(channel))
+                    if not isinstance(statistics, dict):
+                        affine_statistics_valid = False
+                        affine_replacement_valid = False
+                        break
+                    donor_channel = donor_channel_arrays[channel]
+                    recipient_channel = source_target[:context, channel]
+                    donor_center = float(np.mean(donor_channel))
+                    donor_scale = max(float(np.std(donor_channel)), 1e-9)
+                    recipient_center = float(np.mean(recipient_channel))
+                    recipient_scale = max(
+                        float(np.std(recipient_channel)),
+                        1e-9,
+                    )
+                    statistics_valid = all(
+                        _finite_float(statistics.get(key))
+                        and math.isclose(
+                            float(statistics[key]),
+                            expected,
+                            rel_tol=1e-12,
+                            abs_tol=1e-12,
+                        )
+                        for key, expected in (
+                            ("donor_center", donor_center),
+                            ("donor_scale", donor_scale),
+                            ("recipient_center", recipient_center),
+                            ("recipient_scale", recipient_scale),
+                        )
+                    )
+                    affine_statistics_valid = bool(
+                        affine_statistics_valid and statistics_valid
+                    )
+                    expected_replacement = (
+                        (donor_channel - donor_center)
+                        / donor_scale
+                        * recipient_scale
+                        + recipient_center
+                    )
+                    affine_replacement_valid = bool(
+                        affine_replacement_valid
+                        and np.allclose(
+                            target[:context, channel],
+                            expected_replacement,
+                            rtol=1e-12,
+                            atol=1e-12,
+                        )
+                    )
+            donor_provenance_valid = bool(
+                isinstance(metadata, dict)
+                and metadata.get("donor_selection_policy")
+                == (
+                    "global_eligible_background_successor_"
+                    "shard_invariant_v1"
+                )
+                and donor_matrix is not None
+                and metadata.get("donor_visible_history_sha256")
+                == array_sha256(donor_matrix)
+                and affine_statistics_valid
+                and affine_replacement_valid
+                and arrays_valid
+                and ablated
+                and metadata.get("ablated_visible_history_sha256")
+                == array_sha256(target[:context, ablated])
+                and donor_background_id
+                and donor_background_id != source.get("background_id")
+                and isinstance(donor_seed_index, int)
+                and donor_seed_index >= 0
+                and donor_seed_index != source.get("seed_index")
+                and donor_id == expected_donor_sample_id
+                and upstream_commitment_valid
+            )
+            checks.update(
+                {
+                    "source_binding_exact": bool(
+                        row.get("input_ablation_source_pair_id")
+                        == source.get("counterfactual_pair_id")
+                        and row.get("input_ablation_source_paired_group_id")
+                        == source.get("paired_group_id")
+                        and row.get("counterfactual_pair_id")
+                        == f"{source['counterfactual_pair_id']}__input_ablation"
+                        and row.get("paired_group_id")
+                        == f"{source['paired_group_id']}__input_ablation"
+                        and row.get("counterfactual_member")
+                        == source.get("counterfactual_member")
+                        and row.get("evaluation_table")
+                        == (
+                            "real_anchored_structural_sensitivity_"
+                            "input_ablation"
+                            if source.get("evaluation_table")
+                            == "real_anchored_structural_sensitivity"
+                            else "real_anchored_input_ablation"
+                        )
+                    ),
+                    "sample_identity_valid": bool(
+                        sample_id == f"{source_id}__input_ablation"
+                        and row.get("master_sample_id") == sample_id
+                        and row.get("baseline_sample_id")
+                        == f"{source['baseline_sample_id']}__input_ablation"
+                    ),
+                    "source_fields_shared": all(
+                        row.get(field) == source.get(field)
+                        for field in (
+                            "dataset_id",
+                            "capability_id",
+                            "seed_index",
+                            "dose_index",
+                            "intensity",
+                            "dose_value",
+                            "background_id",
+                            "anchor_id",
+                            "target_dim",
+                            "covariate_dim",
+                            "mase_scale",
+                            "mase_scale_by_target",
+                            "shared_standardization",
+                            "intensity_calibration",
+                        )
+                    ),
+                    "mandatory_contract_shared": bool(
+                        isinstance(contract, dict)
+                        and contract == source.get("mandatory_input_ablation")
+                        and contract.get("required") is True
+                    ),
+                    "metadata_contract_valid": bool(
+                        isinstance(metadata, dict)
+                        and metadata.get("assessed_target_indices") == assessed
+                        and metadata.get("ablated_input_indices") == ablated
+                        and metadata.get(
+                            "assessed_target_history_unchanged"
+                        )
+                        is True
+                        and metadata.get("scored_future_unchanged") is True
+                    ),
+                    "donor_payload_valid": bool(
+                        donor_channels_valid and donor_matrix is not None
+                    ),
+                    "affine_statistics_valid": affine_statistics_valid,
+                    "affine_replacement_valid": affine_replacement_valid,
+                    "donor_provenance_valid": donor_provenance_valid,
+                    "donor_upstream_commitment_valid": (
+                        upstream_commitment_valid
+                    ),
+                    "target_arrays_valid": arrays_valid,
+                    "assessed_history_unchanged": bool(
+                        arrays_valid
+                        and assessed
+                        and np.array_equal(
+                            target[:context, assessed],
+                            source_target[:context, assessed],
+                        )
+                    ),
+                    "all_nonablated_history_unchanged": bool(
+                        arrays_valid
+                        and np.array_equal(
+                            target[:context, unchanged],
+                            source_target[:context, unchanged],
+                        )
+                    ),
+                    "ablated_history_changed": bool(
+                        arrays_valid
+                        and ablated
+                        and not np.array_equal(
+                            target[:context, ablated],
+                            source_target[:context, ablated],
+                        )
+                    ),
+                    "future_truth_unchanged": bool(
+                        arrays_valid
+                        and np.array_equal(
+                            target[context:],
+                            source_target[context:],
+                        )
+                    ),
+                    "covariates_unchanged": bool(
+                        (source_covariate is None and row_covariate is None)
+                        or (
+                            source_covariate is not None
+                            and row_covariate is not None
+                            and np.array_equal(
+                                row_covariate,
+                                source_covariate,
+                            )
+                        )
+                    ),
+                    "target_hash_matches": bool(
+                        arrays_valid
+                        and row.get("target_sha256")
+                        == protocol.target_and_covariate_sha256(
+                            target,
+                            row_covariate,
+                        )
+                    ),
+                    "future_hash_matches_source": bool(
+                        arrays_valid
+                        and row.get("future_sha256")
+                        == source.get("future_sha256")
+                        == array_sha256(target[context:])
+                    ),
+                }
+            )
+        if source is not None and donor is not None:
+            donor_target = targets.get(donor_id)
+            checks["donor_in_shard_contract_valid"] = bool(
+                donor_id != source_id
+                and donor.get("background_id")
+                == row.get("donor_background_id")
+                and donor.get("seed_index") == row.get("donor_seed_index")
+                and donor.get("background_id") != source.get("background_id")
+                and all(
+                    donor.get(field) == source.get(field)
+                    for field in (
+                        "dataset_id",
+                        "capability_id",
+                        "dose_index",
+                            "counterfactual_member",
+                            "target_dim",
+                            "evaluation_table",
+                        )
+                )
+                and donor_target is not None
+                and isinstance(metadata, dict)
+                and donor_matrix is not None
+                and np.array_equal(
+                    donor_matrix,
+                    donor_target[
+                        : protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+                        ablated,
+                    ],
+                )
+                and metadata.get("donor_visible_history_sha256")
+                == array_sha256(
+                    donor_target[
+                        : protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+                        ablated,
+                    ]
+                )
+            )
+        if not all(checks.values()):
+            ablation_failures.append(
+                {
+                    "row_index": row_index,
+                    "sample_id": sample_id,
+                    "source_sample_id": source_id,
+                    "checks": checks,
+                }
+            )
+        if source_id:
+            ablations_by_source[source_id].append(row)
+
+    coverage_failures: list[dict[str, Any]] = []
+    for sample_id, source in sorted(main_by_sample.items()):
+        expected = source.get("capability_id") in mandatory_ablation_capabilities
+        matched = ablations_by_source.get(sample_id, [])
+        if (expected and len(matched) != 1) or (not expected and matched):
+            coverage_failures.append(
+                {
+                    "source_sample_id": sample_id,
+                    "capability_id": source.get("capability_id"),
+                    "expected_ablation_count": 1 if expected else 0,
+                    "observed_ablation_count": len(matched),
+                }
+            )
+    unknown_sources = sorted(
+        source_id
+        for source_id in ablations_by_source
+        if source_id not in main_by_sample
+    )
+    for source_id in unknown_sources:
+        coverage_failures.append(
+            {
+                "source_sample_id": source_id,
+                "capability_id": None,
+                "expected_ablation_count": 0,
+                "observed_ablation_count": len(
+                    ablations_by_source[source_id]
+                ),
+            }
+        )
+
+    ablation_pair_failures: list[dict[str, Any]] = []
+    ablation_by_pair: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in ablation_rows:
+        ablation_by_pair[str(row.get("counterfactual_pair_id", ""))].append(row)
+    for pair_id, pair_rows in sorted(ablation_by_pair.items()):
+        members = [row.get("counterfactual_member") for row in pair_rows]
+        source_pairs = {
+            str(row.get("input_ablation_source_pair_id", ""))
+            for row in pair_rows
+        }
+        checks = {
+            "exactly_two_members": bool(
+                len(pair_rows) == 2
+                and members.count(0) == 1
+                and members.count(1) == 1
+            ),
+            "one_source_main_pair": bool(
+                len(source_pairs) == 1 and "" not in source_pairs
+            ),
+            "pair_id_bound_to_source": bool(
+                len(source_pairs) == 1
+                and pair_id
+                == f"{next(iter(source_pairs))}__input_ablation"
+            ),
+        }
+        if not all(checks.values()):
+            ablation_pair_failures.append(
+                {
+                    "counterfactual_pair_id": pair_id,
+                    "checks": checks,
+                }
+            )
+
+    background_groups: dict[tuple[str, str, str, str], set[str]] = defaultdict(
+        set
+    )
+    seed_backgrounds: dict[tuple[str, str, int, str], set[str]] = defaultdict(
+        set
+    )
+    for group_id, group_rows in by_group.items():
+        if not group_rows:
+            continue
+        first = group_rows[0]
+        try:
+            key = (
+                str(first["dataset_id"]),
+                str(first["capability_id"]),
+                str(first["background_id"]),
+                str(first["evaluation_table"]),
+            )
+            seed_key = (
+                str(first["dataset_id"]),
+                str(first["capability_id"]),
+                int(first["seed_index"]),
+                str(first["evaluation_table"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+        background_groups[key].add(group_id)
+        seed_backgrounds[seed_key].add(key[2])
+    repeated_background_failures = [
+        {
+            "dataset_id": key[0],
+            "capability_id": key[1],
+            "background_id": key[2],
+            "evaluation_table": key[3],
+            "paired_group_ids": sorted(group_ids),
+        }
+        for key, group_ids in sorted(background_groups.items())
+        if len(group_ids) > 1
+    ]
+    seed_assignment_failures = [
+        {
+            "dataset_id": key[0],
+            "capability_id": key[1],
+            "seed_index": key[2],
+            "evaluation_table": key[3],
+            "background_ids": sorted(background_ids),
+        }
+        for key, background_ids in sorted(seed_backgrounds.items())
+        if len(background_ids) > 1
+    ]
+    formal_rows = [
+        row
+        for row in main_rows
+        if row.get("evaluation_table")
+        != "real_anchored_structural_sensitivity"
+    ]
+    sensitivity_rows = [
+        row
+        for row in main_rows
+        if row.get("evaluation_table")
+        == "real_anchored_structural_sensitivity"
+    ]
+    upstream_replay_coverage_failures = [
+        *_upstream_replay_coverage_failures(
+            formal_rows,
+            expected_replay_rows,
+        ),
+        *_upstream_replay_coverage_failures(
+            sensitivity_rows,
+            expected_sensitivity_replay_rows,
+        ),
+    ]
+    accepted = not any(
+        (
+            row_failures,
+            pair_failures,
+            group_failures,
+            ablation_failures,
+            coverage_failures,
+            ablation_pair_failures,
+            repeated_background_failures,
+            seed_assignment_failures,
+            upstream_replay_coverage_failures,
+        )
+    )
+    return {
+        "accepted": accepted,
+        "main_sample_count": len(main_rows),
+        "formal_main_sample_count": len(formal_rows),
+        "sensitivity_main_sample_count": len(sensitivity_rows),
+        "input_ablation_sample_count": len(ablation_rows),
+        "main_pair_count": len(by_pair),
+        "input_ablation_pair_count": len(ablation_by_pair),
+        "paired_group_count": len(by_group),
+        "row_failures": row_failures,
+        "pair_failures": pair_failures,
+        "paired_group_failures": group_failures,
+        "input_ablation_failures": ablation_failures,
+        "input_ablation_coverage_failures": coverage_failures,
+        "input_ablation_pair_failures": ablation_pair_failures,
+        "repeated_background_failures": repeated_background_failures,
+        "seed_assignment_failures": seed_assignment_failures,
+        "upstream_replay_coverage_failures": (
+            upstream_replay_coverage_failures
+        ),
+        "effective_background_count_by_capability": {
+            capability_id: len(
+                {
+                    str(row.get("background_id", ""))
+                    for row in formal_rows
+                    if row.get("capability_id") == capability_id
+                }
+            )
+            for capability_id in sorted(
+                {
+                    str(row.get("capability_id", ""))
+                    for row in formal_rows
+                    if row.get("capability_id")
+                }
+            )
+        },
+        "sensitivity_background_count_by_capability": {
+            capability_id: len(
+                {
+                    str(row.get("background_id", ""))
+                    for row in sensitivity_rows
+                    if row.get("capability_id") == capability_id
+                }
+            )
+            for capability_id in sorted(
+                {
+                    str(row.get("capability_id", ""))
+                    for row in sensitivity_rows
+                    if row.get("capability_id")
+                }
+            )
+        },
+    }
+
+
+def real_anchored_counterfactual_checks(
+    rows: list[dict[str, Any]],
+    *,
+    expected_row_count: int | None = None,
+    donor_commitment_entries: dict[str, dict[str, Any]] | None = None,
+    donor_commitment_root_sha256: str | None = None,
+    upstream_replay_evidence: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate v3 real-path rows while retaining the v1/v2 univariate track."""
+
+    univariate_rows: list[dict[str, Any]] = []
+    nonlinear_replay_rows: list[dict[str, Any]] = []
+    structural_main_rows: list[dict[str, Any]] = []
+    structural_ablation_rows: list[dict[str, Any]] = []
+    routing_failures: list[dict[str, Any]] = []
+    hierarchy_rows: list[str] = []
+    undersized_formal_panel_rows: list[str] = []
+    for row_index, row in enumerate(rows):
+        sample_id = str(row.get("sample_id", ""))
+        capability_id = str(row.get("capability_id", ""))
+        evaluation_table = row.get("evaluation_table")
+        if capability_id == "hierarchical_coherence":
+            hierarchy_rows.append(sample_id)
+        if (
+            evaluation_table
+            == "real_anchored_nonlinear_replay_sensitivity"
+        ):
+            nonlinear_replay_rows.append(row)
+            continue
+        if evaluation_table == "real_anchored_input_ablation" or row.get(
+            "input_ablation_schema_version"
+        ) is not None:
+            structural_ablation_rows.append(row)
+            continue
+        structural = bool(
+            row.get("schema_version") == STRUCTURAL_MASTER_SCHEMA
+            or row.get("generator_family_role") == "real_anchored_structural"
+        )
+        if structural:
+            structural_main_rows.append(row)
+            if (
+                evaluation_table == "real_anchored_counterfactual"
+                and capability_id
+                in {"common_factor", "cross_series_dependence"}
+                and isinstance(row.get("target_dim"), int)
+                and int(row["target_dim"])
+                < FORMAL_PANEL_MINIMUM_DIMENSION
+            ):
+                undersized_formal_panel_rows.append(sample_id)
+            continue
+        schema = row.get("schema_version")
+        legacy = schema == "cafe.real_anchored_counterfactual_master.v1"
+        evaluation_valid = bool(
+            evaluation_table == "real_anchored_counterfactual"
+            or legacy and evaluation_table in {None, "main"}
+        )
+        role_valid = row.get("generator_family_role") == "real_anchored"
+        if not evaluation_valid or not role_valid:
+            routing_failures.append(
+                {
+                    "row_index": row_index,
+                    "sample_id": sample_id,
+                    "checks": {
+                        "main_evaluation_table_valid": evaluation_valid,
+                        "generator_family_role_valid": role_valid,
+                    },
+                }
+            )
+        univariate_rows.append(row)
+
+    univariate_expected = (
+        upstream_replay_evidence.get("univariate_expected_rows")
+        if isinstance(upstream_replay_evidence, dict)
+        else None
+    )
+    structural_expected = (
+        upstream_replay_evidence.get("structural_expected_rows")
+        if isinstance(upstream_replay_evidence, dict)
+        else None
+    )
+    structural_sensitivity_expected = (
+        upstream_replay_evidence.get(
+            "structural_sensitivity_expected_rows"
+        )
+        if isinstance(upstream_replay_evidence, dict)
+        else None
+    )
+    nonlinear_replay_expected = (
+        upstream_replay_evidence.get("nonlinear_replay_expected_rows")
+        if isinstance(upstream_replay_evidence, dict)
+        else None
+    )
+    univariate = _univariate_real_anchored_counterfactual_checks(
+        univariate_rows,
+        expected_replay_rows=(
+            univariate_expected
+            if isinstance(univariate_expected, dict)
+            else None
+        ),
+    )
+    nonlinear_replay = _nonlinear_replay_sensitivity_checks(
+        nonlinear_replay_rows,
+        source_main_rows=univariate_rows,
+        expected_replay_rows=(
+            nonlinear_replay_expected
+            if isinstance(nonlinear_replay_expected, dict)
+            else None
+        ),
+    )
+    structural = _structural_real_anchored_checks(
+        structural_main_rows,
+        structural_ablation_rows,
+        donor_commitment_entries=donor_commitment_entries,
+        donor_commitment_root_sha256=donor_commitment_root_sha256,
+        expected_replay_rows=(
+            structural_expected
+            if isinstance(structural_expected, dict)
+            else None
+        ),
+        expected_sensitivity_replay_rows=(
+            structural_sensitivity_expected
+            if isinstance(structural_sensitivity_expected, dict)
+            else None
+        ),
+    )
+    sample_ids = [str(row.get("sample_id", "")) for row in rows]
+    master_ids = [str(row.get("master_sample_id", "")) for row in rows]
+    duplicate_sample_ids = sorted(
+        identifier
+        for identifier, count in Counter(sample_ids).items()
+        if identifier and count > 1
+    )
+    duplicate_master_ids = sorted(
+        identifier
+        for identifier, count in Counter(master_ids).items()
+        if identifier and count > 1
+    )
+    manifest_row_count_matches = bool(
+        expected_row_count is None or expected_row_count == len(rows)
+    )
+    policy_failures: list[dict[str, Any]] = []
+    if hierarchy_rows:
+        policy_failures.append(
+            {
+                "policy": "hierarchy_qualification_only_no_formal_rows",
+                "sample_ids": sorted(hierarchy_rows),
+            }
+        )
+    if undersized_formal_panel_rows:
+        policy_failures.append(
+            {
+                "policy": "formal_panel_dimension_at_least_three",
+                "capabilities": [
+                    "common_factor",
+                    "cross_series_dependence",
+                ],
+                "sample_ids": sorted(undersized_formal_panel_rows),
+            }
+        )
+    row_failures = [
+        *univariate["row_failures"],
+        *nonlinear_replay["row_failures"],
+        *structural["row_failures"],
+        *routing_failures,
+    ]
+    pair_failures = [
+        *univariate["pair_failures"],
+        *nonlinear_replay["pair_failures"],
+        *structural["pair_failures"],
+    ]
+    group_failures = [
+        *univariate["paired_group_failures"],
+        *nonlinear_replay["paired_group_failures"],
+        *structural["paired_group_failures"],
+    ]
+    repeated_background_failures = [
+        *univariate["repeated_background_failures"],
+        *structural["repeated_background_failures"],
+    ]
+    seed_assignment_failures = [
+        *univariate["seed_assignment_failures"],
+        *structural["seed_assignment_failures"],
+    ]
+    accepted = bool(
+        manifest_row_count_matches
+        and not duplicate_sample_ids
+        and not duplicate_master_ids
+        and not policy_failures
+        and univariate["accepted"]
+        and nonlinear_replay["accepted"]
+        and structural["accepted"]
+        and not routing_failures
+    )
+    effective_backgrounds = dict(
+        univariate["effective_background_count_by_capability"]
+    )
+    effective_backgrounds.update(
+        structural["effective_background_count_by_capability"]
+    )
+    return {
+        "schema_version": "cafe.real_anchored_validation.v3",
+        "status": "evaluated",
+        "accepted": accepted,
+        "sample_count": len(rows),
+        "pair_count": len(
+            {
+                str(row.get("counterfactual_pair_id", ""))
+                for row in rows
+                if row.get("counterfactual_pair_id")
+            }
+        ),
+        "paired_group_count": len(
+            {
+                str(row.get("paired_group_id", ""))
+                for row in rows
+                if row.get("paired_group_id")
+            }
+        ),
+        "univariate_sample_count": len(univariate_rows),
+        "nonlinear_replay_sensitivity_sample_count": len(
+            nonlinear_replay_rows
+        ),
+        "structural_main_sample_count": sum(
+            row.get("evaluation_table")
+            == "real_anchored_counterfactual"
+            for row in structural_main_rows
+        ),
+        "structural_sensitivity_sample_count": sum(
+            row.get("evaluation_table")
+            == "real_anchored_structural_sensitivity"
+            for row in structural_main_rows
+        ),
+        "structural_input_ablation_sample_count": len(
+            structural_ablation_rows
+        ),
+        "expected_manifest_row_count": expected_row_count,
+        "manifest_row_count_matches": manifest_row_count_matches,
+        "duplicate_sample_ids": duplicate_sample_ids,
+        "duplicate_master_sample_ids": duplicate_master_ids,
+        "row_failures": row_failures,
+        "pair_failures": pair_failures,
+        "paired_group_failures": group_failures,
+        "policy_failures": policy_failures,
+        "input_ablation_failures": structural[
+            "input_ablation_failures"
+        ],
+        "input_ablation_coverage_failures": structural[
+            "input_ablation_coverage_failures"
+        ],
+        "input_ablation_pair_failures": structural[
+            "input_ablation_pair_failures"
+        ],
+        "repeated_background_failures": repeated_background_failures,
+        "seed_assignment_failures": seed_assignment_failures,
+        "upstream_replay_coverage_failures": [
+            *univariate["upstream_replay_coverage_failures"],
+            *nonlinear_replay["upstream_replay_coverage_failures"],
+            *structural["upstream_replay_coverage_failures"],
+        ],
+        "effective_background_count_by_capability": effective_backgrounds,
+        "univariate_validation": univariate,
+        "nonlinear_replay_sensitivity_validation": nonlinear_replay,
+        "structural_validation": structural,
+        "background_sampling_policy": (
+            "unique_real_background_per_dataset_capability_main_rows_only"
+        ),
+        "intentional_duplicate_baseline_policy": (
+            "allowed_within_paired_group_across_alpha_doses_if_exact"
+        ),
+        "anti_copy_policy": (
+            "not_applicable_intentional_real_anchor_counterfactual"
+        ),
+        "hierarchy_policy": "qualification_only_formal_rows_rejected",
+        "formal_panel_dimension_policy": (
+            "common_and_cross_D>=3;D2_sensitivity_only;"
+            "covariate_response_D>=1_with_known_future_inputs"
+        ),
+        "structural_input_ablation_policy": (
+            "mandatory_for_common_and_cross_reported_separately_"
+            "excluded_from_primary_score"
+        ),
+    }
+
+
 def main() -> int:
     args = parse_args()
     dataset = protocol.resolve_dataset(args.dataset_id)
@@ -1121,6 +4478,35 @@ def main() -> int:
     )
     manifest_path = generation_dir / f"manifest__{shard_name}.json"
     manifest = protocol.read_json(manifest_path)
+    upstream_replay_evidence: dict[str, Any] = {}
+    validated_config = validate_generation_manifest_contract(
+        manifest,
+        manifest_path=manifest_path,
+        calibration_dir=generation_dir.parent / "01_calibration",
+        dataset_id=dataset.dataset_id,
+        seed_start=args.seed_start,
+        seed_count=args.seed_count,
+        replay_evidence_out=upstream_replay_evidence,
+    )
+    real_config = validated_config.get("real_anchored_counterfactual", {})
+    donor_declaration = (
+        real_config.get("structural_donor_commitment")
+        if isinstance(real_config, dict)
+        else None
+    )
+    donor_commitment_entries: dict[str, dict[str, Any]] | None = None
+    donor_commitment_root_sha256: str | None = None
+    if isinstance(donor_declaration, dict):
+        donor_sidecar = protocol.read_json(
+            Path(manifest["files"]["structural_donor_commitments"]["path"])
+        )
+        donor_commitment_entries = {
+            str(entry["sample_id"]): entry
+            for entry in donor_sidecar["entries"]
+        }
+        donor_commitment_root_sha256 = str(
+            donor_sidecar["commitment_root_sha256"]
+        )
     for record in manifest["files"].values():
         validate_manifest_file(record)
     clean_rows = list(
@@ -1138,7 +4524,12 @@ def main() -> int:
     if real_anchored_record is None:
         real_anchored_rows: list[dict[str, Any]] = []
         real_anchored_validation = {
-            **real_anchored_counterfactual_checks(real_anchored_rows),
+            **real_anchored_counterfactual_checks(
+                real_anchored_rows,
+                upstream_replay_evidence=(
+                    upstream_replay_evidence or None
+                ),
+            ),
             "status": "not_present",
         }
     else:
@@ -1156,6 +4547,11 @@ def main() -> int:
         real_anchored_validation = real_anchored_counterfactual_checks(
             real_anchored_rows,
             expected_row_count=expected_real_anchored_count,
+            donor_commitment_entries=donor_commitment_entries,
+            donor_commitment_root_sha256=(
+                donor_commitment_root_sha256
+            ),
+            upstream_replay_evidence=(upstream_replay_evidence or None),
         )
         if expected_real_anchored_count is None:
             real_anchored_validation.update(

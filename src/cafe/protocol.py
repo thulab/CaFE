@@ -60,7 +60,7 @@ from cafe.features.primitives import (
 )
 
 
-SCHEMA_VERSION = "cafe.pipeline.v2"
+SCHEMA_VERSION = "cafe.pipeline.v3"
 REAL_CALIBRATION_CONTEXT_LENGTH = 168
 CONTEXT_LENGTH = 336
 HORIZON = 48

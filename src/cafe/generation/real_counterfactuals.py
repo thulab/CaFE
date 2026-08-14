@@ -18,34 +18,233 @@ import numpy as np
 
 from cafe import protocol
 from cafe.generation.anchored import (
+    ANCHORED_CONTRACT_SCHEMA,
     AnchoredDecompositionContract,
     apply_real_anchored_contract,
     fit_real_anchored_contract,
 )
+from cafe.generation.real_anchored_policy import (
+    MINIMUM_FORMAL_BACKGROUND_COUNT,
+    NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY,
+    QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+    REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+    TIME_VARYING_SEASONALITY_BASIS_POLICY,
+)
+from cafe.generation.real_path_dynamics import (
+    REAL_PATH_DYNAMIC_CAPABILITIES,
+    REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+    apply_real_path_dynamic_contract,
+    dynamic_qualification_provenance,
+    fit_real_path_dynamic_contract,
+    validate_real_path_dynamic_contract,
+)
 
 
-REAL_ANCHORED_GENERATOR_VERSION = "cafe.real_anchored_generator.v1"
+REAL_ANCHORED_GENERATOR_VERSION = "cafe.real_anchored_generator.v3"
 REAL_ANCHORED_BACKGROUND_SCHEMA = (
     "cafe.real_anchored_background_master.v1"
 )
 REAL_ANCHORED_MASTER_SCHEMA = (
-    "cafe.real_anchored_counterfactual_master.v1"
+    "cafe.real_anchored_counterfactual_master.v2"
 )
 REAL_ANCHORED_AVAILABILITY_SCHEMA = (
-    "cafe.real_anchored_availability.v1"
+    "cafe.real_anchored_availability.v2"
 )
 REAL_ANCHORED_SUPPORTED_CAPABILITIES = (
     "trend",
     "multi_seasonal",
     "time_varying_seasonality",
     "regime_switching",
+    "nonlinear_persistence",
+    "predictable_intermittency",
 )
 REAL_ANCHORED_ALPHAS = (1.2, 1.4, 1.6, 1.8, 2.0)
 REAL_ANCHORED_MINIMUM_CYCLES = 3.0
 REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO = 0.01
+REAL_ANCHORED_MINIMUM_VISIBLE_COMPONENT_RMS_RATIO = 0.01
 REAL_ANCHORED_MINIMUM_FUTURE_COMPONENT_RMS_RATIO = 0.01
-REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS = 4
+REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS = (
+    MINIMUM_FORMAL_BACKGROUND_COUNT
+)
 REAL_ANCHORED_FIT_WINDOW = protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+REAL_ANCHORED_VISIBLE_CONTEXT_LENGTH = protocol.FIXED_CONTEXT_LENGTH
+
+REAL_ANCHORED_MAXIMUM_SECONDARY_PERIODS = 2
+REAL_ANCHORED_MINIMUM_SECONDARY_POWER_SHARE = 0.01
+REAL_ANCHORED_MINIMUM_CARRIER_RMS_RATIO = 0.10
+REAL_ANCHORED_MINIMUM_CARRIER_POWER_SHARE = 0.01
+REAL_ANCHORED_MINIMUM_AMPLITUDE_CV = 0.05
+REAL_ANCHORED_MINIMUM_ENVELOPE_POWER_SHARE = 0.10
+REAL_ANCHORED_MINIMUM_MODULATION_CARRIER_STRENGTH = 0.10
+REAL_ANCHORED_REGIME_MINIMUM_SEGMENT_LENGTH = 24
+REAL_ANCHORED_REGIME_LOCAL_COMPARISON_LENGTH = 72
+REAL_ANCHORED_REGIME_MINIMUM_STANDARDIZED_JUMP = 0.35
+REAL_ANCHORED_REGIME_MINIMUM_LOCAL_SSE_REDUCTION = 0.05
+REAL_ANCHORED_REGIME_MINIMUM_STEP_OVER_RAMP_ADVANTAGE = 0.01
+REAL_ANCHORED_REGIME_STABILITY_SCORE_FRACTION = 0.95
+REAL_ANCHORED_REGIME_MAXIMUM_JOIN_STABILITY_WIDTH = 12
+REAL_ANCHORED_FOUR_CAPABILITY_QUALIFICATION_POLICY_ID = (
+    "cafe.real_anchored.decomposition_four.reference.v3"
+)
+
+
+DEFAULT_FOUR_CAPABILITY_QUALIFICATION_THRESHOLDS: dict[
+    str, dict[str, float | int]
+] = {
+    "trend": {},
+    "multi_seasonal": {},
+    "time_varying_seasonality": {},
+    "regime_switching": {},
+}
+
+_SHARED_FOUR_CAPABILITY_THRESHOLDS: dict[str, float | int] = {
+    "minimum_cycles": REAL_ANCHORED_MINIMUM_CYCLES,
+    "minimum_carrier_rms_ratio": REAL_ANCHORED_MINIMUM_CARRIER_RMS_RATIO,
+    "minimum_carrier_power_share": (
+        REAL_ANCHORED_MINIMUM_CARRIER_POWER_SHARE
+    ),
+    "maximum_secondary_periods": REAL_ANCHORED_MAXIMUM_SECONDARY_PERIODS,
+    "minimum_secondary_power_share": (
+        REAL_ANCHORED_MINIMUM_SECONDARY_POWER_SHARE
+    ),
+    "minimum_amplitude_cv": REAL_ANCHORED_MINIMUM_AMPLITUDE_CV,
+    "minimum_envelope_power_share": (
+        REAL_ANCHORED_MINIMUM_ENVELOPE_POWER_SHARE
+    ),
+    "minimum_modulation_carrier_strength": (
+        REAL_ANCHORED_MINIMUM_MODULATION_CARRIER_STRENGTH
+    ),
+    "minimum_regime_segment_length": (
+        REAL_ANCHORED_REGIME_MINIMUM_SEGMENT_LENGTH
+    ),
+    "regime_local_comparison_length": (
+        REAL_ANCHORED_REGIME_LOCAL_COMPARISON_LENGTH
+    ),
+    "minimum_standardized_jump": (
+        REAL_ANCHORED_REGIME_MINIMUM_STANDARDIZED_JUMP
+    ),
+    "minimum_local_sse_reduction": (
+        REAL_ANCHORED_REGIME_MINIMUM_LOCAL_SSE_REDUCTION
+    ),
+    "minimum_step_over_ramp_advantage": (
+        REAL_ANCHORED_REGIME_MINIMUM_STEP_OVER_RAMP_ADVANTAGE
+    ),
+    "regime_stability_score_fraction": (
+        REAL_ANCHORED_REGIME_STABILITY_SCORE_FRACTION
+    ),
+    "maximum_join_stability_width": (
+        REAL_ANCHORED_REGIME_MAXIMUM_JOIN_STABILITY_WIDTH
+    ),
+    "minimum_component_rms_ratio": (
+        REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO
+    ),
+    "minimum_visible_component_rms_ratio": (
+        REAL_ANCHORED_MINIMUM_VISIBLE_COMPONENT_RMS_RATIO
+    ),
+    "minimum_future_component_rms_ratio": (
+        REAL_ANCHORED_MINIMUM_FUTURE_COMPONENT_RMS_RATIO
+    ),
+    "visible_context_length": REAL_ANCHORED_VISIBLE_CONTEXT_LENGTH,
+    "fit_window": REAL_ANCHORED_FIT_WINDOW,
+    "trend_window": 96,
+    "trend_degree": 2,
+    "harmonics_per_period": 1,
+}
+
+
+def default_four_capability_qualification_policy() -> dict[str, Any]:
+    """Return the predeclared four-capability qualification thresholds."""
+
+    thresholds = {
+        capability_id: {
+            **_SHARED_FOUR_CAPABILITY_THRESHOLDS,
+            **specific,
+        }
+        for capability_id, specific in (
+            DEFAULT_FOUR_CAPABILITY_QUALIFICATION_THRESHOLDS.items()
+        )
+    }
+    payload: dict[str, Any] = {
+        "schema_version": REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+        "qualification_policy_id": (
+            REAL_ANCHORED_FOUR_CAPABILITY_QUALIFICATION_POLICY_ID
+        ),
+        "threshold_source": QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+        "qualification_thresholds": thresholds,
+        "threshold_derivation": (
+            "frozen_protocol_defaults_pending_or_replaced_by_"
+            "disjoint_reference_bank"
+        ),
+    }
+    payload["qualification_policy_sha256"] = protocol.json_sha256(payload)
+    return payload
+
+
+def _four_capability_qualification(
+    capability_id: str,
+    qualification_policy: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, float | int]]:
+    policy = (
+        default_four_capability_qualification_policy()
+        if qualification_policy is None
+        else dict(qualification_policy)
+    )
+    if policy.get("schema_version") != REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA:
+        raise ValueError("unsupported real-anchored qualification policy schema")
+    threshold_source = policy.get(
+        "threshold_source_policy",
+        policy.get("threshold_source"),
+    )
+    if threshold_source != QUALIFICATION_THRESHOLD_SOURCE_POLICY:
+        raise ValueError(
+            "qualification thresholds must come from the independent "
+            "source-time-disjoint reference bank"
+        )
+    frozen_capabilities = policy.get("capabilities")
+    if isinstance(frozen_capabilities, Mapping):
+        capability_policy = frozen_capabilities.get(capability_id)
+        if not isinstance(capability_policy, Mapping):
+            raise ValueError(
+                f"frozen qualification policy has no {capability_id} cell"
+            )
+        policy_id = capability_policy.get("qualification_policy_id")
+        raw_thresholds = capability_policy.get("qualification_thresholds")
+    else:
+        policy_id = policy.get("qualification_policy_id")
+        all_thresholds = policy.get("qualification_thresholds")
+        if not isinstance(all_thresholds, Mapping):
+            raise ValueError("qualification policy is missing threshold mappings")
+        raw_thresholds = all_thresholds.get(capability_id)
+    if not isinstance(policy_id, str) or not policy_id:
+        raise ValueError("qualification policy requires a stable non-empty id")
+    if not isinstance(raw_thresholds, Mapping):
+        raise ValueError(
+            f"qualification policy has no thresholds for {capability_id}"
+        )
+    defaults = {
+        **_SHARED_FOUR_CAPABILITY_THRESHOLDS,
+        **DEFAULT_FOUR_CAPABILITY_QUALIFICATION_THRESHOLDS[capability_id],
+    }
+    thresholds: dict[str, float | int] = {}
+    for name, default in defaults.items():
+        value = raw_thresholds.get(name, default)
+        if not isinstance(value, (int, float)) or not math.isfinite(
+            float(value)
+        ):
+            raise ValueError(
+                f"qualification threshold {name!r} must be finite"
+            )
+        thresholds[name] = value
+    provenance = {
+        "qualification_policy_id": policy_id,
+        "qualification_policy_sha256": policy.get(
+            "qualification_policy_sha256",
+            protocol.json_sha256(policy),
+        ),
+        "qualification_threshold_source": str(threshold_source),
+        "qualification_thresholds": dict(thresholds),
+    }
+    return provenance, thresholds
 
 
 def array_sha256(values: np.ndarray) -> str:
@@ -137,12 +336,50 @@ def _frequency_collision(
     )
 
 
+def _period_visibility(
+    history: np.ndarray,
+    *,
+    period: float,
+) -> dict[str, float]:
+    """Measure one declared Fourier component against detrended history."""
+
+    values = _nonlinear_detrend(np.asarray(history, dtype=float))
+    time = np.arange(values.size, dtype=float)
+    phase = 2.0 * np.pi * time / float(period)
+    design = np.column_stack((np.sin(phase), np.cos(phase)))
+    coefficients, *_ = np.linalg.lstsq(design, values, rcond=None)
+    component = design @ coefficients
+    history_rms = max(float(np.sqrt(np.mean(values**2))), 1e-12)
+    component_rms = float(np.sqrt(np.mean(component**2)))
+    total_energy = float(np.sum(values**2))
+    power_share = (
+        float(np.clip(np.sum(component**2) / total_energy, 0.0, 1.0))
+        if total_energy > 1e-24
+        else 0.0
+    )
+    return {
+        "carrier_rms": component_rms,
+        "detrended_history_rms": history_rms,
+        "carrier_rms_ratio": component_rms / history_rms,
+        "carrier_power_share": power_share,
+    }
+
+
 def resolve_history_periods(
     history: np.ndarray,
     *,
     declared_carrier_period: float,
-    maximum_secondary_periods: int = 2,
-    minimum_secondary_power_share: float = 0.01,
+    maximum_secondary_periods: int = REAL_ANCHORED_MAXIMUM_SECONDARY_PERIODS,
+    minimum_secondary_power_share: float = (
+        REAL_ANCHORED_MINIMUM_SECONDARY_POWER_SHARE
+    ),
+    minimum_carrier_rms_ratio: float = (
+        REAL_ANCHORED_MINIMUM_CARRIER_RMS_RATIO
+    ),
+    minimum_carrier_power_share: float = (
+        REAL_ANCHORED_MINIMUM_CARRIER_POWER_SHARE
+    ),
+    minimum_cycles: float = REAL_ANCHORED_MINIMUM_CYCLES,
 ) -> dict[str, Any]:
     """Resolve one fixed carrier and identifiable non-carrier components.
 
@@ -156,17 +393,63 @@ def resolve_history_periods(
     values = np.asarray(history, dtype=float)
     if values.ndim != 1 or values.size < 12 or not np.isfinite(values).all():
         raise ValueError("period resolution requires one finite history")
-    candidates = _spectral_candidates(values)
-    maximum_period = values.size / REAL_ANCHORED_MINIMUM_CYCLES
-    carrier = float(declared_carrier_period)
-    carrier_source = "calibration_feature_period"
-    if not 2.0 <= carrier <= maximum_period:
-        if not candidates:
-            raise ValueError("no carrier period has three complete cycles")
-        carrier = float(candidates[0]["period"])
+    minimum_cycles = float(minimum_cycles)
+    if not math.isfinite(minimum_cycles) or minimum_cycles <= 0.0:
+        raise ValueError("minimum_cycles must be finite and positive")
+    candidates = _spectral_candidates(values, minimum_cycles=minimum_cycles)
+    maximum_period = values.size / minimum_cycles
+    maximum_secondary_periods = int(maximum_secondary_periods)
+    if maximum_secondary_periods < 0:
+        raise ValueError("maximum_secondary_periods must be non-negative")
+    for name, threshold in (
+        ("minimum_secondary_power_share", minimum_secondary_power_share),
+        ("minimum_carrier_rms_ratio", minimum_carrier_rms_ratio),
+        ("minimum_carrier_power_share", minimum_carrier_power_share),
+    ):
+        if not math.isfinite(float(threshold)) or float(threshold) < 0.0:
+            raise ValueError(f"{name} must be finite and non-negative")
+
+    declared = float(declared_carrier_period)
+    declared_visibility: dict[str, float] | None = None
+    if 2.0 <= declared <= maximum_period:
+        declared_visibility = _period_visibility(values, period=declared)
+    declared_visible = bool(
+        declared_visibility is not None
+        and declared_visibility["carrier_rms_ratio"]
+        >= float(minimum_carrier_rms_ratio)
+        and declared_visibility["carrier_power_share"]
+        >= float(minimum_carrier_power_share)
+    )
+    if declared_visible:
+        carrier = declared
+        carrier_source = "visible_calibration_feature_period"
+        carrier_visibility = dict(declared_visibility or {})
+    else:
+        carrier = float("nan")
+        carrier_visibility = {}
         carrier_source = "history_spectral_peak_fallback"
+        for candidate in candidates:
+            candidate_period = float(candidate["period"])
+            visibility = _period_visibility(
+                values,
+                period=candidate_period,
+            )
+            if (
+                visibility["carrier_rms_ratio"]
+                >= float(minimum_carrier_rms_ratio)
+                and visibility["carrier_power_share"]
+                >= float(minimum_carrier_power_share)
+            ):
+                carrier = candidate_period
+                carrier_visibility = visibility
+                break
+        if not math.isfinite(carrier):
+            raise ValueError(
+                "no carrier period passed the frozen visibility gates"
+            )
     secondary: list[float] = []
     selected_rows: list[dict[str, float]] = []
+    secondary_candidate_pool: list[dict[str, float]] = []
     for row in candidates:
         period = float(row["period"])
         if float(row["power_share"]) < minimum_secondary_power_share:
@@ -176,6 +459,9 @@ def resolve_history_periods(
             carrier,
             history_length=values.size,
         ):
+            continue
+        secondary_candidate_pool.append(dict(row))
+        if len(secondary) >= maximum_secondary_periods:
             continue
         if any(
             _frequency_collision(
@@ -188,28 +474,61 @@ def resolve_history_periods(
             continue
         secondary.append(period)
         selected_rows.append(dict(row))
-        if len(secondary) >= int(maximum_secondary_periods):
-            break
     return {
-        "schema_version": "cafe.real_anchored_period_resolution.v1",
+        "schema_version": "cafe.real_anchored_period_resolution.v2",
         "history_only": True,
         "history_length": int(values.size),
-        "minimum_cycles": REAL_ANCHORED_MINIMUM_CYCLES,
+        "minimum_cycles": minimum_cycles,
         "carrier_period": carrier,
         "carrier_source": carrier_source,
+        "declared_carrier_period": declared,
+        "declared_carrier_visibility": declared_visibility,
+        "carrier_visibility_passed": True,
+        **carrier_visibility,
         "secondary_periods": secondary,
         "secondary_peaks": selected_rows,
+        "secondary_candidate_pool": secondary_candidate_pool,
         "minimum_secondary_power_share": minimum_secondary_power_share,
+        "maximum_secondary_periods": maximum_secondary_periods,
+        "minimum_carrier_rms_ratio": minimum_carrier_rms_ratio,
+        "minimum_carrier_power_share": minimum_carrier_power_share,
         "candidate_count": len(candidates),
     }
+
+
+def _remove_trend_and_secondary(
+    history: np.ndarray,
+    *,
+    secondary_periods: Sequence[float],
+) -> np.ndarray:
+    """Remove non-carrier nuisance while leaving carrier/AM signal intact."""
+
+    values = np.asarray(history, dtype=float)
+    scaled_time = np.linspace(-1.0, 1.0, values.size)
+    absolute_time = np.arange(values.size, dtype=float)
+    columns = [np.ones(values.size), scaled_time, scaled_time**2]
+    for period in map(float, secondary_periods):
+        phase = 2.0 * np.pi * absolute_time / period
+        columns.extend((np.sin(phase), np.cos(phase)))
+    design = np.column_stack(columns)
+    coefficients, *_ = np.linalg.lstsq(design, values, rcond=None)
+    # Keep the carrier-bearing residual, including its slow AM envelope.
+    return values - design @ coefficients
 
 
 def resolve_modulation_period(
     history: np.ndarray,
     *,
     carrier_period: float,
-    minimum_amplitude_cv: float = 0.05,
-    minimum_envelope_power_share: float = 0.10,
+    secondary_periods: Sequence[float] = (),
+    minimum_amplitude_cv: float = REAL_ANCHORED_MINIMUM_AMPLITUDE_CV,
+    minimum_envelope_power_share: float = (
+        REAL_ANCHORED_MINIMUM_ENVELOPE_POWER_SHARE
+    ),
+    minimum_carrier_strength: float = (
+        REAL_ANCHORED_MINIMUM_MODULATION_CARRIER_STRENGTH
+    ),
+    minimum_cycles: float = REAL_ANCHORED_MINIMUM_CYCLES,
 ) -> dict[str, Any]:
     """Resolve a slow carrier-amplitude modulation from history only.
 
@@ -223,22 +542,51 @@ def resolve_modulation_period(
     values = np.asarray(history, dtype=float)
     if values.ndim != 1 or not np.isfinite(values).all():
         raise ValueError("modulation resolution requires one finite history")
+    for name, threshold in (
+        ("minimum_amplitude_cv", minimum_amplitude_cv),
+        ("minimum_envelope_power_share", minimum_envelope_power_share),
+        ("minimum_carrier_strength", minimum_carrier_strength),
+    ):
+        if not math.isfinite(float(threshold)) or float(threshold) < 0.0:
+            raise ValueError(f"{name} must be finite and non-negative")
+    minimum_cycles = float(minimum_cycles)
+    if not math.isfinite(minimum_cycles) or minimum_cycles <= 0.0:
+        raise ValueError("minimum_cycles must be finite and positive")
+    base = {
+        "schema_version": "cafe.real_anchored_modulation_resolution.v2",
+        "history_only": True,
+        "carrier_period": float(carrier_period),
+        "secondary_periods_fixed_as_nuisance": [
+            float(value) for value in secondary_periods
+        ],
+        "modulation_basis": TIME_VARYING_SEASONALITY_BASIS_POLICY,
+        "minimum_amplitude_cv": minimum_amplitude_cv,
+        "minimum_envelope_power_share": minimum_envelope_power_share,
+        "minimum_carrier_strength": minimum_carrier_strength,
+        "minimum_cycles": minimum_cycles,
+    }
     period_steps = int(round(float(carrier_period)))
     if period_steps < 4:
         return {
+            **base,
             "available": False,
             "unavailable_reason": "carrier_period_too_short_for_envelope",
             "modulation_period": None,
         }
     cycle_count = values.size // period_steps
-    if cycle_count < 7:
+    minimum_cycle_observations = 2 * int(math.ceil(minimum_cycles)) + 1
+    if cycle_count < minimum_cycle_observations:
         return {
+            **base,
             "available": False,
             "unavailable_reason": "insufficient_carrier_cycles_for_modulation",
             "modulation_period": None,
             "carrier_cycle_count": cycle_count,
         }
-    detrended = _nonlinear_detrend(values)
+    detrended = _remove_trend_and_secondary(
+        values,
+        secondary_periods=secondary_periods,
+    )
     start = values.size - cycle_count * period_steps
     amplitudes: list[float] = []
     for cycle_index in range(cycle_count):
@@ -275,12 +623,13 @@ def resolve_modulation_period(
     ) ** 2
     admissible_bins = [
         index
-        for index in range(3, envelope_power.size)
+        for index in range(int(math.ceil(minimum_cycles)), envelope_power.size)
         if cycle_count / float(index) > 1.0
     ]
     total_power = float(np.sum(envelope_power[1:]))
     if not admissible_bins or total_power <= 1e-12:
         return {
+            **base,
             "available": False,
             "unavailable_reason": "amplitude_envelope_spectrum_degenerate",
             "modulation_period": None,
@@ -297,7 +646,7 @@ def resolve_modulation_period(
         period_steps * cycle_count / float(selected_bin)
     )
     reason: str | None = None
-    if carrier_strength < 0.10:
+    if carrier_strength < minimum_carrier_strength:
         reason = "carrier_component_too_weak_for_modulation"
     elif amplitude_cv < minimum_amplitude_cv:
         reason = "carrier_amplitude_variation_too_weak"
@@ -305,11 +654,10 @@ def resolve_modulation_period(
         reason = "amplitude_envelope_peak_too_diffuse"
     elif modulation_period <= float(carrier_period):
         reason = "modulation_not_slower_than_carrier"
-    elif values.size / modulation_period < REAL_ANCHORED_MINIMUM_CYCLES:
+    elif values.size / modulation_period < minimum_cycles:
         reason = "insufficient_complete_modulation_cycles"
     return {
-        "schema_version": "cafe.real_anchored_modulation_resolution.v1",
-        "history_only": True,
+        **base,
         "available": reason is None,
         "unavailable_reason": reason,
         "modulation_period": modulation_period if reason is None else None,
@@ -320,10 +668,108 @@ def resolve_modulation_period(
         "amplitude_cv": amplitude_cv,
         "envelope_frequency_bin": selected_bin,
         "envelope_power_share": power_share,
-        "minimum_amplitude_cv": minimum_amplitude_cv,
-        "minimum_envelope_power_share": minimum_envelope_power_share,
-        "minimum_cycles": REAL_ANCHORED_MINIMUM_CYCLES,
     }
+
+
+def _modulation_sideband_collision(
+    period: float,
+    *,
+    carrier_period: float,
+    modulation_period: float,
+    history_length: int,
+    harmonics_per_period: int = 1,
+) -> bool:
+    frequency = 1.0 / float(period)
+    carrier_frequency = 1.0 / float(carrier_period)
+    modulation_frequency = 1.0 / float(modulation_period)
+    resolution = 1.5 / float(history_length)
+    return any(
+        abs(
+            frequency
+            - (harmonic * carrier_frequency + sign * modulation_frequency)
+        )
+        <= resolution
+        for harmonic in range(1, int(harmonics_per_period) + 1)
+        for sign in (-1.0, 1.0)
+    )
+
+
+def _resolve_spectral_component_ownership(
+    period_resolution: Mapping[str, Any],
+    modulation_resolution: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Assign AM sideband bins to AM before choosing secondary periods."""
+
+    resolved = dict(period_resolution)
+    carrier_period = float(resolved["carrier_period"])
+    history_length = int(resolved["history_length"])
+    maximum_secondary = int(resolved["maximum_secondary_periods"])
+    modulation_period = (
+        float(modulation_resolution["modulation_period"])
+        if modulation_resolution.get("available") is True
+        else None
+    )
+    pool = [
+        dict(row)
+        for row in resolved.get(
+            "secondary_candidate_pool",
+            resolved.get("secondary_peaks", []),
+        )
+    ]
+    selected_periods: list[float] = []
+    selected_rows: list[dict[str, float]] = []
+    assigned_sidebands: list[dict[str, float]] = []
+    for row in pool:
+        period = float(row["period"])
+        if (
+            modulation_period is not None
+            and _modulation_sideband_collision(
+                period,
+                carrier_period=carrier_period,
+                modulation_period=modulation_period,
+                history_length=history_length,
+            )
+        ):
+            assigned_sidebands.append(dict(row))
+            continue
+        if len(selected_periods) >= maximum_secondary:
+            continue
+        if any(
+            _frequency_collision(
+                period,
+                prior,
+                history_length=history_length,
+            )
+            for prior in selected_periods
+        ):
+            continue
+        selected_periods.append(period)
+        selected_rows.append(dict(row))
+    resolved["secondary_periods"] = selected_periods
+    resolved["secondary_peaks"] = selected_rows
+    resolved["spectral_component_ownership"] = (
+        "carrier_then_symmetric_am_then_independent_secondary_v1"
+    )
+    resolved["am_sideband_owned_peaks"] = assigned_sidebands
+    ownership = {
+        "schema_version": "cafe.real_anchored_component_ownership.v1",
+        "history_only": True,
+        "policy": "shared_background_joint_design_v1",
+        "priority": [
+            "carrier_and_harmonics",
+            "symmetric_carrier_amplitude_modulation",
+            "independent_secondary_periods",
+            "regime_level_shift",
+            "trend_nonlinearity",
+            "residual",
+        ],
+        "carrier_period": carrier_period,
+        "modulation_period": modulation_period,
+        "secondary_periods": selected_periods,
+        "am_sideband_owned_peak_count": len(assigned_sidebands),
+        "modulation_basis": TIME_VARYING_SEASONALITY_BASIS_POLICY,
+    }
+    return resolved, ownership
 
 
 def _nuisance_residual(
@@ -331,6 +777,7 @@ def _nuisance_residual(
     *,
     carrier_period: float,
     secondary_periods: Sequence[float],
+    modulation_period: float | None = None,
 ) -> np.ndarray:
     values = np.asarray(history, dtype=float)
     time = np.linspace(-1.0, 1.0, values.size)
@@ -339,6 +786,33 @@ def _nuisance_residual(
     for period in (float(carrier_period), *map(float, secondary_periods)):
         phase = 2.0 * np.pi * absolute_time / period
         columns.extend((np.sin(phase), np.cos(phase)))
+    preliminary_design = np.column_stack(columns)
+    preliminary_coefficients, *_ = np.linalg.lstsq(
+        preliminary_design,
+        values,
+        rcond=None,
+    )
+    if modulation_period is not None:
+        # The carrier occupies columns 3/4 after the quadratic trend.  Freeze
+        # that history-only phase and remove only its constrained AM product
+        # subspace; do not introduce four free sidebands.
+        carrier_phase = math.atan2(
+            float(preliminary_coefficients[4]),
+            float(preliminary_coefficients[3]),
+        )
+        carrier_wave = np.sin(
+            2.0 * np.pi * absolute_time / float(carrier_period)
+            + carrier_phase
+        )
+        slow_phase = (
+            2.0 * np.pi * absolute_time / float(modulation_period)
+        )
+        columns.extend(
+            (
+                carrier_wave * np.cos(slow_phase),
+                carrier_wave * np.sin(slow_phase),
+            )
+        )
     design = np.column_stack(columns)
     coefficients, *_ = np.linalg.lstsq(design, values, rcond=None)
     return values - design @ coefficients
@@ -349,21 +823,68 @@ def resolve_regime_joinpoint(
     *,
     carrier_period: float,
     secondary_periods: Sequence[float],
-    visible_context_length: int = protocol.FIXED_CONTEXT_LENGTH,
-    minimum_segment_length: int = 24,
-    local_comparison_length: int = 72,
-    minimum_standardized_jump: float = 0.35,
-    minimum_local_sse_reduction: float = 0.05,
+    modulation_period: float | None = None,
+    visible_context_length: int = REAL_ANCHORED_VISIBLE_CONTEXT_LENGTH,
+    minimum_segment_length: int = (
+        REAL_ANCHORED_REGIME_MINIMUM_SEGMENT_LENGTH
+    ),
+    local_comparison_length: int = (
+        REAL_ANCHORED_REGIME_LOCAL_COMPARISON_LENGTH
+    ),
+    minimum_standardized_jump: float = (
+        REAL_ANCHORED_REGIME_MINIMUM_STANDARDIZED_JUMP
+    ),
+    minimum_local_sse_reduction: float = (
+        REAL_ANCHORED_REGIME_MINIMUM_LOCAL_SSE_REDUCTION
+    ),
+    minimum_step_over_ramp_advantage: float = (
+        REAL_ANCHORED_REGIME_MINIMUM_STEP_OVER_RAMP_ADVANTAGE
+    ),
+    stability_score_fraction: float = (
+        REAL_ANCHORED_REGIME_STABILITY_SCORE_FRACTION
+    ),
+    maximum_join_stability_width: int = (
+        REAL_ANCHORED_REGIME_MAXIMUM_JOIN_STABILITY_WIDTH
+    ),
 ) -> dict[str, Any]:
-    """Detect one observable history regime level shift without future data."""
+    """Detect a recent abrupt, stable level shift without future data."""
 
     values = np.asarray(history, dtype=float)
     if values.ndim != 1 or not np.isfinite(values).all():
         raise ValueError("regime resolution requires one finite history")
+    visible_context_length = int(visible_context_length)
+    minimum_segment_length = int(minimum_segment_length)
+    local_comparison_length = int(local_comparison_length)
+    maximum_join_stability_width = int(maximum_join_stability_width)
+    if not 2 * minimum_segment_length <= visible_context_length <= values.size:
+        raise ValueError(
+            "visible_context_length must hold two complete regime segments"
+        )
+    if local_comparison_length < minimum_segment_length:
+        raise ValueError(
+            "local_comparison_length must cover one minimum segment"
+        )
+    if maximum_join_stability_width < 0:
+        raise ValueError("maximum_join_stability_width must be non-negative")
+    for name, threshold in (
+        ("minimum_standardized_jump", minimum_standardized_jump),
+        ("minimum_local_sse_reduction", minimum_local_sse_reduction),
+        (
+            "minimum_step_over_ramp_advantage",
+            minimum_step_over_ramp_advantage,
+        ),
+    ):
+        if not math.isfinite(float(threshold)) or float(threshold) < 0.0:
+            raise ValueError(f"{name} must be finite and non-negative")
+    if not math.isfinite(float(stability_score_fraction)) or not (
+        0.0 < float(stability_score_fraction) <= 1.0
+    ):
+        raise ValueError("stability_score_fraction must lie in (0, 1]")
     residual = _nuisance_residual(
         values,
         carrier_period=carrier_period,
         secondary_periods=secondary_periods,
+        modulation_period=modulation_period,
     )
     scale = max(float(np.std(residual)), 1e-12)
     candidate_start = max(
@@ -388,6 +909,22 @@ def resolve_regime_joinpoint(
             np.sum((left - np.mean(left)) ** 2)
             + np.sum((right - np.mean(right)) ** 2)
         )
+        local_time = np.arange(lower, upper, dtype=float) - float(join_index)
+        ramp_design = np.column_stack(
+            (
+                np.ones(combined.size),
+                local_time,
+                np.maximum(local_time, 0.0),
+            )
+        )
+        ramp_coefficients, *_ = np.linalg.lstsq(
+            ramp_design,
+            combined,
+            rcond=None,
+        )
+        ramp_sse = float(
+            np.sum((combined - ramp_design @ ramp_coefficients) ** 2)
+        )
         reduction = (
             max(0.0, 1.0 - alternative_sse / null_sse)
             if null_sse > 1e-12
@@ -404,11 +941,20 @@ def resolve_regime_joinpoint(
                 "jump": jump,
                 "standardized_jump": standardized_jump,
                 "local_sse_reduction": reduction,
+                "step_sse": alternative_sse,
+                "continuous_ramp_sse": ramp_sse,
+                "step_over_ramp_sse_advantage": (
+                    (ramp_sse - alternative_sse) / null_sse
+                    if null_sse > 1e-12
+                    else 0.0
+                ),
                 "selection_score": score,
             }
         )
     if not candidates:
         return {
+            "schema_version": "cafe.real_anchored_regime_resolution.v2",
+            "history_only": True,
             "available": False,
             "unavailable_reason": "no_regime_joinpoint_candidate",
             "regime_join_index": None,
@@ -421,6 +967,14 @@ def resolve_regime_joinpoint(
             -int(row["join_index"]),
         ),
     )
+    near_optimal = [
+        int(row["join_index"])
+        for row in candidates
+        if float(row["selection_score"])
+        >= float(stability_score_fraction)
+        * float(selected["selection_score"])
+    ]
+    join_stability_width = max(near_optimal) - min(near_optimal)
     reason: str | None = None
     if float(selected["standardized_jump"]) < minimum_standardized_jump:
         reason = "regime_level_shift_too_weak"
@@ -429,8 +983,15 @@ def resolve_regime_joinpoint(
         < minimum_local_sse_reduction
     ):
         reason = "regime_joinpoint_sse_reduction_too_weak"
+    elif (
+        float(selected["step_over_ramp_sse_advantage"])
+        < minimum_step_over_ramp_advantage
+    ):
+        reason = "continuous_ramp_preferred_over_level_step"
+    elif join_stability_width > maximum_join_stability_width:
+        reason = "regime_joinpoint_not_locally_stable"
     return {
-        "schema_version": "cafe.real_anchored_regime_resolution.v1",
+        "schema_version": "cafe.real_anchored_regime_resolution.v2",
         "history_only": True,
         "available": reason is None,
         "unavailable_reason": reason,
@@ -440,58 +1001,277 @@ def resolve_regime_joinpoint(
         "candidate_range": [candidate_start, candidate_stop],
         "candidate_count": len(candidates),
         "visible_context_length": int(visible_context_length),
+        "modulation_period_fixed_as_nuisance": modulation_period,
         "minimum_segment_length": minimum_segment_length,
         "local_comparison_length": local_comparison_length,
         "minimum_standardized_jump": minimum_standardized_jump,
         "minimum_local_sse_reduction": minimum_local_sse_reduction,
+        "minimum_step_over_ramp_advantage": (
+            minimum_step_over_ramp_advantage
+        ),
+        "stability_score_fraction": stability_score_fraction,
+        "maximum_join_stability_width": maximum_join_stability_width,
+        "near_optimal_join_range": [
+            min(near_optimal),
+            max(near_optimal),
+        ],
+        "join_stability_width": join_stability_width,
         **selected,
     }
+
+
+def _resolve_background_structural_components(
+    history: np.ndarray,
+    *,
+    declared_carrier_period: float,
+    thresholds: Mapping[str, float | int],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Resolve one shared ownership/decomposition state for a background."""
+
+    raw_period_resolution = resolve_history_periods(
+        history,
+        declared_carrier_period=declared_carrier_period,
+        maximum_secondary_periods=int(
+            thresholds["maximum_secondary_periods"]
+        ),
+        minimum_secondary_power_share=float(
+            thresholds["minimum_secondary_power_share"]
+        ),
+        minimum_carrier_rms_ratio=float(
+            thresholds["minimum_carrier_rms_ratio"]
+        ),
+        minimum_carrier_power_share=float(
+            thresholds["minimum_carrier_power_share"]
+        ),
+        minimum_cycles=float(thresholds["minimum_cycles"]),
+    )
+    carrier_period = float(raw_period_resolution["carrier_period"])
+    modulation_resolution = resolve_modulation_period(
+        history,
+        carrier_period=carrier_period,
+        secondary_periods=(),
+        minimum_amplitude_cv=float(thresholds["minimum_amplitude_cv"]),
+        minimum_envelope_power_share=float(
+            thresholds["minimum_envelope_power_share"]
+        ),
+        minimum_carrier_strength=float(
+            thresholds["minimum_modulation_carrier_strength"]
+        ),
+        minimum_cycles=float(thresholds["minimum_cycles"]),
+    )
+    initial_modulation_resolution = dict(modulation_resolution)
+    period_resolution: dict[str, Any]
+    ownership: dict[str, Any]
+    ownership_stable = False
+    for iteration in range(1, 6):
+        period_resolution, ownership = _resolve_spectral_component_ownership(
+            raw_period_resolution,
+            modulation_resolution,
+        )
+        secondary_periods = tuple(
+            float(value)
+            for value in period_resolution["secondary_periods"]
+        )
+        refined_modulation = resolve_modulation_period(
+            history,
+            carrier_period=carrier_period,
+            secondary_periods=secondary_periods,
+            minimum_amplitude_cv=float(thresholds["minimum_amplitude_cv"]),
+            minimum_envelope_power_share=float(
+                thresholds["minimum_envelope_power_share"]
+            ),
+            minimum_carrier_strength=float(
+                thresholds["minimum_modulation_carrier_strength"]
+            ),
+            minimum_cycles=float(thresholds["minimum_cycles"]),
+        )
+        refined_periods, refined_ownership = (
+            _resolve_spectral_component_ownership(
+                raw_period_resolution,
+                refined_modulation,
+            )
+        )
+        if tuple(refined_periods["secondary_periods"]) == tuple(
+            period_resolution["secondary_periods"]
+        ):
+            period_resolution = refined_periods
+            ownership = refined_ownership
+            modulation_resolution = refined_modulation
+            ownership_stable = True
+            break
+        modulation_resolution = refined_modulation
+    if not ownership_stable:
+        modulation_resolution = {
+            **modulation_resolution,
+            "available": False,
+            "unavailable_reason": "spectral_component_ownership_not_stable",
+            "modulation_period": None,
+        }
+        period_resolution, ownership = _resolve_spectral_component_ownership(
+            raw_period_resolution,
+            modulation_resolution,
+        )
+    ownership["fixed_point_iterations"] = iteration
+    ownership["fixed_point_converged"] = ownership_stable
+    modulation_resolution["initial_history_only_resolution"] = (
+        initial_modulation_resolution
+    )
+    modulation_period = (
+        float(modulation_resolution["modulation_period"])
+        if modulation_resolution.get("available") is True
+        else None
+    )
+    regime_resolution = resolve_regime_joinpoint(
+        history,
+        carrier_period=carrier_period,
+        secondary_periods=tuple(period_resolution["secondary_periods"]),
+        modulation_period=modulation_period,
+        visible_context_length=int(thresholds["visible_context_length"]),
+        minimum_segment_length=int(
+            thresholds["minimum_regime_segment_length"]
+        ),
+        local_comparison_length=int(
+            thresholds["regime_local_comparison_length"]
+        ),
+        minimum_standardized_jump=float(
+            thresholds["minimum_standardized_jump"]
+        ),
+        minimum_local_sse_reduction=float(
+            thresholds["minimum_local_sse_reduction"]
+        ),
+        minimum_step_over_ramp_advantage=float(
+            thresholds["minimum_step_over_ramp_advantage"]
+        ),
+        stability_score_fraction=float(
+            thresholds["regime_stability_score_fraction"]
+        ),
+        maximum_join_stability_width=int(
+            thresholds["maximum_join_stability_width"]
+        ),
+    )
+    return (
+        period_resolution,
+        modulation_resolution,
+        regime_resolution,
+        ownership,
+    )
 
 
 def fit_background_capability_contracts(
     backgrounds: Sequence[dict[str, Any]],
     *,
     capability_ids: Iterable[str],
+    qualification_policy: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Fit per-background contracts and freeze explicit availability rows."""
 
     requested = tuple(dict.fromkeys(str(value) for value in capability_ids))
+    four_capabilities = tuple(
+        capability_id
+        for capability_id in requested
+        if capability_id in DEFAULT_FOUR_CAPABILITY_QUALIFICATION_THRESHOLDS
+    )
+    four_qualification = {
+        capability_id: _four_capability_qualification(
+            capability_id,
+            qualification_policy,
+        )
+        for capability_id in four_capabilities
+    }
+    if four_qualification:
+        first_thresholds = dict(
+            next(iter(four_qualification.values()))[1]
+        )
+        structural_threshold_names = (
+            "minimum_cycles",
+            "minimum_carrier_rms_ratio",
+            "minimum_carrier_power_share",
+            "maximum_secondary_periods",
+            "minimum_secondary_power_share",
+            "minimum_amplitude_cv",
+            "minimum_envelope_power_share",
+            "minimum_modulation_carrier_strength",
+            "visible_context_length",
+            "minimum_regime_segment_length",
+            "regime_local_comparison_length",
+            "minimum_standardized_jump",
+            "minimum_local_sse_reduction",
+            "minimum_step_over_ramp_advantage",
+            "regime_stability_score_fraction",
+            "maximum_join_stability_width",
+            "fit_window",
+            "trend_window",
+            "trend_degree",
+            "harmonics_per_period",
+        )
+        for _provenance, thresholds in four_qualification.values():
+            if any(
+                float(thresholds[name]) != float(first_thresholds[name])
+                for name in structural_threshold_names
+            ):
+                raise ValueError(
+                    "four-capability policies disagree on shared structural "
+                    "decomposition thresholds"
+                )
+        structural_thresholds = first_thresholds
+    else:
+        structural_thresholds = {
+            **_SHARED_FOUR_CAPABILITY_THRESHOLDS,
+        }
+    dynamic_qualification = {
+        capability_id: dynamic_qualification_provenance(
+            capability_id,
+            qualification_policy,
+        )
+        for capability_id in requested
+        if capability_id in REAL_PATH_DYNAMIC_CAPABILITIES
+    }
     rows: list[dict[str, Any]] = []
     reason_counts: Counter[str] = Counter()
     for background in backgrounds:
         history = _history_1d(background)
         try:
-            period_resolution = resolve_history_periods(
+            (
+                period_resolution,
+                modulation_resolution,
+                regime_resolution,
+                component_ownership,
+            ) = _resolve_background_structural_components(
                 history,
                 declared_carrier_period=float(background["feature_period"]),
+                thresholds=structural_thresholds,
             )
         except ValueError as error:
             period_resolution = None
+            modulation_resolution = None
+            regime_resolution = None
+            component_ownership = None
             period_error = str(error)
         else:
             period_error = None
-        if period_resolution is None:
-            modulation_resolution = None
-            regime_resolution = None
-        else:
-            carrier_period = float(period_resolution["carrier_period"])
-            secondary_periods = tuple(
-                float(value)
-                for value in period_resolution["secondary_periods"]
-            )
-            modulation_resolution = resolve_modulation_period(
-                history,
-                carrier_period=carrier_period,
-            )
-            regime_resolution = resolve_regime_joinpoint(
-                history,
-                carrier_period=carrier_period,
-                secondary_periods=secondary_periods,
-            )
         for capability_id in requested:
+            if capability_id in four_qualification:
+                qualification, thresholds = four_qualification[capability_id]
+            elif capability_id in dynamic_qualification:
+                qualification = dynamic_qualification[capability_id]
+                thresholds = dict(
+                    qualification["qualification_thresholds"]
+                )
+            else:
+                qualification = {
+                    "qualification_policy_id": (
+                        "cafe.real_anchored.unsupported.no_thresholds.v1"
+                    ),
+                    "qualification_policy_sha256": None,
+                    "qualification_threshold_source": (
+                        QUALIFICATION_THRESHOLD_SOURCE_POLICY
+                    ),
+                    "qualification_thresholds": {},
+                }
+                thresholds = {}
             base = {
                 "schema_version": (
-                    "cafe.real_anchored_background_capability.v2"
+                    "cafe.real_anchored_background_capability.v3"
                 ),
                 "dataset_id": str(background["dataset_id"]),
                 "background_id": str(background["background_id"]),
@@ -503,6 +1283,12 @@ def fit_background_capability_contracts(
                 "period_resolution": period_resolution,
                 "modulation_resolution": modulation_resolution,
                 "regime_resolution": regime_resolution,
+                "component_ownership": component_ownership,
+                "shared_decomposition_policy": (
+                    "one_background_one_joint_design_all_four_capabilities_v1"
+                ),
+                "modulation_basis": TIME_VARYING_SEASONALITY_BASIS_POLICY,
+                **qualification,
             }
             if capability_id not in REAL_ANCHORED_SUPPORTED_CAPABILITIES:
                 reason = "real_univariate_transform_not_implemented"
@@ -587,54 +1373,127 @@ def fit_background_capability_contracts(
                     "unavailable_reason": reason,
                     "unavailable_detail": (
                         "no recent history-only level shift passed the jump "
-                        "and local SSE-reduction gates"
+                        "local SSE, step-vs-ramp, and join-stability gates"
                     ),
                     "contract": None,
                 }
             else:
-                fitted = fit_real_anchored_contract(
-                    history,
-                    capability_id=capability_id,
-                    carrier_period=float(
-                        period_resolution["carrier_period"]
-                    ),
-                    secondary_periods=(
-                        tuple(period_resolution["secondary_periods"])
-                    ),
-                    horizon=protocol.HORIZON,
-                    fit_window=REAL_ANCHORED_FIT_WINDOW,
-                    trend_window=96,
-                    trend_degree=2,
-                    harmonics_per_period=1,
-                    modulation_period=(
-                        None
-                        if capability_id != "time_varying_seasonality"
-                        or modulation_resolution is None
-                        or modulation_resolution.get("available") is not True
-                        else float(
-                            modulation_resolution["modulation_period"]
-                        )
-                    ),
-                    regime_join_index=(
-                        None
-                        if capability_id != "regime_switching"
-                        or regime_resolution is None
-                        or regime_resolution.get("available") is not True
-                        else int(regime_resolution["regime_join_index"])
-                    ),
-                    minimum_regime_segment_length=24,
-                    minimum_cycles=REAL_ANCHORED_MINIMUM_CYCLES,
-                    mase_period=int(background["mase_period"]),
-                    minimum_component_rms_ratio=(
-                        REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO
-                    ),
-                    minimum_future_component_rms_ratio=(
-                        REAL_ANCHORED_MINIMUM_FUTURE_COMPONENT_RMS_RATIO
-                    ),
-                    reference_history=history[
-                        -protocol.REAL_ANCHORED_CONTEXT_LENGTH:
-                    ],
-                )
+                if capability_id in REAL_PATH_DYNAMIC_CAPABILITIES:
+                    effective_period = int(
+                        background["mase_scale_effective_period_by_target"][0]
+                    )
+                    fitted = fit_real_path_dynamic_contract(
+                        history,
+                        capability_id=capability_id,
+                        carrier_period=float(
+                            period_resolution["carrier_period"]
+                        ),
+                        secondary_periods=tuple(
+                            ()
+                            if capability_id == "predictable_intermittency"
+                            else period_resolution["secondary_periods"]
+                        ),
+                        reference_history=history[
+                            -protocol.REAL_ANCHORED_CONTEXT_LENGTH:
+                        ],
+                        mase_period=int(background["mase_period"]),
+                        mase_scale=float(background["mase_scale"]),
+                        mase_effective_period=effective_period,
+                        mase_scale_source=(
+                            "seasonal_history"
+                            if effective_period == int(background["mase_period"])
+                            else (
+                                "lag_one_history_fallback"
+                                if effective_period == 1
+                                else "normalization_scale_constant_fallback"
+                            )
+                        ),
+                        qualification_policy=qualification_policy,
+                    )
+                else:
+                    modulation_period = (
+                        float(modulation_resolution["modulation_period"])
+                        if modulation_resolution is not None
+                        and modulation_resolution.get("available") is True
+                        else None
+                    )
+                    regime_join_index = (
+                        int(regime_resolution["regime_join_index"])
+                        if regime_resolution is not None
+                        and regime_resolution.get("available") is True
+                        else None
+                    )
+                    fitted = fit_real_anchored_contract(
+                        history,
+                        capability_id=capability_id,
+                        carrier_period=float(
+                            period_resolution["carrier_period"]
+                        ),
+                        secondary_periods=(
+                            tuple(period_resolution["secondary_periods"])
+                        ),
+                        horizon=protocol.HORIZON,
+                        fit_window=int(thresholds["fit_window"]),
+                        trend_window=int(thresholds["trend_window"]),
+                        trend_degree=int(thresholds["trend_degree"]),
+                        harmonics_per_period=int(
+                            thresholds["harmonics_per_period"]
+                        ),
+                        # All detected nuisance is shared across all four
+                        # capability contracts.  Only the intervention slice
+                        # changes; the joint fit and ownership do not.
+                        modulation_period=modulation_period,
+                        regime_join_index=regime_join_index,
+                        minimum_regime_segment_length=int(
+                            thresholds["minimum_regime_segment_length"]
+                        ),
+                        minimum_cycles=float(thresholds["minimum_cycles"]),
+                        mase_period=int(background["mase_period"]),
+                        minimum_component_rms_ratio=(
+                            float(thresholds["minimum_component_rms_ratio"])
+                        ),
+                        minimum_visible_component_rms_ratio=(
+                            float(
+                                thresholds[
+                                    "minimum_visible_component_rms_ratio"
+                                ]
+                            )
+                        ),
+                        visible_context_length=int(
+                            thresholds["visible_context_length"]
+                        ),
+                        minimum_future_component_rms_ratio=(
+                            float(
+                                thresholds[
+                                    "minimum_future_component_rms_ratio"
+                                ]
+                            )
+                        ),
+                        reference_history=history[
+                            -protocol.REAL_ANCHORED_CONTEXT_LENGTH:
+                        ],
+                        qualification_policy_id=str(
+                            qualification["qualification_policy_id"]
+                        ),
+                        qualification_policy_sha256=(
+                            None
+                            if qualification.get(
+                                "qualification_policy_sha256"
+                            )
+                            is None
+                            else str(
+                                qualification[
+                                    "qualification_policy_sha256"
+                                ]
+                            )
+                        ),
+                        qualification_threshold_source=str(
+                            qualification[
+                                "qualification_threshold_source"
+                            ]
+                        ),
+                        qualification_thresholds=thresholds,
+                    )
                 reason = fitted.get("unavailable_reason")
                 row = {
                     **base,
@@ -652,17 +1511,29 @@ def fit_background_capability_contracts(
                     "controlled_component_future_rms": fitted.get(
                         "controlled_component_future_rms"
                     ),
+                    "controlled_component_visible_history_rms": fitted.get(
+                        "controlled_component_visible_history_rms"
+                    ),
+                    "controlled_component_visible_context_length": fitted.get(
+                        "controlled_component_visible_context_length"
+                    ),
                     "minimum_history_component_rms": fitted.get(
                         "minimum_history_component_rms"
                     ),
                     "minimum_future_component_rms": fitted.get(
                         "minimum_future_component_rms"
                     ),
+                    "minimum_visible_history_component_rms": fitted.get(
+                        "minimum_visible_history_component_rms"
+                    ),
                     "minimum_component_rms_ratio": fitted.get(
                         "minimum_component_rms_ratio"
                     ),
                     "minimum_future_component_rms_ratio": fitted.get(
                         "minimum_future_component_rms_ratio"
+                    ),
+                    "minimum_visible_component_rms_ratio": fitted.get(
+                        "minimum_visible_component_rms_ratio"
                     ),
                     "future_component_horizon": fitted.get(
                         "future_component_horizon"
@@ -752,7 +1623,12 @@ def build_availability(
         ]
 
         def metric_range(field: str) -> dict[str, float] | None:
-            values = [float(row[field]) for row in gate_rows]
+            values = [
+                float(row[field])
+                for row in gate_rows
+                if isinstance(row.get(field), (int, float))
+                and math.isfinite(float(row[field]))
+            ]
             if not values:
                 return None
             return {
@@ -786,6 +1662,29 @@ def build_availability(
                 )
             }
         )
+        visible_ratios = sorted(
+            {
+                float(row["minimum_visible_component_rms_ratio"])
+                for row in gate_rows
+                if isinstance(
+                    row.get("minimum_visible_component_rms_ratio"),
+                    (int, float),
+                )
+                and math.isfinite(
+                    float(row["minimum_visible_component_rms_ratio"])
+                )
+            }
+        )
+        visible_context_lengths = sorted(
+            {
+                int(row["controlled_component_visible_context_length"])
+                for row in gate_rows
+                if isinstance(
+                    row.get("controlled_component_visible_context_length"),
+                    int,
+                )
+            }
+        )
         cells.append(
             {
                 "dataset_id": dataset_id,
@@ -809,12 +1708,17 @@ def build_availability(
                 "supported_dose_values": list(REAL_ANCHORED_ALPHAS),
                 "controlled_component_rms_gate": {
                     "history_source": "history_fitted_component_l504",
+                    "visible_history_source": (
+                        "history_fitted_component_trailing_l168"
+                    ),
                     "future_source": (
                         "analytic_history_fitted_component_extension"
                     ),
                     "future_horizon": protocol.HORIZON,
                     "evaluated_background_count": len(gate_rows),
                     "history_minimum_rms_ratios": history_ratios,
+                    "visible_history_minimum_rms_ratios": visible_ratios,
+                    "visible_context_lengths": visible_context_lengths,
                     "future_minimum_rms_ratios": future_ratios,
                     "history_rms_range": metric_range(
                         "controlled_component_history_rms"
@@ -822,11 +1726,17 @@ def build_availability(
                     "future_rms_range": metric_range(
                         "controlled_component_future_rms"
                     ),
+                    "visible_history_rms_range": metric_range(
+                        "controlled_component_visible_history_rms"
+                    ),
                     "history_threshold_range": metric_range(
                         "minimum_history_component_rms"
                     ),
                     "future_threshold_range": metric_range(
                         "minimum_future_component_rms"
+                    ),
+                    "visible_history_threshold_range": metric_range(
+                        "minimum_visible_history_component_rms"
                     ),
                 },
             }
@@ -861,11 +1771,51 @@ def validate_availability_contract(
         raise ValueError("real-anchored availability is missing cells")
     requested = tuple(str(cell["capability_id"]) for cell in cells)
     minimum = int(availability.get("minimum_eligible_backgrounds", 0))
+    schema_version = availability.get("schema_version")
+    if (
+        schema_version == REAL_ANCHORED_AVAILABILITY_SCHEMA
+        and minimum != REAL_ANCHORED_MINIMUM_ELIGIBLE_BACKGROUNDS
+    ):
+        raise ValueError("real-anchored availability changed the formal-N gate")
     recomputed = build_availability(
         contract_rows,
         requested_capability_ids=requested,
         minimum_eligible_backgrounds=minimum,
     )
+    blocked_capabilities = {
+        str(value)
+        for value in availability.get(
+            "qualification_blocked_capabilities",
+            [],
+        )
+    }
+    for cell in recomputed["cells"]:
+        if str(cell["capability_id"]) in blocked_capabilities:
+            cell["reason_codes"] = sorted(
+                {
+                    *cell["reason_codes"],
+                    "independent_reference_bank_unavailable",
+                }
+            )
+    if schema_version == "cafe.real_anchored_availability.v1":
+        # Pipeline v2 froze the same eligibility decision before the
+        # fixed-L168 visibility audit was added.  Preserve that immutable
+        # upstream contract by projecting the v2 diagnostic payload back to
+        # its exact v1 shape; generation may consume it but never reinterpret
+        # it as a v3 qualification result.
+        for cell in recomputed["cells"]:
+            gate = cell.get("controlled_component_rms_gate")
+            if isinstance(gate, dict):
+                for field in (
+                    "visible_history_source",
+                    "visible_history_minimum_rms_ratios",
+                    "visible_context_lengths",
+                    "visible_history_rms_range",
+                    "visible_history_threshold_range",
+                ):
+                    gate.pop(field, None)
+    elif schema_version != REAL_ANCHORED_AVAILABILITY_SCHEMA:
+        raise ValueError("unsupported real-anchored availability schema")
     observed_cells = [dict(cell) for cell in cells]
     expected_cells = [dict(cell) for cell in recomputed["cells"]]
     dataset_id = availability.get("dataset_id")
@@ -875,8 +1825,6 @@ def validate_availability_contract(
         raise ValueError(
             "real-anchored availability cells disagree with contracts"
         )
-    if availability.get("schema_version") != REAL_ANCHORED_AVAILABILITY_SCHEMA:
-        raise ValueError("unsupported real-anchored availability schema")
     if availability.get("benchmark_track") != (
         "real_anchored_counterfactual"
     ):
@@ -1035,7 +1983,7 @@ def _sample_row(
             "contract_sha256": str(metadata["contract_sha256"]),
         },
         "generation_metadata": dict(metadata),
-        "evaluation_table": "main",
+        "evaluation_table": "real_anchored_counterfactual",
         "input_history_semantics": (
             "observed_real_history_plus_declared_intervention"
         ),
@@ -1175,9 +2123,16 @@ def iter_real_anchored_samples(
             baseline_visible = source_baseline[visible_start:]
             for dose_index, treatment_alpha in enumerate(alpha_values, start=1):
                 for pair_member, alpha in ((0, 1.0), (1, treatment_alpha)):
-                    augmented, metadata = apply_real_anchored_contract(
+                    capability_contract = contract_row["contract"]
+                    apply_contract = (
+                        apply_real_path_dynamic_contract
+                        if capability_contract.get("schema")
+                        == REAL_PATH_DYNAMIC_CONTRACT_SCHEMA
+                        else apply_real_anchored_contract
+                    )
+                    augmented, metadata = apply_contract(
                         source_baseline,
-                        contract_row["contract"],
+                        capability_contract,
                         alpha=alpha,
                         context_length=(
                             protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
@@ -1202,6 +2157,97 @@ def iter_real_anchored_samples(
                     )
 
 
+def iter_nonlinear_replay_sensitivity_samples(
+    backgrounds: Sequence[Mapping[str, Any]],
+    contract_rows: Sequence[Mapping[str, Any]],
+    *,
+    seed_indexes: Iterable[int],
+    alphas: Sequence[float] = REAL_ANCHORED_ALPHAS,
+) -> Iterator[dict[str, Any]]:
+    """Yield the history-residual-replay nonlinear auxiliary track."""
+
+    alpha_values = tuple(float(value) for value in alphas)
+    if alpha_values != REAL_ANCHORED_ALPHAS:
+        raise ValueError("nonlinear replay sensitivity uses the frozen grid")
+    by_background = {
+        str(background["background_id"]): background
+        for background in backgrounds
+    }
+    assignments = real_anchored_assignments(
+        contract_rows,
+        capability_ids=("nonlinear_persistence",),
+        seed_indexes=seed_indexes,
+    )
+    for seed_index, contract_row in assignments.get(
+        "nonlinear_persistence", []
+    ):
+        background = by_background[str(contract_row["background_id"])]
+        source_baseline = reconstruct_source_baseline(background)
+        visible_start = (
+            protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            - protocol.REAL_ANCHORED_CONTEXT_LENGTH
+        )
+        baseline_visible = source_baseline[visible_start:]
+        capability_contract = contract_row["contract"]
+        if capability_contract.get("schema") != REAL_PATH_DYNAMIC_CONTRACT_SCHEMA:
+            raise ValueError("nonlinear replay requires a dynamic contract")
+        for dose_index, treatment_alpha in enumerate(alpha_values, start=1):
+            for pair_member, alpha in ((0, 1.0), (1, treatment_alpha)):
+                augmented, metadata = apply_real_path_dynamic_contract(
+                    source_baseline,
+                    capability_contract,
+                    alpha=alpha,
+                    context_length=(
+                        protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                    ),
+                    future_innovation_policy=(
+                        NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
+                    ),
+                )
+                augmented_array = np.asarray(augmented, dtype=float)
+                if augmented_array.ndim == 2:
+                    augmented_array = augmented_array[:, 0]
+                visible_target = augmented_array[visible_start:]
+                visible_delta = visible_target - baseline_visible
+                row = _sample_row(
+                    background=background,
+                    contract_row=contract_row,
+                    seed_index=int(seed_index),
+                    dose_index=dose_index,
+                    pair_member=pair_member,
+                    alpha=alpha,
+                    visible_target=visible_target,
+                    visible_delta=visible_delta,
+                    baseline_visible=baseline_visible,
+                    metadata=metadata,
+                )
+                main_pair_id = str(row["counterfactual_pair_id"])
+                main_group_id = str(row["paired_group_id"])
+                main_sample_id = str(row["sample_id"])
+                row["evaluation_table"] = (
+                    "real_anchored_nonlinear_replay_sensitivity"
+                )
+                row["sample_id"] = f"{main_sample_id}__nonlinear_replay"
+                row["master_sample_id"] = row["sample_id"]
+                row["counterfactual_pair_id"] = (
+                    f"{main_pair_id}__nonlinear_replay"
+                )
+                row["paired_group_id"] = (
+                    f"{main_group_id}__nonlinear_replay"
+                )
+                row["baseline_sample_id"] = (
+                    f"{main_pair_id}__m0__nonlinear_replay"
+                )
+                row["sensitivity_source_sample_id"] = main_sample_id
+                row["sensitivity_source_pair_id"] = main_pair_id
+                row["sensitivity_source_paired_group_id"] = main_group_id
+                row["excluded_from_primary_score"] = True
+                row["generation_metadata"][
+                    "sensitivity_role"
+                ] = "history_residual_replay_auxiliary"
+                yield row
+
+
 def validate_contract_integrity(contract_row: Mapping[str, Any]) -> None:
     """Raise when a persisted available contract cannot be reconstructed."""
 
@@ -1210,9 +2256,36 @@ def validate_contract_integrity(contract_row: Mapping[str, Any]) -> None:
     capability = contract_row.get("contract")
     if not isinstance(capability, Mapping):
         raise ValueError("available real-anchored row has no contract")
+    if capability.get("schema") == REAL_PATH_DYNAMIC_CONTRACT_SCHEMA:
+        validate_real_path_dynamic_contract(capability)
+        if contract_row.get("qualification_policy_id") != capability.get(
+            "qualification_policy_id"
+        ):
+            raise ValueError("dynamic row/contract qualification policy mismatch")
+        if contract_row.get("qualification_thresholds") != capability.get(
+            "qualification_thresholds"
+        ):
+            raise ValueError("dynamic row/contract thresholds mismatch")
+        return
     decomposition = capability.get("decomposition_contract")
     if not isinstance(decomposition, Mapping):
         raise ValueError("available real-anchored row has no decomposition")
     restored = AnchoredDecompositionContract.from_dict(decomposition)
     if restored.contract_sha256 != decomposition.get("contract_sha256"):
         raise ValueError("real-anchored decomposition hash mismatch")
+    if restored.schema == ANCHORED_CONTRACT_SCHEMA and (
+        contract_row.get("qualification_policy_id")
+        != capability.get("qualification_policy_id")
+    ):
+        raise ValueError("anchored row/contract qualification policy mismatch")
+    if restored.schema == ANCHORED_CONTRACT_SCHEMA and (
+        contract_row.get("qualification_thresholds")
+        != capability.get("qualification_thresholds")
+    ):
+        raise ValueError("anchored row/contract thresholds mismatch")
+    if (
+        restored.schema == ANCHORED_CONTRACT_SCHEMA
+        and restored.modulation_basis
+        != TIME_VARYING_SEASONALITY_BASIS_POLICY
+    ):
+        raise ValueError("anchored contract lost constrained AM basis policy")
