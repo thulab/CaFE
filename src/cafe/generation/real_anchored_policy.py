@@ -1,12 +1,29 @@
-"""Frozen v3 scientific decisions for the real-anchored benchmark track."""
+"""Frozen v5 scientific decisions for the real-anchored benchmark track."""
 
 from __future__ import annotations
 
 
-REAL_ANCHORED_PROTOCOL_SCHEMA = "cafe.real_anchored_protocol.v3"
+REAL_ANCHORED_PROTOCOL_SCHEMA = "cafe.real_anchored_protocol.v5"
 REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA = (
-    "cafe.real_anchored_qualification_policy.v1"
+    "cafe.real_anchored_qualification_policy.v3"
 )
+
+REAL_ANCHORED_CANONICAL_STRENGTH_GRID = (0.2, 0.4, 0.6, 0.8, 1.0)
+REAL_ANCHORED_SOURCE_DISTANCE_MINIMUM = 0.10
+REAL_ANCHORED_ADDITIVE_HISTORY_TARGET_MAXIMUM = 0.50
+REAL_ANCHORED_ADDITIVE_FUTURE_TARGET_MAXIMUM = 0.15
+REAL_ANCHORED_NONLINEAR_HISTORY_TARGET_MAXIMUM = 0.20
+REAL_ANCHORED_NONLINEAR_FUTURE_TARGET_MAXIMUM = 0.10
+REAL_ANCHORED_REFERENCE_DOSE_QUANTILE = 0.75
+REAL_ANCHORED_MINIMUM_SEPARATION_ACCEPTANCE_FRACTION = 1.00
+REAL_ANCHORED_MAXIMUM_HISTORY_MACRO_SEPARATION = 1.0
+REAL_ANCHORED_MAXIMUM_FUTURE_MACRO_SEPARATION = 1.0
+REAL_ANCHORED_MAXIMUM_AFFECTED_CHANNEL_SEPARATION = 1.5
+REAL_ANCHORED_MINIMUM_REFERENCE_DOSE_EVIDENCE_COUNT = 3
+REAL_ANCHORED_ADDITIVE_MAXIMUM_GAIN = 20.0
+REAL_ANCHORED_ADDITIVE_MAXIMUM_ALPHA = 21.0
+REAL_ANCHORED_NONLINEAR_MAXIMUM_ALPHA = 3.0
+REAL_ANCHORED_NONLINEAR_REFERENCE_ALPHA_STEP = 0.005
 
 REAL_ANCHORED_FORMAL_CAPABILITIES = (
     "trend",
@@ -21,6 +38,17 @@ REAL_ANCHORED_FORMAL_CAPABILITIES = (
 )
 REAL_ANCHORED_QUALIFICATION_ONLY_CAPABILITIES = (
     "hierarchical_coherence",
+)
+REAL_ANCHORED_NONLINEAR_DOSE_CAPABILITIES = (
+    "nonlinear_persistence",
+)
+REAL_ANCHORED_ADDITIVE_DOSE_CAPABILITIES = tuple(
+    capability_id
+    for capability_id in (
+        *REAL_ANCHORED_FORMAL_CAPABILITIES,
+        *REAL_ANCHORED_QUALIFICATION_ONLY_CAPABILITIES,
+    )
+    if capability_id not in REAL_ANCHORED_NONLINEAR_DOSE_CAPABILITIES
 )
 
 TIME_VARYING_SEASONALITY_BASIS_POLICY = (
@@ -83,4 +111,66 @@ def protocol_decisions() -> dict[str, object]:
         "qualification_threshold_source": (
             QUALIFICATION_THRESHOLD_SOURCE_POLICY
         ),
+        "dose_design": {
+            "policy": (
+                "reference_frozen_contract_specific_treatment_source_"
+                "distance_v2"
+            ),
+            "strength_grid": list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID),
+            "additive_history_target_maximum": (
+                REAL_ANCHORED_ADDITIVE_HISTORY_TARGET_MAXIMUM
+            ),
+            "additive_future_target_maximum": (
+                REAL_ANCHORED_ADDITIVE_FUTURE_TARGET_MAXIMUM
+            ),
+            "nonlinear_history_target_maximum": (
+                REAL_ANCHORED_NONLINEAR_HISTORY_TARGET_MAXIMUM
+            ),
+            "nonlinear_future_target_maximum": (
+                REAL_ANCHORED_NONLINEAR_FUTURE_TARGET_MAXIMUM
+            ),
+            "reference_quantile": REAL_ANCHORED_REFERENCE_DOSE_QUANTILE,
+            "minimum_reference_evidence_count": (
+                REAL_ANCHORED_MINIMUM_REFERENCE_DOSE_EVIDENCE_COUNT
+            ),
+            "treatment_source_distance_minimum": (
+                REAL_ANCHORED_SOURCE_DISTANCE_MINIMUM
+            ),
+            "minimum_separation_acceptance_fraction": (
+                REAL_ANCHORED_MINIMUM_SEPARATION_ACCEPTANCE_FRACTION
+            ),
+            "maximum_history_macro_separation": (
+                REAL_ANCHORED_MAXIMUM_HISTORY_MACRO_SEPARATION
+            ),
+            "maximum_future_macro_separation": (
+                REAL_ANCHORED_MAXIMUM_FUTURE_MACRO_SEPARATION
+            ),
+            "maximum_affected_channel_separation": (
+                REAL_ANCHORED_MAXIMUM_AFFECTED_CHANNEL_SEPARATION
+            ),
+            "additive_maximum_gain": (
+                REAL_ANCHORED_ADDITIVE_MAXIMUM_GAIN
+            ),
+            "additive_maximum_alpha": (
+                REAL_ANCHORED_ADDITIVE_MAXIMUM_ALPHA
+            ),
+            "nonlinear_maximum_alpha": (
+                REAL_ANCHORED_NONLINEAR_MAXIMUM_ALPHA
+            ),
+            "nonlinear_reference_alpha_step": (
+                REAL_ANCHORED_NONLINEAR_REFERENCE_ALPHA_STEP
+            ),
+            "alpha_semantics": (
+                "controlled_component_multiplier_not_cross_capability_strength"
+            ),
+            "canonical_strength_semantics": (
+                "cross_capability_dose_index_with_frozen_standardized_targets"
+            ),
+            "real_anchored_anti_copy_policy": (
+                "treatment_only_source_distance_baseline_exact_and_exempt"
+            ),
+            "real_anchored_proximity_policy": (
+                "fixed_l168_treatment_vs_own_source_hard_gate"
+            ),
+        },
     }

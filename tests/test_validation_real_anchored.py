@@ -10,7 +10,6 @@ import pytest
 from cafe import protocol
 from cafe.data.real import RealDatasetBundle, RealSeriesRecord
 from cafe.generation.real_counterfactuals import (
-    REAL_ANCHORED_ALPHAS,
     REAL_ANCHORED_MASTER_SCHEMA,
     array_sha256,
     build_availability,
@@ -18,6 +17,14 @@ from cafe.generation.real_counterfactuals import (
 from cafe.generation.real_anchored_policy import (
     NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY,
     QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
+)
+from cafe.generation.real_anchored_dose import (
+    additive_dose_reference,
+    freeze_capability_dose_calibration,
+    nonlinear_dose_reference,
+    paired_minimum_separation_gate,
+    resolve_contract_dose_calibration,
 )
 from cafe.generation.reference_bank import (
     build_combined_real_anchored_bank_split_audit,
@@ -40,6 +47,59 @@ from cafe.generation.structural_real_counterfactuals import (
 from cafe.validation import runner
 
 
+def _fit_structural_contracts_with_frozen_dose(
+    backgrounds: list[dict],
+    *,
+    capability_ids: tuple[str, ...],
+) -> tuple[list[dict], dict, dict]:
+    """Build a compact independent-reference policy for row-validator tests."""
+
+    raw_reference, _raw_availability = fit_structural_capability_contracts(
+        backgrounds,
+        capability_ids=capability_ids,
+    )
+    reference_rows: list[dict] = []
+    for capability_id in capability_ids:
+        candidates = [
+            row
+            for row in raw_reference
+            if row["capability_id"] == capability_id
+            and row.get("dose_design_reference") is not None
+        ]
+        assert candidates
+        for index in range(max(3, len(candidates))):
+            source = copy.deepcopy(candidates[index % len(candidates)])
+            reference_id = f"{source['background_id']}__dose_ref_{index}"
+            source["background_id"] = reference_id
+            source["dose_design_reference"]["background_id"] = reference_id
+            reference_rows.append(source)
+    reference_ids = sorted(str(row["background_id"]) for row in reference_rows)
+    split_audit = {
+        "schema_version": "cafe.real_anchored_bank_split.v1",
+        "policy": "unit_test_disjoint_reference_fixture_v1",
+        "source_window_length": protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+        "evaluation_background_count": len(backgrounds),
+        "evaluation_background_ids_sha256": protocol.json_sha256(
+            sorted(str(row["background_id"]) for row in backgrounds)
+        ),
+        "reference_background_count": len(reference_ids),
+        "reference_background_ids_sha256": protocol.json_sha256(reference_ids),
+        "component_assignment_sha256": protocol.json_sha256([]),
+        "cross_bank_temporal_overlap_count": 0,
+    }
+    policy = freeze_real_anchored_qualification_policy(
+        reference_rows,
+        reference_background_ids=reference_ids,
+        bank_split_audit=split_audit,
+    )
+    contracts, availability = fit_structural_capability_contracts(
+        backgrounds,
+        capability_ids=capability_ids,
+        frozen_qualification_policy=policy,
+    )
+    return contracts, availability, policy
+
+
 def _real_anchored_rows() -> list[dict]:
     context = protocol.REAL_ANCHORED_CONTEXT_LENGTH
     length = context + protocol.HORIZON
@@ -51,6 +111,7 @@ def _real_anchored_rows() -> list[dict]:
     )
     controlled = 0.45 * np.sin(2.0 * np.pi * time / 12.0 + 0.4)
     history = baseline[:context]
+    normalization_scale_value = float(np.std(history))
     mase_scale = float(np.mean(np.abs(history[24:] - history[:-24])))
     baseline_hashes = {
         "baseline_history_sha256": array_sha256(baseline[:context]),
@@ -67,11 +128,74 @@ def _real_anchored_rows() -> list[dict]:
     standardization = {
         "scope": "shared_unmodified_real_l336_history",
         "location": 17.0,
-        "scale": 2.5,
+        "scale": normalization_scale_value,
     }
-    rows: list[dict] = []
+    history_unit = float(
+        np.sqrt(np.mean(controlled[context - 168 : context] ** 2))
+        / normalization_scale_value
+    )
+    future_unit = float(
+        np.sqrt(np.mean(controlled[context:] ** 2))
+        / normalization_scale_value
+    )
+    reference_rows = [
+        {
+            "capability_id": "multi_seasonal",
+            "background_id": f"reference-{index}",
+            "available": True,
+            "dose_design_reference": additive_dose_reference(
+                capability_id="multi_seasonal",
+                background_id=f"reference-{index}",
+                unit_gain_history_separation=history_unit,
+                unit_gain_future_separation=future_unit,
+                affected_channel_indices=(0,),
+            ),
+        }
+        for index in range(3)
+    ]
+    dose_policy = freeze_capability_dose_calibration(
+        "multi_seasonal",
+        reference_rows,
+    )
+    assert dose_policy["status"] == "available"
+    evaluation_evidence = additive_dose_reference(
+        capability_id="multi_seasonal",
+        background_id=background_id,
+        unit_gain_history_separation=history_unit,
+        unit_gain_future_separation=future_unit,
+        affected_channel_indices=(0,),
+    )
+    dose_calibration = resolve_contract_dose_calibration(
+        dose_policy,
+        evaluation_evidence,
+    )
+    gates: list[dict] = []
+    previous_delta: np.ndarray | None = None
     for dose_index, treatment_alpha in enumerate(
-        REAL_ANCHORED_ALPHAS,
+        dose_calibration["applied_alpha_grid"],
+        start=1,
+    ):
+        treatment_delta = ((treatment_alpha - 1.0) * controlled)[:, None]
+        gates.append(
+            paired_minimum_separation_gate(
+                treatment_delta,
+                context_length=context,
+                dose_index=dose_index,
+                dose_calibration=dose_calibration,
+                affected_channel_indices=(0,),
+                scale_by_channel=(normalization_scale_value,),
+                previous_delta=previous_delta,
+            )
+        )
+        previous_delta = treatment_delta
+    assert all(gate["accepted"] for gate in gates)
+    rows: list[dict] = []
+    for dose_index, (canonical_strength, treatment_alpha) in enumerate(
+        zip(
+            REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
+            dose_calibration["applied_alpha_grid"],
+            strict=True,
+        ),
         start=1,
     ):
         pair_id = f"real-cf-pair-a{dose_index}"
@@ -120,7 +244,29 @@ def _real_anchored_rows() -> list[dict]:
                 ),
                 "controlled_component": "secondary_harmonic_sum",
                 "carrier_fixed": True,
+                "dose_calibration_policy_sha256": dose_calibration[
+                    "dose_policy_sha256"
+                ],
             }
+            if member == 1:
+                metadata["paired_minimum_separation_gate"] = copy.deepcopy(
+                    gates[dose_index - 1]
+                )
+            row_gate = (
+                {
+                    "status": "not_applicable",
+                    "accepted": None,
+                    "reason_code": "repeated_authentic_baseline_member",
+                    "dose_index": dose_index,
+                    "paired_treatment_gate_status": "passed",
+                    "dose_calibration_policy_sha256": dose_calibration[
+                        "dose_policy_sha256"
+                    ],
+                }
+                if member == 0
+                else copy.deepcopy(gates[dose_index - 1])
+            )
+            member_strength = 0.0 if member == 0 else canonical_strength
             sample_id = f"{pair_id}__m{member}"
             rows.append(
                 {
@@ -145,25 +291,51 @@ def _real_anchored_rows() -> list[dict]:
                     "covariate_dim": 0,
                     "covariates": None,
                     "intensity": dose_index,
-                    "intensity_lambda": alpha,
+                    "intensity_lambda": member_strength,
                     "dose_index": dose_index,
-                    "dose_parameter": "alpha",
-                    "dose_value": alpha,
-                    "baseline_dose_value": 1.0,
+                    "dose_parameter": "canonical_strength_lambda",
+                    "physical_dose_parameter": (
+                        "controlled_component_multiplier_alpha"
+                    ),
+                    "dose_value": member_strength,
+                    "baseline_dose_value": 0.0,
+                    "paired_treatment_strength": canonical_strength,
+                    "applied_alpha": alpha,
+                    "paired_treatment_applied_alpha": treatment_alpha,
+                    "dose_calibration_policy_sha256": dose_calibration[
+                        "dose_policy_sha256"
+                    ],
                     "target_feature": "real_anchored_intervention_rms",
                     "intensity_target_feature_value": intervention_rms,
                     "target_feature_value": intervention_rms,
                     "intensity_calibration": {
                         "policy": (
-                            "physical_component_amplitude_alpha_grid_v1"
+                            "reference_q75_capability_specific_alpha_grid_v1"
                         ),
                         "scope": (
                             "real_anchored_history_only_decomposition"
                         ),
-                        "selected_alphas": list(REAL_ANCHORED_ALPHAS),
+                        "canonical_strength_grid": list(
+                            REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+                        ),
+                        "selected_alphas": list(
+                            dose_calibration["applied_alpha_grid"]
+                        ),
+                        "history_target_grid": list(
+                            dose_calibration["history_target_grid"]
+                        ),
+                        "future_target_grid": list(
+                            dose_calibration["future_target_grid"]
+                        ),
+                        "dose_calibration_policy_sha256": dose_calibration[
+                            "dose_policy_sha256"
+                        ],
                     },
+                    "dose_calibration": copy.deepcopy(dose_calibration),
+                    "paired_minimum_separation_gate": row_gate,
                     "sampled_generator_parameters": {
                         "alpha": alpha,
+                        "canonical_strength": member_strength,
                         "controlled_component": (
                             "secondary_harmonic_sum"
                         ),
@@ -174,6 +346,9 @@ def _real_anchored_rows() -> list[dict]:
                         ),
                         "background_id": background_id,
                         "contract_sha256": contract_hash,
+                        "dose_calibration_policy_sha256": dose_calibration[
+                            "dose_policy_sha256"
+                        ],
                     },
                     "generation_metadata": metadata,
                     "mase_period": 24,
@@ -227,20 +402,72 @@ def _rehash_target(row: dict, baseline_row: dict) -> None:
 
 def _nonlinear_real_anchored_rows() -> list[dict]:
     rows = _real_anchored_rows()
+    background_id = str(rows[0]["background_id"])
     context = protocol.REAL_ANCHORED_CONTEXT_LENGTH
     baseline = np.asarray(rows[0]["target"], dtype=float)
     first_treatment = np.asarray(rows[1]["target"], dtype=float)
     unit_delta = (first_treatment - baseline) / (
-        float(rows[1]["dose_value"]) - 1.0
+        float(rows[1]["applied_alpha"]) - 1.0
+    )
+    normalization_scale = float(
+        rows[0]["generation_metadata"]["normalization_scale_by_target"][0]
+    )
+    candidate_alphas = [1.0 + 0.005 * index for index in range(401)]
+    curve: list[dict] = []
+    for alpha in candidate_alphas:
+        nonlinear_scale = (alpha - 1.0) * (1.0 + 0.35 * (alpha - 1.0))
+        delta = nonlinear_scale * unit_delta
+        curve.append(
+            {
+                "alpha": alpha,
+                "history_separation": float(
+                    np.sqrt(np.mean(delta[context - 168 : context] ** 2))
+                    / normalization_scale
+                ),
+                "future_separation": float(
+                    np.sqrt(np.mean(delta[context:] ** 2))
+                    / normalization_scale
+                ),
+                "safe": True,
+            }
+        )
+    nonlinear_reference_rows = [
+        {
+            "capability_id": "nonlinear_persistence",
+            "background_id": f"nonlinear-reference-{index}",
+            "available": True,
+            "dose_design_reference": nonlinear_dose_reference(
+                background_id=f"nonlinear-reference-{index}",
+                zero_innovation_curve=curve,
+                monotone=True,
+            ),
+        }
+        for index in range(3)
+    ]
+    dose_policy = freeze_capability_dose_calibration(
+        "nonlinear_persistence",
+        nonlinear_reference_rows,
+    )
+    assert dose_policy["status"] == "available"
+    nonlinear_evaluation_evidence = nonlinear_dose_reference(
+        background_id=background_id,
+        zero_innovation_curve=curve,
+        monotone=True,
+    )
+    dose_calibration = resolve_contract_dose_calibration(
+        dose_policy,
+        nonlinear_evaluation_evidence,
     )
     qualification: list[dict[str, float]] = []
-    for dose_index, alpha in enumerate(REAL_ANCHORED_ALPHAS):
+    deltas: list[np.ndarray] = []
+    for dose_index, alpha in enumerate(dose_calibration["applied_alpha_grid"]):
         baseline_row = rows[2 * dose_index]
         treatment = rows[2 * dose_index + 1]
         nonlinear_scale = (alpha - 1.0) * (1.0 + 0.35 * (alpha - 1.0))
         treatment["target"] = (baseline + nonlinear_scale * unit_delta).tolist()
         _rehash_target(treatment, baseline_row)
         delta = np.asarray(treatment["target"], dtype=float) - baseline
+        deltas.append(delta)
         qualification.append(
             {
                 "alpha": alpha,
@@ -253,11 +480,40 @@ def _nonlinear_real_anchored_rows() -> list[dict]:
                 ),
             }
         )
+    gates: list[dict] = []
+    previous_delta: np.ndarray | None = None
+    for dose_index, delta in enumerate(deltas, start=1):
+        gate = paired_minimum_separation_gate(
+            delta,
+            context_length=context,
+            dose_index=dose_index,
+            dose_calibration=dose_calibration,
+            affected_channel_indices=(0,),
+            scale_by_channel=(normalization_scale,),
+            previous_delta=previous_delta,
+        )
+        assert gate["accepted"] is True
+        gates.append(gate)
+        previous_delta = delta
     for row in rows:
         metadata = row["generation_metadata"]
+        dose_index = int(row["dose_index"])
+        member = int(row["counterfactual_member"])
+        canonical_strength = float(
+            dose_calibration["strength_grid"][dose_index - 1]
+        )
+        treatment_alpha = float(
+            dose_calibration["applied_alpha_grid"][dose_index - 1]
+        )
+        member_strength = 0.0 if member == 0 else canonical_strength
+        member_alpha = 1.0 if member == 0 else treatment_alpha
         metadata.update(
             {
                 "capability_id": "nonlinear_persistence",
+                "alpha": member_alpha,
+                "dose_calibration_policy_sha256": dose_calibration[
+                    "dose_policy_sha256"
+                ],
                 "controlled_component": (
                     "bounded_nonlinear_autoregressive_gain"
                 ),
@@ -281,7 +537,60 @@ def _nonlinear_real_anchored_rows() -> list[dict]:
                 "dose_response_qualification": copy.deepcopy(qualification),
             }
         )
+        if member == 0:
+            metadata.pop("paired_minimum_separation_gate", None)
+            row_gate = {
+                "status": "not_applicable",
+                "accepted": None,
+                "reason_code": "repeated_authentic_baseline_member",
+                "dose_index": dose_index,
+                "paired_treatment_gate_status": "passed",
+                "dose_calibration_policy_sha256": dose_calibration[
+                    "dose_policy_sha256"
+                ],
+            }
+        else:
+            metadata["paired_minimum_separation_gate"] = copy.deepcopy(
+                gates[dose_index - 1]
+            )
+            row_gate = copy.deepcopy(gates[dose_index - 1])
         row["capability_id"] = "nonlinear_persistence"
+        row["dose_value"] = member_strength
+        row["intensity_lambda"] = member_strength
+        row["paired_treatment_strength"] = canonical_strength
+        row["applied_alpha"] = member_alpha
+        row["paired_treatment_applied_alpha"] = treatment_alpha
+        row["dose_calibration"] = copy.deepcopy(dose_calibration)
+        row["dose_calibration_policy_sha256"] = dose_calibration[
+            "dose_policy_sha256"
+        ]
+        row["paired_minimum_separation_gate"] = row_gate
+        row["intensity_calibration"].update(
+            {
+                "canonical_strength_grid": list(
+                    dose_calibration["strength_grid"]
+                ),
+                "selected_alphas": list(
+                    dose_calibration["applied_alpha_grid"]
+                ),
+                "history_target_grid": list(
+                    dose_calibration["history_target_grid"]
+                ),
+                "future_target_grid": list(
+                    dose_calibration["future_target_grid"]
+                ),
+                "dose_calibration_policy_sha256": dose_calibration[
+                    "dose_policy_sha256"
+                ],
+            }
+        )
+        row["parameter_sampling"]["dose_calibration_policy_sha256"] = (
+            dose_calibration["dose_policy_sha256"]
+        )
+        row["sampled_generator_parameters"]["alpha"] = member_alpha
+        row["sampled_generator_parameters"]["canonical_strength"] = (
+            member_strength
+        )
         row["sampled_generator_parameters"]["controlled_component"] = (
             "bounded_nonlinear_autoregressive_gain"
         )
@@ -340,8 +649,8 @@ def _structural_common_rows() -> tuple[
     time = np.arange(source_length, dtype=float)
 
     def panel(phase: float) -> np.ndarray:
-        factor = np.sin(2.0 * np.pi * time / 24.0 + phase) + 0.3 * np.cos(
-            2.0 * np.pi * time / 12.0 - phase
+        factor = np.sin(2.0 * np.pi * time / 96.0 + phase) + 0.3 * np.cos(
+            2.0 * np.pi * time / 48.0 - phase
         )
         return np.vstack(
             [
@@ -406,9 +715,11 @@ def _structural_common_rows() -> tuple[
         maximum_backgrounds=3,
         real_bundle=bundle,
     )
-    contracts, _availability = fit_structural_capability_contracts(
+    contracts, _availability, _policy = (
+        _fit_structural_contracts_with_frozen_dose(
         backgrounds,
         capability_ids=("common_factor",),
+        )
     )
     main = list(
         iter_structural_real_anchored_samples(
@@ -453,8 +764,8 @@ def _structural_d2_sensitivity_rows(
     time = np.arange(source_length, dtype=float)
 
     def panel(phase: float) -> np.ndarray:
-        factor = np.sin(2.0 * np.pi * time / 24.0 + phase) + 0.25 * np.cos(
-            2.0 * np.pi * time / 12.0 - phase
+        factor = np.sin(2.0 * np.pi * time / 96.0 + phase) + 0.25 * np.cos(
+            2.0 * np.pi * time / 48.0 - phase
         )
         return np.vstack(
             (
@@ -490,9 +801,11 @@ def _structural_d2_sensitivity_rows(
         maximum_backgrounds=3,
         real_bundle=bundle,
     )
-    contracts, _availability = fit_structural_capability_contracts(
+    contracts, _availability, _policy = (
+        _fit_structural_contracts_with_frozen_dose(
         backgrounds,
         capability_ids=("common_factor",),
+        )
     )
     assert all(
         row["sensitivity_available"] is True
@@ -598,9 +911,11 @@ def _structural_covariate_d1_rows() -> list[dict]:
         maximum_backgrounds=1,
         real_bundle=bundle,
     )
-    contracts, _availability = fit_structural_capability_contracts(
+    contracts, _availability, _policy = (
+        _fit_structural_contracts_with_frozen_dose(
         backgrounds,
         capability_ids=("covariate_response",),
+        )
     )
     assert contracts[0]["generation_eligible"] is True
     return list(iter_structural_real_anchored_samples(backgrounds, contracts))
@@ -681,7 +996,7 @@ def _structural_covariate_replay_bank(
     return private_backgrounds, contracts, availability, rows
 
 
-def _v3_generation_manifest_fixture(
+def _v4_generation_manifest_fixture(
     root: Path,
     *,
     dataset_id: str = "gift_electricity_h",
@@ -775,7 +1090,7 @@ def _v3_generation_manifest_fixture(
         protocol.write_json(path, payload)
         replay_files[name] = protocol.file_record(path)
     bundle = {
-        "schema_version": "cafe.calibration_bundle.v3",
+        "schema_version": "cafe.calibration_bundle.v5",
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,
         "dataset": {"dataset_id": dataset_id},
@@ -864,7 +1179,7 @@ def _v3_generation_manifest_fixture(
         protocol.write_jsonl(path, ())
         files[key] = {**protocol.file_record(path), "row_count": 0}
     config = {
-        "schema_version": "cafe.generation_config.v3",
+        "schema_version": "cafe.generation_config.v5",
         "dataset_id": dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "seed_start": seed_start,
@@ -872,6 +1187,27 @@ def _v3_generation_manifest_fixture(
         "seed_indexes": seed_indexes,
         "requested_capabilities": [],
         "real_anchored_counterfactual": {
+            "dose_parameter": "canonical_strength_lambda",
+            "canonical_strength_grid": list(
+                REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+            ),
+            "dose_policy_sha256": policy["dose_policy"][
+                "dose_policy_sha256"
+            ],
+            "dose_calibration_sha256_by_capability": {},
+            "applied_alpha_grid_by_capability": {},
+            "applied_alpha_scope": "contract_specific_history_only",
+            "applied_alpha_range_by_capability": {},
+            "pairing": (
+                "baseline_lambda0_alpha1_vs_treatment_"
+                "contract_resolved_alpha"
+            ),
+            "anti_copy": (
+                "not_applicable_intentional_real_anchor_counterfactual"
+            ),
+            "paired_minimum_separation": (
+                "mandatory_treatment_source_l168_distance_with_budget_v1"
+            ),
             "calibrated_available_capabilities": [],
             "generated_capabilities": [],
             "qualification_policy_sha256": policy[
@@ -909,7 +1245,7 @@ def _v3_generation_manifest_fixture(
         },
     }
     manifest = {
-        "schema_version": "cafe.generation_manifest.v3",
+        "schema_version": "cafe.generation_manifest.v5",
         "config": config,
         "config_sha256": protocol.json_sha256(config),
         "files": files,
@@ -1114,6 +1450,33 @@ def _install_structural_replay_fixture(
     real_config["qualification_policy_sha256"] = qualification_policy[
         "qualification_policy_sha256"
     ]
+    covariate_dose = qualification_policy["capabilities"][
+        "covariate_response"
+    ]["dose_calibration"]
+    real_config["dose_policy_sha256"] = qualification_policy["dose_policy"][
+        "dose_policy_sha256"
+    ]
+    real_config["dose_calibration_sha256_by_capability"] = {
+        "covariate_response": covariate_dose["policy_sha256"]
+    }
+    real_config["applied_alpha_grid_by_capability"] = {
+        "covariate_response": covariate_dose["applied_alpha_grid"]
+    }
+    resolved_grids = [
+        row["contract"]["dose_calibration"]["applied_alpha_grid"]
+        for row in contracts
+        if row.get("capability_id") == "covariate_response"
+        and row.get("generation_eligible") is True
+    ]
+    real_config["applied_alpha_range_by_capability"] = {
+        "covariate_response": [
+            {
+                "minimum": min(grid[index] for grid in resolved_grids),
+                "maximum": max(grid[index] for grid in resolved_grids),
+            }
+            for index in range(len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID))
+        ]
+    }
     real_config["structural_donor_commitment"] = {
         "schema_version": donor_commitments["schema_version"],
         "commitment_policy": donor_commitments["commitment_policy"],
@@ -1130,11 +1493,11 @@ def _install_structural_replay_fixture(
     return rows
 
 
-def test_v3_generation_manifest_contract_binds_config_bundle_and_policy(
+def test_v4_generation_manifest_contract_binds_config_bundle_and_policy(
     tmp_path: Path,
 ) -> None:
     manifest, manifest_path, calibration_dir = (
-        _v3_generation_manifest_fixture(tmp_path)
+        _v4_generation_manifest_fixture(tmp_path)
     )
 
     config = runner.validate_generation_manifest_contract(
@@ -1149,13 +1512,50 @@ def test_v3_generation_manifest_contract_binds_config_bundle_and_policy(
     assert config == manifest["config"]
 
 
+def test_legacy_v3_manifest_is_accepted_only_with_empty_real_anchor_rows(
+    tmp_path: Path,
+) -> None:
+    manifest, manifest_path, calibration_dir = (
+        _v4_generation_manifest_fixture(tmp_path)
+    )
+    manifest["schema_version"] = "cafe.generation_manifest.v3"
+    manifest["config"]["schema_version"] = "cafe.generation_config.v3"
+    manifest["config_sha256"] = protocol.json_sha256(manifest["config"])
+
+    validated = runner.validate_generation_manifest_contract(
+        manifest,
+        manifest_path=manifest_path,
+        calibration_dir=calibration_dir,
+        dataset_id="gift_electricity_h",
+        seed_start=4,
+        seed_count=2,
+    )
+    assert validated["real_anchored_counterfactual"][
+        "generated_capabilities"
+    ] == []
+
+    manifest["config"]["real_anchored_counterfactual"][
+        "generated_capabilities"
+    ] = ["trend"]
+    manifest["config_sha256"] = protocol.json_sha256(manifest["config"])
+    with pytest.raises(ValueError, match="legacy"):
+        runner.validate_generation_manifest_contract(
+            manifest,
+            manifest_path=manifest_path,
+            calibration_dir=calibration_dir,
+            dataset_id="gift_electricity_h",
+            seed_start=4,
+            seed_count=2,
+        )
+
+
 def test_main_row_replay_rejects_self_consistent_real_path_rewrite(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
     dataset_id = "gift_electricity_h"
     manifest, manifest_path, calibration_dir = (
-        _v3_generation_manifest_fixture(
+            _v4_generation_manifest_fixture(
             tmp_path,
             dataset_id=dataset_id,
             seed_start=0,
@@ -1232,7 +1632,7 @@ def test_generation_main_rejects_stale_config_hash_before_row_read(
     monkeypatch,
 ) -> None:
     manifest, manifest_path, _calibration_dir = (
-        _v3_generation_manifest_fixture(tmp_path)
+        _v4_generation_manifest_fixture(tmp_path)
     )
     manifest["config"]["dataset_id"] = "tampered"
     protocol.write_json(manifest_path, manifest)
@@ -1258,11 +1658,11 @@ def test_generation_main_rejects_stale_config_hash_before_row_read(
         runner.main()
 
 
-def test_v3_generation_manifest_rejects_self_consistent_identity_tamper(
+def test_v4_generation_manifest_rejects_self_consistent_identity_tamper(
     tmp_path: Path,
 ) -> None:
     manifest, manifest_path, calibration_dir = (
-        _v3_generation_manifest_fixture(tmp_path)
+        _v4_generation_manifest_fixture(tmp_path)
     )
     manifest["config"]["dataset_id"] = "tampered"
     manifest["config_sha256"] = protocol.json_sha256(manifest["config"])
@@ -1278,11 +1678,11 @@ def test_v3_generation_manifest_rejects_self_consistent_identity_tamper(
         )
 
 
-def test_v3_generation_manifest_rejects_qualification_binding_tamper(
+def test_v4_generation_manifest_rejects_qualification_binding_tamper(
     tmp_path: Path,
 ) -> None:
     manifest, manifest_path, calibration_dir = (
-        _v3_generation_manifest_fixture(tmp_path)
+        _v4_generation_manifest_fixture(tmp_path)
     )
     manifest["config"]["real_anchored_counterfactual"][
         "qualification_policy_sha256"
@@ -1300,11 +1700,55 @@ def test_v3_generation_manifest_rejects_qualification_binding_tamper(
         )
 
 
-def test_v3_manifest_rejects_bundle_rehashed_wrong_split_audit(
+def test_v4_generation_manifest_rejects_dose_mapping_binding_tamper(
     tmp_path: Path,
 ) -> None:
     manifest, manifest_path, calibration_dir = (
-        _v3_generation_manifest_fixture(tmp_path)
+        _v4_generation_manifest_fixture(tmp_path)
+    )
+    manifest["config"]["real_anchored_counterfactual"][
+        "canonical_strength_grid"
+    ] = [0.1, 0.3, 0.5, 0.7, 1.0]
+    manifest["config_sha256"] = protocol.json_sha256(manifest["config"])
+
+    with pytest.raises(ValueError, match="dose-policy binding mismatch"):
+        runner.validate_generation_manifest_contract(
+            manifest,
+            manifest_path=manifest_path,
+            calibration_dir=calibration_dir,
+            dataset_id="gift_electricity_h",
+            seed_start=4,
+            seed_count=2,
+        )
+
+
+def test_v4_manifest_requires_local_augmentation_budget_policy(
+    tmp_path: Path,
+) -> None:
+    manifest, manifest_path, calibration_dir = (
+        _v4_generation_manifest_fixture(tmp_path)
+    )
+    manifest["config"]["real_anchored_counterfactual"][
+        "paired_minimum_separation"
+    ] = "mandatory_treatment_source_l168_distance_without_budget_v1"
+    manifest["config_sha256"] = protocol.json_sha256(manifest["config"])
+
+    with pytest.raises(ValueError, match="minimum-separation policy"):
+        runner.validate_generation_manifest_contract(
+            manifest,
+            manifest_path=manifest_path,
+            calibration_dir=calibration_dir,
+            dataset_id="gift_electricity_h",
+            seed_start=4,
+            seed_count=2,
+        )
+
+
+def test_v4_manifest_rejects_bundle_rehashed_wrong_split_audit(
+    tmp_path: Path,
+) -> None:
+    manifest, manifest_path, calibration_dir = (
+        _v4_generation_manifest_fixture(tmp_path)
     )
     bundle_path = calibration_dir / "calibration_bundle.json"
     bundle = protocol.read_json(bundle_path)
@@ -1358,11 +1802,11 @@ def test_v3_manifest_rejects_bundle_rehashed_wrong_split_audit(
         )
 
 
-def test_v3_generation_manifest_accepts_legacy_v2_upstream_without_rows(
+def test_v4_generation_manifest_accepts_legacy_v2_upstream_without_rows(
     tmp_path: Path,
 ) -> None:
     manifest, manifest_path, calibration_dir = (
-        _v3_generation_manifest_fixture(tmp_path)
+        _v4_generation_manifest_fixture(tmp_path)
     )
     bundle_path = calibration_dir / "calibration_bundle.json"
     bundle = protocol.read_json(bundle_path)
@@ -1431,8 +1875,12 @@ def test_valid_real_anchored_component_allows_exact_repeated_baselines() -> None
     )
 
     assert result["accepted"] is True
-    assert result["sample_count"] == 2 * len(REAL_ANCHORED_ALPHAS)
-    assert result["pair_count"] == len(REAL_ANCHORED_ALPHAS)
+    assert result["sample_count"] == 2 * len(
+        REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+    )
+    assert result["pair_count"] == len(
+        REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+    )
     assert result["paired_group_count"] == 1
     assert result["row_failures"] == []
     assert result["pair_failures"] == []
@@ -1445,6 +1893,132 @@ def test_valid_real_anchored_component_allows_exact_repeated_baselines() -> None
     assert all(
         np.array_equal(values, baselines[0]) for values in baselines[1:]
     )
+
+
+def test_v4_rows_separate_canonical_strength_from_physical_alpha() -> None:
+    rows = _real_anchored_rows()
+    treatments = [
+        row for row in rows if row["counterfactual_member"] == 1
+    ]
+    baselines = [row for row in rows if row["counterfactual_member"] == 0]
+
+    assert [row["dose_value"] for row in treatments] == list(
+        REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+    )
+    assert [row["applied_alpha"] for row in treatments] == rows[0][
+        "dose_calibration"
+    ]["applied_alpha_grid"]
+    assert all(
+        row["dose_value"] == 0.0 and row["applied_alpha"] == 1.0
+        for row in baselines
+    )
+
+
+def test_v4_row_rejects_rehashed_mapping_payload_with_stale_policy_hash() -> None:
+    rows = _real_anchored_rows()
+    for row in rows:
+        row["dose_calibration"]["applied_alpha_grid"][-1] += 0.01
+
+    result = runner.real_anchored_counterfactual_checks(rows)
+
+    assert result["accepted"] is False
+    assert any(
+        not failure["checks"]["dose_calibration_self_hash_valid"]
+        for failure in result["row_failures"]
+    )
+
+
+def test_adjacent_real_anchor_distance_is_diagnostic_only() -> None:
+    rows = _real_anchored_rows()
+    pairs = [
+        (rows[2 * index], rows[2 * index + 1])
+        for index in range(len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID))
+    ]
+    baseline = np.asarray(pairs[0][0]["target"], dtype=float)
+    dose_three_delta = np.asarray(pairs[2][1]["target"], dtype=float) - baseline
+    pairs[1][1]["target"] = (baseline + 0.95 * dose_three_delta).tolist()
+    _rehash_target(pairs[1][1], pairs[1][0])
+
+    calibration = pairs[0][0]["dose_calibration"]
+    scale = tuple(
+        pairs[0][0]["generation_metadata"]["normalization_scale_by_target"]
+    )
+    previous_delta: np.ndarray | None = None
+    for dose_index, (baseline_row, treatment_row) in enumerate(pairs, start=1):
+        delta = np.asarray(treatment_row["target"], dtype=float) - np.asarray(
+            baseline_row["target"], dtype=float
+        )
+        gate = paired_minimum_separation_gate(
+            delta,
+            context_length=protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+            dose_index=dose_index,
+            dose_calibration=calibration,
+            affected_channel_indices=(0,),
+            scale_by_channel=scale,
+            previous_delta=previous_delta,
+        )
+        treatment_row["paired_minimum_separation_gate"] = copy.deepcopy(gate)
+        treatment_row["generation_metadata"][
+            "paired_minimum_separation_gate"
+        ] = copy.deepcopy(gate)
+        previous_delta = delta
+
+    ordered_pairs = [
+        {
+            "baseline": baseline_row,
+            "treatment": treatment_row,
+            "delta": np.asarray(treatment_row["target"], dtype=float)
+            - np.asarray(baseline_row["target"], dtype=float),
+        }
+        for baseline_row, treatment_row in pairs
+    ]
+    group_checks = runner._paired_gate_replay_checks(ordered_pairs)
+    assert group_checks["absolute_minimum_separation_passed"] is True
+    assert group_checks["adjacent_minimum_separation_passed"] is False
+    assert runner._paired_group_checks_pass(group_checks) is True
+
+
+def test_real_anchor_treatment_cannot_exceed_local_augmentation_budget() -> None:
+    rows = _real_anchored_rows()
+    pairs = [
+        (rows[2 * index], rows[2 * index + 1])
+        for index in range(len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID))
+    ]
+    baseline_row, treatment_row = pairs[-1]
+    baseline = np.asarray(baseline_row["target"], dtype=float)
+    delta = np.asarray(treatment_row["target"], dtype=float) - baseline
+    treatment_row["target"] = (baseline + 20.0 * delta).tolist()
+    _rehash_target(treatment_row, baseline_row)
+    previous_delta = (
+        np.asarray(pairs[-2][1]["target"], dtype=float)
+        - np.asarray(pairs[-2][0]["target"], dtype=float)
+    )
+    oversized_delta = np.asarray(treatment_row["target"], dtype=float) - baseline
+    gate = paired_minimum_separation_gate(
+        oversized_delta,
+        context_length=protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+        dose_index=len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID),
+        dose_calibration=treatment_row["dose_calibration"],
+        affected_channel_indices=(0,),
+        scale_by_channel=tuple(
+            treatment_row["generation_metadata"][
+                "normalization_scale_by_target"
+            ]
+        ),
+        previous_delta=previous_delta,
+    )
+    assert gate["local_augmentation_budget_passed"] is False
+    treatment_row["paired_minimum_separation_gate"] = copy.deepcopy(gate)
+    treatment_row["generation_metadata"][
+        "paired_minimum_separation_gate"
+    ] = copy.deepcopy(gate)
+
+    result = runner.real_anchored_counterfactual_checks(rows)
+
+    assert result["accepted"] is False
+    assert result["paired_group_failures"][0]["checks"][
+        "absolute_minimum_separation_passed"
+    ] is False
 
 
 def test_univariate_replay_rejects_self_consistent_path_rewrite() -> None:
@@ -1462,7 +2036,7 @@ def test_univariate_replay_rejects_self_consistent_path_rewrite() -> None:
 
     rewritten = copy.deepcopy(expected_rows)
     context = protocol.REAL_ANCHORED_CONTEXT_LENGTH
-    for dose_index in range(len(REAL_ANCHORED_ALPHAS)):
+    for dose_index in range(len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)):
         baseline = rewritten[2 * dose_index]
         treatment = rewritten[2 * dose_index + 1]
         for row in (baseline, treatment):
@@ -1624,7 +2198,7 @@ def test_reusing_one_real_background_under_a_fresh_seed_fails() -> None:
     ]
 
 
-def test_legacy_v1_rows_without_evaluation_table_remain_accepted() -> None:
+def test_legacy_v1_nonempty_rows_do_not_enter_v4_validation() -> None:
     rows = _real_anchored_rows()
     for row in rows:
         row["schema_version"] = (
@@ -1634,13 +2208,12 @@ def test_legacy_v1_rows_without_evaluation_table_remain_accepted() -> None:
 
     result = runner.real_anchored_counterfactual_checks(rows)
 
-    assert result["accepted"] is True
-    assert result["schema_version"] == "cafe.real_anchored_validation.v3"
+    assert result["accepted"] is False
 
 
 def test_current_univariate_grid_cannot_delete_a_frozen_dose() -> None:
     rows = _real_anchored_rows()[:-2]
-    shortened_grid = list(REAL_ANCHORED_ALPHAS[:-1])
+    shortened_grid = list(rows[0]["dose_calibration"]["applied_alpha_grid"][:-1])
     for row in rows:
         row["intensity_calibration"]["selected_alphas"] = shortened_grid
 
@@ -1656,9 +2229,9 @@ def test_current_univariate_grid_cannot_delete_a_frozen_dose() -> None:
     ] is False
 
 
-def test_legacy_v1_univariate_grid_remains_self_declared() -> None:
+def test_legacy_v1_nonempty_self_declared_grid_is_rejected() -> None:
     rows = _real_anchored_rows()[:-2]
-    shortened_grid = list(REAL_ANCHORED_ALPHAS[:-1])
+    shortened_grid = list(rows[0]["dose_calibration"]["applied_alpha_grid"][:-1])
     for row in rows:
         row["schema_version"] = "cafe.real_anchored_counterfactual_master.v1"
         row.pop("evaluation_table")
@@ -1666,26 +2239,31 @@ def test_legacy_v1_univariate_grid_remains_self_declared() -> None:
 
     result = runner.real_anchored_counterfactual_checks(rows)
 
-    assert result["accepted"] is True
+    assert result["accepted"] is False
 
 
 def test_current_univariate_grid_cannot_replace_a_frozen_dose() -> None:
     rows = _real_anchored_rows()
-    replacement_grid = [*REAL_ANCHORED_ALPHAS[:-1], 2.2]
+    original_grid = list(rows[0]["dose_calibration"]["applied_alpha_grid"])
+    replacement_alpha = original_grid[-1] + 0.1
+    replacement_grid = [*original_grid[:-1], replacement_alpha]
     for row in rows:
         row["intensity_calibration"]["selected_alphas"] = replacement_grid
     baseline = np.asarray(rows[-2]["target"], dtype=float)
     first_baseline = np.asarray(rows[0]["target"], dtype=float)
     first_treatment = np.asarray(rows[1]["target"], dtype=float)
     unit_delta = (first_treatment - first_baseline) / (
-        float(rows[1]["dose_value"]) - 1.0
+        float(rows[1]["applied_alpha"]) - 1.0
     )
     treatment = rows[-1]
-    treatment["dose_value"] = 2.2
-    treatment["intensity_lambda"] = 2.2
-    treatment["sampled_generator_parameters"]["alpha"] = 2.2
-    treatment["generation_metadata"]["alpha"] = 2.2
-    treatment["target"] = (baseline + 1.2 * unit_delta).tolist()
+    treatment["applied_alpha"] = replacement_alpha
+    treatment["paired_treatment_applied_alpha"] = replacement_alpha
+    rows[-2]["paired_treatment_applied_alpha"] = replacement_alpha
+    treatment["sampled_generator_parameters"]["alpha"] = replacement_alpha
+    treatment["generation_metadata"]["alpha"] = replacement_alpha
+    treatment["target"] = (
+        baseline + (replacement_alpha - 1.0) * unit_delta
+    ).tolist()
     _rehash_target(treatment, rows[-2])
 
     result = runner.real_anchored_counterfactual_checks(rows)
@@ -1711,8 +2289,8 @@ def test_nonlinear_dynamic_contract_is_not_forced_to_be_alpha_linear() -> None:
     baseline = np.asarray(rows[0]["target"], dtype=float)
     first_delta = np.asarray(rows[1]["target"], dtype=float) - baseline
     second_delta = np.asarray(rows[3]["target"], dtype=float) - baseline
-    first_alpha = float(rows[1]["dose_value"])
-    second_alpha = float(rows[3]["dose_value"])
+    first_alpha = float(rows[1]["applied_alpha"])
+    second_alpha = float(rows[3]["applied_alpha"])
     assert not np.allclose(
         first_delta / (first_alpha - 1.0),
         second_delta / (second_alpha - 1.0),
@@ -1798,7 +2376,8 @@ def test_nonlinear_replay_sensitivity_fails_closed(tamper: str) -> None:
         replay = [
             row
             for row in replay
-            if row["dose_index"] != len(REAL_ANCHORED_ALPHAS)
+            if row["dose_index"]
+            != len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
         ]
 
     result = runner.real_anchored_counterfactual_checks(
@@ -1815,7 +2394,7 @@ def test_nonlinear_replay_sensitivity_fails_closed(tamper: str) -> None:
         assert replay_validation["row_failures"]
 
 
-def test_structural_main_and_mandatory_input_ablation_pass_v3() -> None:
+def test_structural_main_and_mandatory_input_ablation_pass_v4() -> None:
     main, ablations, entries, root, _manifest = _structural_common_rows()
 
     result = runner.real_anchored_counterfactual_checks(
@@ -2000,9 +2579,10 @@ def test_current_structural_grid_cannot_delete_a_frozen_dose() -> None:
     rows = [
         row
         for row in (*main, *ablations)
-        if int(row["dose_index"]) < len(REAL_ANCHORED_ALPHAS)
+        if int(row["dose_index"])
+        < len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
     ]
-    shortened_grid = list(REAL_ANCHORED_ALPHAS[:-1])
+    shortened_grid = list(main[0]["dose_calibration"]["applied_alpha_grid"][:-1])
     for row in rows:
         row["intensity_calibration"]["selected_alphas"] = shortened_grid
 
@@ -2023,7 +2603,7 @@ def test_current_structural_grid_cannot_delete_a_frozen_dose() -> None:
     )
 
 
-def test_covariate_response_d1_with_known_future_inputs_passes_v3() -> None:
+def test_covariate_response_d1_with_known_future_inputs_passes_v4() -> None:
     rows = _structural_covariate_d1_rows()
 
     result = runner.real_anchored_counterfactual_checks(rows)
@@ -2468,7 +3048,7 @@ def test_absent_real_anchored_manifest_component_is_backward_compatible(
     report = protocol.read_json(
         generation_dir / f"validation__{shard_name}.json"
     )
-    assert report["schema_version"] == "cafe.generation_validation.v2"
+    assert report["schema_version"] == "cafe.generation_validation.v5"
     assert report["accepted"] is True
     assert report["real_anchored_sample_count"] == 0
     assert report["real_anchored_validation"]["status"] == "not_present"

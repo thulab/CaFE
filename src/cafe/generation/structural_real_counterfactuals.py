@@ -30,6 +30,15 @@ from cafe import protocol
 from cafe.data.imputation import impute_observed_window
 from cafe.data.real import RealDatasetBundle, RealSeriesRecord, load_real_dataset
 from cafe.generation.normalization import standardize_hierarchy_by_context
+from cafe.generation.real_anchored_dose import (
+    REAL_ANCHORED_DOSE_CALIBRATION_SCHEMA,
+    additive_dose_reference,
+    dose_calibration_from_policy,
+    paired_minimum_separation_gate,
+    resolve_contract_dose_calibration,
+    standardized_channel_separations,
+    validate_dose_calibration,
+)
 from cafe.generation.real_counterfactuals import array_sha256
 from cafe.generation.real_anchored_policy import (
     HIERARCHY_FORMAL_RANK_POLICY,
@@ -44,20 +53,22 @@ from cafe.generation.real_anchored_policy import (
 
 STRUCTURAL_BACKGROUND_SCHEMA = "cafe.structural_real_background.v1"
 STRUCTURAL_BACKGROUND_BANK_SCHEMA = "cafe.structural_real_background_bank.v1"
-STRUCTURAL_CONTRACT_SCHEMA = "cafe.structural_real_contract.v1"
-STRUCTURAL_CAPABILITY_ROW_SCHEMA = "cafe.structural_real_capability_row.v1"
-STRUCTURAL_MASTER_SCHEMA = "cafe.structural_real_counterfactual_master.v1"
+STRUCTURAL_CONTRACT_SCHEMA = "cafe.structural_real_contract.v2"
+STRUCTURAL_CAPABILITY_ROW_SCHEMA = "cafe.structural_real_capability_row.v2"
+STRUCTURAL_MASTER_SCHEMA = "cafe.structural_real_counterfactual_master.v2"
 STRUCTURAL_ABLATION_SCHEMA = "cafe.structural_input_ablation.v1"
-STRUCTURAL_AVAILABILITY_SCHEMA = "cafe.structural_real_availability.v2"
+STRUCTURAL_AVAILABILITY_SCHEMA = "cafe.structural_real_availability.v3"
 STRUCTURAL_DONOR_COMMITMENT_SCHEMA = (
-    "cafe.structural_donor_commitment_manifest.v1"
+    "cafe.structural_donor_commitment_manifest.v2"
 )
 STRUCTURAL_DONOR_COMMITMENT_ENTRY_SCHEMA = (
-    "cafe.structural_donor_commitment_entry.v1"
+    "cafe.structural_donor_commitment_entry.v2"
 )
 STRUCTURAL_DONOR_COMMITMENT_POLICY = (
-    "calibration_frozen_structural_l336_per_channel_commitment_v1"
+    "calibration_frozen_structural_l336_per_channel_dose_commitment_v2"
 )
+LEGACY_STRUCTURAL_CONTRACT_SCHEMA = "cafe.structural_real_contract.v1"
+LEGACY_STRUCTURAL_AVAILABILITY_SCHEMA = "cafe.structural_real_availability.v2"
 STRUCTURAL_REFERENCE_BANK_ID = "cafe.structural_reference_bank.2026-08-v1"
 
 STRUCTURAL_CAPABILITIES = (
@@ -770,6 +781,99 @@ def _ar1_one_step_holdout_r2(values: np.ndarray) -> float:
     return _safe_r2(actual, prediction)
 
 
+def _fit_ar_lags(values: np.ndarray, lags: Sequence[int]) -> np.ndarray:
+    series = np.asarray(values, dtype=float)
+    lag_values = tuple(sorted({int(value) for value in lags}))
+    start = max(lag_values)
+    indexes = np.arange(start, series.size)
+    design = np.column_stack(
+        [np.ones(indexes.size)]
+        + [series[indexes - lag] for lag in lag_values]
+    )
+    return _ridge_coefficients(design, series[indexes])
+
+
+def _ar_lag_one_step_r2(values: np.ndarray, lags: Sequence[int]) -> float:
+    series = np.asarray(values, dtype=float)
+    lag_values = tuple(sorted({int(value) for value in lags}))
+    split = max(max(lag_values) + 24, int(math.floor(0.75 * series.size)))
+    coefficients = _fit_ar_lags(series[:split], lag_values)
+    indexes = np.arange(split, series.size)
+    design = np.column_stack(
+        [np.ones(indexes.size)]
+        + [series[indexes - lag] for lag in lag_values]
+    )
+    return _safe_r2(series[indexes], design @ coefficients)
+
+
+def _selected_state_forecast(
+    values: np.ndarray,
+    horizon: int,
+    *,
+    period: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Select a history-only stable AR/seasonal state extension."""
+
+    series = np.asarray(values, dtype=float)
+    seasonal = int(np.clip(period, 2, min(168, series.size // 3)))
+    candidates = tuple(
+        dict.fromkeys(
+            (
+                (1,),
+                (1, 2),
+                (seasonal,),
+                tuple(sorted({1, seasonal})),
+                tuple(sorted({1, 2, seasonal})),
+            )
+        )
+    )
+    scored = [
+        {
+            "lags": list(lags),
+            "one_step_holdout_r2": _ar_lag_one_step_r2(series, lags),
+        }
+        for lags in candidates
+    ]
+    selected = max(
+        scored,
+        key=lambda row: (
+            float(row["one_step_holdout_r2"]),
+            -len(row["lags"]),
+        ),
+    )
+    lags = tuple(int(value) for value in selected["lags"])
+    coefficients = _fit_ar_lags(series, lags)
+    extended = series.astype(float).tolist()
+    center = float(np.median(series))
+    scale = max(float(np.std(series)), 1e-6)
+    lower = center - 6.0 * scale
+    upper = center + 6.0 * scale
+    clipped = 0
+    for _step in range(int(horizon)):
+        state = float(coefficients[0]) + sum(
+            float(coefficient) * float(extended[-lag])
+            for lag, coefficient in zip(lags, coefficients[1:], strict=True)
+        )
+        bounded = float(np.clip(state, lower, upper))
+        clipped += int(bounded != state)
+        extended.append(bounded)
+    forecast = np.asarray(extended[-int(horizon):], dtype=float)
+    metadata = {
+        "policy": "history_only_holdout_selected_bounded_ar_seasonal_v1",
+        "candidate_scores": scored,
+        "selected_lags": list(lags),
+        "selected_one_step_holdout_r2": float(
+            selected["one_step_holdout_r2"]
+        ),
+        "coefficients": coefficients.tolist(),
+        "seasonal_period": seasonal,
+        "forecast_clip_bound_standard_deviations": 6.0,
+        "forecast_clipped_step_count": clipped,
+        "target_future_used": False,
+    }
+    return forecast, metadata
+
+
 def _principal_loading(values: np.ndarray) -> tuple[np.ndarray, np.ndarray, float]:
     matrix = np.asarray(values, dtype=float)
     centered = matrix - np.mean(matrix, axis=0, keepdims=True)
@@ -814,6 +918,76 @@ def _component_gate(
     }
 
 
+def _structural_affected_channel_indices(
+    capability_id: str,
+    background: Mapping[str, Any],
+    fit_diagnostics: Mapping[str, Any],
+) -> tuple[int, ...]:
+    """Return the channels whose controlled component defines dose strength."""
+
+    if capability_id == "common_factor":
+        raw = fit_diagnostics.get("nondegenerate_loading_indices", ())
+    elif capability_id == "cross_series_dependence":
+        raw = fit_diagnostics.get("responders", ())
+    elif capability_id == "covariate_response":
+        raw = fit_diagnostics.get("eligible_target_indices", ())
+    elif capability_id == "hierarchical_coherence":
+        hierarchy = background.get("hierarchy")
+        raw = (
+            ()
+            if not isinstance(hierarchy, Mapping)
+            else hierarchy.get("child_indices", ())
+        )
+    else:
+        raise ValueError(f"unsupported structural dose capability {capability_id}")
+    affected = tuple(int(value) for value in raw)
+    if len(affected) != len(set(affected)) or any(value < 0 for value in affected):
+        raise ValueError("structural dose channels must be unique/non-negative")
+    return affected
+
+
+def _structural_dose_reference(
+    background: Mapping[str, Any],
+    *,
+    capability_id: str,
+    component: np.ndarray,
+    fit_diagnostics: Mapping[str, Any],
+    evidence_role: str | None,
+) -> dict[str, Any] | None:
+    """Build reference-only standardized L168/H48 unit-gain evidence."""
+
+    if evidence_role is None:
+        return None
+    affected = _structural_affected_channel_indices(
+        capability_id,
+        background,
+        fit_diagnostics,
+    )
+    if not affected:
+        return None
+    history_by_channel, future_by_channel = standardized_channel_separations(
+        np.asarray(component, dtype=float),
+        context_length=protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH,
+    )
+    if max(affected) >= history_by_channel.size:
+        raise ValueError("structural dose channel exceeds component dimension")
+    history = float(np.mean(history_by_channel[list(affected)]))
+    future = float(np.mean(future_by_channel[list(affected)]))
+    if min(history, future) <= 0.0:
+        return None
+    return additive_dose_reference(
+        capability_id=capability_id,
+        background_id=str(background["background_id"]),
+        unit_gain_history_separation=history,
+        unit_gain_future_separation=future,
+        affected_channel_indices=affected,
+        known_future_covariate_path_used=(
+            capability_id == "covariate_response"
+        ),
+        evidence_role=evidence_role,
+    )
+
+
 def _base_contract(
     background: Mapping[str, Any],
     *,
@@ -825,6 +999,26 @@ def _base_contract(
     mandatory_input_ablation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     component_values = np.asarray(component, dtype=float)
+    qualification_only_eligible = bool(
+        capability_id == "hierarchical_coherence"
+        and fit_diagnostics.get("qualification_passed") is True
+    )
+    evidence_role = (
+        "formal"
+        if formal_main_eligible
+        else "sensitivity"
+        if sensitivity_eligible
+        else "qualification_only"
+        if qualification_only_eligible
+        else None
+    )
+    dose_reference = _structural_dose_reference(
+        background,
+        capability_id=capability_id,
+        component=component_values,
+        fit_diagnostics=fit_diagnostics,
+        evidence_role=evidence_role,
+    )
     contract: dict[str, Any] = {
         "schema_version": STRUCTURAL_CONTRACT_SCHEMA,
         "capability_id": capability_id,
@@ -836,7 +1030,11 @@ def _base_contract(
         "model_context_length": protocol.REAL_ANCHORED_CONTEXT_LENGTH,
         "horizon": protocol.HORIZON,
         "intervention_law": "X_alpha=X+(alpha-1)*M_hat",
-        "alpha_grid": list(STRUCTURAL_ALPHAS),
+        # Reference fitting measures unit-gain response only.  The formal grid
+        # is selected later from the independent reference bank.
+        "alpha_grid": [],
+        "dose_grid_status": "reference_mapping_pending",
+        "dose_design_reference": dose_reference,
         "component": component_values.tolist(),
         "component_sha256": _array_sha256(
             component_values,
@@ -857,6 +1055,8 @@ def _base_contract(
         "target_future_used_for_fit": False,
         "formal_main_eligible": bool(formal_main_eligible),
         "sensitivity_eligible": bool(sensitivity_eligible),
+        "generation_eligible": bool(formal_main_eligible),
+        "ranking_eligible": bool(formal_main_eligible),
         "mandatory_input_ablation": (
             None
             if mandatory_input_ablation is None
@@ -884,9 +1084,10 @@ def fit_common_factor_contract(background: Mapping[str, Any]) -> dict[str, Any]:
     nondegenerate = np.flatnonzero(
         relative >= _threshold("common_min_loading_relative_magnitude")
     )
-    factor_future, intercept, persistence = _ar1_forecast(
+    factor_future, factor_forecast = _selected_state_forecast(
         scores,
         protocol.HORIZON,
+        period=int(round(float(background.get("season_length", 24)))),
     )
     component = np.vstack(
         [
@@ -913,8 +1114,7 @@ def fit_common_factor_contract(background: Mapping[str, Any]) -> dict[str, Any]:
         "minimum_factor_one_step_holdout_r2": _threshold(
             "common_min_one_step_holdout_r2"
         ),
-        "factor_ar1_intercept": intercept,
-        "factor_ar1_persistence": persistence,
+        "factor_future_forecast": factor_forecast,
         "loadings": loading.tolist(),
         "protected_target_index": protected,
     }
@@ -994,7 +1194,9 @@ def _incremental_gain(
 def _select_directed_edge(matrix: np.ndarray) -> dict[str, Any]:
     values = np.asarray(matrix, dtype=float)
     max_lag = int(_threshold("cross_max_lag"))
-    candidates: list[tuple[float, int, int, list[float], list[float]]] = []
+    minimum_gain = float(_threshold("cross_min_corrected_incremental_r2"))
+    minimum_responder_count = min(2, values.shape[1] - 1)
+    candidates: list[dict[str, Any]] = []
     for source in range(values.shape[1]):
         destinations = [index for index in range(values.shape[1]) if index != source]
         for lag in range(1, max_lag + 1):
@@ -1022,19 +1224,61 @@ def _select_directed_edge(matrix: np.ndarray) -> dict[str, Any]:
                 else 0.0
                 for left, right in zip(forward, reverse, strict=True)
             ]
-            candidates.append(
-                (float(np.min(corrected)), source, lag, corrected, forward)
+            eligible_offsets = [
+                offset
+                for offset, gain in enumerate(corrected)
+                if float(gain) >= minimum_gain
+            ]
+            eligible_responders = [
+                destinations[offset] for offset in eligible_offsets
+            ]
+            eligible_gains = [corrected[offset] for offset in eligible_offsets]
+            score = (
+                float(np.median(eligible_gains))
+                if len(eligible_gains) >= minimum_responder_count
+                else 0.0
             )
-    score, source, lag, corrected, forward = max(candidates, key=lambda row: row[0])
+            candidates.append(
+                {
+                    "score": score,
+                    "source": source,
+                    "lag": lag,
+                    "responders": eligible_responders,
+                    "eligible_corrected_gains": eligible_gains,
+                    "corrected_all_destinations": corrected,
+                    "forward_all_destinations": forward,
+                    "all_destinations": destinations,
+                }
+            )
+    selected = max(
+        candidates,
+        key=lambda row: (
+            float(row["score"]),
+            len(row["responders"]),
+            -int(row["lag"]),
+            -int(row["source"]),
+        ),
+    )
     return {
-        "source": int(source),
-        "lag": int(lag),
-        "responders": [
-            index for index in range(values.shape[1]) if index != source
-        ],
-        "minimum_corrected_incremental_r2": float(score),
-        "corrected_incremental_r2_by_responder": corrected,
-        "forward_incremental_r2_by_responder": forward,
+        "source": int(selected["source"]),
+        "lag": int(selected["lag"]),
+        "responders": [int(value) for value in selected["responders"]],
+        "minimum_responder_count": minimum_responder_count,
+        "eligible_responder_count": len(selected["responders"]),
+        "minimum_corrected_incremental_r2": float(selected["score"]),
+        "corrected_incremental_r2_by_responder": list(
+            selected["eligible_corrected_gains"]
+        ),
+        "all_destination_indices": list(selected["all_destinations"]),
+        "corrected_incremental_r2_by_all_destination": list(
+            selected["corrected_all_destinations"]
+        ),
+        "forward_incremental_r2_by_all_destination": list(
+            selected["forward_all_destinations"]
+        ),
+        "responder_selection_policy": (
+            "at_least_two_threshold_passing_responders_for_d_ge_3_v1"
+        ),
     }
 
 
@@ -1047,21 +1291,61 @@ def fit_cross_series_contract(background: Mapping[str, Any]) -> dict[str, Any]:
     source = int(selected["source"])
     lag = int(selected["lag"])
     responders = [int(value) for value in selected["responders"]]
-    fold_selections = [
-        _select_directed_edge(history[:336]),
-        _select_directed_edge(history[-336:]),
-    ]
-    driver_agreement = float(
-        np.mean([row["source"] == source for row in fold_selections])
+    fold_edge_evidence: list[dict[str, Any]] = []
+    for fold in (history[:336], history[-336:]):
+        corrected: list[float] = []
+        for responder in responders:
+            forward = _incremental_gain(
+                fold,
+                source=source,
+                destination=responder,
+                lag=lag,
+            )
+            reverse = _incremental_gain(
+                fold[::-1],
+                source=source,
+                destination=responder,
+                lag=lag,
+            )
+            corrected.append(max(float(forward) - float(reverse), 0.0))
+        passing = [
+            gain
+            for gain in corrected
+            if gain >= _threshold("cross_min_corrected_incremental_r2")
+        ]
+        fold_edge_evidence.append(
+            {
+                "source": source,
+                "lag": lag,
+                "corrected_incremental_r2_by_full_selected_responder": corrected,
+                "passing_responder_count": len(passing),
+                "minimum_required_responder_count": int(
+                    selected["minimum_responder_count"]
+                ),
+                "median_passing_corrected_incremental_r2": (
+                    float(np.median(passing)) if passing else 0.0
+                ),
+            }
+        )
+    fixed_edge_fold_passed = all(
+        int(row["passing_responder_count"])
+        >= int(row["minimum_required_responder_count"])
+        and float(row["median_passing_corrected_incremental_r2"])
+        >= _threshold("cross_min_corrected_incremental_r2")
+        for row in fold_edge_evidence
     )
-    fold_lag_deviation = float(
-        np.median([abs(int(row["lag"]) - lag) for row in fold_selections])
+    driver_agreement = 1.0 if fixed_edge_fold_passed else 0.0
+    fold_lag_deviation = (
+        0.0
+        if fixed_edge_fold_passed
+        else float(_threshold("cross_max_lag") + 1.0)
     )
     source_center = float(np.mean(history[:, source]))
     source_values = history[:, source] - source_center
-    source_future, source_intercept, source_persistence = _ar1_forecast(
+    source_future, source_forecast = _selected_state_forecast(
         source_values,
         protocol.HORIZON,
+        period=int(round(float(background.get("season_length", 24)))),
     )
     source_extended = np.concatenate([source_values, source_future])
     component = np.zeros(
@@ -1106,8 +1390,9 @@ def fit_cross_series_contract(background: Mapping[str, Any]) -> dict[str, Any]:
     edge_passed = bool(
         float(selected["minimum_corrected_incremental_r2"])
         >= _threshold("cross_min_corrected_incremental_r2")
-        and driver_agreement >= _threshold("cross_min_fold_driver_agreement")
-        and fold_lag_deviation <= _threshold("cross_max_fold_lag_deviation")
+        and int(selected["eligible_responder_count"])
+        >= int(selected["minimum_responder_count"])
+        and fixed_edge_fold_passed
     )
     component_passed = bool(_component_gate(component, history_length=504)["passed"])
     panel = background["panel_contract"]
@@ -1117,12 +1402,15 @@ def fit_cross_series_contract(background: Mapping[str, Any]) -> dict[str, Any]:
     )
     diagnostics = {
         **selected,
-        "fold_selections": fold_selections,
+        "fold_selections": fold_edge_evidence,
+        "fixed_full_edge_fold_validation_passed": fixed_edge_fold_passed,
+        "fold_validation_policy": (
+            "full_history_selected_edge_replayed_without_reselection_in_halves_v2"
+        ),
         "fold_driver_agreement": driver_agreement,
         "fold_lag_deviation": fold_lag_deviation,
         "source_center": source_center,
-        "source_ar1_intercept": source_intercept,
-        "source_ar1_persistence": source_persistence,
+        "source_future_forecast": source_forecast,
         "response_parameters": response_parameters,
         "edge_passed": edge_passed,
         "interpretation": "directed_predictive_transfer_not_causal_scm",
@@ -1321,6 +1609,38 @@ def fit_covariate_response_contract(background: Mapping[str, Any]) -> dict[str, 
     )
 
 
+def _hierarchy_raw_negativity_audit(
+    background: Mapping[str, Any],
+    component: np.ndarray,
+    alphas: Sequence[float],
+) -> dict[str, Any]:
+    payload = background.get("hierarchy")
+    if not isinstance(payload, Mapping):
+        raise ValueError("hierarchy negativity audit requires hierarchy payload")
+    raw_path = np.asarray(payload["_raw_source_window"], dtype=float)
+    children = [int(value) for value in payload["child_indices"]]
+    raw_component = (
+        np.asarray(component, dtype=float)
+        * float(payload["standardization"]["shared_scale"])
+    )
+    negativity: dict[str, Any] = {}
+    for alpha in alphas:
+        alpha_value = float(alpha)
+        augmented = raw_path.copy()
+        augmented[:, children] += (
+            (alpha_value - 1.0) * raw_component[:, children]
+        )
+        counts = np.sum(augmented[:, children] < 0.0, axis=0)
+        negativity[str(alpha_value)] = {
+            "negative_value_count_by_child": counts.astype(int).tolist(),
+            "total_negative_value_count": int(np.sum(counts)),
+            "minimum_augmented_child_value": float(
+                np.min(augmented[:, children])
+            ),
+        }
+    return negativity
+
+
 def fit_hierarchy_qualification_contract(
     background: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -1328,7 +1648,6 @@ def fit_hierarchy_qualification_contract(
     if not isinstance(payload, Mapping):
         raise ValueError("hierarchy qualification requires a declared hierarchy")
     history = np.asarray(payload["_decomposition_history"], dtype=float)
-    raw_path = np.asarray(payload["_raw_source_window"], dtype=float)
     children = [int(value) for value in payload["child_indices"]]
     parent = history[:, int(payload["parent_index"])]
     child_history = history[:, children]
@@ -1363,20 +1682,11 @@ def fit_hierarchy_qualification_contract(
         and float(np.mean(holdout_r2)) >= minimum_holdout
         and _component_gate(component, history_length=504)["passed"]
     )
-    shared_scale = float(payload["standardization"]["shared_scale"])
-    raw_component = component * shared_scale
-    negativity: dict[str, Any] = {}
-    for alpha in STRUCTURAL_ALPHAS:
-        augmented = raw_path.copy()
-        augmented[:, children] += (alpha - 1.0) * raw_component[:, children]
-        counts = np.sum(augmented[:, children] < 0.0, axis=0)
-        negativity[str(alpha)] = {
-            "negative_value_count_by_child": counts.astype(int).tolist(),
-            "total_negative_value_count": int(np.sum(counts)),
-            "minimum_augmented_child_value": float(
-                np.min(augmented[:, children])
-            ),
-        }
+    negativity = _hierarchy_raw_negativity_audit(
+        background,
+        component,
+        STRUCTURAL_ALPHAS,
+    )
     contract = _base_contract(
         background,
         capability_id="hierarchical_coherence",
@@ -1407,6 +1717,136 @@ def fit_hierarchy_qualification_contract(
     return contract
 
 
+def _attach_frozen_structural_dose_design(
+    background: Mapping[str, Any],
+    contract: Mapping[str, Any],
+    frozen_qualification_policy: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Replay one reference-frozen grid and fail closed on weak separation."""
+
+    result = copy.deepcopy(dict(contract))
+    capability_id = str(result["capability_id"])
+    calibration = dose_calibration_from_policy(
+        frozen_qualification_policy,
+        capability_id,
+        require_available=False,
+    )
+    evidence = result.get("dose_design_reference")
+    gates: list[dict[str, Any]] = []
+    failure_reason: str | None = None
+    if calibration.get("status") != "available":
+        failure_reason = "reference_dose_calibration_unavailable"
+    elif not isinstance(evidence, Mapping):
+        failure_reason = "evaluation_dose_design_reference_unavailable"
+    else:
+        try:
+            calibration = resolve_contract_dose_calibration(
+                calibration,
+                evidence,
+            )
+        except ValueError:
+            failure_reason = "contract_source_distance_mapping_unavailable"
+    result["dose_calibration"] = copy.deepcopy(calibration)
+    if failure_reason is None:
+        affected = [
+            int(value) for value in evidence["affected_channel_indices"]
+        ]
+        component = np.asarray(result["component"], dtype=float)[
+            protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            - protocol.REAL_ANCHORED_CONTEXT_LENGTH :
+        ]
+        previous_delta: np.ndarray | None = None
+        for dose_index, alpha in enumerate(
+            calibration["applied_alpha_grid"],
+            start=1,
+        ):
+            delta = (float(alpha) - 1.0) * component
+            gates.append(
+                paired_minimum_separation_gate(
+                    delta,
+                    context_length=protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+                    dose_index=dose_index,
+                    dose_calibration=calibration,
+                    affected_channel_indices=affected,
+                    previous_delta=previous_delta,
+                )
+            )
+            previous_delta = delta
+        if not all(bool(gate["accepted"]) for gate in gates):
+            failure_reason = "paired_minimum_separation_gate_failed"
+    passed = bool(failure_reason is None)
+    adjacent_passed = bool(
+        gates and all(gate["adjacent_accepted"] is True for gate in gates)
+    )
+    result["paired_minimum_separation_gate"] = gates
+    result["paired_minimum_separation_qualification"] = {
+        "status": "passed" if passed else "failed",
+        "accepted": passed,
+        "reason_code": failure_reason,
+        "all_levels_passed": passed,
+        "adjacent_minimum_separation_passed": adjacent_passed,
+        "adjacent_separation_derivation": (
+            "explicit_previous_treatment_delta_with_level_1_baseline"
+        ),
+        "evaluated_level_count": len(gates),
+        "dose_calibration_policy_sha256": str(
+            calibration.get(
+                "dose_policy_sha256",
+                calibration["policy_sha256"],
+            )
+        ),
+        "contract_dose_calibration_sha256": str(
+            calibration["policy_sha256"]
+        ),
+        "target_future_used": False,
+        "anti_copy_semantics": (
+            "treatment_only_distance_from_authentic_source"
+        ),
+    }
+    result["dose_pairing_eligible"] = passed
+    if calibration.get("status") == "available":
+        result["dose_grid_status"] = "reference_frozen_available"
+        result["canonical_strength_grid"] = list(
+            calibration["strength_grid"]
+        )
+        result["applied_alpha_grid"] = list(
+            calibration["applied_alpha_grid"]
+        )
+        # ``alpha_grid`` is retained as a compatibility alias but is no longer
+        # the cross-capability strength coordinate.
+        result["alpha_grid"] = list(calibration["applied_alpha_grid"])
+        if capability_id == "hierarchical_coherence":
+            diagnostics = copy.deepcopy(dict(result["fit_diagnostics"]))
+            diagnostics["raw_negativity_audit_by_alpha"] = (
+                _hierarchy_raw_negativity_audit(
+                    background,
+                    np.asarray(result["component"], dtype=float),
+                    tuple(float(value) for value in result["applied_alpha_grid"]),
+                )
+            )
+            diagnostics["raw_negativity_alpha_grid_source"] = (
+                "reference_frozen_dose_calibration"
+            )
+            result["fit_diagnostics"] = diagnostics
+    else:
+        result["dose_grid_status"] = "reference_frozen_unavailable"
+        result["canonical_strength_grid"] = list(
+            calibration["strength_grid"]
+        )
+        result["applied_alpha_grid"] = []
+        result["alpha_grid"] = []
+    if capability_id != "hierarchical_coherence" and not passed:
+        result["formal_main_eligible"] = False
+        result["sensitivity_eligible"] = False
+    if capability_id != "hierarchical_coherence":
+        result["generation_eligible"] = bool(
+            result.get("formal_main_eligible")
+        )
+        result["ranking_eligible"] = bool(result.get("formal_main_eligible"))
+    result["contract_sha256"] = _contract_sha256(result)
+    return result
+
+
 def fit_structural_capability_contracts(
     backgrounds: Sequence[Mapping[str, Any]],
     *,
@@ -1433,6 +1873,12 @@ def fit_structural_capability_contracts(
             except (ValueError, np.linalg.LinAlgError) as error:
                 contract = None
                 reason = str(error)
+            if contract is not None and frozen_qualification_policy is not None:
+                contract = _attach_frozen_structural_dose_design(
+                    background,
+                    contract,
+                    frozen_qualification_policy,
+                )
             formal = bool(
                 contract is not None and contract.get("formal_main_eligible") is True
             )
@@ -1451,7 +1897,15 @@ def fit_structural_capability_contracts(
                     else reason
                 )
             elif contract is not None and not formal:
-                if sensitivity:
+                dose_qualification = contract.get(
+                    "paired_minimum_separation_qualification"
+                )
+                if (
+                    isinstance(dose_qualification, Mapping)
+                    and dose_qualification.get("accepted") is False
+                ):
+                    reason = str(dose_qualification["reason_code"])
+                elif sensitivity:
                     reason = "panel_d2_sensitivity_only"
                 else:
                     reason = "fixed_reference_bank_structural_gates_failed"
@@ -1494,6 +1948,32 @@ def fit_structural_capability_contracts(
                     QUALIFICATION_THRESHOLD_SOURCE_POLICY
                 ),
                 "frozen_qualification_policy_sha256": None,
+                "dose_design_reference": (
+                    None
+                    if contract is None
+                    else copy.deepcopy(contract.get("dose_design_reference"))
+                ),
+                "dose_calibration": (
+                    None
+                    if contract is None
+                    else copy.deepcopy(contract.get("dose_calibration"))
+                ),
+                "paired_minimum_separation_gate": (
+                    []
+                    if contract is None
+                    else copy.deepcopy(
+                        contract.get("paired_minimum_separation_gate", [])
+                    )
+                ),
+                "paired_minimum_separation_qualification": (
+                    None
+                    if contract is None
+                    else copy.deepcopy(
+                        contract.get(
+                            "paired_minimum_separation_qualification"
+                        )
+                    )
+                ),
                 "contract": contract,
             }
             if frozen_qualification_policy is not None:
@@ -1754,7 +2234,10 @@ def validate_structural_availability(
         "cafe.structural_real_availability.v1"
     ):
         return
-    if availability.get("schema_version") != STRUCTURAL_AVAILABILITY_SCHEMA:
+    if availability.get("schema_version") not in {
+        STRUCTURAL_AVAILABILITY_SCHEMA,
+        LEGACY_STRUCTURAL_AVAILABILITY_SCHEMA,
+    }:
         raise ValueError("unsupported structural availability schema")
     if not isinstance(cells, list):
         raise ValueError("structural availability lacks cells")
@@ -1872,7 +2355,10 @@ def validate_structural_contract(
     contract: Mapping[str, Any],
     background: Mapping[str, Any],
 ) -> None:
-    if contract.get("schema_version") != STRUCTURAL_CONTRACT_SCHEMA:
+    if contract.get("schema_version") not in {
+        STRUCTURAL_CONTRACT_SCHEMA,
+        LEGACY_STRUCTURAL_CONTRACT_SCHEMA,
+    }:
         raise ValueError("unsupported structural contract schema")
     if contract.get("background_id") != background.get("background_id"):
         raise ValueError("structural contract/background identity mismatch")
@@ -1903,6 +2389,153 @@ def validate_structural_contract(
         ablation = contract.get("mandatory_input_ablation")
         if not isinstance(ablation, Mapping) or ablation.get("required") is not True:
             raise ValueError("panel structural contract requires input ablation")
+    evidence = contract.get("dose_design_reference")
+    if evidence is not None:
+        if not isinstance(evidence, Mapping):
+            raise ValueError("structural dose reference evidence is malformed")
+        expected_evidence = _structural_dose_reference(
+            background,
+            capability_id=str(contract["capability_id"]),
+            component=component,
+            fit_diagnostics=contract["fit_diagnostics"],
+            evidence_role=str(evidence.get("evidence_role", "")),
+        )
+        if expected_evidence != dict(evidence):
+            raise ValueError(
+                "structural dose reference disagrees with fitted component"
+            )
+    calibration = contract.get("dose_calibration")
+    if calibration is None:
+        if contract.get("schema_version") == STRUCTURAL_CONTRACT_SCHEMA:
+            if (
+                contract.get("alpha_grid") != []
+                or contract.get("dose_grid_status")
+                != "reference_mapping_pending"
+            ):
+                raise ValueError("reference structural dose mapping was altered")
+        return
+    if not isinstance(calibration, Mapping):
+        raise ValueError("structural dose calibration is malformed")
+    capability_id = str(contract["capability_id"])
+    validate_dose_calibration(calibration, capability_id=capability_id)
+    expected_strengths = list(calibration["strength_grid"])
+    expected_alphas = list(calibration["applied_alpha_grid"])
+    if contract.get("canonical_strength_grid") != expected_strengths:
+        raise ValueError("structural canonical strength grid changed")
+    if contract.get("applied_alpha_grid") != expected_alphas:
+        raise ValueError("structural applied alpha grid changed")
+    if contract.get("alpha_grid") != expected_alphas:
+        raise ValueError("structural alpha compatibility grid changed")
+    qualification = contract.get("paired_minimum_separation_qualification")
+    gates = contract.get("paired_minimum_separation_gate")
+    if not isinstance(qualification, Mapping) or not isinstance(gates, list):
+        raise ValueError("structural paired separation audit is missing")
+    contract_mapping_unavailable = False
+    if (
+        calibration.get("status") == "available"
+        and calibration.get("schema_version")
+        == REAL_ANCHORED_DOSE_CALIBRATION_SCHEMA
+        and isinstance(evidence, Mapping)
+    ):
+        try:
+            resolve_contract_dose_calibration(calibration, evidence)
+        except ValueError:
+            contract_mapping_unavailable = True
+        else:
+            raise ValueError(
+                "resolvable structural dose mapping was stored as unavailable"
+            )
+    expected_gates: list[dict[str, Any]] = []
+    if calibration.get("status") == "available" and isinstance(evidence, Mapping):
+        visible_component = component[
+            protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            - protocol.REAL_ANCHORED_CONTEXT_LENGTH :
+        ]
+        affected = [
+            int(value) for value in evidence["affected_channel_indices"]
+        ]
+        previous_delta: np.ndarray | None = None
+        for dose_index, alpha in enumerate(expected_alphas, start=1):
+            delta = (float(alpha) - 1.0) * visible_component
+            expected_gates.append(
+                paired_minimum_separation_gate(
+                    delta,
+                    context_length=protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+                    dose_index=dose_index,
+                    dose_calibration=calibration,
+                    affected_channel_indices=affected,
+                    previous_delta=previous_delta,
+                )
+            )
+            previous_delta = delta
+    if gates != expected_gates:
+        raise ValueError("structural paired separation gates changed")
+    expected_accepted = bool(
+        calibration.get("status") == "available"
+        and isinstance(evidence, Mapping)
+        and expected_gates
+        and all(bool(gate["accepted"]) for gate in expected_gates)
+    )
+    expected_reason = (
+        "reference_dose_calibration_unavailable"
+        if calibration.get("status") != "available"
+        else "evaluation_dose_design_reference_unavailable"
+        if not isinstance(evidence, Mapping)
+        else "contract_source_distance_mapping_unavailable"
+        if contract_mapping_unavailable
+        else "paired_minimum_separation_gate_failed"
+        if not expected_accepted
+        else None
+    )
+    if (
+        qualification.get("accepted") is not expected_accepted
+        or qualification.get("status")
+        != ("passed" if expected_accepted else "failed")
+        or qualification.get("reason_code") != expected_reason
+        or qualification.get("all_levels_passed") is not expected_accepted
+        or qualification.get("evaluated_level_count") != len(expected_gates)
+        or contract.get("dose_pairing_eligible") is not expected_accepted
+        or qualification.get("adjacent_minimum_separation_passed")
+        is not bool(
+            expected_gates
+            and all(
+                gate["adjacent_accepted"] is True for gate in expected_gates
+            )
+        )
+            or qualification.get("dose_calibration_policy_sha256")
+            != calibration.get(
+                "dose_policy_sha256",
+                calibration.get("policy_sha256"),
+            )
+            or qualification.get("contract_dose_calibration_sha256")
+            != calibration.get("policy_sha256")
+        or qualification.get("target_future_used") is not False
+            or qualification.get("anti_copy_semantics")
+            != "treatment_only_distance_from_authentic_source"
+    ):
+        raise ValueError("structural paired separation qualification changed")
+    expected_grid_status = (
+        "reference_frozen_available"
+        if calibration.get("status") == "available"
+        else "reference_frozen_unavailable"
+    )
+    if contract.get("dose_grid_status") != expected_grid_status:
+        raise ValueError("structural dose grid status changed")
+    if capability_id != "hierarchical_coherence" and not expected_accepted:
+        if (
+            contract.get("formal_main_eligible") is not False
+            or contract.get("sensitivity_eligible") is not False
+            or contract.get("generation_eligible") is not False
+            or contract.get("ranking_eligible") is not False
+        ):
+            raise ValueError("failed structural dose gate did not fail closed")
+    if capability_id != "hierarchical_coherence" and expected_accepted:
+        expected_generation = bool(contract.get("formal_main_eligible"))
+        if (
+            contract.get("generation_eligible") is not expected_generation
+            or contract.get("ranking_eligible") is not expected_generation
+        ):
+            raise ValueError("structural generation eligibility changed")
 
 
 def apply_structural_contract(
@@ -1922,7 +2555,16 @@ def apply_structural_contract(
         if not (allow_sensitivity and contract.get("sensitivity_eligible")):
             raise ValueError("structural contract is not eligible for this track")
     alpha_value = float(alpha)
-    if alpha_value != 1.0 and alpha_value not in STRUCTURAL_ALPHAS:
+    calibrated_grid = contract.get("applied_alpha_grid")
+    allowed_alphas = (
+        tuple(float(value) for value in calibrated_grid)
+        if isinstance(calibrated_grid, list)
+        else STRUCTURAL_ALPHAS
+    )
+    if alpha_value != 1.0 and not any(
+        math.isclose(alpha_value, allowed, rel_tol=0.0, abs_tol=1e-12)
+        for allowed in allowed_alphas
+    ):
         raise ValueError("alpha is outside the frozen structural dose grid")
     baseline = np.asarray(background["target"], dtype=float)
     component = np.asarray(contract["component"], dtype=float)[
@@ -1971,6 +2613,21 @@ def apply_structural_contract(
             domain=f"structural_{capability_id}_truth_delta",
         ),
         "contract_sha256": str(contract["contract_sha256"]),
+        "dose_calibration_policy_sha256": (
+            None
+            if not isinstance(contract.get("dose_calibration"), Mapping)
+            else str(
+                contract["dose_calibration"].get(
+                    "dose_policy_sha256",
+                    contract["dose_calibration"]["policy_sha256"],
+                )
+            )
+        ),
+        "contract_dose_calibration_sha256": (
+            None
+            if not isinstance(contract.get("dose_calibration"), Mapping)
+            else str(contract["dose_calibration"]["policy_sha256"])
+        ),
         "target_future_used_for_delta": False,
         "known_future_covariate_path_used_for_delta": bool(
             capability_id == "covariate_response"
@@ -1990,6 +2647,16 @@ def iter_structural_real_anchored_samples(
     sensitivity: bool = False,
     seed_indexes: Iterable[int] | None = None,
 ) -> Iterator[dict[str, Any]]:
+    legacy_alphas = tuple(float(value) for value in alphas)
+    if (
+        not legacy_alphas
+        or any(
+            not math.isfinite(value) or value <= 1.0
+            for value in legacy_alphas
+        )
+        or len(legacy_alphas) != len(set(legacy_alphas))
+    ):
+        raise ValueError("structural alpha grid must be finite/unique/above one")
     background_by_id = {
         str(background["background_id"]): background for background in backgrounds
     }
@@ -2067,7 +2734,76 @@ def iter_structural_real_anchored_samples(
     for seed_index, row in assigned_rows:
         contract = row["contract"]
         background = background_by_id[str(row["background_id"])]
-        for dose_index, alpha in enumerate(alphas, start=1):
+        validate_structural_contract(contract, background)
+        calibration = contract.get("dose_calibration")
+        stored_gates = contract.get("paired_minimum_separation_gate", [])
+        if isinstance(calibration, Mapping):
+            validate_dose_calibration(
+                calibration,
+                capability_id=str(contract["capability_id"]),
+            )
+            if (
+                calibration.get("status") != "available"
+                or contract.get("dose_pairing_eligible") is not True
+            ):
+                raise ValueError(
+                    "eligible structural row lacks an accepted frozen dose grid"
+                )
+            evidence = contract["dose_design_reference"]
+            visible_component = np.asarray(contract["component"], dtype=float)[
+                protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                - protocol.REAL_ANCHORED_CONTEXT_LENGTH :
+            ]
+            replayed_gates: list[dict[str, Any]] = []
+            previous_delta: np.ndarray | None = None
+            for replay_index, replay_alpha in enumerate(
+                calibration["applied_alpha_grid"],
+                start=1,
+            ):
+                replay_delta = (
+                    float(replay_alpha) - 1.0
+                ) * visible_component
+                replayed_gates.append(
+                    paired_minimum_separation_gate(
+                        replay_delta,
+                        context_length=protocol.REAL_ANCHORED_CONTEXT_LENGTH,
+                        dose_index=replay_index,
+                        dose_calibration=calibration,
+                        affected_channel_indices=evidence[
+                            "affected_channel_indices"
+                        ],
+                        previous_delta=previous_delta,
+                    )
+                )
+                previous_delta = replay_delta
+            if replayed_gates != stored_gates:
+                raise ValueError("structural paired gate replay changed")
+            dose_plan = tuple(
+                (
+                    dose_index,
+                    float(canonical_strength),
+                    float(alpha),
+                    copy.deepcopy(stored_gates[dose_index - 1]),
+                )
+                for dose_index, (canonical_strength, alpha) in enumerate(
+                    zip(
+                        calibration["strength_grid"],
+                        calibration["applied_alpha_grid"],
+                    ),
+                    start=1,
+                )
+            )
+        else:
+            dose_plan = tuple(
+                (
+                    dose_index,
+                    float(alpha - 1.0),
+                    float(alpha),
+                    None,
+                )
+                for dose_index, alpha in enumerate(legacy_alphas, start=1)
+            )
+        for dose_index, canonical_strength, alpha, pair_gate in dose_plan:
             pair_id = (
                 f"cafe_structural_cf__{protocol.safe_id(str(background['dataset_id']))}"
                 f"__{contract['capability_id']}__{protocol.safe_id(str(background['background_id']))}"
@@ -2077,13 +2813,32 @@ def iter_structural_real_anchored_samples(
                 f"cafe_structural_cf__{protocol.safe_id(str(background['dataset_id']))}"
                 f"__{contract['capability_id']}__{protocol.safe_id(str(background['background_id']))}"
             )
-            for member, member_alpha in ((0, 1.0), (1, float(alpha))):
+            for member, member_alpha in ((0, 1.0), (1, alpha)):
+                member_strength = 0.0 if member == 0 else canonical_strength
                 target, metadata = apply_structural_contract(
                     background,
                     contract,
                     alpha=member_alpha,
                     allow_sensitivity=sensitivity,
                 )
+                metadata = {
+                    **metadata,
+                    "dose_index": dose_index,
+                    "canonical_strength": member_strength,
+                    "paired_treatment_strength": canonical_strength,
+                    "applied_alpha": member_alpha,
+                    "paired_treatment_applied_alpha": alpha,
+                    "paired_minimum_separation_gate": copy.deepcopy(pair_gate),
+                    "adjacent_minimum_separation_passed": (
+                        None
+                        if not isinstance(calibration, Mapping)
+                        else bool(
+                            contract[
+                                "paired_minimum_separation_qualification"
+                            ]["adjacent_minimum_separation_passed"]
+                        )
+                    ),
+                }
                 covariate_payload = background.get("known_future_covariates")
                 covariates = (
                     None
@@ -2097,6 +2852,23 @@ def iter_structural_real_anchored_samples(
                             ** 2
                         )
                     )
+                )
+                row_gate = (
+                    None
+                    if pair_gate is None
+                    else {
+                        "status": "not_applicable",
+                        "accepted": None,
+                        "reason_code": "repeated_authentic_baseline_member",
+                        "dose_index": dose_index,
+                        "paired_treatment_gate_status": "passed",
+                        "dose_calibration_policy_sha256": calibration.get(
+                            "dose_policy_sha256",
+                            calibration["policy_sha256"],
+                        ),
+                    }
+                    if member == 0
+                    else copy.deepcopy(pair_gate)
                 )
                 yield {
                     "schema_version": STRUCTURAL_MASTER_SCHEMA,
@@ -2117,7 +2889,7 @@ def iter_structural_real_anchored_samples(
                     "task_id": str(background["task_view_id"]),
                     "task_view_id": str(background["task_view_id"]),
                     "profile_id": (
-                        f"real_anchored_structural_{contract['capability_id']}_v1"
+                        f"real_anchored_structural_{contract['capability_id']}_v2"
                     ),
                     "background_id": str(background["background_id"]),
                     "anchor_id": str(background["background_id"]),
@@ -2125,18 +2897,43 @@ def iter_structural_real_anchored_samples(
                         background["target_sha256"]
                     ),
                     "capability_id": str(contract["capability_id"]),
-                    "generator_version": "cafe.structural_real_generator.v1",
+                    "generator_version": "cafe.structural_real_generator.v2",
                     "generator_family_role": "real_anchored_structural",
                     "generator_family_id": (
-                        f"real_anchored_structural_{contract['capability_id']}_v1"
+                        f"real_anchored_structural_{contract['capability_id']}_v2"
                     ),
                     "intensity": dose_index,
-                    "intensity_lambda": member_alpha,
+                    "intensity_lambda": member_strength,
                     "dose_index": dose_index,
-                    "dose_parameter": "alpha",
-                    "dose_value": member_alpha,
-                    "baseline_dose_value": 1.0,
+                    "dose_parameter": "canonical_strength_lambda",
+                    "physical_dose_parameter": (
+                        "controlled_component_multiplier_alpha"
+                    ),
+                    "dose_value": member_strength,
+                    "baseline_dose_value": 0.0,
+                    "canonical_strength": member_strength,
+                    "paired_treatment_strength": canonical_strength,
                     "applied_alpha": member_alpha,
+                    "paired_treatment_applied_alpha": alpha,
+                    "paired_minimum_separation_gate": row_gate,
+                    "adjacent_minimum_separation_passed": metadata[
+                        "adjacent_minimum_separation_passed"
+                    ],
+                    "dose_calibration_policy_sha256": (
+                        None
+                        if not isinstance(calibration, Mapping)
+                        else str(
+                            calibration.get(
+                                "dose_policy_sha256",
+                                calibration["policy_sha256"],
+                            )
+                        )
+                    ),
+                    "contract_dose_calibration_sha256": (
+                        None
+                        if not isinstance(calibration, Mapping)
+                        else str(calibration["policy_sha256"])
+                    ),
                     "seed_index": seed_index,
                     "sample_index": seed_index,
                     "context_length": protocol.REAL_ANCHORED_CONTEXT_LENGTH,
@@ -2171,24 +2968,77 @@ def iter_structural_real_anchored_samples(
                     "intensity_target_feature_value": intervention_rms,
                     "sampled_generator_parameters": {
                         "alpha": member_alpha,
+                        "canonical_strength": member_strength,
                         "controlled_component": metadata[
                             "controlled_component"
                         ],
                     },
                     "parameter_sampling": {
                         "policy": (
-                            "authentic_structural_background_contract_v1"
+                            "authentic_structural_background_contract_v2"
                         ),
                         "background_id": str(background["background_id"]),
                         "contract_sha256": str(contract["contract_sha256"]),
+                        "dose_calibration_policy_sha256": (
+                            None
+                            if not isinstance(calibration, Mapping)
+                            else str(
+                                calibration.get(
+                                    "dose_policy_sha256",
+                                    calibration["policy_sha256"],
+                                )
+                            )
+                        ),
                     },
                     "intensity_calibration": {
-                        "policy": "physical_component_amplitude_alpha_grid_v1",
+                        "policy": (
+                            "reference_q75_capability_specific_alpha_grid_v1"
+                            if isinstance(calibration, Mapping)
+                            else "legacy_physical_component_alpha_grid_v1"
+                        ),
                         "scope": (
                             "structural_real_history_only_contract"
                         ),
-                        "selected_alphas": list(STRUCTURAL_ALPHAS),
+                        "canonical_strength_grid": [
+                            float(plan[1]) for plan in dose_plan
+                        ],
+                        "selected_alphas": [
+                            float(plan[2]) for plan in dose_plan
+                        ],
+                        "applied_alpha_grid": [
+                            float(plan[2]) for plan in dose_plan
+                        ],
+                        "history_target_grid": (
+                            []
+                            if not isinstance(calibration, Mapping)
+                            else list(calibration["history_target_grid"])
+                        ),
+                        "future_target_grid": (
+                            []
+                            if not isinstance(calibration, Mapping)
+                            else list(calibration["future_target_grid"])
+                        ),
+                        "dose_calibration_policy_sha256": (
+                            None
+                            if not isinstance(calibration, Mapping)
+                            else str(
+                                calibration.get(
+                                    "dose_policy_sha256",
+                                    calibration["policy_sha256"],
+                                )
+                            )
+                        ),
+                        "contract_dose_calibration_sha256": (
+                            None
+                            if not isinstance(calibration, Mapping)
+                            else str(calibration["policy_sha256"])
+                        ),
                     },
+                    "dose_calibration": (
+                        None
+                        if not isinstance(calibration, Mapping)
+                        else copy.deepcopy(dict(calibration))
+                    ),
                     "shared_standardization": copy.deepcopy(
                         background["target_standardization"]
                     ),
@@ -2252,6 +3102,28 @@ def _structural_donor_commitment_entry(
         "background_id": str(sample["background_id"]),
         "capability_id": str(sample["capability_id"]),
         "dose_index": int(sample["dose_index"]),
+        "dose_value": float(sample["dose_value"]),
+        "intensity_lambda": float(sample["intensity_lambda"]),
+        "canonical_strength": float(sample["canonical_strength"]),
+        "paired_treatment_strength": float(
+            sample["paired_treatment_strength"]
+        ),
+        "applied_alpha": float(sample["applied_alpha"]),
+        "paired_treatment_applied_alpha": float(
+            sample["paired_treatment_applied_alpha"]
+        ),
+        "dose_calibration_policy_sha256": sample.get(
+            "dose_calibration_policy_sha256"
+        ),
+        "paired_minimum_separation_gate_sha256": (
+            None
+            if not isinstance(
+                sample.get("paired_minimum_separation_gate"), Mapping
+            )
+            else protocol.json_sha256(
+                sample["paired_minimum_separation_gate"]
+            )
+        ),
         "counterfactual_member": int(sample["counterfactual_member"]),
         "evaluation_table": str(sample["evaluation_table"]),
         "seed_index": int(sample["seed_index"]),
@@ -2296,13 +3168,37 @@ def build_structural_donor_commitment_manifest(
             "cross_series_dependence",
         }
     ]
+    dose_hashes_by_capability: dict[str, set[str]] = {}
+    for row in selected_contracts:
+        contract = row.get("contract")
+        if not isinstance(contract, Mapping):
+            continue
+        calibration = contract.get("dose_calibration")
+        if not isinstance(calibration, Mapping):
+            continue
+        dose_hashes_by_capability.setdefault(
+            str(row["capability_id"]),
+            set(),
+        ).add(
+            str(
+                calibration.get(
+                    "dose_policy_sha256",
+                    calibration["policy_sha256"],
+                )
+            )
+        )
+    if any(len(values) != 1 for values in dose_hashes_by_capability.values()):
+        raise ValueError("structural donor rows disagree on frozen dose mapping")
+    dose_hash_by_capability = {
+        capability_id: next(iter(values))
+        for capability_id, values in sorted(dose_hashes_by_capability.items())
+    }
     samples = (
         sample
         for sensitivity in (False, True)
         for sample in iter_structural_real_anchored_samples(
             public_backgrounds,
             selected_contracts,
-            alphas=STRUCTURAL_ALPHAS,
             seed_indexes=range(len(public_backgrounds)),
             sensitivity=sensitivity,
         )
@@ -2324,6 +3220,9 @@ def build_structural_donor_commitment_manifest(
         ),
         "source_structural_contract_bank_sha256": protocol.json_sha256(
             list(contract_rows)
+        ),
+        "dose_calibration_policy_sha256_by_capability": (
+            dose_hash_by_capability
         ),
         "entry_count": len(entries),
         "eligible_donor_sample_ids_sha256": protocol.json_sha256(sample_ids),
@@ -2397,6 +3296,26 @@ def _committed_donor_entry(
         and entry.get("background_id") == donor.get("background_id")
         and entry.get("capability_id") == donor.get("capability_id")
         and entry.get("dose_index") == donor.get("dose_index")
+        and entry.get("dose_value") == donor.get("dose_value")
+        and entry.get("intensity_lambda") == donor.get("intensity_lambda")
+        and entry.get("canonical_strength") == donor.get("canonical_strength")
+        and entry.get("paired_treatment_strength")
+        == donor.get("paired_treatment_strength")
+        and entry.get("applied_alpha") == donor.get("applied_alpha")
+        and entry.get("paired_treatment_applied_alpha")
+        == donor.get("paired_treatment_applied_alpha")
+        and entry.get("dose_calibration_policy_sha256")
+        == donor.get("dose_calibration_policy_sha256")
+        and entry.get("paired_minimum_separation_gate_sha256")
+        == (
+            None
+            if not isinstance(
+                donor.get("paired_minimum_separation_gate"), Mapping
+            )
+            else protocol.json_sha256(
+                donor["paired_minimum_separation_gate"]
+            )
+        )
         and entry.get("counterfactual_member")
         == donor.get("counterfactual_member")
         and entry.get("evaluation_table") == donor.get("evaluation_table")
@@ -2456,7 +3375,15 @@ def build_matched_input_ablation_task(
     )
     if sample.get("background_id") == donor.get("background_id"):
         raise ValueError("input ablation donor must be a distinct background")
-    for key in ("capability_id", "dose_index", "counterfactual_member", "target_dim"):
+    for key in (
+        "capability_id",
+        "dose_index",
+        "counterfactual_member",
+        "target_dim",
+        "canonical_strength",
+        "paired_treatment_strength",
+        "dose_calibration_policy_sha256",
+    ):
         if sample.get(key) != donor.get(key):
             raise ValueError(f"input ablation donor mismatch for {key}")
     contract = sample.get("mandatory_input_ablation")

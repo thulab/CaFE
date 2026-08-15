@@ -373,9 +373,75 @@ def test_stage_contract_file_write_is_idempotent(tmp_path: Path) -> None:
         "stage": "analysis",
     }
     provenance.write_json_once(path, value)
-
     assert json.loads(path.read_text(encoding="utf-8")) == value
     provenance.write_json_once(path, value)
+
+
+def test_stage_protocols_freeze_v4_real_anchored_dose_contract() -> None:
+    full_protocol = {
+        "pipeline_schema_version": "cafe.pipeline.v5",
+        "dataset_ids": ["gift_electricity_h"],
+        "real_data_adapters": {},
+        "capabilities": ["trend"],
+        "real_calibration_context_length": 168,
+        "synthetic_master_context_length": 336,
+        "fixed_context_length": 168,
+        "horizon": 48,
+        "view_context_lengths": [96, 168, 336],
+        "intensities": [1, 2, 3, 4, 5],
+        "benchmark_tracks": [
+            "deterministic_synthetic",
+            "real_anchored_counterfactual",
+        ],
+        "real_anchored_protocol": {
+            "canonical_strength_grid": [0.2, 0.4, 0.6, 0.8, 1.0],
+            "physical_alpha_grid": (
+                "dataset_capability_fixed_reference_q75_mapping"
+            ),
+            "paired_minimum_separation_gate": {"status": "mandatory"},
+        },
+        "max_anchors": 32,
+        "calibration_seeds": 16,
+        "max_calibration_seeds": 64,
+        "calibration_path_policy": "fixture",
+        "generator_version": "fixture",
+        "seed_start": 0,
+        "seed_count": 4,
+        "generation_acceptance": {},
+        "mase_scale_policy": "fixture",
+        "models": ["naive_last"],
+        "model_execution_config": {"naive_last": {}},
+        "model_scheduling_policy": {},
+        "input_adaptation_policy": "fixture",
+        "api_prefix": "/ai/api/v1",
+        "analysis_profile": "full",
+        "aggregation_policy": "fixture",
+        "primary_mechanism_score_policy": {},
+        "analysis_source_experiment": None,
+    }
+
+    configs = pipeline.stage_protocol_configs(
+        full_protocol,
+        endpoints=["http://127.0.0.1:10810"],
+        endpoint_profiles={},
+        preparation_execution={},
+    )
+
+    assert {
+        stage: config["schema_version"]
+        for stage, config in configs.items()
+    } == {
+        "calibration": "cafe.calibration_stage.v5",
+        "generation": "cafe.generation_stage.v5",
+        "validation": "cafe.validation_stage.v5",
+        "inference": "cafe.inference_stage.v5",
+        "analysis": "cafe.analysis_stage.v5",
+    }
+    assert all(
+        config["real_anchored_protocol"]
+        == full_protocol["real_anchored_protocol"]
+        for config in configs.values()
+    )
 
 
 def test_completed_v2_analysis_manifest_is_reusable(tmp_path: Path) -> None:

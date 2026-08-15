@@ -76,6 +76,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--max-anchors", type=int, default=256)
     parser.add_argument(
+        "--calibration-sample-seed",
+        type=int,
+        default=protocol.CALIBRATION_SAMPLE_SEED,
+        help=(
+            "Deterministic seed used to select ordinary L168+H48 real "
+            "calibration/accuracy origins."
+        ),
+    )
+    parser.add_argument(
+        "--real-anchored-sample-seed",
+        type=int,
+        default=protocol.REAL_ANCHORED_SAMPLE_SEED,
+        help=(
+            "Deterministic seed used to select L504+H48 real-anchored "
+            "candidate origins before the disjoint bank split."
+        ),
+    )
+    parser.add_argument(
         "--calibration-seeds",
         type=int,
         default=protocol.DEFAULT_CALIBRATION_PATH_COUNT,
@@ -284,6 +302,7 @@ def main() -> int:
         source_root=source_root,
         maximum_anchors=args.max_anchors,
         minimum_observed_fraction=args.minimum_observed_fraction,
+        sample_seed=args.calibration_sample_seed,
         real_bundle=real_bundle,
     )
     anchor_extraction_seconds = time.perf_counter() - anchor_started
@@ -316,6 +335,7 @@ def main() -> int:
             source_root=source_root,
             maximum_backgrounds=candidate_limit,
             minimum_observed_fraction=args.minimum_observed_fraction,
+            sample_seed=args.real_anchored_sample_seed,
             real_bundle=real_bundle,
         )
     )
@@ -325,6 +345,7 @@ def main() -> int:
             source_root=source_root,
             maximum_backgrounds=candidate_limit,
             minimum_observed_fraction=args.minimum_observed_fraction,
+            sample_seed=args.real_anchored_sample_seed,
             real_bundle=real_bundle,
         )
     )
@@ -649,7 +670,7 @@ def main() -> int:
     )
     elapsed_before_bundle_write = time.perf_counter() - run_started
     bundle = {
-        "schema_version": "cafe.calibration_bundle.v3",
+        "schema_version": "cafe.calibration_bundle.v5",
         "created_at": protocol.utc_now(),
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,

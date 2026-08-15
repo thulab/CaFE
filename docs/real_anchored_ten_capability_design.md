@@ -1,12 +1,16 @@
-# CaFE 十能力真实路径锚定公式与 v3 实现规范
+# CaFE 十能力真实路径锚定公式与 v5 实现规范
 
-> 状态：v3 已实现；本文是十能力真实锚定公式与边界的规范说明
-> 初稿：2026-08-12；实现冻结：2026-08-14
+> 状态：v5 已冻结 treatment-only source-distance 与 contract-specific history-only dose solver；能力机制和分解定义沿用 v3 已实现边界
+> 初稿：2026-08-12；v5 实现冻结：2026-08-15
 > 适用目标：把 CaFE 从“用真实特征校准合成机制”扩展为“在真实路径上执行可审计的能力反事实干预”
 
 ## 1. 结论摘要
 
-十种能力不能机械地套用同一个合成模板。v3 按以下三类实现：
+十种能力不能机械地套用同一个合成模板。v5 保留 v3 的三类机制定义，但不再把同一个
+$\alpha$ 网格当作跨能力的共同强度。跨能力比较的是 canonical
+$\lambda$ 档。reference bank 冻结目标、solver 与 cap；实际 multiplier
+$\alpha_{b,c,k}$ 由每个 contract 的 history-only response 求解。该过程不读取
+evaluation target future。机制分为：
 
 | 类型 | 能力 | 反事实形式 |
 |---|---|---|
@@ -56,11 +60,20 @@ H_{model}=X_{o-336:o},\qquad
 Y^{real}=X_{o:o+48}.
 \]
 
-其中 $X_t$ 可以是单变量、同步 panel 或 hierarchy。所有 normalization 与 MASE reference 都从未修改的 $H_{model}$ 冻结。当前剂量网格沿用：
+其中 $X_t$ 可以是单变量、同步 panel 或 hierarchy。所有 normalization 与 MASE reference 都从未修改的 $H_{model}$ 冻结。v5 唯一的跨能力强度坐标为：
 
 \[
-\alpha\in\{1,1.2,1.4,1.6,1.8,2.0\}.
+\boxed{\lambda_k\in\{0.2,0.4,0.6,0.8,1.0\}},
+\qquad k=1,\ldots,5.
 \]
+
+$\lambda_k$ 是可聚合的 canonical strength / dose index，不是物理分量系数。
+$\alpha=1$ 是 exact-identity baseline；第 $k$ 档 treatment 使用
+$\alpha_{b,c,k}>1$。reference bank 只冻结目标网格、求解器、上下界和 hash；每条
+evaluation contract 再用自己的 history-only component response 解出物理
+$\alpha_{b,c,k}$。因此不同能力、同一能力的不同真实背景都可以有不同 multiplier，
+但它们在同一 $\lambda_k$ 下满足相同的标准化 source-distance 目标。真实 H48
+target 不进入求解。
 
 ### 3.1 可加分量的统一公式
 
@@ -69,28 +82,172 @@ $\widehat M_t^{(c)}$，则：
 
 \[
 \boxed{
-X_t^{(c,\alpha)}
-=X_t+(\alpha-1)\widehat M_t^{(c)}
+X_t^{(b,c,k)}
+=X_t+(\alpha_{b,c,k}-1)\widehat M_t^{(b,c)}
 }
 \]
 
 所以：
 
 \[
-X_t^{(c,1)}=X_t,
+X_t^{(c,0)}=X_t\quad(\alpha=1),
 \qquad
-\Delta Y_h^{(c,\alpha)}
-=(\alpha-1)\widehat M_{o+h}^{(c)}.
+\Delta Y_h^{(b,c,k)}
+=(\alpha_{b,c,k}-1)\widehat M_{o+h}^{(b,c)}.
 \]
 
 原真实 H48 没有被模型重建，而是作为 pair-shared nuisance 保留：
 
 \[
-Y_{o+h}^{(c,\alpha)}
-=Y_{o+h}^{real}+\Delta Y_h^{(c,\alpha)}.
+Y_{o+h}^{(c,k)}
+=Y_{o+h}^{real}+\Delta Y_h^{(c,k)}.
 \]
 
-### 3.2 所有能力的共同不变量
+### 3.2 treatment-only source distance 与 contract-specific $\alpha$
+
+对 reference background $b$ 的受影响通道集 $A_{c,b}$，令 $s_{b,j}$ 为未修改
+L336 baseline history 冻结的通道尺度。对 history 的最后 L168 和
+future H48 分别记 $W_H,W_F$，定义 affected-channel macro RMS：
+
+\[
+d_W(\Delta;b,c)
+=\frac{1}{|A_{c,b}|}\sum_{j\in A_{c,b}}
+\sqrt{\frac{1}{|W|}\sum_{t\in W}
+\left(\frac{\Delta_{t,j}}{s_{b,j}}\right)^2},
+\qquad W\in\{W_H,W_F\}.
+\]
+
+对可加能力，unit-gain 即 $\alpha-1=1$ 时的受控分量：
+
+\[
+u^H_{c,b}=d_{W_H}(\widehat M^{(c)};b,c),
+\qquad
+u^F_{c,b}=d_{W_F}(\widehat M^{(c)};b,c).
+\]
+
+v5 将最低档直接定义为 treatment 相对其 authentic source 的 L168 标准化
+RMS 至少 $0.10$。五档 history 目标在冻结上限内等距展开：
+
+\[
+r^H_k=(0.10,0.20,0.30,0.40,0.50).
+\]
+
+\[
+r^F_k=0.15\lambda_k=(0.03,0.06,0.09,0.12,0.15).
+\]
+
+$0.10$ 来自 v5 冻结前的 qualification pilot：多个 GIFT hourly 数据集上真实
+L168 窗口的自然 nearest-neighbor RMS 中位数约为 $0.40$--$0.93$，而旧最低档
+treatment 常只有约 $0.02$--$0.05$。取 $0.10$ 能明显抬离 source，又仍低于自然
+样本间距的低阶量级。该数值现作为协议常数冻结；正式 v5 evaluation 不再回看结果
+调阈值。
+
+reference bank 不再冻结一个能力级公共 multiplier，而是验证该能力的预声明目标
+是否有足够 coverage。对每条 evaluation contract，history-only solver 解：
+
+\[
+\boxed{
+\alpha_{b,c,k}=1+\max\left(
+\frac{r^H_k}{u^H_{c,b}},
+\frac{r^F_k}{u^F_{c,b}}
+\right)
+}.
+\]
+
+additive 的绝对上限为 $\alpha\le21$。reference policy 至少需要 3 条
+mechanism-eligible evidence，且至少 75% 能在同一个目标网格、相同上界预算下得到
+完整五档解；否则 capability dose policy unavailable。evaluation background 自己的
+component 太弱、history/future 比例失衡或需要超过 cap 时仍逐条 fail-closed，不能
+降低 $0.10$ 门限。reference 与 evaluation windows 在 source-time 上不相交。
+
+nonlinear persistence 不假设 effect 对 $\alpha-1$ 成比例。它在每条
+reference contract 上用 history-only initial state 和 zero-future-innovation rollout
+计算候选网格 $a\in\{1,1.005,\ldots,3\}$ 的 safe、单调响应曲线。
+其目标为：
+
+\[
+r^{H,nl}_k=(0.10,0.125,0.15,0.175,0.20),
+\]
+
+\[
+r^{F,nl}_k=0.10\lambda_k=(0.02,0.04,0.06,0.08,0.10).
+\]
+
+令未达标时 $a_{b,k}=+\infty$，否则 evaluation contract 逐档取：
+
+\[
+a_{b,k}=\inf\left\{
+a\in\{1,1.005,\ldots,2\}:\
+d_{W_H}(\Delta_b(a))\ge r^{H,nl}_k,\\
+d_{W_F}(\Delta_b(a))\ge r^{F,nl}_k,
+\ \operatorname{safe}(a)
+\right\}.
+\]
+
+五档必须严格递增且位于 safe monotone prefix；若无法在 $\alpha\le3$ 内满足，
+该 background unavailable。至少 3 条 reference curves 有效且 75% 能完整求解，
+policy 才 available。history residual replay 仍只是 sensitivity，不参与 mapping。
+
+### 3.3 v5 treatment-source 距离门与局部增强预算
+
+对每条 evaluation treatment，source-distance 只在模型真正看到的 trailing L168
+上计算，并要求：
+
+\[
+\boxed{
+d_{W_H}(X^{(b,c,k)}-X^{(b,c,0)})\ge r^H_k,
+\qquad r^H_1=0.10.
+}.
+\]
+
+panel 先对 affected channels 做 macro-average，并要求至少
+$\lceil|A_{c,b}|/2\rceil$ 个受影响通道达到相应单通道门。$\alpha=1$ authentic
+baseline 是 source 本身，精确保留且明确豁免。相邻 treatment 的距离仍保存为
+diagnostic，用于识别饱和或等级挤压，但不作为 hard reject；这正是
+`treatment-only` 口径。
+
+这个门不是预训练污染的可识别性证明。它只保证新增 treatment 不再与它所锚定的
+真实 source 数值上过近；真实 baseline 本身是否出现在预训练集无法由局部变换消除。
+synthetic 的 LOO DCR/NNDR 仍是另一个 gate。
+
+只有最低距离会让 H48 continuation 很弱的能力通过极端放大 history 来达标。
+因此 v5 对每个 treatment 相对 baseline 的绝对 effect 另加 local augmentation
+upper budget。令
+
+\[
+d_{W,j}(\Delta)
+=\sqrt{\frac1{|W|}\sum_{t\in W}
+\left(\frac{\Delta_{t,j}}{s_{b,j}}\right)^2}
+\]
+
+为单通道标准化 RMS，则每一档必须同时满足：
+
+\[
+\boxed{
+d_{W_H}(\Delta_{b,k})\le1.0,
+\qquad
+d_{W_F}(\Delta_{b,k})\le1.0
+},
+\]
+
+\[
+\boxed{
+\max_{j\in A_{c,b}}d_{W_H,j}(\Delta_{b,k})\le1.5,
+\qquad
+\max_{j\in A_{c,b}}d_{W_F,j}(\Delta_{b,k})\le1.5
+}.
+\]
+
+该上界只约束每档相对 authentic baseline 的绝对局部增强。任一档低于 source
+distance 目标、history-only H48 设计目标，或超出 macro $1.0$ / affected-channel
+$1.5$ 上界，该 evaluation background 都 fail-closed。求解器可以在 cap 内调大
+$\alpha_{b,c,k}$，但不能改变门限、clip 曲线或读取真实 H48。过滤后不足 4 个
+authentic backgrounds 时 dataset-capability 不能进入 formal 轨。
+
+实现 artifact 为兼容仍沿用 `paired_minimum_separation` 名称，但其 v5 语义是
+`treatment_source_distance`；不得再解释为相邻等级硬分离。
+
+### 3.4 所有能力的共同不变量
 
 1. component、period、lag、joinpoint、loading、coefficient、event clock 和 availability 只由 L504 target history 冻结；covariate response 还可使用同区间 covariate history，但不能使用 target H48。
 2. 只有 adapter 明确声明的 known-future covariate 可以参与 H48 component；target future 不能参与。
@@ -99,7 +256,7 @@ Y_{o+h}^{(c,\alpha)}
 5. 同一 background 的所有 member 共用 baseline L336 normalization 和 MASE，禁止逐 member z-score。
 6. 单变量的统计单位是不同真实 background；panel 是不同 panel-origin；hierarchy 至少按 structural group-origin 聚类。
 7. 至少四个 eligible 真实统计单位才允许一个 `dataset × capability` 进入该轨；不得用 seed 重复包装同一 background。
-8. 分解与 dynamic/event contract 同时冻结 history、fixed-L168 可见区和 H48 的非退化强度；structural contract 在 L504 上拟合，并对 trailing-L336 history 与 H48 component 执行非退化 gate，再在 fixed-L168 正式视图评估。所有数值阈值由协议预声明，再由独立 reference bank 验证并冻结绑定；evaluation origins 只能复用 policy id 与 threshold hash。
+8. 分解与 dynamic/event contract 同时冻结 history、fixed-L168 可见区和 H48 的非退化强度；structural contract 在 L504 上拟合，并对 trailing-L336 history 与 H48 component 执行非退化 gate，再在 fixed-L168 正式视图评估。机制 qualification 阈值、dose target、contract-specific solver、cap、0.10 source-distance 下界、macro $1.0$ / affected-channel $1.5$ 上界均由协议预声明；reference bank 冻结 coverage 与 hash，evaluation origin 只能用 history-only response 解自己的 $\alpha$。
 9. 任何需要真实 H48 target 才能选择分量、剂量、方向或 clip 的方案均不合格。
 
 ## 4. 共享分解与 component ownership
@@ -156,15 +313,20 @@ time-local structure
 
 下文十幅图展示 benchmark 构造出的真实路径反事实 truth，而不是模型预测。除明确标记为 sensitivity 或 qualification-only 的例外外，绘图只从通过资格门的 evaluation-bank contract 中选择真实 background，并调用与 generation 相同的 production apply 逻辑；不得重新拟合一个只供画图使用的 component。
 
-所有图遵守同一约定：
+> **v5 图片状态：** 下方 PNG/SVG 已由当前 v5 calibration contract 重生。九个可生成
+> 能力均为 formal 实例；`hierarchical_coherence` 保持 qualification-only 且没有
+> treatment。每个正式实例显示自己的 history-only resolved $\alpha_{b,c,k}$，并通过
+> 最低档 0.10 treatment-source 距离与 upper budget。输入 bundle、policy、程序与图片
+> 哈希见同目录 `manifest.json`。
 
-1. 五列从左到右固定为五个非基线剂量
-   $\alpha=1.2,1.4,1.6,1.8,2.0$。$\alpha=1$ 不算一个强度档，而是在每列重复绘制的灰色真实 baseline；彩色曲线是同一 baseline、同一 contract 和同一 nuisance / residual realization 上的 treatment。
+v5 重生图必须遵守以下约定：
+
+1. 五列固定为 $\lambda=0.2,0.4,0.6,0.8,1.0$。每列标出该 contract 的 resolved $\alpha_{b,c,k}$；$\alpha=1$ 是重复绘制的灰色 authentic source，不算强度档。
 2. contract 使用完整 L504 history 拟合；为保证可读性，主图只展示预测起点前最后 L168 与其后的 H48，并以竖线标记预测起点 $o$。图中可以在 contract 冻结后展示真实 H48 baseline，但 target H48 不参与 component 拟合、资格判定、anchor 选择、方向选择或阈值设置；H48 treatment 是真实 H48 加 history-only continuation，covariate response 仅额外使用 adapter 合法声明的 known-future input。
 3. 完整路径使用 adapter 交付的 raw units。一个通道在五列中共享相同横轴和纵轴范围，不做逐列 z-score、逐列 autoscale 或为视觉效果进行 clipping；结构能力可以按通道分行，但每一行的五列仍共享坐标。差值辅图如使用 $s_{336}$ 归一化，必须与 raw-unit 完整路径明确分开标注。
 4. 示例 anchor 通过冻结的 `figure_seed`、`capability_id` 和 `background_id` 做稳定哈希排序后确定；具体 seed、dataset / native item / origin、bank role、background / contract / policy hash、输入 artifact hash 和绘图程序版本写入同目录 `manifest.json`。选择不得查看模型预测、正式分数或 target H48。把同一 contract 重放为五个剂量只服务于可视化，不改变正式无放回分配，也不能把五列当作五个独立统计单位。
-5. 每幅图明确标记其协议地位：formal、主分数权重为 0 的 sensitivity，或不创建 forecast task 的 qualification-only。common factor 与 cross-series 的 matched-donor input ablation 是必备归因审计，但不与 full-input 曲线混画；nonlinear 主图只展示 zero-future-innovation 定义，history-residual-replay 只进入单独 sensitivity 输出。
-6. 数值资格阈值是协议预先声明的常数，不由最终 evaluation origins 调整，也不是从 reference rows 重新学习分位数。source-time-disjoint reference bank 的作用是验证各 contract 使用同一阈值 payload、记录覆盖情况，并把 policy、bank split 与阈值哈希冻结；evaluation contract 只能逐字复用已经冻结的 policy id 和 threshold hash。
+5. 每幅图明确标记其协议地位：formal、below-formal illustration、主分数权重为 0 的 sensitivity、只做资格审计的 qualification-only，或 dose-mapping unavailable audit。common factor 与 cross-series 的 matched-donor input ablation 是有 treatment 时的必备归因审计，但不与 full-input 曲线混画；mapping unavailable 时没有 treatment，也就没有可执行的 input ablation。nonlinear 主图只展示 zero-future-innovation 定义，history-residual-replay 只进入单独 sensitivity 输出。
+6. qualification 阈值、source-distance 0.10、目标、solver、cap 与 upper budget 均预声明。reference bank 冻结 solver coverage；evaluation contract 只用自己的 history-only response 求解 $\alpha$，不使用真实 H48。相邻档距离只作诊断。
 
 图由 `tools/plotting/real_anchored_examples.py` 读取完成的 calibration bundle 生成。该程序先验证 bundle 自哈希与输入 file records，再调用 production iterator / apply API，确定性输出 PNG、SVG 和包含 plotter source hash 的 manifest；临时 runtime 路径不会写入文档资产。
 
@@ -206,7 +368,7 @@ v3 已实现约束：
 
 ![五个剂量下的真实路径锚定 local nonlinear trend 示例](figures/real-anchored-capability-examples/01_trend__five_doses.png)
 
-*图 5.1 — `trend` 的真实路径锚定示例。来源为 GIFT ETT1 evaluation background `item_0 / channel 0 / origin 14703`，由 production seed-0 稳定分配选中。五列在同一路径上分别加入 $(\alpha-1)\widehat T^{nl}$；灰线为未修改的真实路径，彩线为增强 trailing-W96 quadratic continuation 后的 truth。线性 tangent、共享 decomposition 中的 seasonal / regime nuisance、真实 residual 和 normalization 均保持不变。该图是 formal-contract 可视化，不是模型预测；完整 ID 与哈希见同目录 `manifest.json`。*
+*图 5.1 — `trend` 的 v5 formal 示例。来源为 GIFT Jena Weather evaluation background `item_0 / channel 1 / origin 1072`。五列 $\lambda=(.2,.4,.6,.8,1)$ 的 contract-specific history-only $\alpha=(1.338846,1.423557,1.508268,1.592980,1.677691)$；灰线是 authentic source，彩线只增强 trailing-W96 nonlinear continuation。最低档相对 source 的 L168 标准化 RMS 至少为 0.10，真实 H48 不参与求解；图不是模型预测。*
 
 ### 5.2 Independent multi-seasonality
 
@@ -245,7 +407,7 @@ v3 已实现约束：
 
 ![五个剂量下的真实路径锚定 independent multi-seasonality 示例](figures/real-anchored-capability-examples/02_multi_seasonal__five_doses.png)
 
-*图 5.2 — `multi_seasonal` 的真实路径锚定示例。来源为 GIFT ETT1 evaluation background `item_0 / channel 1 / origin 11858`，由 production seed-0 稳定分配选中。五列只放大由 L504 共享 spectral ownership 归属为 independent secondary 的 $\widehat S^{sec}$；主 carrier、constrained-AM sideband、trend、level shift 和真实 residual 原样保留。该图是 formal-contract truth，不把总季节性整体缩放，也不是模型预测。*
+*图 5.2 — `multi_seasonal` 的 v5 formal 示例。来源为 Jena Weather `item_0 / channel 16 / origin 1067`，resolved $\alpha=(1.934380,2.868761,3.803141,4.737521,5.671901)$。只放大 L504 ownership map 中的 independent secondary；carrier、constrained-AM、trend、step 与真实 residual 保持不变。五档均通过 treatment-source 距离和 augmentation budget；图不是模型预测。*
 
 ### 5.3 Carrier amplitude modulation
 
@@ -294,7 +456,7 @@ v3 已实现约束：
 
 ![五个剂量下的真实路径锚定 carrier amplitude modulation 示例](figures/real-anchored-capability-examples/03_time_varying_seasonality__five_doses.png)
 
-*图 5.3 — `time_varying_seasonality` 的真实路径锚定示例。来源为 GIFT ETT1 evaluation background `item_0 / channel 0 / origin 9597`，由 production seed-0 稳定分配选中。五列只放大与 carrier phase 锁定的 constrained-AM envelope component；固定 carrier 的 phase 和 amplitude、independent secondary、其他 nuisance 与真实 residual 均共享。它展示 amplitude modulation truth，不包含自由 phase modulation，也不是模型预测。*
+*图 5.3 — `time_varying_seasonality` 的 v5 formal 示例。来源为 Jena Weather `item_0 / channel 16 / origin 4444`，resolved $\alpha=(2.343339,3.686678,5.030017,6.373355,7.716694)$。只放大与 carrier phase 锁定的 constrained-AM envelope；固定 carrier、secondary、nuisance 和 residual 共享。较大的 multiplier 是该真实 contract 为达到同一 0.10 source-distance 目标而自动求解的结果，不是跨能力强度。*
 
 ### 5.4 Observed persistent level shift
 
@@ -337,7 +499,7 @@ v3 已实现约束：
 
 ![五个剂量下的真实路径锚定 observed persistent level shift 示例](figures/real-anchored-capability-examples/04_regime_switching__five_doses.png)
 
-*图 5.4 — `regime_switching` 的真实路径锚定示例。来源为 GIFT ETT1 evaluation background `item_0 / channel 2 / origin 7883`，由 production seed-0 稳定分配选中。五列增强的是 L168 内已经观察到、并由 L504 history-only step-vs-ramp contract 接受的 persistent level shift；joinpoint、pre/post nuisance、真实 residual 和 future nuisance 不变。H48 只是把已观察新水平继续外推，不表示未来凭空发生一次新 regime switch。*
+*图 5.4 — `regime_switching` 的 v5 formal 示例。来源为 Jena Weather `item_0 / channel 7 / origin 7823`，resolved $\alpha=(1.125506,1.235325,1.345143,1.454961,1.564779)$。只增强 L168 内已观察并由 step-vs-ramp contract 接受的 persistent level shift；joinpoint、nuisance 与 residual 不变。H48 只延续已观察的新水平。*
 
 ### 5.5 Nonlinear autoregressive persistence
 
@@ -464,7 +626,7 @@ y_{o+h}^{(\alpha)}
 
 ![五个剂量下的真实路径锚定 nonlinear autoregressive persistence 示例](figures/real-anchored-capability-examples/05_nonlinear_persistence__five_doses.png)
 
-*图 5.5 — `nonlinear_persistence` 的真实路径锚定示例。来源为 GIFT ETT1 evaluation background `item_0 / channel 2 / origin 11857`，由 production seed-0 稳定分配选中。每列用同一 L504 拟合的 bounded recurrence 改变 nonlinear gain；model-visible history 共享冻结的 observed one-step innovations，H48 truth delta 来自 baseline / treatment 终态的 paired zero-future-innovation rollouts，再加回同一真实 H48。该剂量效应不假设线性比例；图中不展示、也不以 history-residual-replay sensitivity 替代正式主定义。*
+*图 5.5 — `nonlinear_persistence` 的 v5 formal 示例。来源为 GIFT M_DENSE `item 4 / channel 0 / origin 1608`，safe monotone solver 得到 $\alpha=(1.570,1.605,1.640,1.670,1.690)$。history 共享 observed innovations，H48 delta 来自 paired zero-future-innovation rollouts；五档不假设线性比例。该数据集有 30 个 eligible evaluation backgrounds；residual replay 仍只作 sensitivity。*
 
 ### 5.6 Predictable recurrent intermittency
 
@@ -528,7 +690,7 @@ x_t^{(\alpha)}
 
 ![五个剂量下的真实路径锚定 predictable recurrent intermittency 示例](figures/real-anchored-capability-examples/06_predictable_intermittency__five_doses.png)
 
-*图 5.6 — `predictable_intermittency` 的真实路径锚定示例。来源为 GIFT Electricity evaluation background `MT_073 / origin 31816`，由 production seed-0 稳定分配选中。五列共享由 L504 history 冻结的 event clock、phase-specific empirical template、event center、width 和 shape，只改变可预测 positive-pulse amplitude；未被 clock 解释的真实 burst 和 residual 不变。H48 event 来自 history clock 的解析延伸，而非查看 target future。*
+*图 5.6 — `predictable_intermittency` 的 v5 formal 示例。来源为 GIFT Electricity `MT_073 / channel 0 / origin 31816`，resolved $\alpha=(1.136180,1.272359,1.408539,1.544718,1.680898)$。五档共享 history-frozen event clock、template、center、width 和 shape，只改变可预测 positive-pulse amplitude；H48 event 来自 clock 延伸，不查看 target future。*
 
 ### 5.7 Forecastable common factor
 
@@ -587,9 +749,13 @@ PCA loading 的整体符号不唯一不影响公式，因为 $\lambda f_t$ 的�
 
 成熟度：v3 已实现 structural background、history-fitted factor continuation 和 mandatory input ablation；只有正式 panel $D\ge3$ 且全部 gates 通过时才生成主结果。
 
+v5 用 history-only holdout 在多个有界状态延拓候选中选择 common-factor future，
+再按每条 contract 的 unit response 求解剂量。Jena Weather 在不读取真实 H48 的前提下
+保留 5 个 formal backgrounds；若其他 dataset 达不到四个仍 fail-closed。
+
 ![五个剂量下的真实路径锚定 forecastable common factor 示例](figures/real-anchored-capability-examples/07_common_factor__five_doses.png)
 
-*图 5.7 — `common_factor` 的真实路径锚定示例。来源为 GIFT ETT1 evaluation panel `item_0 / origin 15266`（原生同步 $D=7$），由 production seed-0 稳定分配选中；图中按 contract 固定展示 protected target 与两个最大 loading 辅助通道。五列放大 L504 history-fitted rank-one factor 及其稳定 AR(1) continuation，并保留逐通道真实 idiosyncratic residual。图中是 full-panel formal truth；必需的 distinct-background matched-donor input ablation 没有混画，因而仅凭本图不能证明模型实际使用了辅助通道。*
+*图 5.7 — `common_factor` 的 v5 formal 示例。来源为 Jena Weather 原生同步 $D=21$ panel `item_0 / origin 6129`，resolved $\alpha=(1.116053,1.232106,1.348160,1.464213,1.580266)$。因子 future 使用 history-only holdout 选择的有界状态延拓器；图展示 representative channels。该 cell 有 5 个 formal backgrounds，并强制生成 matched-donor input ablation（消融不与本图混画）。*
 
 ### 5.8 Forecastable zero-sum hierarchical contrast
 
@@ -654,11 +820,15 @@ c_t^{(\alpha)}
 
 第二种通常需要真实 future share 才能逐点保持原路径并确保非负，从而违反严格 future-blind delta。v3 因此冻结为 qualification-only：保存 zero-sum identity、holdout 与逐 alpha raw-negativity audit，但 generation count 和 formal rank 均为 0。
 
-成熟度：v3 qualification contract 已实现；raw-support 政策仍未决，因此不进入 real-anchored 主 rank。
+成熟度：v3 qualification contract 已实现；raw-support 政策仍未决，因此不进入
+real-anchored 主 rank。v5 不因 qualification-only 而放宽剂量政策：若少于 3 条
+mechanism-eligible reference evidence，或 contract-specific solver coverage
+不足，qualification dose mapping 也显式 unavailable；raw-negativity 仍只作为审计，
+不反向改变 history-fitted contract 或 qualification decision。
 
 ![五个剂量下的真实路径锚定 zero-sum hierarchical contrast 资格示例](figures/real-anchored-capability-examples/08_hierarchical_coherence__five_doses.png)
 
-*图 5.8 — `hierarchical_coherence` 的 qualification-only 可视化。来源为 GIFT Hierarchical Sales evaluation background `B1-31-32 / origin 1369`，按与 production 相同的稳定排序取首个通过资格的 contract。五列保持真实 parent 完全不变，只在 children 间放大由 L504 history 外推的 zero-sum allocation contrast，因此逐点 child sum 仍等于 parent；同时按剂量审计 raw-domain negative child。它不创建 generation / inference forecast task、不进入 formal rank，不能解读为模型预测或正式能力得分。*
+*图 5.8 — `hierarchical_coherence` 的 v5 qualification-only audit。来源为 Hierarchical Sales `B1-31-32 / origin 1369`。zero-sum component 通过 aggregation identity，但 reference contract-specific dose coverage 不足，故 $\alpha=\mathrm{N/A}$、只显示 authentic parent/children baseline。它不创建 generation / inference task，也不进入 formal rank。*
 
 ### 5.9 Directed cross-series predictive transfer
 
@@ -724,7 +894,7 @@ v3 没有把 common factor 或 calendar 显式残差化，也没有 permutation-
 
 ![五个剂量下的真实路径锚定 directed cross-series predictive transfer 示例](figures/real-anchored-capability-examples/09_cross_series_dependence__five_doses.png)
 
-*图 5.9 — `cross_series_dependence` 的 $D=2$ sensitivity 示例。来源为 GIFT Bitbrains RND evaluation panel `rnd_68 / origin 553`，由 sensitivity seed-0 稳定分配选中；contract 冻结 driver 0、responder 1 与 lag 6。五列保持 driver 路径及其 truth effect 严格为 0，只放大 L504 history 拟合的 lagged predictive-transfer component 对 responder 的传播；这说明 predictive association，不作 causal edge 主张。$D=2$ 主分数权重为 0，不代表本节要求 $D\ge3$ 的 formal 结果；必需的 matched-donor driver ablation 未在图中混画。*
+*图 5.9 — `cross_series_dependence` 的 v5 formal 示例。来源为 Jena Weather $D=21$ panel `item_0 / origin 4447`，contract 冻结 driver 18、lag 22 与稳定 responder 集；图展示 driver 和一个 representative responder。resolved $\alpha=(1.170422,1.340843,1.511265,1.681687,1.852108)$，driver truth effect 严格为 0。该 cell 有 5 个 formal backgrounds并强制 matched-donor input ablation；结论是 predictive transfer，不是 causal edge。*
 
 ### 5.10 Known-future conditional predictive response
 
@@ -772,7 +942,7 @@ z_t^{(\alpha)}=z_t
 \beta_{k\ell}\longrightarrow\alpha\beta_{k\ell}.
 \]
 
-这比直接把 binary promotion 从 1 乘到 1.2–2.0 更合理：dose 控制 target 对 covariate 的响应强度，而不是制造无语义的 covariate 值。
+这比直接缩放 binary promotion 更合理：dose 控制 target 对 covariate 的响应强度，而不是制造无语义的 covariate 值。
 
 必要 gate：
 
@@ -789,7 +959,7 @@ promotion 可能内生，天气 forecast 也可能带误差，因此只能称 co
 
 ![五个剂量下的真实路径锚定 known-future conditional predictive response 示例](figures/real-anchored-capability-examples/10_covariate_response__five_doses.png)
 
-*图 5.10 — `covariate_response` 的真实路径锚定示例。来源为 GIFT Hierarchical Sales evaluation background `B1-3-4 / origin 661`，由 production seed-0 稳定分配选中；图中展示通过资格的 target `QTY_B1_3` 与其 contract 中系数范数最大的已知未来输入 `PROMO_B1_3`。五列使用完全相同、由 adapter 声明并覆盖 L504+H48 的 known-future covariate path，只把 history-fitted response coefficient 及其经 target state 传播的 response component 放大到 $\alpha$ 倍；covariate value 本身从不缩放。该图展示 conditional predictive response truth，不声称 causal lift，也不是模型预测。*
+*图 5.10 — `covariate_response` 的 v5 formal 示例。来源为 Hierarchical Sales `B1-3-4 / origin 661`，resolved $\alpha=(1.300870,1.601740,1.902611,2.203481,2.504351)$。五档使用完全相同、由 adapter 声明的 known-future covariate path，只放大 history-fitted response component；covariate 本身不变。图展示 conditional predictive response，不声称 causal lift。*
 
 ## 6. 真实数据与当前接入边界
 
@@ -877,9 +1047,9 @@ nonlinear persistence 不满足 exact dose proportionality。它应验证：
 - covariate response：baseline/treatment covariate path 完全相同；
 - common/cross：full-panel 与 ablation task 使用同一 target truth pair。
 
-### 7.4 门限的三层语义
+### 7.4 门限的四层语义
 
-实现中有三类容易混淆、但作用完全不同的门限。
+实现中有四类容易混淆、但作用完全不同的门限。
 
 第一类是旧 synthetic 轨的 **real-feature support diagnostic**。当某特征至少有 12 个有限真实 anchor 值时，记真实范围为 $[m,M]$、跨度为 $w=M-m$，诊断区间为
 
@@ -889,7 +1059,7 @@ nonlinear persistence 不满足 exact dose proportionality。它应验证：
 
 synthetic 样本落在区间外只会写诊断；family target 的容忍度同样是 $0.1w$。两者都不会令 validation `accepted=false`，不能把它们解释成 real-anchored availability gate。
 
-第二类是 **real-anchored qualification hard gate**。数值由协议预声明，reference bank 不估计分位数、不优化阈值；它验证 reference contracts 使用相同 payload，记录通过覆盖率，并把 threshold、source-time-disjoint split、reference/evaluation IDs 与 policy hash 冻结。evaluation contracts 只能逐字复用。当前主要数值如下：
+第二类是 **real-anchored mechanism qualification hard gate**。这一子政策的数值由协议预声明，reference bank 不估计分位数、不优化它们；它验证 reference contracts 使用相同 payload，记录通过覆盖率，并把 threshold、source-time-disjoint split、reference/evaluation IDs 与 policy hash 冻结。evaluation contracts 只能逐字复用。当前主要数值如下：
 
 | 能力 | background-level hard gate 摘要 |
 |---|---|
@@ -897,16 +1067,18 @@ synthetic 样本落在区间外只会写诊断；family target 的容忍度同�
 | multi-seasonal | 至少一个 independent secondary；每个 tapered spectral power share $\ge0.01$，最多 2 个；排除 carrier 前 8 阶 harmonic，频率容差 $1.5/504$。 |
 | time-varying seasonality | carrier strength $\ge0.10$、cycle-amplitude CV $\ge0.05$、envelope peak share $\ge0.10$；modulation 慢于 carrier 且 L504 内至少 3 cycles。 |
 | regime switching | 两侧 segment 至少 24、局部窗口 72；standardized jump $\ge0.35$、local SSE reduction $\ge0.05$、step 相对 ramp 的 normalized SSE advantage $\ge0.01$；near-optimal join width $\le12$。 |
-| nonlinear persistence | 3 个 blocked folds 的 median gain $\ge0.01$，positive-fold fraction $\ge2/3$，linear spectral radius $<0.98$；history / L168 / zero-innovation H48 effect 均大于 $0.01s_{336}$，五档 effect RMS 严格递增且 rollout 有限、不越过冻结 support。 |
+| nonlinear persistence | 3 个 blocked folds 的 median gain $\ge0.01$，positive-fold fraction $\ge2/3$，linear spectral radius $<0.995$；history / L168 / zero-innovation H48 effect 均大于 $0.01s_{336}$，五档 effect RMS 严格递增且 rollout 有限、不越过冻结 support。 |
 | predictable intermittency | peak $z\ge1$，clock holdout $R^2\ge0.10$，timing F1 $\ge0.60$，median timing error 不超过 1 个 pulse width，positive-pulse fraction $\ge0.80$，pulse/off-event robust-scale ratio $\ge2$，duty $\le0.25$，training events $\ge6$，H48 至少 1 个 event，并通过三段 $0.01s_{336}$ gate。 |
 | common factor | top PCA share $\ge1/D+0.02$，split-loading cosine $\ge0.75$，至少 $\min(3,D)$ 个通道的 relative loading $\ge0.25$，factor holdout $R^2\ge0$，trailing-L336/H48 component RMS $\ge0.01$。 |
-| cross-series | time-reverse-corrected minimum responder gain $\ge0.0025$，两半 driver agreement $\ge0.50$，median lag deviation $\le2$，lag bank 为 1–24，并通过 structural component gate。 |
+| cross-series | time-reverse-corrected responder gain $\ge0.0025$，两半 driver agreement $\ge0.50$，median lag deviation $\le2$，lag bank 为 1–24；正式 $D\ge3$ 至少两个 responder 通过，并通过 structural component gate。 |
 | covariate response | actual gain 减固定 53-step shift-null gain $\ge0.0025$，两半 beta cosine $\ge0.50$，$\lVert\beta\rVert>10^{-8}$，至少一个 target 通过，并通过 structural component gate。 |
 | hierarchy | zero-sum component max-abs $\le10^{-10}$，mean contrast holdout $R^2\ge0$，并通过 structural component gate；raw negativity 只审计，不改变 qualification，且永不生成或排名。 |
 
 dataset-level 再施加统计单位门：正式 real-anchored 生成/排名要求至少 4 个不同 authentic backgrounds；common/cross 正式 panel 要求 $D\ge3$。$D=2$ 只在至少 2 个不同 donor backgrounds 时进入 sensitivity；hierarchy 是 qualification-only 例外。
 
-第三类是 synthetic-only **near-distance anti-copy gate**。它取每个真实 anchor 的最后 L168，用全体 `anchor × time` 的 pooled mean / standard deviation 做同一 z-normalization，并定义
+第三类是 v5 **real-anchored treatment-source distance hard gate**。它用冻结的 L336 尺度要求每个 treatment 在 trailing L168 上与自己的 authentic source 至少达到该档目标，最低档为 $0.10$；baseline 豁免。reference bank 冻结目标、solver、cap 与 75% coverage，evaluation contract 只用 history-only response 求解自己的 $\alpha$。每档同时受 history/future macro $\le1.0$ 与 affected-channel $\le1.5$ 上界约束。相邻 treatment 距离只记录诊断，不决定接受。
+
+第四类是 synthetic-only **DCR/NNDR near-distance anti-copy gate**。它取每个真实 anchor 的最后 L168，用全体 `anchor × time` 的 pooled mean / standard deviation 做同一 z-normalization，并定义
 
 \[
 d(a,b)=\sqrt{\frac1{168}\sum_t(z_{a,t}-z_{b,t})^2}.
@@ -919,7 +1091,7 @@ d(a,b)=\sqrt{\frac1{168}\sum_t(z_{a,t}-z_{b,t})^2}.
 \tau_r=Q_{0.01}(\{r_i\}).
 \]
 
-生成通道只有同时满足 $d_1\le\tau_d$ 与 $d_1/d_2\le\tau_r$ 才记为 copy risk。单变量有一个风险通道即拒绝；多变量至少 $\lceil D/2\rceil$ 个风险通道才拒绝，generator 最多尝试 5 个确定性 candidate。若真实 anchor masters 少于 12 或 pooled scale 退化，则明确记录 `not_enforced`。real-anchored 路径本来就刻意包含真实 baseline，因此该门对其固定为 `not_applicable:intentional_real_anchor_counterfactual`，不能拿 anti-copy 距离去拒绝真实锚定样本。
+生成通道只有同时满足 $d_1\le\tau_d$ 与 $d_1/d_2\le\tau_r$ 才记为 copy risk。单变量有一个风险通道即拒绝；多变量至少 $\lceil D/2\rceil$ 个风险通道才拒绝，generator 最多尝试 5 个确定性 candidate。若真实 anchor masters 少于 12 或 pooled scale 退化，则记录 `not_enforced`。real-anchored 保留 `anti_copy=not_applicable`，另用 treatment-source gate 保证新增 treatment 不与自己的 source 过近；它不声称能识别 baseline 是否曾出现在预训练集。
 
 ## 8. 评分与统计单位
 
@@ -951,21 +1123,22 @@ d(a,b)=\sqrt{\frac1{168}\sum_t(z_{a,t}-z_{b,t})^2}.
 - common/cross 的 input-ablation degradation 独立报告，不与原始 effect NRMSE 任意加权；
 - hierarchy 的 contrast recovery、coherence violation 与 raw-support violation分别报告。
 
-## 9. v3 实现与执行顺序
+## 9. v5 实现与执行顺序
 
-v3 流水线按以下已实现的依赖顺序执行：
+v5 流水线按以下依赖顺序执行：
 
-1. **冻结协议与 qualification policy**：所有数值门来自预声明 policy；独立 reference bank 负责验证、冻结与哈希绑定，evaluation origins 不能反推阈值。
+1. **冻结协议常量**：预声明 mechanism qualification thresholds、canonical $\lambda$、L168 source-distance 最低档 $0.10$、目标网格、solver、剂量 cap、最小 reference $N=3$、75% solver coverage，以及 macro $1.0$ / affected-channel $1.5$ upper budget。
 2. **拆分 reference/evaluation background banks**：同一 native item 上时间重叠的窗口不得跨 bank；reference rows 不生成 forecast task。
 3. **构建真实 background**：单变量链保留真实 channel；结构链保留同步 panel、known-future covariate、hierarchy 与 group semantics。
 4. **拟合 capability contract**：四能力共享 decomposition v3；nonlinear/event 使用专用 dynamic contract；common/cross/covariate 使用 structural contract；hierarchy 只生成 qualification contract。
-5. **冻结 availability**：每个 dataset × capability 依据 frozen gates 和真实统计单位计数决定 formal、sensitivity、qualification-only 或 unavailable。
-6. **生成与推理**：generation 只消费 evaluation bank 和 generation-eligible contract；hierarchy 生成数严格为 0；common/cross 同步产生 mandatory ablation task；$D=2$ panel 与 nonlinear residual replay 产生显式的辅助 sensitivity task。
-7. **分轨分析**：real-anchored mechanism score、input-ablation attribution、auxiliary sensitivity、hierarchy qualification 和 deterministic synthetic rank 分开输出，不合成任意总分。
+5. **冻结 capability dose solver**：只消费 mechanism-eligible、source-time-disjoint reference evidence；验证至少 75% evidence 可在相同目标/cap/budget 下完整求解，冻结 solver hash；reference bank 不读取 evaluation origins。
+6. **解析 evaluation 剂量与 availability**：每个 contract 只用 history-only response 解自己的 $\alpha_{b,c,k}$；硬验 treatment-source L168 距离、history-only H48 设计目标和 upper budget。相邻档只作诊断。任一档失败即 background fail-closed。
+7. **生成与推理**：generation 只消费 evaluation bank 和 generation-eligible contract；hierarchy 生成数严格为 0；common/cross 同步产生 mandatory ablation task；$D=2$ panel 与 nonlinear residual replay 产生显式的辅助 sensitivity task。
+8. **分轨分析**：real-anchored mechanism score、input-ablation attribution、auxiliary sensitivity、hierarchy qualification 和 deterministic synthetic rank 分开输出，不合成任意总分。
 
-## 10. 已冻结的 v3 决策
+## 10. 已冻结的 v5 决策
 
-| 决策 | v3 结论 | 实现后果 |
+| 决策 | v5 结论 | 实现后果 |
 |---|---|---|
 | TVS 自由 sideband 还是纯 AM | constrained AM | carrier phase 固定，每个 harmonic 仅有两个 envelope 自由度；AM sideband 与 independent secondary 互斥归属 |
 | nonlinear future innovation | zero innovation 为正式主结果 | history residual replay 生成独立 sensitivity task 与 summary，但不生成第二套正式排名 |
@@ -973,8 +1146,11 @@ v3 流水线按以下已实现的依赖顺序执行：
 | common/cross panel 最小维数 | 正式轨固定 $D\ge3$ | $D=2$ 至少有两个不同 donor background 时生成独立 sensitivity task 与 matched input ablation，主 score 权重为 0；该限制不适用于单 target 的 known-future covariate response |
 | common/cross input ablation | 声明结构能力的必备组成 | 与 main rows 同 artifact、同 truth pair；单独报告 degradation，主 score 权重严格为 0 |
 | qualification 阈值 | 协议预声明，独立 reference bank 验证并冻结绑定 | 同一 native item 上时间重叠窗口不得跨 reference/evaluation bank；最终 origins 只能复用 policy id 与 threshold hash |
+| 强度语义 | canonical $\lambda=(.2,.4,.6,.8,1)$ | $\lambda$ 是跨能力档位；$\alpha_{b,c,k}$ 是 contract-specific 物理 multiplier，不作跨能力比较 |
+| dose solver 资格 | 最少 3 条 mechanism-eligible reference evidence，至少 75% 可完整求解 | additive $\alpha\le21$；nonlinear 使用步长 .005 的 safe monotone curve且 $\alpha\le3$；覆盖不足整项 unavailable |
+| real source-distance | treatment-only，L168 最低档 $0.10$；upper budget 为 macro H/F $\le1.0$、affected channel $\le1.5$ | baseline 精确保留并豁免；相邻档只作诊断；与 synthetic LOO DCR/NNDR 严格分开 |
 
-### 10.1 v3 接入状态
+### 10.1 v5 接入状态
 
 - `trend`、`multi_seasonal`、`time_varying_seasonality`、`regime_switching`：共享 decomposition v3 与 component ownership；
 - `nonlinear_persistence`：递归 dynamic contract，zero-future-innovation 主定义；
@@ -986,4 +1162,4 @@ v3 流水线按以下已实现的依赖顺序执行：
 
 ### 10.2 流水线与输出边界
 
-v3 calibration bundle 冻结 reference/evaluation backgrounds、contracts、bank split audit 和 qualification policy。generation 只读取 evaluation backgrounds；reference rows 不会成为 inference task。`real_anchored_sensitivity_effects.jsonl` 与 `real_anchored_sensitivity_summary.json` 保存 $D=2$ panel 和 nonlinear replay 的辅助结果。real-anchored 主分数、common/cross attribution audit、auxiliary sensitivity、hierarchy qualification 与 deterministic synthetic rank 始终分开，禁止合成任意总分。
+v5 calibration bundle 冻结 reference/evaluation backgrounds、contracts、bank split audit、qualification policy、dose solver 与逐 contract resolved-alpha hash。generation 只读取 evaluation backgrounds；reference rows 不会成为 inference task。validation 逐 treatment 重算 L168 source-distance、history-only H48 design effect 与 local augmentation budget；相邻档距离只入诊断。`real_anchored_sensitivity_effects.jsonl` 与 `real_anchored_sensitivity_summary.json` 保存 $D=2$ panel 和 nonlinear replay 的辅助结果。real-anchored 主分数、common/cross attribution audit、auxiliary sensitivity、hierarchy qualification 与 deterministic synthetic rank 始终分开。

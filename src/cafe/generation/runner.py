@@ -27,7 +27,6 @@ from cafe.generation.families import (
     cross_series_identifiability_gate,
 )
 from cafe.generation.real_counterfactuals import (
-    REAL_ANCHORED_ALPHAS,
     REAL_ANCHORED_GENERATOR_VERSION,
     available_capabilities as available_real_anchored_capabilities,
     iter_nonlinear_replay_sensitivity_samples,
@@ -41,7 +40,6 @@ from cafe.generation.reference_bank import (
     validate_real_anchored_reference_chain,
 )
 from cafe.generation.structural_real_counterfactuals import (
-    STRUCTURAL_ALPHAS,
     STRUCTURAL_CAPABILITIES,
     available_structural_capabilities,
     available_structural_sensitivity_capabilities,
@@ -50,6 +48,9 @@ from cafe.generation.structural_real_counterfactuals import (
     validate_structural_donor_commitment_manifest,
     validate_structural_availability,
     validate_structural_contract,
+)
+from cafe.generation.real_anchored_policy import (
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
 )
 
 
@@ -700,6 +701,8 @@ def main() -> int:
     if upstream_pipeline_schema not in {
         "cafe.pipeline.v1",
         "cafe.pipeline.v2",
+        "cafe.pipeline.v3",
+        "cafe.pipeline.v4",
         protocol.SCHEMA_VERSION,
     }:
         raise ValueError(
@@ -709,7 +712,9 @@ def main() -> int:
     expected_bundle_schema = {
         "cafe.pipeline.v1": "cafe.calibration_bundle.v1",
         "cafe.pipeline.v2": "cafe.calibration_bundle.v2",
-        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v3",
+        "cafe.pipeline.v3": "cafe.calibration_bundle.v3",
+        "cafe.pipeline.v4": "cafe.calibration_bundle.v4",
+        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v5",
     }[upstream_pipeline_schema]
     if bundle.get("schema_version") != expected_bundle_schema:
         raise ValueError(
@@ -742,13 +747,16 @@ def main() -> int:
         )
     if upstream_pipeline_schema in {
         "cafe.pipeline.v2",
+        "cafe.pipeline.v3",
+        "cafe.pipeline.v4",
         protocol.SCHEMA_VERSION,
     } and not real_anchored_files_present:
         raise ValueError(
-            "v2/v3 calibration bundle is missing the frozen real-anchored "
+            "v2/v3/v4/v5 calibration bundle is missing the frozen "
+            "real-anchored "
             "component"
         )
-    v3_real_anchored_file_keys = {
+    current_real_anchored_file_keys = {
         "structural_real_anchored_backgrounds",
         "structural_real_anchored_contracts",
         "structural_real_anchored_donor_commitments",
@@ -761,13 +769,13 @@ def main() -> int:
         "structural_hierarchy_qualification",
     }
     if upstream_pipeline_schema == protocol.SCHEMA_VERSION:
-        missing_v3 = sorted(
-            v3_real_anchored_file_keys - set(bundle.get("files", {}))
+        missing_current = sorted(
+            current_real_anchored_file_keys - set(bundle.get("files", {}))
         )
-        if missing_v3:
+        if missing_current:
             raise ValueError(
-                "v3 calibration bundle is missing real-anchored files: "
-                + ", ".join(missing_v3)
+                "current calibration bundle is missing real-anchored files: "
+                + ", ".join(missing_current)
             )
     if real_anchored_files_present:
         real_anchored_backgrounds = list(
@@ -918,6 +926,27 @@ def main() -> int:
         structural_donor_commitments = None
         structural_availability = {}
         qualification_policy = None
+    capability_dose_cells = (
+        qualification_policy.get("capabilities", {})
+        if isinstance(qualification_policy, dict)
+        else {}
+    )
+    applied_alpha_grid_by_capability = {
+        str(capability_id): list(dose_calibration["applied_alpha_grid"])
+        for capability_id, cell in sorted(capability_dose_cells.items())
+        if isinstance(cell, dict)
+        and isinstance(cell.get("dose_calibration"), dict)
+        and (dose_calibration := cell["dose_calibration"]).get("status")
+        == "available"
+    }
+    dose_calibration_sha256_by_capability = {
+        str(capability_id): str(dose_calibration["policy_sha256"])
+        for capability_id, cell in sorted(capability_dose_cells.items())
+        if isinstance(cell, dict)
+        and isinstance(cell.get("dose_calibration"), dict)
+        and (dose_calibration := cell["dose_calibration"]).get("status")
+        == "available"
+    }
     if bundle["generator_version"] != protocol.GENERATOR_VERSION:
         raise ValueError("calibration bundle generator version mismatch")
 
@@ -986,7 +1015,6 @@ def main() -> int:
                 for row in structural_contracts
                 if row.get("capability_id") in structural_capability_ids
             ],
-            alphas=STRUCTURAL_ALPHAS,
             seed_indexes=seed_indexes,
         )
     )
@@ -1005,7 +1033,6 @@ def main() -> int:
                 if row.get("capability_id")
                 in structural_sensitivity_capability_ids
             ],
-            alphas=STRUCTURAL_ALPHAS,
             sensitivity=True,
             seed_indexes=seed_indexes,
         )
@@ -1018,7 +1045,6 @@ def main() -> int:
                 for row in structural_contracts
                 if row.get("capability_id") in structural_capability_ids
             ],
-            alphas=STRUCTURAL_ALPHAS,
             seed_indexes=range(len(structural_backgrounds)),
         )
     )
@@ -1031,7 +1057,6 @@ def main() -> int:
                 if row.get("capability_id")
                 in structural_sensitivity_capability_ids
             ],
-            alphas=STRUCTURAL_ALPHAS,
             sensitivity=True,
             seed_indexes=range(len(structural_backgrounds)),
         )
@@ -1069,7 +1094,6 @@ def main() -> int:
             real_anchored_backgrounds,
             real_anchored_contracts,
             seed_indexes=seed_indexes,
-            alphas=REAL_ANCHORED_ALPHAS,
         )
     ) if "nonlinear_persistence" in real_anchored_capability_ids else []
     generated_structural_capability_ids = tuple(
@@ -1080,6 +1104,62 @@ def main() -> int:
             for row in structural_main_rows
         )
     )
+    generated_dose_capability_ids = tuple(
+        dict.fromkeys(
+            (
+                *generated_real_anchored_capability_ids,
+                *generated_structural_capability_ids,
+                *structural_sensitivity_capability_ids,
+            )
+        )
+    )
+    missing_dose_mappings = sorted(
+        capability_id
+        for capability_id in generated_dose_capability_ids
+        if capability_id not in applied_alpha_grid_by_capability
+        or capability_id not in dose_calibration_sha256_by_capability
+    )
+    if missing_dose_mappings:
+        raise ValueError(
+            "current real-anchored generation lacks a reference-frozen "
+            "dose mapping for: " + ", ".join(missing_dose_mappings)
+        )
+    resolved_alpha_grids_by_capability: dict[str, list[list[float]]] = {}
+    for row in (*real_anchored_contracts, *structural_contracts):
+        capability_id = str(row.get("capability_id", ""))
+        if capability_id not in generated_dose_capability_ids:
+            continue
+        contract_dose_calibration = row.get("dose_calibration")
+        if not isinstance(contract_dose_calibration, dict):
+            contract = row.get("contract")
+            if isinstance(contract, dict):
+                contract_dose_calibration = contract.get("dose_calibration")
+        if not isinstance(contract_dose_calibration, dict):
+            continue
+        grid = [
+            float(value)
+            for value in contract_dose_calibration.get(
+                "applied_alpha_grid", ()
+            )
+        ]
+        if len(grid) == len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID):
+            resolved_alpha_grids_by_capability.setdefault(
+                capability_id,
+                [],
+            ).append(grid)
+    applied_alpha_range_by_capability = {
+        capability_id: [
+            {
+                "minimum": min(grid[index] for grid in grids),
+                "maximum": max(grid[index] for grid in grids),
+            }
+            for index in range(len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID))
+        ]
+        for capability_id, grids in sorted(
+            resolved_alpha_grids_by_capability.items()
+        )
+        if grids
+    }
     if (
         not capability_ids
         and not generated_real_anchored_capability_ids
@@ -1133,7 +1213,6 @@ def main() -> int:
                     real_anchored_contracts,
                     capability_ids=real_anchored_capability_ids,
                     seed_indexes=seed_indexes,
-                    alphas=REAL_ANCHORED_ALPHAS,
                 ),
                 iter(structural_main_rows),
                 iter(structural_ablation_rows),
@@ -1149,7 +1228,7 @@ def main() -> int:
             len(assignments)
             for assignments in real_anchored_assignment_map.values()
         )
-        * len(REAL_ANCHORED_ALPHAS)
+        * len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
         * 2
         + len(structural_main_rows)
         + len(structural_ablation_rows)
@@ -1223,7 +1302,29 @@ def main() -> int:
             "mandatory_common_cross_separate_attribution_not_score_weighted"
         ),
         "hierarchical_coherence_generation_count": 0,
-        "dose_values": list(REAL_ANCHORED_ALPHAS),
+        "dose_parameter": "canonical_strength_lambda",
+        "dose_values": list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID),
+        "applied_alpha_grid_by_capability": {
+            capability_id: applied_alpha_grid_by_capability[capability_id]
+            for capability_id in generated_real_anchored_capability_ids
+        },
+        "applied_alpha_scope": "contract_specific_history_only",
+        "applied_alpha_range_by_capability": {
+            capability_id: applied_alpha_range_by_capability[capability_id]
+            for capability_id in generated_real_anchored_capability_ids
+            if capability_id in applied_alpha_range_by_capability
+        },
+        "dose_calibration_sha256_by_capability": {
+            capability_id: dose_calibration_sha256_by_capability[
+                capability_id
+            ]
+            for capability_id in generated_real_anchored_capability_ids
+        },
+        "dose_policy_sha256": (
+            None
+            if qualification_policy is None
+            else qualification_policy["dose_policy"]["dose_policy_sha256"]
+        ),
     }
     protocol.write_json(
         real_anchored_availability_path,
@@ -1272,7 +1373,38 @@ def main() -> int:
             structural_sensitivity_ablation_rows
         ),
         "hierarchical_coherence_generation_count": 0,
-        "dose_values": list(STRUCTURAL_ALPHAS),
+        "dose_parameter": "canonical_strength_lambda",
+        "dose_values": list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID),
+        "applied_alpha_grid_by_capability": {
+            capability_id: applied_alpha_grid_by_capability[capability_id]
+            for capability_id in (
+                *generated_structural_capability_ids,
+                *structural_sensitivity_capability_ids,
+            )
+        },
+        "applied_alpha_scope": "contract_specific_history_only",
+        "applied_alpha_range_by_capability": {
+            capability_id: applied_alpha_range_by_capability[capability_id]
+            for capability_id in (
+                *generated_structural_capability_ids,
+                *structural_sensitivity_capability_ids,
+            )
+            if capability_id in applied_alpha_range_by_capability
+        },
+        "dose_calibration_sha256_by_capability": {
+            capability_id: dose_calibration_sha256_by_capability[
+                capability_id
+            ]
+            for capability_id in (
+                *generated_structural_capability_ids,
+                *structural_sensitivity_capability_ids,
+            )
+        },
+        "dose_policy_sha256": (
+            None
+            if qualification_policy is None
+            else qualification_policy["dose_policy"]["dose_policy_sha256"]
+        ),
     }
     protocol.write_json(
         structural_real_anchored_availability_path,
@@ -1350,7 +1482,7 @@ def main() -> int:
     )
     derived_tables_seconds = time.perf_counter() - derived_tables_started
     config = {
-        "schema_version": "cafe.generation_config.v3",
+        "schema_version": "cafe.generation_config.v5",
         "dataset_id": dataset.dataset_id,
         "calibration_bundle_sha256": bundle["bundle_content_sha256"],
         "generator_version": protocol.GENERATOR_VERSION,
@@ -1388,11 +1520,37 @@ def main() -> int:
                 "frozen_global_seed_ordinal_permutation_without_replacement_"
                 "truncate_at_eligible_count_v1"
             ),
-            "alpha_grid": list(REAL_ANCHORED_ALPHAS),
-            "pairing": "baseline_alpha1_vs_treatment_each_alpha",
+            "dose_parameter": "canonical_strength_lambda",
+            "canonical_strength_grid": list(
+                REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+            ),
+            "applied_alpha_grid_by_capability": (
+                applied_alpha_grid_by_capability
+            ),
+            "applied_alpha_scope": "contract_specific_history_only",
+            "applied_alpha_range_by_capability": (
+                applied_alpha_range_by_capability
+            ),
+            "dose_calibration_sha256_by_capability": (
+                dose_calibration_sha256_by_capability
+            ),
+            "dose_policy_sha256": (
+                None
+                if qualification_policy is None
+                else qualification_policy["dose_policy"][
+                    "dose_policy_sha256"
+                ]
+            ),
+            "pairing": (
+                "baseline_lambda0_alpha1_vs_treatment_"
+                "contract_resolved_alpha"
+            ),
             "normalization": "shared_unmodified_real_l336_history",
             "anti_copy": (
                 "not_applicable_intentional_real_anchor_counterfactual"
+            ),
+            "paired_minimum_separation": (
+                "mandatory_treatment_source_l168_distance_with_budget_v1"
             ),
             "qualification_policy_sha256": (
                 None
@@ -1411,7 +1569,7 @@ def main() -> int:
             "legacy_upstream_component_policy": (
                 None
                 if upstream_pipeline_schema == protocol.SCHEMA_VERSION
-                else "validated_but_not_regenerated_or_ranked_as_v3"
+                else "validated_but_not_regenerated_or_ranked_as_v5"
             ),
             "structural_main_count": len(structural_main_rows),
             "structural_input_ablation_count": len(
@@ -1509,7 +1667,7 @@ def main() -> int:
         },
     }
     manifest = {
-        "schema_version": "cafe.generation_manifest.v3",
+        "schema_version": "cafe.generation_manifest.v5",
         "created_at": protocol.utc_now(),
         "execution": {
             "capability_workers": min(args.workers, len(capability_ids)),

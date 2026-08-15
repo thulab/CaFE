@@ -15,6 +15,7 @@ from cafe.analysis import metrics
 from cafe.analysis import diagnostics
 from cafe.generation.real_anchored_policy import (
     MINIMUM_FORMAL_BACKGROUND_COUNT,
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
 )
 
 
@@ -74,18 +75,18 @@ def validated_current_real_anchored_generation_protocol(
     *,
     task_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Reject legacy real-anchored tasks before they can be ranked as v3."""
+    """Reject legacy real-anchored tasks before they can be ranked as v5."""
 
     manifest = protocol.read_json(generation_manifest_path)
-    if manifest.get("schema_version") != "cafe.generation_manifest.v3":
+    if manifest.get("schema_version") != "cafe.generation_manifest.v5":
         raise ValueError(
-            "legacy real-anchored generation cannot enter the v3 ranking"
+            "legacy real-anchored generation cannot enter the v5 ranking"
         )
     config = manifest.get("config")
     if not isinstance(config, dict) or config.get("schema_version") != (
-        "cafe.generation_config.v3"
+        "cafe.generation_config.v5"
     ):
-        raise ValueError("real-anchored generation config is not v3")
+        raise ValueError("real-anchored generation config is not v5")
     config_sha256 = protocol.json_sha256(config)
     if manifest.get("config_sha256") != config_sha256:
         raise ValueError("real-anchored generation config hash mismatch")
@@ -113,6 +114,114 @@ def validated_current_real_anchored_generation_protocol(
         raise ValueError(
             "legacy or unqualified real-anchored generation cannot be ranked"
         )
+    dose_policy_sha256 = real_config.get("dose_policy_sha256")
+    canonical_strength_grid = real_config.get("canonical_strength_grid")
+    alpha_grids = real_config.get("applied_alpha_grid_by_capability")
+    alpha_ranges = real_config.get("applied_alpha_range_by_capability")
+    calibration_hashes = real_config.get(
+        "dose_calibration_sha256_by_capability"
+    )
+    generated_capabilities = real_config.get("generated_capabilities")
+    sensitivity_capabilities = real_config.get(
+        "structural_sensitivity_capabilities",
+        [],
+    )
+    if (
+        real_config.get("dose_parameter") != "canonical_strength_lambda"
+        or canonical_strength_grid
+        != list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+        or not isinstance(alpha_grids, dict)
+        or not isinstance(calibration_hashes, dict)
+        or not isinstance(generated_capabilities, list)
+        or not isinstance(sensitivity_capabilities, list)
+        or any(
+            not isinstance(value, str) or not value
+            for value in (
+                *generated_capabilities,
+                *sensitivity_capabilities,
+            )
+        )
+        or len(generated_capabilities) != len(set(generated_capabilities))
+        or len(sensitivity_capabilities)
+        != len(set(sensitivity_capabilities))
+        or not {*generated_capabilities, *sensitivity_capabilities}
+        or real_config.get("applied_alpha_scope")
+        != "contract_specific_history_only"
+        or not isinstance(alpha_ranges, dict)
+        or real_config.get("pairing")
+        != "baseline_lambda0_alpha1_vs_treatment_contract_resolved_alpha"
+        or real_config.get("paired_minimum_separation")
+        != "mandatory_treatment_source_l168_distance_with_budget_v1"
+        or real_config.get("anti_copy")
+        != "not_applicable_intentional_real_anchor_counterfactual"
+        or not isinstance(dose_policy_sha256, str)
+        or len(dose_policy_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in dose_policy_sha256
+        )
+    ):
+        raise ValueError("real-anchored generation lacks the v5 dose contract")
+    dose_capabilities = list(
+        dict.fromkeys(
+            (*generated_capabilities, *sensitivity_capabilities)
+        )
+    )
+    for capability_id in dose_capabilities:
+        capability_id = str(capability_id)
+        alpha_grid = alpha_grids.get(capability_id)
+        alpha_range = alpha_ranges.get(capability_id)
+        calibration_sha256 = calibration_hashes.get(capability_id)
+        if (
+            not isinstance(alpha_grid, list)
+            or alpha_grid != []
+            or not isinstance(alpha_range, list)
+            or len(alpha_range)
+            != len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+            or any(
+                not isinstance(bounds, dict)
+                or not math.isfinite(float(bounds.get("minimum", math.nan)))
+                or not math.isfinite(float(bounds.get("maximum", math.nan)))
+                or float(bounds["minimum"]) <= 1.0
+                or float(bounds["maximum"]) < float(bounds["minimum"])
+                for bounds in alpha_range
+            )
+            or not isinstance(calibration_sha256, str)
+            or len(calibration_sha256) != 64
+            or any(
+                character not in "0123456789abcdef"
+                for character in calibration_sha256
+            )
+        ):
+            raise ValueError(
+                "real-anchored generated capability lacks a frozen dose "
+                f"mapping: {capability_id}"
+            )
+    if task_manifest is not None:
+        observed_dose_provenance = task_manifest.get(
+            "real_anchored_dose_provenance"
+        )
+        expected_dose_provenance = {
+            key: real_config.get(key)
+            for key in (
+                "dose_parameter",
+                "canonical_strength_grid",
+                "applied_alpha_grid_by_capability",
+                "applied_alpha_scope",
+                "applied_alpha_range_by_capability",
+                "dose_calibration_sha256_by_capability",
+                "dose_policy_sha256",
+                "qualification_policy_sha256",
+            )
+        }
+        if (
+            observed_dose_provenance is not None
+            and observed_dose_provenance != expected_dose_provenance
+        ):
+            raise ValueError(
+                "real-anchored inference task dose provenance differs from "
+                "its generation config"
+            )
     return {
         "generation_manifest_path": str(generation_manifest_path),
         "generation_manifest_sha256": protocol.file_sha256(
@@ -121,6 +230,21 @@ def validated_current_real_anchored_generation_protocol(
         "generation_config_sha256": config_sha256,
         "upstream_real_anchored_protocol": protocol.SCHEMA_VERSION,
         "qualification_policy_sha256": qualification_sha256,
+        "dose_policy_sha256": dose_policy_sha256,
+        "canonical_strength_grid": list(canonical_strength_grid),
+        "applied_alpha_grid_by_capability": {
+            str(capability_id): list(alpha_grids[str(capability_id)])
+            for capability_id in dose_capabilities
+        },
+        "applied_alpha_scope": "contract_specific_history_only",
+        "applied_alpha_range_by_capability": {
+            str(capability_id): list(alpha_ranges[str(capability_id)])
+            for capability_id in dose_capabilities
+        },
+        "dose_calibration_sha256_by_capability": {
+            str(capability_id): str(calibration_hashes[str(capability_id)])
+            for capability_id in dose_capabilities
+        },
     }
 
 
@@ -206,6 +330,7 @@ def validated_synthetic_task_path(
     if task_manifest.get("schema_version") not in {
         "cafe.inference_task_manifest.v1",
         "cafe.inference_task_manifest.v2",
+        "cafe.inference_task_manifest.v3",
     }:
         raise ValueError("unsupported Paper-cafe inference task manifest")
     component = task_manifest.get("task_components", {}).get("synthetic")
@@ -411,6 +536,13 @@ def validated_optional_real_anchored_task_path(
         raise ValueError(
             "real-anchored inference task component is outside inference dir"
         ) from error
+    if int(component["row_count"]) == 0:
+        if int(generation_record["row_count"]) != 0:
+            raise ValueError(
+                "empty real-anchored task component has a non-empty "
+                "generation source"
+            )
+        return None
 
     expected_manifest_count = task_manifest.get(
         "real_anchored_view_count"
@@ -577,7 +709,18 @@ def metric_row(
         ),
         "counterfactual_member": sample.get("counterfactual_member"),
         "background_id": sample.get("background_id"),
+        "dose_parameter": sample.get("dose_parameter"),
         "dose_value": sample.get("dose_value"),
+        "paired_treatment_strength": sample.get(
+            "paired_treatment_strength"
+        ),
+        "applied_alpha": sample.get("applied_alpha"),
+        "paired_treatment_applied_alpha": sample.get(
+            "paired_treatment_applied_alpha"
+        ),
+        "dose_calibration_policy_sha256": sample.get(
+            "dose_calibration_policy_sha256"
+        ),
         "clean_master_sample_id": sample.get("clean_master_sample_id"),
         "input_ablation_group_id": sample.get(
             "input_ablation_group_id"
@@ -640,9 +783,17 @@ def effect_channels(sample: dict[str, Any]) -> list[int]:
     elif capability == "cross_series_dependence":
         channels = [int(value) for value in metadata["responder_indices"]]
     elif capability == "covariate_response":
-        channels = [
-            int(value) for value in metadata["eligible_target_indices"]
-        ]
+        eligible = metadata.get("eligible_target_indices")
+        if eligible is None and sample.get("generator_family_role") != (
+            "real_anchored"
+        ):
+            channels = list(range(int(sample["target_dim"])))
+        elif eligible is None:
+            raise ValueError(
+                "real-anchored covariate response has no eligible targets"
+            )
+        else:
+            channels = [int(value) for value in eligible]
     else:
         channels = list(range(int(sample["target_dim"])))
     target_dim = int(sample["target_dim"])
@@ -764,7 +915,18 @@ def effect_row(
             "master_counterfactual_pair_id"
         ],
         "background_id": first_sample.get("background_id"),
+        "dose_parameter": second_sample.get("dose_parameter"),
         "dose_value": second_sample.get("dose_value"),
+        "paired_treatment_strength": second_sample.get(
+            "paired_treatment_strength"
+        ),
+        "applied_alpha": second_sample.get("applied_alpha"),
+        "paired_treatment_applied_alpha": second_sample.get(
+            "paired_treatment_applied_alpha"
+        ),
+        "dose_calibration_policy_sha256": second_sample.get(
+            "dose_calibration_policy_sha256"
+        ),
         "input_ablation_source_pair_id": first_sample.get(
             "input_ablation_source_pair_id"
         ),
@@ -2117,6 +2279,79 @@ def real_anchored_score_table(
             for row in maximum_dose_effects
             if row.get("shared_baseline_mase_scale") is not None
         }
+        dose_provenance: dict[str, Any] = {}
+        for field in (
+            "dose_parameter",
+            "dose_value",
+            "paired_treatment_strength",
+            "dose_calibration_policy_sha256",
+        ):
+            present_values = [
+                row[field]
+                for row in maximum_dose_effects
+                if row.get(field) is not None
+            ]
+            values = set(present_values)
+            if present_values and len(present_values) != len(
+                maximum_dose_effects
+            ):
+                raise ValueError(
+                    "real-anchored maximum-dose provenance is missing for "
+                    f"some backgrounds: {field}"
+                )
+            if len(values) > 1:
+                raise ValueError(
+                    "real-anchored maximum-dose provenance disagrees across "
+                    f"backgrounds: {field}"
+                )
+            dose_provenance[field] = next(iter(values), None)
+        applied_alpha_by_background: dict[str, float] = {}
+        alpha_provenance_present = any(
+            effect.get("applied_alpha") is not None
+            or effect.get("paired_treatment_applied_alpha") is not None
+            for effects in maximum_effects_by_background.values()
+            for effect in effects
+        )
+        for background_id, background_effects in sorted(
+            maximum_effects_by_background.items()
+        ):
+            effect = background_effects[0]
+            applied_alpha = effect.get("applied_alpha")
+            paired_alpha = effect.get("paired_treatment_applied_alpha")
+            if not alpha_provenance_present:
+                continue
+            if (
+                applied_alpha is None
+                or paired_alpha is None
+                or not math.isfinite(float(applied_alpha))
+                or not math.isfinite(float(paired_alpha))
+                or not math.isclose(
+                    float(applied_alpha),
+                    float(paired_alpha),
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError(
+                    "real-anchored maximum-dose physical alpha provenance "
+                    f"is invalid for background {background_id}"
+                )
+            applied_alpha_by_background[background_id] = float(applied_alpha)
+        applied_alpha_values = list(applied_alpha_by_background.values())
+        shared_applied_alpha = (
+            applied_alpha_values[0]
+            if applied_alpha_values
+            and all(
+                math.isclose(
+                    value,
+                    applied_alpha_values[0],
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+                for value in applied_alpha_values[1:]
+            )
+            else None
+        )
         output.append(
             {
                 "schema_version": "cafe.real_anchored_score.v1",
@@ -2163,6 +2398,38 @@ def real_anchored_score_table(
                     else None
                 ),
                 "mechanism_intensity": maximum_dose,
+                "mechanism_dose_parameter": dose_provenance[
+                    "dose_parameter"
+                ],
+                "mechanism_canonical_strength": (
+                    dose_provenance["paired_treatment_strength"]
+                    if dose_provenance["paired_treatment_strength"]
+                    is not None
+                    else dose_provenance["dose_value"]
+                ),
+                "mechanism_applied_alpha": shared_applied_alpha,
+                "mechanism_paired_treatment_applied_alpha": (
+                    shared_applied_alpha
+                ),
+                "mechanism_applied_alpha_minimum": (
+                    min(applied_alpha_values)
+                    if applied_alpha_values
+                    else None
+                ),
+                "mechanism_applied_alpha_maximum": (
+                    max(applied_alpha_values)
+                    if applied_alpha_values
+                    else None
+                ),
+                "mechanism_applied_alpha_by_background_sha256": (
+                    protocol.json_sha256(applied_alpha_by_background)
+                ),
+                "mechanism_applied_alpha_scope": (
+                    "contract_specific_history_only"
+                ),
+                "dose_calibration_policy_sha256": dose_provenance[
+                    "dose_calibration_policy_sha256"
+                ],
                 "mechanism_dose_policy": "maximum_available_intervention_dose",
                 "mechanism_pair_count": len(maximum_dose_effects),
                 "mechanism_background_count": len(
@@ -2289,7 +2556,18 @@ def real_anchored_input_ablation_attribution(
                 "background_id": key[3],
                 "source_pair_id": source_pair_id,
                 "dose_index": int(row["intensity"]),
+                "dose_parameter": row.get("dose_parameter"),
                 "dose_value": row.get("dose_value"),
+                "paired_treatment_strength": row.get(
+                    "paired_treatment_strength"
+                ),
+                "applied_alpha": row.get("applied_alpha"),
+                "paired_treatment_applied_alpha": row.get(
+                    "paired_treatment_applied_alpha"
+                ),
+                "dose_calibration_policy_sha256": row.get(
+                    "dose_calibration_policy_sha256"
+                ),
                 "main_effect_nrmse": main_nrmse,
                 "ablated_effect_nrmse": ablated_nrmse,
                 "effect_nrmse_increase": ablated_nrmse - main_nrmse,
@@ -3798,11 +4076,12 @@ def hierarchy_qualification_summary(
     record = files.get("structural_hierarchy_qualification")
     if not isinstance(record, dict):
         return {
-            "schema_version": "cafe.hierarchy_qualification_summary.v1",
+            "schema_version": "cafe.hierarchy_qualification_summary.v2",
             "dataset_id": dataset_id,
             "status": "component_absent",
             "qualification_background_count": 0,
             "passed_background_count": 0,
+            "unavailable_background_count": 0,
             "included_in_generation_or_ranking": False,
             "rows": [],
         }
@@ -3815,17 +4094,35 @@ def hierarchy_qualification_summary(
     projected_rows: list[dict[str, Any]] = []
     negativity_by_alpha: dict[str, dict[str, Any]] = {}
     reason_counts: dict[str, int] = defaultdict(int)
+    unavailable_background_count = 0
     for row in rows:
         contract = row.get("contract")
+        if (
+            row.get("dataset_id") != dataset_id
+            or row.get("capability_id") != "hierarchical_coherence"
+        ):
+            raise ValueError("invalid hierarchy qualification contract row")
+        if contract is None:
+            reason = row.get("unavailable_reason")
+            if (
+                row.get("available") is not False
+                or row.get("qualification_available") is not False
+                or row.get("generation_eligible") is not False
+                or row.get("ranking_eligible") is not False
+                or not isinstance(reason, str)
+                or not reason
+            ):
+                raise ValueError("invalid unavailable hierarchy qualification row")
+            unavailable_background_count += 1
+            reason_counts[reason] += 1
+            continue
         diagnostics_payload = (
             contract.get("fit_diagnostics")
             if isinstance(contract, dict)
             else None
         )
         if (
-            row.get("dataset_id") != dataset_id
-            or row.get("capability_id") != "hierarchical_coherence"
-            or not isinstance(contract, dict)
+            not isinstance(contract, dict)
             or contract.get("qualification_only") is not True
             or contract.get("generation_eligible") is not False
             or contract.get("ranking_eligible") is not False
@@ -3897,13 +4194,14 @@ def hierarchy_qualification_summary(
         else "partially_qualified"
     )
     return {
-        "schema_version": "cafe.hierarchy_qualification_summary.v1",
+        "schema_version": "cafe.hierarchy_qualification_summary.v2",
         "dataset_id": dataset_id,
         "status": status,
         "source_calibration_bundle_sha256": expected_bundle_hash,
         "source_file": record,
         "qualification_background_count": len(projected_rows),
         "passed_background_count": passed_background_count,
+        "unavailable_background_count": unavailable_background_count,
         "reason_counts": dict(sorted(reason_counts.items())),
         "raw_negativity_by_alpha": dict(sorted(negativity_by_alpha.items())),
         "included_in_generation_or_ranking": False,

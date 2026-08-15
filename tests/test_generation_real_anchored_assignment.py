@@ -10,9 +10,15 @@ import pytest
 from cafe import protocol
 from cafe.generation import runner
 from cafe.generation.real_counterfactuals import (
-    REAL_ANCHORED_ALPHAS,
     build_availability,
     real_anchored_assignments,
+)
+from cafe.generation.real_anchored_dose import (
+    additive_dose_reference,
+    resolve_contract_dose_calibration,
+)
+from cafe.generation.real_anchored_policy import (
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
 )
 from cafe.generation.reference_bank import (
     build_combined_real_anchored_bank_split_audit,
@@ -81,14 +87,14 @@ def _write_calibration_bundle(
                 "item_id": f"item_{index}",
                 "decomposition_start": 0,
             }
-            for index in range(5)
+            for index in range(8)
         ]
         if pipeline_schema_version == protocol.SCHEMA_VERSION:
             backgrounds, reference_backgrounds, base_split_audit = (
                 split_real_anchored_background_banks(
                     candidate_backgrounds,
                     maximum_evaluation_backgrounds=4,
-                    maximum_reference_backgrounds=1,
+                    maximum_reference_backgrounds=4,
                     source_window_length=(
                         protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH
                     ),
@@ -130,6 +136,13 @@ def _write_calibration_bundle(
                 {
                     **contracts[0],
                     "background_id": str(background["background_id"]),
+                    "dose_design_reference": additive_dose_reference(
+                        capability_id=CAPABILITY_ID,
+                        background_id=str(background["background_id"]),
+                        unit_gain_history_separation=0.12,
+                        unit_gain_future_separation=0.24,
+                        affected_channel_indices=(0,),
+                    ),
                 }
                 for background in reference_backgrounds
             ]
@@ -214,9 +227,32 @@ def _write_calibration_bundle(
                 row["qualification_policy_sha256"] = (
                     qualification_policy["qualification_policy_sha256"]
                 )
+                evidence = additive_dose_reference(
+                    capability_id=CAPABILITY_ID,
+                    background_id=str(row["background_id"]),
+                    unit_gain_history_separation=0.12,
+                    unit_gain_future_separation=0.24,
+                    affected_channel_indices=(0,),
+                )
+                row["dose_design_reference"] = evidence
+                row["dose_calibration"] = resolve_contract_dose_calibration(
+                    qualification_policy[
+                    "capabilities"
+                    ][CAPABILITY_ID]["dose_calibration"],
+                    evidence,
+                )
             protocol.write_jsonl(contracts_path, contracts)
             files["real_anchored_contracts"] = protocol.file_record(
                 contracts_path
+            )
+            availability = build_availability(
+                contracts,
+                requested_capability_ids=(CAPABILITY_ID,),
+                minimum_eligible_backgrounds=4,
+            )
+            protocol.write_json(availability_path, availability)
+            files["real_anchored_availability"] = protocol.file_record(
+                availability_path
             )
         for name, payload in (
             (
@@ -240,7 +276,7 @@ def _write_calibration_bundle(
             "cafe.calibration_bundle.v1"
             if pipeline_schema_version == "cafe.pipeline.v1"
             else (
-                "cafe.calibration_bundle.v3"
+                "cafe.calibration_bundle.v5"
                 if pipeline_schema_version == protocol.SCHEMA_VERSION
                 else "cafe.calibration_bundle.v2"
             )
@@ -269,7 +305,6 @@ def _fake_real_anchored_samples(
     *,
     capability_ids: Iterable[str],
     seed_indexes: Iterable[int],
-    alphas: Sequence[float],
 ) -> Iterable[dict[str, Any]]:
     assignments = real_anchored_assignments(
         contract_rows,
@@ -278,14 +313,28 @@ def _fake_real_anchored_samples(
     )
     for capability_id, rows in assignments.items():
         for seed_index, contract_row in rows:
-            for dose_index, alpha in enumerate(alphas, start=1):
+            dose_calibration = contract_row["dose_calibration"]
+            for dose_index, (strength, alpha) in enumerate(
+                zip(
+                    dose_calibration["strength_grid"],
+                    dose_calibration["applied_alpha_grid"],
+                    strict=True,
+                ),
+                start=1,
+            ):
                 for member in (0, 1):
                     yield {
                         "capability_id": capability_id,
                         "seed_index": seed_index,
                         "background_id": contract_row["background_id"],
                         "dose_index": dose_index,
-                        "dose_value": 1.0 if member == 0 else alpha,
+                        "dose_parameter": "canonical_strength_lambda",
+                        "dose_value": 0.0 if member == 0 else strength,
+                        "paired_treatment_strength": strength,
+                        "applied_alpha": 1.0 if member == 0 else alpha,
+                        "dose_calibration_policy_sha256": dose_calibration[
+                            "dose_policy_sha256"
+                        ],
                         "counterfactual_member": member,
                     }
 
@@ -395,7 +444,9 @@ def test_runner_without_replacement_counts_and_mapping_are_shard_invariant(
         seed_count=8,
     )
 
-    expected_full_count = 4 * len(REAL_ANCHORED_ALPHAS) * 2
+    expected_full_count = (
+        4 * len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID) * 2
+    )
     assert len(full_rows) == expected_full_count
     assert full_rows == first_rows + second_rows
     assert full_availability["requested_seed_indexes"] == list(range(10))
@@ -429,6 +480,22 @@ def test_runner_without_replacement_counts_and_mapping_are_shard_invariant(
     assert full_manifest["config"]["real_anchored_counterfactual"][
         "generated_capabilities"
     ] == [CAPABILITY_ID]
+    real_config = full_manifest["config"][
+        "real_anchored_counterfactual"
+    ]
+    assert real_config["canonical_strength_grid"] == list(
+        REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+    )
+    assert real_config["applied_alpha_grid_by_capability"][CAPABILITY_ID] == []
+    assert real_config["applied_alpha_scope"] == (
+        "contract_specific_history_only"
+    )
+    assert len(
+        real_config["applied_alpha_range_by_capability"][CAPABILITY_ID]
+    ) == 5
+    assert len(
+        real_config["dose_calibration_sha256_by_capability"][CAPABILITY_ID]
+    ) == 64
     treatment_rows = [
         row for row in full_rows if row["counterfactual_member"] == 1
     ]
@@ -541,7 +608,7 @@ def test_generation_accepts_immutable_v2_anchored_availability(
     ] == []
     assert manifest["config"]["real_anchored_counterfactual"][
         "legacy_upstream_component_policy"
-    ] == "validated_but_not_regenerated_or_ranked_as_v3"
+    ] == "validated_but_not_regenerated_or_ranked_as_v5"
     assert manifest["config"]["capabilities"] == [CAPABILITY_ID]
 
 

@@ -26,7 +26,7 @@ the fixed L168 view. Pair members share the unmodified real L336
 normalization/MASE reference. The two mechanism tracks never share scores or
 rankings.
 
-The v3 real-anchored implementation supports nine formally rankable mechanisms:
+The v5 real-anchored implementation supports nine potentially rankable mechanisms:
 local nonlinear trend, independent multi-seasonality, constrained carrier AM,
 observed regime level shifts, nonlinear persistence, predictable intermittency,
 common factor, directed cross-series predictive transfer, and known-future
@@ -40,9 +40,16 @@ Hierarchical coherence is qualification-only until a raw-support/
 nonnegativity policy is frozen. Common/cross input ablations are mandatory
 attribution audits but never receive weight in the main score.
 
-Qualification thresholds are frozen from a source-time-disjoint reference bank.
-Final evaluation origins cannot tune them and reference windows are never emitted
-as inference tasks.
+Qualification thresholds are protocol-declared and hash-frozen against a
+source-time-disjoint reference bank. The same bank freezes the dose targets,
+solver, caps, and coverage policy. Each evaluation contract resolves its own
+physical multiplier grid from history-only response, while the reported
+strength coordinate remains `lambda = 0.2, 0.4, 0.6, 0.8, 1.0`. Every
+treatment must be at least 0.10 frozen-scale RMS away from its authentic source
+on trailing L168 and remain within the local-augmentation budget; the exact
+baseline is exempt and adjacent-level distance is diagnostic only. Final
+evaluation targets cannot tune this policy, and reference windows are never
+emitted as inference tasks.
 
 ## Install
 

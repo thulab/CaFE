@@ -123,6 +123,20 @@ def _common_panel(*, phase: float = 0.0, dimension: int = 4) -> np.ndarray:
     )
 
 
+def _persistent_common_panel(*, dimension: int = 4) -> np.ndarray:
+    time = np.arange(SOURCE_LENGTH, dtype=float)
+    phase = np.pi / 2.0 - 2.0 * np.pi * 503.0 / 200.0
+    factor = np.sin(2.0 * np.pi * time / 200.0 + phase)
+    loadings = np.asarray([1.0, -0.9, 1.2, -1.1])[:dimension]
+    return np.vstack(
+        [
+            loading * factor
+            + 0.03 * np.sin(2.0 * np.pi * time / (41.0 + index))
+            for index, loading in enumerate(loadings)
+        ]
+    )
+
+
 def _cross_panel() -> np.ndarray:
     rng = np.random.default_rng(4)
     driver = np.empty(SOURCE_LENGTH, dtype=float)
@@ -316,6 +330,10 @@ def test_common_factor_is_history_only_and_requires_matched_ablation() -> None:
         contract = row["contract"]
         assert contract["mandatory_input_ablation"]["required"] is True
         assert contract["mandatory_input_ablation"]["excluded_from_primary_score"] is True
+        assert contract["dose_design_reference"][
+            "affected_channel_indices"
+        ] == contract["fit_diagnostics"]["nondegenerate_loading_indices"]
+        assert contract["dose_design_reference"]["evidence_role"] == "formal"
         validate_structural_contract(contract, background)
         identity, identity_meta = apply_structural_contract(
             background,
@@ -527,6 +545,9 @@ def test_cross_series_contract_controls_only_predictive_transfer() -> None:
     assert diagnostics["causal_identification_claimed"] is False
     component = np.asarray(contract["component"])
     np.testing.assert_array_equal(component[:, diagnostics["source"]], 0.0)
+    assert contract["dose_design_reference"][
+        "affected_channel_indices"
+    ] == diagnostics["responders"]
     treatment, metadata = apply_structural_contract(
         background,
         contract,
@@ -555,6 +576,9 @@ def test_covariate_contract_uses_known_future_path_not_target_future() -> None:
     assert first_contract["contract_sha256"] == second_contract["contract_sha256"]
     assert first_contract["component_sha256"] == second_contract["component_sha256"]
     assert first_contract["fit_diagnostics"]["causal_identification_claimed"] is False
+    assert first_contract["dose_design_reference"][
+        "affected_channel_indices"
+    ] == first_contract["fit_diagnostics"]["eligible_target_indices"]
     first_treatment, first_metadata = apply_structural_contract(
         first,
         first_contract,
@@ -593,6 +617,12 @@ def test_hierarchy_is_zero_sum_qualification_only_with_negativity_audit() -> Non
     )
     contract = fit_hierarchy_qualification_contract(background)
     assert contract["fit_diagnostics"]["qualification_passed"] is True
+    assert contract["dose_design_reference"]["evidence_role"] == (
+        "qualification_only"
+    )
+    assert contract["dose_design_reference"][
+        "affected_channel_indices"
+    ] == background["hierarchy"]["child_indices"]
     assert contract["generation_eligible"] is False
     assert contract["ranking_eligible"] is False
     component = np.asarray(contract["component"])
@@ -642,6 +672,10 @@ def test_reference_policy_is_json_safe_and_reused_by_evaluation_rows() -> None:
         reference_background_ids=[row["background_id"] for row in reference],
         bank_split_audit=split_audit,
     )
+    dose_calibration = policy["capabilities"]["common_factor"][
+        "dose_calibration"
+    ]
+    assert dose_calibration["status"] == "unavailable"
     evaluation_rows, evaluation_availability = (
         fit_structural_capability_contracts(
             evaluation,
@@ -654,12 +688,146 @@ def test_reference_policy_is_json_safe_and_reused_by_evaluation_rows() -> None:
         == policy["qualification_policy_sha256"]
         for row in evaluation_rows
     )
+    assert all(
+        row["formal_main_available"] is False
+        and row["generation_eligible"] is False
+        and row["contract"]["dose_pairing_eligible"] is False
+        and row["contract"]["applied_alpha_grid"] == []
+        for row in evaluation_rows
+    )
     assert evaluation_availability["frozen_qualification_policy_sha256"] == (
         policy["qualification_policy_sha256"]
     )
     assert structural_threshold_contract()[
         "evaluation_origin_adaptation_allowed"
     ] is False
+
+
+def test_frozen_structural_dose_grid_drives_rows_gates_and_commitments() -> None:
+    records = [
+        RealSeriesRecord(
+            item_id=f"panel_{index}",
+            values=_persistent_common_panel(),
+        )
+        for index in range(8)
+    ]
+    backgrounds, _metadata = build_structural_real_anchored_backgrounds(
+        _spec("structural_dose_fixture"),
+        source_root=Path("/unused"),
+        maximum_backgrounds=8,
+        real_bundle=_bundle(*records),
+    )
+    evaluation, reference, split_audit = split_real_anchored_background_banks(
+        backgrounds,
+        maximum_evaluation_backgrounds=4,
+        maximum_reference_backgrounds=4,
+        source_window_length=SOURCE_LENGTH,
+    )
+    reference_rows, _reference_availability = (
+        fit_structural_capability_contracts(
+            reference,
+            capability_ids=("common_factor",),
+        )
+    )
+    policy = freeze_real_anchored_qualification_policy(
+        reference_rows,
+        reference_background_ids=[row["background_id"] for row in reference],
+        bank_split_audit=split_audit,
+    )
+    calibration = policy["capabilities"]["common_factor"][
+        "dose_calibration"
+    ]
+    assert calibration["status"] == "available"
+    assert calibration["applied_alpha_grid"] != list(STRUCTURAL_ALPHAS)
+
+    rows, availability = fit_structural_capability_contracts(
+        evaluation,
+        capability_ids=("common_factor",),
+        frozen_qualification_policy=policy,
+    )
+    assert availability["formal_background_count_by_capability"] == {
+        "common_factor": 4
+    }
+    for row, background in zip(rows, evaluation, strict=True):
+        contract = row["contract"]
+        assert contract["dose_calibration"]["dose_policy_sha256"] == (
+            calibration["policy_sha256"]
+        )
+        assert contract["canonical_strength_grid"] == calibration[
+            "strength_grid"
+        ]
+        assert len(contract["applied_alpha_grid"]) == 5
+        assert all(
+            gate["accepted"] is True
+            for gate in contract["paired_minimum_separation_gate"]
+        )
+        validate_structural_contract(contract, background)
+
+    # A caller-supplied legacy alpha is ignored once a reference-frozen grid
+    # is attached to an evaluation row.
+    first_seed_samples = list(
+        iter_structural_real_anchored_samples(
+            evaluation,
+            rows,
+            alphas=(1.2,),
+            seed_indexes=(0,),
+        )
+    )
+    assert len(first_seed_samples) == 10
+    for dose_index in range(1, 6):
+        pair = [
+            sample
+            for sample in first_seed_samples
+            if sample["dose_index"] == dose_index
+        ]
+        baseline = next(
+            sample for sample in pair if sample["counterfactual_member"] == 0
+        )
+        treatment = next(
+            sample for sample in pair if sample["counterfactual_member"] == 1
+        )
+        canonical_strength = calibration["strength_grid"][dose_index - 1]
+        applied_alpha = treatment["applied_alpha"]
+        assert baseline["dose_value"] == baseline["intensity_lambda"] == 0.0
+        assert baseline["applied_alpha"] == 1.0
+        assert treatment["dose_value"] == canonical_strength
+        assert treatment["intensity_lambda"] == canonical_strength
+        assert treatment["applied_alpha"] == applied_alpha
+        assert baseline["paired_treatment_strength"] == canonical_strength
+        assert treatment["paired_treatment_strength"] == canonical_strength
+        assert baseline["paired_treatment_applied_alpha"] == applied_alpha
+        assert treatment["paired_treatment_applied_alpha"] == applied_alpha
+        assert baseline["paired_minimum_separation_gate"]["status"] == (
+            "not_applicable"
+        )
+        assert baseline["paired_minimum_separation_gate"][
+            "paired_treatment_gate_status"
+        ] == "passed"
+        assert treatment["paired_minimum_separation_gate"]["accepted"] is True
+        assert treatment["paired_minimum_separation_gate"][
+            "adjacent_distance_role"
+        ] == "diagnostic_only"
+        assert treatment["anti_copy_gate"]["status"] == "not_applicable"
+
+    commitments = build_structural_donor_commitment_manifest(
+        evaluation,
+        rows,
+        dataset_id="structural_dose_fixture",
+    )
+    assert commitments[
+        "dose_calibration_policy_sha256_by_capability"
+    ] == {"common_factor": calibration["policy_sha256"]}
+    assert all(
+        entry["dose_calibration_policy_sha256"] == calibration["policy_sha256"]
+        and entry["paired_minimum_separation_gate_sha256"] is not None
+        for entry in commitments["entries"]
+    )
+    validate_structural_donor_commitment_manifest(
+        commitments,
+        evaluation,
+        rows,
+        dataset_id="structural_dose_fixture",
+    )
 
 
 def test_structural_formal_cell_requires_four_independent_backgrounds() -> None:

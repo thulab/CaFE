@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 
 import numpy as np
@@ -22,6 +23,9 @@ from cafe.generation.real_counterfactuals import (
     resolve_regime_joinpoint,
     validate_availability_contract,
     validate_contract_integrity,
+)
+from cafe.generation.real_anchored_dose import (
+    freeze_capability_dose_calibration,
 )
 from cafe.generation.real_anchored_policy import (
     QUALIFICATION_THRESHOLD_SOURCE_POLICY,
@@ -129,9 +133,21 @@ def _four_background_bank() -> tuple[
         sample_seed=1729,
         real_bundle=_bundle(paths, adapter_id="fixture"),
     )
+    policy = _frozen_four_policy(
+        ("multi_seasonal", "trend"),
+        [
+            _hourly_path(
+                protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+                phase=0.17 * (index + 10),
+            )
+            for index in range(4)
+        ],
+        dataset_id="fixture_four_reference",
+    )
     contract_rows, availability = fit_background_capability_contracts(
         backgrounds,
         capability_ids=("multi_seasonal", "trend"),
+        qualification_policy=policy,
     )
     return (
         [public_background(background) for background in backgrounds],
@@ -159,18 +175,77 @@ def _four_extended_background_bank() -> tuple[
         sample_seed=2718,
         real_bundle=_bundle(paths, adapter_id="fixture"),
     )
+    policy = _frozen_four_policy(
+        ("time_varying_seasonality", "regime_switching"),
+        [
+            _modulated_regime_path(
+                protocol.REAL_ANCHORED_SOURCE_WINDOW_LENGTH,
+                modulation_phase=0.1 * (index + 10),
+            )
+            for index in range(4)
+        ],
+        dataset_id="fixture_extended_reference",
+    )
     contract_rows, availability = fit_background_capability_contracts(
         backgrounds,
         capability_ids=(
             "time_varying_seasonality",
             "regime_switching",
         ),
+        qualification_policy=policy,
     )
     return (
         [public_background(background) for background in backgrounds],
         contract_rows,
         availability,
     )
+
+
+def _frozen_four_policy(
+    capability_ids: tuple[str, ...],
+    reference_paths: list[np.ndarray],
+    *,
+    dataset_id: str,
+) -> dict[str, object]:
+    reference_backgrounds, _metadata = (
+        protocol.build_real_anchored_backgrounds(
+            _spec(dataset_id),
+            source_root=Path("/unused"),
+            maximum_backgrounds=len(reference_paths),
+            sample_seed=8721,
+            real_bundle=_bundle(reference_paths, adapter_id="fixture"),
+        )
+    )
+    reference_rows, _availability = fit_background_capability_contracts(
+        reference_backgrounds,
+        capability_ids=capability_ids,
+    )
+    defaults = default_four_capability_qualification_policy()
+    cells: dict[str, object] = {}
+    for capability_id in capability_ids:
+        calibration = freeze_capability_dose_calibration(
+            capability_id,
+            [
+                row
+                for row in reference_rows
+                if row["capability_id"] == capability_id
+            ],
+        )
+        assert calibration["status"] == "available"
+        cells[capability_id] = {
+            "qualification_policy_id": f"fixture.{capability_id}.v4",
+            "qualification_thresholds": defaults[
+                "qualification_thresholds"
+            ][capability_id],
+            "dose_calibration": calibration,
+        }
+    policy: dict[str, object] = {
+        "schema_version": REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+        "threshold_source_policy": QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+        "capabilities": cells,
+    }
+    policy["qualification_policy_sha256"] = protocol.json_sha256(policy)
+    return policy
 
 
 @pytest.mark.parametrize(
@@ -499,6 +574,10 @@ def test_frozen_qualification_policy_is_reused_by_available_and_unavailable_rows
                 "qualification_thresholds": dict(
                     default_thresholds[capability_id]
                 ),
+                "dose_calibration": freeze_capability_dose_calibration(
+                    capability_id,
+                    (),
+                ),
             }
             for capability_id in ("trend", "regime_switching")
         },
@@ -513,7 +592,11 @@ def test_frozen_qualification_policy_is_reused_by_available_and_unavailable_rows
         qualification_policy=frozen_policy,
     )
 
-    assert {bool(row["available"]) for row in rows} == {False, True}
+    assert {bool(row["available"]) for row in rows} == {False}
+    assert any(
+        row["unavailable_reason"] == "dose_calibration_unavailable"
+        for row in rows
+    )
     for row in rows:
         capability_id = str(row["capability_id"])
         expected = frozen_policy["capabilities"][capability_id]
@@ -601,10 +684,40 @@ def test_public_background_reconstructs_full_source_and_contracts_are_available(
         )
 
 
+def test_contract_integrity_treats_adjacent_distance_as_diagnostic() -> None:
+    _backgrounds, contract_rows, _availability = _four_background_bank()
+    row = deepcopy(next(row for row in contract_rows if row["available"]))
+    gate = row["paired_minimum_separation_gate"][0]
+    assert gate["accepted"] is True
+    gate["adjacent_accepted"] = False
+    gate["adjacent_status"] = "diagnostic_below_target"
+
+    validate_contract_integrity(row)
+
+
 def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
 ) -> None:
     backgrounds, contract_rows, availability = _four_background_bank()
     assert {cell["status"] for cell in availability["cells"]} == {"available"}
+    alpha_grids = {
+        capability_id: {
+            tuple(row["dose_calibration"]["applied_alpha_grid"])
+            for row in contract_rows
+            if row["capability_id"] == capability_id
+        }
+        for capability_id in ("multi_seasonal", "trend")
+    }
+    assert all(grids for grids in alpha_grids.values())
+    assert all(
+        len(grid) == 5
+        for grids in alpha_grids.values()
+        for grid in grids
+    )
+    assert all(
+        gate["accepted"] is True
+        for row in contract_rows
+        for gate in row["paired_minimum_separation_gate"]
+    )
     for cell in availability["cells"]:
         rms_gate = cell["controlled_component_rms_gate"]
         assert rms_gate["evaluated_background_count"] == len(backgrounds)
@@ -619,18 +732,16 @@ def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
         assert rms_gate["future_rms_range"] is not None
         assert rms_gate["visible_history_rms_range"] is not None
         assert rms_gate["future_threshold_range"] is not None
-    alphas = (1.2, 1.6, 2.0)
     arguments = {
         "capability_ids": ("multi_seasonal", "trend"),
         "seed_indexes": (0, 1),
-        "alphas": alphas,
     }
 
     first = list(iter_real_anchored_samples(backgrounds, contract_rows, **arguments))
     second = list(iter_real_anchored_samples(backgrounds, contract_rows, **arguments))
 
     assert first == second
-    assert len(first) == 2 * 2 * len(alphas) * 2
+    assert len(first) == 2 * 2 * 5 * 2
     by_background = {
         str(background["background_id"]): background for background in backgrounds
     }
@@ -639,9 +750,10 @@ def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
         by_pair[str(sample["counterfactual_pair_id"])].append(sample)
     assert all(len(pair) == 2 for pair in by_pair.values())
 
-    treatment_deltas: dict[tuple[str, int], list[tuple[float, np.ndarray]]] = (
-        defaultdict(list)
-    )
+    treatment_deltas: dict[
+        tuple[str, int],
+        list[tuple[float, float, np.ndarray]],
+    ] = defaultdict(list)
     for pair in by_pair.values():
         baseline = next(row for row in pair if row["counterfactual_member"] == 0)
         treatment = next(row for row in pair if row["counterfactual_member"] == 1)
@@ -651,7 +763,11 @@ def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
         treatment_target = np.asarray(treatment["target"], dtype=float)
 
         np.testing.assert_array_equal(baseline_target, expected_baseline)
-        assert baseline["dose_value"] == 1.0
+        assert baseline["dose_value"] == 0.0
+        assert baseline["applied_alpha"] == 1.0
+        assert treatment["dose_value"] in {0.2, 0.4, 0.6, 0.8, 1.0}
+        assert treatment["applied_alpha"] > 1.0
+        assert treatment["paired_minimum_separation_gate"]["accepted"] is True
         assert baseline["generation_metadata"]["intervention_rms"] == 0.0
         assert baseline["mase_scale"] == treatment["mase_scale"]
         assert baseline["mase_scale"] == background["mase_scale"]
@@ -671,7 +787,13 @@ def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
         assert np.linalg.norm(delta) > 0.0
         treatment_deltas[
             (str(treatment["capability_id"]), int(treatment["seed_index"]))
-        ].append((float(treatment["dose_value"]), delta))
+        ].append(
+            (
+                float(treatment["dose_value"]),
+                float(treatment["applied_alpha"]),
+                delta,
+            )
+        )
 
     assert {capability for capability, _seed in treatment_deltas} == {
         "multi_seasonal",
@@ -679,11 +801,11 @@ def test_real_anchored_generation_is_deterministic_exactly_paired_and_monotone(
     }
     for rows in treatment_deltas.values():
         rows.sort(key=lambda row: row[0])
-        norms = [float(np.linalg.norm(delta)) for _alpha, delta in rows]
+        norms = [float(np.linalg.norm(delta)) for _dose, _alpha, delta in rows]
         assert all(left < right for left, right in zip(norms, norms[1:]))
-        reference_alpha, reference_delta = rows[0]
+        _reference_dose, reference_alpha, reference_delta = rows[0]
         reference_unit_delta = reference_delta / (reference_alpha - 1.0)
-        for alpha, delta in rows[1:]:
+        for _dose, alpha, delta in rows[1:]:
             np.testing.assert_allclose(
                 delta / (alpha - 1.0),
                 reference_unit_delta,
@@ -729,10 +851,9 @@ def test_real_anchored_backgrounds_are_never_recycled_as_new_seeds() -> None:
             contract_rows,
             capability_ids=capability_ids,
             seed_indexes=range(10),
-            alphas=(2.0,),
         )
     )
-    assert len(samples) == len(backgrounds) * 2
+    assert len(samples) == len(backgrounds) * 5 * 2
     treatment_backgrounds = {
         str(row["background_id"])
         for row in samples
@@ -784,11 +905,9 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
             if str(row["background_id"]) == background_id
         )
 
-    alphas = (1.2, 1.6, 2.0)
     arguments = {
         "capability_ids": tuple(sorted(expected_capabilities)),
         "seed_indexes": (0, 1),
-        "alphas": alphas,
     }
     first = list(
         iter_real_anchored_samples(backgrounds, contract_rows, **arguments)
@@ -797,7 +916,7 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
         iter_real_anchored_samples(backgrounds, contract_rows, **arguments)
     )
     assert first == second
-    assert len(first) == len(expected_capabilities) * 2 * len(alphas) * 2
+    assert len(first) == len(expected_capabilities) * 2 * 5 * 2
 
     by_background = {
         str(background["background_id"]): background
@@ -806,9 +925,10 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
     by_pair: dict[str, list[dict[str, object]]] = defaultdict(list)
     for sample in first:
         by_pair[str(sample["counterfactual_pair_id"])].append(sample)
-    dose_deltas: dict[tuple[str, int], list[tuple[float, np.ndarray]]] = (
-        defaultdict(list)
-    )
+    dose_deltas: dict[
+        tuple[str, int],
+        list[tuple[float, float, np.ndarray]],
+    ] = defaultdict(list)
     for pair in by_pair.values():
         assert len(pair) == 2
         baseline = next(row for row in pair if row["counterfactual_member"] == 0)
@@ -853,16 +973,22 @@ def test_extended_real_anchored_pairs_are_exact_shared_and_alpha_monotone(
         assert np.linalg.norm(delta) > 0.0
         dose_deltas[
             (str(treatment["capability_id"]), int(treatment["seed_index"]))
-        ].append((float(treatment["dose_value"]), delta))
+        ].append(
+            (
+                float(treatment["dose_value"]),
+                float(treatment["applied_alpha"]),
+                delta,
+            )
+        )
 
     assert {capability for capability, _seed in dose_deltas} == expected_capabilities
     for rows in dose_deltas.values():
         rows.sort(key=lambda row: row[0])
-        norms = [float(np.linalg.norm(delta)) for _alpha, delta in rows]
+        norms = [float(np.linalg.norm(delta)) for _dose, _alpha, delta in rows]
         assert all(left < right for left, right in zip(norms, norms[1:]))
-        alpha, delta = rows[0]
+        _dose, alpha, delta = rows[0]
         unit_delta = delta / (alpha - 1.0)
-        for next_alpha, next_delta in rows[1:]:
+        for _next_dose, next_alpha, next_delta in rows[1:]:
             np.testing.assert_allclose(
                 next_delta / (next_alpha - 1.0),
                 unit_delta,

@@ -30,7 +30,16 @@ from cafe.generation.real_anchored_policy import (
     REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
     TIME_VARYING_SEASONALITY_BASIS_POLICY,
 )
+from cafe.generation.real_anchored_dose import (
+    additive_dose_reference,
+    dose_calibration_from_policy,
+    dose_targets,
+    paired_minimum_separation_gate,
+    resolve_contract_dose_calibration,
+    validate_dose_calibration,
+)
 from cafe.generation.real_path_dynamics import (
+    LEGACY_REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
     REAL_PATH_DYNAMIC_CAPABILITIES,
     REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
     apply_real_path_dynamic_contract,
@@ -40,15 +49,15 @@ from cafe.generation.real_path_dynamics import (
 )
 
 
-REAL_ANCHORED_GENERATOR_VERSION = "cafe.real_anchored_generator.v3"
+REAL_ANCHORED_GENERATOR_VERSION = "cafe.real_anchored_generator.v5"
 REAL_ANCHORED_BACKGROUND_SCHEMA = (
     "cafe.real_anchored_background_master.v1"
 )
 REAL_ANCHORED_MASTER_SCHEMA = (
-    "cafe.real_anchored_counterfactual_master.v2"
+    "cafe.real_anchored_counterfactual_master.v3"
 )
 REAL_ANCHORED_AVAILABILITY_SCHEMA = (
-    "cafe.real_anchored_availability.v2"
+    "cafe.real_anchored_availability.v3"
 )
 REAL_ANCHORED_SUPPORTED_CAPABILITIES = (
     "trend",
@@ -58,6 +67,8 @@ REAL_ANCHORED_SUPPORTED_CAPABILITIES = (
     "nonlinear_persistence",
     "predictable_intermittency",
 )
+# Legacy compatibility declaration only. Formal v5 generation reads each
+# contract-specific history-only ``applied_alpha_grid`` from its contract row.
 REAL_ANCHORED_ALPHAS = (1.2, 1.4, 1.6, 1.8, 2.0)
 REAL_ANCHORED_MINIMUM_CYCLES = 3.0
 REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO = 0.01
@@ -244,6 +255,12 @@ def _four_capability_qualification(
         "qualification_threshold_source": str(threshold_source),
         "qualification_thresholds": dict(thresholds),
     }
+    if isinstance(frozen_capabilities, Mapping):
+        provenance["dose_calibration"] = dose_calibration_from_policy(
+            policy,
+            capability_id,
+            require_available=False,
+        )
     return provenance, thresholds
 
 
@@ -1157,6 +1174,111 @@ def _resolve_background_structural_components(
     )
 
 
+def _additive_dose_artifacts(
+    *,
+    background_id: str,
+    capability_id: str,
+    history: np.ndarray,
+    fitted: Mapping[str, Any],
+    dose_calibration: Mapping[str, Any] | None,
+) -> tuple[
+    dict[str, Any] | None,
+    dict[str, Any] | None,
+    list[dict[str, Any]] | None,
+    str | None,
+]:
+    """Build history-only dose evidence and replay frozen evaluation doses."""
+
+    history_rms = fitted.get("controlled_component_visible_history_rms")
+    future_rms = fitted.get("controlled_component_future_rms")
+    raw_decomposition = fitted.get("decomposition_contract")
+    if not isinstance(raw_decomposition, Mapping):
+        return None, dose_calibration, None, None
+    raw_scales = raw_decomposition.get("normalization_scale_by_target")
+    if not isinstance(raw_scales, list) or len(raw_scales) != 1:
+        raise ValueError("additive contract has invalid normalization scales")
+    normalization_scale = float(raw_scales[0])
+    evidence = (
+        additive_dose_reference(
+            capability_id=capability_id,
+            background_id=background_id,
+            unit_gain_history_separation=(
+                float(history_rms) / normalization_scale
+            ),
+            unit_gain_future_separation=(
+                float(future_rms) / normalization_scale
+            ),
+            affected_channel_indices=(0,),
+        )
+        if (
+            isinstance(history_rms, (int, float))
+            and isinstance(future_rms, (int, float))
+            and float(history_rms) > 0.0
+            and float(future_rms) > 0.0
+        )
+        else None
+    )
+    if dose_calibration is None or fitted.get("available") is not True:
+        return evidence, dose_calibration, None, None
+    if dose_calibration.get("status") != "available":
+        return evidence, dose_calibration, None, "dose_calibration_unavailable"
+    if evidence is None:
+        return evidence, dose_calibration, None, "dose_reference_unavailable"
+    try:
+        resolved_calibration = resolve_contract_dose_calibration(
+            dose_calibration,
+            evidence,
+        )
+    except ValueError:
+        return (
+            evidence,
+            dose_calibration,
+            None,
+            "contract_source_distance_mapping_unavailable",
+        )
+
+    source_baseline = np.concatenate(
+        (np.asarray(history, dtype=float), np.zeros(protocol.HORIZON))
+    )
+    gates: list[dict[str, Any]] = []
+    previous_delta: np.ndarray | None = None
+    for dose_index, alpha in enumerate(
+        resolved_calibration["applied_alpha_grid"],
+        start=1,
+    ):
+        augmented, _metadata = apply_real_anchored_contract(
+            source_baseline,
+            fitted,
+            alpha=float(alpha),
+            context_length=(
+                protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+            ),
+        )
+        delta = np.asarray(augmented, dtype=float).reshape(-1) - source_baseline
+        gates.append(
+            paired_minimum_separation_gate(
+                delta,
+                context_length=(
+                    protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                ),
+                dose_index=dose_index,
+                dose_calibration=resolved_calibration,
+                affected_channel_indices=(0,),
+                scale_by_channel=(normalization_scale,),
+                previous_delta=previous_delta,
+            )
+        )
+        previous_delta = delta
+    if not all(bool(gate["accepted"]) for gate in gates):
+        return (
+            evidence,
+            resolved_calibration,
+            gates,
+            "treatment_source_distance_gate_failed",
+        )
+    return evidence, resolved_calibration, gates, None
+
+
 def fit_background_capability_contracts(
     backgrounds: Sequence[dict[str, Any]],
     *,
@@ -1271,7 +1393,7 @@ def fit_background_capability_contracts(
                 thresholds = {}
             base = {
                 "schema_version": (
-                    "cafe.real_anchored_background_capability.v3"
+                    "cafe.real_anchored_background_capability.v4"
                 ),
                 "dataset_id": str(background["dataset_id"]),
                 "background_id": str(background["background_id"]),
@@ -1385,6 +1507,7 @@ def fit_background_capability_contracts(
                     fitted = fit_real_path_dynamic_contract(
                         history,
                         capability_id=capability_id,
+                        background_id=str(background["background_id"]),
                         carrier_period=float(
                             period_resolution["carrier_period"]
                         ),
@@ -1494,13 +1617,54 @@ def fit_background_capability_contracts(
                         ),
                         qualification_thresholds=thresholds,
                     )
-                reason = fitted.get("unavailable_reason")
+                dose_calibration = qualification.get("dose_calibration")
+                if capability_id in REAL_PATH_DYNAMIC_CAPABILITIES:
+                    dose_calibration = fitted.get(
+                        "dose_calibration",
+                        dose_calibration,
+                    )
+                    dose_reference = fitted.get("dose_design_reference")
+                    paired_separation_gates = fitted.get(
+                        "paired_minimum_separation_gate"
+                    )
+                    dose_failure = None
+                else:
+                    (
+                        dose_reference,
+                        dose_calibration,
+                        paired_separation_gates,
+                        dose_failure,
+                    ) = _additive_dose_artifacts(
+                        background_id=str(background["background_id"]),
+                        capability_id=capability_id,
+                        history=history,
+                        fitted=fitted,
+                        dose_calibration=(
+                            dose_calibration
+                            if isinstance(dose_calibration, Mapping)
+                            else None
+                        ),
+                    )
+                fitted_available = bool(fitted["available"])
+                available = bool(fitted_available and dose_failure is None)
+                reason = (
+                    fitted.get("unavailable_reason")
+                    if not fitted_available
+                    else dose_failure
+                )
                 row = {
                     **base,
-                    "available": bool(fitted["available"]),
+                    "available": available,
                     "unavailable_reason": reason,
-                    "unavailable_detail": fitted.get(
-                        "unavailable_detail"
+                    "unavailable_detail": (
+                        fitted.get("unavailable_detail")
+                        if not fitted_available
+                        else dose_failure
+                    ),
+                    "dose_design_reference": dose_reference,
+                    "dose_calibration": dose_calibration,
+                    "paired_minimum_separation_gate": (
+                        paired_separation_gates
                     ),
                     "controlled_component_rms": fitted.get(
                         "controlled_component_rms"
@@ -1576,11 +1740,56 @@ def build_availability(
     dataset_id = dataset_ids[0] if len(dataset_ids) == 1 else None
     cells: list[dict[str, Any]] = []
     for capability_id in requested:
+        try:
+            capability_strength_grid = list(
+                dose_targets(capability_id)["strength_grid"]
+            )
+        except ValueError:
+            capability_strength_grid = []
         selected = [
             row
             for row in contract_rows
             if str(row["capability_id"]) == capability_id
         ]
+        available_dose_calibrations = [
+            row["dose_calibration"]
+            for row in selected
+            if isinstance(row.get("dose_calibration"), Mapping)
+            and row["dose_calibration"].get("status") == "available"
+            and row.get("available") is True
+            and len(row["dose_calibration"].get("applied_alpha_grid", ()))
+            == len(capability_strength_grid)
+        ]
+        dose_policy_hashes = {
+            str(
+                calibration.get(
+                    "dose_policy_sha256",
+                    calibration.get("policy_sha256", ""),
+                )
+            )
+            for calibration in available_dose_calibrations
+        }
+        if len(dose_policy_hashes) > 1:
+            raise ValueError(
+                f"{capability_id} rows disagree on frozen dose calibration"
+            )
+        applied_grids = [
+            [float(value) for value in calibration["applied_alpha_grid"]]
+            for calibration in available_dose_calibrations
+        ]
+        supported_applied_alphas = (
+            applied_grids[0]
+            if applied_grids
+            and all(grid == applied_grids[0] for grid in applied_grids)
+            else []
+        )
+        applied_alpha_ranges = [
+            {
+                "minimum": min(grid[index] for grid in applied_grids),
+                "maximum": max(grid[index] for grid in applied_grids),
+            }
+            for index in range(len(capability_strength_grid))
+        ] if applied_grids else []
         eligible_ids = sorted(
             str(row["background_id"])
             for row in selected
@@ -1704,8 +1913,11 @@ def build_availability(
                 "supported_context_lengths": [
                     protocol.FIXED_CONTEXT_LENGTH
                 ],
-                "dose_parameter": "alpha",
-                "supported_dose_values": list(REAL_ANCHORED_ALPHAS),
+                "dose_parameter": "canonical_strength_lambda",
+                "supported_dose_values": capability_strength_grid,
+                "supported_applied_alpha_values": supported_applied_alphas,
+                "applied_alpha_range_by_dose_level": applied_alpha_ranges,
+                "applied_alpha_scope": "contract_specific_history_only",
                 "controlled_component_rms_gate": {
                     "history_source": "history_fitted_component_l504",
                     "visible_history_source": (
@@ -1878,6 +2090,8 @@ def _sample_row(
     seed_index: int,
     dose_index: int,
     pair_member: int,
+    canonical_strength: float,
+    treatment_alpha: float,
     alpha: float,
     visible_target: np.ndarray,
     visible_delta: np.ndarray,
@@ -1895,6 +2109,36 @@ def _sample_row(
     target_2d = np.asarray(visible_target, dtype=float)[:, None]
     delta_2d = np.asarray(visible_delta, dtype=float)[:, None]
     context = protocol.REAL_ANCHORED_CONTEXT_LENGTH
+    dose_calibration = contract_row.get("dose_calibration")
+    if not isinstance(dose_calibration, Mapping):
+        raise ValueError("generation row has no frozen dose calibration")
+    gates = contract_row.get("paired_minimum_separation_gate")
+    if not isinstance(gates, list) or len(gates) != len(
+        dose_calibration["strength_grid"]
+    ):
+        raise ValueError("generation row has no paired separation gates")
+    treatment_gate = metadata.get("paired_minimum_separation_gate")
+    if treatment_gate is None:
+        treatment_gate = gates[dose_index - 1]
+    if not isinstance(treatment_gate, Mapping) or (
+        treatment_gate.get("accepted") is not True
+    ):
+        raise ValueError("generation row failed paired minimum separation")
+    row_gate = (
+        {
+            "status": "not_applicable",
+            "accepted": None,
+            "reason_code": "repeated_authentic_baseline_member",
+            "dose_index": dose_index,
+            "paired_treatment_gate_status": "passed",
+            "dose_calibration_policy_sha256": dose_calibration.get(
+                "dose_policy_sha256",
+                dose_calibration["policy_sha256"],
+            ),
+        }
+        if pair_member == 0
+        else dict(treatment_gate)
+    )
     return {
         "schema_version": REAL_ANCHORED_MASTER_SCHEMA,
         "feature_schema_version": protocol.FEATURE_SCHEMA_VERSION,
@@ -1932,11 +2176,26 @@ def _sample_row(
         "generator_family_id": f"real_anchored_{capability_id}_v1",
         "capability_id": capability_id,
         "intensity": dose_index,
-        "intensity_lambda": alpha,
+        "intensity_lambda": (
+            0.0 if pair_member == 0 else canonical_strength
+        ),
         "dose_index": dose_index,
-        "dose_parameter": "alpha",
-        "dose_value": alpha,
-        "baseline_dose_value": 1.0,
+        "dose_parameter": "canonical_strength_lambda",
+        "dose_value": 0.0 if pair_member == 0 else canonical_strength,
+        "baseline_dose_value": 0.0,
+        "paired_treatment_strength": canonical_strength,
+        "physical_dose_parameter": (
+            "controlled_component_multiplier_alpha"
+        ),
+        "applied_alpha": alpha,
+        "paired_treatment_applied_alpha": treatment_alpha,
+        "dose_calibration_policy_sha256": dose_calibration.get(
+            "dose_policy_sha256",
+            dose_calibration["policy_sha256"],
+        ),
+        "contract_dose_calibration_sha256": dose_calibration[
+            "policy_sha256"
+        ],
         "seed_index": seed_index,
         "sample_index": seed_index,
         "context_length": context,
@@ -1965,15 +2224,37 @@ def _sample_row(
             protocol.PRIMARY_TARGET_FEATURE[capability_id]
         ),
         "intensity_calibration": {
-            "policy": "physical_component_amplitude_alpha_grid_v1",
+            "policy": (
+                "reference_frozen_contract_specific_history_solver_v2"
+            ),
             "scope": "real_anchored_history_only_decomposition",
             "formal_seed_inverse": False,
             "sample_level_target_gate": True,
-            "selected_alphas": list(REAL_ANCHORED_ALPHAS),
+            "canonical_strength_grid": list(
+                dose_calibration["strength_grid"]
+            ),
+            "selected_alphas": list(
+                dose_calibration["applied_alpha_grid"]
+            ),
+            "history_target_grid": list(
+                dose_calibration["history_target_grid"]
+            ),
+            "future_target_grid": list(
+                dose_calibration["future_target_grid"]
+            ),
+            "dose_calibration_policy_sha256": dose_calibration.get(
+                "dose_policy_sha256",
+                dose_calibration["policy_sha256"],
+            ),
         },
+        "dose_calibration": dict(dose_calibration),
+        "paired_minimum_separation_gate": row_gate,
         "realized_features": {},
         "sampled_generator_parameters": {
             "alpha": alpha,
+            "canonical_strength": (
+                0.0 if pair_member == 0 else canonical_strength
+            ),
             "controlled_component": metadata["controlled_component"],
         },
         "parameter_mapping": {},
@@ -2083,26 +2364,42 @@ def real_anchored_assignments(
     return assignments
 
 
+def _row_dose_grid(
+    contract_row: Mapping[str, Any],
+) -> tuple[tuple[float, float], ...]:
+    capability_id = str(contract_row["capability_id"])
+    calibration = contract_row.get("dose_calibration")
+    if not isinstance(calibration, Mapping):
+        raise ValueError(
+            f"{capability_id} contract row has no frozen dose calibration"
+        )
+    validate_dose_calibration(calibration, capability_id=capability_id)
+    if calibration.get("status") != "available":
+        raise ValueError(
+            f"{capability_id} contract row has unavailable dose calibration"
+        )
+    strengths = tuple(float(value) for value in calibration["strength_grid"])
+    alphas = tuple(float(value) for value in calibration["applied_alpha_grid"])
+    return tuple(zip(strengths, alphas, strict=True))
+
+
 def iter_real_anchored_samples(
     backgrounds: Sequence[Mapping[str, Any]],
     contract_rows: Sequence[Mapping[str, Any]],
     *,
     capability_ids: Iterable[str],
     seed_indexes: Iterable[int],
-    alphas: Sequence[float] = REAL_ANCHORED_ALPHAS,
+    alphas: Sequence[float] | None = None,
 ) -> Iterator[dict[str, Any]]:
-    """Yield exact baseline/treatment pairs for every requested physical dose."""
+    """Yield pairs on each capability's reference-frozen physical grid."""
 
-    alpha_values = tuple(float(value) for value in alphas)
-    if not alpha_values or any(
-        not math.isfinite(value) or value <= 1.0 for value in alpha_values
+    if alphas is not None and tuple(float(value) for value in alphas) != (
+        REAL_ANCHORED_ALPHAS
     ):
-        raise ValueError("real-anchored alpha values must be finite and > 1")
-    if any(
-        right <= left
-        for left, right in zip(alpha_values, alpha_values[1:])
-    ):
-        raise ValueError("real-anchored alpha values must increase strictly")
+        raise ValueError(
+            "global alpha overrides are unsupported; each capability uses "
+            "its frozen applied_alpha_grid"
+        )
     by_background = {
         str(background["background_id"]): background
         for background in backgrounds
@@ -2121,13 +2418,19 @@ def iter_real_anchored_samples(
                 - protocol.REAL_ANCHORED_CONTEXT_LENGTH
             )
             baseline_visible = source_baseline[visible_start:]
-            for dose_index, treatment_alpha in enumerate(alpha_values, start=1):
+            for dose_index, (
+                canonical_strength,
+                treatment_alpha,
+            ) in enumerate(_row_dose_grid(contract_row), start=1):
                 for pair_member, alpha in ((0, 1.0), (1, treatment_alpha)):
                     capability_contract = contract_row["contract"]
                     apply_contract = (
                         apply_real_path_dynamic_contract
                         if capability_contract.get("schema")
-                        == REAL_PATH_DYNAMIC_CONTRACT_SCHEMA
+                        in {
+                            REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+                            LEGACY_REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+                        }
                         else apply_real_anchored_contract
                     )
                     augmented, metadata = apply_contract(
@@ -2149,6 +2452,8 @@ def iter_real_anchored_samples(
                         seed_index=int(seed_index),
                         dose_index=dose_index,
                         pair_member=pair_member,
+                        canonical_strength=canonical_strength,
+                        treatment_alpha=treatment_alpha,
                         alpha=alpha,
                         visible_target=visible_target,
                         visible_delta=visible_delta,
@@ -2162,13 +2467,16 @@ def iter_nonlinear_replay_sensitivity_samples(
     contract_rows: Sequence[Mapping[str, Any]],
     *,
     seed_indexes: Iterable[int],
-    alphas: Sequence[float] = REAL_ANCHORED_ALPHAS,
+    alphas: Sequence[float] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield the history-residual-replay nonlinear auxiliary track."""
 
-    alpha_values = tuple(float(value) for value in alphas)
-    if alpha_values != REAL_ANCHORED_ALPHAS:
-        raise ValueError("nonlinear replay sensitivity uses the frozen grid")
+    if alphas is not None and tuple(float(value) for value in alphas) != (
+        REAL_ANCHORED_ALPHAS
+    ):
+        raise ValueError(
+            "nonlinear replay uses its capability-frozen applied_alpha_grid"
+        )
     by_background = {
         str(background["background_id"]): background
         for background in backgrounds
@@ -2189,63 +2497,109 @@ def iter_nonlinear_replay_sensitivity_samples(
         )
         baseline_visible = source_baseline[visible_start:]
         capability_contract = contract_row["contract"]
-        if capability_contract.get("schema") != REAL_PATH_DYNAMIC_CONTRACT_SCHEMA:
+        if capability_contract.get("schema") not in {
+            REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+            LEGACY_REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+        }:
             raise ValueError("nonlinear replay requires a dynamic contract")
-        for dose_index, treatment_alpha in enumerate(alpha_values, start=1):
+        prepared: list[
+            tuple[int, float, float, int, float, np.ndarray, dict[str, Any]]
+        ] = []
+        replay_group_eligible = True
+        for dose_index, (
+            canonical_strength,
+            treatment_alpha,
+        ) in enumerate(_row_dose_grid(contract_row), start=1):
             for pair_member, alpha in ((0, 1.0), (1, treatment_alpha)):
-                augmented, metadata = apply_real_path_dynamic_contract(
-                    source_baseline,
-                    capability_contract,
-                    alpha=alpha,
-                    context_length=(
-                        protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
-                    ),
-                    future_innovation_policy=(
-                        NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
-                    ),
-                )
+                try:
+                    augmented, metadata = apply_real_path_dynamic_contract(
+                        source_baseline,
+                        capability_contract,
+                        alpha=alpha,
+                        context_length=(
+                            protocol.REAL_ANCHORED_DECOMPOSITION_CONTEXT_LENGTH
+                        ),
+                        future_innovation_policy=(
+                            NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
+                        ),
+                    )
+                except ValueError as error:
+                    if (
+                        pair_member == 1
+                        and str(error)
+                        == "dynamic dose failed paired minimum separation"
+                    ):
+                        replay_group_eligible = False
+                        break
+                    raise
                 augmented_array = np.asarray(augmented, dtype=float)
                 if augmented_array.ndim == 2:
                     augmented_array = augmented_array[:, 0]
                 visible_target = augmented_array[visible_start:]
-                visible_delta = visible_target - baseline_visible
-                row = _sample_row(
-                    background=background,
-                    contract_row=contract_row,
-                    seed_index=int(seed_index),
-                    dose_index=dose_index,
-                    pair_member=pair_member,
-                    alpha=alpha,
-                    visible_target=visible_target,
-                    visible_delta=visible_delta,
-                    baseline_visible=baseline_visible,
-                    metadata=metadata,
+                prepared.append(
+                    (
+                        dose_index,
+                        canonical_strength,
+                        treatment_alpha,
+                        pair_member,
+                        alpha,
+                        visible_target,
+                        metadata,
+                    )
                 )
-                main_pair_id = str(row["counterfactual_pair_id"])
-                main_group_id = str(row["paired_group_id"])
-                main_sample_id = str(row["sample_id"])
-                row["evaluation_table"] = (
-                    "real_anchored_nonlinear_replay_sensitivity"
-                )
-                row["sample_id"] = f"{main_sample_id}__nonlinear_replay"
-                row["master_sample_id"] = row["sample_id"]
-                row["counterfactual_pair_id"] = (
-                    f"{main_pair_id}__nonlinear_replay"
-                )
-                row["paired_group_id"] = (
-                    f"{main_group_id}__nonlinear_replay"
-                )
-                row["baseline_sample_id"] = (
-                    f"{main_pair_id}__m0__nonlinear_replay"
-                )
-                row["sensitivity_source_sample_id"] = main_sample_id
-                row["sensitivity_source_pair_id"] = main_pair_id
-                row["sensitivity_source_paired_group_id"] = main_group_id
-                row["excluded_from_primary_score"] = True
-                row["generation_metadata"][
-                    "sensitivity_role"
-                ] = "history_residual_replay_auxiliary"
-                yield row
+            if not replay_group_eligible:
+                break
+        if not replay_group_eligible:
+            continue
+        for (
+            dose_index,
+            canonical_strength,
+            treatment_alpha,
+            pair_member,
+            alpha,
+            visible_target,
+            metadata,
+        ) in prepared:
+            visible_delta = visible_target - baseline_visible
+            row = _sample_row(
+                background=background,
+                contract_row=contract_row,
+                seed_index=int(seed_index),
+                dose_index=dose_index,
+                pair_member=pair_member,
+                canonical_strength=canonical_strength,
+                treatment_alpha=treatment_alpha,
+                alpha=alpha,
+                visible_target=visible_target,
+                visible_delta=visible_delta,
+                baseline_visible=baseline_visible,
+                metadata=metadata,
+            )
+            main_pair_id = str(row["counterfactual_pair_id"])
+            main_group_id = str(row["paired_group_id"])
+            main_sample_id = str(row["sample_id"])
+            row["evaluation_table"] = (
+                "real_anchored_nonlinear_replay_sensitivity"
+            )
+            row["sample_id"] = f"{main_sample_id}__nonlinear_replay"
+            row["master_sample_id"] = row["sample_id"]
+            row["counterfactual_pair_id"] = (
+                f"{main_pair_id}__nonlinear_replay"
+            )
+            row["paired_group_id"] = (
+                f"{main_group_id}__nonlinear_replay"
+            )
+            row["baseline_sample_id"] = (
+                f"{main_pair_id}__m0__nonlinear_replay"
+            )
+            row["sensitivity_source_sample_id"] = main_sample_id
+            row["sensitivity_source_pair_id"] = main_pair_id
+            row["sensitivity_source_paired_group_id"] = main_group_id
+            row["excluded_from_primary_score"] = True
+            row["generation_metadata"][
+                "sensitivity_role"
+            ] = "history_residual_replay_auxiliary"
+            yield row
 
 
 def validate_contract_integrity(contract_row: Mapping[str, Any]) -> None:
@@ -2256,7 +2610,47 @@ def validate_contract_integrity(contract_row: Mapping[str, Any]) -> None:
     capability = contract_row.get("contract")
     if not isinstance(capability, Mapping):
         raise ValueError("available real-anchored row has no contract")
-    if capability.get("schema") == REAL_PATH_DYNAMIC_CONTRACT_SCHEMA:
+    if contract_row.get("schema_version") == (
+        "cafe.real_anchored_background_capability.v4"
+    ):
+        capability_id = str(contract_row.get("capability_id", ""))
+        calibration = contract_row.get("dose_calibration")
+        if calibration is not None:
+            if not isinstance(calibration, Mapping):
+                raise ValueError("v4 dose calibration must be a mapping")
+            validate_dose_calibration(
+                calibration,
+                capability_id=capability_id,
+            )
+            if calibration.get("status") != "available":
+                raise ValueError(
+                    "available v4 row has unavailable dose calibration"
+                )
+            gates = contract_row.get("paired_minimum_separation_gate")
+            if (
+                not isinstance(gates, list)
+                or len(gates) != len(calibration["strength_grid"])
+                or any(
+                    not isinstance(gate, Mapping)
+                    or gate.get("accepted") is not True
+                    for gate in gates
+                )
+            ):
+                raise ValueError(
+                    "available v4 row failed treatment-source separation gates"
+                )
+        evidence = contract_row.get("dose_design_reference")
+        if (
+            not isinstance(evidence, Mapping)
+            or evidence.get("capability_id") != capability_id
+            or evidence.get("background_id")
+            != contract_row.get("background_id")
+        ):
+            raise ValueError("v4 real-anchored row has invalid dose evidence")
+    if capability.get("schema") in {
+        REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+        LEGACY_REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+    }:
         validate_real_path_dynamic_contract(capability)
         if contract_row.get("qualification_policy_id") != capability.get(
             "qualification_policy_id"
@@ -2266,6 +2660,21 @@ def validate_contract_integrity(contract_row: Mapping[str, Any]) -> None:
             "qualification_thresholds"
         ):
             raise ValueError("dynamic row/contract thresholds mismatch")
+        if (
+            contract_row.get("schema_version")
+            == "cafe.real_anchored_background_capability.v4"
+            and contract_row.get("dose_calibration") is not None
+            and contract_row.get("dose_calibration")
+            != capability.get("dose_calibration")
+        ):
+            raise ValueError("dynamic row/contract dose calibration mismatch")
+        if (
+            contract_row.get("dose_design_reference")
+            != capability.get("dose_design_reference")
+            or contract_row.get("paired_minimum_separation_gate")
+            != capability.get("paired_minimum_separation_gate")
+        ):
+            raise ValueError("dynamic row/contract dose evidence mismatch")
         return
     decomposition = capability.get("decomposition_contract")
     if not isinstance(decomposition, Mapping):

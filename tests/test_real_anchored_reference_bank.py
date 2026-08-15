@@ -5,6 +5,7 @@ import copy
 import pytest
 
 from cafe import protocol
+from cafe.generation.real_anchored_dose import additive_dose_reference
 from cafe.generation.reference_bank import (
     build_combined_real_anchored_bank_split_audit,
     freeze_real_anchored_qualification_policy,
@@ -134,6 +135,64 @@ def test_reference_bank_freezes_thresholds_and_rejects_evaluation_drift() -> Non
         assert "differ" in str(error)
     else:
         raise AssertionError("evaluation threshold drift must be rejected")
+
+
+def test_reference_policy_freezes_and_binds_capability_dose_mapping() -> None:
+    rows = [_row(f"x{index}", "x", index * 600) for index in range(8)]
+    evaluation, reference, audit = split_real_anchored_background_banks(
+        rows,
+        maximum_evaluation_backgrounds=4,
+        maximum_reference_backgrounds=4,
+        source_window_length=552,
+    )
+
+    def contracts(bank: list[dict], *, with_evidence: bool) -> list[dict]:
+        result = []
+        for index, row in enumerate(bank):
+            contract = {
+                "background_id": row["background_id"],
+                "capability_id": "trend",
+                "available": True,
+                "qualification_policy_id": "trend.reference.v1",
+                "qualification_threshold_source": (
+                    QUALIFICATION_THRESHOLD_SOURCE_POLICY
+                ),
+                "qualification_thresholds": {"minimum": 0.01},
+            }
+            if with_evidence:
+                contract["dose_design_reference"] = additive_dose_reference(
+                    capability_id="trend",
+                    background_id=row["background_id"],
+                    unit_gain_history_separation=0.10,
+                    unit_gain_future_separation=0.15 + 0.01 * index,
+                    affected_channel_indices=(0,),
+                )
+            result.append(contract)
+        return result
+
+    policy = freeze_real_anchored_qualification_policy(
+        contracts(reference, with_evidence=True),
+        reference_background_ids=[row["background_id"] for row in reference],
+        bank_split_audit=audit,
+    )
+    dose = policy["capabilities"]["trend"]["dose_calibration"]
+    assert dose["status"] == "available"
+    assert policy["dose_policy"]["capability_policy_sha256"]["trend"] == (
+        dose["policy_sha256"]
+    )
+
+    evaluation_rows = contracts(evaluation, with_evidence=False)
+    for row in evaluation_rows:
+        row["qualification_policy_sha256"] = policy[
+            "qualification_policy_sha256"
+        ]
+        row["dose_calibration"] = copy.deepcopy(dose)
+    validate_evaluation_qualification_policy(evaluation_rows, policy)
+
+    drifted = copy.deepcopy(evaluation_rows)
+    drifted[0]["dose_calibration"]["history_target_grid"][-1] += 0.1
+    with pytest.raises(ValueError, match="dose calibration policy hash"):
+        validate_evaluation_qualification_policy(drifted, policy)
 
 
 def test_empty_capability_reference_bank_freezes_fail_closed_policy() -> None:

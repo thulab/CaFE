@@ -13,7 +13,7 @@ from cafe.generation.families import (
 )
 
 
-SCHEMA_VERSION = "cafe.feature_gate.v1"
+SCHEMA_VERSION = "cafe.feature_gate.v2"
 MINIMUM_NONLINEAR_ACTIVITY_PAIRED_POSITIVE_FRACTION = 0.50
 COUNTERFACTUAL_CAPABILITIES = frozenset(
     {
@@ -30,6 +30,9 @@ STRUCTURAL_CAPABILITIES = frozenset(
         "covariate_response",
     }
 )
+SPECIALIZED_DOSE_CAPABILITIES = STRUCTURAL_CAPABILITIES | {
+    "nonlinear_persistence"
+}
 MINIMUM_CALIBRATION_REACHABILITY_FRACTION = {
     "common_factor": 1.00,
     "hierarchical_coherence": 1.00,
@@ -788,6 +791,7 @@ def nonlinear_mechanism_response_checks(
             {
                 "dataset_id": key[0],
                 "family_role": key[1],
+                "blocking": key[1] == "primary",
                 "feature": "nonlinear_strength",
                 "missing_feature_count": missing_strength_count,
                 "mean_feature_by_intensity": {
@@ -1131,6 +1135,10 @@ def validate_sample_collection(
                 for left, right in zip(ordered, ordered[1:])
             )
         )
+        blocking = bool(
+            key[2] == "primary"
+            and key[1] not in SPECIALIZED_DOSE_CAPABILITIES
+        )
         dose_results.append(
             {
                 "dataset_id": key[0],
@@ -1140,6 +1148,12 @@ def validate_sample_collection(
                     str(name): value for name, value in means.items()
                 },
                 "accepted": accepted,
+                "blocking": blocking,
+                "validation_role": (
+                    "generic_primary_feature_gate"
+                    if blocking
+                    else "diagnostic_proxy_specialized_or_secondary_gate"
+                ),
             }
         )
 
@@ -1252,10 +1266,15 @@ def validate_sample_collection(
     accepted = bool(
         all(result["accepted"] for result in basic_results.values())
         and not duplicate_groups
-        and all(result["accepted"] for result in dose_results)
+        and all(
+            result["accepted"]
+            for result in dose_results
+            if result["blocking"]
+        )
         and all(
             result["accepted"]
             for result in nonlinear_mechanism_results
+            if result["blocking"]
         )
         and all(
             result.get("accepted", False)

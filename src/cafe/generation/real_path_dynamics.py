@@ -17,6 +17,13 @@ from typing import Any, Mapping, Sequence
 
 import numpy as np
 
+from cafe.generation.real_anchored_dose import (
+    additive_dose_reference,
+    dose_calibration_from_policy,
+    nonlinear_dose_reference,
+    paired_minimum_separation_gate,
+    resolve_contract_dose_calibration,
+)
 from cafe.generation.real_anchored_policy import (
     NONLINEAR_FUTURE_INNOVATION_MAIN_POLICY,
     NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY,
@@ -25,11 +32,17 @@ from cafe.generation.real_anchored_policy import (
 )
 
 
-REAL_PATH_DYNAMIC_CONTRACT_SCHEMA = "cafe.real_path_dynamic_contract.v1"
+REAL_PATH_DYNAMIC_CONTRACT_SCHEMA = "cafe.real_path_dynamic_contract.v2"
+LEGACY_REAL_PATH_DYNAMIC_CONTRACT_SCHEMA = (
+    "cafe.real_path_dynamic_contract.v1"
+)
 REAL_PATH_DYNAMIC_CAPABILITIES = frozenset(
     {"nonlinear_persistence", "predictable_intermittency"}
 )
 NONLINEAR_ALPHA_GRID = (1.2, 1.4, 1.6, 1.8, 2.0)
+NONLINEAR_REFERENCE_ALPHA_GRID = tuple(
+    round(1.0 + 0.005 * index, 3) for index in range(401)
+)
 _CONTEXT_LENGTH = 504
 _VISIBLE_CONTEXT_LENGTH = 336
 _FIXED_CONTEXT_LENGTH = 168
@@ -37,6 +50,47 @@ _HORIZON = 48
 _VISIBLE_START = _CONTEXT_LENGTH - _VISIBLE_CONTEXT_LENGTH
 _FIXED_START = _CONTEXT_LENGTH - _FIXED_CONTEXT_LENGTH
 _MINIMUM_COMPONENT_RMS_RATIO = 0.01
+
+
+def _ridge_coefficients(
+    design: np.ndarray,
+    target: np.ndarray,
+    *,
+    penalty: float = 1e-4,
+) -> np.ndarray:
+    matrix = np.asarray(design, dtype=float)
+    response = np.asarray(target, dtype=float)
+    regularizer = np.eye(matrix.shape[1], dtype=float) * float(penalty)
+    regularizer[0, 0] = 0.0
+    return np.linalg.solve(
+        matrix.T @ matrix + regularizer,
+        matrix.T @ response,
+    )
+
+
+def _strict_alpha_grid(
+    values: Sequence[float],
+    *,
+    maximum: float,
+    label: str,
+) -> tuple[float, ...]:
+    grid = tuple(float(value) for value in values)
+    if (
+        not grid
+        or any(
+            not math.isfinite(value) or not 1.0 < value <= float(maximum)
+            for value in grid
+        )
+        or any(
+            right <= left
+            for left, right in zip(grid, grid[1:], strict=False)
+        )
+    ):
+        raise ValueError(
+            f"{label} must be a finite, strictly increasing alpha grid "
+            f"inside (1, {float(maximum):g}]"
+        )
+    return grid
 
 DEFAULT_DYNAMIC_QUALIFICATION_THRESHOLDS: dict[str, dict[str, float | int]] = {
     "predictable_intermittency": {
@@ -54,7 +108,10 @@ DEFAULT_DYNAMIC_QUALIFICATION_THRESHOLDS: dict[str, dict[str, float | int]] = {
     "nonlinear_persistence": {
         "minimum_median_blocked_holdout_gain": 0.01,
         "minimum_positive_fold_fraction": 2.0 / 3.0,
-        "maximum_linear_spectral_radius": 0.98,
+        # Recursive stability is still strict (<1).  A 0.995 margin avoids
+        # discarding slowly mean-reverting real states merely because the
+        # older 0.98 convenience bound was overly conservative.
+        "maximum_linear_spectral_radius": 0.995,
         "minimum_component_rms_ratio": 0.01,
         "maximum_latent_support_multiplier": 4.0,
         "minimum_absolute_safe_bound": 8.0,
@@ -141,6 +198,12 @@ def _capability_qualification(
         "qualification_threshold_source": str(threshold_source),
         "qualification_thresholds": dict(thresholds),
     }
+    if isinstance(frozen_capabilities, Mapping):
+        provenance["dose_calibration"] = dose_calibration_from_policy(
+            policy,
+            capability_id,
+            require_available=False,
+        )
     return provenance, thresholds
 
 
@@ -591,6 +654,7 @@ def _fit_clock_candidate(
 def fit_predictable_intermittency_contract(
     history: np.ndarray,
     *,
+    background_id: str | None = None,
     carrier_period: float,
     secondary_periods: Sequence[float],
     reference_history: np.ndarray,
@@ -781,6 +845,63 @@ def fit_predictable_intermittency_contract(
         "future_component_horizon": _HORIZON,
         "future_component_source": "analytic_history_fitted_event_clock",
     }
+    dose_reference = (
+        additive_dose_reference(
+            capability_id="predictable_intermittency",
+            background_id=(
+                str(background_id)
+                if background_id is not None
+                else str(base["source_history_sha256"])
+            ),
+            unit_gain_history_separation=(
+                fixed_context_rms / reference_scale
+            ),
+            unit_gain_future_separation=future_rms / reference_scale,
+            affected_channel_indices=(0,),
+        )
+        if min(fixed_context_rms, future_rms) > 0.0
+        else None
+    )
+    dose_calibration = qualification.get("dose_calibration")
+    dose_mapping_failed = False
+    paired_separation_gates: list[dict[str, Any]] | None = None
+    if (
+        isinstance(dose_calibration, Mapping)
+        and dose_calibration.get("status") == "available"
+        and isinstance(dose_reference, Mapping)
+    ):
+        try:
+            dose_calibration = resolve_contract_dose_calibration(
+                dose_calibration,
+                dose_reference,
+            )
+        except ValueError:
+            dose_mapping_failed = True
+    if (
+        isinstance(dose_calibration, Mapping)
+        and dose_calibration.get("status") == "available"
+        and not dose_mapping_failed
+    ):
+        component_delta = component.copy()
+        paired_separation_gates = []
+        previous_delta: np.ndarray | None = None
+        for dose_index, alpha in enumerate(
+            dose_calibration["applied_alpha_grid"],
+            start=1,
+        ):
+            current_delta = (float(alpha) - 1.0) * component_delta
+            paired_separation_gates.append(
+                paired_minimum_separation_gate(
+                    current_delta,
+                    context_length=_CONTEXT_LENGTH,
+                    dose_index=dose_index,
+                    dose_calibration=dose_calibration,
+                    affected_channel_indices=(0,),
+                    scale_by_channel=(reference_scale,),
+                    previous_delta=previous_delta,
+                )
+            )
+            previous_delta = current_delta
     failures: list[str] = []
     if float(selected["holdout_clock_r2"]) < float(
         thresholds["minimum_holdout_clock_r2"]
@@ -814,12 +935,24 @@ def fit_predictable_intermittency_contract(
         failures.append("no_history_clock_event_in_h48")
     if min(history_rms, fixed_context_rms, future_rms) <= threshold:
         failures.append("event_component_rms_too_weak")
+    if isinstance(dose_calibration, Mapping):
+        if dose_calibration.get("status") != "available":
+            failures.append("dose_calibration_unavailable")
+        elif dose_mapping_failed:
+            failures.append("contract_source_distance_mapping_unavailable")
+        elif paired_separation_gates is None or not all(
+            bool(gate["accepted"]) for gate in paired_separation_gates
+        ):
+            failures.append("paired_minimum_separation_gate_failed")
     if failures:
         return _unavailable(
             base,
             failures[0],
             ",".join(failures),
             **gates,
+            dose_design_reference=dose_reference,
+            dose_calibration=dose_calibration,
+            paired_minimum_separation_gate=paired_separation_gates,
             clock_qualification=selected,
         )
     model = {
@@ -837,6 +970,9 @@ def fit_predictable_intermittency_contract(
             "unavailable_reason": None,
             "unavailable_detail": None,
             "controlled_component_rms": history_rms,
+            "dose_design_reference": dose_reference,
+            "dose_calibration": dose_calibration,
+            "paired_minimum_separation_gate": paired_separation_gates,
             **gates,
             "model": model,
         }
@@ -846,7 +982,8 @@ def fit_predictable_intermittency_contract(
 def _lag_set(period: int) -> tuple[int, ...]:
     return tuple(
         sorted(
-            {
+            {1, 2, 3}
+            | {
                 int(np.clip(round(period * fraction), 2, 32))
                 for fraction in (1 / 6, 1 / 5, 1 / 4, 1 / 3, 1 / 2)
             }
@@ -1031,6 +1168,17 @@ def _dynamic_effect(
     model: Mapping[str, Any],
     future_innovations: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # Alpha one is the authentic source by definition.  Replaying the fitted
+    # recurrence plus abducted innovations can differ from the stored latent
+    # history by floating-point roundoff, especially after a small frozen
+    # normalization scale.  Do not let that numerical reconstruction error
+    # masquerade as an intervention in the reference dose curve.
+    if float(alpha) == 1.0:
+        return (
+            np.zeros_like(latent_history, dtype=float),
+            np.zeros(_HORIZON, dtype=float),
+            latent_history.copy(),
+        )
     treatment_history = latent_history.copy()
     for index in range(_VISIBLE_START, _CONTEXT_LENGTH):
         treatment_history[index] = _recurrence_value(
@@ -1069,9 +1217,148 @@ def _dynamic_effect(
     return history_delta, future_delta, treatment_history
 
 
+def _nonlinear_curve_row(
+    latent_history: np.ndarray,
+    innovations: np.ndarray,
+    *,
+    alpha: float,
+    model: Mapping[str, Any],
+    safe_bound: float,
+) -> dict[str, Any]:
+    history_delta, future_delta, treatment_history = _dynamic_effect(
+        latent_history,
+        innovations,
+        alpha=float(alpha),
+        model=model,
+    )
+    visible_history = history_delta[_VISIBLE_START:]
+    fixed_history = history_delta[_FIXED_START:]
+    effect = np.concatenate((visible_history, future_delta))
+    safe = bool(
+        np.isfinite(effect).all()
+        and np.isfinite(treatment_history).all()
+        and np.max(np.abs(treatment_history)) <= float(safe_bound)
+    )
+    return {
+        "alpha": float(alpha),
+        "intervention_rms": float(np.sqrt(np.mean(effect**2))),
+        "visible_history_effect_rms": float(
+            np.sqrt(np.mean(visible_history**2))
+        ),
+        "fixed_context_effect_rms": float(
+            np.sqrt(np.mean(fixed_history**2))
+        ),
+        "full_history_effect_rms": float(
+            np.sqrt(np.mean(history_delta**2))
+        ),
+        "future_effect_rms": float(np.sqrt(np.mean(future_delta**2))),
+        "safe": safe,
+    }
+
+
+def _nonlinear_dose_reference(
+    latent_history: np.ndarray,
+    innovations: np.ndarray,
+    *,
+    background_id: str,
+    model: Mapping[str, Any],
+    safe_bound: float,
+    normalization_scale: float,
+) -> tuple[dict[str, Any], dict[float, dict[str, Any]]]:
+    rows = [
+        _nonlinear_curve_row(
+            latent_history,
+            innovations,
+            alpha=alpha,
+            model=model,
+            safe_bound=safe_bound,
+        )
+        for alpha in NONLINEAR_REFERENCE_ALPHA_GRID
+    ]
+    history_values = [
+        float(row["fixed_context_effect_rms"]) for row in rows
+    ]
+    future_values = [float(row["future_effect_rms"]) for row in rows]
+    tolerance = 1e-12
+    history_monotone = all(
+        right + tolerance >= left
+        for left, right in zip(
+            history_values,
+            history_values[1:],
+            strict=False,
+        )
+    )
+    future_monotone = all(
+        right + tolerance >= left
+        for left, right in zip(
+            future_values,
+            future_values[1:],
+            strict=False,
+        )
+    )
+    all_safe = all(bool(row["safe"]) for row in rows)
+    monotone_prefix_count = 1
+    for index in range(1, len(rows)):
+        if (
+            not bool(rows[index]["safe"])
+            or float(rows[index]["fixed_context_effect_rms"]) + tolerance
+            < float(rows[index - 1]["fixed_context_effect_rms"])
+            or float(rows[index]["future_effect_rms"]) + tolerance
+            < float(rows[index - 1]["future_effect_rms"])
+        ):
+            break
+        monotone_prefix_count = index + 1
+    public_curve = [
+        {
+            "alpha": float(row["alpha"]),
+            "history_separation": float(
+                row["fixed_context_effect_rms"]
+            ),
+            "future_separation": float(row["future_effect_rms"]),
+            "safe": bool(row["safe"]),
+        }
+        for row in rows
+    ]
+    standardized_curve = [
+        {
+            **row,
+            "history_separation": (
+                float(row["history_separation"]) / normalization_scale
+            ),
+            "future_separation": (
+                float(row["future_separation"]) / normalization_scale
+            ),
+        }
+        for row in public_curve
+    ]
+    evidence = nonlinear_dose_reference(
+        background_id=background_id,
+        zero_innovation_curve=standardized_curve,
+        monotone=bool(history_monotone and future_monotone),
+    )
+    evidence.update(
+        {
+            "candidate_alpha_start": 1.0,
+            "candidate_alpha_stop": 3.0,
+            "candidate_alpha_step": 0.005,
+            "history_separation_monotone": history_monotone,
+            "future_separation_monotone": future_monotone,
+            "all_candidates_safe": all_safe,
+            "monotone_safe_prefix_count": monotone_prefix_count,
+            "monotone_safe_prefix_alpha_max": float(
+                rows[monotone_prefix_count - 1]["alpha"]
+            ),
+        }
+    )
+    return evidence, {
+        float(row["alpha"]): row for row in rows
+    }
+
+
 def fit_nonlinear_persistence_contract(
     history: np.ndarray,
     *,
+    background_id: str | None = None,
     carrier_period: float,
     secondary_periods: Sequence[float],
     reference_history: np.ndarray,
@@ -1128,75 +1415,107 @@ def fit_nonlinear_persistence_contract(
         )
         for lag in _lag_set(period)
     ]
-    selected = max(
+    ranked_candidates = sorted(
         candidates,
         key=lambda row: (
             float(row["median_blocked_holdout_gain"]),
             float(row["positive_fold_fraction"]),
             -int(row["nonlinear_lag"]),
         ),
+        reverse=True,
     )
-    if (
-        float(selected["median_blocked_holdout_gain"])
-        < float(thresholds["minimum_median_blocked_holdout_gain"])
-        or float(selected["positive_fold_fraction"])
-        < float(thresholds["minimum_positive_fold_fraction"])
-    ):
+    qualified_candidates = [
+        row
+        for row in ranked_candidates
+        if float(row["median_blocked_holdout_gain"])
+        >= float(thresholds["minimum_median_blocked_holdout_gain"])
+        and float(row["positive_fold_fraction"])
+        >= float(thresholds["minimum_positive_fold_fraction"])
+    ]
+    if not qualified_candidates:
         return _unavailable(
             base,
             "nonlinear_blocked_holdout_gain_too_weak",
-            "selected nonlinear lag failed median gain or fold-sign gate",
-            nonlinear_lag_resolution=selected,
+            "no nonlinear lag passed median gain and fold-sign gates",
+            nonlinear_lag_resolution=ranked_candidates[0],
             nonlinear_lag_candidates=candidates,
         )
-    lag = int(selected["nonlinear_lag"])
-    start = max(period, lag, 1)
-    indexes = np.arange(start, _CONTEXT_LENGTH)
-    delayed = latent[indexes - lag]
-    basis_median, basis_scale = _bounded_basis_parameters(delayed)
-    linear, nonlinear, residualization = _dynamic_design(
-        latent,
-        indexes,
-        period=period,
-        nonlinear_lag=lag,
-        basis_median=basis_median,
-        basis_scale=basis_scale,
-        residualization=None,
-    )
-    coefficients, *_ = np.linalg.lstsq(
-        np.column_stack((linear, nonlinear)),
-        latent[indexes],
-        rcond=None,
-    )
-    lags = tuple(dict.fromkeys((1, period, lag)))
-    linear_count = linear.shape[1]
-    model: dict[str, Any] = {
-        "law": "bounded_residualized_nonlinear_autoregression_v1",
-        "dose_response_law": "dynamic_recursive_nonproportional",
-        "period": period,
-        "nonlinear_lag": lag,
-        "linear_lags": list(lags),
-        "intercept": float(coefficients[0]),
-        "linear_coefficients": coefficients[1:linear_count].tolist(),
-        "basis_median": basis_median,
-        "basis_scale": basis_scale,
-        "basis_clip": 3.0,
-        "basis_functions": [
-            "q^2/(1+q^2)_residualized_against_[1,q]",
-            "q^3/(1+abs(q)^3)_residualized_against_[1,q]",
-        ],
-        "basis_residualization": residualization.tolist(),
-        "nonlinear_coefficients": coefficients[linear_count:].tolist(),
-        "nuisance": nuisance_metadata,
-        "future_innovation_policy": NONLINEAR_FUTURE_INNOVATION_MAIN_POLICY,
-        "history_innovation_policy": "shared_observed_one_step_innovations",
-        "intervention_start": _VISIBLE_START,
-        "qualified_alpha_max": max(NONLINEAR_ALPHA_GRID),
-    }
-    spectral_radius = _linear_spectral_radius(
-        np.asarray(model["linear_coefficients"]),
-        lags,
-    )
+    selected: Mapping[str, Any] | None = None
+    selected_fit: tuple[
+        int, np.ndarray, tuple[int, ...], dict[str, Any], float
+    ] | None = None
+    candidate_stability: list[dict[str, Any]] = []
+    for candidate in qualified_candidates:
+        candidate_lag = int(candidate["nonlinear_lag"])
+        candidate_start = max(period, candidate_lag, 1)
+        candidate_indexes = np.arange(candidate_start, _CONTEXT_LENGTH)
+        delayed = latent[candidate_indexes - candidate_lag]
+        basis_median, basis_scale = _bounded_basis_parameters(delayed)
+        linear, nonlinear, residualization = _dynamic_design(
+            latent,
+            candidate_indexes,
+            period=period,
+            nonlinear_lag=candidate_lag,
+            basis_median=basis_median,
+            basis_scale=basis_scale,
+            residualization=None,
+        )
+        coefficients = _ridge_coefficients(
+            np.column_stack((linear, nonlinear)),
+            latent[candidate_indexes],
+        )
+        candidate_lags = tuple(dict.fromkeys((1, period, candidate_lag)))
+        linear_count = linear.shape[1]
+        candidate_model: dict[str, Any] = {
+            "law": "bounded_residualized_nonlinear_autoregression_v2",
+            "dose_response_law": "dynamic_recursive_nonproportional",
+            "period": period,
+            "nonlinear_lag": candidate_lag,
+            "linear_lags": list(candidate_lags),
+            "intercept": float(coefficients[0]),
+            "linear_coefficients": coefficients[1:linear_count].tolist(),
+            "basis_median": basis_median,
+            "basis_scale": basis_scale,
+            "basis_clip": 3.0,
+            "basis_functions": [
+                "q^2/(1+q^2)_residualized_against_[1,q]",
+                "q^3/(1+abs(q)^3)_residualized_against_[1,q]",
+            ],
+            "basis_residualization": residualization.tolist(),
+            "nonlinear_coefficients": coefficients[linear_count:].tolist(),
+            "nuisance": nuisance_metadata,
+            "future_innovation_policy": NONLINEAR_FUTURE_INNOVATION_MAIN_POLICY,
+            "history_innovation_policy": "shared_observed_one_step_innovations",
+            "intervention_start": _VISIBLE_START,
+            "qualified_alpha_max": 3.0,
+        }
+        radius = _linear_spectral_radius(
+            np.asarray(candidate_model["linear_coefficients"]),
+            candidate_lags,
+        )
+        candidate_stability.append(
+            {"nonlinear_lag": candidate_lag, "linear_spectral_radius": radius}
+        )
+        if radius < float(thresholds["maximum_linear_spectral_radius"]):
+            selected = candidate
+            selected_fit = (
+                candidate_lag,
+                candidate_indexes,
+                candidate_lags,
+                candidate_model,
+                radius,
+            )
+            break
+    if selected is None or selected_fit is None:
+        return _unavailable(
+            base,
+            "nonlinear_linear_recurrence_unstable",
+            "all holdout-qualified nonlinear lags had unstable linear state",
+            nonlinear_lag_resolution=qualified_candidates[0],
+            nonlinear_lag_candidates=candidates,
+            nonlinear_candidate_stability=candidate_stability,
+        )
+    lag, indexes, lags, model, spectral_radius = selected_fit
     innovations = np.zeros(_CONTEXT_LENGTH, dtype=float)
     for index in indexes:
         innovations[index] = latent[index] - _recurrence_value(
@@ -1215,51 +1534,99 @@ def fit_nonlinear_persistence_contract(
     nonlinear_component_rms = float(np.sqrt(np.mean(nonlinear_component**2)))
     history_scale = float(references["normalization_scale_by_target"][0])
     threshold = component_rms_ratio * history_scale
-    main_effects: list[dict[str, Any]] = []
     safe_bound = max(
         float(thresholds["minimum_absolute_safe_bound"]),
         float(thresholds["maximum_latent_support_multiplier"])
         * float(np.max(np.abs(latent))),
     )
-    safe = True
-    for alpha in NONLINEAR_ALPHA_GRID:
-        history_delta, future_delta, treatment_history = _dynamic_effect(
-            latent,
-            innovations,
-            alpha=alpha,
-            model=model,
+    dose_reference, reference_curve = _nonlinear_dose_reference(
+        latent,
+        innovations,
+        background_id=(
+            str(background_id)
+            if background_id is not None
+            else str(base["source_history_sha256"])
+        ),
+        model=model,
+        safe_bound=safe_bound,
+        normalization_scale=history_scale,
+    )
+    dose_calibration = qualification.get("dose_calibration")
+    dose_mapping_failed = False
+    if (
+        isinstance(dose_calibration, Mapping)
+        and dose_calibration.get("status") == "available"
+    ):
+        try:
+            dose_calibration = resolve_contract_dose_calibration(
+                dose_calibration,
+                dose_reference,
+            )
+        except ValueError:
+            dose_mapping_failed = True
+    applied_alpha_grid = (
+        _strict_alpha_grid(
+            dose_calibration.get("applied_alpha_grid", ()),
+            maximum=3.0,
+            label="frozen nonlinear applied_alpha_grid",
         )
-        effect = np.concatenate((history_delta[_VISIBLE_START:], future_delta))
-        safe = safe and bool(
-            np.isfinite(effect).all()
-            and np.max(np.abs(treatment_history)) <= safe_bound
+        if isinstance(dose_calibration, Mapping)
+        and dose_calibration.get("status") == "available"
+        and not dose_mapping_failed
+        else NONLINEAR_ALPHA_GRID
+    )
+    main_effects = [
+        dict(
+            reference_curve.get(float(alpha))
+            or _nonlinear_curve_row(
+                latent,
+                innovations,
+                alpha=alpha,
+                model=model,
+                safe_bound=safe_bound,
+            )
         )
-        main_effects.append(
-            {
-                "alpha": alpha,
-                "intervention_rms": float(np.sqrt(np.mean(effect**2))),
-                "visible_history_effect_rms": float(
-                    np.sqrt(np.mean(history_delta[_VISIBLE_START:] ** 2))
-                ),
-                "fixed_context_effect_rms": float(
-                    np.sqrt(np.mean(history_delta[_FIXED_START:] ** 2))
-                ),
-                "full_history_effect_rms": float(
-                    np.sqrt(np.mean(history_delta**2))
-                ),
-                "future_effect_rms": float(np.sqrt(np.mean(future_delta**2))),
-            }
-        )
+        for alpha in applied_alpha_grid
+    ]
+    paired_separation_gates: list[dict[str, Any]] | None = None
+    if (
+        isinstance(dose_calibration, Mapping)
+        and dose_calibration.get("status") == "available"
+        and not dose_mapping_failed
+    ):
+        paired_separation_gates = []
+        previous_delta: np.ndarray | None = None
+        for dose_index, alpha in enumerate(applied_alpha_grid, start=1):
+            history_delta, future_delta, _treatment = _dynamic_effect(
+                latent,
+                innovations,
+                alpha=alpha,
+                model=model,
+            )
+            current_delta = np.concatenate((history_delta, future_delta))
+            paired_separation_gates.append(
+                paired_minimum_separation_gate(
+                    current_delta,
+                    context_length=_CONTEXT_LENGTH,
+                    dose_index=dose_index,
+                    dose_calibration=dose_calibration,
+                    affected_channel_indices=(0,),
+                    scale_by_channel=(history_scale,),
+                    previous_delta=previous_delta,
+                )
+            )
+            previous_delta = current_delta
     rms_values = [row["intervention_rms"] for row in main_effects]
     dose_monotone = all(
         right > left
         for left, right in zip(rms_values, rms_values[1:], strict=False)
     )
     replay = innovations[_CONTEXT_LENGTH - _HORIZON :].copy()
+    maximum_applied_alpha = max(applied_alpha_grid)
     replay_history_delta, replay_future_delta, _ = _dynamic_effect(
         latent,
         innovations,
-        alpha=max(NONLINEAR_ALPHA_GRID),
+        alpha=maximum_applied_alpha,
         model=model,
         future_innovations=replay,
     )
@@ -1273,10 +1640,34 @@ def fit_nonlinear_persistence_contract(
             )
         )
     )
+    if abs(maximum_applied_alpha - 2.0) <= 1e-12:
+        replay_alpha2_rms = replay_rms
+    else:
+        replay_alpha2_history, replay_alpha2_future, _ = _dynamic_effect(
+            latent,
+            innovations,
+            alpha=2.0,
+            model=model,
+            future_innovations=replay,
+        )
+        replay_alpha2_rms = float(
+            np.sqrt(
+                np.mean(
+                    np.concatenate(
+                        (
+                            replay_alpha2_history[_VISIBLE_START:],
+                            replay_alpha2_future,
+                        )
+                    )
+                    ** 2
+                )
+            )
+        )
     maximum_effect = main_effects[-1]
     metrics = {
         "nonlinear_lag_resolution": selected,
         "nonlinear_lag_candidates": candidates,
+        "nonlinear_candidate_stability": candidate_stability,
         "linear_spectral_radius": spectral_radius,
         "controlled_component_rms": nonlinear_component_rms,
         "controlled_component_history_rms": float(
@@ -1299,7 +1690,16 @@ def fit_nonlinear_persistence_contract(
         "future_component_source": "paired_zero_innovation_dynamic_rollout",
         "dose_response_qualification": main_effects,
         "dose_rms_strictly_increasing": dose_monotone,
-        "history_residual_replay_sensitivity_alpha2_rms": replay_rms,
+        "dose_design_reference": dose_reference,
+        "dose_calibration": dose_calibration,
+        "paired_minimum_separation_gate": paired_separation_gates,
+        "history_residual_replay_sensitivity_alpha2_rms": (
+            replay_alpha2_rms
+        ),
+        "history_residual_replay_sensitivity_max_dose_rms": replay_rms,
+        "history_residual_replay_sensitivity_applied_alpha": (
+            maximum_applied_alpha
+        ),
         "history_residual_replay_policy": (
             NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
         ),
@@ -1317,8 +1717,17 @@ def fit_nonlinear_persistence_contract(
         failures.append("nonlinear_zero_innovation_future_effect_too_weak")
     if not dose_monotone:
         failures.append("nonlinear_dynamic_dose_rms_not_monotone")
-    if not safe:
-        failures.append("nonlinear_dynamic_rollout_outside_safe_support")
+    if float(dose_reference["monotone_safe_prefix_alpha_max"]) <= 1.0:
+        failures.append("nonlinear_no_safe_monotone_dose_interval")
+    if isinstance(dose_calibration, Mapping):
+        if dose_calibration.get("status") != "available":
+            failures.append("dose_calibration_unavailable")
+        elif dose_mapping_failed:
+            failures.append("contract_source_distance_mapping_unavailable")
+        elif paired_separation_gates is None or not all(
+            bool(gate["accepted"]) for gate in paired_separation_gates
+        ):
+            failures.append("paired_minimum_separation_gate_failed")
     if failures:
         return _unavailable(
             base,
@@ -1354,6 +1763,7 @@ def fit_real_path_dynamic_contract(
     history: np.ndarray,
     *,
     capability_id: str,
+    background_id: str | None = None,
     carrier_period: float,
     secondary_periods: Sequence[float],
     reference_history: np.ndarray,
@@ -1366,6 +1776,7 @@ def fit_real_path_dynamic_contract(
     if capability_id == "predictable_intermittency":
         return fit_predictable_intermittency_contract(
             history,
+            background_id=background_id,
             carrier_period=carrier_period,
             secondary_periods=secondary_periods,
             reference_history=reference_history,
@@ -1378,6 +1789,7 @@ def fit_real_path_dynamic_contract(
     if capability_id == "nonlinear_persistence":
         return fit_nonlinear_persistence_contract(
             history,
+            background_id=background_id,
             carrier_period=carrier_period,
             secondary_periods=secondary_periods,
             reference_history=reference_history,
@@ -1395,7 +1807,10 @@ def validate_real_path_dynamic_contract(contract: Mapping[str, Any]) -> None:
     expected = payload.pop("capability_contract_sha256", None)
     if not isinstance(expected, str) or expected != _payload_sha256(payload):
         raise ValueError("real-path dynamic capability contract hash mismatch")
-    if contract.get("schema") != REAL_PATH_DYNAMIC_CONTRACT_SCHEMA:
+    if contract.get("schema") not in {
+        REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+        LEGACY_REAL_PATH_DYNAMIC_CONTRACT_SCHEMA,
+    }:
         raise ValueError("unsupported real-path dynamic capability schema")
     if contract.get("capability_id") not in REAL_PATH_DYNAMIC_CAPABILITIES:
         raise ValueError("unsupported real-path dynamic capability id")
@@ -1414,7 +1829,7 @@ def _shared_metadata(
     contract: Mapping[str, Any],
     model: Mapping[str, Any],
 ) -> dict[str, Any]:
-    return {
+    metadata = {
         "capability_id": str(contract["capability_id"]),
         "contract_sha256": str(model["model_sha256"]),
         "capability_contract_sha256": str(
@@ -1448,6 +1863,47 @@ def _shared_metadata(
         "carrier_fixed": True,
         "dose_response_law": str(model["dose_response_law"]),
     }
+    if isinstance(contract.get("dose_calibration"), Mapping):
+        metadata["dose_calibration"] = dict(contract["dose_calibration"])
+    if isinstance(contract.get("dose_design_reference"), Mapping):
+        metadata["dose_design_reference"] = dict(
+            contract["dose_design_reference"]
+        )
+    return metadata
+
+
+def _dose_gate_for_alpha(
+    contract: Mapping[str, Any],
+    *,
+    alpha: float,
+) -> dict[str, Any] | None:
+    calibration = contract.get("dose_calibration")
+    if not isinstance(calibration, Mapping) or alpha == 1.0:
+        return None
+    if calibration.get("status") != "available":
+        raise ValueError("dynamic contract has no available dose calibration")
+    selected_index = next(
+        (
+            index
+            for index, candidate in enumerate(
+                calibration["applied_alpha_grid"],
+                start=1,
+            )
+            if abs(float(candidate) - alpha) <= 1e-12
+        ),
+        None,
+    )
+    if selected_index is None:
+        raise ValueError("dynamic alpha is not on the frozen capability grid")
+    gates = contract.get("paired_minimum_separation_gate")
+    if not isinstance(gates, list) or len(gates) != len(
+        calibration["applied_alpha_grid"]
+    ):
+        raise ValueError("dynamic contract lacks paired separation gates")
+    gate = gates[selected_index - 1]
+    if not isinstance(gate, Mapping) or gate.get("accepted") is not True:
+        raise ValueError("dynamic dose failed paired minimum separation")
+    return dict(gate)
 
 
 def apply_real_path_dynamic_contract(
@@ -1482,6 +1938,7 @@ def apply_real_path_dynamic_contract(
         raise ValueError("dynamic baseline source history hash mismatch")
     model = contract["model"]
     capability_id = str(contract["capability_id"])
+    paired_gate = _dose_gate_for_alpha(contract, alpha=alpha)
     requested_future_policy = (
         str(model.get("future_innovation_policy"))
         if future_innovation_policy is None
@@ -1531,6 +1988,44 @@ def apply_real_path_dynamic_contract(
             raise ValueError("nonlinear treatment left the qualified support")
         delta = np.concatenate((history_delta, future_delta))
     augmented = baseline + delta
+    if paired_gate is not None:
+        gate_index = int(paired_gate["dose_index"])
+        previous_delta: np.ndarray | None = None
+        if gate_index > 1:
+            previous_alpha = float(
+                contract["dose_calibration"]["applied_alpha_grid"][
+                    gate_index - 2
+                ]
+            )
+            if capability_id == "predictable_intermittency":
+                previous_delta = (previous_alpha - 1.0) * np.asarray(
+                    model["event_component"],
+                    dtype=float,
+                )
+            else:
+                previous_history_delta, previous_future_delta, _previous = (
+                    _dynamic_effect(
+                        latent,
+                        innovations,
+                        alpha=previous_alpha,
+                        model=model,
+                        future_innovations=replay_innovations,
+                    )
+                )
+                previous_delta = np.concatenate(
+                    (previous_history_delta, previous_future_delta)
+                )
+        paired_gate = paired_minimum_separation_gate(
+            delta,
+            context_length=_CONTEXT_LENGTH,
+            dose_index=gate_index,
+            dose_calibration=contract["dose_calibration"],
+            affected_channel_indices=(0,),
+            scale_by_channel=contract["normalization_scale_by_target"],
+            previous_delta=previous_delta,
+        )
+        if paired_gate.get("accepted") is not True:
+            raise ValueError("dynamic dose failed paired minimum separation")
     visible_delta = delta[_VISIBLE_START:]
     metadata = {
         **_shared_metadata(contract, model),
@@ -1538,6 +2033,9 @@ def apply_real_path_dynamic_contract(
         "intervention_rms": float(np.sqrt(np.mean(visible_delta**2))),
         "visible_history_effect_rms": float(
             np.sqrt(np.mean(delta[_VISIBLE_START:_CONTEXT_LENGTH] ** 2))
+        ),
+        "fixed_context_effect_rms": float(
+            np.sqrt(np.mean(delta[_FIXED_START:_CONTEXT_LENGTH] ** 2))
         ),
         "future_effect_rms": float(
             np.sqrt(np.mean(delta[_CONTEXT_LENGTH:] ** 2))
@@ -1553,6 +2051,7 @@ def apply_real_path_dynamic_contract(
         "amplitude_modulation_fixed": True,
         "regime_level_shift_fixed": True,
         "future_component_source": contract["future_component_source"],
+        "paired_minimum_separation_gate": paired_gate,
     }
     if capability_id == "predictable_intermittency":
         clock = model["clock"]
@@ -1593,6 +2092,12 @@ def apply_real_path_dynamic_contract(
                 ),
                 "history_residual_replay_sensitivity_alpha2_rms": contract[
                     "history_residual_replay_sensitivity_alpha2_rms"
+                ],
+                "history_residual_replay_sensitivity_max_dose_rms": contract[
+                    "history_residual_replay_sensitivity_max_dose_rms"
+                ],
+                "history_residual_replay_sensitivity_applied_alpha": contract[
+                    "history_residual_replay_sensitivity_applied_alpha"
                 ],
                 "history_residual_replay_policy": contract[
                     "history_residual_replay_policy"

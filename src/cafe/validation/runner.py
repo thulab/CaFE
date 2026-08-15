@@ -12,7 +12,6 @@ import numpy as np
 
 from cafe import protocol
 from cafe.generation.real_counterfactuals import (
-    REAL_ANCHORED_ALPHAS,
     REAL_ANCHORED_BACKGROUND_SCHEMA,
     REAL_ANCHORED_MASTER_SCHEMA,
     REAL_ANCHORED_SUPPORTED_CAPABILITIES,
@@ -27,6 +26,11 @@ from cafe.generation.real_anchored_policy import (
     NONLINEAR_FUTURE_INNOVATION_MAIN_POLICY,
     NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY,
     QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
+)
+from cafe.generation.real_anchored_dose import (
+    paired_minimum_separation_gate,
+    validate_dose_calibration,
 )
 from cafe.generation.reference_bank import (
     validate_evaluation_qualification_policy,
@@ -34,7 +38,6 @@ from cafe.generation.reference_bank import (
 )
 from cafe.generation.structural_real_counterfactuals import (
     FORMAL_PANEL_MINIMUM_DIMENSION,
-    STRUCTURAL_ALPHAS,
     STRUCTURAL_ABLATION_SCHEMA,
     STRUCTURAL_BACKGROUND_SCHEMA,
     STRUCTURAL_CAPABILITY_ROW_SCHEMA,
@@ -400,7 +403,357 @@ def _same_finite_float(*values: Any) -> bool:
     )
 
 
-def _validate_v3_reference_bank_chain(
+def _validated_row_dose_calibration(
+    row: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a self-hash-valid v4 dose mapping, or ``None`` on failure."""
+
+    calibration = row.get("dose_calibration")
+    if not isinstance(calibration, dict):
+        return None
+    try:
+        validate_dose_calibration(
+            calibration,
+            capability_id=str(row.get("capability_id", "")),
+        )
+    except (TypeError, ValueError):
+        return None
+    if calibration.get("status") != "available":
+        return None
+    return calibration
+
+
+def _v4_dose_row_checks(row: dict[str, Any]) -> dict[str, bool]:
+    """Validate canonical lambda versus capability-specific physical alpha."""
+
+    calibration = _validated_row_dose_calibration(row)
+    member = row.get("counterfactual_member")
+    dose_index = row.get("dose_index")
+    valid_index = bool(
+        calibration is not None
+        and isinstance(dose_index, int)
+        and 1 <= dose_index <= len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+    )
+    if valid_index:
+        assert calibration is not None
+        assert isinstance(dose_index, int)
+        strength = float(calibration["strength_grid"][dose_index - 1])
+        treatment_alpha = float(
+            calibration["applied_alpha_grid"][dose_index - 1]
+        )
+    else:
+        strength = math.nan
+        treatment_alpha = math.nan
+    member_strength = 0.0 if member == 0 else strength
+    member_alpha = 1.0 if member == 0 else treatment_alpha
+    intensity_calibration = row.get("intensity_calibration")
+    sampled = row.get("sampled_generator_parameters")
+    metadata = row.get("generation_metadata")
+    calibration_hash = (
+        None
+        if calibration is None
+        else calibration.get(
+            "dose_policy_sha256",
+            calibration.get("policy_sha256"),
+        )
+    )
+    exposed_hashes = [
+        value
+        for value in (
+            row.get("dose_calibration_policy_sha256"),
+            (
+                intensity_calibration.get("dose_calibration_policy_sha256")
+                if isinstance(intensity_calibration, dict)
+                else None
+            ),
+            (
+                row.get("parameter_sampling", {}).get(
+                    "dose_calibration_policy_sha256"
+                )
+                if isinstance(row.get("parameter_sampling"), dict)
+                else None
+            ),
+            (
+                metadata.get("dose_calibration_policy_sha256")
+                if isinstance(metadata, dict)
+                else None
+            ),
+        )
+        if value is not None
+    ]
+    gate = row.get("paired_minimum_separation_gate")
+    gate_declaration_valid = bool(
+        isinstance(gate, dict)
+        and (
+            (
+                member == 0
+                and gate.get("status") == "not_applicable"
+                and gate.get("accepted") is None
+                and gate.get("reason_code")
+                == "repeated_authentic_baseline_member"
+                and gate.get("paired_treatment_gate_status") == "passed"
+            )
+            or (
+                member == 1
+                and gate.get("status") == "passed"
+                and gate.get("accepted") is True
+                and gate.get("reason_code") is None
+            )
+        )
+        and gate.get("dose_index") == dose_index
+        and gate.get("dose_calibration_policy_sha256") == calibration_hash
+    )
+    return {
+        "dose_calibration_self_hash_valid": calibration is not None,
+        "dose_index_valid": bool(
+            valid_index and row.get("intensity") == dose_index
+        ),
+        "canonical_strength_grid_exact": bool(
+            calibration is not None
+            and calibration.get("strength_grid")
+            == list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+        ),
+        "intensity_calibration_mapping_exact": bool(
+            calibration is not None
+            and isinstance(intensity_calibration, dict)
+            and intensity_calibration.get("canonical_strength_grid")
+            == calibration.get("strength_grid")
+            and intensity_calibration.get("selected_alphas")
+            == calibration.get("applied_alpha_grid")
+            and intensity_calibration.get(
+                "dose_calibration_policy_sha256"
+            )
+            == calibration_hash
+        ),
+        "dose_semantics_valid": bool(
+            valid_index
+            and member in (0, 1)
+            and row.get("dose_parameter") == "canonical_strength_lambda"
+            and row.get("physical_dose_parameter")
+            == "controlled_component_multiplier_alpha"
+            and _same_finite_float(row.get("baseline_dose_value"), 0.0)
+            and _same_finite_float(row.get("dose_value"), member_strength)
+            and _same_finite_float(
+                row.get("intensity_lambda"), member_strength
+            )
+            and _same_finite_float(
+                row.get("paired_treatment_strength"), strength
+            )
+            and _same_finite_float(row.get("applied_alpha"), member_alpha)
+            and _same_finite_float(
+                row.get("paired_treatment_applied_alpha"), treatment_alpha
+            )
+            and isinstance(sampled, dict)
+            and _same_finite_float(sampled.get("alpha"), member_alpha)
+            and (
+                sampled.get("canonical_strength") is None
+                or _same_finite_float(
+                    sampled.get("canonical_strength"), member_strength
+                )
+            )
+            and isinstance(metadata, dict)
+            and _same_finite_float(metadata.get("alpha"), member_alpha)
+            and (
+                metadata.get("canonical_strength") is None
+                or _same_finite_float(
+                    metadata.get("canonical_strength"), member_strength
+                )
+            )
+        ),
+        "dose_calibration_hash_exposure_exact": bool(
+            _is_sha256(calibration_hash)
+            and exposed_hashes
+            and all(value == calibration_hash for value in exposed_hashes)
+        ),
+        "paired_separation_gate_declared": gate_declaration_valid,
+    }
+
+
+def _affected_channel_indices_from_row(
+    row: dict[str, Any],
+    *,
+    target_dim: int,
+) -> list[int] | None:
+    """Reconstruct the capability-declared channel mask used by the gate."""
+
+    capability_id = str(row.get("capability_id", ""))
+    metadata = row.get("generation_metadata")
+    if not isinstance(metadata, dict) or target_dim < 1:
+        return None
+    if row.get("generator_family_role") == "real_anchored":
+        return [0] if target_dim == 1 else None
+    raw: Any
+    if capability_id == "common_factor":
+        loadings = metadata.get("response_loadings")
+        if not isinstance(loadings, list) or len(loadings) != target_dim:
+            return None
+        try:
+            absolute = np.abs(np.asarray(loadings, dtype=float))
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(absolute).all() or float(np.max(absolute)) <= 0.0:
+            return None
+        raw = np.flatnonzero(
+            absolute / float(np.max(absolute)) >= 0.25
+        ).tolist()
+    elif capability_id == "cross_series_dependence":
+        raw = metadata.get("responder_indices")
+    elif capability_id == "covariate_response":
+        raw = metadata.get("eligible_target_indices")
+    else:
+        return None
+    if not isinstance(raw, list):
+        return None
+    try:
+        affected = [int(value) for value in raw]
+    except (TypeError, ValueError):
+        return None
+    if (
+        not affected
+        or len(affected) != len(set(affected))
+        or min(affected) < 0
+        or max(affected) >= target_dim
+    ):
+        return None
+    return affected
+
+
+def _numerically_equal_json(left: Any, right: Any) -> bool:
+    """Compare persisted numerical evidence after JSON float round-tripping."""
+
+    if isinstance(left, dict) and isinstance(right, dict):
+        return bool(
+            set(left) == set(right)
+            and all(_numerically_equal_json(left[key], right[key]) for key in left)
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return bool(
+            len(left) == len(right)
+            and all(
+                _numerically_equal_json(a, b)
+                for a, b in zip(left, right, strict=True)
+            )
+        )
+    if (
+        isinstance(left, (int, float))
+        and not isinstance(left, bool)
+        and isinstance(right, (int, float))
+        and not isinstance(right, bool)
+    ):
+        return bool(
+            math.isfinite(float(left))
+            and math.isfinite(float(right))
+            and math.isclose(
+                float(left),
+                float(right),
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            )
+        )
+    return left == right
+
+
+def _paired_gate_replay_checks(
+    ordered_pairs: list[dict[str, Any]],
+) -> dict[str, bool]:
+    """Replay absolute and adjacent L168/H48 gates from observed pair deltas."""
+
+    if len(ordered_pairs) != len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID):
+        return {
+            "paired_minimum_separation_gate_exact": False,
+            "absolute_minimum_separation_passed": False,
+            "adjacent_minimum_separation_passed": False,
+            "affected_channel_mask_exact": False,
+        }
+    previous_delta: np.ndarray | None = None
+    exact = True
+    absolute = True
+    adjacent = True
+    masks = True
+    for pair in ordered_pairs:
+        treatment = pair["treatment"]
+        baseline = pair["baseline"]
+        delta = np.asarray(pair["delta"], dtype=float)
+        calibration = _validated_row_dose_calibration(treatment)
+        baseline_calibration = _validated_row_dose_calibration(baseline)
+        affected = _affected_channel_indices_from_row(
+            treatment,
+            target_dim=delta.shape[1],
+        )
+        treatment_metadata = treatment.get("generation_metadata")
+        scale_by_channel = (
+            treatment_metadata.get("normalization_scale_by_target")
+            if treatment.get("generator_family_role") == "real_anchored"
+            and isinstance(treatment_metadata, dict)
+            else None
+        )
+        if (
+            calibration is None
+            or baseline_calibration != calibration
+            or affected is None
+        ):
+            exact = absolute = adjacent = masks = False
+            previous_delta = delta
+            continue
+        try:
+            expected = paired_minimum_separation_gate(
+                delta,
+                context_length=int(treatment["context_length"]),
+                dose_index=int(treatment["dose_index"]),
+                dose_calibration=calibration,
+                affected_channel_indices=affected,
+                scale_by_channel=scale_by_channel,
+                previous_delta=previous_delta,
+            )
+        except (KeyError, TypeError, ValueError):
+            exact = absolute = adjacent = masks = False
+            previous_delta = delta
+            continue
+        stored = treatment.get("paired_minimum_separation_gate")
+        metadata = treatment.get("generation_metadata")
+        metadata_gate = (
+            metadata.get("paired_minimum_separation_gate")
+            if isinstance(metadata, dict)
+            else None
+        )
+        exact = bool(
+            exact
+            and _numerically_equal_json(stored, expected)
+            and (
+                metadata_gate is None
+                or _numerically_equal_json(metadata_gate, expected)
+            )
+        )
+        absolute = bool(
+            absolute
+            and expected.get("macro_passed") is True
+            and expected.get("channel_coverage_passed") is True
+            and expected.get("local_augmentation_budget_passed") is True
+        )
+        adjacent = bool(adjacent and expected.get("adjacent_accepted") is True)
+        masks = bool(
+            masks and expected.get("affected_channel_indices") == affected
+        )
+        previous_delta = delta
+    return {
+        "paired_minimum_separation_gate_exact": exact,
+        "absolute_minimum_separation_passed": absolute,
+        "adjacent_minimum_separation_passed": adjacent,
+        "affected_channel_mask_exact": masks,
+    }
+
+
+def _paired_group_checks_pass(checks: dict[str, bool]) -> bool:
+    """Require source-distance and budget gates; keep adjacency diagnostic."""
+
+    return all(
+        value
+        for name, value in checks.items()
+        if name != "adjacent_minimum_separation_passed"
+    )
+
+
+def _validate_reference_bank_chain(
     bundle_files: dict[str, Any],
     qualification_policy: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -415,7 +768,7 @@ def _validate_v3_reference_bank_chain(
     missing = sorted(required - set(bundle_files))
     if missing:
         raise ValueError(
-            "v3 calibration bundle lacks reference-bank evidence: "
+            "v4 calibration bundle lacks reference-bank evidence: "
             + ", ".join(missing)
         )
 
@@ -564,14 +917,14 @@ def _validated_structural_donor_commitments(
     return trusted
 
 
-def _current_v3_row_replay_evidence(
+def _current_v4_row_replay_evidence(
     *,
     bundle_files: dict[str, Any],
     config: dict[str, Any],
     dataset_id: str,
     seed_indexes: list[int],
 ) -> dict[str, Any]:
-    """Recreate every declared v3 main row from bundle-bound calibration."""
+    """Recreate every declared v4 main row from bundle-bound calibration."""
 
     required = {
         "real_anchored_backgrounds",
@@ -584,7 +937,7 @@ def _current_v3_row_replay_evidence(
     missing = sorted(required - set(bundle_files))
     if missing:
         raise ValueError(
-            "v3 calibration bundle lacks row replay evidence: "
+            "v4 calibration bundle lacks row replay evidence: "
             + ", ".join(missing)
         )
 
@@ -770,7 +1123,7 @@ def _current_v3_row_replay_evidence(
         if (
             background is None
             or row.get("schema_version")
-            != "cafe.real_anchored_background_capability.v3"
+            != "cafe.real_anchored_background_capability.v4"
             or row.get("dataset_id") != dataset_id
             or capability_id not in REAL_ANCHORED_SUPPORTED_CAPABILITIES
             or identity in real_contract_identities
@@ -819,7 +1172,7 @@ def _current_v3_row_replay_evidence(
         or len(requested) != len(set(requested))
         or not isinstance(real_config, dict)
     ):
-        raise ValueError("v3 generation capability request is invalid")
+        raise ValueError("v4 generation capability request is invalid")
     available_real = tuple(
         capability_id
         for capability_id in available_real_anchored_capabilities(
@@ -845,7 +1198,7 @@ def _current_v3_row_replay_evidence(
         field in real_config for field in sensitivity_fields
     ):
         raise ValueError(
-            "v3 auxiliary sensitivity declaration is incomplete"
+            "v4 auxiliary sensitivity declaration is incomplete"
         )
     raw_sensitivity_capabilities = real_config.get(
         "structural_sensitivity_capabilities",
@@ -860,7 +1213,7 @@ def _current_v3_row_replay_evidence(
         or len(raw_sensitivity_capabilities)
         != len(set(raw_sensitivity_capabilities))
     ):
-        raise ValueError("v3 structural sensitivity capabilities are invalid")
+        raise ValueError("v4 structural sensitivity capabilities are invalid")
     sensitivity_capabilities = tuple(raw_sensitivity_capabilities)
     available_sensitivity = set(
         available_structural_sensitivity_capabilities(
@@ -886,12 +1239,12 @@ def _current_v3_row_replay_evidence(
         for capability_id in sensitivity_capabilities
     ):
         raise ValueError(
-            "v3 structural sensitivity capability is not contract-eligible"
+            "v4 structural sensitivity capability is not contract-eligible"
         )
     if real_config.get("calibrated_available_capabilities") != list(
         available_real
     ):
-        raise ValueError("v3 calibrated capability declaration is not replayable")
+        raise ValueError("v4 calibrated capability declaration is not replayable")
 
     real_expected = list(
         iter_real_anchored_samples(
@@ -899,7 +1252,6 @@ def _current_v3_row_replay_evidence(
             real_contracts,
             capability_ids=available_real,
             seed_indexes=seed_indexes,
-            alphas=REAL_ANCHORED_ALPHAS,
         )
     )
     nonlinear_replay_expected = (
@@ -908,7 +1260,6 @@ def _current_v3_row_replay_evidence(
                 real_backgrounds,
                 real_contracts,
                 seed_indexes=seed_indexes,
-                alphas=REAL_ANCHORED_ALPHAS,
             )
         )
         if "nonlinear_persistence" in available_real
@@ -922,7 +1273,6 @@ def _current_v3_row_replay_evidence(
                 for row in structural_contracts
                 if row.get("capability_id") in available_structural
             ],
-            alphas=STRUCTURAL_ALPHAS,
             seed_indexes=seed_indexes,
         )
     )
@@ -935,7 +1285,6 @@ def _current_v3_row_replay_evidence(
                 if row.get("capability_id") in sensitivity_capabilities
                 and row.get("sensitivity_available") is True
             ],
-            alphas=STRUCTURAL_ALPHAS,
             sensitivity=True,
             seed_indexes=seed_indexes,
         )
@@ -960,20 +1309,20 @@ def _current_v3_row_replay_evidence(
     )
     expected_generated = [*generated_real, *generated_structural]
     if real_config.get("generated_capabilities") != expected_generated:
-        raise ValueError("v3 generated capability declaration is not replayable")
+        raise ValueError("v4 generated capability declaration is not replayable")
     if real_config.get("structural_main_count") != len(structural_expected):
-        raise ValueError("v3 structural main count is not replayable")
+        raise ValueError("v4 structural main count is not replayable")
     if real_config.get("nonlinear_replay_sensitivity_count", 0) != len(
         nonlinear_replay_expected
     ):
-        raise ValueError("v3 nonlinear replay count is not replayable")
+        raise ValueError("v4 nonlinear replay count is not replayable")
     if (
         real_config.get("structural_sensitivity_main_count")
         != len(structural_sensitivity_expected)
         or real_config.get("structural_sensitivity_input_ablation_count")
         != len(structural_sensitivity_expected)
     ):
-        raise ValueError("v3 structural sensitivity count is not replayable")
+        raise ValueError("v4 structural sensitivity count is not replayable")
 
     def by_sample_id(
         rows: list[dict[str, Any]],
@@ -986,7 +1335,7 @@ def _current_v3_row_replay_evidence(
         return mapped
 
     return {
-        "schema_version": "cafe.real_anchored_row_replay_evidence.v1",
+        "schema_version": "cafe.real_anchored_row_replay_evidence.v2",
         "dataset_id": dataset_id,
         "seed_indexes": list(seed_indexes),
         "univariate_expected_rows": by_sample_id(
@@ -1018,7 +1367,7 @@ def validate_generation_manifest_contract(
     seed_count: int,
     replay_evidence_out: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate generation identity and v3 upstream bindings before row reads."""
+    """Validate generation identity and current upstream bindings before reads."""
 
     if replay_evidence_out is not None:
         replay_evidence_out.clear()
@@ -1027,6 +1376,8 @@ def validate_generation_manifest_contract(
         "cafe.generation_manifest.v1": "cafe.generation_config.v1",
         "cafe.generation_manifest.v2": "cafe.generation_config.v2",
         "cafe.generation_manifest.v3": "cafe.generation_config.v3",
+        "cafe.generation_manifest.v4": "cafe.generation_config.v4",
+        "cafe.generation_manifest.v5": "cafe.generation_config.v5",
     }
     if schema not in schema_pairs:
         raise ValueError(f"unsupported generation manifest schema: {schema!r}")
@@ -1075,41 +1426,98 @@ def validate_generation_manifest_contract(
             "generation manifest is missing required files: "
             + ", ".join(missing_base)
         )
-    if schema != "cafe.generation_manifest.v3":
+    if schema in {
+        "cafe.generation_manifest.v1",
+        "cafe.generation_manifest.v2",
+    }:
         return config
 
-    required_v3_files = {
+    # Pre-v5 manifests remain readable only with an empty real-anchor
+    # component. Their earlier dose semantics are never regenerated or ranked.
+    if schema in {
+        "cafe.generation_manifest.v3",
+        "cafe.generation_manifest.v4",
+    }:
+        real_config = config.get("real_anchored_counterfactual")
+        real_record = files.get("real_anchored_counterfactuals")
+        generated = (
+            real_config.get("generated_capabilities")
+            if isinstance(real_config, dict)
+            else None
+        )
+        counts = (
+            [
+                real_config.get(field, 0)
+                for field in (
+                    "structural_main_count",
+                    "structural_input_ablation_count",
+                    "structural_sensitivity_main_count",
+                    "structural_sensitivity_input_ablation_count",
+                    "nonlinear_replay_sensitivity_count",
+                )
+            ]
+            if isinstance(real_config, dict)
+            else []
+        )
+        if (
+            not isinstance(real_config, dict)
+            or generated != []
+            or any(value != 0 for value in counts)
+            or (
+                real_record is not None
+                and (
+                    not isinstance(real_record, dict)
+                    or real_record.get("row_count") != 0
+                )
+            )
+            or real_config.get("included_in_synthetic_ranking") is not False
+        ):
+            raise ValueError(
+                "pre-v5 real-anchored rows are legacy and cannot enter v5 "
+                "validation"
+            )
+        return config
+
+    required_v4_files = {
         "real_anchored_counterfactuals",
         "real_anchored_availability",
         "structural_real_anchored_availability",
     }
-    missing_v3 = sorted(required_v3_files - set(files))
-    if missing_v3:
+    missing_v4 = sorted(required_v4_files - set(files))
+    if missing_v4:
         raise ValueError(
-            "v3 generation manifest is missing bound artifacts: "
-            + ", ".join(missing_v3)
+            "v4 generation manifest is missing bound artifacts: "
+            + ", ".join(missing_v4)
         )
     real_config = config.get("real_anchored_counterfactual")
     if not isinstance(real_config, dict):
-        raise ValueError("v3 generation config lacks real-anchored contract")
+        raise ValueError("v4 generation config lacks real-anchored contract")
     upstream_pipeline_schema = real_config.get(
         "upstream_real_anchored_protocol"
     )
     supported_upstream_schemas = {
         "cafe.pipeline.v1",
         "cafe.pipeline.v2",
+        "cafe.pipeline.v3",
+        "cafe.pipeline.v4",
         protocol.SCHEMA_VERSION,
     }
     if upstream_pipeline_schema not in supported_upstream_schemas:
-        raise ValueError("v3 generation config has unsupported upstream protocol")
+        raise ValueError("v4 generation config has unsupported upstream protocol")
     if real_config.get("included_in_synthetic_ranking") is not False:
         raise ValueError("real-anchored track entered the synthetic ranking")
     if real_config.get("formal_panel_minimum_dimension") != 3:
-        raise ValueError("v3 generation config changed the formal panel minimum")
+        raise ValueError("v4 generation config changed the formal panel minimum")
     if real_config.get("hierarchy_policy") != (
         "qualification_only_zero_generation_rows"
     ):
-        raise ValueError("v3 generation config changed hierarchy policy")
+        raise ValueError("v4 generation config changed hierarchy policy")
+    if real_config.get("paired_minimum_separation") != (
+        "mandatory_treatment_source_l168_distance_with_budget_v1"
+    ):
+        raise ValueError(
+            "v4 generation config changed paired minimum-separation policy"
+        )
 
     bundle_path = calibration_dir / "calibration_bundle.json"
     if not bundle_path.is_file():
@@ -1118,7 +1526,9 @@ def validate_generation_manifest_contract(
     expected_bundle_schema = {
         "cafe.pipeline.v1": "cafe.calibration_bundle.v1",
         "cafe.pipeline.v2": "cafe.calibration_bundle.v2",
-        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v3",
+        "cafe.pipeline.v3": "cafe.calibration_bundle.v3",
+        "cafe.pipeline.v4": "cafe.calibration_bundle.v4",
+        protocol.SCHEMA_VERSION: "cafe.calibration_bundle.v5",
     }[upstream_pipeline_schema]
     if bundle.get("schema_version") != expected_bundle_schema:
         raise ValueError(
@@ -1208,7 +1618,7 @@ def validate_generation_manifest_contract(
     real_record = files["real_anchored_counterfactuals"]
     real_row_count = real_record.get("row_count")
     if not isinstance(real_row_count, int) or real_row_count < 0:
-        raise ValueError("v3 real-anchored row count is invalid")
+        raise ValueError("v4 real-anchored row count is invalid")
     if real_availability.get("generated_master_count") != real_row_count:
         raise ValueError("real availability row-count binding mismatch")
     if real_config.get("structural_main_count") != (
@@ -1245,9 +1655,13 @@ def validate_generation_manifest_contract(
         structural_availability.get("hierarchical_coherence_generation_count")
         != 0
     ):
-        raise ValueError("hierarchy rows were declared in v3 availability")
+        raise ValueError("hierarchy rows were declared in v4 availability")
 
-    if upstream_pipeline_schema in {"cafe.pipeline.v1", "cafe.pipeline.v2"}:
+    if upstream_pipeline_schema in {
+        "cafe.pipeline.v1",
+        "cafe.pipeline.v2",
+        "cafe.pipeline.v3",
+    }:
         if files.get("structural_donor_commitments") is not None:
             raise ValueError("legacy generation declared donor commitments")
         if real_config.get("structural_donor_commitment") is not None:
@@ -1289,13 +1703,13 @@ def validate_generation_manifest_contract(
 
     qualification_hash = real_config.get("qualification_policy_sha256")
     if not _is_sha256(qualification_hash):
-        raise ValueError("v3 generation config qualification hash is invalid")
+        raise ValueError("v4 generation config qualification hash is invalid")
     if real_config.get("qualification_threshold_source") != (
         QUALIFICATION_THRESHOLD_SOURCE_POLICY
     ):
-        raise ValueError("v3 generation qualification threshold source changed")
+        raise ValueError("v4 generation qualification threshold source changed")
     if real_config.get("legacy_upstream_component_policy") is not None:
-        raise ValueError("v3 generation config unexpectedly declares legacy mode")
+        raise ValueError("v4 generation config unexpectedly declares legacy mode")
     policy_record = bundle_files.get("real_anchored_qualification_policy")
     if not isinstance(policy_record, dict):
         raise ValueError("calibration bundle lacks qualification policy file")
@@ -1312,7 +1726,49 @@ def validate_generation_manifest_contract(
         "frozen_qualification_policy_sha256"
     ) != qualification_hash:
         raise ValueError("structural availability qualification binding mismatch")
-    _validate_v3_reference_bank_chain(bundle_files, qualification_policy)
+    capability_cells = qualification_policy.get("capabilities")
+    dose_policy = qualification_policy.get("dose_policy")
+    if not isinstance(capability_cells, dict) or not isinstance(
+        dose_policy, dict
+    ):
+        raise ValueError("v4 qualification policy lacks frozen dose mappings")
+    expected_dose_hashes: dict[str, str] = {}
+    expected_alpha_grids: dict[str, list[float]] = {}
+    for capability_id, cell in sorted(capability_cells.items()):
+        calibration = (
+            cell.get("dose_calibration")
+            if isinstance(cell, dict)
+            else None
+        )
+        if not isinstance(calibration, dict):
+            raise ValueError("v4 qualification capability lacks dose mapping")
+        validate_dose_calibration(
+            calibration,
+            capability_id=str(capability_id),
+        )
+        if calibration.get("status") == "available":
+            expected_dose_hashes[str(capability_id)] = str(
+                calibration["policy_sha256"]
+            )
+            expected_alpha_grids[str(capability_id)] = [
+                float(value)
+                for value in calibration["applied_alpha_grid"]
+            ]
+    if (
+        real_config.get("dose_parameter") != "canonical_strength_lambda"
+        or real_config.get("canonical_strength_grid")
+        != list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+        or real_config.get("dose_policy_sha256")
+        != dose_policy.get("dose_policy_sha256")
+        or real_config.get("dose_calibration_sha256_by_capability")
+        != expected_dose_hashes
+        or real_config.get("applied_alpha_grid_by_capability")
+        != expected_alpha_grids
+        or real_config.get("applied_alpha_scope")
+        != "contract_specific_history_only"
+    ):
+        raise ValueError("v4 generation dose-policy binding mismatch")
+    _validate_reference_bank_chain(bundle_files, qualification_policy)
     evaluation_contracts = [
         *protocol.iter_jsonl(
             Path(bundle_files["real_anchored_contracts"]["path"])
@@ -1323,6 +1779,42 @@ def validate_generation_manifest_contract(
             )
         ),
     ]
+    generated_dose_capabilities = set(
+        real_config.get("generated_capabilities", [])
+    ) | set(real_config.get("structural_sensitivity_capabilities", []))
+    resolved_grids: dict[str, list[list[float]]] = {}
+    for row in evaluation_contracts:
+        capability_id = str(row.get("capability_id", ""))
+        if capability_id not in generated_dose_capabilities:
+            continue
+        calibration = row.get("dose_calibration")
+        if not isinstance(calibration, dict):
+            contract = row.get("contract")
+            if isinstance(contract, dict):
+                calibration = contract.get("dose_calibration")
+        if not isinstance(calibration, dict):
+            continue
+        grid = [
+            float(value)
+            for value in calibration.get("applied_alpha_grid", [])
+        ]
+        if len(grid) == len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID):
+            resolved_grids.setdefault(capability_id, []).append(grid)
+    expected_alpha_ranges = {
+        capability_id: [
+            {
+                "minimum": min(grid[index] for grid in grids),
+                "maximum": max(grid[index] for grid in grids),
+            }
+            for index in range(len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID))
+        ]
+        for capability_id, grids in sorted(resolved_grids.items())
+        if grids
+    }
+    if real_config.get("applied_alpha_range_by_capability") != (
+        expected_alpha_ranges
+    ):
+        raise ValueError("generation contract-specific alpha ranges mismatch")
     validate_evaluation_qualification_policy(
         evaluation_contracts,
         qualification_policy,
@@ -1333,7 +1825,7 @@ def validate_generation_manifest_contract(
         expected_bundle_hash=expected_bundle_hash,
         dataset_id=dataset_id,
     )
-    replay_evidence = _current_v3_row_replay_evidence(
+    replay_evidence = _current_v4_row_replay_evidence(
         bundle_files=bundle_files,
         config=config,
         dataset_id=dataset_id,
@@ -1361,7 +1853,7 @@ def validate_generation_manifest_contract(
         + sensitivity_ablation_count
         != real_row_count
     ):
-        raise ValueError("v3 real-anchored row count is not replayable")
+        raise ValueError("v4 real-anchored row count is not replayable")
     if replay_evidence_out is not None:
         replay_evidence_out.update(replay_evidence)
     return config
@@ -1565,13 +2057,17 @@ def _univariate_real_anchored_counterfactual_checks(
 
         member_valid = isinstance(member, int) and member in (0, 1)
         current_schema = row.get("schema_version") == REAL_ANCHORED_MASTER_SCHEMA
+        v4_dose_checks = (
+            _v4_dose_row_checks(row) if current_schema else {}
+        )
         dose_index = row.get("dose_index")
         dose_index_valid = bool(
             isinstance(dose_index, int)
             and dose_index >= 1
             and (
                 not current_schema
-                or dose_index <= len(REAL_ANCHORED_ALPHAS)
+                or dose_index
+                <= len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
             )
         )
         alpha_values = (
@@ -1592,13 +2088,22 @@ def _univariate_real_anchored_counterfactual_checks(
             )
             and (
                 not current_schema
-                or alpha_values == list(REAL_ANCHORED_ALPHAS)
+                or (
+                    _validated_row_dose_calibration(row) is not None
+                    and alpha_values
+                    == _validated_row_dose_calibration(row).get(
+                        "applied_alpha_grid"
+                    )
+                )
             )
         )
-        alpha = row.get("dose_value")
+        alpha = (
+            row.get("applied_alpha")
+            if current_schema
+            else row.get("dose_value")
+        )
         exposed_alphas = [
             alpha,
-            row.get("intensity_lambda"),
             metadata.get("alpha") if isinstance(metadata, dict) else None,
             (
                 sampled_parameters.get("alpha")
@@ -1779,8 +2284,14 @@ def _univariate_real_anchored_counterfactual_checks(
             "dose_index_valid": bool(
                 dose_index_valid
                 and row.get("intensity") == dose_index
-                and row.get("dose_parameter") == "alpha"
-                and _same_finite_float(row.get("baseline_dose_value"), 1.0)
+                and (
+                    v4_dose_checks.get("dose_index_valid", False)
+                    if current_schema
+                    else row.get("dose_parameter") == "alpha"
+                    and _same_finite_float(
+                        row.get("baseline_dose_value"), 1.0
+                    )
+                )
             ),
             "alpha_grid_valid": alpha_grid_valid,
             "alpha_exposure_consistent": bool(
@@ -1807,6 +2318,8 @@ def _univariate_real_anchored_counterfactual_checks(
                 "reason_code": "intentional_real_anchor_counterfactual",
             },
         }
+        if current_schema:
+            checks.update(v4_dose_checks)
         if expected_replay_rows is not None:
             checks.update(
                 _upstream_main_row_replay_checks(
@@ -1837,6 +2350,10 @@ def _univariate_real_anchored_counterfactual_checks(
         "seed_index",
         "dose_index",
         "intensity",
+        "paired_treatment_strength",
+        "paired_treatment_applied_alpha",
+        "dose_calibration_policy_sha256",
+        "dose_calibration",
         "background_id",
         "anchor_id",
         "shared_standardization",
@@ -1926,7 +2443,19 @@ def _univariate_real_anchored_counterfactual_checks(
                         "baseline_member_exact": bool(
                             _same_finite_float(
                                 baseline.get("dose_value"),
-                                1.0,
+                                (
+                                    0.0
+                                    if baseline.get("schema_version")
+                                    == REAL_ANCHORED_MASTER_SCHEMA
+                                    else 1.0
+                                ),
+                            )
+                            and (
+                                baseline.get("schema_version")
+                                != REAL_ANCHORED_MASTER_SCHEMA
+                                or _same_finite_float(
+                                    baseline.get("applied_alpha"), 1.0
+                                )
                             )
                             and isinstance(
                                 baseline.get("generation_metadata"),
@@ -2016,6 +2545,8 @@ def _univariate_real_anchored_counterfactual_checks(
         "baseline_history_sha256",
         "baseline_future_sha256",
         "baseline_target_sha256",
+        "dose_calibration_policy_sha256",
+        "dose_calibration",
         "parameter_sampling",
         "intensity_calibration",
     )
@@ -2035,6 +2566,15 @@ def _univariate_real_anchored_counterfactual_checks(
                 for pair in ordered_pairs
             ]
             treatment_alphas = [
+                float(
+                    pair["treatment"].get(
+                        "applied_alpha",
+                        pair["treatment"]["dose_value"],
+                    )
+                )
+                for pair in ordered_pairs
+            ]
+            treatment_strengths = [
                 float(pair["treatment"]["dose_value"])
                 for pair in ordered_pairs
             ]
@@ -2060,6 +2600,7 @@ def _univariate_real_anchored_counterfactual_checks(
             delta_rms = []
             metadata_rms = []
             selected_alphas = []
+            treatment_strengths = []
         baseline_targets = [
             np.asarray(pair["baseline_target"], dtype=float)
             for pair in ordered_pairs
@@ -2163,7 +2704,18 @@ def _univariate_real_anchored_counterfactual_checks(
             ),
             "frozen_treatment_grid_exact": bool(
                 not current_group_schema
-                or selected_alphas == list(REAL_ANCHORED_ALPHAS)
+                or (
+                    len(group_rows)
+                    == 2 * len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+                    and treatment_strengths
+                    == list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+                    and _validated_row_dose_calibration(group_rows[0])
+                    is not None
+                    and selected_alphas
+                    == _validated_row_dose_calibration(group_rows[0]).get(
+                        "applied_alpha_grid"
+                    )
+                )
             ),
             "dose_indexes_match_grid": dose_indexes
             == list(range(1, len(selected_alphas) + 1)),
@@ -2278,7 +2830,9 @@ def _univariate_real_anchored_counterfactual_checks(
                 )
             ),
         }
-        if not all(checks.values()):
+        if current_group_schema:
+            checks.update(_paired_gate_replay_checks(ordered_pairs))
+        if not _paired_group_checks_pass(checks):
             group_failures.append(
                 {
                     "paired_group_id": group_id,
@@ -2348,7 +2902,7 @@ def _univariate_real_anchored_counterfactual_checks(
         and not upstream_replay_coverage_failures
     )
     return {
-        "schema_version": "cafe.real_anchored_validation.v2",
+        "schema_version": "cafe.real_anchored_validation.v5",
         "status": "evaluated",
         "accepted": accepted,
         "sample_count": len(rows),
@@ -2464,14 +3018,7 @@ def _nonlinear_replay_sensitivity_checks(
             if isinstance(calibration, dict)
             else None
         )
-        alpha = row.get("dose_value")
-        sampled = row.get("sampled_generator_parameters")
-        exposed_alphas = (
-            alpha,
-            row.get("intensity_lambda"),
-            metadata.get("alpha") if isinstance(metadata, dict) else None,
-            sampled.get("alpha") if isinstance(sampled, dict) else None,
-        )
+        v4_dose_checks = _v4_dose_row_checks(row)
         source_identity_exact = bool(
             source is not None
             and source.get("evaluation_table")
@@ -2498,6 +3045,13 @@ def _nonlinear_replay_sensitivity_checks(
                     "anchor_id",
                     "parameter_sampling",
                     "intensity_calibration",
+                    "dose_calibration",
+                    "dose_calibration_policy_sha256",
+                    "dose_value",
+                    "intensity_lambda",
+                    "paired_treatment_strength",
+                    "applied_alpha",
+                    "paired_treatment_applied_alpha",
                 )
             )
         )
@@ -2579,22 +3133,11 @@ def _nonlinear_replay_sensitivity_checks(
                 and _is_sha256(metadata.get("future_innovation_sha256"))
             ),
             "frozen_treatment_grid_exact": selected_alphas
-            == list(REAL_ANCHORED_ALPHAS),
+            == (
+                _validated_row_dose_calibration(row) or {}
+            ).get("applied_alpha_grid"),
             "dose_and_alpha_valid": bool(
-                member_valid
-                and isinstance(row.get("dose_index"), int)
-                and 1 <= int(row["dose_index"]) <= len(REAL_ANCHORED_ALPHAS)
-                and row.get("intensity") == row.get("dose_index")
-                and row.get("dose_parameter") == "alpha"
-                and _same_finite_float(*exposed_alphas)
-                and (
-                    _same_finite_float(alpha, 1.0)
-                    if member == 0
-                    else _same_finite_float(
-                        alpha,
-                        REAL_ANCHORED_ALPHAS[int(row["dose_index"]) - 1],
-                    )
-                )
+                member_valid and all(v4_dose_checks.values())
             ),
             **_upstream_main_row_replay_checks(
                 row,
@@ -2602,6 +3145,7 @@ def _nonlinear_replay_sensitivity_checks(
                 expected=expected,
             ),
         }
+        checks.update(v4_dose_checks)
         if not all(checks.values()):
             row_failures.append(
                 {
@@ -2638,6 +3182,10 @@ def _nonlinear_replay_sensitivity_checks(
                     "background_id",
                     "anchor_id",
                     "intensity_calibration",
+                    "dose_calibration",
+                    "dose_calibration_policy_sha256",
+                    "paired_treatment_strength",
+                    "paired_treatment_applied_alpha",
                     "excluded_from_primary_score",
                 ),
             ),
@@ -2659,7 +3207,10 @@ def _nonlinear_replay_sensitivity_checks(
                 checks.update(
                     {
                         "baseline_member_exact": bool(
-                            _same_finite_float(baseline.get("dose_value"), 1.0)
+                            _same_finite_float(baseline.get("dose_value"), 0.0)
+                            and _same_finite_float(
+                                baseline.get("applied_alpha"), 1.0
+                            )
                             and baseline.get("intervention_delta_sha256")
                             == array_sha256(np.zeros_like(baseline_target))
                         ),
@@ -2692,6 +3243,7 @@ def _nonlinear_replay_sensitivity_checks(
                     "baseline": baseline,
                     "treatment": treatment,
                     "baseline_target": baseline_target,
+                    "delta": delta,
                 }
         if not all(checks.values()):
             pair_failures.append(
@@ -2711,17 +3263,35 @@ def _nonlinear_replay_sensitivity_checks(
             int(pair["treatment"].get("dose_index", -1)) for pair in pairs
         ]
         treatment_alphas = [
+            float(pair["treatment"].get("applied_alpha", math.nan))
+            for pair in pairs
+        ]
+        treatment_strengths = [
             float(pair["treatment"].get("dose_value", math.nan))
             for pair in pairs
         ]
         baselines = [pair["baseline_target"] for pair in pairs]
         checks = {
             "complete_frozen_grid": bool(
-                len(group_rows) == 2 * len(REAL_ANCHORED_ALPHAS)
-                and len(pairs) == len(REAL_ANCHORED_ALPHAS)
+                len(group_rows)
+                == 2 * len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+                and len(pairs)
+                == len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
                 and dose_indexes
-                == list(range(1, len(REAL_ANCHORED_ALPHAS) + 1))
-                and treatment_alphas == list(REAL_ANCHORED_ALPHAS)
+                == list(
+                    range(
+                        1,
+                        len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID) + 1,
+                    )
+                )
+                and treatment_strengths
+                == list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+                and _validated_row_dose_calibration(group_rows[0])
+                is not None
+                and treatment_alphas
+                == _validated_row_dose_calibration(group_rows[0]).get(
+                    "applied_alpha_grid"
+                )
             ),
             "duplicate_baselines_are_exact": bool(
                 baselines
@@ -2740,7 +3310,8 @@ def _nonlinear_replay_sensitivity_checks(
                 == 1
             ),
         }
-        if not all(checks.values()):
+        checks.update(_paired_gate_replay_checks(pairs))
+        if not _paired_group_checks_pass(checks):
             group_failures.append(
                 {"paired_group_id": group_id, "checks": checks}
             )
@@ -3007,11 +3578,10 @@ def _structural_real_anchored_checks(
             and _is_sha256(metadata.get("truth_delta_sha256"))
         )
         member_valid = isinstance(member, int) and member in (0, 1)
-        alpha = row.get("dose_value")
+        v4_dose_checks = _v4_dose_row_checks(row)
+        alpha = row.get("applied_alpha")
         exposed_alphas = (
             alpha,
-            row.get("intensity_lambda"),
-            row.get("applied_alpha"),
             metadata.get("alpha") if isinstance(metadata, dict) else None,
             (
                 sampled_parameters.get("alpha")
@@ -3048,7 +3618,11 @@ def _structural_real_anchored_checks(
                     selected_alphas[1:],
                 )
             )
-            and selected_alphas == list(STRUCTURAL_ALPHAS)
+            and _validated_row_dose_calibration(row) is not None
+            and selected_alphas
+            == _validated_row_dose_calibration(row).get(
+                "applied_alpha_grid"
+            )
         )
         panel_dimension_valid = bool(
             isinstance(target_dim, int)
@@ -3209,10 +3783,9 @@ def _structural_real_anchored_checks(
                 isinstance(row.get("dose_index"), int)
                 and 1
                 <= int(row["dose_index"])
-                <= len(STRUCTURAL_ALPHAS)
+                <= len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
                 and row.get("intensity") == row.get("dose_index")
-                and row.get("dose_parameter") == "alpha"
-                and _same_finite_float(row.get("baseline_dose_value"), 1.0)
+                and v4_dose_checks.get("dose_index_valid", False)
             ),
             "alpha_grid_valid": alpha_grid_valid,
             "normalization_reference_valid": standardization_valid,
@@ -3231,6 +3804,7 @@ def _structural_real_anchored_checks(
                 "reason_code": "intentional_real_anchor_counterfactual",
             },
         }
+        checks.update(v4_dose_checks)
         if (
             sensitivity_row
             or expected_replay_rows is not None
@@ -3264,6 +3838,8 @@ def _structural_real_anchored_checks(
         "seed_index",
         "dose_index",
         "intensity",
+        "paired_treatment_strength",
+        "paired_treatment_applied_alpha",
         "background_id",
         "anchor_id",
         "target_dim",
@@ -3277,6 +3853,8 @@ def _structural_real_anchored_checks(
         "mase_scale_fallback_target_indices",
         "mase_scale_policy",
         "mase_scale_source",
+        "dose_calibration_policy_sha256",
+        "dose_calibration",
         "parameter_sampling",
         "intensity_calibration",
         "mandatory_input_ablation",
@@ -3342,7 +3920,10 @@ def _structural_real_anchored_checks(
                 checks.update(
                     {
                         "baseline_member_exact": bool(
-                            _same_finite_float(baseline.get("dose_value"), 1.0)
+                            _same_finite_float(baseline.get("dose_value"), 0.0)
+                            and _same_finite_float(
+                                baseline.get("applied_alpha"), 1.0
+                            )
                             and _same_finite_float(
                                 baseline.get("target_feature_value"),
                                 0.0,
@@ -3434,7 +4015,14 @@ def _structural_real_anchored_checks(
             dose_indexes = [
                 int(pair["treatment"]["dose_index"]) for pair in ordered
             ]
-            alphas = [float(pair["treatment"]["dose_value"]) for pair in ordered]
+            alphas = [
+                float(pair["treatment"]["applied_alpha"])
+                for pair in ordered
+            ]
+            strengths = [
+                float(pair["treatment"]["dose_value"])
+                for pair in ordered
+            ]
             selected_alphas = [
                 float(value)
                 for value in group_rows[0]["intensity_calibration"][
@@ -3446,6 +4034,7 @@ def _structural_real_anchored_checks(
             ordered = []
             dose_indexes = []
             alphas = []
+            strengths = []
             selected_alphas = []
             rms_values = []
         baseline_targets = [
@@ -3471,7 +4060,13 @@ def _structural_real_anchored_checks(
                 and len(group_rows) == 2 * len(selected_alphas)
             ),
             "frozen_treatment_grid_exact": (
-                selected_alphas == list(STRUCTURAL_ALPHAS)
+                strengths == list(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
+                and _validated_row_dose_calibration(group_rows[0])
+                is not None
+                and selected_alphas
+                == _validated_row_dose_calibration(group_rows[0]).get(
+                    "applied_alpha_grid"
+                )
             ),
             "dose_indexes_match_grid": dose_indexes
             == list(range(1, len(selected_alphas) + 1)),
@@ -3504,7 +4099,8 @@ def _structural_real_anchored_checks(
                 )
             ),
         }
-        if not all(checks.values()):
+        checks.update(_paired_gate_replay_checks(ordered))
+        if not _paired_group_checks_pass(checks):
             group_failures.append(
                 {
                     "paired_group_id": group_id,
@@ -3553,13 +4149,10 @@ def _structural_real_anchored_checks(
             ),
             "source_main_exists": source is not None,
             "frozen_treatment_grid_exact": bool(
-                isinstance(row.get("intensity_calibration"), dict)
-                and row["intensity_calibration"].get("selected_alphas")
-                == list(STRUCTURAL_ALPHAS)
+                all(_v4_dose_row_checks(row).values())
                 and isinstance(row.get("dose_index"), int)
-                and 1
-                <= int(row["dose_index"])
-                <= len(STRUCTURAL_ALPHAS)
+                and 1 <= int(row["dose_index"])
+                <= len(REAL_ANCHORED_CANONICAL_STRENGTH_GRID)
             ),
             "excluded_from_primary_score": bool(
                 row.get("excluded_from_primary_score") is True
@@ -3689,6 +4282,24 @@ def _structural_real_anchored_checks(
                 == source.get("capability_id")
                 and committed_entry.get("dose_index")
                 == source.get("dose_index")
+                and committed_entry.get("intensity_lambda")
+                == source.get("intensity_lambda")
+                and committed_entry.get("paired_treatment_strength")
+                == source.get("paired_treatment_strength")
+                and (
+                    donor is None
+                    or committed_entry.get("applied_alpha")
+                    == donor.get("applied_alpha")
+                )
+                and (
+                    donor is None
+                    or committed_entry.get(
+                        "paired_treatment_applied_alpha"
+                    )
+                    == donor.get("paired_treatment_applied_alpha")
+                )
+                and committed_entry.get("dose_calibration_policy_sha256")
+                == source.get("dose_calibration_policy_sha256")
                 and committed_entry.get("counterfactual_member")
                 == source.get("counterfactual_member")
                 and committed_entry.get("evaluation_table")
@@ -3848,6 +4459,14 @@ def _structural_real_anchored_checks(
                             "mase_scale_by_target",
                             "shared_standardization",
                             "intensity_calibration",
+                            "dose_calibration",
+                            "dose_calibration_policy_sha256",
+                            "dose_value",
+                            "intensity_lambda",
+                            "paired_treatment_strength",
+                            "applied_alpha",
+                            "paired_treatment_applied_alpha",
+                            "paired_minimum_separation_gate",
                         )
                     ),
                     "mandatory_contract_shared": bool(
@@ -4191,7 +4810,7 @@ def real_anchored_counterfactual_checks(
     donor_commitment_root_sha256: str | None = None,
     upstream_replay_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate v3 real-path rows while retaining the v1/v2 univariate track."""
+    """Validate v4 real-path rows and isolate legacy empty components."""
 
     univariate_rows: list[dict[str, Any]] = []
     nonlinear_replay_rows: list[dict[str, Any]] = []
@@ -4383,7 +5002,7 @@ def real_anchored_counterfactual_checks(
         structural["effective_background_count_by_capability"]
     )
     return {
-        "schema_version": "cafe.real_anchored_validation.v3",
+        "schema_version": "cafe.real_anchored_validation.v5",
         "status": "evaluated",
         "accepted": accepted,
         "sample_count": len(rows),
@@ -4588,7 +5207,7 @@ def main() -> int:
         and real_anchored_validation["accepted"]
     )
     report = {
-        "schema_version": "cafe.generation_validation.v2",
+        "schema_version": "cafe.generation_validation.v5",
         "created_at": protocol.utc_now(),
         "dataset_id": dataset.dataset_id,
         "generation_manifest": str(manifest_path),

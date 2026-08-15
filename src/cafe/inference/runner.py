@@ -44,7 +44,7 @@ MODEL_EXECUTION_CONFIG = {
     # the main native-target mix and a hierarchy/covariate request mix. The x8
     # preset below overrides whole-service concurrency where applicable.
     "Timer-4.0": {
-        "replicas_per_device": 4,
+        "replicas_per_device": 1,
         "http_concurrency": 32,
         "task_batch_size": 192,
         "transport": "msgpack_bulk",
@@ -56,7 +56,7 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "Chronos-2": {
-        "replicas_per_device": 2,
+        "replicas_per_device": 1,
         "http_concurrency": 16,
         "task_batch_size": 192,
         "transport": "msgpack_bulk",
@@ -68,13 +68,13 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "toto2.0": {
-        "replicas_per_device": 2,
+        "replicas_per_device": 1,
         "http_concurrency": 16,
         "task_batch_size": 4,
         "transport": "msgpack_bulk",
     },
     "timesfm2.5": {
-        "replicas_per_device": 4,
+        "replicas_per_device": 1,
         "http_concurrency": 32,
         "task_batch_size": 64,
         "transport": "msgpack_bulk",
@@ -2208,6 +2208,12 @@ def optional_real_anchored_source_record(
         label="real-anchored counterfactual source",
         validate_row_count=True,
     )
+    # Legacy generation manifests may carry an immutable, empty optional
+    # component.  Keep that absence backward-compatible instead of emitting
+    # an empty task component that could later be mistaken for a rankable
+    # real-anchored protocol.
+    if int(record["row_count"]) == 0:
+        return None
     return record
 
 
@@ -2219,6 +2225,7 @@ def validate_inference_task_manifest_files(
     if task_manifest.get("schema_version") not in {
         "cafe.inference_task_manifest.v1",
         "cafe.inference_task_manifest.v2",
+        "cafe.inference_task_manifest.v3",
     }:
         raise ValueError("unsupported Paper-cafe inference task manifest")
     task_components = task_manifest.get("task_components")
@@ -2404,8 +2411,30 @@ def prepare_view_tasks(
             **protocol.file_record(real_anchored_task_path),
             "row_count": real_anchored_view_count,
         }
+    generation_real_anchored_config = generation_manifest.get(
+        "config",
+        {},
+    ).get("real_anchored_counterfactual")
+    real_anchored_dose_provenance = (
+        {
+            key: generation_real_anchored_config.get(key)
+            for key in (
+                "dose_parameter",
+                "canonical_strength_grid",
+                "applied_alpha_grid_by_capability",
+                "applied_alpha_scope",
+                "applied_alpha_range_by_capability",
+                "dose_calibration_sha256_by_capability",
+                "dose_policy_sha256",
+                "qualification_policy_sha256",
+            )
+        }
+        if real_anchored_source_record is not None
+        and isinstance(generation_real_anchored_config, dict)
+        else None
+    )
     manifest = {
-        "schema_version": "cafe.inference_task_manifest.v2",
+        "schema_version": "cafe.inference_task_manifest.v3",
         "created_at": protocol.utc_now(),
         "generation_config_sha256": generation_manifest["config_sha256"],
         "generation_files": source_records + (
@@ -2420,6 +2449,7 @@ def prepare_view_tasks(
         ),
         "real_anchor_source": real_source_record,
         "real_anchored_source": real_anchored_source_record,
+        "real_anchored_dose_provenance": real_anchored_dose_provenance,
         "context_lengths": list(protocol.VIEW_CONTEXT_LENGTHS),
         "fixed_context_length": protocol.FIXED_CONTEXT_LENGTH,
         "synthetic_view_count": synthetic_view_count,

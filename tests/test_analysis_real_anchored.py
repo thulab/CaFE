@@ -8,6 +8,9 @@ import pytest
 
 from cafe import protocol
 from cafe.analysis import runner
+from cafe.generation.real_anchored_policy import (
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
+)
 
 
 def anchored_sample(
@@ -44,7 +47,12 @@ def anchored_sample(
         "intensity": intensity,
         "seed_index": 7 + background_index,
         "background_id": f"real_background_{background_index}",
-        "dose_value": 1.0 if member == 0 else 1.0 + 0.2 * intensity,
+        "dose_parameter": "canonical_strength_lambda",
+        "dose_value": 0.0 if member == 0 else intensity / 5.0,
+        "paired_treatment_strength": intensity / 5.0,
+        "applied_alpha": 1.0 if member == 0 else 1.0 + 0.3 * intensity,
+        "paired_treatment_applied_alpha": 1.0 + 0.3 * intensity,
+        "dose_calibration_policy_sha256": "d" * 64,
         "context_length": context,
         "horizon": horizon,
         "target_dim": 1,
@@ -62,6 +70,17 @@ def anchored_sample(
 
 def file_record(path: Path, *, row_count: int) -> dict:
     return {**protocol.file_record(path), "row_count": row_count}
+
+
+def test_synthetic_covariate_effect_defaults_to_all_target_channels() -> None:
+    sample = {
+        "capability_id": "covariate_response",
+        "generator_family_role": "primary",
+        "target_dim": 1,
+        "generation_metadata": {},
+    }
+
+    assert runner.effect_channels(sample) == [0]
 
 
 def test_hierarchy_qualification_is_projected_but_never_ranked(
@@ -98,11 +117,22 @@ def test_hierarchy_qualification_is_projected_but_never_ranked(
             },
         },
     }
-    protocol.write_jsonl(qualification_path, [row])
+    unavailable = {
+        "dataset_id": dataset_id,
+        "background_id": "hierarchy-background-unavailable",
+        "capability_id": "hierarchical_coherence",
+        "available": False,
+        "qualification_available": False,
+        "generation_eligible": False,
+        "ranking_eligible": False,
+        "unavailable_reason": "hierarchy qualification requires a declared hierarchy",
+        "contract": None,
+    }
+    protocol.write_jsonl(qualification_path, [unavailable, row])
     files = {
         "structural_hierarchy_qualification": file_record(
             qualification_path,
-            row_count=1,
+            row_count=2,
         )
     }
     bundle = {
@@ -129,6 +159,10 @@ def test_hierarchy_qualification_is_projected_but_never_ranked(
     assert summary["status"] == "qualified"
     assert summary["qualification_background_count"] == 1
     assert summary["passed_background_count"] == 1
+    assert summary["unavailable_background_count"] == 1
+    assert summary["reason_counts"][
+        "hierarchy qualification requires a declared hierarchy"
+    ] == 1
     assert summary["included_in_generation_or_ranking"] is False
     assert summary["rows"][0][
         "mean_contrast_one_step_holdout_r2"
@@ -183,7 +217,38 @@ def test_optional_component_is_backward_compatible_when_absent(
     )
 
 
-def test_legacy_real_anchored_generation_cannot_enter_v3_ranking(
+def test_empty_legacy_optional_component_is_treated_as_absent(
+    tmp_path: Path,
+) -> None:
+    inference_dir = tmp_path / "inference"
+    generation_path = tmp_path / "empty_real_anchored_masters.jsonl"
+    task_path = inference_dir / "empty_real_anchored_views.jsonl"
+    protocol.write_jsonl(generation_path, ())
+    protocol.write_jsonl(task_path, ())
+    component = {
+        **file_record(task_path, row_count=0),
+        "generation_component": file_record(
+            generation_path,
+            row_count=0,
+        ),
+    }
+
+    assert (
+        runner.validated_optional_real_anchored_task_path(
+            inference_dir,
+            {},
+            {
+                "real_anchored_view_count": 0,
+                "task_components": {
+                    "real_anchored_counterfactuals": component,
+                },
+            },
+        )
+        is None
+    )
+
+
+def test_legacy_real_anchored_generation_cannot_enter_v4_ranking(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "manifest__seed_000000_000001.json"
@@ -204,6 +269,104 @@ def test_legacy_real_anchored_generation_cannot_enter_v3_ranking(
 
     with pytest.raises(ValueError, match="legacy real-anchored generation"):
         runner.validated_current_real_anchored_generation_protocol(path)
+
+
+def test_current_real_anchored_generation_binds_frozen_dose_policy(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "manifest__seed_000000_000001.json"
+    alpha_grid = [1.2, 1.4, 1.6, 1.8, 2.0]
+    config = {
+        "schema_version": "cafe.generation_config.v5",
+        "real_anchored_counterfactual": {
+            "upstream_real_anchored_protocol": protocol.SCHEMA_VERSION,
+            "qualification_policy_sha256": "a" * 64,
+            "legacy_upstream_component_policy": None,
+            "generated_capabilities": ["multi_seasonal"],
+            "dose_parameter": "canonical_strength_lambda",
+            "canonical_strength_grid": list(
+                REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+            ),
+            "applied_alpha_grid_by_capability": {
+                "multi_seasonal": [],
+            },
+            "applied_alpha_scope": "contract_specific_history_only",
+            "applied_alpha_range_by_capability": {
+                "multi_seasonal": [
+                    {"minimum": value, "maximum": value}
+                    for value in alpha_grid
+                ],
+            },
+            "dose_calibration_sha256_by_capability": {
+                "multi_seasonal": "b" * 64,
+            },
+            "dose_policy_sha256": "c" * 64,
+            "pairing": (
+                "baseline_lambda0_alpha1_vs_treatment_"
+                "contract_resolved_alpha"
+            ),
+            "paired_minimum_separation": (
+                "mandatory_treatment_source_l168_distance_with_budget_v1"
+            ),
+            "anti_copy": (
+                "not_applicable_intentional_real_anchor_counterfactual"
+            ),
+        },
+    }
+    protocol.write_json(
+        path,
+        {
+            "schema_version": "cafe.generation_manifest.v5",
+            "config": config,
+            "config_sha256": protocol.json_sha256(config),
+        },
+    )
+
+    dose_provenance = {
+        key: config["real_anchored_counterfactual"].get(key)
+        for key in (
+            "dose_parameter",
+            "canonical_strength_grid",
+            "applied_alpha_grid_by_capability",
+            "applied_alpha_scope",
+            "applied_alpha_range_by_capability",
+            "dose_calibration_sha256_by_capability",
+            "dose_policy_sha256",
+            "qualification_policy_sha256",
+        )
+    }
+    task_manifest = {
+        "generation_config_sha256": protocol.json_sha256(config),
+        "real_anchored_dose_provenance": dose_provenance,
+    }
+    binding = runner.validated_current_real_anchored_generation_protocol(
+        path,
+        task_manifest=task_manifest,
+    )
+
+    assert binding["canonical_strength_grid"] == list(
+        REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+    )
+    assert binding["applied_alpha_grid_by_capability"] == {
+        "multi_seasonal": []
+    }
+    assert binding["applied_alpha_range_by_capability"] == {
+        "multi_seasonal": [
+            {"minimum": value, "maximum": value} for value in alpha_grid
+        ]
+    }
+    assert binding["dose_calibration_sha256_by_capability"] == {
+        "multi_seasonal": "b" * 64
+    }
+    task_manifest["real_anchored_dose_provenance"] = {
+        **dose_provenance,
+        "dose_policy_sha256": "0" * 64,
+    }
+    with pytest.raises(ValueError, match="dose provenance differs"):
+        runner.validated_current_real_anchored_generation_protocol(
+            path,
+            task_manifest=task_manifest,
+        )
 
 
 def test_component_validation_binds_generation_and_shared_mase(
@@ -365,6 +528,13 @@ def test_effect_is_treatment_minus_baseline_even_when_rows_are_reversed(
     assert effects[0]["counterfactual_effect_nrmse"] == pytest.approx(0.0)
     assert effects[0]["shared_baseline_mase_scale"] == pytest.approx(2.5)
     assert effects[0]["effect_mae_shared_baseline_mase"] == pytest.approx(0.0)
+    assert effects[0]["dose_parameter"] == "canonical_strength_lambda"
+    assert effects[0]["paired_treatment_strength"] == pytest.approx(0.8)
+    assert effects[0]["applied_alpha"] == pytest.approx(2.2)
+    assert effects[0]["dose_calibration_policy_sha256"] == "d" * 64
+    assert {
+        row["dose_calibration_policy_sha256"] for row in metric_rows
+    } == {"d" * 64}
 
 
 def test_effect_rejects_pair_specific_mase_normalization() -> None:
@@ -470,7 +640,16 @@ def test_real_anchored_scores_use_maximum_available_dose_and_write_separately(
                 "intensity": intensity,
                 "seed_index": 7 + background_index,
                 "background_id": f"real_background_{background_index}",
-                "dose_value": 1.0 + 0.2 * intensity,
+                "dose_parameter": "canonical_strength_lambda",
+                "dose_value": intensity / 5.0,
+                "paired_treatment_strength": intensity / 5.0,
+                "applied_alpha": (
+                    1.0 + 0.3 * intensity + 0.1 * background_index
+                ),
+                "paired_treatment_applied_alpha": (
+                    1.0 + 0.3 * intensity + 0.1 * background_index
+                ),
+                "dose_calibration_policy_sha256": "d" * 64,
                 "counterfactual_effect_nrmse": nrmse,
                 "shared_baseline_mase_scale": 2.5,
                 }
@@ -479,6 +658,22 @@ def test_real_anchored_scores_use_maximum_available_dose_and_write_separately(
     scores = runner.real_anchored_score_table(metrics, effects)
     assert len(scores) == 1
     assert scores[0]["mechanism_intensity"] == 4
+    assert scores[0]["mechanism_canonical_strength"] == pytest.approx(0.8)
+    assert scores[0]["mechanism_applied_alpha"] is None
+    assert scores[0]["mechanism_applied_alpha_minimum"] == pytest.approx(2.2)
+    assert scores[0]["mechanism_applied_alpha_maximum"] == pytest.approx(2.5)
+    assert scores[0]["mechanism_applied_alpha_scope"] == (
+        "contract_specific_history_only"
+    )
+    assert scores[0]["mechanism_applied_alpha_by_background_sha256"] == (
+        protocol.json_sha256(
+            {
+                f"real_background_{index}": 2.2 + 0.1 * index
+                for index in range(4)
+            }
+        )
+    )
+    assert scores[0]["dose_calibration_policy_sha256"] == "d" * 64
     assert scores[0]["mechanism_score"] == pytest.approx(0.2)
     assert scores[0]["ranking_scope"].endswith("never_synthetic")
 
@@ -801,12 +996,41 @@ def prepare_aggregate_experiment(
             },
         )
         generation_config = {
-            "schema_version": "cafe.generation_config.v3",
+            "schema_version": "cafe.generation_config.v5",
             "capabilities": ["multi_seasonal"],
             "real_anchored_counterfactual": {
                 "upstream_real_anchored_protocol": protocol.SCHEMA_VERSION,
                 "qualification_policy_sha256": "a" * 64,
                 "legacy_upstream_component_policy": None,
+                "generated_capabilities": ["multi_seasonal"],
+                "dose_parameter": "canonical_strength_lambda",
+                "canonical_strength_grid": list(
+                    REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+                ),
+                "applied_alpha_grid_by_capability": {
+                    "multi_seasonal": [],
+                },
+                "applied_alpha_scope": "contract_specific_history_only",
+                "applied_alpha_range_by_capability": {
+                    "multi_seasonal": [
+                        {"minimum": value, "maximum": value}
+                        for value in [1.2, 1.4, 1.6, 1.8, 2.0]
+                    ],
+                },
+                "dose_calibration_sha256_by_capability": {
+                    "multi_seasonal": "b" * 64,
+                },
+                "dose_policy_sha256": "c" * 64,
+                "pairing": (
+                    "baseline_lambda0_alpha1_vs_treatment_"
+                    "contract_resolved_alpha"
+                ),
+                "paired_minimum_separation": (
+                    "mandatory_treatment_source_l168_distance_with_budget_v1"
+                ),
+                "anti_copy": (
+                    "not_applicable_intentional_real_anchor_counterfactual"
+                ),
             },
         }
         protocol.write_json(
@@ -815,7 +1039,7 @@ def prepare_aggregate_experiment(
             / "02_generation"
             / f"manifest__{shard_name}.json",
             {
-                "schema_version": "cafe.generation_manifest.v3",
+                "schema_version": "cafe.generation_manifest.v5",
                 "config": generation_config,
                 "config_sha256": protocol.json_sha256(generation_config),
             },

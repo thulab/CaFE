@@ -186,14 +186,81 @@ GIFT-Eval 官方 test-set leaderboard；如报告官方准确率，必须另走�
 不能把该 future 用于分解、availability 或剂量选择。
 
 baseline 先用未修改的 trailing L336 history 计算 location、scale 和 MASE
-denominator，随后同一 pair 的全部 α 共用这组 reference，禁止逐 member 重新
-z-score。真实 baseline（含其 residual 与 held-out innovation）逐点保留；只添加
-history-fitted component delta：
+denominator，随后同一 pair 的全部 treatment 共用这组 reference，禁止逐
+member 重新 z-score。真实 baseline（含其 residual 与 held-out innovation）逐点
+保留；只添加 history-fitted component delta。v5 不再使用跨能力统一的
+$\alpha$ 网格。唯一的跨能力坐标是：
 
 \[
-x^{(c,\alpha)}_t=x_t+(\alpha-1)\widehat M^{(c)}_t,
-\qquad \alpha\in\{1.2,1.4,1.6,1.8,2.0\}.
+\lambda_k\in\{0.2,0.4,0.6,0.8,1.0\},
+\qquad k=1,\ldots,5.
 \]
+
+$\lambda$ 是 canonical strength / dose index；$\alpha$ 仍为受控分量的物理
+multiplier，$\alpha=1$ 是单独的 exact baseline。对 additive 能力：
+
+\[
+x^{(b,c,k)}_t=x_t+(\alpha_{b,c,k}-1)\widehat M^{(b,c)}_t.
+\]
+
+令 $A_{c,b}$ 为 background $b$ 的 affected channels，$s_{b,j}$ 为未修改
+L336 baseline 冻结的通道尺度，$W_H$ 为 fixed-L168，$W_F$ 为 H48。
+使用 affected-channel macro RMS：
+
+\[
+d_W(\Delta;b,c)=\frac1{|A_{c,b}|}\sum_{j\in A_{c,b}}
+\sqrt{\frac1{|W|}\sum_{t\in W}
+\left(\frac{\Delta_{t,j}}{s_{b,j}}\right)^2}.
+\]
+
+对 additive unit-gain component，记 $u^H_{c,b}=d_{W_H}(\widehat M^{(c)})$、
+$u^F_{c,b}=d_{W_F}(\widehat M^{(c)})$。v5 的 treatment-only source-distance
+history 目标为：
+
+\[
+r^H_k=(0.10,0.20,0.30,0.40,0.50),
+\]
+
+\[
+r^F_k=0.15\lambda_k=(0.03,0.06,0.09,0.12,0.15).
+\]
+
+最低档 $0.10$ 在 v5 冻结前的 qualification pilot 中确定：GIFT hourly 的自然
+L168 nearest-neighbor RMS 中位数约为 $0.40$--$0.93$，旧最低档 treatment 常仅
+$0.02$--$0.05$。正式 v5 evaluation 不得据结果再调该门限。
+
+source-time-disjoint reference bank 只用已通过机制门的 evidence 验证并冻结
+目标网格、solver、cap 和 coverage policy；至少 3 条 evidence 且至少 75% 能完整
+求解才 available。每条 evaluation contract 再用自己的 history-only unit response
+确定：
+
+\[
+\boxed{
+\alpha_{b,c,k}=1+\max\left(
+\frac{r^H_k}{u^H_{c,b}},\frac{r^F_k}{u^F_{c,b}}
+\right)
+}.
+\]
+
+additive 绝对上限为 $\alpha\le21$。evaluation 可以在 cap 内调大 multiplier 以越过
+source-distance 门，但不能改变门限、查看真实 H48、clip 曲线或按模型结果选剂量。
+
+nonlinear persistence 使用不同的非比例 mapping。每条 reference contract 在
+$a\in\{1,1.005,\ldots,3\}$ 上计算 history-only initial state、zero-future-innovation
+的 safe 且单调响应曲线；五档目标为：
+
+\[
+r^{H,nl}_k=(0.10,0.125,0.15,0.175,0.20),
+\]
+
+\[
+r^{F,nl}_k=0.10\lambda_k=(0.02,0.04,0.06,0.08,0.10).
+\]
+
+令 $a_{b,k}$ 为该 evaluation contract 同时达到两段目标的最小 safe 候选。
+五档必须严格递增并处于 safe monotone prefix，且 $\alpha\le3$；无解即该
+background fail-closed。reference 至少 3 条、75% 完整可解。history residual
+replay 不参与 mapping。
 
 当前核心单变量定义至少包括：
 
@@ -240,14 +307,27 @@ x^{(c,\alpha)}_t=x_t+(\alpha-1)\widehat M^{(c)}_t,
 - hierarchical coherence 当前只生成 qualification contract 与 raw negativity
   audit，不创建正式 forecast task，也不进入 rank。
 
-资格阈值的数值由协议预声明，不从 reference bank 统计反解，也不用
-evaluation origins 调参。source-time-disjoint reference bank 只负责验证同一
-capability 的 threshold payload 与 policy id 一致，然后冻结其 hash。一个 native
+common factor 的 future state 使用 history-only holdout 选择的有界状态延拓器；
+cross-series 的 driver 同样使用该延拓器，并要求正式 $D\ge3$ panel 至少两个
+稳定 responders。若 history-only H48 response 太弱、需要超过 cap、或 source-distance
+与 augmentation budget 后不足 4 个 authentic backgrounds，仍必须 unavailable。
+hierarchy 仍是
+qualification-only；若其 reference evidence 不足或 dose balance coverage 不合格，
+连 qualification dose mapping 也必须显式 unavailable（raw-support negativity 仍只
+审计，不改变 qualification）。旧曲线图不是 v5 availability 证据。
+
+机制资格阈值由协议预声明，不从 reference bank 统计反解，也不用
+evaluation origins 调参。dose targets、contract-specific solver、caps、最小
+reference $N=3$、source distance $0.10$、目标网格、solver 与 cap 同样预声明。
+source-time-disjoint reference bank 验证 qualification payload 与 solver coverage，
+冻结两者 hash。每个 evaluation contract 只用自己的 history-only response 解
+$\alpha_{b,c,k}$。一个 native
 item 上时间重叠的窗口（含不同 channel）不能跨 reference/evaluation
-bank；最终 evaluation origin 只能复用该 policy id 与 threshold hash，
+bank；最终 evaluation origin 只能复用该 policy id、threshold hash 与 dose hash，
 reference rows 永远不进入推理。
 
-α 是物理 component-amplitude dose，不冒充 synthetic 的 real-q10/q90 I1–I5。
+$\alpha$ 是物理 component-amplitude multiplier，不是跨能力强度，也不冒充
+synthetic 的 real-q10/q90 I1–I5。跨能力只比较 canonical $\lambda_k$。
 real-anchored sample 的 `target_feature` 固定为
 `real_anchored_intervention_rms`；原 synthetic feature coordinate 只作 provenance，
 不能把 intervention RMS 重新标成 `multi_period_score`、`trend_strength` 等经验特征。
@@ -255,6 +335,26 @@ real-anchored sample 的 `target_feature` 固定为
 设计，validation 不将其误判为 synthetic duplicate。anti-copy 对此轨必须记录
 `not_applicable:intentional_real_anchor_counterfactual`，不能全局关闭 synthetic
 near-distance gate。
+
+每个 real-anchored treatment 必须通过 treatment-only source-distance gate；artifact
+为兼容沿用 `paired_minimum_separation` 名称。L168
+treatment-minus-authentic-source macro RMS 至少达到该档目标，最低档为 $0.10$。
+panel 还要求至少 $\lceil|A|/2\rceil$ 个 affected channels 达到单通道门。真实
+$\alpha=1$ baseline 精确保留并豁免。相邻档距离只记录 diagnostic，不作 hard reject。
+
+上界是 local augmentation budget，只约束每档相对真实 baseline 的绝对干预，
+不约束相邻差：
+
+\[
+d_{W_H}(\Delta_k)\le1.0,
+\qquad d_{W_F}(\Delta_k)\le1.0,
+\]
+
+且每个 affected channel 在两段的标准化 RMS 均不得超过 $1.5$。任一档不满足
+source-distance/history-only future 目标或该上界，该 evaluation background 立即
+fail-closed；solver 可以在冻结 cap 内调大 $\alpha$，但不得改阈值或读取真实 H48。
+能力级 reference evidence 不足或 solver coverage 不足则整项 unavailable；background 级失败后，dataset-capability
+仍须剩余至少 4 个 authentic backgrounds 才能进入 formal 轨。
 
 每个 `dataset × capability × background` 在模型推理前冻结 availability；至少四个
 eligible authentic backgrounds 才允许该 dataset-capability 进入正式生成和排名轨道。
@@ -268,8 +368,9 @@ history-only H48 外推的 component/effect RMS。structural contract 则在按 
 L336 标准化后，检查 trailing L336 history 与 H48 component RMS，不把其统称为
 L504 history gate。上述非退化门限均为 baseline L336 scale 的 1%（结构标准化
 坐标中即 0.01），H48 gate 不读取真实 future。这样既避免把数值上非零但实际
-不可见的拟合项当作真实能力，也避免最大剂量的 truth effect 过小而令 effect NRMSE
-失稳。
+不可见的拟合项当作真实能力。v5 dose solver 与 treatment-source distance gate 同时避免
+truth effect 过小而令 effect NRMSE 失稳，以及为追逐微弱 future component 而把
+真实 history 过度放大。
 
 真实 background 是统计单位，不能用多个 synthetic seed 重复包装来扩大样本量。
 每个 dataset-capability 先冻结 eligible background permutation，再以全实验
@@ -287,12 +388,12 @@ real-anchored 的 absolute accuracy 与 mechanism effect 分开报告。对 pair
 \]
 
 保存 treatment MASE、effect NRMSE、effect correlation、amplitude ratio 和以共享
-baseline MASE 归一化的 effect MAE。主机制 rank 只使用 fixed-L168 的最大可用
-dose effect NRMSE；结果写入独立 `real_anchored_scores.json`，不追加到
+baseline MASE 归一化的 effect MAE。主机制 rank 只使用 fixed-L168 的最高
+canonical 档 $\lambda_5=1$ 及其 capability-specific $\alpha_{c,5}$ effect NRMSE；结果写入独立 `real_anchored_scores.json`，不追加到
 `scores.json`，也不参与 synthetic experiment aggregate。
 accuracy 以 authentic background 为统计单位：序列化用于配对的重复 baseline
 只计一次，再与各 treatment dose 各计一次并先在 background 内平均，最后对
-background 等权。mechanism 在最大 dose 上每个 background 恰好一条 effect；
+background 等权。mechanism 在最高 canonical 档上每个 background 恰好一条 effect；
 dataset score 必须记录实际 background count 与 ID-set hash。experiment aggregate
 仍对可用 dataset 等权，不按某个 dataset 的 background 数量池化加权。
 
@@ -493,7 +594,7 @@ selected-I5 的这些结构约束已在校准阶段先做可达性资格检查�
 参考目标的误差。这两项是 construct-alignment audit，不参与逐样本 acceptance，
 也不触发重试。强度有效性由完整 seed batch 上的 I1–I5 聚合响应顺序与跨度回验。
 
-near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有真实 anchor
+synthetic near-distance gate 默认开启，但只承担 anti-copy 语义：先在所有真实 anchor
 内部做 leave-one-out，得到 pooled-z RMS DCR 与 NNDR 的 p01；channel 同时满足
 `DCR <= p01` 和 `NNDR <= p01` 时标记风险。p01 是面向整批数千次查询的保守
 anti-copy 尾部，而不是把单次查询的 p05 假阳性率重复应用到每个样本。单变量样本
@@ -502,7 +603,11 @@ anti-copy 尾部，而不是把单次查询的 p05 假阳性率重复应用到�
 样本污染。若可用真实 anchor masters 少于 12，或 pooled scale 退化，该 gate 会带
 原因记录为 `not_enforced`，不会伪造距离门限。它不使用 held-out，不参与参数标定，
 也不把“像不像真实曲线”当作生成质量目标；可用 `--no-near-distance-gate` 显式旁路并
-记录。
+记录。该 DCR/NNDR 门只对 synthetic anti-copy 生效；real-anchored 是故意复用真实
+baseline，因此必须记录 `not_applicable:intentional_real_anchor_counterfactual`。
+它不能替代、复用或重命名为 real treatment-source distance gate：DCR/NNDR 判断
+synthetic 是否近似复制另一条真实序列；real gate 只判断 treatment 是否与它自己的
+authentic source 至少相距 $0.10$ 个冻结尺度且没有越过 augmentation 上界。
 
 合成 MASE 默认使用真实 anchor 给出的 seasonal lag。对完全确定、精确周期的
 通道，seasonal-naive history error 可能严格为零；该通道显式回退到标准 lag-1
@@ -615,7 +720,7 @@ direct-prefix/tail effect profile，但这些诊断量不与 NRMSE 加权合并�
 它仍计算七个 foundation model 的 fixed/oracle MASE、十个能力的主机制分，
 以及 common/cross/covariate 主分所需的配对反事实 effect；不运行 reference
 baselines、结构正控、split-bank、matched comparison 或 multivariate
-utilization audit。被省略的分析会记录在 v4 analysis manifest 中，不能与
+utilization audit。被省略的分析会记录在 v5 analysis manifest 中，不能与
 `full` profile 静默复用。对既有不可变推理结果的重分析写入新的 experiment
 目录，并在 manifest 中绑定源 inference manifest hash。
 

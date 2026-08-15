@@ -20,7 +20,6 @@ from typing import Any
 from cafe import provenance
 from cafe import protocol
 from cafe.generation.real_counterfactuals import (
-    REAL_ANCHORED_ALPHAS,
     REAL_ANCHORED_GENERATOR_VERSION,
     REAL_ANCHORED_MINIMUM_COMPONENT_RMS_RATIO,
     REAL_ANCHORED_MINIMUM_CYCLES,
@@ -29,6 +28,11 @@ from cafe.generation.real_counterfactuals import (
     REAL_ANCHORED_SUPPORTED_CAPABILITIES,
 )
 from cafe.generation.real_anchored_policy import (
+    REAL_ANCHORED_CANONICAL_STRENGTH_GRID,
+    REAL_ANCHORED_MAXIMUM_AFFECTED_CHANNEL_SEPARATION,
+    REAL_ANCHORED_MAXIMUM_FUTURE_MACRO_SEPARATION,
+    REAL_ANCHORED_MAXIMUM_HISTORY_MACRO_SEPARATION,
+    REAL_ANCHORED_MINIMUM_SEPARATION_ACCEPTANCE_FRACTION,
     REAL_ANCHORED_PROTOCOL_SCHEMA,
     protocol_decisions as real_anchored_protocol_decisions,
 )
@@ -93,6 +97,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed-start", type=int, default=0)
     parser.add_argument("--seed-count", type=int, default=64)
     parser.add_argument("--max-anchors", type=int, default=256)
+    parser.add_argument(
+        "--calibration-sample-seed",
+        type=int,
+        default=protocol.CALIBRATION_SAMPLE_SEED,
+        help=(
+            "Deterministic batch seed for ordinary real calibration and "
+            "real-accuracy forecast origins."
+        ),
+    )
+    parser.add_argument(
+        "--real-anchored-sample-seed",
+        type=int,
+        default=protocol.REAL_ANCHORED_SAMPLE_SEED,
+        help=(
+            "Deterministic batch seed for L504 real-anchored candidate "
+            "origins before reference/evaluation splitting."
+        ),
+    )
     parser.add_argument(
         "--preparation-workers",
         type=int,
@@ -276,6 +298,22 @@ def commands_for_dataset(
                 ),
                 "--max-anchors",
                 str(args.max_anchors),
+                "--calibration-sample-seed",
+                str(
+                    getattr(
+                        args,
+                        "calibration_sample_seed",
+                        protocol.CALIBRATION_SAMPLE_SEED,
+                    )
+                ),
+                "--real-anchored-sample-seed",
+                str(
+                    getattr(
+                        args,
+                        "real_anchored_sample_seed",
+                        protocol.REAL_ANCHORED_SAMPLE_SEED,
+                    )
+                ),
                 "--calibration-seeds",
                 str(args.calibration_seeds),
                 "--max-calibration-seeds",
@@ -450,7 +488,7 @@ def protocol_config(
             "missing model execution configs: " + ", ".join(missing_configs)
         )
     return {
-        "schema_version": "cafe.experiment_protocol.v3",
+        "schema_version": "cafe.experiment_protocol.v5",
         "pipeline_schema_version": protocol.SCHEMA_VERSION,
         "generator_version": protocol.GENERATOR_VERSION,
         "benchmark_tracks": [
@@ -487,7 +525,30 @@ def protocol_config(
             "period_resolution": (
                 "calibration_carrier_plus_separated_history_fft_peaks_v1"
             ),
-            "alpha_grid": list(REAL_ANCHORED_ALPHAS),
+            "canonical_strength_grid": list(
+                REAL_ANCHORED_CANONICAL_STRENGTH_GRID
+            ),
+            "physical_alpha_grid": (
+                "dataset_capability_fixed_reference_q75_mapping"
+            ),
+            "paired_minimum_separation_gate": {
+                "status": "mandatory_not_cli_disableable",
+                "history_window": "trailing_l168",
+                "future_window": "history_only_or_known_future_legal_h48_delta",
+                "minimum_acceptance_fraction": (
+                    REAL_ANCHORED_MINIMUM_SEPARATION_ACCEPTANCE_FRACTION
+                ),
+                "maximum_history_macro_separation": (
+                    REAL_ANCHORED_MAXIMUM_HISTORY_MACRO_SEPARATION
+                ),
+                "maximum_future_macro_separation": (
+                    REAL_ANCHORED_MAXIMUM_FUTURE_MACRO_SEPARATION
+                ),
+                "maximum_affected_channel_separation": (
+                    REAL_ANCHORED_MAXIMUM_AFFECTED_CHANNEL_SEPARATION
+                ),
+                "distinct_from_synthetic_anti_copy": True,
+            },
             "multi_seasonal_intervention": (
                 "fixed_carrier_scale_secondary_harmonic_sum_v1"
             ),
@@ -539,6 +600,20 @@ def protocol_config(
         "seed_start": int(args.seed_start),
         "seed_count": int(args.seed_count),
         "max_anchors": int(args.max_anchors),
+        "calibration_sample_seed": int(
+            getattr(
+                args,
+                "calibration_sample_seed",
+                protocol.CALIBRATION_SAMPLE_SEED,
+            )
+        ),
+        "real_anchored_sample_seed": int(
+            getattr(
+                args,
+                "real_anchored_sample_seed",
+                protocol.REAL_ANCHORED_SAMPLE_SEED,
+            )
+        ),
         "calibration_seeds": int(args.calibration_seeds),
         "max_calibration_seeds": int(args.max_calibration_seeds),
         "generation_acceptance": {
@@ -549,10 +624,14 @@ def protocol_config(
                 "diagnostic_only_primary_feature_anchor_minmax_with_"
                 "0.1_span_each_side_when_real_reference_exists"
             ),
-            "near_distance_enabled": bool(args.near_distance_gate),
-            "near_distance": (
+            "synthetic_near_distance_enabled": bool(args.near_distance_gate),
+            "synthetic_near_distance": (
                 "anchor_internal_leave_one_out_dcr_p01_and_nndr_p01_"
                 "with_multivariate_majority_vote"
+            ),
+            "real_anchored_paired_minimum_separation": (
+                "mandatory_treatment_source_l168_distance_"
+                "with_local_augmentation_budget_v1"
             ),
             "retry_identity": (
                 "formal seed, anchor, sample IDs, and pairing remain fixed"
@@ -746,16 +825,24 @@ def stage_protocol_configs(
     }
     return {
         "calibration": {
-            "schema_version": "cafe.calibration_stage.v3",
+            "schema_version": "cafe.calibration_stage.v5",
             **shared_structure,
             "max_anchors": full_protocol["max_anchors"],
+            "calibration_sample_seed": full_protocol.get(
+                "calibration_sample_seed",
+                protocol.CALIBRATION_SAMPLE_SEED,
+            ),
+            "real_anchored_sample_seed": full_protocol.get(
+                "real_anchored_sample_seed",
+                protocol.REAL_ANCHORED_SAMPLE_SEED,
+            ),
             "calibration_seeds": full_protocol["calibration_seeds"],
             "max_calibration_seeds": full_protocol["max_calibration_seeds"],
             "calibration_path_policy": full_protocol["calibration_path_policy"],
             "execution": preparation_execution,
         },
         "generation": {
-            "schema_version": "cafe.generation_stage.v3",
+            "schema_version": "cafe.generation_stage.v5",
             **shared_structure,
             "generator_version": full_protocol["generator_version"],
             "seed_start": full_protocol["seed_start"],
@@ -765,12 +852,12 @@ def stage_protocol_configs(
             "execution": preparation_execution,
         },
         "validation": {
-            "schema_version": "cafe.validation_stage.v3",
+            "schema_version": "cafe.validation_stage.v5",
             **shared_structure,
             "generator_version": full_protocol["generator_version"],
         },
         "inference": {
-            "schema_version": "cafe.inference_stage.v3",
+            "schema_version": "cafe.inference_stage.v5",
             "dataset_ids": full_protocol["dataset_ids"],
             "seed_start": full_protocol["seed_start"],
             "seed_count": full_protocol["seed_count"],
@@ -790,7 +877,7 @@ def stage_protocol_configs(
             "endpoint_profiles": endpoint_profiles,
         },
         "analysis": {
-            "schema_version": "cafe.analysis_stage.v3",
+            "schema_version": "cafe.analysis_stage.v5",
             "dataset_ids": full_protocol["dataset_ids"],
             "seed_start": full_protocol["seed_start"],
             "seed_count": full_protocol["seed_count"],

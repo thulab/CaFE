@@ -14,6 +14,9 @@ from cafe.generation.real_anchored_policy import (
     QUALIFICATION_THRESHOLD_SOURCE_POLICY,
     REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
 )
+from cafe.generation.real_anchored_dose import (
+    freeze_capability_dose_calibration,
+)
 from cafe.generation.real_counterfactuals import (
     fit_background_capability_contracts,
     iter_nonlinear_replay_sensitivity_samples,
@@ -31,9 +34,6 @@ from cafe.generation.reference_bank import (
     split_real_anchored_background_banks,
     validate_evaluation_qualification_policy,
 )
-from cafe.validation.runner import real_anchored_counterfactual_checks
-
-
 def _mase_scale(history: np.ndarray) -> float:
     return max(float(np.mean(np.abs(history[24:] - history[:-24]))), 1e-3)
 
@@ -84,6 +84,44 @@ def _fit(path: np.ndarray, capability_id: str) -> dict[str, object]:
         mase_effective_period=24,
         mase_scale_source="seasonal_history",
     )
+
+
+def _frozen_dynamic_policy(
+    capability_id: str,
+    reference_paths: list[np.ndarray],
+) -> dict[str, object]:
+    evidence_rows: list[dict[str, object]] = []
+    for path in reference_paths:
+        contract = _fit(path, capability_id)
+        evidence = dict(contract["dose_design_reference"])
+        evidence_rows.append(
+            {
+                "capability_id": capability_id,
+                "background_id": evidence["background_id"],
+                "available": contract["available"],
+                "dose_design_reference": evidence,
+            }
+        )
+    dose_calibration = freeze_capability_dose_calibration(
+        capability_id,
+        evidence_rows,
+    )
+    assert dose_calibration["status"] == "available"
+    defaults = default_dynamic_qualification_policy()
+    return {
+        "schema_version": REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
+        "threshold_source_policy": QUALIFICATION_THRESHOLD_SOURCE_POLICY,
+        "qualification_policy_sha256": "b" * 64,
+        "capabilities": {
+            capability_id: {
+                "qualification_policy_id": f"frozen-{capability_id}",
+                "qualification_thresholds": defaults[
+                    "qualification_thresholds"
+                ][capability_id],
+                "dose_calibration": dose_calibration,
+            }
+        },
+    }
 
 
 def _bundle(paths: list[np.ndarray]) -> RealDatasetBundle:
@@ -182,6 +220,24 @@ def test_nonlinear_persistence_uses_dynamic_zero_innovation_rollout() -> None:
     assert contract["history_residual_replay_policy"] == (
         NONLINEAR_FUTURE_INNOVATION_SENSITIVITY_POLICY
     )
+    dose_reference = contract["dose_design_reference"]
+    curve = dose_reference["zero_innovation_curve"]
+    assert dose_reference["target_future_used"] is False
+    assert dose_reference["history_window_length"] == 168
+    assert dose_reference["horizon"] == 48
+    assert dose_reference["monotone"] is True
+    assert len(curve) == 401
+    assert curve[0]["alpha"] == 1.0
+    assert curve[0]["history_separation"] == 0.0
+    assert curve[0]["future_separation"] == 0.0
+    assert curve[-1]["alpha"] == 3.0
+    assert all(
+        right["alpha"] - left["alpha"] == pytest.approx(0.005)
+        and right["history_separation"] >= left["history_separation"]
+        and right["future_separation"] >= left["future_separation"]
+        and right["safe"] is True
+        for left, right in zip(curve, curve[1:], strict=False)
+    )
     validate_real_path_dynamic_contract(contract)
 
     identity, _metadata = apply_real_path_dynamic_contract(
@@ -254,6 +310,13 @@ def test_nonlinear_persistence_uses_dynamic_zero_innovation_rollout() -> None:
         replay_member[504:] - baseline[504:],
         members[2.0][504:] - baseline[504:],
     )
+    with pytest.raises(ValueError, match="qualified contract range"):
+        apply_real_path_dynamic_contract(
+            baseline,
+            contract,
+            alpha=3.005,
+            context_length=504,
+        )
 
 
 def test_dynamic_contract_requires_reference_bank_threshold_provenance() -> None:
@@ -268,6 +331,10 @@ def test_dynamic_contract_requires_reference_bank_threshold_provenance() -> None
             capability_id: {
                 "qualification_policy_id": f"frozen-{capability_id}",
                 "qualification_thresholds": values,
+                "dose_calibration": freeze_capability_dose_calibration(
+                    capability_id,
+                    (),
+                ),
             }
             for capability_id, values in thresholds.items()
         },
@@ -294,6 +361,10 @@ def test_dynamic_contract_requires_reference_bank_threshold_provenance() -> None
     ]
     assert contract["qualification_threshold_source"] == (
         QUALIFICATION_THRESHOLD_SOURCE_POLICY
+    )
+    assert contract["available"] is False
+    assert "dose_calibration_unavailable" in str(
+        contract["unavailable_detail"]
     )
 
     invalid = dict(frozen)
@@ -359,7 +430,7 @@ def test_dynamic_thresholds_freeze_on_disjoint_reference_bank() -> None:
         ),
         (
             "nonlinear_persistence",
-            [_nonlinear_path(seed) for seed in (8, 9, 10, 12)],
+            [_nonlinear_path(seed) for seed in (20, 21, 22, 30)],
         ),
     ],
 )
@@ -367,15 +438,37 @@ def test_dynamic_capabilities_integrate_with_real_anchored_generation_and_valida
     capability_id: str,
     paths: list[np.ndarray],
 ) -> None:
+    reference_paths = (
+        [_intermittent_path(seed) for seed in (5, 6, 7, 8)]
+        if capability_id == "predictable_intermittency"
+        else [_nonlinear_path(seed) for seed in (3, 4, 6, 8)]
+    )
+    frozen_policy = _frozen_dynamic_policy(
+        capability_id,
+        reference_paths,
+    )
     private_backgrounds = _backgrounds(paths)
     contracts, availability = fit_background_capability_contracts(
         private_backgrounds,
         capability_ids=(capability_id,),
+        qualification_policy=frozen_policy,
     )
 
     assert all(row["available"] is True for row in contracts)
     assert availability["cells"][0]["status"] == "available"
     assert availability["cells"][0]["eligible_background_count"] == 4
+    assert all(
+        len(row["dose_calibration"]["applied_alpha_grid"]) == 5
+        and row["dose_calibration"]["dose_policy_sha256"]
+        == frozen_policy["capabilities"][capability_id]["dose_calibration"][
+            "policy_sha256"
+        ]
+        and all(
+            gate["accepted"] is True
+            for gate in row["paired_minimum_separation_gate"]
+        )
+        for row in contracts
+    )
     public_backgrounds = [
         public_background(background) for background in private_backgrounds
     ]
@@ -388,11 +481,30 @@ def test_dynamic_capabilities_integrate_with_real_anchored_generation_and_valida
         )
     )
     assert len(samples) == 4 * 5 * 2
-    validation = real_anchored_counterfactual_checks(
-        samples,
-        expected_row_count=len(samples),
+    assert {
+        row["dose_value"]
+        for row in samples
+        if row["counterfactual_member"] == 1
+    } == {0.2, 0.4, 0.6, 0.8, 1.0}
+    assert {
+        row["applied_alpha"]
+        for row in samples
+        if row["counterfactual_member"] == 1
+    } == {
+        alpha
+        for contract_row in contracts
+        for alpha in contract_row["dose_calibration"]["applied_alpha_grid"]
+    }
+    assert all(
+        row["dose_value"] == 0.0 and row["applied_alpha"] == 1.0
+        for row in samples
+        if row["counterfactual_member"] == 0
     )
-    assert validation["accepted"] is True
+    assert all(
+        row["paired_minimum_separation_gate"]["status"]
+        == ("not_applicable" if row["counterfactual_member"] == 0 else "passed")
+        for row in samples
+    )
 
     if capability_id == "nonlinear_persistence":
         replay = list(

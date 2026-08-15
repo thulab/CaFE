@@ -45,6 +45,13 @@ def _real_anchored_master(sample_id: str, member: int) -> dict[str, object]:
         "covariate_dim": 0,
         "capability_id": "multi_seasonal",
         "evaluation_table": "real_anchored_counterfactual",
+        "dose_parameter": "canonical_strength_lambda",
+        "dose_index": 3,
+        "dose_value": 0.0 if member == 0 else 0.6,
+        "paired_treatment_strength": 0.6,
+        "applied_alpha": 1.0 if member == 0 else 1.75,
+        "paired_treatment_applied_alpha": 1.75,
+        "dose_calibration_policy_sha256": "d" * 64,
         "generation_metadata": {},
         "future_sha256": hashlib.sha256(future.tobytes()).hexdigest(),
         "target": target.tolist(),
@@ -56,6 +63,27 @@ def test_prepare_view_tasks_adds_fixed_l168_real_anchored_component(
     tmp_path: Path,
 ) -> None:
     generation_manifest = _empty_generation_manifest(tmp_path)
+    generation_manifest["config"] = {
+        "real_anchored_counterfactual": {
+            "dose_parameter": "canonical_strength_lambda",
+            "canonical_strength_grid": [0.2, 0.4, 0.6, 0.8, 1.0],
+            "applied_alpha_grid_by_capability": {
+                "multi_seasonal": [],
+            },
+            "applied_alpha_scope": "contract_specific_history_only",
+            "applied_alpha_range_by_capability": {
+                "multi_seasonal": [
+                    {"minimum": value, "maximum": value}
+                    for value in [1.25, 1.5, 1.75, 2.0, 2.25]
+                ],
+            },
+            "dose_calibration_sha256_by_capability": {
+                "multi_seasonal": "d" * 64,
+            },
+            "dose_policy_sha256": "e" * 64,
+            "qualification_policy_sha256": "f" * 64,
+        },
+    }
     masters_path = tmp_path / "real_anchored__seed_000000_000001.jsonl"
     masters = [
         _real_anchored_master("anchored-m0", 0),
@@ -100,6 +128,30 @@ def test_prepare_view_tasks_adds_fixed_l168_real_anchored_component(
         == protocol.FIXED_CONTEXT_LENGTH + protocol.HORIZON
         for row in views
     )
+    assert {row["dose_value"] for row in views} == {0.0, 0.6}
+    assert {row["applied_alpha"] for row in views} == {1.0, 1.75}
+    assert {
+        row["dose_calibration_policy_sha256"] for row in views
+    } == {"d" * 64}
+    assert manifest["real_anchored_dose_provenance"] == {
+        "dose_parameter": "canonical_strength_lambda",
+        "canonical_strength_grid": [0.2, 0.4, 0.6, 0.8, 1.0],
+        "applied_alpha_grid_by_capability": {
+            "multi_seasonal": [],
+        },
+        "applied_alpha_scope": "contract_specific_history_only",
+        "applied_alpha_range_by_capability": {
+            "multi_seasonal": [
+                {"minimum": value, "maximum": value}
+                for value in [1.25, 1.5, 1.75, 2.0, 2.25]
+            ],
+        },
+        "dose_calibration_sha256_by_capability": {
+            "multi_seasonal": "d" * 64,
+        },
+        "dose_policy_sha256": "e" * 64,
+        "qualification_policy_sha256": "f" * 64,
+    }
     assert views[0]["target"][0] == [
         float(protocol.CONTEXT_LENGTH - protocol.FIXED_CONTEXT_LENGTH)
     ]
@@ -127,6 +179,28 @@ def test_prepare_view_tasks_preserves_legacy_two_component_manifest(
         inference.validate_inference_task_manifest_files(legacy_manifest)
         == task_path
     )
+
+
+def test_empty_legacy_real_anchored_source_remains_component_absent(
+    tmp_path: Path,
+) -> None:
+    generation_manifest = _empty_generation_manifest(tmp_path)
+    masters_path = tmp_path / "empty_real_anchored.jsonl"
+    row_count = protocol.write_jsonl(masters_path, ())
+    generation_manifest["files"][
+        inference.REAL_ANCHORED_GENERATION_FILE_KEY
+    ] = _file_record(masters_path, row_count=row_count)
+
+    _task_path, manifest = inference.prepare_view_tasks(
+        generation_manifest,
+        inference_dir=tmp_path / "inference",
+    )
+
+    assert manifest["real_anchored_view_count"] == 0
+    assert inference.REAL_ANCHORED_GENERATION_FILE_KEY not in manifest[
+        "task_components"
+    ]
+    assert manifest["real_anchored_source"] is None
 
 
 def test_prepare_view_tasks_preserves_real_anchored_auxiliary_table(

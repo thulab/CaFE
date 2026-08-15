@@ -1,9 +1,11 @@
-"""Disjoint qualification/evaluation banks for real-anchored tasks.
+"""Disjoint qualification/evaluation banks for real-anchored v4 tasks.
 
 The split happens after authentic windows have been selected from disjoint
 source strata.  Windows whose source intervals overlap within one native item
 are kept in the same bank, including different channels of a synchronized
-record.  Qualification rows are never emitted as forecast tasks.
+record.  Qualification rows are never emitted as forecast tasks.  Their
+mechanism thresholds and dose evidence freeze one policy; evaluation origins
+can reuse that policy but cannot tune either part.
 """
 
 from __future__ import annotations
@@ -14,6 +16,12 @@ from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from cafe.generation.real_anchored_dose import (
+    build_dose_policy_summary,
+    freeze_capability_dose_calibration,
+    validate_dose_calibration,
+    validate_dose_policy_summary,
+)
 from cafe.generation.real_anchored_policy import (
     QUALIFICATION_THRESHOLD_SOURCE_POLICY,
     REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
@@ -561,6 +569,10 @@ def freeze_real_anchored_qualification_policy(
             if row.get("available") is not True:
                 reason_counts[str(row.get("unavailable_reason", "unknown"))] += 1
         thresholds = dict(threshold_payloads[0])
+        dose_calibration = freeze_capability_dose_calibration(
+            capability_id,
+            rows,
+        )
         capability_policies[capability_id] = {
             "qualification_policy_id": next(iter(policy_ids)),
             "qualification_thresholds": thresholds,
@@ -575,8 +587,10 @@ def freeze_real_anchored_qualification_policy(
             "qualification_threshold_source": (
                 QUALIFICATION_THRESHOLD_SOURCE_POLICY
             ),
+            "dose_calibration": dose_calibration,
         }
 
+    dose_policy = build_dose_policy_summary(capability_policies)
     payload: dict[str, Any] = {
         "schema_version": REAL_ANCHORED_QUALIFICATION_POLICY_SCHEMA,
         "threshold_source_policy": QUALIFICATION_THRESHOLD_SOURCE_POLICY,
@@ -604,6 +618,7 @@ def freeze_real_anchored_qualification_policy(
             "cross_bank_temporal_overlap_count": 0,
         },
         "capabilities": capability_policies,
+        "dose_policy": dose_policy,
         "evaluation_origin_role": "forbidden_for_threshold_tuning",
     }
     payload["qualification_policy_sha256"] = _canonical_hash(payload)
@@ -660,6 +675,7 @@ def unavailable_real_anchored_qualification_policy(
             "cross_bank_temporal_overlap_count": 0,
         },
         "capabilities": {},
+        "dose_policy": build_dose_policy_summary({}),
         "evaluation_origin_role": "forbidden_for_threshold_tuning",
         "formal_real_anchored_status": "unavailable",
         "formal_real_anchored_unavailable_reason": (
@@ -720,6 +736,10 @@ def validate_evaluation_qualification_policy(
     capabilities = qualification_policy.get("capabilities")
     if not isinstance(capabilities, Mapping):
         raise ValueError("qualification policy has no capability thresholds")
+    dose_policy = qualification_policy.get("dose_policy")
+    if not isinstance(dose_policy, Mapping):
+        raise ValueError("qualification policy has no dose-policy binding")
+    validate_dose_policy_summary(dose_policy, capabilities)
     if qualification_policy.get("threshold_source_policy") != (
         QUALIFICATION_THRESHOLD_SOURCE_POLICY
     ):
@@ -736,6 +756,15 @@ def validate_evaluation_qualification_policy(
             raise ValueError(
                 f"qualification policy threshold hash mismatch: {capability_id}"
             )
+        dose_calibration = frozen.get("dose_calibration")
+        if not isinstance(dose_calibration, Mapping):
+            raise ValueError(
+                f"qualification policy dose calibration missing: {capability_id}"
+            )
+        validate_dose_calibration(
+            dose_calibration,
+            capability_id=str(capability_id),
+        )
     for row in evaluation_contract_rows:
         capability_id = str(row.get("capability_id", ""))
         frozen = capabilities.get(capability_id)
@@ -763,6 +792,36 @@ def validate_evaluation_qualification_policy(
         ):
             raise ValueError(
                 f"evaluation threshold source is not reference-frozen: "
+                f"{capability_id}"
+            )
+        frozen_dose = frozen.get("dose_calibration")
+        if not isinstance(frozen_dose, Mapping):
+            raise ValueError(
+                f"evaluation capability has no frozen dose mapping: "
+                f"{capability_id}"
+            )
+        row_dose = row.get("dose_calibration")
+        if not isinstance(row_dose, Mapping):
+            contract = row.get("contract")
+            if isinstance(contract, Mapping):
+                row_dose = contract.get("dose_calibration")
+        if isinstance(row_dose, Mapping):
+            validate_dose_calibration(
+                row_dose,
+                capability_id=capability_id,
+            )
+            row_policy_hash = row_dose.get(
+                "dose_policy_sha256",
+                row_dose.get("policy_sha256"),
+            )
+            if row_policy_hash != frozen_dose.get("policy_sha256"):
+                raise ValueError(
+                    f"evaluation dose mapping differs from reference: "
+                    f"{capability_id}"
+                )
+        elif frozen_dose.get("status") == "available":
+            raise ValueError(
+                f"evaluation contract lacks reference-frozen dose mapping: "
                 f"{capability_id}"
             )
         row_policy_hash = row.get("qualification_policy_sha256")
