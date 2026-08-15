@@ -36,6 +36,10 @@ native: a `[D,T]` target produces one `D`-target instance. Channel splitting,
 when required by a model, is an inference adaptation and is reassembled before
 scoring.
 
+The parity source is pinned to GIFT-Eval revision
+`26df7582a5a2a2ef7602b5ded3a9a12fd4da74b2`,
+`src/gift_eval/data.py`.
+
 Missing history values use history-only linear interpolation with edge hold.
 The future observed mask is retained and metrics use observed cells only.
 

@@ -13,7 +13,10 @@ from cafe import core as protocol
 
 
 GIFT_EVAL_ADAPTER_SCHEMA = "cafe.gift_eval_native_adapter.v1"
-GIFT_EVAL_SOURCE_REVISION = "SalesforceAIResearch/gift-eval:data.py@main"
+GIFT_EVAL_SOURCE_REVISION = (
+    "SalesforceAIResearch/gift-eval@26df7582a5a2a2ef7602b5ded3a9a12fd4da74b2:"
+    "src/gift_eval/data.py"
+)
 SHORT_PREDICTION_LENGTHS = {
     "M": 12,
     "W": 8,
