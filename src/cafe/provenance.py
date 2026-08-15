@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 EXPERIMENT_SCHEMA = "cafe.experiment.v1"
 STAGE_CONTRACT_SCHEMA = "cafe.stage_contract.v1"
-STAGES = ("calibration", "generation", "validation", "inference", "analysis")
+STAGES = ("generation", "validation", "inference", "analysis")
 
 
 def canonical_json(value: Any) -> str:
@@ -108,8 +108,7 @@ def initialize_experiment(
         "created_at": created_at,
         "stage_contract_layout": "stage_contracts/<stage>.json",
         "artifact_layout": (
-            "<dataset_id>/{01_calibration,02_generation,"
-            "03_inference,04_analysis}"
+            "<dataset_id>/{01_generation,02_validation,03_inference,04_analysis}"
         ),
     }
     write_json_once(path, manifest)

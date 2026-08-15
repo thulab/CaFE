@@ -1,51 +1,50 @@
 # Repository Guidelines
 
-## Scope
+## Project
 
-CaFE is a standalone paper experiment repository. It contains real-data
-calibration, deterministic synthetic generation, mechanism validation, model
-inference, and capability/stability analysis. Do not introduce web platform,
-database, API, or persistence-service dependencies.
+CaFE is a Capability-Focused Extension of existing forecasting benchmarks.
+The current adapter reads GIFT-Eval's official test instances and adds paired
+capability treatments directly to their authentic histories and futures.
 
-## Scientific protocol
+## Architecture
 
-- Real calibration history: 168.
-- Synthetic master history: 336.
-- Forecast horizon: 48.
-- Inference views: 96, 168, and 336.
-- Fixed-context main table: 168.
-- Synthetic futures are deterministic.
-- Features and normalization statistics use history only.
-- Paired members preserve seeds, anchors, nuisance paths, and normalization.
-- Real-anchor forecasts are auxiliary and never enter synthetic rankings.
+The active pipeline has four stages:
+
+```text
+official GIFT-Eval instances
+  → generation
+  → validation
+  → inference
+  → analysis
+```
+
+Generation preserves native target dimensions and official forecast origins.
+Treatments cover the complete official input history, while inference applies
+each model's maximum-context truncation afterward. Five capability levels use
+ordered, non-overlapping parameter intervals and deterministic randomness from
+the official instance id, capability, level, and augmentation seed.
 
 ## Stage contracts
 
-`experiment.json` is identity-only. Each stage freezes its own immutable
-contract under `stage_contracts/` when it starts. Downstream stages may be
-created by later Git revisions, but must hash and validate their upstream
-contract. Never overwrite completed artifacts or redefine an existing stage
-contract.
+`experiment.json` stores experiment identity. Stage contracts live under
+`stage_contracts/`, record code and configuration, and hash upstream artifacts.
+Completed experiments remain immutable; a changed protocol uses a new
+experiment id.
 
 ## Development
 
-Use Python type hints, 4-space indentation, and snake_case names.
+Python uses type hints, 4-space indentation, and snake_case names. Focused
+tests live under `tests/`.
 
 ```bash
 uv sync --extra test
-uv run pytest tests/test_generation.py
-uv run pytest tests/test_pipeline.py
+uv run pytest
 ```
 
-Run focused tests first. Do not start model services or long-running
-experiments unless explicitly requested. Long jobs must use a uniquely named
-detached tmux session with logs under `runtime/`.
+Runtime experiments live under `runtime/`. Source datasets live under `data/`.
+Both stay outside Git commits.
 
-`runtime/` can contain expensive experiments. Never delete or overwrite it
-broadly.
+## Project decisions
 
-## Git
-
-Keep commits task-scoped. Do not commit runtime artifacts, predictions, logs,
-datasets, model weights, secrets, virtual environments, or caches. Preserve
-the `monorepo-cutover-2026-07-28` tag and ancestor history.
+User-confirmed project decisions are recorded in `项目决策.md` with their date
+and rationale.

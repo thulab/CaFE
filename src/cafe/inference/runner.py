@@ -19,7 +19,7 @@ from typing import Any, Callable, Iterator, TypeVar
 import httpx
 import msgpack
 import numpy as np
-from cafe import protocol
+from cafe import core as protocol
 
 INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v2-input-mode"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
@@ -3546,7 +3546,7 @@ def run_model_major_controller(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
+def _legacy_main_removed_from_cli() -> int:
     args = parse_args()
     if args.dataset_ids:
         return run_model_major_controller(args)
@@ -3970,6 +3970,14 @@ def main() -> int:
     if not manifest["complete"]:
         return 2
     return 0
+
+
+def main() -> int:
+    """Delegate direct module execution to the active benchmark-extension path."""
+
+    from cafe.benchmark_extension.inference import main as extension_main
+
+    return extension_main()
 
 
 if __name__ == "__main__":

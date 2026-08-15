@@ -4,16 +4,11 @@ import argparse
 import sys
 from collections.abc import Callable
 
-from cafe.analysis import runner as analysis
-from cafe.calibration import runner as calibration
-from cafe.generation import runner as generation
-from cafe.inference import runner as inference
 from cafe import pipeline
-from cafe.validation import runner as validation
+from cafe.benchmark_extension import analysis, generation, inference, validation
 
 
 COMMANDS: dict[str, Callable[[], int]] = {
-    "calibrate": calibration.main,
     "generate": generation.main,
     "validate": validation.main,
     "infer": inference.main,

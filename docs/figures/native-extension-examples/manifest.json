@@ -1,0 +1,593 @@
+{
+  "created_at": "2026-08-15T18:32:23.645187+00:00",
+  "figure_semantics": "benchmark_truth_paths_not_model_predictions_last_l168_display_only_treatment_was_applied_to_full_official_history",
+  "records": [
+    {
+      "affected_target_index_shown": 2,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "trend",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 310161,
+        "path": "01_trend__five_levels.png",
+        "sha256": "7f96d5ab9b1e39a0459f9837e7369374035320d0ed7909cb9b96ac62a5e02107"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.11355362762290382,
+          "source_distance": 0.1135536276229038
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.19826199107878942,
+          "source_distance": 0.19826199107878936
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.2559935483218908,
+          "source_distance": 0.25599354832189075
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.3232913148350845,
+          "source_distance": 0.32329131483508444
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.49425227263700394,
+          "source_distance": 0.4942522726370039
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 0,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "multi_seasonal",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 320379,
+        "path": "02_multi_seasonal__five_levels.png",
+        "sha256": "70920108dc4a4c9eb6a59f33478eea8254b14a5aaff2c64efb5925259c4e13d2"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.12591513005823557,
+          "source_distance": 0.12591513005823557
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.16807286209960742,
+          "source_distance": 0.16807286209960745
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.2597659787918915,
+          "source_distance": 0.2597659787918915
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.37217828450539464,
+          "source_distance": 0.37217828450539464
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.45194636854216763,
+          "source_distance": 0.4519463685421677
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 0,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266__baseline",
+      "capability_id": "time_varying_seasonality",
+      "dataset_id": "gift_restaurant_d",
+      "display_history": 168,
+      "file": {
+        "bytes": 484919,
+        "path": "03_time_varying_seasonality__five_levels.png",
+        "sha256": "3918f0ac5a4585cc771e7e46bdafe62ba9e240adbcee8baf109270dde3e50c41"
+      },
+      "full_treatment_history": 266,
+      "horizon": 30,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.10121071053958723,
+          "source_distance": 0.10121071053958723
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.176790421706505,
+          "source_distance": 0.176790421706505
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.2423197306113472,
+          "source_distance": 0.24231973061134723
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.3726794619299442,
+          "source_distance": 0.3726794619299442
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.4280142372897542,
+          "source_distance": 0.4280142372897542
+        }
+      ],
+      "official_instance_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 0,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "regime_switching",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 318157,
+        "path": "04_regime_switching__five_levels.png",
+        "sha256": "d516aace8fd05a4420baef828f7083ed1673f746d52f0398c3600bbc876780b7"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.2,
+            0.32
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.3096820649587314,
+          "source_distance": 0.8308671486537599
+        },
+        {
+          "coordinate_interval": [
+            0.38,
+            0.5
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.3824978963482123,
+          "source_distance": 0.7858097494514357
+        },
+        {
+          "coordinate_interval": [
+            0.56,
+            0.66
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.5748746146714108,
+          "source_distance": 0.6520367193291988
+        },
+        {
+          "coordinate_interval": [
+            0.72,
+            0.82
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.8193981387477447,
+          "source_distance": 0.4249937459335426
+        },
+        {
+          "coordinate_interval": [
+            0.87,
+            0.94
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.926037485887158,
+          "source_distance": 0.2719132518376198
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 0,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266__baseline",
+      "capability_id": "nonlinear_persistence",
+      "dataset_id": "gift_restaurant_d",
+      "display_history": 168,
+      "file": {
+        "bytes": 378324,
+        "path": "05_nonlinear_persistence__five_levels.png",
+        "sha256": "da8bc5ffc2806bd8c4dca70e09e93bfc803453e83e65e6d691f519a327ec7923"
+      },
+      "full_treatment_history": 266,
+      "horizon": 30,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.13734681444967137,
+          "source_distance": 0.1373468144496714
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.18668902204098312,
+          "source_distance": 0.18668902204098314
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.238190410820395,
+          "source_distance": 0.23819041082039502
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.37383135370918763,
+          "source_distance": 0.37383135370918774
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.5473087378983337,
+          "source_distance": 0.5473087378983338
+        }
+      ],
+      "official_instance_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 0,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "predictable_intermittency",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 356991,
+        "path": "06_predictable_intermittency__five_levels.png",
+        "sha256": "88261054f78b21bf28ab69668bba4405b0af758e76d916b9458c6b078449bff2"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.18
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.17631321820175894,
+          "source_distance": 0.5
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.3
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.2547522232172671,
+          "source_distance": 0.40504629365049116
+        },
+        {
+          "coordinate_interval": [
+            0.34,
+            0.44
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.34944352817259094,
+          "source_distance": 0.3423265984407288
+        },
+        {
+          "coordinate_interval": [
+            0.5,
+            0.64
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.5608189901719791,
+          "source_distance": 0.26726124191242434
+        },
+        {
+          "coordinate_interval": [
+            0.72,
+            0.92
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.7698049907816918,
+          "source_distance": 0.2314550249431378
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 0,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "common_factor",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 360191,
+        "path": "07_common_factor__five_levels.png",
+        "sha256": "51628d3120d1d480607e4da6c31bee41fd37ef0b818d173368b92be44509815e"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.12852151034306797,
+          "source_distance": 0.12852151034306794
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.19785540348958922,
+          "source_distance": 0.19785540348958922
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.2737733689469467,
+          "source_distance": 0.2737733689469467
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.3108658178576651,
+          "source_distance": 0.31086581785766504
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.4249299779585587,
+          "source_distance": 0.42492997795855875
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    },
+    {
+      "capability_id": "hierarchical_coherence",
+      "file": {
+        "bytes": 39356,
+        "path": "08_hierarchical_coherence__five_levels.png",
+        "sha256": "68c79de4e99cbeee9694784b7163e0fb493a78b169e899f235ed8832d88643e0"
+      },
+      "status": "qualification_only_no_generation"
+    },
+    {
+      "affected_target_index_shown": 2,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "cross_series_dependence",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 359129,
+        "path": "09_cross_series_dependence__five_levels.png",
+        "sha256": "fd408b7214b21152aa88ac6743839728498f711deb9a079e943917dc0fa58fc1"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.12150441719807412,
+          "source_distance": 0.12150441719807412
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.19431531892349652,
+          "source_distance": 0.19431531892349654
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.2731813241195294,
+          "source_distance": 0.2731813241195294
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.3479396600158661,
+          "source_distance": 0.3479396600158661
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.541613196663841,
+          "source_distance": 0.541613196663841
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    },
+    {
+      "affected_target_index_shown": 2,
+      "augmentation_seed": 2026081601,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "capability_id": "covariate_response",
+      "dataset_id": "gift_ett1_h",
+      "display_history": 168,
+      "file": {
+        "bytes": 391608,
+        "path": "10_covariate_response__five_levels.png",
+        "sha256": "60c71457e39f078b81201ba1deb85476d2c5cb1b17fc066b60ac075d51d87047"
+      },
+      "full_treatment_history": 16460,
+      "horizon": 48,
+      "levels": [
+        {
+          "coordinate_interval": [
+            0.1,
+            0.14
+          ],
+          "level": 1,
+          "sampled_coordinate": 0.11498778614093216,
+          "source_distance": 0.11498778614093216
+        },
+        {
+          "coordinate_interval": [
+            0.16,
+            0.2
+          ],
+          "level": 2,
+          "sampled_coordinate": 0.17545160826422934,
+          "source_distance": 0.17545160826422934
+        },
+        {
+          "coordinate_interval": [
+            0.22,
+            0.28
+          ],
+          "level": 3,
+          "sampled_coordinate": 0.2793630221445166,
+          "source_distance": 0.2793630221445165
+        },
+        {
+          "coordinate_interval": [
+            0.3,
+            0.38
+          ],
+          "level": 4,
+          "sampled_coordinate": 0.37728391566146163,
+          "source_distance": 0.3772839156614616
+        },
+        {
+          "coordinate_interval": [
+            0.42,
+            0.55
+          ],
+          "level": 5,
+          "sampled_coordinate": 0.4865530240064253,
+          "source_distance": 0.4865530240064253
+        }
+      ],
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "status": "generated_example"
+    }
+  ],
+  "schema_version": "cafe.native_extension_example_plotter.v1",
+  "selection_policy": "lexicographically_first_validated_official_instance_per_capability"
+}
