@@ -15,6 +15,31 @@ def test_v7_pipeline_has_no_calibration_stage() -> None:
     assert pipeline.STAGES == ("generation", "validation", "inference", "analysis")
 
 
+def test_storage_preflight_is_stable_across_resume(tmp_path: Path) -> None:
+    experiment_root = tmp_path / "experiment"
+    experiment_root.mkdir()
+    computed = {
+        "schema_version": "cafe.storage_preflight.v1",
+        "policy": "test",
+        "dataset_count": 1,
+        "model_count": 7,
+        "maximum_views_per_instance": 56,
+        "estimated_steady_state_bytes": 100,
+        "estimated_peak_bytes": 120,
+        "datasets": [{"dataset_id": "fixture"}],
+    }
+    first = pipeline._freeze_storage_preflight(
+        experiment_root, computed, disk_budget_gb=1.0
+    )
+    path = experiment_root / "storage_preflight.json"
+    first_hash = protocol.file_sha256(path)
+    second = pipeline._freeze_storage_preflight(
+        experiment_root, computed, disk_budget_gb=1.0
+    )
+    assert second == first
+    assert protocol.file_sha256(path) == first_hash
+
+
 def test_preparation_pipeline_uses_official_instances_without_services(
     tmp_path: Path,
     monkeypatch,

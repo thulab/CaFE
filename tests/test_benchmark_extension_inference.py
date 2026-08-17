@@ -6,6 +6,8 @@ import numpy as np
 
 from cafe.benchmark_extension import inference as inference_module
 from cafe.benchmark_extension.inference import (
+    _iter_model_bulk_batches,
+    _requested_execution_complete,
     _run_streaming_bulk_model,
     model_task_row,
 )
@@ -50,6 +52,43 @@ def test_native_panel_is_preserved_in_generation_task() -> None:
     row = model_task_row(_sample(), model)
     assert row["target_dim"] == 3
     assert np.asarray(row["target"]).shape == (250, 3)
+
+
+def test_model_major_partial_invocation_succeeds_before_global_completion() -> None:
+    statuses = {"Timer-4.0": {"status": "complete"}}
+    predictions = {"Timer-4.0": {"parts": [{"path": "part.parquet"}]}}
+    assert _requested_execution_complete(["Timer-4.0"], statuses, predictions)
+    assert not _requested_execution_complete(["Chronos-2"], statuses, predictions)
+
+
+def test_bulk_batches_respect_advertised_group_row_limit() -> None:
+    model = {
+        "forecast_limits": {
+            "max_input_length": 16,
+            "min_input_length": 1,
+            "max_output_length": 64,
+            "max_group_rows": 4,
+            "input_mode": {
+                "max_target_count": 1,
+                "max_history_covariate_count": 0,
+                "supports_future_covariates": False,
+            },
+        }
+    }
+    summary = inference_module._adaptation_summary()
+    batches = list(
+        _iter_model_bulk_batches(
+            (_sample() for _index in range(3)),
+            model=model,
+            execution={"task_batch_size": 1024},
+            maximum_open_groups=2,
+            maximum_buffered_bytes=1024 * 1024,
+            summary=summary,
+        )
+    )
+    # Each logical row expands to three univariate children, so a four-row
+    # service limit permits only one logical row per bulk request.
+    assert [len(chunk) for _shard, _key, chunk in batches] == [1, 1, 1]
 
 
 def test_streaming_bulk_writes_atomic_source_shards_without_task_file(

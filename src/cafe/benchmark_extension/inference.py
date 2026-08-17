@@ -161,7 +161,15 @@ def _iter_model_bulk_batches(
         dict[str, Any],
     ] = OrderedDict()
     current_shard: int | None = None
-    task_batch_size = int(execution["task_batch_size"])
+    configured_batch_size = int(execution["task_batch_size"])
+    advertised_group_limit = int(
+        (model.get("forecast_limits") or {}).get("max_group_rows") or -1
+    )
+    task_batch_size = (
+        min(configured_batch_size, advertised_group_limit)
+        if advertised_group_limit > 0
+        else configured_batch_size
+    )
     for dense_sample in samples:
         source_shard = int(dense_sample.get("source_shard_index", 0))
         if current_shard is None:
@@ -240,6 +248,20 @@ def _next_batch(iterator: Any) -> Any:
         return next(iterator)
     except StopIteration:
         return None
+
+
+def _requested_execution_complete(
+    execute_models: list[str],
+    status_by_model: dict[str, dict[str, Any]],
+    prediction_records: dict[str, Any],
+) -> bool:
+    """Report success for this invocation, not for the whole resumed manifest."""
+
+    return all(
+        status_by_model.get(model_id, {}).get("status") == "complete"
+        and bool((prediction_records.get(model_id) or {}).get("parts"))
+        for model_id in execute_models
+    )
 
 
 def _batch_bytes(
@@ -731,7 +753,12 @@ def main() -> int:
     }
     protocol.write_json(manifest_path, manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
-    return 0 if args.prepare_only or manifest["complete"] else 1
+    invocation_complete = _requested_execution_complete(
+        execute_models,
+        status_by_model,
+        prediction_records,
+    )
+    return 0 if args.prepare_only or invocation_complete else 1
 
 
 if __name__ == "__main__":

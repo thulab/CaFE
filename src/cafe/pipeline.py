@@ -232,6 +232,62 @@ def _storage_preflight(
     }
 
 
+def _freeze_storage_preflight(
+    experiment_root: Path,
+    computed: dict[str, Any],
+    *,
+    disk_budget_gb: float,
+) -> dict[str, Any]:
+    """Freeze reproducible estimates while rechecking current free space on resume."""
+
+    path = experiment_root / "storage_preflight.json"
+    budget_bytes = int(float(disk_budget_gb) * (1024**3))
+    free_bytes = shutil.disk_usage(experiment_root.parent).free
+    accepted_now = bool(
+        computed["estimated_peak_bytes"] <= budget_bytes
+        and computed["estimated_peak_bytes"] <= int(free_bytes * 0.9)
+    )
+    if path.is_file():
+        frozen = protocol.read_json(path)
+        comparable_keys = (
+            "schema_version",
+            "policy",
+            "dataset_count",
+            "model_count",
+            "maximum_views_per_instance",
+            "estimated_steady_state_bytes",
+            "estimated_peak_bytes",
+            "datasets",
+        )
+        if any(frozen.get(key) != computed.get(key) for key in comparable_keys):
+            raise ValueError(
+                "existing storage preflight does not match the resumed experiment"
+            )
+        if int(frozen.get("configured_budget_bytes", -1)) != budget_bytes:
+            raise ValueError(
+                "existing storage preflight uses a different disk budget"
+            )
+        if not accepted_now:
+            raise RuntimeError(
+                "current free space is below the frozen preflight requirement"
+            )
+        return frozen
+    frozen = {
+        **computed,
+        "configured_budget_bytes": budget_bytes,
+        "configured_budget_gib": float(disk_budget_gb),
+        "filesystem_free_bytes": int(free_bytes),
+        "accepted": accepted_now,
+    }
+    protocol.write_json(path, frozen)
+    if not accepted_now:
+        raise RuntimeError(
+            "estimated artifact footprint exceeds the configured disk budget or "
+            "90% of available space; see storage_preflight.json"
+        )
+    return frozen
+
+
 def run_pipeline(args: argparse.Namespace) -> Path:
     dataset_ids = selected_dataset_ids(args)
     stages = _stage_range(args.start_at, args.stop_after)
@@ -242,33 +298,18 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         experiment_id=experiment_id,
         created_at=protocol.utc_now(),
     )
-    storage_preflight = _storage_preflight(
+    computed_preflight = _storage_preflight(
         dataset_ids,
         gift_eval_dir=args.gift_eval_dir,
         term=args.term,
         capability_ids=list(args.capabilities),
         model_count=len(args.models),
     )
-    budget_bytes = int(float(args.disk_budget_gb) * (1024**3))
-    free_bytes = shutil.disk_usage(experiment_root.parent).free
-    storage_preflight.update(
-        {
-            "configured_budget_bytes": budget_bytes,
-            "configured_budget_gib": float(args.disk_budget_gb),
-            "filesystem_free_bytes": int(free_bytes),
-            "accepted": bool(
-                storage_preflight["estimated_peak_bytes"] <= budget_bytes
-                and storage_preflight["estimated_peak_bytes"]
-                <= int(free_bytes * 0.9)
-            ),
-        }
+    storage_preflight = _freeze_storage_preflight(
+        experiment_root,
+        computed_preflight,
+        disk_budget_gb=float(args.disk_budget_gb),
     )
-    protocol.write_json(experiment_root / "storage_preflight.json", storage_preflight)
-    if not storage_preflight["accepted"]:
-        raise RuntimeError(
-            "estimated artifact footprint exceeds the configured disk budget or "
-            "90% of available space; see storage_preflight.json"
-        )
     common = {
         "pipeline_schema_version": PIPELINE_SCHEMA,
         "dataset_ids": dataset_ids,
