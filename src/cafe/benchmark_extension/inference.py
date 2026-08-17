@@ -257,11 +257,15 @@ def _requested_execution_complete(
 ) -> bool:
     """Report success for this invocation, not for the whole resumed manifest."""
 
-    return all(
-        status_by_model.get(model_id, {}).get("status") == "complete"
-        and bool((prediction_records.get(model_id) or {}).get("parts"))
-        for model_id in execute_models
-    )
+    for model_id in execute_models:
+        if status_by_model.get(model_id, {}).get("status") != "complete":
+            return False
+        record = prediction_records.get(model_id)
+        if not isinstance(record, dict):
+            return False
+        if int(record.get("row_count", -1)) > 0 and not record.get("parts"):
+            return False
+    return True
 
 
 def _batch_bytes(
@@ -661,7 +665,8 @@ def main() -> int:
         )
         if previous_status is not None and isinstance(previous_record, dict):
             parts = previous_record.get("parts") or []
-            if parts and all(
+            zero_row_complete = int(previous_record.get("row_count", -1)) == 0
+            if (zero_row_complete or bool(parts)) and all(
                 Path(str(record["path"])).is_file()
                 and protocol.file_sha256(Path(str(record["path"]))) == record["sha256"]
                 for record in parts

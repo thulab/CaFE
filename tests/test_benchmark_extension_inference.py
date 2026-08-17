@@ -61,6 +61,12 @@ def test_model_major_partial_invocation_succeeds_before_global_completion() -> N
     assert not _requested_execution_complete(["Chronos-2"], statuses, predictions)
 
 
+def test_zero_compatible_rows_are_a_completed_model_invocation() -> None:
+    statuses = {"tirex2": {"status": "complete", "compatible_sample_count": 0}}
+    predictions = {"tirex2": {"row_count": 0, "parts": []}}
+    assert _requested_execution_complete(["tirex2"], statuses, predictions)
+
+
 def test_bulk_batches_respect_advertised_group_row_limit() -> None:
     model = {
         "forecast_limits": {

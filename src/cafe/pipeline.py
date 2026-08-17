@@ -424,11 +424,15 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                         }
                         record = (existing.get("model_predictions") or {}).get(model_id)
                         parts = record.get("parts") if isinstance(record, dict) else None
-                        artifacts_valid = bool(parts) and all(
+                        zero_row_complete = bool(
+                            isinstance(record, dict)
+                            and int(record.get("row_count", -1)) == 0
+                        )
+                        artifacts_valid = (zero_row_complete or bool(parts)) and all(
                             Path(str(part["path"])).is_file()
                             and protocol.file_sha256(Path(str(part["path"])))
                             == part["sha256"]
-                            for part in parts
+                            for part in (parts or [])
                         )
                         if model_id in complete_models and artifacts_valid:
                             continue
