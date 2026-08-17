@@ -218,7 +218,12 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         _contract(
             experiment_root,
             "analysis",
-            {**common, "analysis_policy": "official_accuracy_and_paired_effects"},
+            {
+                **common,
+                "analysis_policy": (
+                    "baseline_treatment_accuracy_paired_effects_and_input_ablation"
+                ),
+            },
             inference_manifests,
         )
         for dataset_id in dataset_ids:

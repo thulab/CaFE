@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
-from cafe.benchmark_extension.analysis import analyse_model
+from cafe import core as protocol
+from cafe.benchmark_extension.analysis import (
+    _accuracy_rows,
+    _input_ablation_rows,
+    analyse_model,
+    run_analysis,
+)
+from cafe.benchmark_extension.inference import INFERENCE_SCHEMA
 
 
 def test_effect_metric_uses_shared_official_baseline_prediction() -> None:
@@ -10,6 +19,7 @@ def test_effect_metric_uses_shared_official_baseline_prediction() -> None:
     future = np.arange(20.0, 24.0)[:, None]
     baseline = {
         "sample_id": "baseline",
+        "dataset_id": "gift_fixture",
         "official_instance_id": "official",
         "context_length": 20,
         "target": np.vstack((history, future)).tolist(),
@@ -42,3 +52,133 @@ def test_effect_metric_uses_shared_official_baseline_prediction() -> None:
     assert summary["official_mase_mean"] == 0.0
     assert effects[0]["effect_nrmse"] == 0.0
     assert effects[0]["effect_amplitude_ratio"] == 1.0
+    assert effects[0]["treatment_mase"] == 0.0
+    accuracy = _accuracy_rows(
+        "model", {"baseline": baseline}, [treatment], predictions
+    )
+    assert [row["sample_kind"] for row in accuracy] == [
+        "official_baseline",
+        "capability_treatment",
+    ]
+    assert [row["mase"] for row in accuracy] == [0.0, 0.0]
+
+
+def test_input_ablation_reports_measured_degradation_without_model_type_shortcut() -> None:
+    history = np.arange(20.0)[:, None]
+    future = np.arange(20.0, 24.0)[:, None]
+    baseline = {
+        "sample_id": "baseline",
+        "official_instance_id": "official",
+        "dataset_id": "gift_fixture",
+        "context_length": 20,
+        "target": np.vstack((history, future)).tolist(),
+        "future_observed_mask": np.ones((4, 1), dtype=bool).tolist(),
+        "mase_scale_by_target": [1.0],
+    }
+    treatment = {
+        **baseline,
+        "sample_id": "treatment",
+        "baseline_sample_id": "baseline",
+        "capability_id": "cross_series_dependence",
+        "capability_level": 1,
+        "target": np.vstack((history, future + 2.0)).tolist(),
+    }
+    ablation = {
+        **treatment,
+        "sample_id": "ablation",
+        "input_ablation_source_sample_id": "treatment",
+        "assessed_target_indices": [0],
+        "ablated_input_indices": [1],
+    }
+    perfect = future + 2.0
+    rows = _input_ablation_rows(
+        "independent-univariate",
+        {"baseline": baseline},
+        {"treatment": treatment},
+        [ablation],
+        {"treatment": perfect, "ablation": perfect.copy()},
+    )
+    assert rows[0]["input_ablation_mase_degradation"] == 0.0
+    assert rows[0]["input_ablation_response_ratio"] == 0.0
+
+    rows = _input_ablation_rows(
+        "native-panel",
+        {"baseline": baseline},
+        {"treatment": treatment},
+        [ablation],
+        {"treatment": perfect, "ablation": perfect - 1.0},
+    )
+    assert rows[0]["full_input_mase"] == 0.0
+    assert rows[0]["ablated_input_mase"] == 1.0
+    assert rows[0]["input_ablation_mase_degradation"] == 1.0
+
+
+def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
+    tmp_path: Path,
+) -> None:
+    dataset_root = tmp_path / "gift_fixture"
+    generation_dir = dataset_root / "01_generation"
+    inference_dir = dataset_root / "03_inference"
+    history = np.arange(20.0)[:, None]
+    future = np.arange(20.0, 24.0)[:, None]
+    baseline = {
+        "sample_id": "baseline",
+        "official_instance_id": "official",
+        "dataset_id": "gift_fixture",
+        "context_length": 20,
+        "target": np.vstack((history, future)).tolist(),
+        "future_observed_mask": np.ones((4, 1), dtype=bool).tolist(),
+        "mase_scale_by_target": [1.0],
+        "capability_id": None,
+        "capability_level": 0,
+    }
+    treatment = {
+        **baseline,
+        "sample_id": "treatment",
+        "baseline_sample_id": "baseline",
+        "capability_id": "cross_series_dependence",
+        "capability_level": 1,
+        "controlled_coordinate": "strength",
+        "sampled_coordinate": 0.2,
+        "affected_target_indices": [0],
+        "target": np.vstack((history, future + 2.0)).tolist(),
+    }
+    ablation = {
+        **treatment,
+        "sample_id": "ablation",
+        "input_ablation_source_sample_id": "treatment",
+        "assessed_target_indices": [0],
+        "ablated_input_indices": [1],
+    }
+    protocol.write_jsonl(generation_dir / "official_baselines.jsonl", [baseline])
+    protocol.write_jsonl(
+        generation_dir / "capability_treatments.jsonl", [treatment]
+    )
+    protocol.write_jsonl(generation_dir / "input_ablations.jsonl", [ablation])
+    prediction_path = inference_dir / "models" / "model" / "predictions" / "model.jsonl"
+    protocol.write_jsonl(
+        prediction_path,
+        [
+            {"sample_id": "baseline", "forecast": future.tolist()},
+            {"sample_id": "treatment", "forecast": (future + 2.0).tolist()},
+            {"sample_id": "ablation", "forecast": (future + 1.0).tolist()},
+        ],
+    )
+    protocol.write_json(
+        inference_dir / "manifest.json",
+        {
+            "schema_version": INFERENCE_SCHEMA,
+            "dataset_id": "gift_fixture",
+            "config": {"models": ["model"]},
+            "complete": True,
+        },
+    )
+    manifest = run_analysis(dataset_root)
+    assert manifest["files"]["accuracy_rows"]["row_count"] == 2
+    assert manifest["files"]["capability_effect_rows"]["row_count"] == 1
+    assert manifest["files"]["input_ablation_rows"]["row_count"] == 1
+    accuracy = protocol.read_json(dataset_root / "04_analysis" / "accuracy_summary.json")
+    assert {row["sample_kind"] for row in accuracy["rows"]} == {
+        "official_baseline",
+        "capability_treatment",
+    }

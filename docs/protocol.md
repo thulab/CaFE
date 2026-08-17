@@ -8,11 +8,14 @@ history, forecast origin, horizon, native target dimension, and observed
 future are retained. A treatment modifies the authentic history and adds a
 history-only or legally known-future component to the authentic future.
 
-The analysis reports two separate estimands:
+The analysis reports three separate views:
 
-1. forecast accuracy on the unchanged official GIFT-Eval future;
-2. the agreement between the model's forecast change and the treatment's
-   truth change.
+1. MASE and MAE on both unchanged official instances and treated instances;
+2. agreement between the model's forecast change and the treatment's truth
+   change;
+3. for common-factor and cross-series treatments, prediction degradation when
+   the auxiliary input histories are temporally misaligned while the assessed
+   target history and scored future stay unchanged.
 
 ## 2. Official GIFT-Eval instances
 
@@ -105,7 +108,10 @@ path is shared by baseline and treatment and is known over the horizon.
 Validation binds the generation manifest and all JSONL file hashes. It checks
 native shapes, source links, five-level completeness, coordinate intervals,
 delta hashes, treatment-only distance, regime-location ordering, event-gap
-ordering, and availability agreement.
+ordering, and availability agreement. Common-factor and cross-series input
+ablations are replayed exactly: assessed histories and futures remain fixed,
+and only the declared auxiliary histories receive their deterministic,
+marginal-preserving temporal shifts.
 
 ## 7. Inference
 
@@ -117,8 +123,9 @@ requests and reassembles the native forecast tensor.
 
 ## 8. Analysis
 
-Official accuracy is reported with observed-cell MAE and MASE. For treatment
-`a` and baseline `0`, the mechanism estimand is
+Accuracy is reported with observed-cell MAE and MASE for the official baseline
+and every treatment, using the authentic baseline-history MASE scale. For
+treatment `a` and baseline `0`, the mechanism estimand is
 
 \[
 \Delta y= y^{(a)}-y^{(0)},\qquad
@@ -129,6 +136,21 @@ On affected targets, CaFE reports effect NRMSE, correlation, and amplitude
 ratio. Ranks are separate by capability and level; lower effect NRMSE ranks
 better. Levels are neutral capability coordinates: for regime and
 intermittency a higher level means less evidence, not a larger amplitude.
+
+For common factor and cross-series dependence, an additional attribution table
+compares the full treatment forecast with a forecast for the same treatment
+after auxiliary histories are temporally misaligned. The primary statistic is
+
+\[
+\Delta\operatorname{MASE}_{\mathrm{ablate}}=
+\operatorname{MASE}_{\mathrm{ablated\ input}}-
+\operatorname{MASE}_{\mathrm{full\ input}}.
+\]
+
+A positive value means the intact auxiliary inputs improved the assessed
+forecast. A univariate inference adaptation sees the same assessed-target
+history in both tasks and should therefore produce a value near zero. This
+attribution audit is reported separately and is not folded into effect NRMSE.
 
 ## 9. Artifacts and stage contracts
 

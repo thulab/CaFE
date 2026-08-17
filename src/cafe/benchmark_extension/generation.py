@@ -26,8 +26,8 @@ from cafe.benchmark_extension.mechanisms import (
 
 
 PIPELINE_SCHEMA = "cafe.pipeline.v6"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v1"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v1"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v2"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v2"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -236,6 +236,174 @@ def _treatment_row(
     }
 
 
+def _least_aligned_circular_shift(
+    values: np.ndarray,
+    *,
+    official_instance_id: str,
+    capability_id: str,
+    capability_level: int,
+    augmentation_seed: int,
+    channel: int,
+) -> tuple[np.ndarray, int, float | None]:
+    """Return a deterministic, marginal-preserving temporal donor.
+
+    Candidate shifts come only from the model-visible history.  Choosing the
+    least aligned candidate avoids accidentally retaining a dominant period,
+    while circular shifting preserves the exact empirical marginal scale.
+    """
+
+    source = np.asarray(values, dtype=float)
+    length = int(source.size)
+    if length < 4:
+        raise ValueError("input_ablation_requires_history_length_at_least_four")
+    rng = np.random.default_rng(
+        protocol.stable_seed(
+            official_instance_id,
+            capability_id,
+            capability_level,
+            channel,
+            "input_ablation",
+            base=int(augmentation_seed),
+        )
+    )
+    lower = max(1, length // 8)
+    upper = max(lower + 1, length - lower)
+    candidate_count = min(24, max(1, upper - lower))
+    candidates = sorted(
+        {
+            int(value)
+            for value in rng.integers(lower, upper, size=candidate_count)
+            if int(value) % length
+        }
+    )
+    if not candidates:
+        candidates = [max(1, length // 2)]
+    source_std = float(np.std(source))
+    best: tuple[float, int, np.ndarray, float | None] | None = None
+    for shift in candidates:
+        shifted = np.roll(source, shift)
+        shifted_std = float(np.std(shifted))
+        correlation = (
+            None
+            if source_std <= 1e-12 or shifted_std <= 1e-12
+            else float(np.corrcoef(source, shifted)[0, 1])
+        )
+        score = 0.0 if correlation is None else abs(correlation)
+        candidate = (score, shift, shifted, correlation)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+    assert best is not None
+    return best[2], int(best[1]), best[3]
+
+
+def _input_ablation_row(
+    instance: GiftEvalInstance,
+    group: CapabilityGroup,
+    treatment: CapabilityTreatment,
+    treatment_row: dict[str, Any],
+    *,
+    augmentation_seed: int,
+) -> dict[str, Any] | None:
+    """Build the mandatory auxiliary-input attribution task.
+
+    The assessed target history and the complete scored future stay identical
+    to the main treatment.  Only auxiliary histories are temporally misaligned,
+    so the row measures whether a model actually uses cross-channel inputs.
+    """
+
+    if group.capability_id not in {"common_factor", "cross_series_dependence"}:
+        return None
+    metadata = treatment.metadata
+    if group.capability_id == "cross_series_dependence":
+        assessed = (int(metadata["responder_target_index"]),)
+        ablated = (int(metadata["driver_target_index"]),)
+    else:
+        loading = np.asarray(metadata["loading"], dtype=float)
+        assessed = (int(np.argmax(np.abs(loading))),)
+        ablated = tuple(index for index in range(instance.target_dim) if index not in assessed)
+    if not ablated:
+        raise ValueError("input_ablation_has_no_auxiliary_channel")
+
+    target = np.asarray(treatment_row["target"], dtype=float)
+    context = int(treatment_row["context_length"])
+    result = target.copy()
+    channel_audit: dict[str, Any] = {}
+    for channel in ablated:
+        source = target[:context, channel]
+        shifted, shift, correlation = _least_aligned_circular_shift(
+            source,
+            official_instance_id=instance.official_instance_id,
+            capability_id=group.capability_id,
+            capability_level=treatment.level,
+            augmentation_seed=augmentation_seed,
+            channel=channel,
+        )
+        result[:context, channel] = shifted
+        channel_audit[str(channel)] = {
+            "circular_shift": shift,
+            "absolute_alignment_correlation": (
+                None if correlation is None else abs(correlation)
+            ),
+            "source_history_sha256": _target_sha256(source),
+            "ablated_history_sha256": _target_sha256(shifted),
+            "source_mean": float(np.mean(source)),
+            "source_std": float(np.std(source)),
+            "ablated_mean": float(np.mean(shifted)),
+            "ablated_std": float(np.std(shifted)),
+        }
+    np.testing.assert_array_equal(
+        result[:context, list(assessed)], target[:context, list(assessed)]
+    )
+    np.testing.assert_array_equal(result[context:], target[context:])
+
+    row = json.loads(json.dumps(treatment_row))
+    row.update(
+        {
+            "evaluation_table": "gift_eval_capability_input_ablation",
+            "sample_id": f"{treatment_row['sample_id']}__input_ablation",
+            "counterfactual_pair_id": (
+                f"{treatment_row['counterfactual_pair_id']}__input_ablation"
+            ),
+            "counterfactual_member": 2,
+            "input_ablation_source_sample_id": treatment_row["sample_id"],
+            "input_ablation_source_target_sha256": treatment_row["target_sha256"],
+            "assessed_target_indices": list(assessed),
+            "ablated_input_indices": list(ablated),
+            "target": result.tolist(),
+            "target_sha256": _target_sha256(result),
+            "history_sha256": _target_sha256(result[:context]),
+            "future_sha256": _target_sha256(result[context:]),
+            "history_delta_sha256": _target_sha256(
+                result[:context] - instance.history
+            ),
+            "future_delta_sha256": _target_sha256(
+                result[context:] - instance.future
+            ),
+            "input_ablation_delta_sha256": _target_sha256(
+                result[:context] - target[:context]
+            ),
+            "source_distance_gate": {
+                "policy": "not_applicable_auxiliary_input_ablation",
+                "status": "not_applicable",
+            },
+            "anti_copy_gate": {
+                "policy": "not_applicable_auxiliary_input_ablation",
+                "status": "not_applicable",
+            },
+            "input_ablation_metadata": {
+                "policy": "deterministic_least_aligned_circular_shift_v1",
+                "assessed_target_history_unchanged": True,
+                "scored_future_unchanged": True,
+                "empirical_marginal_preserved": True,
+                "channel_audit": channel_audit,
+            },
+            "included_in_capability_ranking": False,
+            "excluded_from_primary_score": True,
+        }
+    )
+    return row
+
+
 def _availability_row(
     instance: GiftEvalInstance,
     group: CapabilityGroup,
@@ -279,13 +447,14 @@ def generate_dataset(
     generation_dir = dataset_root / "01_generation"
     baseline_path = generation_dir / "official_baselines.jsonl"
     treatment_path = generation_dir / "capability_treatments.jsonl"
+    ablation_path = generation_dir / "input_ablations.jsonl"
     availability_path = generation_dir / "availability.jsonl"
-    paths = (baseline_path, treatment_path, availability_path)
+    paths = (baseline_path, treatment_path, ablation_path, availability_path)
     handles, temporary = _atomic_handles(paths)
-    baseline_count = treatment_count = availability_count = instance_count = 0
+    baseline_count = treatment_count = ablation_count = availability_count = instance_count = 0
     available_counts = {capability: 0 for capability in capability_ids}
     try:
-        baseline_handle, treatment_handle, availability_handle = handles
+        baseline_handle, treatment_handle, ablation_handle, availability_handle = handles
         for instance in iter_gift_eval_instances(
             dataset_id,
             gift_eval_dir,
@@ -306,16 +475,27 @@ def generate_dataset(
                 if group.available:
                     available_counts[capability_id] += 1
                 for treatment in group.treatments:
+                    treatment_row = _treatment_row(
+                        instance,
+                        group,
+                        treatment,
+                        augmentation_seed=augmentation_seed,
+                    )
                     _write_row(
                         treatment_handle,
-                        _treatment_row(
-                            instance,
-                            group,
-                            treatment,
-                            augmentation_seed=augmentation_seed,
-                        ),
+                        treatment_row,
                     )
                     treatment_count += 1
+                    ablation_row = _input_ablation_row(
+                        instance,
+                        group,
+                        treatment,
+                        treatment_row,
+                        augmentation_seed=augmentation_seed,
+                    )
+                    if ablation_row is not None:
+                        _write_row(ablation_handle, ablation_row)
+                        ablation_count += 1
         for handle in handles:
             handle.flush()
             os.fsync(handle.fileno())
@@ -357,6 +537,9 @@ def generate_dataset(
         "source_distance_policy": (
             "treatment_only_multicontext_minimum_source_distance_v2"
         ),
+        "input_ablation_policy": (
+            "common_cross_auxiliary_history_least_aligned_circular_shift_v1"
+        ),
     }
     manifest = {
         "schema_version": GENERATION_SCHEMA,
@@ -374,6 +557,10 @@ def generate_dataset(
                 **protocol.file_record(treatment_path),
                 "row_count": treatment_count,
             },
+            "input_ablations": {
+                **protocol.file_record(ablation_path),
+                "row_count": ablation_count,
+            },
             "availability": {
                 **protocol.file_record(availability_path),
                 "row_count": availability_count,
@@ -382,6 +569,7 @@ def generate_dataset(
         "official_instance_count": instance_count,
         "available_instance_count_by_capability": available_counts,
         "treatment_count": treatment_count,
+        "input_ablation_count": ablation_count,
     }
     protocol.write_json(generation_dir / "manifest.json", manifest)
     return manifest

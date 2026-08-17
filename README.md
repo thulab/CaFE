@@ -12,7 +12,7 @@ GIFT-Eval official native test instances
   → capability generation
   → pair and provenance validation
   → model inference
-  → official-accuracy and capability-effect analysis
+  → baseline/treatment accuracy, capability-effect, and input-attribution analysis
 ```
 
 There is no calibration stage and no standalone synthetic-curve generator.
@@ -30,7 +30,7 @@ official samples.
 Treatments modify the complete retained official history. Model-specific
 context truncation happens afterward. Each treatment is at least 0.10
 source-scale normalized RMS from its authentic source across standard context
-suffixes, while upper-distance limits keep the perturbation local.
+suffixes. There is no upper treatment-distance rejection threshold.
 
 ## Capabilities
 
@@ -51,6 +51,12 @@ Availability is instance-specific. Short or structurally unsuitable samples
 remain in the official baseline table and record a capability-unavailable
 reason. Hierarchical coherence is currently qualification-only and produces
 no ranked treatments.
+
+Analysis keeps three result families separate: baseline and treatment
+MASE/MAE; paired effect NRMSE, correlation, and amplitude ratio; and a
+common/cross input-ablation table. The ablation keeps the assessed target
+history and treatment future fixed while temporally misaligning auxiliary
+channels, so it measures whether intact panel inputs improve the forecast.
 
 ## Install and test
 

@@ -23,7 +23,7 @@ from cafe.benchmark_extension.mechanisms import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v1"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v2"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -94,7 +94,12 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
     elif manifest.get("config_sha256") != protocol.json_sha256(config):
         failures.append({"scope": "manifest", "reason": "config_hash"})
     file_paths: dict[str, Path] = {}
-    for key in ("official_baselines", "capability_treatments", "availability"):
+    for key in (
+        "official_baselines",
+        "capability_treatments",
+        "input_ablations",
+        "availability",
+    ):
         try:
             file_paths[key] = _validate_file_record(manifest["files"][key])
         except (KeyError, ValueError, FileNotFoundError) as error:
@@ -137,6 +142,7 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
             )
 
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    treatments_by_id: dict[str, dict[str, Any]] = {}
     treatment_count = 0
     for row in protocol.iter_jsonl(file_paths["capability_treatments"]):
         treatment_count += 1
@@ -147,6 +153,8 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
                 raise ValueError("treatment_table")
             if row.get("counterfactual_member") != 1:
                 raise ValueError("treatment_only_member")
+            if str(row["sample_id"]) in treatments_by_id:
+                raise ValueError("duplicate_treatment")
             baseline = baselines[str(row["baseline_sample_id"])]
             if row["official_instance_id"] != baseline["official_instance_id"]:
                 raise ValueError("official_instance_link")
@@ -218,6 +226,7 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
             ):
                 raise ValueError("parameter_draw_hash")
             groups[(str(row["official_instance_id"]), capability)].append(row)
+            treatments_by_id[str(row["sample_id"])] = row
         except (KeyError, TypeError, ValueError, IndexError) as error:
             failures.append(
                 {"scope": "treatment", "sample_id": row.get("sample_id"), "reason": str(error)}
@@ -249,6 +258,142 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
                     {"scope": "group", "official_instance_id": instance_id, "capability_id": capability, "reason": "event_sparsity_not_ordered"}
                 )
 
+    ablation_count = 0
+    ablation_source_ids: set[str] = set()
+    for row in protocol.iter_jsonl(file_paths["input_ablations"]):
+        ablation_count += 1
+        try:
+            if row.get("schema_version") != SAMPLE_SCHEMA:
+                raise ValueError("sample_schema")
+            if row.get("evaluation_table") != "gift_eval_capability_input_ablation":
+                raise ValueError("input_ablation_table")
+            if row.get("counterfactual_member") != 2:
+                raise ValueError("input_ablation_member")
+            if row.get("included_in_capability_ranking") is not False:
+                raise ValueError("input_ablation_primary_ranking")
+            if row.get("excluded_from_primary_score") is not True:
+                raise ValueError("input_ablation_exclusion")
+            source_id = str(row["input_ablation_source_sample_id"])
+            if source_id in ablation_source_ids:
+                raise ValueError("duplicate_input_ablation_source")
+            source_row = treatments_by_id[source_id]
+            if row.get("input_ablation_source_target_sha256") != source_row.get(
+                "target_sha256"
+            ):
+                raise ValueError("input_ablation_source_target_hash")
+            capability = str(source_row["capability_id"])
+            if capability not in {"common_factor", "cross_series_dependence"}:
+                raise ValueError("input_ablation_capability")
+            if row.get("capability_id") != capability:
+                raise ValueError("input_ablation_capability_link")
+            if row.get("official_instance_id") != source_row.get("official_instance_id"):
+                raise ValueError("input_ablation_instance_link")
+            target = _target(row)
+            source = _target(source_row)
+            if target.shape != source.shape:
+                raise ValueError("input_ablation_shape")
+            context = int(row["context_length"])
+            covariates = _covariates(row)
+            source_covariates = _covariates(source_row)
+            if (covariates is None) != (source_covariates is None) or (
+                covariates is not None
+                and not np.array_equal(covariates, source_covariates)
+            ):
+                raise ValueError("input_ablation_covariates")
+            metadata = source_row["mechanism_metadata"]
+            if capability == "cross_series_dependence":
+                expected_assessed = (int(metadata["responder_target_index"]),)
+                expected_ablated = (int(metadata["driver_target_index"]),)
+            else:
+                loading = np.asarray(metadata["loading"], dtype=float)
+                expected_assessed = (int(np.argmax(np.abs(loading))),)
+                expected_ablated = tuple(
+                    index
+                    for index in range(int(row["target_dim"]))
+                    if index not in expected_assessed
+                )
+            assessed = tuple(int(value) for value in row["assessed_target_indices"])
+            ablated = tuple(int(value) for value in row["ablated_input_indices"])
+            if assessed != expected_assessed or ablated != expected_ablated:
+                raise ValueError("input_ablation_channel_contract")
+            audit = row.get("input_ablation_metadata")
+            if not isinstance(audit, dict) or audit.get("policy") != (
+                "deterministic_least_aligned_circular_shift_v1"
+            ):
+                raise ValueError("input_ablation_policy")
+            channel_audit = audit.get("channel_audit")
+            if not isinstance(channel_audit, dict) or set(channel_audit) != {
+                str(value) for value in ablated
+            }:
+                raise ValueError("input_ablation_channel_audit")
+            expected = source.copy()
+            for channel in ablated:
+                details = channel_audit[str(channel)]
+                shift = int(details["circular_shift"])
+                source_history = source[:context, channel]
+                shifted = np.roll(source_history, shift)
+                expected[:context, channel] = shifted
+                if details.get("source_history_sha256") != _array_sha256(source_history):
+                    raise ValueError("input_ablation_source_channel_hash")
+                if details.get("ablated_history_sha256") != _array_sha256(shifted):
+                    raise ValueError("input_ablation_channel_hash")
+                for label, observed, expected_value in (
+                    ("source_mean", details["source_mean"], np.mean(source_history)),
+                    ("source_std", details["source_std"], np.std(source_history)),
+                    ("ablated_mean", details["ablated_mean"], np.mean(shifted)),
+                    ("ablated_std", details["ablated_std"], np.std(shifted)),
+                ):
+                    if not _float_equal(observed, expected_value):
+                        raise ValueError(f"input_ablation_{label}")
+            if not np.array_equal(target, expected):
+                raise ValueError("input_ablation_exact_replay")
+            if not np.array_equal(
+                target[:context, list(assessed)],
+                source[:context, list(assessed)],
+            ):
+                raise ValueError("input_ablation_assessed_history_changed")
+            if not np.array_equal(target[context:], source[context:]):
+                raise ValueError("input_ablation_future_changed")
+            if row.get("target_sha256") != _array_sha256(target):
+                raise ValueError("input_ablation_target_hash")
+            if row.get("history_sha256") != _array_sha256(target[:context]):
+                raise ValueError("input_ablation_history_hash")
+            if row.get("future_sha256") != _array_sha256(target[context:]):
+                raise ValueError("input_ablation_future_hash")
+            baseline = baselines[str(row["baseline_sample_id"])]
+            baseline_target = _target(baseline)
+            if row.get("history_delta_sha256") != _array_sha256(
+                target[:context] - baseline_target[:context]
+            ):
+                raise ValueError("input_ablation_history_delta_hash")
+            if row.get("future_delta_sha256") != _array_sha256(
+                target[context:] - baseline_target[context:]
+            ):
+                raise ValueError("input_ablation_future_delta_hash")
+            if row.get("input_ablation_delta_sha256") != _array_sha256(
+                target[:context] - source[:context]
+            ):
+                raise ValueError("input_ablation_delta_hash")
+            ablation_source_ids.add(source_id)
+        except (KeyError, TypeError, ValueError, IndexError) as error:
+            failures.append(
+                {
+                    "scope": "input_ablation",
+                    "sample_id": row.get("sample_id"),
+                    "reason": str(error),
+                }
+            )
+
+    expected_ablation_source_ids = {
+        sample_id
+        for sample_id, row in treatments_by_id.items()
+        if row.get("capability_id") in {"common_factor", "cross_series_dependence"}
+    }
+    if ablation_source_ids != expected_ablation_source_ids:
+        failures.append(
+            {"scope": "input_ablation", "reason": "input_ablation_coverage"}
+        )
+
     availability_rows = list(protocol.iter_jsonl(file_paths["availability"]))
     declared_available = {
         (str(row["official_instance_id"]), str(row["capability_id"]))
@@ -261,6 +406,8 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
         failures.append({"scope": "manifest", "reason": "baseline_count"})
     if treatment_count != int(manifest["files"]["capability_treatments"]["row_count"]):
         failures.append({"scope": "manifest", "reason": "treatment_count"})
+    if ablation_count != int(manifest["files"]["input_ablations"]["row_count"]):
+        failures.append({"scope": "manifest", "reason": "input_ablation_count"})
     if len(availability_rows) != int(manifest["files"]["availability"]["row_count"]):
         failures.append({"scope": "manifest", "reason": "availability_count"})
     report = {
@@ -272,6 +419,7 @@ def validate_generation(dataset_root: Path) -> dict[str, Any]:
         "accepted": not failures,
         "official_baseline_count": len(baselines),
         "treatment_count": treatment_count,
+        "input_ablation_count": ablation_count,
         "available_group_count": len(groups),
         "failures": failures,
     }

@@ -24,8 +24,8 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v1"
-TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v1"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v2"
+TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v2"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -95,7 +95,7 @@ def model_task_row(sample: dict[str, Any], model: dict[str, Any]) -> dict[str, A
 
 
 def iter_generation_samples(manifest: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    for key in ("official_baselines", "capability_treatments"):
+    for key in ("official_baselines", "capability_treatments", "input_ablations"):
         record = manifest["files"][key]
         path = Path(record["path"])
         if protocol.file_sha256(path) != record["sha256"]:
