@@ -752,11 +752,20 @@ def main() -> int:
         "prepare_only": bool(args.prepare_only),
     }
     protocol.write_json(manifest_path, manifest)
-    print(json.dumps(manifest, ensure_ascii=False, indent=2))
     invocation_complete = _requested_execution_complete(
         execute_models,
         status_by_model,
         prediction_records,
+    )
+    print(
+        protocol.canonical_json(
+            {
+                "manifest_path": str(manifest_path),
+                "executed_models": execute_models,
+                "invocation_complete": invocation_complete,
+                "experiment_complete": manifest["complete"],
+            }
+        )
     )
     return 0 if args.prepare_only or invocation_complete else 1
 
