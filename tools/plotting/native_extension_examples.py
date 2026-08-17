@@ -9,15 +9,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from cafe import core
+from cafe.benchmark_extension.generation import iter_replayed_samples
 from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
 
 
-PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v1"
+PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v2"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot five-level examples from validated v6 generation artifacts."
+        description="Plot five-level examples by replaying validated v7 contracts."
     )
     parser.add_argument("--dataset-root", type=Path, action="append", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -27,19 +28,38 @@ def parse_args() -> argparse.Namespace:
 def _load_roots(roots: list[Path]) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     baselines: dict[str, dict[str, Any]] = {}
     treatments: list[dict[str, Any]] = []
+    selected: set[str] = set()
+    required = set(CAPABILITY_IDS) - {"hierarchical_coherence"}
     for root in roots:
         validation = core.read_json(root / "02_validation" / "report.json")
         if not validation.get("accepted"):
             raise ValueError(f"generation is not validated: {root}")
-        baselines.update(
-            {
-                str(row["sample_id"]): row
-                for row in core.iter_jsonl(root / "01_generation" / "official_baselines.jsonl")
-            }
-        )
-        treatments.extend(
-            core.iter_jsonl(root / "01_generation" / "capability_treatments.jsonl")
-        )
+        manifest = core.read_json(root / "01_generation" / "manifest.json")
+        gift_root = Path(manifest["config"]["gift_eval_source_root"])
+        current_baseline: dict[str, Any] | None = None
+        current_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in iter_replayed_samples(manifest, gift_eval_dir=gift_root):
+            if row["evaluation_table"] == "gift_eval_official_baseline":
+                current_baseline = row
+                current_groups.clear()
+                continue
+            if (
+                row["evaluation_table"] != "gift_eval_capability_treatment"
+                or str(row["capability_id"]) in selected
+            ):
+                continue
+            capability = str(row["capability_id"])
+            current_groups[capability].append(row)
+            if len(current_groups[capability]) == 5:
+                if current_baseline is None:
+                    raise ValueError("treatment appeared before its baseline")
+                selected.add(capability)
+                treatments.extend(current_groups[capability])
+                baselines[str(current_baseline["sample_id"])] = current_baseline
+            if selected == required:
+                break
+        if selected == required:
+            break
     return baselines, treatments
 
 
@@ -167,7 +187,7 @@ def _plot_hierarchy(output_path: Path) -> dict[str, Any]:
     axis.text(
         0.5,
         0.36,
-        "Qualification-only in the v6 GIFT-Eval adapter\n"
+        "Qualification-only in the v7 GIFT-Eval adapter\n"
         "No explicit summing matrix is inferred from separate univariate records,\n"
         "so no five-level treatment or formal rank is emitted.",
         ha="center",

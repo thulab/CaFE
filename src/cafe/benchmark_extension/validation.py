@@ -1,437 +1,209 @@
 from __future__ import annotations
 
 import argparse
-import math
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-
 from cafe import core as protocol
 from cafe.benchmark_extension.generation import (
+    CONTRACT_SCHEMA,
     GENERATION_SCHEMA,
     PIPELINE_SCHEMA,
-    SAMPLE_SCHEMA,
+    compact_contract_row,
+    materialized_samples_for_instance,
 )
-from cafe.benchmark_extension.mechanisms import (
-    CAPABILITY_LEVELS,
-    INTERMITTENCY_GAP_INTERVALS,
-    REGIME_RECENCY_INTERVALS,
-    STRENGTH_INTERVALS,
-    _distance_gate,
+from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
+from cafe.benchmark_extension.storage import (
+    iter_compact_parquet,
+    validate_parquet_record,
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v2"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v3"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate native GIFT-Eval capability treatments."
+        description="Validate compact GIFT-Eval capability contracts by replay."
     )
     parser.add_argument("--dataset-id", required=True)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument(
+        "--gift-eval-dir",
+        type=Path,
+        default=protocol.REPO_ROOT / "data" / "gift-eval",
+    )
     return parser.parse_args()
 
 
-def _validate_file_record(record: dict[str, Any]) -> Path:
-    path = Path(str(record["path"]))
-    if not path.is_file():
-        raise FileNotFoundError(path)
-    if protocol.file_sha256(path) != record["sha256"]:
-        raise ValueError(f"generation file hash mismatch: {path}")
-    if path.stat().st_size != int(record["bytes"]):
-        raise ValueError(f"generation file size mismatch: {path}")
-    return path
-
-
-def _target(row: dict[str, Any]) -> np.ndarray:
-    values = np.asarray(row["target"], dtype=float)
-    expected = (
-        int(row["context_length"]) + int(row["horizon"]),
-        int(row["target_dim"]),
-    )
-    if values.shape != expected or not np.all(np.isfinite(values)):
-        raise ValueError(f"invalid target shape/content for {row.get('sample_id')}")
-    return values
-
-
-def _covariates(row: dict[str, Any]) -> np.ndarray | None:
-    dimension = int(row["covariate_dim"])
-    raw = row.get("covariates")
-    if dimension == 0:
-        if raw is not None:
-            raise ValueError("zero-dimensional covariates must be null")
+def _next_or_none(iterator: Any) -> dict[str, Any] | None:
+    try:
+        return next(iterator)
+    except StopIteration:
         return None
-    values = np.asarray(raw, dtype=float)
-    expected = (
-        int(row["context_length"]) + int(row["horizon"]),
-        dimension,
-    )
-    if values.shape != expected or not np.all(np.isfinite(values)):
-        raise ValueError("invalid covariate shape/content")
-    if len(row.get("covariate_column_names") or []) != dimension:
-        raise ValueError("covariate column names do not match dimension")
-    return values
 
 
-def _float_equal(left: Any, right: Any, tolerance: float = 1e-10) -> bool:
-    return math.isclose(float(left), float(right), rel_tol=tolerance, abs_tol=tolerance)
+def validate_generation(
+    dataset_root: Path,
+    *,
+    gift_eval_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Stream all contracts and independently reproduce them from source Arrow."""
 
-
-def validate_generation(dataset_root: Path) -> dict[str, Any]:
-    generation_dir = dataset_root / "01_generation"
-    manifest_path = generation_dir / "manifest.json"
+    manifest_path = dataset_root / "01_generation" / "manifest.json"
     manifest = protocol.read_json(manifest_path)
     failures: list[dict[str, Any]] = []
+    config = manifest.get("config")
+    gift_root = (
+        Path(str((config or {}).get("gift_eval_source_root"))).resolve()
+        if gift_eval_dir is None and (config or {}).get("gift_eval_source_root")
+        else (
+            protocol.REPO_ROOT / "data" / "gift-eval"
+            if gift_eval_dir is None
+            else gift_eval_dir.resolve()
+        )
+    )
     if manifest.get("schema_version") != GENERATION_SCHEMA:
         failures.append({"scope": "manifest", "reason": "schema_version"})
-    config = manifest.get("config")
     if not isinstance(config, dict) or config.get("pipeline_schema_version") != PIPELINE_SCHEMA:
         failures.append({"scope": "manifest", "reason": "pipeline_schema"})
     elif manifest.get("config_sha256") != protocol.json_sha256(config):
         failures.append({"scope": "manifest", "reason": "config_hash"})
-    file_paths: dict[str, Path] = {}
-    for key in (
+    if isinstance(config, dict):
+        storage = config.get("artifact_storage")
+        if (
+            not isinstance(storage, dict)
+            or storage.get("format") != "parquet"
+            or storage.get("dense_targets_stored") is not False
+            or storage.get("dense_covariates_stored") is not False
+        ):
+            failures.append({"scope": "manifest", "reason": "dense_storage_policy"})
+
+    artifact_keys = (
         "official_baselines",
         "capability_treatments",
         "input_ablations",
         "availability",
-    ):
+    )
+    paths: dict[str, Path] = {}
+    for key in artifact_keys:
         try:
-            file_paths[key] = _validate_file_record(manifest["files"][key])
-        except (KeyError, ValueError, FileNotFoundError) as error:
+            paths[key] = validate_parquet_record(manifest["files"][key])
+        except (KeyError, TypeError, ValueError, FileNotFoundError) as error:
             failures.append({"scope": "manifest", "reason": f"{key}:{error}"})
-    if failures:
-        report = {
-            "schema_version": VALIDATION_SCHEMA,
-            "created_at": protocol.utc_now(),
-            "dataset_id": manifest.get("dataset_id"),
-            "generation_manifest_sha256": protocol.file_sha256(manifest_path),
-            "accepted": False,
-            "failures": failures,
+    for record in manifest.get("source_files") or []:
+        try:
+            source_path = Path(str(record["path"]))
+            if protocol.file_sha256(source_path) != record["sha256"]:
+                raise ValueError("source_hash")
+        except (KeyError, OSError, ValueError) as error:
+            failures.append({"scope": "manifest", "reason": f"source:{error}"})
+
+    counts = {key: 0 for key in artifact_keys}
+    if not failures and isinstance(config, dict):
+        observed = {
+            key: iter(iter_compact_parquet(path)) for key, path in paths.items()
         }
-        validation_dir = dataset_root / "02_validation"
-        protocol.write_json(validation_dir / "report.json", report)
-        return report
-
-    baselines: dict[str, dict[str, Any]] = {}
-    for row in protocol.iter_jsonl(file_paths["official_baselines"]):
-        try:
-            if row.get("schema_version") != SAMPLE_SCHEMA:
-                raise ValueError("sample_schema")
-            if row.get("evaluation_table") != "gift_eval_official_baseline":
-                raise ValueError("baseline_table")
-            target = _target(row)
-            _covariates(row)
-            context = int(row["context_length"])
-            if protocol.json_sha256(row.get("history_imputation")) is None:
-                raise ValueError("history_imputation")
-            if row["sample_id"] in baselines:
-                raise ValueError("duplicate_baseline")
-            if row.get("target_sha256") != _array_sha256(target):
-                raise ValueError("baseline_target_hash")
-            if row.get("history_sha256") != _array_sha256(target[:context]):
-                raise ValueError("baseline_history_hash")
-            baselines[str(row["sample_id"])] = row
-        except (KeyError, TypeError, ValueError) as error:
-            failures.append(
-                {"scope": "baseline", "sample_id": row.get("sample_id"), "reason": str(error)}
+        shard_size = int(config.get("generation_execution", {}).get("shard_size", 256))
+        for instance_index, instance in enumerate(
+            iter_gift_eval_instances(
+                str(config["dataset_id"]),
+                gift_root,
+                term=str(config["term"]),
+                max_instances=config.get("max_instances"),
             )
-
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
-    treatments_by_id: dict[str, dict[str, Any]] = {}
-    treatment_count = 0
-    for row in protocol.iter_jsonl(file_paths["capability_treatments"]):
-        treatment_count += 1
-        try:
-            if row.get("schema_version") != SAMPLE_SCHEMA:
-                raise ValueError("sample_schema")
-            if row.get("evaluation_table") != "gift_eval_capability_treatment":
-                raise ValueError("treatment_table")
-            if row.get("counterfactual_member") != 1:
-                raise ValueError("treatment_only_member")
-            if str(row["sample_id"]) in treatments_by_id:
-                raise ValueError("duplicate_treatment")
-            baseline = baselines[str(row["baseline_sample_id"])]
-            if row["official_instance_id"] != baseline["official_instance_id"]:
-                raise ValueError("official_instance_link")
-            target = _target(row)
-            source = _target(baseline)
-            covariates = _covariates(row)
-            source_covariates = _covariates(baseline)
-            context = int(row["context_length"])
-            if target.shape != source.shape:
-                raise ValueError("pair_shape")
-            if (covariates is None) != (source_covariates is None) or (
-                covariates is not None
-                and not np.array_equal(covariates, source_covariates)
+        ):
+            for kind, dense_row in materialized_samples_for_instance(
+                instance,
+                augmentation_seed=int(config["augmentation_seed"]),
+                capability_ids=tuple(str(value) for value in config["capability_ids"]),
+                source_shard_index=instance_index // max(1, shard_size),
             ):
-                raise ValueError("pair_covariate_path_not_shared")
-            if row.get("target_sha256") != _array_sha256(target):
-                raise ValueError("treatment_target_hash")
-            if row.get("source_history_sha256") != _array_sha256(source[:context]):
-                raise ValueError("source_history_hash")
-            if row.get("source_future_sha256") != _array_sha256(source[context:]):
-                raise ValueError("source_future_hash")
-            history_delta = target[:context] - source[:context]
-            future_delta = target[context:] - source[context:]
-            if row.get("history_delta_sha256") != _array_sha256(history_delta):
-                raise ValueError("history_delta_hash")
-            if row.get("future_delta_sha256") != _array_sha256(future_delta):
-                raise ValueError("future_delta_hash")
-            affected = tuple(int(value) for value in row["affected_target_indices"])
-            expected_gate = _distance_gate(history_delta, source[:context], affected)
-            observed_gate = row.get("source_distance_gate")
-            if not isinstance(observed_gate, dict) or not observed_gate.get("accepted"):
-                raise ValueError("source_distance_rejected")
-            for key in (
-                "minimum_observed_macro_distance",
-                "maximum_observed_macro_distance",
-                "maximum_observed_channel_distance",
-            ):
-                if not _float_equal(observed_gate[key], expected_gate[key]):
-                    raise ValueError(f"source_distance_{key}")
-            level = int(row["capability_level"])
-            if level not in CAPABILITY_LEVELS:
-                raise ValueError("capability_level")
-            interval = tuple(float(value) for value in row["coordinate_interval"])
-            capability = str(row["capability_id"])
-            expected_intervals = (
-                REGIME_RECENCY_INTERVALS
-                if capability == "regime_switching"
-                else (
-                    INTERMITTENCY_GAP_INTERVALS
-                    if capability == "predictable_intermittency"
-                    else STRENGTH_INTERVALS
-                )
-            )
-            if interval != expected_intervals[level - 1]:
-                raise ValueError("coordinate_interval")
-            sampled = float(row["sampled_coordinate"])
-            if not interval[0] <= sampled <= interval[1]:
-                raise ValueError("sampled_coordinate")
-            parameter_draw = {
-                "capability_level": level,
-                "controlled_coordinate": row["controlled_coordinate"],
-                "coordinate_interval": list(interval),
-                "sampled_coordinate": sampled,
-                "applied_component_gain": float(row["applied_component_gain"]),
-                "augmentation_seed": int(row["augmentation_seed"]),
-            }
-            if row.get("parameter_draw_sha256") != protocol.json_sha256(
-                parameter_draw
-            ):
-                raise ValueError("parameter_draw_hash")
-            groups[(str(row["official_instance_id"]), capability)].append(row)
-            treatments_by_id[str(row["sample_id"])] = row
-        except (KeyError, TypeError, ValueError, IndexError) as error:
-            failures.append(
-                {"scope": "treatment", "sample_id": row.get("sample_id"), "reason": str(error)}
-            )
-
-    for (instance_id, capability), rows in groups.items():
-        levels = sorted(int(row["capability_level"]) for row in rows)
-        if levels != list(CAPABILITY_LEVELS):
-            failures.append(
-                {
-                    "scope": "group",
-                    "official_instance_id": instance_id,
-                    "capability_id": capability,
-                    "reason": "incomplete_five_level_group",
-                }
-            )
-            continue
-        ordered = sorted(rows, key=lambda row: int(row["capability_level"]))
-        if capability == "regime_switching":
-            joins = [int(row["mechanism_metadata"]["change_index"]) for row in ordered]
-            if joins != sorted(joins):
-                failures.append(
-                    {"scope": "group", "official_instance_id": instance_id, "capability_id": capability, "reason": "regime_location_not_ordered"}
-                )
-        if capability == "predictable_intermittency":
-            gaps = [int(row["mechanism_metadata"]["event_gap"]) for row in ordered]
-            if gaps != sorted(gaps):
-                failures.append(
-                    {"scope": "group", "official_instance_id": instance_id, "capability_id": capability, "reason": "event_sparsity_not_ordered"}
-                )
-
-    ablation_count = 0
-    ablation_source_ids: set[str] = set()
-    for row in protocol.iter_jsonl(file_paths["input_ablations"]):
-        ablation_count += 1
-        try:
-            if row.get("schema_version") != SAMPLE_SCHEMA:
-                raise ValueError("sample_schema")
-            if row.get("evaluation_table") != "gift_eval_capability_input_ablation":
-                raise ValueError("input_ablation_table")
-            if row.get("counterfactual_member") != 2:
-                raise ValueError("input_ablation_member")
-            if row.get("included_in_capability_ranking") is not False:
-                raise ValueError("input_ablation_primary_ranking")
-            if row.get("excluded_from_primary_score") is not True:
-                raise ValueError("input_ablation_exclusion")
-            source_id = str(row["input_ablation_source_sample_id"])
-            if source_id in ablation_source_ids:
-                raise ValueError("duplicate_input_ablation_source")
-            source_row = treatments_by_id[source_id]
-            if row.get("input_ablation_source_target_sha256") != source_row.get(
-                "target_sha256"
-            ):
-                raise ValueError("input_ablation_source_target_hash")
-            capability = str(source_row["capability_id"])
-            if capability not in {"common_factor", "cross_series_dependence"}:
-                raise ValueError("input_ablation_capability")
-            if row.get("capability_id") != capability:
-                raise ValueError("input_ablation_capability_link")
-            if row.get("official_instance_id") != source_row.get("official_instance_id"):
-                raise ValueError("input_ablation_instance_link")
-            target = _target(row)
-            source = _target(source_row)
-            if target.shape != source.shape:
-                raise ValueError("input_ablation_shape")
-            context = int(row["context_length"])
-            covariates = _covariates(row)
-            source_covariates = _covariates(source_row)
-            if (covariates is None) != (source_covariates is None) or (
-                covariates is not None
-                and not np.array_equal(covariates, source_covariates)
-            ):
-                raise ValueError("input_ablation_covariates")
-            metadata = source_row["mechanism_metadata"]
-            if capability == "cross_series_dependence":
-                expected_assessed = (int(metadata["responder_target_index"]),)
-                expected_ablated = (int(metadata["driver_target_index"]),)
-            else:
-                loading = np.asarray(metadata["loading"], dtype=float)
-                expected_assessed = (int(np.argmax(np.abs(loading))),)
-                expected_ablated = tuple(
-                    index
-                    for index in range(int(row["target_dim"]))
-                    if index not in expected_assessed
-                )
-            assessed = tuple(int(value) for value in row["assessed_target_indices"])
-            ablated = tuple(int(value) for value in row["ablated_input_indices"])
-            if assessed != expected_assessed or ablated != expected_ablated:
-                raise ValueError("input_ablation_channel_contract")
-            audit = row.get("input_ablation_metadata")
-            if not isinstance(audit, dict) or audit.get("policy") != (
-                "deterministic_least_aligned_circular_shift_v1"
-            ):
-                raise ValueError("input_ablation_policy")
-            channel_audit = audit.get("channel_audit")
-            if not isinstance(channel_audit, dict) or set(channel_audit) != {
-                str(value) for value in ablated
-            }:
-                raise ValueError("input_ablation_channel_audit")
-            expected = source.copy()
-            for channel in ablated:
-                details = channel_audit[str(channel)]
-                shift = int(details["circular_shift"])
-                source_history = source[:context, channel]
-                shifted = np.roll(source_history, shift)
-                expected[:context, channel] = shifted
-                if details.get("source_history_sha256") != _array_sha256(source_history):
-                    raise ValueError("input_ablation_source_channel_hash")
-                if details.get("ablated_history_sha256") != _array_sha256(shifted):
-                    raise ValueError("input_ablation_channel_hash")
-                for label, observed, expected_value in (
-                    ("source_mean", details["source_mean"], np.mean(source_history)),
-                    ("source_std", details["source_std"], np.std(source_history)),
-                    ("ablated_mean", details["ablated_mean"], np.mean(shifted)),
-                    ("ablated_std", details["ablated_std"], np.std(shifted)),
+                expected = compact_contract_row(dense_row)
+                actual = _next_or_none(observed[kind])
+                counts[kind] += 1
+                if actual is None:
+                    failures.append(
+                        {
+                            "scope": kind,
+                            "sample_id": expected.get("sample_id"),
+                            "reason": "missing_compact_contract",
+                        }
+                    )
+                    continue
+                if actual.get("schema_version") != CONTRACT_SCHEMA:
+                    failures.append(
+                        {
+                            "scope": kind,
+                            "sample_id": actual.get("sample_id"),
+                            "reason": "contract_schema",
+                        }
+                    )
+                if any(
+                    field in actual
+                    for field in ("target", "covariates", "future_observed_mask")
                 ):
-                    if not _float_equal(observed, expected_value):
-                        raise ValueError(f"input_ablation_{label}")
-            if not np.array_equal(target, expected):
-                raise ValueError("input_ablation_exact_replay")
-            if not np.array_equal(
-                target[:context, list(assessed)],
-                source[:context, list(assessed)],
-            ):
-                raise ValueError("input_ablation_assessed_history_changed")
-            if not np.array_equal(target[context:], source[context:]):
-                raise ValueError("input_ablation_future_changed")
-            if row.get("target_sha256") != _array_sha256(target):
-                raise ValueError("input_ablation_target_hash")
-            if row.get("history_sha256") != _array_sha256(target[:context]):
-                raise ValueError("input_ablation_history_hash")
-            if row.get("future_sha256") != _array_sha256(target[context:]):
-                raise ValueError("input_ablation_future_hash")
-            baseline = baselines[str(row["baseline_sample_id"])]
-            baseline_target = _target(baseline)
-            if row.get("history_delta_sha256") != _array_sha256(
-                target[:context] - baseline_target[:context]
-            ):
-                raise ValueError("input_ablation_history_delta_hash")
-            if row.get("future_delta_sha256") != _array_sha256(
-                target[context:] - baseline_target[context:]
-            ):
-                raise ValueError("input_ablation_future_delta_hash")
-            if row.get("input_ablation_delta_sha256") != _array_sha256(
-                target[:context] - source[:context]
-            ):
-                raise ValueError("input_ablation_delta_hash")
-            ablation_source_ids.add(source_id)
-        except (KeyError, TypeError, ValueError, IndexError) as error:
+                    failures.append(
+                        {
+                            "scope": kind,
+                            "sample_id": actual.get("sample_id"),
+                            "reason": "dense_payload_present",
+                        }
+                    )
+                if protocol.canonical_json(actual) != protocol.canonical_json(expected):
+                    failures.append(
+                        {
+                            "scope": kind,
+                            "sample_id": expected.get("sample_id"),
+                            "reason": "deterministic_replay_mismatch",
+                        }
+                    )
+                if kind == "capability_treatments":
+                    gate = dense_row.get("source_distance_gate")
+                    if not isinstance(gate, dict) or not gate.get("accepted"):
+                        failures.append(
+                            {
+                                "scope": kind,
+                                "sample_id": expected.get("sample_id"),
+                                "reason": "source_distance_rejected",
+                            }
+                        )
+        for kind, iterator in observed.items():
+            extra = _next_or_none(iterator)
+            if extra is not None:
+                failures.append(
+                    {
+                        "scope": kind,
+                        "sample_id": extra.get("sample_id"),
+                        "reason": "unexpected_compact_contract",
+                    }
+                )
+
+    for kind, count in counts.items():
+        declared = int((manifest.get("files", {}).get(kind) or {}).get("row_count", -1))
+        if count != declared:
             failures.append(
-                {
-                    "scope": "input_ablation",
-                    "sample_id": row.get("sample_id"),
-                    "reason": str(error),
-                }
+                {"scope": "manifest", "reason": f"{kind}_count:{count}!={declared}"}
             )
-
-    expected_ablation_source_ids = {
-        sample_id
-        for sample_id, row in treatments_by_id.items()
-        if row.get("capability_id") in {"common_factor", "cross_series_dependence"}
-    }
-    if ablation_source_ids != expected_ablation_source_ids:
-        failures.append(
-            {"scope": "input_ablation", "reason": "input_ablation_coverage"}
-        )
-
-    availability_rows = list(protocol.iter_jsonl(file_paths["availability"]))
-    declared_available = {
-        (str(row["official_instance_id"]), str(row["capability_id"]))
-        for row in availability_rows
-        if row.get("available")
-    }
-    if declared_available != set(groups):
-        failures.append({"scope": "availability", "reason": "generated_group_set_mismatch"})
-    if len(baselines) != int(manifest["files"]["official_baselines"]["row_count"]):
-        failures.append({"scope": "manifest", "reason": "baseline_count"})
-    if treatment_count != int(manifest["files"]["capability_treatments"]["row_count"]):
-        failures.append({"scope": "manifest", "reason": "treatment_count"})
-    if ablation_count != int(manifest["files"]["input_ablations"]["row_count"]):
-        failures.append({"scope": "manifest", "reason": "input_ablation_count"})
-    if len(availability_rows) != int(manifest["files"]["availability"]["row_count"]):
-        failures.append({"scope": "manifest", "reason": "availability_count"})
     report = {
         "schema_version": VALIDATION_SCHEMA,
         "created_at": protocol.utc_now(),
-        "dataset_id": manifest["dataset_id"],
+        "dataset_id": manifest.get("dataset_id"),
         "pipeline_schema_version": PIPELINE_SCHEMA,
         "generation_manifest_sha256": protocol.file_sha256(manifest_path),
+        "validation_policy": (
+            "stream_all_compact_contracts_and_exactly_replay_from_source_arrow_v1"
+        ),
         "accepted": not failures,
-        "official_baseline_count": len(baselines),
-        "treatment_count": treatment_count,
-        "input_ablation_count": ablation_count,
-        "available_group_count": len(groups),
+        "official_baseline_count": counts["official_baselines"],
+        "treatment_count": counts["capability_treatments"],
+        "input_ablation_count": counts["input_ablations"],
+        "availability_count": counts["availability"],
         "failures": failures,
     }
-    validation_dir = dataset_root / "02_validation"
-    protocol.write_json(validation_dir / "report.json", report)
+    protocol.write_json(dataset_root / "02_validation" / "report.json", report)
     return report
-
-
-def _array_sha256(values: np.ndarray) -> str:
-    import hashlib
-
-    return hashlib.sha256(np.asarray(values, dtype="<f8").tobytes()).hexdigest()
 
 
 def main() -> int:
@@ -442,7 +214,7 @@ def main() -> int:
         raise FileExistsError(
             f"validation artifact already exists; use a new experiment root: {report_path}"
         )
-    report = validate_generation(dataset_root)
+    report = validate_generation(dataset_root, gift_eval_dir=args.gift_eval_dir)
     print(protocol.canonical_json(report))
     return 0 if report["accepted"] else 1
 

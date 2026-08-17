@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from cafe import core as protocol
+from cafe.benchmark_extension import analysis as analysis_module
 from cafe.benchmark_extension.analysis import (
     _accuracy_rows,
     _input_ablation_rows,
@@ -12,6 +13,10 @@ from cafe.benchmark_extension.analysis import (
     run_analysis,
 )
 from cafe.benchmark_extension.inference import INFERENCE_SCHEMA
+from cafe.benchmark_extension.storage import (
+    PredictionParquetWriter,
+    parquet_file_record,
+)
 
 
 def test_effect_metric_uses_shared_official_baseline_prediction() -> None:
@@ -115,6 +120,7 @@ def test_input_ablation_reports_measured_degradation_without_model_type_shortcut
 
 def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
     dataset_root = tmp_path / "gift_fixture"
     generation_dir = dataset_root / "01_generation"
@@ -122,6 +128,8 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
     history = np.arange(20.0)[:, None]
     future = np.arange(20.0, 24.0)[:, None]
     baseline = {
+        "evaluation_table": "gift_eval_official_baseline",
+        "source_shard_index": 0,
         "sample_id": "baseline",
         "official_instance_id": "official",
         "dataset_id": "gift_fixture",
@@ -142,6 +150,7 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         "sampled_coordinate": 0.2,
         "affected_target_indices": [0],
         "target": np.vstack((history, future + 2.0)).tolist(),
+        "evaluation_table": "gift_eval_capability_treatment",
     }
     ablation = {
         **treatment,
@@ -149,27 +158,40 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         "input_ablation_source_sample_id": "treatment",
         "assessed_target_indices": [0],
         "ablated_input_indices": [1],
+        "evaluation_table": "gift_eval_capability_input_ablation",
     }
-    protocol.write_jsonl(generation_dir / "official_baselines.jsonl", [baseline])
-    protocol.write_jsonl(
-        generation_dir / "capability_treatments.jsonl", [treatment]
+    protocol.write_json(
+        generation_dir / "manifest.json",
+        {"config": {"dataset_id": "gift_fixture"}},
     )
-    protocol.write_jsonl(generation_dir / "input_ablations.jsonl", [ablation])
-    prediction_path = inference_dir / "models" / "model" / "predictions" / "model.jsonl"
-    protocol.write_jsonl(
-        prediction_path,
-        [
-            {"sample_id": "baseline", "forecast": future.tolist()},
-            {"sample_id": "treatment", "forecast": (future + 2.0).tolist()},
-            {"sample_id": "ablation", "forecast": (future + 1.0).tolist()},
-        ],
+    monkeypatch.setattr(
+        analysis_module,
+        "iter_replayed_samples",
+        lambda *_args, **_kwargs: iter((baseline, treatment, ablation)),
     )
+    prediction_path = inference_dir / "models" / "model" / "predictions" / "part_000000.parquet"
+    writer = PredictionParquetWriter(prediction_path)
+    writer.write(model_id="model", sample_id="baseline", forecast=future)
+    writer.write(model_id="model", sample_id="treatment", forecast=future + 2.0)
+    writer.write(model_id="model", sample_id="ablation", forecast=future + 1.0)
+    prediction_count = writer.close()
+    prediction_record = {
+        **parquet_file_record(prediction_path, row_count=prediction_count),
+        "source_shard_index": 0,
+    }
     protocol.write_json(
         inference_dir / "manifest.json",
         {
             "schema_version": INFERENCE_SCHEMA,
             "dataset_id": "gift_fixture",
             "config": {"models": ["model"]},
+            "model_predictions": {
+                "model": {
+                    "format": "partitioned_parquet",
+                    "row_count": 3,
+                    "parts": [prediction_record],
+                }
+            },
             "complete": True,
         },
     )

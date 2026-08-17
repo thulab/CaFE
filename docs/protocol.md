@@ -1,4 +1,4 @@
-# CaFE v6 scientific protocol
+# CaFE v7 scientific protocol
 
 ## 1. Estimand
 
@@ -105,21 +105,21 @@ path is shared by baseline and treatment and is known over the horizon.
 
 ## 6. Validation
 
-Validation binds the generation manifest and all JSONL file hashes. It checks
-native shapes, source links, five-level completeness, coordinate intervals,
-delta hashes, treatment-only distance, regime-location ordering, event-gap
-ordering, and availability agreement. Common-factor and cross-series input
-ablations are replayed exactly: assessed histories and futures remain fixed,
-and only the declared auxiliary histories receive their deterministic,
-marginal-preserving temporal shifts.
+Validation binds the source Arrow files, generation manifest, and every
+Parquet artifact hash. It streams the compact rows and independently rebuilds
+every official instance, five-level treatment, and input ablation. Dense
+targets, futures, and calendar covariates are transient replay values and are
+not generation artifacts.
 
 ## 7. Inference
 
-The model task retains the generated full-history provenance. If the service
-advertises a maximum input length, the task target and covariates are sliced
-to that suffix after treatment. Native multivariate requests are used when
-supported. Otherwise the inference adapter issues independent univariate
-requests and reassembles the native forecast tensor.
+Inference reads source Arrow and compact contracts directly. It rebuilds a
+bounded number of samples in memory, applies model maximum-context truncation,
+groups homogeneous shapes, and sends MessagePack bulk requests. No
+model-specific task dataset is stored. A model is loaded across all compatible
+configured endpoints and GPU devices. Native multivariate requests are used
+when supported; otherwise channel requests are reassembled before the float32
+forecast is written to source-sharded ZSTD Parquet.
 
 ## 8. Analysis
 
@@ -152,9 +152,18 @@ forecast. A univariate inference adaptation sees the same assessed-target
 history in both tasks and should therefore produce a value near zero. This
 attribution audit is reported separately and is not folded into effect NRMSE.
 
+Analysis loads one source shard and its prediction shard at a time. Per-sample
+metrics use compressed Parquet; summaries and manifests use JSON.
+
 ## 9. Artifacts and stage contracts
 
 The active stages are generation, validation, inference, and analysis.
 `experiment.json` stores identity. Each stage contract records config, Git
 provenance, and upstream artifact hashes. A protocol change starts a new
 experiment id.
+
+The original GIFT-Eval Arrow files are the sole persistent copy of authentic
+series. Generation stores replay contracts in ZSTD Parquet, inference stores
+float32 prediction shards, and analysis stores scalar metric Parquet. A
+preflight estimates the complete experiment footprint and enforces the
+configured disk budget before generation begins.

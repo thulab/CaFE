@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-08-17T08:58:56.611887+00:00",
+  "created_at": "2026-08-17T12:30:53.205163+00:00",
   "figure_semantics": "benchmark_truth_paths_not_model_predictions_complete_official_instance_history_and_future",
   "records": [
     {
@@ -135,18 +135,18 @@
     {
       "affected_target_index_shown": 0,
       "augmentation_seed": 2026081601,
-      "baseline_sample_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266__baseline",
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "time_varying_seasonality",
-      "dataset_id": "gift_restaurant_d",
+      "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
-      "display_history": 266,
+      "display_history": 16460,
       "file": {
-        "bytes": 494082,
+        "bytes": 253270,
         "path": "03_time_varying_seasonality__five_levels.png",
-        "sha256": "fdf42a0c6d931ce9fd8872a509c1cf19fb05949c6cc4e8b2781d35f510da1992"
+        "sha256": "b7d40434127c202162108283d87d620d2612787776f498fe137521d6a7a4c875"
       },
-      "full_treatment_history": 266,
-      "horizon": 30,
+      "full_treatment_history": 16460,
+      "horizon": 48,
       "levels": [
         {
           "coordinate_interval": [
@@ -154,8 +154,8 @@
             0.14
           ],
           "level": 1,
-          "sampled_coordinate": 0.10121071053958723,
-          "source_distance": 0.10121071053958723
+          "sampled_coordinate": 0.12878892322640795,
+          "source_distance": 0.12878892322640798
         },
         {
           "coordinate_interval": [
@@ -163,8 +163,8 @@
             0.2
           ],
           "level": 2,
-          "sampled_coordinate": 0.176790421706505,
-          "source_distance": 0.176790421706505
+          "sampled_coordinate": 0.1717903344314956,
+          "source_distance": 0.17179033443149558
         },
         {
           "coordinate_interval": [
@@ -172,8 +172,8 @@
             0.28
           ],
           "level": 3,
-          "sampled_coordinate": 0.2423197306113472,
-          "source_distance": 0.24231973061134723
+          "sampled_coordinate": 0.2746807268531986,
+          "source_distance": 0.2746807268531986
         },
         {
           "coordinate_interval": [
@@ -181,8 +181,8 @@
             0.38
           ],
           "level": 4,
-          "sampled_coordinate": 0.3726794619299442,
-          "source_distance": 0.3726794619299442
+          "sampled_coordinate": 0.3418428241180046,
+          "source_distance": 0.34184282411800454
         },
         {
           "coordinate_interval": [
@@ -190,11 +190,11 @@
             0.55
           ],
           "level": 5,
-          "sampled_coordinate": 0.4280142372897542,
-          "source_distance": 0.4280142372897542
+          "sampled_coordinate": 0.4305548658184693,
+          "source_distance": 0.4305548658184693
         }
       ],
-      "official_instance_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266",
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
       "status": "generated_example"
     },
     {
@@ -263,20 +263,20 @@
       "status": "generated_example"
     },
     {
-      "affected_target_index_shown": 0,
+      "affected_target_index_shown": 5,
       "augmentation_seed": 2026081601,
-      "baseline_sample_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266__baseline",
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "nonlinear_persistence",
-      "dataset_id": "gift_restaurant_d",
+      "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
-      "display_history": 266,
+      "display_history": 16460,
       "file": {
-        "bytes": 339862,
+        "bytes": 233118,
         "path": "05_nonlinear_persistence__five_levels.png",
-        "sha256": "f9ff9706b433c3c886c698af8ad87de42ea53f9278fb3049f79e04f8d4bd2f4b"
+        "sha256": "03c08d0f3fca334b82554e1464c3f883c1f1a677896dc5e71a4e109caceaf2fa"
       },
-      "full_treatment_history": 266,
-      "horizon": 30,
+      "full_treatment_history": 16460,
+      "horizon": 48,
       "levels": [
         {
           "coordinate_interval": [
@@ -284,8 +284,8 @@
             0.14
           ],
           "level": 1,
-          "sampled_coordinate": 0.13734681444967137,
-          "source_distance": 0.1373468144496714
+          "sampled_coordinate": 0.10991662751187899,
+          "source_distance": 0.10991662751187901
         },
         {
           "coordinate_interval": [
@@ -293,8 +293,8 @@
             0.2
           ],
           "level": 2,
-          "sampled_coordinate": 0.18668902204098312,
-          "source_distance": 0.18668902204098314
+          "sampled_coordinate": 0.17430505855884554,
+          "source_distance": 0.1743050585588456
         },
         {
           "coordinate_interval": [
@@ -302,8 +302,8 @@
             0.28
           ],
           "level": 3,
-          "sampled_coordinate": 0.238190410820395,
-          "source_distance": 0.23819041082039502
+          "sampled_coordinate": 0.2376487784268634,
+          "source_distance": 0.23764877842686347
         },
         {
           "coordinate_interval": [
@@ -311,8 +311,8 @@
             0.38
           ],
           "level": 4,
-          "sampled_coordinate": 0.37383135370918763,
-          "source_distance": 0.37383135370918774
+          "sampled_coordinate": 0.3359883509383993,
+          "source_distance": 0.33598835093839935
         },
         {
           "coordinate_interval": [
@@ -320,11 +320,11 @@
             0.55
           ],
           "level": 5,
-          "sampled_coordinate": 0.5473087378983337,
-          "source_distance": 0.5473087378983338
+          "sampled_coordinate": 0.44280551621305175,
+          "source_distance": 0.4428055162130518
         }
       ],
-      "official_instance_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266",
+      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
       "status": "generated_example"
     },
     {
@@ -460,9 +460,9 @@
     {
       "capability_id": "hierarchical_coherence",
       "file": {
-        "bytes": 39356,
+        "bytes": 39129,
         "path": "08_hierarchical_coherence__five_levels.png",
-        "sha256": "68c79de4e99cbeee9694784b7163e0fb493a78b169e899f235ed8832d88643e0"
+        "sha256": "21d14c79c62b8f487305d18368e7c93177680496772110fe8c178d253251b785"
       },
       "status": "qualification_only_no_generation"
     },
@@ -597,6 +597,6 @@
       "status": "generated_example"
     }
   ],
-  "schema_version": "cafe.native_extension_example_plotter.v1",
+  "schema_version": "cafe.native_extension_example_plotter.v2",
   "selection_policy": "lexicographically_first_validated_official_instance_per_capability"
 }

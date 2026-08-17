@@ -27,6 +27,13 @@ from `official_instance_id`, capability, level, and `augmentation_seed`.
 Changing the augmentation seed creates another treatment batch over the same
 official samples.
 
+The source Arrow files remain the only stored copy of authentic paths.
+Generation writes compact replay contracts to ZSTD Parquet; it does not copy
+full targets or calendar covariates. Inference rebuilds bounded batches in
+memory, sends MessagePack bulk requests across compatible endpoints/GPUs, and
+writes source-sharded float32 Parquet forecasts. No model-specific task JSONL
+is materialized. Analysis scans one prediction shard at a time.
+
 Treatments modify the complete retained official history. Model-specific
 context truncation happens afterward. Each treatment is at least 0.10
 source-scale normalized RMS from its authentic source across standard context
@@ -71,7 +78,7 @@ This runs generation and validation without starting model services:
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v6-smoke \
+  --experiment-id gift-v7-smoke \
   --dataset-id gift_ett1_h \
   --max-instances 2 \
   --augmentation-seed 2026081601 \
@@ -85,11 +92,14 @@ all official GIFT-Eval test instances.
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v6-formal \
+  --experiment-id gift-v7-formal \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
   --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \
-  --endpoints http://100.102.176.45:10810
+  --endpoints http://100.102.176.45:10810 \
+  --generation-workers 8 \
+  --preprocess-workers 8 \
+  --disk-budget-gb 40
 ```
 
 Artifacts use this layout:

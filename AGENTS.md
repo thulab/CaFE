@@ -24,6 +24,12 @@ each model's maximum-context truncation afterward. Five capability levels use
 ordered, non-overlapping parameter intervals and deterministic randomness from
 the official instance id, capability, level, and augmentation seed.
 
+The source Arrow files remain the single copy of authentic series. Generation
+stores replayable treatment contracts in compressed Parquet rather than dense
+curves. Inference reconstructs bounded batches in memory, uses MessagePack bulk
+requests across configured endpoints and GPUs, and stores float32 prediction
+shards in Parquet. Analysis joins one source shard at a time.
+
 ## Stage contracts
 
 `experiment.json` stores experiment identity. Stage contracts live under

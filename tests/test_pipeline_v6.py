@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe import pipeline
 
 
-def test_v6_pipeline_has_no_calibration_stage() -> None:
+def test_v7_pipeline_has_no_calibration_stage() -> None:
     assert pipeline.STAGES == ("generation", "validation", "inference", "analysis")
 
 
@@ -42,7 +42,7 @@ def test_preparation_pipeline_uses_official_instances_without_services(
         dataset_id=["gift_fixture"],
         dataset_ids=None,
         output_root=tmp_path / "runtime",
-        experiment_id="v6-smoke",
+        experiment_id="v7-smoke",
         gift_eval_dir=gift_root,
         term="short",
         augmentation_seed=3,
@@ -56,6 +56,15 @@ def test_preparation_pipeline_uses_official_instances_without_services(
         stop_after="validation",
         resume_inference=False,
         prepare_only=False,
+        generation_workers=2,
+        generation_shard_size=2,
+        validation_dataset_workers=1,
+        preprocess_workers=2,
+        analysis_workers=2,
+        max_open_shape_groups=8,
+        max_inflight_batches=2,
+        max_inflight_mib=64,
+        disk_budget_gb=1.0,
     )
     experiment_root = pipeline.run_pipeline(args)
     assert not (experiment_root / "stage_contracts" / "calibration.json").exists()

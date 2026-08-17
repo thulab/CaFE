@@ -7,7 +7,12 @@ import pyarrow as pa
 import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
-from cafe.benchmark_extension.generation import generate_dataset
+from cafe.benchmark_extension.generation import generate_dataset, iter_replayed_samples
+from cafe.benchmark_extension.storage import (
+    iter_compact_parquet,
+    parquet_file_record,
+    write_compact_parquet,
+)
 from cafe.benchmark_extension.validation import validate_generation
 
 
@@ -91,16 +96,13 @@ def test_generation_uses_all_official_instances_and_shared_baseline(
     # ceil(.1 * 800 / 48) official windows, no random origin sampling.
     assert manifest["official_instance_count"] == 2
     assert manifest["files"]["official_baselines"]["row_count"] == 2
-    treatments = list(
-        protocol.iter_jsonl(
-            dataset_root / "01_generation" / "capability_treatments.jsonl"
-        )
-    )
+    treatments = list(iter_compact_parquet(dataset_root / "01_generation" / "treatment_contracts.parquet"))
     assert len(treatments) == 2 * 2 * 5
     assert {row["capability_level"] for row in treatments} == {1, 2, 3, 4, 5}
     assert all(row["source_distance_gate"]["accepted"] for row in treatments)
     assert all(row["counterfactual_member"] == 1 for row in treatments)
     assert len({row["baseline_sample_id"] for row in treatments}) == 2
+    assert all("target" not in row and "covariates" not in row for row in treatments)
 
 
 def test_augmentation_seed_changes_parameters_not_official_instances(
@@ -121,11 +123,7 @@ def test_augmentation_seed_changes_parameters_not_official_instances(
             max_instances=1,
         )
         rows.append(
-            list(
-                protocol.iter_jsonl(
-                    root / "01_generation" / "capability_treatments.jsonl"
-                )
-            )
+            list(iter_compact_parquet(root / "01_generation" / "treatment_contracts.parquet"))
         )
     assert {row["official_instance_id"] for row in rows[0]} == {
         row["official_instance_id"] for row in rows[1]
@@ -150,15 +148,16 @@ def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatm
         capability_ids=("common_factor", "cross_series_dependence"),
         max_instances=1,
     )
+    replayed = list(iter_replayed_samples(manifest, gift_eval_dir=gift_root))
     treatments = {
         row["sample_id"]: row
-        for row in protocol.iter_jsonl(
-            dataset_root / "01_generation" / "capability_treatments.jsonl"
-        )
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_capability_treatment"
     }
-    ablations = list(
-        protocol.iter_jsonl(dataset_root / "01_generation" / "input_ablations.jsonl")
-    )
+    ablations = [
+        row for row in replayed
+        if row["evaluation_table"] == "gift_eval_capability_input_ablation"
+    ]
     assert manifest["input_ablation_count"] == len(ablations) == 10
     assert len(treatments) == 10
     for row in ablations:
@@ -183,22 +182,21 @@ def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatm
     assert report["accepted"]
     assert report["input_ablation_count"] == 10
 
-    ablation_path = dataset_root / "01_generation" / "input_ablations.jsonl"
-    tampered = list(protocol.iter_jsonl(ablation_path))
+    ablation_path = dataset_root / "01_generation" / "input_ablation_contracts.parquet"
+    tampered = list(iter_compact_parquet(ablation_path))
     first_channel = str(tampered[0]["ablated_input_indices"][0])
     tampered[0]["input_ablation_metadata"]["channel_audit"][first_channel][
         "circular_shift"
     ] += 1
-    protocol.write_jsonl(ablation_path, tampered)
+    write_compact_parquet(ablation_path, tampered)
     manifest_path = dataset_root / "01_generation" / "manifest.json"
     changed_manifest = protocol.read_json(manifest_path)
     changed_manifest["files"]["input_ablations"] = {
-        **protocol.file_record(ablation_path),
-        "row_count": len(tampered),
+        **parquet_file_record(ablation_path, row_count=len(tampered)),
     }
     protocol.write_json(manifest_path, changed_manifest)
     rejected = validate_generation(dataset_root)
     assert not rejected["accepted"]
     assert any(
-        row["scope"] == "input_ablation" for row in rejected["failures"]
+        row["scope"] == "input_ablations" for row in rejected["failures"]
     )

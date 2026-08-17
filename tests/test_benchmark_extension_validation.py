@@ -8,6 +8,11 @@ import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
 from cafe.benchmark_extension.generation import generate_dataset
+from cafe.benchmark_extension.storage import (
+    iter_compact_parquet,
+    parquet_file_record,
+    write_compact_parquet,
+)
 from cafe.benchmark_extension.validation import validate_generation
 
 
@@ -67,17 +72,19 @@ def test_validation_rejects_self_consistent_treatment_source_rewrite(
         capability_ids=("trend",),
         max_instances=1,
     )
-    treatment_path = dataset_root / "01_generation" / "capability_treatments.jsonl"
-    rows = list(protocol.iter_jsonl(treatment_path))
+    treatment_path = dataset_root / "01_generation" / "treatment_contracts.parquet"
+    rows = list(iter_compact_parquet(treatment_path))
     rows[0]["source_history_sha256"] = "0" * 64
-    protocol.write_jsonl(treatment_path, rows)
+    write_compact_parquet(treatment_path, rows)
     manifest_path = dataset_root / "01_generation" / "manifest.json"
     manifest = protocol.read_json(manifest_path)
     manifest["files"]["capability_treatments"] = {
-        **protocol.file_record(treatment_path),
-        "row_count": len(rows),
+        **parquet_file_record(treatment_path, row_count=len(rows)),
     }
     protocol.write_json(manifest_path, manifest)
     report = validate_generation(dataset_root)
     assert not report["accepted"]
-    assert any(row["reason"] == "source_history_hash" for row in report["failures"])
+    assert any(
+        row["reason"] == "deterministic_replay_mismatch"
+        for row in report["failures"]
+    )

@@ -1,6 +1,6 @@
 # Ten capability designs on authentic benchmark paths
 
-This document defines the v6 GIFT-Eval implementation. In every formula,
+This document defines the v7 GIFT-Eval implementation. In every formula,
 `x_{t,d}` is an authentic official history, `y_{h,d}` its official future,
 and `σ_d` a source-history scale. Fits and random draws do not use the target
 future. Treatments cover the complete history.
@@ -170,9 +170,10 @@ RMS is 0.10, with no upper distance threshold. Regime and intermittency solve
 one shared amplitude from the weakest level, preserving their
 location/sparsity coordinate across the five-level group.
 
-## Actual v6 curve examples
+## Actual v7 curve examples
 
-These figures come from validated v6 generation artifacts, not an
+These figures come from validated v7 compact contracts replayed against the
+source Arrow files, not an
 illustrative synthetic generator or model forecasts. Five columns are the
 five independently drawn level parameters. Grey is the authentic official
 source, blue is the treatment, and the lower row is their difference. Every
@@ -202,7 +203,7 @@ enhanced.
 
 ![Time-varying seasonality five-level example](figures/native-extension-examples/03_time_varying_seasonality__five_levels.png)
 
-Source: `gift_restaurant_d`, `o266`. A phase-locked carrier is multiplied by a
+Source: `gift_ett1_h`, `o16460`. A phase-locked carrier is multiplied by a
 slower history-resolved envelope.
 
 ### Regime switching
@@ -216,7 +217,7 @@ toward the forecast origin.
 
 ![Nonlinear persistence five-level example](figures/native-extension-examples/05_nonlinear_persistence__five_levels.png)
 
-Source: `gift_restaurant_d`, `o266`. The future delta uses a zero-innovation
+Source: `gift_ett1_h`, `o16460`. The future delta uses a zero-innovation
 history-state rollout.
 
 ### Predictable intermittency

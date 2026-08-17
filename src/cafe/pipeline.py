@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -18,6 +20,13 @@ from cafe.benchmark_extension.generation import (
 )
 from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
 from cafe.benchmark_extension.validation import validate_generation
+from cafe.benchmark_extension.gift_eval import (
+    gift_arrow_target_summary,
+    gift_eval_asset_path,
+    iter_gift_arrow_target_records,
+    official_window_count_from_minimum_length,
+    prediction_length,
+)
 from cafe.inference.runner import DEFAULT_ENDPOINTS, DEFAULT_MODELS
 
 
@@ -54,6 +63,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-after", choices=STAGES, default="analysis")
     parser.add_argument("--resume-inference", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
+    parser.add_argument("--generation-workers", type=int, default=4)
+    parser.add_argument("--generation-shard-size", type=int, default=256)
+    parser.add_argument("--validation-dataset-workers", type=int, default=2)
+    parser.add_argument("--preprocess-workers", type=int, default=4)
+    parser.add_argument("--analysis-workers", type=int, default=4)
+    parser.add_argument("--max-open-shape-groups", type=int, default=64)
+    parser.add_argument("--max-inflight-batches", type=int, default=8)
+    parser.add_argument("--max-inflight-mib", type=int, default=2048)
+    parser.add_argument("--disk-budget-gb", type=float, default=40.0)
     return parser.parse_args()
 
 
@@ -63,7 +81,7 @@ def selected_dataset_ids(args: argparse.Namespace) -> list[str]:
     for dataset_id in output:
         dataset = protocol.resolve_dataset(dataset_id)
         if dataset.real_data_adapter not in {"gift_arrow", "gift_hierarchical_sales"}:
-            raise ValueError(f"v6 supports GIFT-Eval only: {dataset_id}")
+            raise ValueError(f"v7 supports GIFT-Eval only: {dataset_id}")
     return output
 
 
@@ -71,7 +89,7 @@ def _experiment_id(args: argparse.Namespace) -> str:
     if args.experiment_id:
         return str(args.experiment_id)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"gift-extension-v6-{args.augmentation_seed}-{timestamp}"
+    return f"gift-extension-v7-{args.augmentation_seed}-{timestamp}"
 
 
 def _stage_range(start_at: str, stop_after: str) -> tuple[str, ...]:
@@ -105,6 +123,10 @@ def _inference_command(
     args: argparse.Namespace,
     experiment_root: Path,
     dataset_id: str,
+    *,
+    execute_model: str | None = None,
+    reuse_loaded_model: bool = False,
+    preserve_loaded_model: bool = False,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -122,12 +144,92 @@ def _inference_command(
         args.api_prefix,
         "--devices",
         args.devices,
+        "--gift-eval-dir",
+        str(args.gift_eval_dir),
+        "--preprocess-workers",
+        str(args.preprocess_workers),
+        "--max-open-shape-groups",
+        str(args.max_open_shape_groups),
+        "--max-inflight-batches",
+        str(args.max_inflight_batches),
+        "--max-inflight-mib",
+        str(args.max_inflight_mib),
     ]
-    if args.resume_inference:
+    if execute_model is not None:
+        command.extend(("--execute-models", execute_model))
+    if reuse_loaded_model:
+        command.append("--reuse-loaded-model")
+    if preserve_loaded_model:
+        command.append("--preserve-loaded-model")
+    if args.resume_inference or execute_model is not None:
         command.append("--resume")
     if args.prepare_only:
         command.append("--prepare-only")
     return command
+
+
+def _storage_preflight(
+    dataset_ids: list[str],
+    *,
+    gift_eval_dir: Path,
+    term: str,
+    capability_ids: list[str],
+    model_count: int,
+) -> dict[str, Any]:
+    generated_capabilities = sum(
+        capability != "hierarchical_coherence" for capability in capability_ids
+    )
+    ablation_capabilities = sum(
+        capability in {"common_factor", "cross_series_dependence"}
+        for capability in capability_ids
+    )
+    maximum_views = 1 + generated_capabilities * 5 + ablation_capabilities * 5
+    rows: list[dict[str, Any]] = []
+    total_forecast_values = 0
+    total_instances = 0
+    for dataset_id in dataset_ids:
+        asset = gift_eval_asset_path(dataset_id, gift_eval_dir)
+        frequency, minimum_length, _record_count = gift_arrow_target_summary(asset)
+        horizon = prediction_length(dataset_id, frequency, term=term)
+        windows = official_window_count_from_minimum_length(
+            dataset_id, minimum_length, horizon
+        )
+        instance_count = 0
+        forecast_values = 0
+        for _item_id, _frequency, target in iter_gift_arrow_target_records(asset):
+            dimension = 1 if target.ndim == 1 else int(target.shape[0])
+            instance_count += windows
+            forecast_values += windows * maximum_views * horizon * dimension
+        rows.append(
+            {
+                "dataset_id": dataset_id,
+                "official_instance_upper_bound": instance_count,
+                "maximum_generated_views_per_instance": maximum_views,
+                "forecast_float_count_per_model_upper_bound": forecast_values,
+            }
+        )
+        total_instances += instance_count
+        total_forecast_values += forecast_values
+    # Forecast float32 plus Parquet metadata; compact contracts and scalar metric rows
+    # use conservative empirical byte allowances. Availability can only reduce this.
+    prediction_bytes = total_forecast_values * max(1, model_count) * 4 * 1.25
+    contract_rows = total_instances * maximum_views
+    contract_bytes = contract_rows * 700
+    metric_bytes = contract_rows * max(1, model_count) * 220
+    estimated = int(prediction_bytes + contract_bytes + metric_bytes)
+    peak = int(estimated * 1.2)
+    return {
+        "schema_version": "cafe.storage_preflight.v1",
+        "policy": "conservative_supported_capability_upper_bound",
+        "dataset_count": len(dataset_ids),
+        "model_count": int(model_count),
+        "maximum_views_per_instance": maximum_views,
+        "estimated_steady_state_bytes": estimated,
+        "estimated_steady_state_gib": estimated / (1024**3),
+        "estimated_peak_bytes": peak,
+        "estimated_peak_gib": peak / (1024**3),
+        "datasets": rows,
+    }
 
 
 def run_pipeline(args: argparse.Namespace) -> Path:
@@ -140,6 +242,33 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         experiment_id=experiment_id,
         created_at=protocol.utc_now(),
     )
+    storage_preflight = _storage_preflight(
+        dataset_ids,
+        gift_eval_dir=args.gift_eval_dir,
+        term=args.term,
+        capability_ids=list(args.capabilities),
+        model_count=len(args.models),
+    )
+    budget_bytes = int(float(args.disk_budget_gb) * (1024**3))
+    free_bytes = shutil.disk_usage(experiment_root.parent).free
+    storage_preflight.update(
+        {
+            "configured_budget_bytes": budget_bytes,
+            "configured_budget_gib": float(args.disk_budget_gb),
+            "filesystem_free_bytes": int(free_bytes),
+            "accepted": bool(
+                storage_preflight["estimated_peak_bytes"] <= budget_bytes
+                and storage_preflight["estimated_peak_bytes"]
+                <= int(free_bytes * 0.9)
+            ),
+        }
+    )
+    protocol.write_json(experiment_root / "storage_preflight.json", storage_preflight)
+    if not storage_preflight["accepted"]:
+        raise RuntimeError(
+            "estimated artifact footprint exceeds the configured disk budget or "
+            "90% of available space; see storage_preflight.json"
+        )
     common = {
         "pipeline_schema_version": PIPELINE_SCHEMA,
         "dataset_ids": dataset_ids,
@@ -148,6 +277,20 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         "augmentation_seed": int(args.augmentation_seed),
         "max_instances": args.max_instances,
         "formal": args.max_instances is None,
+        "artifact_format": "parquet_zstd",
+        "storage_preflight_sha256": protocol.file_sha256(
+            experiment_root / "storage_preflight.json"
+        ),
+        "execution": {
+            "generation_workers": int(args.generation_workers),
+            "generation_shard_size": int(args.generation_shard_size),
+            "validation_dataset_workers": int(args.validation_dataset_workers),
+            "preprocess_workers": int(args.preprocess_workers),
+            "analysis_workers": int(args.analysis_workers),
+            "max_open_shape_groups": int(args.max_open_shape_groups),
+            "max_inflight_batches": int(args.max_inflight_batches),
+            "max_inflight_mib": int(args.max_inflight_mib),
+        },
     }
     if "generation" in stages:
         _contract(experiment_root, "generation", common, [])
@@ -167,6 +310,8 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 augmentation_seed=args.augmentation_seed,
                 capability_ids=tuple(args.capabilities),
                 max_instances=args.max_instances,
+                workers=args.generation_workers,
+                shard_size=args.generation_shard_size,
             )
     generation_manifests = [
         experiment_root / dataset_id / "01_generation" / "manifest.json"
@@ -174,7 +319,7 @@ def run_pipeline(args: argparse.Namespace) -> Path:
     ]
     if "validation" in stages:
         _contract(experiment_root, "validation", common, generation_manifests)
-        for dataset_id in dataset_ids:
+        def validate_one(dataset_id: str) -> tuple[str, dict[str, Any]]:
             report_path = (
                 experiment_root / dataset_id / "02_validation" / "report.json"
             )
@@ -182,9 +327,18 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 raise FileExistsError(
                     f"completed validation is immutable: {report_path}"
                 )
-            report = validate_generation(experiment_root / dataset_id)
-            if not report["accepted"]:
-                raise RuntimeError(f"generation validation failed: {dataset_id}")
+            report = validate_generation(
+                experiment_root / dataset_id,
+                gift_eval_dir=args.gift_eval_dir,
+            )
+            return dataset_id, report
+
+        with ThreadPoolExecutor(
+            max_workers=max(1, int(args.validation_dataset_workers))
+        ) as executor:
+            for dataset_id, report in executor.map(validate_one, dataset_ids):
+                if not report["accepted"]:
+                    raise RuntimeError(f"generation validation failed: {dataset_id}")
     validation_reports = [
         experiment_root / dataset_id / "02_validation" / "report.json"
         for dataset_id in dataset_ids
@@ -204,12 +358,55 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             inference_config,
             [*generation_manifests, *validation_reports],
         )
-        for dataset_id in dataset_ids:
-            subprocess.run(
-                _inference_command(args, experiment_root, dataset_id),
-                cwd=protocol.REPO_ROOT,
-                check=True,
-            )
+        if args.prepare_only:
+            for dataset_id in dataset_ids:
+                subprocess.run(
+                    _inference_command(args, experiment_root, dataset_id),
+                    cwd=protocol.REPO_ROOT,
+                    check=True,
+                )
+        else:
+            # Model-major execution loads each model once across all compatible
+            # endpoints/GPUs, streams every dataset, then unloads before the next.
+            for model_id in args.models:
+                pending_datasets: list[str] = []
+                for dataset_id in dataset_ids:
+                    manifest_path = (
+                        experiment_root / dataset_id / "03_inference" / "manifest.json"
+                    )
+                    if manifest_path.is_file():
+                        existing = protocol.read_json(manifest_path)
+                        complete_models = {
+                            str(row["model_id"])
+                            for row in existing.get("model_statuses") or []
+                            if row.get("status") == "complete"
+                        }
+                        record = (existing.get("model_predictions") or {}).get(model_id)
+                        parts = record.get("parts") if isinstance(record, dict) else None
+                        artifacts_valid = bool(parts) and all(
+                            Path(str(part["path"])).is_file()
+                            and protocol.file_sha256(Path(str(part["path"])))
+                            == part["sha256"]
+                            for part in parts
+                        )
+                        if model_id in complete_models and artifacts_valid:
+                            continue
+                    pending_datasets.append(dataset_id)
+                for dataset_index, dataset_id in enumerate(pending_datasets):
+                    subprocess.run(
+                        _inference_command(
+                            args,
+                            experiment_root,
+                            dataset_id,
+                            execute_model=model_id,
+                            reuse_loaded_model=dataset_index > 0,
+                            preserve_loaded_model=(
+                                dataset_index < len(pending_datasets) - 1
+                            ),
+                        ),
+                        cwd=protocol.REPO_ROOT,
+                        check=True,
+                    )
     inference_manifests = [
         experiment_root / dataset_id / "03_inference" / "manifest.json"
         for dataset_id in dataset_ids
@@ -226,7 +423,7 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             },
             inference_manifests,
         )
-        for dataset_id in dataset_ids:
+        def analyse_one(dataset_id: str) -> None:
             manifest_path = (
                 experiment_root / dataset_id / "04_analysis" / "manifest.json"
             )
@@ -234,7 +431,20 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 raise FileExistsError(
                     f"completed analysis is immutable: {manifest_path}"
                 )
-            run_analysis(experiment_root / dataset_id)
+            run_analysis(
+                experiment_root / dataset_id,
+                gift_eval_dir=args.gift_eval_dir,
+                replay_workers=max(1, int(args.analysis_workers)),
+            )
+
+        # Dataset-level workers stay bounded; per-dataset replay uses the configured
+        # capability worker pool, so avoid unbounded nested parallelism.
+        dataset_analysis_workers = max(
+            1,
+            min(len(dataset_ids), max(1, int(args.validation_dataset_workers))),
+        )
+        with ThreadPoolExecutor(max_workers=dataset_analysis_workers) as executor:
+            list(executor.map(analyse_one, dataset_ids))
     return experiment_root
 
 

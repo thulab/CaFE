@@ -7,15 +7,75 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
+import pyarrow as pa
 
 from cafe import core as protocol
 from cafe.benchmark_extension.generation import PIPELINE_SCHEMA
+from cafe.benchmark_extension.generation import iter_replayed_samples
 from cafe.benchmark_extension.inference import INFERENCE_SCHEMA
-from cafe.inference.runner import safe_filename
+from cafe.benchmark_extension.storage import (
+    TypedParquetWriter,
+    iter_prediction_parquet,
+    parquet_file_record,
+    validate_parquet_record,
+)
 
 
-ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v2"
+ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v3"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
+
+ACCURACY_METRIC_SCHEMA = pa.schema(
+    [
+        ("schema_version", pa.string()),
+        ("model_id", pa.string()),
+        ("dataset_id", pa.string()),
+        ("official_instance_id", pa.string()),
+        ("sample_id", pa.string()),
+        ("sample_kind", pa.string()),
+        ("capability_id", pa.string()),
+        ("capability_level", pa.int8()),
+        ("mase", pa.float64()),
+        ("mae", pa.float64()),
+    ]
+)
+EFFECT_METRIC_SCHEMA = pa.schema(
+    [
+        ("schema_version", pa.string()),
+        ("model_id", pa.string()),
+        ("dataset_id", pa.string()),
+        ("official_instance_id", pa.string()),
+        ("sample_id", pa.string()),
+        ("capability_id", pa.string()),
+        ("capability_level", pa.int8()),
+        ("controlled_coordinate", pa.string()),
+        ("sampled_coordinate", pa.float64()),
+        ("effect_nrmse", pa.float64()),
+        ("effect_correlation", pa.float64()),
+        ("effect_amplitude_ratio", pa.float64()),
+        ("truth_effect_rms", pa.float64()),
+        ("treatment_mase", pa.float64()),
+        ("treatment_mae", pa.float64()),
+    ]
+)
+ABLATION_METRIC_SCHEMA = pa.schema(
+    [
+        ("schema_version", pa.string()),
+        ("model_id", pa.string()),
+        ("dataset_id", pa.string()),
+        ("official_instance_id", pa.string()),
+        ("sample_id", pa.string()),
+        ("source_treatment_sample_id", pa.string()),
+        ("capability_id", pa.string()),
+        ("capability_level", pa.int8()),
+        ("assessed_target_indices", pa.list_(pa.int32())),
+        ("ablated_input_indices", pa.list_(pa.int32())),
+        ("full_input_mase", pa.float64()),
+        ("ablated_input_mase", pa.float64()),
+        ("input_ablation_mase_degradation", pa.float64()),
+        ("input_ablation_forecast_change_rms", pa.float64()),
+        ("input_ablation_response_ratio", pa.float64()),
+    ]
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -24,17 +84,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--dataset-id", required=True)
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
+    parser.add_argument(
+        "--gift-eval-dir",
+        type=Path,
+        default=protocol.REPO_ROOT / "data" / "gift-eval",
+    )
+    parser.add_argument("--workers", type=int, default=4)
     return parser.parse_args()
-
-
-def _predictions(path: Path) -> dict[str, np.ndarray]:
-    output: dict[str, np.ndarray] = {}
-    for row in protocol.iter_jsonl(path):
-        sample_id = str(row["sample_id"])
-        if sample_id in output:
-            raise ValueError(f"duplicate prediction for {sample_id}")
-        output[sample_id] = np.asarray(row["forecast"], dtype=float)
-    return output
 
 
 def _future(row: dict[str, Any]) -> np.ndarray:
@@ -350,89 +406,448 @@ def _aggregate_effects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return aggregates
 
 
-def run_analysis(dataset_root: Path) -> dict[str, Any]:
+def _load_prediction_part(
+    record: dict[str, Any] | None,
+) -> dict[str, np.ndarray]:
+    if record is None:
+        return {}
+    path = validate_parquet_record(record)
+    output: dict[str, np.ndarray] = {}
+    for row in iter_prediction_parquet(path):
+        sample_id = str(row["sample_id"])
+        if sample_id in output:
+            raise ValueError(f"duplicate prediction for {sample_id} in {path}")
+        output[sample_id] = np.asarray(row["forecast"], dtype=float)
+    return output
+
+
+def _mean_or_none(total: float, count: int) -> float | None:
+    return None if count <= 0 else float(total / count)
+
+
+def run_analysis(
+    dataset_root: Path,
+    *,
+    gift_eval_dir: Path | None = None,
+    replay_workers: int = 1,
+) -> dict[str, Any]:
+    """Analyse one source shard at a time; never load a model's full run."""
+
     generation_dir = dataset_root / "01_generation"
     inference_dir = dataset_root / "03_inference"
     analysis_dir = dataset_root / "04_analysis"
+    generation_manifest = protocol.read_json(generation_dir / "manifest.json")
+    source_root = generation_manifest.get("config", {}).get("gift_eval_source_root")
+    gift_root = (
+        Path(str(source_root)).resolve()
+        if gift_eval_dir is None and source_root
+        else (
+            protocol.REPO_ROOT / "data" / "gift-eval"
+            if gift_eval_dir is None
+            else gift_eval_dir.resolve()
+        )
+    )
     inference_manifest_path = inference_dir / "manifest.json"
     inference_manifest = protocol.read_json(inference_manifest_path)
     if inference_manifest.get("schema_version") != INFERENCE_SCHEMA:
         raise ValueError("unsupported inference manifest")
     if not inference_manifest.get("complete"):
         raise ValueError("inference is incomplete")
-    baselines = {
-        str(row["sample_id"]): row
-        for row in protocol.iter_jsonl(generation_dir / "official_baselines.jsonl")
-    }
-    treatment_rows = list(
-        protocol.iter_jsonl(generation_dir / "capability_treatments.jsonl")
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    accuracy_rows_path = analysis_dir / "accuracy_rows.parquet"
+    effect_rows_path = analysis_dir / "capability_effect_rows.parquet"
+    ablation_rows_path = analysis_dir / "input_ablation_rows.parquet"
+    accuracy_writer = TypedParquetWriter(
+        accuracy_rows_path, schema=ACCURACY_METRIC_SCHEMA
     )
-    treatments = {str(row["sample_id"]): row for row in treatment_rows}
-    ablations = list(protocol.iter_jsonl(generation_dir / "input_ablations.jsonl"))
-    summaries: list[dict[str, Any]] = []
-    effects: list[dict[str, Any]] = []
-    accuracy_rows: list[dict[str, Any]] = []
-    ablation_rows: list[dict[str, Any]] = []
-    for model_id in inference_manifest["config"]["models"]:
-        prediction_path = (
-            inference_dir
-            / "models"
-            / safe_filename(model_id)
-            / "predictions"
-            / f"{safe_filename(model_id)}.jsonl"
-        )
-        predictions = _predictions(prediction_path)
-        model_summary, model_effects = analyse_model(
-            model_id,
-            baselines,
-            treatment_rows,
-            predictions,
-        )
-        summaries.append(model_summary)
-        effects.extend(model_effects)
-        accuracy_rows.extend(
-            _accuracy_rows(model_id, baselines, treatment_rows, predictions)
-        )
-        ablation_rows.extend(
-            _input_ablation_rows(
-                model_id,
-                baselines,
-                treatments,
-                ablations,
-                predictions,
+    effect_writer = TypedParquetWriter(
+        effect_rows_path, schema=EFFECT_METRIC_SCHEMA
+    )
+    ablation_writer = TypedParquetWriter(
+        ablation_rows_path, schema=ABLATION_METRIC_SCHEMA
+    )
+    accuracy_aggregates: defaultdict[tuple[str, str, str | None, int], dict[str, float]] = defaultdict(
+        lambda: {"count": 0.0, "mase": 0.0, "mae": 0.0}
+    )
+    effect_aggregates: defaultdict[tuple[str, str, int], dict[str, float]] = defaultdict(
+        lambda: {
+            "count": 0.0,
+            "nrmse": 0.0,
+            "amplitude": 0.0,
+            "correlation": 0.0,
+            "correlation_count": 0.0,
+        }
+    )
+    ablation_aggregates: defaultdict[tuple[str, str, int], dict[str, float]] = defaultdict(
+        lambda: {
+            "count": 0.0,
+            "full_mase": 0.0,
+            "ablated_mase": 0.0,
+            "degradation": 0.0,
+            "response_ratio": 0.0,
+        }
+    )
+    model_summaries: list[dict[str, Any]] = []
+    try:
+        for model_id in inference_manifest["config"]["models"]:
+            prediction_record = inference_manifest["model_predictions"][model_id]
+            parts = {
+                int(record["source_shard_index"]): record
+                for record in prediction_record.get("parts") or []
+            }
+            current_shard: int | None = None
+            predictions: dict[str, np.ndarray] = {}
+            baselines: dict[str, dict[str, Any]] = {}
+            treatments: dict[str, dict[str, Any]] = {}
+            official_count = 0
+            treatment_count = 0
+            for sample in iter_replayed_samples(
+                generation_manifest,
+                gift_eval_dir=gift_root,
+                replay_workers=max(1, int(replay_workers)),
+            ):
+                shard = int(sample.get("source_shard_index", 0))
+                if current_shard != shard:
+                    current_shard = shard
+                    predictions = _load_prediction_part(parts.get(shard))
+                    baselines.clear()
+                    treatments.clear()
+                sample_id = str(sample["sample_id"])
+                forecast = predictions.get(sample_id)
+                table = str(sample["evaluation_table"])
+                if table == "gift_eval_official_baseline":
+                    future = _future(sample)
+                    state = {
+                        "row": sample,
+                        "future": future,
+                        "mask": np.asarray(sample["future_observed_mask"], dtype=bool),
+                        "scales": np.asarray(sample["mase_scale_by_target"], dtype=float),
+                        "forecast": forecast,
+                    }
+                    baselines[sample_id] = state
+                    if forecast is None:
+                        continue
+                    error = forecast - future
+                    mase = float(
+                        np.mean(
+                            _masked(
+                                np.abs(error) / state["scales"][None, :],
+                                state["mask"],
+                            )
+                        )
+                    )
+                    mae = float(np.mean(np.abs(_masked(error, state["mask"]))))
+                    metric = {
+                        "schema_version": "cafe.forecast_accuracy_metric.v2",
+                        "model_id": model_id,
+                        "dataset_id": sample["dataset_id"],
+                        "official_instance_id": sample["official_instance_id"],
+                        "sample_id": sample_id,
+                        "sample_kind": "official_baseline",
+                        "capability_id": None,
+                        "capability_level": 0,
+                        "mase": mase,
+                        "mae": mae,
+                    }
+                    accuracy_writer.write(metric)
+                    aggregate = accuracy_aggregates[(model_id, "official_baseline", None, 0)]
+                    aggregate["count"] += 1
+                    aggregate["mase"] += mase
+                    aggregate["mae"] += mae
+                    official_count += 1
+                    continue
+                if table == "gift_eval_capability_treatment":
+                    baseline = baselines[str(sample["baseline_sample_id"])]
+                    future = _future(sample)
+                    treatments[sample_id] = {
+                        "row": sample,
+                        "future": future,
+                        "forecast": forecast,
+                        "baseline": baseline,
+                    }
+                    if forecast is None or baseline["forecast"] is None:
+                        continue
+                    mask = baseline["mask"]
+                    scales = baseline["scales"]
+                    error = forecast - future
+                    treatment_mase = float(
+                        np.mean(_masked(np.abs(error) / scales[None, :], mask))
+                    )
+                    treatment_mae = float(np.mean(np.abs(_masked(error, mask))))
+                    accuracy_metric = {
+                        "schema_version": "cafe.forecast_accuracy_metric.v2",
+                        "model_id": model_id,
+                        "dataset_id": sample["dataset_id"],
+                        "official_instance_id": sample["official_instance_id"],
+                        "sample_id": sample_id,
+                        "sample_kind": "capability_treatment",
+                        "capability_id": sample["capability_id"],
+                        "capability_level": int(sample["capability_level"]),
+                        "mase": treatment_mase,
+                        "mae": treatment_mae,
+                    }
+                    accuracy_writer.write(accuracy_metric)
+                    accuracy_key = (
+                        model_id,
+                        "capability_treatment",
+                        str(sample["capability_id"]),
+                        int(sample["capability_level"]),
+                    )
+                    accuracy_aggregate = accuracy_aggregates[accuracy_key]
+                    accuracy_aggregate["count"] += 1
+                    accuracy_aggregate["mase"] += treatment_mase
+                    accuracy_aggregate["mae"] += treatment_mae
+
+                    truth_delta = future - baseline["future"]
+                    forecast_delta = forecast - baseline["forecast"]
+                    affected = [int(value) for value in sample["affected_target_indices"]]
+                    assessed_mask = np.zeros_like(mask, dtype=bool)
+                    assessed_mask[:, affected] = mask[:, affected]
+                    truth_values = _masked(truth_delta, assessed_mask)
+                    forecast_values = _masked(forecast_delta, assessed_mask)
+                    denominator = max(
+                        float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8
+                    )
+                    correlation = _correlation(forecast_values, truth_values)
+                    nrmse = float(
+                        np.sqrt(np.mean(np.square(forecast_values - truth_values)))
+                        / denominator
+                    )
+                    amplitude = float(
+                        np.sqrt(np.mean(np.square(forecast_values))) / denominator
+                    )
+                    effect_metric = {
+                        "schema_version": "cafe.capability_effect_metric.v2",
+                        "model_id": model_id,
+                        "dataset_id": sample["dataset_id"],
+                        "official_instance_id": sample["official_instance_id"],
+                        "sample_id": sample_id,
+                        "capability_id": sample["capability_id"],
+                        "capability_level": int(sample["capability_level"]),
+                        "controlled_coordinate": sample["controlled_coordinate"],
+                        "sampled_coordinate": float(sample["sampled_coordinate"]),
+                        "effect_nrmse": nrmse,
+                        "effect_correlation": correlation,
+                        "effect_amplitude_ratio": amplitude,
+                        "truth_effect_rms": denominator,
+                        "treatment_mase": treatment_mase,
+                        "treatment_mae": treatment_mae,
+                    }
+                    effect_writer.write(effect_metric)
+                    effect_key = (
+                        model_id,
+                        str(sample["capability_id"]),
+                        int(sample["capability_level"]),
+                    )
+                    effect_aggregate = effect_aggregates[effect_key]
+                    effect_aggregate["count"] += 1
+                    effect_aggregate["nrmse"] += nrmse
+                    effect_aggregate["amplitude"] += amplitude
+                    if correlation is not None:
+                        effect_aggregate["correlation"] += correlation
+                        effect_aggregate["correlation_count"] += 1
+                    treatment_count += 1
+                    continue
+                if table != "gift_eval_capability_input_ablation":
+                    raise ValueError(f"unknown evaluation table {table}")
+                source = treatments[str(sample["input_ablation_source_sample_id"])]
+                full_forecast = source["forecast"]
+                if forecast is None or full_forecast is None:
+                    continue
+                baseline = source["baseline"]
+                truth = source["future"]
+                mask = baseline["mask"]
+                assessed = [int(value) for value in sample["assessed_target_indices"]]
+                assessed_mask = np.zeros_like(mask, dtype=bool)
+                assessed_mask[:, assessed] = mask[:, assessed]
+                scales = baseline["scales"]
+                full_mase = float(
+                    np.mean(
+                        _masked(
+                            np.abs(full_forecast - truth) / scales[None, :],
+                            assessed_mask,
+                        )
+                    )
+                )
+                ablated_mase = float(
+                    np.mean(
+                        _masked(
+                            np.abs(forecast - truth) / scales[None, :],
+                            assessed_mask,
+                        )
+                    )
+                )
+                forecast_change = _masked(forecast - full_forecast, assessed_mask)
+                truth_effect = _masked(truth - baseline["future"], assessed_mask)
+                truth_effect_rms = max(
+                    float(np.sqrt(np.mean(np.square(truth_effect)))), 1e-8
+                )
+                response_ratio = float(
+                    np.sqrt(np.mean(np.square(forecast_change))) / truth_effect_rms
+                )
+                ablation_metric = {
+                    "schema_version": "cafe.capability_input_ablation_metric.v2",
+                    "model_id": model_id,
+                    "dataset_id": sample["dataset_id"],
+                    "official_instance_id": sample["official_instance_id"],
+                    "sample_id": sample_id,
+                    "source_treatment_sample_id": source["row"]["sample_id"],
+                    "capability_id": source["row"]["capability_id"],
+                    "capability_level": int(source["row"]["capability_level"]),
+                    "assessed_target_indices": assessed,
+                    "ablated_input_indices": [
+                        int(value) for value in sample["ablated_input_indices"]
+                    ],
+                    "full_input_mase": full_mase,
+                    "ablated_input_mase": ablated_mase,
+                    "input_ablation_mase_degradation": ablated_mase - full_mase,
+                    "input_ablation_forecast_change_rms": float(
+                        np.sqrt(np.mean(np.square(forecast_change)))
+                    ),
+                    "input_ablation_response_ratio": response_ratio,
+                }
+                ablation_writer.write(ablation_metric)
+                ablation_key = (
+                    model_id,
+                    str(source["row"]["capability_id"]),
+                    int(source["row"]["capability_level"]),
+                )
+                ablation_aggregate = ablation_aggregates[ablation_key]
+                ablation_aggregate["count"] += 1
+                ablation_aggregate["full_mase"] += full_mase
+                ablation_aggregate["ablated_mase"] += ablated_mase
+                ablation_aggregate["degradation"] += ablated_mase - full_mase
+                ablation_aggregate["response_ratio"] += response_ratio
+            official_key = (model_id, "official_baseline", None, 0)
+            official_values = accuracy_aggregates[official_key]
+            model_summaries.append(
+                {
+                    "schema_version": "cafe.official_accuracy_summary.v2",
+                    "model_id": model_id,
+                    "official_instance_count": official_count,
+                    "official_mase_mean": _mean_or_none(
+                        official_values["mase"], int(official_values["count"])
+                    ),
+                    "official_mae_mean": _mean_or_none(
+                        official_values["mae"], int(official_values["count"])
+                    ),
+                    "capability_treatment_count": treatment_count,
+                }
             )
+        accuracy_count = accuracy_writer.close()
+        effect_count = effect_writer.close()
+        ablation_count = ablation_writer.close()
+    except Exception:
+        accuracy_writer.abort()
+        effect_writer.abort()
+        ablation_writer.abort()
+        raise
+
+    accuracy_summary: list[dict[str, Any]] = []
+    for (model_id, kind, capability, level), values in sorted(
+        accuracy_aggregates.items(), key=lambda item: tuple(str(value) for value in item[0])
+    ):
+        count = int(values["count"])
+        accuracy_summary.append(
+            {
+                "schema_version": "cafe.forecast_accuracy_summary.v2",
+                "model_id": model_id,
+                "sample_kind": kind,
+                "capability_id": capability,
+                "capability_level": level,
+                "official_instance_count": count,
+                "mase_mean": _mean_or_none(values["mase"], count),
+                "mae_mean": _mean_or_none(values["mae"], count),
+            }
         )
-    aggregate_effects = _aggregate_effects(effects)
-    aggregate_accuracy = _aggregate_accuracy(accuracy_rows)
-    aggregate_ablations = _aggregate_input_ablations(ablation_rows)
+    effect_summary: list[dict[str, Any]] = []
+    for (model_id, capability, level), values in sorted(effect_aggregates.items()):
+        count = int(values["count"])
+        effect_summary.append(
+            {
+                "schema_version": "cafe.capability_effect_summary.v2",
+                "model_id": model_id,
+                "capability_id": capability,
+                "capability_level": level,
+                "official_instance_count": count,
+                "effect_nrmse_mean": _mean_or_none(values["nrmse"], count),
+                "effect_correlation_mean": _mean_or_none(
+                    values["correlation"], int(values["correlation_count"])
+                ),
+                "effect_amplitude_ratio_mean": _mean_or_none(
+                    values["amplitude"], count
+                ),
+            }
+        )
+    for members in (
+        [row for row in effect_summary if row["capability_id"] == capability and row["capability_level"] == level]
+        for capability, level in {
+            (row["capability_id"], row["capability_level"]) for row in effect_summary
+        }
+    ):
+        for rank, row in enumerate(
+            sorted(members, key=lambda value: (value["effect_nrmse_mean"], value["model_id"])),
+            start=1,
+        ):
+            row["effect_rank"] = rank
+    ablation_summary: list[dict[str, Any]] = []
+    for (model_id, capability, level), values in sorted(ablation_aggregates.items()):
+        count = int(values["count"])
+        ablation_summary.append(
+            {
+                "schema_version": "cafe.capability_input_ablation_summary.v2",
+                "model_id": model_id,
+                "capability_id": capability,
+                "capability_level": level,
+                "official_instance_count": count,
+                "full_input_mase_mean": _mean_or_none(values["full_mase"], count),
+                "ablated_input_mase_mean": _mean_or_none(values["ablated_mase"], count),
+                "input_ablation_mase_degradation_mean": _mean_or_none(
+                    values["degradation"], count
+                ),
+                "input_ablation_response_ratio_mean": _mean_or_none(
+                    values["response_ratio"], count
+                ),
+            }
+        )
+    for members in (
+        [row for row in ablation_summary if row["capability_id"] == capability and row["capability_level"] == level]
+        for capability, level in {
+            (row["capability_id"], row["capability_level"])
+            for row in ablation_summary
+        }
+    ):
+        for rank, row in enumerate(
+            sorted(
+                members,
+                key=lambda value: (
+                    -value["input_ablation_mase_degradation_mean"],
+                    value["model_id"],
+                ),
+            ),
+            start=1,
+        ):
+            row["input_attribution_rank"] = rank
+
     accuracy_path = analysis_dir / "official_accuracy.json"
-    accuracy_rows_path = analysis_dir / "accuracy_rows.jsonl"
     accuracy_summary_path = analysis_dir / "accuracy_summary.json"
-    effect_rows_path = analysis_dir / "capability_effect_rows.jsonl"
     effect_summary_path = analysis_dir / "capability_effect_summary.json"
-    ablation_rows_path = analysis_dir / "input_ablation_rows.jsonl"
     ablation_summary_path = analysis_dir / "input_ablation_summary.json"
-    protocol.write_json(accuracy_path, {"models": summaries})
-    protocol.write_jsonl(accuracy_rows_path, accuracy_rows)
-    protocol.write_json(accuracy_summary_path, {"rows": aggregate_accuracy})
-    protocol.write_jsonl(effect_rows_path, effects)
-    protocol.write_json(effect_summary_path, {"rows": aggregate_effects})
-    protocol.write_jsonl(ablation_rows_path, ablation_rows)
-    protocol.write_json(ablation_summary_path, {"rows": aggregate_ablations})
+    protocol.write_json(accuracy_path, {"models": model_summaries})
+    protocol.write_json(accuracy_summary_path, {"rows": accuracy_summary})
+    protocol.write_json(effect_summary_path, {"rows": effect_summary})
+    protocol.write_json(ablation_summary_path, {"rows": ablation_summary})
     config = {
         "pipeline_schema_version": PIPELINE_SCHEMA,
+        "execution": "source_shard_streaming_with_partitioned_prediction_join",
+        "row_artifact_format": "parquet_zstd",
+        "replay_workers": int(replay_workers),
         "estimands": {
             "official_accuracy": "GIFT-Eval official future MASE/MAE",
             "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale",
             "capability_effect": "forecast_delta_vs_truth_delta_on_affected_targets",
             "input_ablation_attribution": (
                 "same_treatment_truth_with_auxiliary_histories_temporally_misaligned"
-            ),
-        },
-        "ranking_policy": {
-            "capability_effect": "separate_rank_by_capability_and_level_lower_effect_nrmse",
-            "input_attribution": (
-                "separate_audit_higher_positive_mase_degradation_indicates_useful_auxiliary_input"
             ),
         },
     }
@@ -445,20 +860,11 @@ def run_analysis(dataset_root: Path) -> dict[str, Any]:
         "inference_manifest_sha256": protocol.file_sha256(inference_manifest_path),
         "files": {
             "official_accuracy": protocol.file_record(accuracy_path),
-            "accuracy_rows": {
-                **protocol.file_record(accuracy_rows_path),
-                "row_count": len(accuracy_rows),
-            },
+            "accuracy_rows": parquet_file_record(accuracy_rows_path, row_count=accuracy_count),
             "accuracy_summary": protocol.file_record(accuracy_summary_path),
-            "capability_effect_rows": {
-                **protocol.file_record(effect_rows_path),
-                "row_count": len(effects),
-            },
+            "capability_effect_rows": parquet_file_record(effect_rows_path, row_count=effect_count),
             "capability_effect_summary": protocol.file_record(effect_summary_path),
-            "input_ablation_rows": {
-                **protocol.file_record(ablation_rows_path),
-                "row_count": len(ablation_rows),
-            },
+            "input_ablation_rows": parquet_file_record(ablation_rows_path, row_count=ablation_count),
             "input_ablation_summary": protocol.file_record(ablation_summary_path),
         },
     }
@@ -474,7 +880,11 @@ def main() -> int:
         raise FileExistsError(
             f"analysis artifact already exists; use a new experiment root: {manifest_path}"
         )
-    manifest = run_analysis(dataset_root)
+    manifest = run_analysis(
+        dataset_root,
+        gift_eval_dir=args.gift_eval_dir,
+        replay_workers=args.workers,
+    )
     print(protocol.canonical_json(manifest))
     return 0
 

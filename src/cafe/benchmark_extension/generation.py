@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterator
 
 import numpy as np
 
@@ -14,8 +14,13 @@ from cafe.benchmark_extension.gift_eval import (
     GIFT_EVAL_ADAPTER_SCHEMA,
     GIFT_EVAL_SOURCE_REVISION,
     GiftEvalInstance,
+    gift_arrow_target_summary,
     gift_eval_asset_path,
+    gift_eval_instances_for_record,
+    iter_gift_arrow_target_records,
     iter_gift_eval_instances,
+    official_window_count_from_minimum_length,
+    prediction_length,
 )
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
@@ -23,11 +28,16 @@ from cafe.benchmark_extension.mechanisms import (
     CapabilityTreatment,
     build_capability_group,
 )
+from cafe.benchmark_extension.storage import (
+    CompactParquetWriter,
+    parquet_file_record,
+)
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v6"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v2"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v2"
+PIPELINE_SCHEMA = "cafe.pipeline.v7"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v3"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v3"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v1"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -56,6 +66,8 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Non-formal source-order prefix for smoke tests.",
     )
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--shard-size", type=int, default=256)
     return parser.parse_args()
 
 
@@ -423,15 +435,244 @@ def _availability_row(
     }
 
 
-def _atomic_handles(paths: Iterable[Path]) -> tuple[list[Any], list[Path]]:
-    temporary = [path.with_suffix(path.suffix + ".tmp") for path in paths]
-    for path in paths:
-        path.parent.mkdir(parents=True, exist_ok=True)
-    return [path.open("w", encoding="utf-8") for path in temporary], temporary
+_DENSE_GENERATION_FIELDS = {
+    "target",
+    "covariates",
+    "future_observed_mask",
+}
 
 
-def _write_row(handle: Any, row: dict[str, Any]) -> None:
-    handle.write(protocol.canonical_json(row) + "\n")
+def compact_contract_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Remove replayable dense arrays from a generated sample row."""
+
+    compact = {
+        key: value for key, value in row.items() if key not in _DENSE_GENERATION_FIELDS
+    }
+    compact.update(
+        {
+            "schema_version": CONTRACT_SCHEMA,
+            "source_sample_schema_version": row.get("schema_version"),
+            "record_kind": row.get("evaluation_table"),
+            "dense_payload_policy": (
+                "source_arrow_reference_plus_deterministic_mechanism_replay"
+            ),
+        }
+    )
+    return compact
+
+
+def materialized_samples_for_instance(
+    instance: GiftEvalInstance,
+    *,
+    augmentation_seed: int,
+    capability_ids: tuple[str, ...],
+    source_shard_index: int | None = None,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Yield dense rows transiently; callers decide whether to send or score."""
+
+    def tagged(row: dict[str, Any]) -> dict[str, Any]:
+        if source_shard_index is not None:
+            row["source_shard_index"] = int(source_shard_index)
+        return row
+
+    yield "official_baselines", tagged(_baseline_row(instance))
+    for capability_id in capability_ids:
+        for kind, row in _materialized_capability_rows(
+            instance,
+            capability_id,
+            augmentation_seed=augmentation_seed,
+        ):
+            yield kind, tagged(row)
+
+
+def _materialized_capability_rows(
+    instance: GiftEvalInstance,
+    capability_id: str,
+    *,
+    augmentation_seed: int,
+) -> list[tuple[str, dict[str, Any]]]:
+    group = build_capability_group(
+        instance,
+        capability_id,
+        augmentation_seed=augmentation_seed,
+    )
+    rows: list[tuple[str, dict[str, Any]]] = [
+        ("availability", _availability_row(instance, group))
+    ]
+    for treatment in group.treatments:
+        treatment_row = _treatment_row(
+            instance,
+            group,
+            treatment,
+            augmentation_seed=augmentation_seed,
+        )
+        rows.append(("capability_treatments", treatment_row))
+        ablation_row = _input_ablation_row(
+            instance,
+            group,
+            treatment,
+            treatment_row,
+            augmentation_seed=augmentation_seed,
+        )
+        if ablation_row is not None:
+            rows.append(("input_ablations", ablation_row))
+    return rows
+
+
+def iter_replayed_samples(
+    manifest: dict[str, Any],
+    *,
+    gift_eval_dir: Path,
+    replay_workers: int = 1,
+) -> Iterator[dict[str, Any]]:
+    """Reconstruct full baseline/treatment/ablation rows without task artifacts."""
+
+    config = manifest["config"]
+    shard_size = int(config.get("generation_execution", {}).get("shard_size", 256))
+    capability_ids = tuple(str(value) for value in config["capability_ids"])
+    executor = (
+        ThreadPoolExecutor(max_workers=int(replay_workers))
+        if int(replay_workers) > 1
+        else None
+    )
+    try:
+        for instance_index, instance in enumerate(iter_gift_eval_instances(
+            str(config["dataset_id"]),
+            gift_eval_dir,
+            term=str(config["term"]),
+            max_instances=config.get("max_instances"),
+        )):
+            shard_index = instance_index // max(1, shard_size)
+            baseline = _baseline_row(instance)
+            baseline["source_shard_index"] = shard_index
+            yield baseline
+            if executor is None:
+                capability_rows = (
+                    _materialized_capability_rows(
+                        instance,
+                        capability_id,
+                        augmentation_seed=int(config["augmentation_seed"]),
+                    )
+                    for capability_id in capability_ids
+                )
+            else:
+                capability_rows = executor.map(
+                    lambda capability_id: _materialized_capability_rows(
+                        instance,
+                        capability_id,
+                        augmentation_seed=int(config["augmentation_seed"]),
+                    ),
+                    capability_ids,
+                )
+            for rows in capability_rows:
+                for kind, row in rows:
+                    if kind != "availability":
+                        row["source_shard_index"] = shard_index
+                        yield row
+    finally:
+        if executor is not None:
+            executor.shutdown()
+
+
+def _compact_record_batch(
+    work: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Worker entry point: fit contracts for source records, return no arrays."""
+
+    output = {
+        "official_baselines": [],
+        "capability_treatments": [],
+        "input_ablations": [],
+        "availability": [],
+    }
+    instance_index = int(work["start_instance_index"])
+    for item in work["records"]:
+        for instance in gift_eval_instances_for_record(
+            dataset_id=str(work["dataset_id"]),
+            config_id=str(work["config_id"]),
+            item_id=str(item["item_id"]),
+            frequency=str(work["frequency"]),
+            term=str(work["term"]),
+            raw_target=np.asarray(item["target"], dtype=float),
+            prediction_length_value=int(work["horizon"]),
+            window_count=int(work["window_count"]),
+            maximum_windows=int(item["maximum_windows"]),
+        ):
+            for kind, row in materialized_samples_for_instance(
+                instance,
+                augmentation_seed=int(work["augmentation_seed"]),
+                capability_ids=tuple(str(value) for value in work["capability_ids"]),
+                source_shard_index=(
+                    instance_index // max(1, int(work["source_shard_size"]))
+                ),
+            ):
+                output[kind].append(compact_contract_row(row))
+            instance_index += 1
+    return output
+
+
+def _parallel_work_batches(
+    dataset_id: str,
+    *,
+    gift_eval_dir: Path,
+    term: str,
+    augmentation_seed: int,
+    capability_ids: tuple[str, ...],
+    max_instances: int | None,
+    shard_size: int,
+) -> Iterator[dict[str, Any]]:
+    dataset = protocol.resolve_dataset(dataset_id)
+    asset_path = gift_eval_asset_path(dataset_id, gift_eval_dir)
+    frequency, minimum_length, _record_count = gift_arrow_target_summary(asset_path)
+    horizon = prediction_length(dataset_id, frequency, term=term)
+    windows = official_window_count_from_minimum_length(
+        dataset_id, minimum_length, horizon
+    )
+    remaining = max_instances
+    current: list[dict[str, Any]] = []
+    current_instances = 0
+
+    next_instance_index = 0
+
+    def work(records: list[dict[str, Any]], start_index: int) -> dict[str, Any]:
+        return {
+            "dataset_id": dataset_id,
+            "config_id": dataset.config_id,
+            "frequency": frequency,
+            "term": term,
+            "horizon": horizon,
+            "window_count": windows,
+            "augmentation_seed": augmentation_seed,
+            "capability_ids": capability_ids,
+            "start_instance_index": int(start_index),
+            "source_shard_size": int(shard_size),
+            "records": records,
+        }
+
+    for item_id, record_frequency, target in iter_gift_arrow_target_records(asset_path):
+        if record_frequency != frequency:
+            raise ValueError("GIFT-Eval config must have one frequency")
+        maximum = windows if remaining is None else min(windows, int(remaining))
+        if maximum <= 0:
+            break
+        if current and current_instances + maximum > int(shard_size):
+            yield work(current, next_instance_index)
+            next_instance_index += current_instances
+            current = []
+            current_instances = 0
+        item = {
+            "item_id": str(item_id),
+            "target": np.asarray(target, dtype=float),
+            "maximum_windows": int(maximum),
+        }
+        current.append(item)
+        current_instances += maximum
+        if remaining is not None:
+            remaining -= maximum
+            if remaining <= 0:
+                break
+    if current:
+        yield work(current, next_instance_index)
 
 
 def generate_dataset(
@@ -443,71 +684,94 @@ def generate_dataset(
     augmentation_seed: int,
     capability_ids: tuple[str, ...],
     max_instances: int | None,
+    workers: int = 1,
+    shard_size: int = 256,
 ) -> dict[str, Any]:
     generation_dir = dataset_root / "01_generation"
-    baseline_path = generation_dir / "official_baselines.jsonl"
-    treatment_path = generation_dir / "capability_treatments.jsonl"
-    ablation_path = generation_dir / "input_ablations.jsonl"
-    availability_path = generation_dir / "availability.jsonl"
+    baseline_path = generation_dir / "official_instances.parquet"
+    treatment_path = generation_dir / "treatment_contracts.parquet"
+    ablation_path = generation_dir / "input_ablation_contracts.parquet"
+    availability_path = generation_dir / "availability.parquet"
     paths = (baseline_path, treatment_path, ablation_path, availability_path)
-    handles, temporary = _atomic_handles(paths)
     baseline_count = treatment_count = ablation_count = availability_count = instance_count = 0
     available_counts = {capability: 0 for capability in capability_ids}
-    try:
-        baseline_handle, treatment_handle, ablation_handle, availability_handle = handles
-        for instance in iter_gift_eval_instances(
-            dataset_id,
-            gift_eval_dir,
-            term=term,
-            max_instances=max_instances,
-        ):
-            instance_count += 1
-            _write_row(baseline_handle, _baseline_row(instance))
+    writers = {
+        "official_baselines": CompactParquetWriter(baseline_path),
+        "capability_treatments": CompactParquetWriter(treatment_path),
+        "input_ablations": CompactParquetWriter(ablation_path),
+        "availability": CompactParquetWriter(availability_path),
+    }
+
+    def consume(kind: str, compact: dict[str, Any]) -> None:
+        nonlocal baseline_count, treatment_count, ablation_count, availability_count
+        writers[kind].write(compact)
+        if kind == "official_baselines":
             baseline_count += 1
-            for capability_id in capability_ids:
-                group = build_capability_group(
-                    instance,
-                    capability_id,
-                    augmentation_seed=augmentation_seed,
+        elif kind == "capability_treatments":
+            treatment_count += 1
+        elif kind == "input_ablations":
+            ablation_count += 1
+        else:
+            availability_count += 1
+            if bool(compact["available"]):
+                available_counts[str(compact["capability_id"])] += 1
+
+    try:
+        if int(workers) > 1:
+            batches = iter(
+                _parallel_work_batches(
+                dataset_id,
+                gift_eval_dir=gift_eval_dir,
+                term=term,
+                augmentation_seed=augmentation_seed,
+                capability_ids=capability_ids,
+                max_instances=max_instances,
+                shard_size=shard_size,
                 )
-                _write_row(availability_handle, _availability_row(instance, group))
-                availability_count += 1
-                if group.available:
-                    available_counts[capability_id] += 1
-                for treatment in group.treatments:
-                    treatment_row = _treatment_row(
-                        instance,
-                        group,
-                        treatment,
-                        augmentation_seed=augmentation_seed,
-                    )
-                    _write_row(
-                        treatment_handle,
-                        treatment_row,
-                    )
-                    treatment_count += 1
-                    ablation_row = _input_ablation_row(
-                        instance,
-                        group,
-                        treatment,
-                        treatment_row,
-                        augmentation_seed=augmentation_seed,
-                    )
-                    if ablation_row is not None:
-                        _write_row(ablation_handle, ablation_row)
-                        ablation_count += 1
-        for handle in handles:
-            handle.flush()
-            os.fsync(handle.fileno())
-            handle.close()
-        for temp, final in zip(temporary, paths, strict=True):
-            os.replace(temp, final)
+            )
+            with ProcessPoolExecutor(max_workers=int(workers)) as executor:
+                pending: list[Any] = []
+                for _index in range(max(1, int(workers) * 2)):
+                    try:
+                        pending.append(executor.submit(_compact_record_batch, next(batches)))
+                    except StopIteration:
+                        break
+                while pending:
+                    future = pending.pop(0)
+                    result = future.result()
+                    for kind in (
+                        "official_baselines",
+                        "capability_treatments",
+                        "input_ablations",
+                        "availability",
+                    ):
+                        for compact in result[kind]:
+                            consume(kind, compact)
+                    try:
+                        pending.append(executor.submit(_compact_record_batch, next(batches)))
+                    except StopIteration:
+                        pass
+            instance_count = baseline_count
+        else:
+            for instance_index, instance in enumerate(iter_gift_eval_instances(
+                dataset_id,
+                gift_eval_dir,
+                term=term,
+                max_instances=max_instances,
+            )):
+                instance_count += 1
+                for kind, row in materialized_samples_for_instance(
+                    instance,
+                    augmentation_seed=augmentation_seed,
+                    capability_ids=capability_ids,
+                    source_shard_index=instance_index // max(1, int(shard_size)),
+                ):
+                    consume(kind, compact_contract_row(row))
+        for writer in writers.values():
+            writer.close()
     except Exception:
-        for handle in handles:
-            if not handle.closed:
-                handle.close()
-        for path in temporary:
-            path.unlink(missing_ok=True)
+        for writer in writers.values():
+            writer.abort()
         raise
     source_path = gift_eval_asset_path(dataset_id, gift_eval_dir)
     source_files = [
@@ -519,6 +783,7 @@ def generate_dataset(
         "adapter_schema_version": GIFT_EVAL_ADAPTER_SCHEMA,
         "gift_eval_split_source": GIFT_EVAL_SOURCE_REVISION,
         "dataset_id": dataset_id,
+        "gift_eval_source_root": str(gift_eval_dir.resolve()),
         "term": term,
         "augmentation_seed": int(augmentation_seed),
         "capability_ids": list(capability_ids),
@@ -540,6 +805,20 @@ def generate_dataset(
         "input_ablation_policy": (
             "common_cross_auxiliary_history_least_aligned_circular_shift_v1"
         ),
+        "artifact_storage": {
+            "format": "parquet",
+            "compression": "zstd",
+            "dense_targets_stored": False,
+            "dense_covariates_stored": False,
+            "replay_policy": "source_arrow_plus_deterministic_contract_v1",
+        },
+        "generation_execution": {
+            "workers": int(workers),
+            "shard_size": int(shard_size),
+            "parallelism_status": (
+                "enabled" if int(workers) > 1 else "single_worker"
+            ),
+        },
     }
     manifest = {
         "schema_version": GENERATION_SCHEMA,
@@ -550,20 +829,16 @@ def generate_dataset(
         "source_files": source_files,
         "files": {
             "official_baselines": {
-                **protocol.file_record(baseline_path),
-                "row_count": baseline_count,
+                **parquet_file_record(baseline_path, row_count=baseline_count),
             },
             "capability_treatments": {
-                **protocol.file_record(treatment_path),
-                "row_count": treatment_count,
+                **parquet_file_record(treatment_path, row_count=treatment_count),
             },
             "input_ablations": {
-                **protocol.file_record(ablation_path),
-                "row_count": ablation_count,
+                **parquet_file_record(ablation_path, row_count=ablation_count),
             },
             "availability": {
-                **protocol.file_record(availability_path),
-                "row_count": availability_count,
+                **parquet_file_record(availability_path, row_count=availability_count),
             },
         },
         "official_instance_count": instance_count,
@@ -595,6 +870,8 @@ def main() -> int:
         augmentation_seed=args.augmentation_seed,
         capability_ids=tuple(args.capabilities),
         max_instances=args.max_instances,
+        workers=args.workers,
+        shard_size=args.shard_size,
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     return 0
