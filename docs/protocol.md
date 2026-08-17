@@ -79,16 +79,14 @@ The checked suffixes are the available members of
 `{96,168,336,512,1024,L}`. Every treatment satisfies
 
 \[
-\min_C d_C\ge 0.10,
-\qquad \max_C d_C\le1.0,
-\qquad \max_{C,d} d_{C,d}\le1.5.
+\min_C d_C\ge 0.10.
 \]
 
 For amplitude-controlled mechanisms the physical gain maps the sampled level
 coordinate to the distance range. For regime and intermittency, one shared
 amplitude is solved from the weakest of the five location/sparsity treatments.
-The whole five-level group is unavailable when the lower and upper conditions
-cannot both be met.
+There is no upper distance threshold. The whole five-level group is unavailable
+when any treatment does not reach the lower bound.
 
 ## 5. Capability availability
 

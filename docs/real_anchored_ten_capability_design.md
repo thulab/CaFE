@@ -166,18 +166,19 @@ coefficient is enhanced.
 
 Each treatment—not adjacent levels—is compared with its authentic source on
 all available suffixes in `{96,168,336,512,1024,L}`. The minimum normalized
-RMS is 0.10. Macro and per-target upper limits are 1.0 and 1.5. Regime and
-intermittency solve one shared amplitude from the weakest level, preserving
-their location/sparsity coordinate across the five-level group.
+RMS is 0.10, with no upper distance threshold. Regime and intermittency solve
+one shared amplitude from the weakest level, preserving their
+location/sparsity coordinate across the five-level group.
 
 ## Actual v6 curve examples
 
 These figures come from validated v6 generation artifacts, not an
 illustrative synthetic generator or model forecasts. Five columns are the
 five independently drawn level parameters. Grey is the authentic official
-source, blue is the treatment, and the lower row is their difference. The
-display uses the final L168 and official future for readability; generation
-treated the complete official history before model-specific truncation. Each
+source, blue is the treatment, and the lower row is their difference. Every
+figure displays that official instance's complete input history and official
+future; generation applies the same treatment before model-specific context
+truncation. Each
 source is the lexicographically first validated group, selected without future
 targets or model results.
 
@@ -186,7 +187,9 @@ targets or model results.
 ![Trend five-level example](figures/native-extension-examples/01_trend__five_levels.png)
 
 Source: `gift_ett1_h`, official origin `o16460`. The ramp follows the
-history-estimated trend sign.
+history-estimated trend sign. Since the complete official history is shown,
+the lower row directly displays the uncentered linear difference from the
+history start, with its slope increasing across levels.
 
 ### Multi-seasonal
 

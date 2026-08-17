@@ -1,6 +1,6 @@
 {
-  "created_at": "2026-08-15T18:32:23.645187+00:00",
-  "figure_semantics": "benchmark_truth_paths_not_model_predictions_last_l168_display_only_treatment_was_applied_to_full_official_history",
+  "created_at": "2026-08-17T08:58:56.611887+00:00",
+  "figure_semantics": "benchmark_truth_paths_not_model_predictions_complete_official_instance_history_and_future",
   "records": [
     {
       "affected_target_index_shown": 2,
@@ -8,11 +8,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "trend",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 310161,
+        "bytes": 241960,
         "path": "01_trend__five_levels.png",
-        "sha256": "7f96d5ab9b1e39a0459f9837e7369374035320d0ed7909cb9b96ac62a5e02107"
+        "sha256": "7b550ea0e4b94ff200f5f6033007d7820ee912c137e1d4244a1ad3e339da8688"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -72,11 +73,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "multi_seasonal",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 320379,
+        "bytes": 296806,
         "path": "02_multi_seasonal__five_levels.png",
-        "sha256": "70920108dc4a4c9eb6a59f33478eea8254b14a5aaff2c64efb5925259c4e13d2"
+        "sha256": "09de9203b99fc1e72c55fbdab7b18476ee7660c3af05694b56cf5edc413c6f58"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -136,11 +138,12 @@
       "baseline_sample_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266__baseline",
       "capability_id": "time_varying_seasonality",
       "dataset_id": "gift_restaurant_d",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 266,
       "file": {
-        "bytes": 484919,
+        "bytes": 494082,
         "path": "03_time_varying_seasonality__five_levels.png",
-        "sha256": "3918f0ac5a4585cc771e7e46bdafe62ba9e240adbcee8baf109270dde3e50c41"
+        "sha256": "fdf42a0c6d931ce9fd8872a509c1cf19fb05949c6cc4e8b2781d35f510da1992"
       },
       "full_treatment_history": 266,
       "horizon": 30,
@@ -200,11 +203,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "regime_switching",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 318157,
+        "bytes": 206268,
         "path": "04_regime_switching__five_levels.png",
-        "sha256": "d516aace8fd05a4420baef828f7083ed1673f746d52f0398c3600bbc876780b7"
+        "sha256": "b0d7e51e2107c5b37215a690dff83341662150e86e1c686d6eda5c71df2414cd"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -264,11 +268,12 @@
       "baseline_sample_id": "gift__gift_restaurant_d__air_8e4360a64dbd4c50__w00__o266__baseline",
       "capability_id": "nonlinear_persistence",
       "dataset_id": "gift_restaurant_d",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 266,
       "file": {
-        "bytes": 378324,
+        "bytes": 339862,
         "path": "05_nonlinear_persistence__five_levels.png",
-        "sha256": "da8bc5ffc2806bd8c4dca70e09e93bfc803453e83e65e6d691f519a327ec7923"
+        "sha256": "f9ff9706b433c3c886c698af8ad87de42ea53f9278fb3049f79e04f8d4bd2f4b"
       },
       "full_treatment_history": 266,
       "horizon": 30,
@@ -328,11 +333,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "predictable_intermittency",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 356991,
+        "bytes": 196798,
         "path": "06_predictable_intermittency__five_levels.png",
-        "sha256": "88261054f78b21bf28ab69668bba4405b0af758e76d916b9458c6b078449bff2"
+        "sha256": "b1eafe13bdcb8a76a05a893c8520fcb698325933ab67253d727e89e5ce8eaae5"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -392,11 +398,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "common_factor",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 360191,
+        "bytes": 263693,
         "path": "07_common_factor__five_levels.png",
-        "sha256": "51628d3120d1d480607e4da6c31bee41fd37ef0b818d173368b92be44509815e"
+        "sha256": "a3cf8542155b24a31652459323dad4bf3288167ea290958cb28feddd4c8937bf"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -465,11 +472,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "cross_series_dependence",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 359129,
+        "bytes": 254371,
         "path": "09_cross_series_dependence__five_levels.png",
-        "sha256": "fd408b7214b21152aa88ac6743839728498f711deb9a079e943917dc0fa58fc1"
+        "sha256": "54de3c8f2691604fc559c948c4caadc27b2d61c7047d67c9ef756a1ba03995d6"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -529,11 +537,12 @@
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "covariate_response",
       "dataset_id": "gift_ett1_h",
-      "display_history": 168,
+      "delta_display": "treatment_minus_source",
+      "display_history": 16460,
       "file": {
-        "bytes": 391608,
+        "bytes": 185597,
         "path": "10_covariate_response__five_levels.png",
-        "sha256": "60c71457e39f078b81201ba1deb85476d2c5cb1b17fc066b60ac075d51d87047"
+        "sha256": "4f83cba0507c5bd74824a279fa7556908698eb012ee8b4517c1d678143cecdd5"
       },
       "full_treatment_history": 16460,
       "horizon": 48,

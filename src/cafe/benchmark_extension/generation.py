@@ -355,7 +355,7 @@ def generate_dataset(
             "counter_based_by_official_instance_capability_level_and_augmentation_seed"
         ),
         "source_distance_policy": (
-            "treatment_only_multicontext_source_frozen_normalized_rms_v1"
+            "treatment_only_multicontext_minimum_source_distance_v2"
         ),
     }
     manifest = {

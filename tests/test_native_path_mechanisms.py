@@ -5,6 +5,7 @@ import numpy as np
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_THRESHOLD,
+    _distance_gate,
     build_capability_group,
 )
 
@@ -108,6 +109,16 @@ def test_treatment_distance_gate_is_from_authentic_source_not_adjacent_level() -
         >= SOURCE_DISTANCE_THRESHOLD - 1e-12
         for treatment in group.treatments
     )
+
+
+def test_treatment_distance_gate_has_no_upper_rejection_threshold() -> None:
+    history = np.column_stack((np.arange(120.0), np.arange(120.0)))
+    delta = np.full_like(history, 1000.0)
+    gate = _distance_gate(delta, history, (0, 1))
+    assert gate["accepted"]
+    assert gate["maximum_observed_macro_distance"] > 1.0
+    assert "maximum_macro_distance" not in gate
+    assert "maximum_channel_distance" not in gate
 
 
 def test_common_and_cross_use_native_panel_without_channel_tasks() -> None:

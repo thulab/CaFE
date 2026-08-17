@@ -13,7 +13,6 @@ from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
 
 
 PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v1"
-DISPLAY_HISTORY = 168
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,7 +65,7 @@ def _plot_group(
     horizon = int(baseline["horizon"])
     affected = [int(value) for value in rows[0]["affected_target_indices"]]
     channel = affected[0]
-    start = max(0, context - DISPLAY_HISTORY)
+    start = 0
     x = np.arange(start - context, horizon)
     source = baseline_target[start:, channel]
     treatment_values = [np.asarray(row["target"], dtype=float)[start:, channel] for row in rows]
@@ -74,9 +73,15 @@ def _plot_group(
     margin = max(1e-6, 0.05 * float(np.ptp(all_values)))
     y_limits = (float(np.min(all_values) - margin), float(np.max(all_values) + margin))
     delta_values = [values - source for values in treatment_values]
-    delta_limit = max(max(float(np.max(np.abs(delta))) for delta in delta_values), 1e-6)
+    displayed_deltas = delta_values
+    delta_limit = max(
+        max(float(np.max(np.abs(delta))) for delta in displayed_deltas),
+        1e-6,
+    )
     figure, axes = plt.subplots(2, 5, figsize=(16, 5.4), sharex=True)
-    for index, (row, values, delta) in enumerate(zip(rows, treatment_values, delta_values, strict=True)):
+    for index, (row, values, delta, displayed_delta) in enumerate(
+        zip(rows, treatment_values, delta_values, displayed_deltas, strict=True)
+    ):
         axis = axes[0, index]
         axis.plot(x, source, color="#9aa0a6", linewidth=1.0, label="authentic source")
         axis.plot(x, values, color="#1565c0", linewidth=1.2, label="treatment")
@@ -89,14 +94,26 @@ def _plot_group(
             fontsize=8,
         )
         bottom = axes[1, index]
-        bottom.plot(x, delta, color="#d84315", linewidth=1.2)
+        bottom.plot(x, displayed_delta, color="#d84315", linewidth=1.2)
         bottom.axhline(0, color="#9e9e9e", linewidth=0.7)
         bottom.axvline(0, color="#263238", linewidth=0.8)
         bottom.axvspan(0, horizon - 1, color="#ffecb3", alpha=0.35)
         bottom.set_ylim(-1.05 * delta_limit, 1.05 * delta_limit)
         bottom.set_xlabel("time relative to forecast origin")
+        if capability == "trend":
+            slope = float(np.mean(np.diff(delta[: context - start])))
+            bottom.text(
+                0.04,
+                0.90,
+                f"slope={slope:.4g}/step",
+                transform=bottom.transAxes,
+                fontsize=7,
+                va="top",
+            )
     axes[0, 0].set_ylabel("authentic units")
-    axes[1, 0].set_ylabel("treatment − source")
+    axes[1, 0].set_ylabel(
+        "relative trend delta" if capability == "trend" else "treatment − source"
+    )
     axes[0, 0].legend(loc="upper left", fontsize=7)
     figure.suptitle(
         f"{capability}: five treatments on one official {baseline['dataset_id']} instance",
@@ -115,7 +132,8 @@ def _plot_group(
         "official_instance_id": baseline["official_instance_id"],
         "baseline_sample_id": baseline["sample_id"],
         "affected_target_index_shown": channel,
-        "display_history": min(DISPLAY_HISTORY, context),
+        "display_history": context,
+        "delta_display": "treatment_minus_source",
         "full_treatment_history": context,
         "horizon": horizon,
         "augmentation_seed": rows[0]["augmentation_seed"],
@@ -200,8 +218,8 @@ def main() -> int:
             "lexicographically_first_validated_official_instance_per_capability"
         ),
         "figure_semantics": (
-            "benchmark_truth_paths_not_model_predictions_last_l168_display_only_"
-            "treatment_was_applied_to_full_official_history"
+            "benchmark_truth_paths_not_model_predictions_complete_official_"
+            "instance_history_and_future"
         ),
         "records": records,
     }

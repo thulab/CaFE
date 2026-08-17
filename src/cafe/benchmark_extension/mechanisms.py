@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v1"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v2"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -31,8 +31,6 @@ GENERATABLE_CAPABILITY_IDS = tuple(
 )
 CAPABILITY_LEVELS = (1, 2, 3, 4, 5)
 SOURCE_DISTANCE_THRESHOLD = 0.10
-MAXIMUM_MACRO_DISTANCE = 1.0
-MAXIMUM_CHANNEL_DISTANCE = 1.5
 SOURCE_DISTANCE_SUFFIXES = (96, 168, 336, 512, 1024)
 STRENGTH_INTERVALS = (
     (0.10, 0.14),
@@ -146,26 +144,21 @@ def _distance_gate(
     maximum_channel = max(
         max(row["channel_normalized_rms"], default=0.0) for row in by_suffix
     )
-    accepted = bool(
-        minimum_macro >= SOURCE_DISTANCE_THRESHOLD - 1e-12
-        and maximum_macro <= MAXIMUM_MACRO_DISTANCE + 1e-12
-        and maximum_channel <= MAXIMUM_CHANNEL_DISTANCE + 1e-12
-    )
+    accepted = bool(minimum_macro >= SOURCE_DISTANCE_THRESHOLD - 1e-12)
     return {
-        "schema_version": "cafe.treatment_source_distance_gate.v1",
+        "schema_version": "cafe.treatment_source_distance_gate.v2",
         "metric": "source_frozen_scale_multicontext_normalized_rms",
         "scope": "treatment_history_vs_authentic_official_history",
         "treatment_only": True,
         "suffix_contexts": suffixes,
         "minimum_required_distance": SOURCE_DISTANCE_THRESHOLD,
-        "maximum_macro_distance": MAXIMUM_MACRO_DISTANCE,
-        "maximum_channel_distance": MAXIMUM_CHANNEL_DISTANCE,
         "minimum_observed_macro_distance": minimum_macro,
+        # Maxima remain descriptive diagnostics; they are not acceptance limits.
         "maximum_observed_macro_distance": maximum_macro,
         "maximum_observed_channel_distance": maximum_channel,
         "by_suffix": by_suffix,
         "accepted": accepted,
-        "reason": None if accepted else "outside_source_distance_band",
+        "reason": None if accepted else "below_minimum_source_distance",
     }
 
 
@@ -959,7 +952,7 @@ def build_capability_group(
             "parameter_draw_sha256": protocol.json_sha256(parameter_payload),
             "target_future_used_for_fit_or_parameter_draw": False,
             "source_distance_policy": (
-                "treatment_only_multicontext_source_frozen_normalized_rms_v1"
+                "treatment_only_multicontext_minimum_source_distance_v2"
             ),
         },
     )
