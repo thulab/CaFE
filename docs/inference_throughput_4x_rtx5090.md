@@ -215,6 +215,26 @@ univariate children会自动降低有效并发。429/503采用1s、2s指数退�
 扩大token预算：直接增大L1预算不会增加GPU算力，只会把更多排队压力转移到
 ZMQ、GPU backlog和主机内存。
 
+### Compact contract重放供给修复
+
+正式Electricity首次运行暴露出服务端微基准之外的供给瓶颈。该数据集的官方
+history约L34k，Timer-4.0实际看到L11,520，并同时接收2列calendar covariates；
+每个view约34,656个输入值，是C512,D1无协变量微基准的约68倍。因此几千
+views/s不能直接外推到这个shape。
+
+除此之外，旧推理实现没有消费generation已保存的compact contract，而是每个
+模型重新遍历Arrow、重新做能力搜索/拟合，并将完整dense path转成Python list后
+再转回NumPy。实测只有一个HTTP连接活跃，四卡10秒平均SM利用率约4.4%，
+端到端仅约30–35 views/s。
+
+修复后，inference按官方实例顺序流式读取`official_instances.parquet`、
+`treatment_contracts.parquet`和`input_ablation_contracts.parquet`：只应用冻结的
+channel、period、join、lag、loading和gain，不再重复能力选择；dense target全程
+保持NumPy carrier，并用8个跨实例预取线程形成有界生产者流水线。Electricity
+前2,048条contract重放达到约230–242 rows/s。隔离GPU smoke的四卡10秒平均
+SM利用率约83.2%，正式重跑的后续5秒采样约75.4%，无503、429、OOM或预测失败。
+8线程在该48核主机上优于16/24/32线程，说明长path重建主要受内存带宽限制。
+
 ## Toto 优化与精度结论
 
 本轮按 P0–P5 顺序处理了吞吐链路：
