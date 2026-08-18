@@ -956,3 +956,186 @@ def build_capability_group(
             ),
         },
     )
+
+
+def replay_treatment_deltas(
+    instance: GiftEvalInstance,
+    contracts: list[dict[str, Any]],
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Apply frozen treatment contracts without repeating capability selection.
+
+    Generation has already selected channels, periods, joins, lags, loadings and
+    parameter draws.  Inference only reconstructs the corresponding component
+    from the authentic source path and applies the stored physical gain.
+    """
+
+    if not contracts:
+        return {}
+    capability_ids = {str(row["capability_id"]) for row in contracts}
+    if len(capability_ids) != 1:
+        raise ValueError("treatment replay group mixes capabilities")
+    capability_id = capability_ids.pop()
+    history = np.asarray(instance.history, dtype=float)
+    horizon = int(instance.prediction_length)
+    length, dimension = history.shape
+    scales = _scale_by_target(history)
+    shared_components: tuple[np.ndarray, np.ndarray] | None = None
+
+    def shared_component(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+        nonlocal shared_components
+        if shared_components is not None:
+            return shared_components
+        metadata = dict(row["mechanism_metadata"])
+        component_h = np.zeros_like(history)
+        component_f = np.zeros_like(instance.future)
+        if capability_id == "trend":
+            directions = np.asarray(metadata["direction_by_target"], dtype=float)
+            extended = np.arange(length + horizon, dtype=float)
+            extended /= max(1, length - 1)
+            affected = [int(value) for value in row["affected_target_indices"]]
+            component = np.zeros((length + horizon, dimension), dtype=float)
+            component[:, affected] = (
+                extended[:, None]
+                * directions[affected][None, :]
+                * scales[affected][None, :]
+            )
+            component_h, component_f = component[:length], component[length:]
+        elif capability_id == "multi_seasonal":
+            details = metadata["resolved_periods_by_target"]
+            for raw_channel, periods in details.items():
+                channel = int(raw_channel)
+                frequency_index = int(
+                    round(length / float(periods["secondary_period"]))
+                )
+                fitted_h, fitted_f = _harmonic_component(
+                    history[:, channel], frequency_index, horizon
+                )
+                component_h[:, channel] = fitted_h
+                component_f[:, channel] = fitted_f
+        elif capability_id == "time_varying_seasonality":
+            details = metadata["resolved_periods_by_target"]
+            all_t = np.arange(length + horizon, dtype=float)
+            for raw_channel, periods in details.items():
+                channel = int(raw_channel)
+                carrier_index = int(
+                    round(length / float(periods["carrier_period"]))
+                )
+                modulation_index = int(
+                    round(length / float(periods["modulation_period"]))
+                )
+                carrier_h, carrier_f = _harmonic_component(
+                    history[:, channel], carrier_index, horizon
+                )
+                envelope = np.sin(
+                    2.0 * math.pi * modulation_index * all_t / length
+                )
+                combined = np.concatenate((carrier_h, carrier_f)) * envelope
+                component_h[:, channel] = combined[:length]
+                component_f[:, channel] = combined[length:]
+        elif capability_id == "nonlinear_persistence":
+            diagnostics = metadata["diagnostics_by_target"]
+            for raw_channel, diagnostic in diagnostics.items():
+                channel = int(raw_channel)
+                z = (history[:, channel] - np.mean(history[:, channel])) / scales[
+                    channel
+                ]
+                previous = z[:-1]
+                response = z[1:]
+                quadratic = np.square(previous) - float(
+                    np.mean(np.square(previous))
+                )
+                design = np.column_stack(
+                    (np.ones(previous.size), previous, quadratic)
+                )
+                coefficients = np.linalg.lstsq(design, response, rcond=None)[0]
+                beta = float(diagnostic["quadratic_coefficient"])
+                component_h[1:, channel] = scales[channel] * beta * quadratic
+                state = float(z[-1])
+                mean_square = float(np.mean(np.square(previous)))
+                for step in range(horizon):
+                    q = state * state - mean_square
+                    component_f[step, channel] = scales[channel] * beta * q
+                    state = float(coefficients[0] + coefficients[1] * state)
+                    state = float(np.clip(state, -8.0, 8.0))
+        elif capability_id == "common_factor":
+            loading = np.asarray(metadata["loading"], dtype=float)
+            z = (history - np.mean(history, axis=0)) / scales
+            factor = z @ loading
+            phi = float(metadata["factor_ar1"])
+            future_factor = np.empty(horizon, dtype=float)
+            state = float(factor[-1])
+            for step in range(horizon):
+                state *= phi
+                future_factor[step] = state
+            component_h = factor[:, None] * loading[None, :] * scales[None, :]
+            component_f = (
+                future_factor[:, None] * loading[None, :] * scales[None, :]
+            )
+        elif capability_id == "cross_series_dependence":
+            driver = int(metadata["driver_target_index"])
+            responder = int(metadata["responder_target_index"])
+            lag = int(metadata["lag"])
+            beta = float(metadata["transfer_coefficient"])
+            z = (history - np.mean(history, axis=0)) / scales
+            component_h[lag:, responder] = (
+                scales[responder] * beta * z[:-lag, driver]
+            )
+            driver_future = _linear_extrapolation(
+                z[:, driver : driver + 1], horizon
+            )[:, 0]
+            extended_driver = np.concatenate((z[:, driver], driver_future))
+            for step in range(horizon):
+                source_index = length + step - lag
+                component_f[step, responder] = (
+                    scales[responder] * beta * extended_driver[source_index]
+                )
+        elif capability_id == "covariate_response":
+            target = int(metadata["eligible_target_index"])
+            covariate = int(metadata["covariate_index"])
+            beta = float(metadata["response_coefficient"])
+            component_h[:, target] = (
+                scales[target] * beta * instance.history_covariates[:, covariate]
+            )
+            component_f[:, target] = (
+                scales[target] * beta * instance.future_covariates[:, covariate]
+            )
+        else:
+            raise ValueError(f"capability {capability_id!r} has level-specific replay")
+        shared_components = component_h, component_f
+        return shared_components
+
+    output: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for row in contracts:
+        metadata = dict(row["mechanism_metadata"])
+        if capability_id == "regime_switching":
+            component_h = np.zeros_like(history)
+            component_f = np.zeros_like(instance.future)
+            join = int(metadata["change_index"])
+            amplitude = np.asarray(
+                metadata["shared_amplitude_before_distance_adjustment"],
+                dtype=float,
+            )
+            direction = np.asarray(metadata["direction_by_target"], dtype=float)
+            component_h[join:] = direction * amplitude
+            component_f[:] = direction * amplitude
+        elif capability_id == "predictable_intermittency":
+            combined = np.zeros((length + horizon, dimension), dtype=float)
+            amplitude = np.asarray(
+                metadata["positive_event_amplitude_before_distance_adjustment"],
+                dtype=float,
+            )
+            width = int(metadata["pulse_width"])
+            for center in metadata["event_centers"]:
+                for offset in range(width):
+                    index = int(center) + offset
+                    if 0 <= index < combined.shape[0]:
+                        combined[index] += amplitude
+            component_h, component_f = combined[:length], combined[length:]
+        else:
+            component_h, component_f = shared_component(row)
+        gain = float(row["applied_component_gain"])
+        output[str(row["sample_id"])] = (
+            np.asarray(component_h * gain, dtype=float),
+            np.asarray(component_f * gain, dtype=float),
+        )
+    return output

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Iterator
@@ -27,9 +28,11 @@ from cafe.benchmark_extension.mechanisms import (
     CapabilityGroup,
     CapabilityTreatment,
     build_capability_group,
+    replay_treatment_deltas,
 )
 from cafe.benchmark_extension.storage import (
     CompactParquetWriter,
+    iter_compact_parquet,
     parquet_file_record,
 )
 
@@ -132,12 +135,12 @@ def _baseline_row(instance: GiftEvalInstance) -> dict[str, Any]:
         "target_column_names": list(instance.target_column_names),
         "covariate_dim": int(covariates.shape[1]),
         "covariate_column_names": list(instance.covariate_column_names),
-        "covariates": covariates.tolist() if covariates.shape[1] else None,
+        "covariates": covariates if covariates.shape[1] else None,
         "frequency": instance.frequency,
         "term": instance.term,
         "season_length": season,
-        "target": target.tolist(),
-        "future_observed_mask": instance.future_observed_mask.tolist(),
+        "target": target,
+        "future_observed_mask": instance.future_observed_mask,
         "history_imputation": instance.history_imputation,
         "mase_scale": mase,
         "mase_scale_by_target": mase_by_target,
@@ -213,12 +216,12 @@ def _treatment_row(
         "affected_target_indices": list(treatment.affected_target_indices),
         "covariate_dim": int(covariates.shape[1]),
         "covariate_column_names": list(instance.covariate_column_names),
-        "covariates": covariates.tolist() if covariates.shape[1] else None,
+        "covariates": covariates if covariates.shape[1] else None,
         "frequency": instance.frequency,
         "term": instance.term,
         "season_length": season,
-        "target": target.tolist(),
-        "future_observed_mask": instance.future_observed_mask.tolist(),
+        "target": target,
+        "future_observed_mask": instance.future_observed_mask,
         "history_imputation": instance.history_imputation,
         "mase_scale": mase,
         "mase_scale_by_target": mase_by_target,
@@ -368,7 +371,7 @@ def _input_ablation_row(
     )
     np.testing.assert_array_equal(result[context:], target[context:])
 
-    row = json.loads(json.dumps(treatment_row))
+    row = dict(treatment_row)
     row.update(
         {
             "evaluation_table": "gift_eval_capability_input_ablation",
@@ -381,7 +384,7 @@ def _input_ablation_row(
             "input_ablation_source_target_sha256": treatment_row["target_sha256"],
             "assessed_target_indices": list(assessed),
             "ablated_input_indices": list(ablated),
-            "target": result.tolist(),
+            "target": result,
             "target_sha256": _target_sha256(result),
             "history_sha256": _target_sha256(result[:context]),
             "future_sha256": _target_sha256(result[context:]),
@@ -525,53 +528,196 @@ def iter_replayed_samples(
     gift_eval_dir: Path,
     replay_workers: int = 1,
 ) -> Iterator[dict[str, Any]]:
-    """Reconstruct full baseline/treatment/ablation rows without task artifacts."""
+    """Reconstruct dense rows from frozen compact contracts and source Arrow.
+
+    Capability selection and parameter fitting happen only in generation.  This
+    path streams the compact Parquet contracts, applies their frozen mechanism
+    parameters to authentic instances, and prefetches independent instances.
+    """
 
     config = manifest["config"]
-    shard_size = int(config.get("generation_execution", {}).get("shard_size", 256))
-    capability_ids = tuple(str(value) for value in config["capability_ids"])
-    executor = (
-        ThreadPoolExecutor(max_workers=int(replay_workers))
-        if int(replay_workers) > 1
-        else None
+    files = manifest["files"]
+    baseline_rows = iter(iter_compact_parquet(Path(files["official_baselines"]["path"])))
+    treatment_groups = iter(
+        _group_contract_rows(
+            iter_compact_parquet(Path(files["capability_treatments"]["path"]))
+        )
     )
-    try:
-        for instance_index, instance in enumerate(iter_gift_eval_instances(
+    ablation_groups = iter(
+        _group_contract_rows(
+            iter_compact_parquet(Path(files["input_ablations"]["path"]))
+        )
+    )
+    treatment_group = next(treatment_groups, None)
+    ablation_group = next(ablation_groups, None)
+
+    def work_items() -> Iterator[
+        tuple[GiftEvalInstance, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]
+    ]:
+        nonlocal treatment_group, ablation_group
+        for instance in iter_gift_eval_instances(
             str(config["dataset_id"]),
             gift_eval_dir,
             term=str(config["term"]),
             max_instances=config.get("max_instances"),
-        )):
-            shard_index = instance_index // max(1, shard_size)
-            baseline = _baseline_row(instance)
-            baseline["source_shard_index"] = shard_index
-            yield baseline
-            if executor is None:
-                capability_rows = (
-                    _materialized_capability_rows(
-                        instance,
-                        capability_id,
-                        augmentation_seed=int(config["augmentation_seed"]),
-                    )
-                    for capability_id in capability_ids
+        ):
+            baseline_contract = next(baseline_rows, None)
+            if baseline_contract is None:
+                raise ValueError("official baseline contract stream ended early")
+            official_id = str(instance.official_instance_id)
+            if str(baseline_contract["official_instance_id"]) != official_id:
+                raise ValueError("official baseline contract order mismatch")
+            treatments: list[dict[str, Any]] = []
+            if treatment_group is not None and treatment_group[0] == official_id:
+                treatments = treatment_group[1]
+                treatment_group = next(treatment_groups, None)
+            ablations: list[dict[str, Any]] = []
+            if ablation_group is not None and ablation_group[0] == official_id:
+                ablations = ablation_group[1]
+                ablation_group = next(ablation_groups, None)
+            yield instance, baseline_contract, treatments, ablations
+        if next(baseline_rows, None) is not None:
+            raise ValueError("official baseline contract stream has extra rows")
+        if treatment_group is not None or next(treatment_groups, None) is not None:
+            raise ValueError("treatment contract stream has unmatched rows")
+        if ablation_group is not None or next(ablation_groups, None) is not None:
+            raise ValueError("ablation contract stream has unmatched rows")
+
+    workers = max(1, int(replay_workers))
+    if workers == 1:
+        for work in work_items():
+            yield from _replay_contract_instance(*work)
+        return
+    iterator = iter(work_items())
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending: deque[Any] = deque()
+        for _index in range(workers):
+            work = next(iterator, None)
+            if work is None:
+                break
+            pending.append(executor.submit(_replay_contract_instance, *work))
+        while pending:
+            yield from pending.popleft().result()
+            work = next(iterator, None)
+            if work is not None:
+                pending.append(executor.submit(_replay_contract_instance, *work))
+
+
+def _group_contract_rows(
+    rows: Iterator[dict[str, Any]],
+) -> Iterator[tuple[str, list[dict[str, Any]]]]:
+    current_id: str | None = None
+    current: list[dict[str, Any]] = []
+    for row in rows:
+        official_id = str(row["official_instance_id"])
+        if current_id is None:
+            current_id = official_id
+        elif official_id != current_id:
+            yield current_id, current
+            current_id = official_id
+            current = []
+        current.append(row)
+    if current_id is not None:
+        yield current_id, current
+
+
+def _dense_contract_row(
+    contract: dict[str, Any],
+    *,
+    target: np.ndarray,
+    covariates: np.ndarray,
+    future_observed_mask: np.ndarray,
+) -> dict[str, Any]:
+    row = dict(contract)
+    source_schema = row.pop("source_sample_schema_version", SAMPLE_SCHEMA)
+    row.pop("record_kind", None)
+    row.pop("dense_payload_policy", None)
+    row.update(
+        {
+            "schema_version": source_schema,
+            "target": np.asarray(target, dtype=float),
+            "covariates": (
+                np.asarray(covariates, dtype=float)
+                if covariates.shape[1]
+                else None
+            ),
+            "future_observed_mask": np.asarray(
+                future_observed_mask, dtype=bool
+            ),
+        }
+    )
+    return row
+
+
+def _replay_contract_instance(
+    instance: GiftEvalInstance,
+    baseline_contract: dict[str, Any],
+    treatment_contracts: list[dict[str, Any]],
+    ablation_contracts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    covariates = np.vstack(
+        (instance.history_covariates, instance.future_covariates)
+    )
+    baseline = _dense_contract_row(
+        baseline_contract,
+        target=np.vstack((instance.history, instance.future)),
+        covariates=covariates,
+        future_observed_mask=instance.future_observed_mask,
+    )
+    output = [baseline]
+    treatments_by_sample: dict[str, dict[str, Any]] = {}
+    index = 0
+    while index < len(treatment_contracts):
+        capability_id = str(treatment_contracts[index]["capability_id"])
+        stop = index + 1
+        while (
+            stop < len(treatment_contracts)
+            and str(treatment_contracts[stop]["capability_id"])
+            == capability_id
+        ):
+            stop += 1
+        contracts = treatment_contracts[index:stop]
+        deltas = replay_treatment_deltas(instance, contracts)
+        for contract in contracts:
+            history_delta, future_delta = deltas[str(contract["sample_id"])]
+            target = np.vstack(
+                (
+                    instance.history + history_delta,
+                    instance.future + future_delta,
                 )
-            else:
-                capability_rows = executor.map(
-                    lambda capability_id: _materialized_capability_rows(
-                        instance,
-                        capability_id,
-                        augmentation_seed=int(config["augmentation_seed"]),
-                    ),
-                    capability_ids,
-                )
-            for rows in capability_rows:
-                for kind, row in rows:
-                    if kind != "availability":
-                        row["source_shard_index"] = shard_index
-                        yield row
-    finally:
-        if executor is not None:
-            executor.shutdown()
+            )
+            row = _dense_contract_row(
+                contract,
+                target=target,
+                covariates=covariates,
+                future_observed_mask=instance.future_observed_mask,
+            )
+            treatments_by_sample[str(row["sample_id"])] = row
+            output.append(row)
+        index = stop
+    for contract in ablation_contracts:
+        source_id = str(contract["input_ablation_source_sample_id"])
+        source = treatments_by_sample.get(source_id)
+        if source is None:
+            raise ValueError("ablation contract has no matching treatment")
+        target = np.asarray(source["target"], dtype=float).copy()
+        context = int(contract["context_length"])
+        audit = contract["input_ablation_metadata"]["channel_audit"]
+        for raw_channel in contract["ablated_input_indices"]:
+            channel = int(raw_channel)
+            shift = int(audit[str(channel)]["circular_shift"])
+            target[:context, channel] = np.roll(
+                target[:context, channel], shift
+            )
+        output.append(
+            _dense_contract_row(
+                contract,
+                target=target,
+                covariates=covariates,
+                future_observed_mask=instance.future_observed_mask,
+            )
+        )
+    return output
 
 
 def _compact_record_batch(

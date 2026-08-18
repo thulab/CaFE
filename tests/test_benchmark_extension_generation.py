@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,10 @@ from cafe.benchmark_extension.storage import (
     write_compact_parquet,
 )
 from cafe.benchmark_extension.validation import validate_generation
+
+
+def _array_sha256(values: np.ndarray) -> str:
+    return hashlib.sha256(np.asarray(values, dtype="<f8").tobytes()).hexdigest()
 
 
 def _fixture(tmp_path: Path, monkeypatch) -> Path:
@@ -178,6 +183,67 @@ def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatm
                 np.sort(target[:context, channel]),
                 np.sort(source_target[:context, channel]),
             )
+
+
+def test_compact_contract_replay_matches_every_stored_delta_hash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _panel_fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment-replay" / "gift_panel_fixture"
+    manifest = generate_dataset(
+        "gift_panel_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=23,
+        capability_ids=(
+            "trend",
+            "multi_seasonal",
+            "time_varying_seasonality",
+            "regime_switching",
+            "nonlinear_persistence",
+            "predictable_intermittency",
+            "common_factor",
+            "cross_series_dependence",
+            "covariate_response",
+        ),
+        max_instances=1,
+    )
+    replayed = list(
+        iter_replayed_samples(
+            manifest,
+            gift_eval_dir=gift_root,
+            replay_workers=4,
+        )
+    )
+    baseline = next(
+        row
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_official_baseline"
+    )
+    baseline_target = np.asarray(baseline["target"], dtype=float)
+    treatments = [
+        row
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_capability_treatment"
+    ]
+    assert treatments
+    for row in treatments:
+        target = np.asarray(row["target"], dtype=float)
+        context = int(row["context_length"])
+        assert isinstance(row["target"], np.ndarray)
+        assert _array_sha256(target) == row["target_sha256"]
+        assert _array_sha256(target[:context]) == row["history_sha256"]
+        assert _array_sha256(target[context:]) == row["future_sha256"]
+        assert (
+            _array_sha256(target[:context] - baseline_target[:context])
+            == row["history_delta_sha256"]
+        )
+        assert (
+            _array_sha256(target[context:] - baseline_target[context:])
+            == row["future_delta_sha256"]
+        )
     report = validate_generation(dataset_root)
     assert report["accepted"]
     assert report["input_ablation_count"] == 10
