@@ -216,24 +216,43 @@ class PredictionParquetWriter:
         forecast: Any,
         input_adaptation: Mapping[str, Any] | None = None,
     ) -> None:
-        values = np.asarray(forecast, dtype=np.float32)
-        if values.ndim != 2 or not np.all(np.isfinite(values)):
-            raise ValueError(f"prediction must be finite HxD for {sample_id}")
-        self._buffer.append(
-            {
-                "schema_version": "cafe.benchmark_extension_prediction.v1",
-                "model_id": str(model_id),
-                "sample_id": str(sample_id),
-                "horizon": int(values.shape[0]),
-                "target_dim": int(values.shape[1]),
-                "forecast": values.reshape(-1).tolist(),
-                "input_adaptation_json": (
-                    None
-                    if input_adaptation is None
-                    else protocol.canonical_json(dict(input_adaptation))
-                ),
-            }
+        self.write_batch(
+            [
+                {
+                    "model_id": model_id,
+                    "sample_id": sample_id,
+                    "forecast": forecast,
+                    "input_adaptation": input_adaptation,
+                }
+            ]
         )
+
+    def write_batch(self, rows: Iterable[Mapping[str, Any]]) -> None:
+        """Append prediction rows without materializing float Python lists."""
+        for row in rows:
+            sample_id = str(row["sample_id"])
+            values = np.ascontiguousarray(row["forecast"], dtype=np.float32)
+            if values.ndim != 2 or not np.all(np.isfinite(values)):
+                raise ValueError(f"prediction must be finite HxD for {sample_id}")
+            input_adaptation = row.get("input_adaptation")
+            self._buffer.append(
+                {
+                    "schema_version": "cafe.benchmark_extension_prediction.v1",
+                    "model_id": str(row["model_id"]),
+                    "sample_id": sample_id,
+                    "horizon": int(values.shape[0]),
+                    "target_dim": int(values.shape[1]),
+                    # Keep the contiguous float32 carrier until Arrow builds
+                    # the column.  ``tolist()`` here used to allocate millions
+                    # of boxed Python floats during large benchmark runs.
+                    "forecast": values.reshape(-1),
+                    "input_adaptation_json": (
+                        None
+                        if input_adaptation is None
+                        else protocol.canonical_json(dict(input_adaptation))
+                    ),
+                }
+            )
         if len(self._buffer) >= self.batch_size:
             self._flush()
 

@@ -157,7 +157,13 @@ metrics use compressed Parquet; summaries and manifests use JSON.
 
 ## 9. Artifacts and stage contracts
 
-The active stages are generation, validation, inference, and analysis.
+The active stages are generation, validation, inference, and analysis. Research
+validation scans every treatment contract in parallel and requires its stored
+treatment-to-source distance evidence to be internally consistent and above the
+protocol minimum. Publication validation additionally verifies manifests,
+source and artifact hashes, storage policy, row coverage, and an exact replay
+of every compact contract from the official Arrow data. Publication mode is
+opt-in through `--validation-mode publication`; research mode is the default.
 `experiment.json` stores identity. Each stage contract records config, Git
 provenance, and upstream artifact hashes. A protocol change starts a new
 experiment id.

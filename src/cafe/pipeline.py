@@ -19,7 +19,11 @@ from cafe.benchmark_extension.generation import (
     generate_dataset,
 )
 from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
-from cafe.benchmark_extension.validation import validate_generation
+from cafe.benchmark_extension.validation import (
+    DEFAULT_VALIDATION_WORKERS,
+    VALIDATION_MODES,
+    validate_generation,
+)
 from cafe.benchmark_extension.gift_eval import (
     gift_arrow_target_summary,
     gift_eval_asset_path,
@@ -66,11 +70,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--generation-workers", type=int, default=4)
     parser.add_argument("--generation-shard-size", type=int, default=256)
     parser.add_argument("--validation-dataset-workers", type=int, default=2)
+    parser.add_argument(
+        "--validation-mode",
+        choices=VALIDATION_MODES,
+        default="research",
+    )
+    parser.add_argument(
+        "--validation-workers",
+        type=int,
+        default=DEFAULT_VALIDATION_WORKERS,
+        help="Per-dataset process workers for validation.",
+    )
     parser.add_argument("--preprocess-workers", type=int, default=4)
     parser.add_argument("--analysis-workers", type=int, default=4)
     parser.add_argument("--max-open-shape-groups", type=int, default=64)
     parser.add_argument("--max-inflight-batches", type=int, default=8)
     parser.add_argument("--max-inflight-mib", type=int, default=2048)
+    parser.add_argument("--max-request-input-tokens", type=int, default=None)
+    parser.add_argument("--client-inflight-input-tokens", type=int, default=None)
     parser.add_argument("--disk-budget-gb", type=float, default=40.0)
     return parser.parse_args()
 
@@ -165,6 +182,24 @@ def _inference_command(
         command.append("--resume")
     if args.prepare_only:
         command.append("--prepare-only")
+    max_request_input_tokens = getattr(args, "max_request_input_tokens", None)
+    client_inflight_input_tokens = getattr(
+        args, "client_inflight_input_tokens", None
+    )
+    if max_request_input_tokens is not None:
+        command.extend(
+            (
+                "--max-request-input-tokens",
+                str(max_request_input_tokens),
+            )
+        )
+    if client_inflight_input_tokens is not None:
+        command.extend(
+            (
+                "--client-inflight-input-tokens",
+                str(client_inflight_input_tokens),
+            )
+        )
     return command
 
 
@@ -291,6 +326,15 @@ def _freeze_storage_preflight(
 def run_pipeline(args: argparse.Namespace) -> Path:
     dataset_ids = selected_dataset_ids(args)
     stages = _stage_range(args.start_at, args.stop_after)
+    validation_workers = int(
+        getattr(args, "validation_workers", DEFAULT_VALIDATION_WORKERS)
+    )
+    requested_validation_dataset_workers = max(
+        1, int(args.validation_dataset_workers)
+    )
+    validation_dataset_workers = (
+        1 if validation_workers > 1 else requested_validation_dataset_workers
+    )
     experiment_id = _experiment_id(args)
     experiment_root = args.output_root.resolve() / experiment_id
     provenance.initialize_experiment(
@@ -325,12 +369,28 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         "execution": {
             "generation_workers": int(args.generation_workers),
             "generation_shard_size": int(args.generation_shard_size),
-            "validation_dataset_workers": int(args.validation_dataset_workers),
+            "validation_dataset_workers": validation_dataset_workers,
+            "requested_validation_dataset_workers": (
+                requested_validation_dataset_workers
+            ),
+            "validation_mode": str(getattr(args, "validation_mode", "research")),
+            "validation_workers": validation_workers,
+            "validation_parallelism_policy": (
+                "one_dataset_at_a_time_with_row_group_process_pool"
+                if validation_workers > 1
+                else "concurrent_datasets_with_single_process_scans"
+            ),
             "preprocess_workers": int(args.preprocess_workers),
             "analysis_workers": int(args.analysis_workers),
             "max_open_shape_groups": int(args.max_open_shape_groups),
             "max_inflight_batches": int(args.max_inflight_batches),
             "max_inflight_mib": int(args.max_inflight_mib),
+            "max_request_input_tokens_override": getattr(
+                args, "max_request_input_tokens", None
+            ),
+            "client_inflight_input_tokens_override": (
+                getattr(args, "client_inflight_input_tokens", None)
+            ),
         },
     }
     if "generation" in stages:
@@ -371,11 +431,13 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             report = validate_generation(
                 experiment_root / dataset_id,
                 gift_eval_dir=args.gift_eval_dir,
+                mode=str(getattr(args, "validation_mode", "research")),
+                workers=validation_workers,
             )
             return dataset_id, report
 
         with ThreadPoolExecutor(
-            max_workers=max(1, int(args.validation_dataset_workers))
+            max_workers=validation_dataset_workers
         ) as executor:
             for dataset_id, report in executor.map(validate_one, dataset_ids):
                 if not report["accepted"]:
@@ -497,6 +559,17 @@ def main() -> int:
     args = parse_args()
     if args.max_instances is not None and args.max_instances < 1:
         raise ValueError("max_instances must be positive")
+    max_request_input_tokens = getattr(args, "max_request_input_tokens", None)
+    client_inflight_input_tokens = getattr(
+        args, "client_inflight_input_tokens", None
+    )
+    if max_request_input_tokens is not None and max_request_input_tokens < 1:
+        raise ValueError("max-request-input-tokens must be positive")
+    if (
+        client_inflight_input_tokens is not None
+        and client_inflight_input_tokens < 1
+    ):
+        raise ValueError("client-inflight-input-tokens must be positive")
     if len(args.capabilities) != len(set(args.capabilities)):
         raise ValueError("capabilities must be unique")
     root = run_pipeline(args)

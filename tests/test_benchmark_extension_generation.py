@@ -195,7 +195,7 @@ def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatm
         **parquet_file_record(ablation_path, row_count=len(tampered)),
     }
     protocol.write_json(manifest_path, changed_manifest)
-    rejected = validate_generation(dataset_root)
+    rejected = validate_generation(dataset_root, mode="publication", workers=1)
     assert not rejected["accepted"]
     assert any(
         row["scope"] == "input_ablations" for row in rejected["failures"]

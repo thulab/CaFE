@@ -53,8 +53,18 @@ def test_validation_accepts_exact_generated_pairs(tmp_path: Path, monkeypatch) -
     )
     report = validate_generation(dataset_root)
     assert report["accepted"]
+    assert report["validation_mode"] == "research"
+    assert report["source_distance_gate_checked_count"] == 15
     assert report["official_baseline_count"] == 1
     assert report["treatment_count"] == 15
+
+    publication = validate_generation(
+        dataset_root,
+        mode="publication",
+        workers=2,
+    )
+    assert publication["accepted"]
+    assert publication["validation_mode"] == "publication"
 
 
 def test_validation_rejects_self_consistent_treatment_source_rewrite(
@@ -82,9 +92,46 @@ def test_validation_rejects_self_consistent_treatment_source_rewrite(
         **parquet_file_record(treatment_path, row_count=len(rows)),
     }
     protocol.write_json(manifest_path, manifest)
-    report = validate_generation(dataset_root)
+    research_report = validate_generation(dataset_root)
+    assert research_report["accepted"]
+
+    report = validate_generation(dataset_root, mode="publication", workers=1)
     assert not report["accepted"]
+    assert report["validation_mode"] == "publication"
     assert any(
         row["reason"] == "deterministic_replay_mismatch"
         for row in report["failures"]
     )
+
+
+def test_research_validation_rejects_stored_distance_below_threshold(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment" / "gift_fixture"
+    generate_dataset(
+        "gift_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=14,
+        capability_ids=("trend",),
+        max_instances=1,
+    )
+    treatment_path = dataset_root / "01_generation" / "treatment_contracts.parquet"
+    rows = list(iter_compact_parquet(treatment_path))
+    gate = rows[0]["source_distance_gate"]
+    gate["minimum_observed_macro_distance"] = 0.01
+    gate["accepted"] = False
+    gate["reason"] = "below_minimum_source_distance"
+    write_compact_parquet(treatment_path, rows)
+
+    report = validate_generation(dataset_root, workers=2)
+    assert not report["accepted"]
+    assert report["failure_count"] == 1
+    assert report["failures"][0]["reason"] in {
+        "source_distance_gate_observed_mismatch",
+        "source_distance_below_minimum",
+        "source_distance_rejected",
+    }

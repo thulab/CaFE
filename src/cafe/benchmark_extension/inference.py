@@ -39,9 +39,67 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v3"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v4"
 TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v3"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
+SERVICE_DEVICE_BATCH_INPUT_TOKENS = (11520 + 10000) * 50 + 11520
+DEFAULT_MAX_REQUEST_INPUT_TOKENS = round(
+    SERVICE_DEVICE_BATCH_INPUT_TOKENS * 0.75
+)
+DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS = DEFAULT_MAX_REQUEST_INPUT_TOKENS * 8
+MODEL_INPUT_TOKEN_CONFIG = {
+    model_id: {
+        "maximum_request_input_tokens": DEFAULT_MAX_REQUEST_INPUT_TOKENS,
+        "client_inflight_input_tokens": DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "maximum_bulk_rows": 64,
+        "native_multivariate_maximum_bulk_rows": 64,
+    }
+    for model_id in MODEL_EXECUTION_CONFIG
+}
+MODEL_INPUT_TOKEN_CONFIG["Timer-4.0"].update(
+    {
+        "client_inflight_input_tokens": (
+            DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS * 2
+        ),
+        "native_multivariate_input_token_multiplier": 2.0,
+    }
+)
+MODEL_INPUT_TOKEN_CONFIG["Chronos-2"].update({"http_concurrency": 32})
+MODEL_INPUT_TOKEN_CONFIG["timesfm2.5"].update(
+    {
+        "very_long_context_threshold": 8192,
+        "very_long_context_input_token_multiplier": 2.0,
+    }
+)
+MODEL_INPUT_TOKEN_CONFIG["tirex2"].update(
+    {
+        "http_concurrency": 32,
+        "native_multivariate_http_concurrency": 2,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "large_panel_context_threshold": 512,
+        "large_panel_target_dim_threshold": 16,
+        "large_panel_http_concurrency": 8,
+    }
+)
+MODEL_INPUT_TOKEN_CONFIG["moirai2"].update(
+    {
+        "http_concurrency": 32,
+        "client_inflight_input_tokens": (
+            DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS * 2
+        ),
+    }
+)
+MODEL_INPUT_TOKEN_CONFIG["Timer-3.5"].update({"http_concurrency": 32})
+MODEL_INPUT_TOKEN_CONFIG["toto2.0"].update(
+    {
+        "http_concurrency": 8,
+        "maximum_request_input_tokens": 128 * 1024,
+        "client_inflight_input_tokens": 1024 * 1024,
+        "maximum_bulk_rows": 256,
+        "native_multivariate_maximum_bulk_rows": 256,
+    }
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +126,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-open-shape-groups", type=int, default=64)
     parser.add_argument("--max-inflight-batches", type=int, default=8)
     parser.add_argument("--max-inflight-mib", type=int, default=2048)
+    parser.add_argument("--max-request-input-tokens", type=int, default=None)
+    parser.add_argument("--client-inflight-input-tokens", type=int, default=None)
     parser.add_argument("--preprocess-workers", type=int, default=4)
     parser.add_argument("--reuse-loaded-model", action="store_true")
     parser.add_argument("--preserve-loaded-model", action="store_true")
@@ -162,13 +222,15 @@ def _iter_model_bulk_batches(
     ] = OrderedDict()
     current_shard: int | None = None
     configured_batch_size = int(execution["task_batch_size"])
-    advertised_group_limit = int(
-        (model.get("forecast_limits") or {}).get("max_group_rows") or -1
+    task_batch_size = min(
+        configured_batch_size,
+        int(execution.get("maximum_bulk_rows", configured_batch_size)),
     )
-    task_batch_size = (
-        min(configured_batch_size, advertised_group_limit)
-        if advertised_group_limit > 0
-        else configured_batch_size
+    maximum_request_input_tokens = int(
+        execution.get(
+            "maximum_request_input_tokens",
+            DEFAULT_MAX_REQUEST_INPUT_TOKENS,
+        )
     )
     for dense_sample in samples:
         source_shard = int(dense_sample.get("source_shard_index", 0))
@@ -202,8 +264,26 @@ def _iter_model_bulk_batches(
         children = adapted_request_samples(sample, plan)
         key = request_group_key(sample, plan=plan)
         child_count = int(plan["target_request_count"])
-        limit = max(1, task_batch_size // child_count)
         item = (sample, plan, children)
+        item_input_tokens = _batch_input_tokens([item])
+        item_batch_size = task_batch_size
+        if int(plan["request_target_dim"]) > 1:
+            item_batch_size = min(
+                item_batch_size,
+                int(
+                    execution.get(
+                        "native_multivariate_maximum_bulk_rows",
+                        item_batch_size,
+                    )
+                ),
+            )
+        limit = max(
+            1,
+            min(
+                item_batch_size // child_count,
+                maximum_request_input_tokens // item_input_tokens,
+            ),
+        )
         item_bytes = _batch_bytes([item])
         per_group_budget = max(
             1,
@@ -282,6 +362,56 @@ def _batch_bytes(
     return max(1, total)
 
 
+def _child_input_tokens(child: dict[str, Any]) -> int:
+    context = int(child["context_length"])
+    horizon = int(child["horizon"])
+    target_dim = int(child["target_dim"])
+    covariate_dim = int(child["covariate_dim"])
+    return max(
+        1,
+        context * target_dim
+        + context * covariate_dim
+        + horizon * covariate_dim,
+    )
+
+
+def _batch_input_tokens(
+    chunk: list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+) -> int:
+    return max(
+        1,
+        sum(
+            _child_input_tokens(child)
+            for _sample, _plan, children in chunk
+            for child in children
+        ),
+    )
+
+
+class _InputTokenLimiter:
+    """Bound an endpoint by request cost while allowing one oversized request."""
+
+    def __init__(self, capacity: int):
+        self.capacity = max(1, int(capacity))
+        self.inflight = 0
+        self.condition = asyncio.Condition()
+
+    async def acquire(self, amount: int) -> None:
+        amount = max(1, int(amount))
+        async with self.condition:
+            await self.condition.wait_for(
+                lambda: self.inflight == 0
+                or self.inflight + amount <= self.capacity
+            )
+            self.inflight += amount
+
+    async def release(self, amount: int) -> None:
+        amount = max(1, int(amount))
+        async with self.condition:
+            self.inflight -= amount
+            self.condition.notify_all()
+
+
 async def _run_streaming_bulk_model(
     *,
     model_id: str,
@@ -310,8 +440,65 @@ async def _run_streaming_bulk_model(
         )
     )
     concurrency = int(execution["http_concurrency"])
+    client_inflight_input_tokens = int(
+        execution.get(
+            "client_inflight_input_tokens",
+            DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS,
+        )
+    )
+    native_multivariate_input_token_multiplier = float(
+        execution.get("native_multivariate_input_token_multiplier", 1.0)
+    )
+    native_multivariate_http_concurrency = max(
+        1,
+        min(
+            concurrency,
+            int(
+                execution.get(
+                    "native_multivariate_http_concurrency",
+                    concurrency,
+                )
+            ),
+        ),
+    )
+    very_long_context_threshold = int(
+        execution.get("very_long_context_threshold", -1)
+    )
+    very_long_context_input_token_multiplier = float(
+        execution.get("very_long_context_input_token_multiplier", 1.0)
+    )
+    large_panel_context_threshold = int(
+        execution.get("large_panel_context_threshold", -1)
+    )
+    large_panel_target_dim_threshold = int(
+        execution.get("large_panel_target_dim_threshold", -1)
+    )
+    large_panel_http_concurrency = max(
+        1,
+        min(
+            concurrency,
+            int(
+                execution.get(
+                    "large_panel_http_concurrency",
+                    native_multivariate_http_concurrency,
+                )
+            ),
+        ),
+    )
     queues = [
         asyncio.Queue(maxsize=max(1, int(maximum_inflight_batches)))
+        for _endpoint in endpoints
+    ]
+    token_limiters = [
+        _InputTokenLimiter(client_inflight_input_tokens)
+        for _endpoint in endpoints
+    ]
+    native_multivariate_semaphores = [
+        asyncio.Semaphore(native_multivariate_http_concurrency)
+        for _endpoint in endpoints
+    ]
+    large_panel_semaphores = [
+        asyncio.Semaphore(large_panel_http_concurrency)
         for _endpoint in endpoints
     ]
     group_stats: defaultdict[tuple[Any, ...], dict[str, int]] = defaultdict(
@@ -321,6 +508,9 @@ async def _run_streaming_bulk_model(
             "failed_view_count": 0,
             "bulk_request_count": 0,
             "attempt_count": 0,
+            "maximum_request_input_tokens": 0,
+            "maximum_weighted_request_input_tokens": 0,
+            "minimum_dynamic_concurrency_ceiling": concurrency,
         }
     )
     prediction_dir.mkdir(parents=True, exist_ok=True)
@@ -387,7 +577,13 @@ async def _run_streaming_bulk_model(
             for _worker in range(concurrency):
                 await queue.put(None)
 
-    async def endpoint_workers(endpoint: str, queue: asyncio.Queue[Any]) -> None:
+    async def endpoint_workers(
+        endpoint: str,
+        queue: asyncio.Queue[Any],
+        token_limiter: _InputTokenLimiter,
+        native_multivariate_semaphore: asyncio.Semaphore,
+        large_panel_semaphore: asyncio.Semaphore,
+    ) -> None:
         limits = httpx.Limits(
             max_connections=concurrency,
             max_keepalive_connections=concurrency,
@@ -414,13 +610,74 @@ async def _run_streaming_bulk_model(
                             for _sample, _plan, child_rows in chunk
                             for child in child_rows
                         ]
-                        result = await _forecast_bulk_with_retry(
-                            async_client,
-                            forecast_url=forecast_url,
-                            model_id=model_id,
-                            children=children,
-                            max_attempts=max_attempts,
+                        request_input_tokens = sum(
+                            _child_input_tokens(child) for child in children
                         )
+                        native_target_dim = max(
+                            int(child["target_dim"]) for child in children
+                        )
+                        weighted_input_tokens = round(
+                            request_input_tokens
+                            * (
+                                native_multivariate_input_token_multiplier
+                                if native_target_dim > 1
+                                else 1.0
+                            )
+                        )
+                        request_context = max(
+                            int(child["context_length"]) for child in children
+                        )
+                        if (
+                            very_long_context_threshold > 0
+                            and request_context > very_long_context_threshold
+                        ):
+                            weighted_input_tokens = round(
+                                weighted_input_tokens
+                                * very_long_context_input_token_multiplier
+                            )
+                        stats["maximum_request_input_tokens"] = max(
+                            stats["maximum_request_input_tokens"],
+                            request_input_tokens,
+                        )
+                        stats["maximum_weighted_request_input_tokens"] = max(
+                            stats["maximum_weighted_request_input_tokens"],
+                            weighted_input_tokens,
+                        )
+                        stats["minimum_dynamic_concurrency_ceiling"] = min(
+                            stats["minimum_dynamic_concurrency_ceiling"],
+                            max(
+                                1,
+                                client_inflight_input_tokens
+                                // max(1, weighted_input_tokens),
+                            ),
+                        )
+                        await token_limiter.acquire(weighted_input_tokens)
+                        native_multivariate_acquired = False
+                        selected_panel_semaphore = native_multivariate_semaphore
+                        try:
+                            if native_target_dim > 1:
+                                if (
+                                    large_panel_context_threshold > 0
+                                    and large_panel_target_dim_threshold > 1
+                                    and request_context
+                                    > large_panel_context_threshold
+                                    and native_target_dim
+                                    >= large_panel_target_dim_threshold
+                                ):
+                                    selected_panel_semaphore = large_panel_semaphore
+                                await selected_panel_semaphore.acquire()
+                                native_multivariate_acquired = True
+                            result = await _forecast_bulk_with_retry(
+                                async_client,
+                                forecast_url=forecast_url,
+                                model_id=model_id,
+                                children=children,
+                                max_attempts=max_attempts,
+                            )
+                        finally:
+                            if native_multivariate_acquired:
+                                selected_panel_semaphore.release()
+                            await token_limiter.release(weighted_input_tokens)
                         stats["attempt_count"] += int(result["attempts"])
                         forecasts = result["forecasts"]
                         if forecasts is None:
@@ -442,6 +699,7 @@ async def _run_streaming_bulk_model(
                             continue
                         stats["bulk_request_count"] += 1
                         child_offset = 0
+                        prediction_rows = []
                         for sample, plan, child_rows in chunk:
                             selected = forecasts[
                                 child_offset : child_offset + len(child_rows)
@@ -453,13 +711,16 @@ async def _run_streaming_bulk_model(
                                 )
                             else:
                                 forecast = selected[0].T
-                            writer.write(
-                                model_id=model_id,
-                                sample_id=str(sample["sample_id"]),
-                                forecast=forecast,
-                                input_adaptation=plan,
+                            prediction_rows.append(
+                                {
+                                    "model_id": model_id,
+                                    "sample_id": str(sample["sample_id"]),
+                                    "forecast": forecast,
+                                    "input_adaptation": plan,
+                                }
                             )
                             stats["successful_view_count"] += 1
+                        writer.write_batch(prediction_rows)
                     finally:
                         if job is not None:
                             await release_bytes(payload_bytes)
@@ -471,8 +732,27 @@ async def _run_streaming_bulk_model(
         await asyncio.gather(
             producer(),
             *(
-                endpoint_workers(endpoint, queue)
-                for endpoint, queue in zip(endpoints, queues, strict=True)
+                endpoint_workers(
+                    endpoint,
+                    queue,
+                    token_limiter,
+                    native_multivariate_semaphore,
+                    large_panel_semaphore,
+                )
+                for (
+                    endpoint,
+                    queue,
+                    token_limiter,
+                    native_multivariate_semaphore,
+                    large_panel_semaphore,
+                ) in zip(
+                    endpoints,
+                    queues,
+                    token_limiters,
+                    native_multivariate_semaphores,
+                    large_panel_semaphores,
+                    strict=True,
+                )
             ),
         )
         prediction_count = sum(int(record["row_count"]) for record in part_records)
@@ -493,6 +773,45 @@ async def _run_streaming_bulk_model(
         "attempt_count": sum(row["attempt_count"] for row in group_stats.values()),
         "shape_group_count": len(group_stats),
         "maximum_inflight_bytes": int(maximum_inflight_bytes),
+        "maximum_request_input_tokens": int(
+            execution.get(
+                "maximum_request_input_tokens",
+                DEFAULT_MAX_REQUEST_INPUT_TOKENS,
+            )
+        ),
+        "client_inflight_input_tokens_per_endpoint": (
+            client_inflight_input_tokens
+        ),
+        "native_multivariate_input_token_multiplier": (
+            native_multivariate_input_token_multiplier
+        ),
+        "native_multivariate_http_concurrency": (
+            native_multivariate_http_concurrency
+        ),
+        "very_long_context_threshold": very_long_context_threshold,
+        "very_long_context_input_token_multiplier": (
+            very_long_context_input_token_multiplier
+        ),
+        "large_panel_context_threshold": large_panel_context_threshold,
+        "large_panel_target_dim_threshold": large_panel_target_dim_threshold,
+        "large_panel_http_concurrency": large_panel_http_concurrency,
+        "shape_group_token_stats": [
+            {
+                "request_group": list(group_key),
+                "maximum_request_input_tokens": int(
+                    row["maximum_request_input_tokens"]
+                ),
+                "maximum_weighted_request_input_tokens": int(
+                    row["maximum_weighted_request_input_tokens"]
+                ),
+                "minimum_dynamic_concurrency_ceiling": int(
+                    row["minimum_dynamic_concurrency_ceiling"]
+                ),
+            }
+            for group_key, row in sorted(
+                group_stats.items(), key=lambda item: tuple(map(str, item[0]))
+            )
+        ],
     }
     return summary, stats, part_records
 
@@ -575,6 +894,13 @@ def run_streaming_model(
 
 def main() -> int:
     args = parse_args()
+    if args.max_request_input_tokens is not None and args.max_request_input_tokens < 1:
+        raise ValueError("max-request-input-tokens must be positive")
+    if (
+        args.client_inflight_input_tokens is not None
+        and args.client_inflight_input_tokens < 1
+    ):
+        raise ValueError("client-inflight-input-tokens must be positive")
     if len(args.models) != len(set(args.models)):
         raise ValueError("models must be unique")
     execute_models = list(args.execute_models or args.models)
@@ -677,10 +1003,22 @@ def main() -> int:
         model_root = inference_dir / "models" / safe_filename(model_id)
         prediction_dir = model_root / "predictions"
         failure_path = model_root / "failures" / f"{safe_filename(model_id)}.jsonl"
+        execution = {
+            **dict(MODEL_EXECUTION_CONFIG[model_id]),
+            **dict(MODEL_INPUT_TOKEN_CONFIG[model_id]),
+        }
+        if args.max_request_input_tokens is not None:
+            execution["maximum_request_input_tokens"] = int(
+                args.max_request_input_tokens
+            )
+        if args.client_inflight_input_tokens is not None:
+            execution["client_inflight_input_tokens"] = int(
+                args.client_inflight_input_tokens
+            )
         status = run_streaming_model(
             model_id=model_id,
             model=model,
-            execution=dict(MODEL_EXECUTION_CONFIG[model_id]),
+            execution=execution,
             endpoints=endpoint_list,
             api_prefix=args.api_prefix,
             devices=args.devices,
@@ -727,6 +1065,23 @@ def main() -> int:
         ),
         "transport": "msgpack_bulk",
         "endpoint_policy": "model_major_all_compatible_endpoints",
+        "bulk_request_input_token_policy": (
+            "shape_aware_max_request_and_weighted_endpoint_inflight_v1"
+        ),
+        "default_maximum_request_input_tokens": (
+            DEFAULT_MAX_REQUEST_INPUT_TOKENS
+        ),
+        "default_client_inflight_input_tokens_per_endpoint": (
+            DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS
+        ),
+        "model_input_token_config": MODEL_INPUT_TOKEN_CONFIG,
+        "max_request_input_tokens_override": args.max_request_input_tokens,
+        "client_inflight_input_tokens_override": (
+            args.client_inflight_input_tokens
+        ),
+        "overload_retry_policy": (
+            "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter"
+        ),
         "max_open_shape_groups": int(args.max_open_shape_groups),
         "max_inflight_batches_per_endpoint": int(args.max_inflight_batches),
         "max_inflight_mib": int(args.max_inflight_mib),

@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import json
 import os
+import random
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,7 @@ import msgpack
 import numpy as np
 from cafe import core as protocol
 
-INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v2-input-mode"
+INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v3-group-row-aware"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
@@ -69,8 +70,13 @@ MODEL_EXECUTION_CONFIG = {
     },
     "toto2.0": {
         "replicas_per_device": 1,
-        "http_concurrency": 16,
-        "task_batch_size": 4,
+        # Toto's service adapter preserves the complete dense REST batch in
+        # one native model forward.  131k input values fills a 5090 near its
+        # throughput knee across L512/L8192/L16384 without over-batching long
+        # or high-dimensional panels; the benchmark-extension scheduler
+        # enforces the token ceiling below.
+        "http_concurrency": 8,
+        "task_batch_size": 256,
         "transport": "msgpack_bulk",
     },
     "timesfm2.5": {
@@ -961,12 +967,16 @@ def resolve_input_capability(model: dict[str, Any]) -> dict[str, Any]:
             default=None,
         )
     return {
-        "schema_version": "cafe.resolved_input_capability.v1",
+        "schema_version": "cafe.resolved_input_capability.v2",
         "source_schema": source_schema,
         "max_target_count": maximum_targets,
         "max_history_covariate_count": maximum_history_covariates,
         "supports_future_covariates": supports_future_covariates,
         "max_future_covariate_length": maximum_future_length,
+        "max_group_rows": _normalize_unbounded_count(
+            limits.get("max_group_rows"),
+            default=None,
+        ),
     }
 
 
@@ -977,7 +987,10 @@ def _supports_native_targets(
     if target_dim <= 1:
         return True
     maximum_targets = capability["max_target_count"]
-    return maximum_targets is None or target_dim <= maximum_targets
+    if maximum_targets is not None and target_dim > maximum_targets:
+        return False
+    maximum_group_rows = capability.get("max_group_rows")
+    return maximum_group_rows is None or target_dim <= maximum_group_rows
 
 
 def _supports_native_covariates(
@@ -1015,7 +1028,12 @@ def input_adaptation_plan(
     covariate_dim = int(sample["covariate_dim"])
     horizon = int(sample["horizon"])
     target_native = (
-        True if policy_id is None else _supports_native_targets(capability, target_dim)
+        True
+        if policy_id is None
+        else _supports_native_targets(
+            capability,
+            target_dim,
+        )
     )
     covariates_native = (
         True
@@ -1026,6 +1044,17 @@ def input_adaptation_plan(
             horizon=horizon,
         )
     )
+    maximum_group_rows = capability.get("max_group_rows")
+    if (
+        covariates_native
+        and maximum_group_rows is not None
+        and (
+            (target_dim if target_native else 1) + covariate_dim
+            > maximum_group_rows
+        )
+    ):
+        covariates_native = False
+    request_covariate_dim = covariate_dim if covariates_native else 0
     if target_native:
         target_mode = "native_univariate" if target_dim == 1 else "native_multivariate"
     else:
@@ -1053,7 +1082,7 @@ def input_adaptation_plan(
         ),
         "target_request_count": target_request_count,
         "original_covariate_dim": covariate_dim,
-        "request_covariate_dim": (covariate_dim if covariate_mode == "native" else 0),
+        "request_covariate_dim": request_covariate_dim,
         "resolved_input_capability": capability,
     }
 
@@ -1511,7 +1540,15 @@ async def _forecast_bulk_with_retry(
         ) as error:
             last_error = f"{type(error).__name__}: {error}"
             if attempt < max_attempts:
-                await asyncio.sleep(0.25 * (2 ** (attempt - 1)))
+                overloaded = (
+                    isinstance(error, httpx.HTTPStatusError)
+                    and error.response.status_code in {429, 503}
+                )
+                base_delay = (1.0 if overloaded else 0.25) * (
+                    2 ** (attempt - 1)
+                )
+                jitter = random.uniform(0.0, 0.25 * base_delay)
+                await asyncio.sleep(base_delay + jitter)
     return {
         "forecasts": None,
         "attempts": max_attempts,

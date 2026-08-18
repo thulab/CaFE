@@ -88,6 +88,14 @@ uv run cafe run \
 `--max-instances` selects a non-formal source-order prefix. Omitting it uses
 all official GIFT-Eval test instances.
 
+Validation defaults to the research policy: it scans every treatment distance
+gate in parallel and writes the acceptance report required by inference. Add
+`--validation-mode publication` for full manifest/hash checks and exact replay
+of every contract. `--validation-workers` controls the per-dataset process
+pool. When it is greater than one, datasets run sequentially to avoid nested
+process pools; setting it to one lets `--validation-dataset-workers` control
+concurrent lightweight dataset scans.
+
 ## Formal run
 
 ```bash
@@ -117,7 +125,9 @@ Artifacts use this layout:
 
 See [docs/protocol.md](docs/protocol.md) for the frozen scientific protocol
 and [docs/real_anchored_ten_capability_design.md](docs/real_anchored_ten_capability_design.md)
-for mechanism formulas.
+for mechanism formulas. Four-card Timer Service bulk and concurrency settings
+are recorded in
+[docs/inference_throughput_4x_rtx5090.md](docs/inference_throughput_4x_rtx5090.md).
 
 ## History
 
