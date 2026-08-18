@@ -32,8 +32,8 @@ T_{req}=B\,[C(D+K)+HK],
 
 ## 测试方法
 
-测试脚本为 `tools/benchmarking/timer_service_throughput.py`。每个模型先在四卡各
-加载一个replica，然后扫描：
+测试脚本为 `tools/benchmarking/timer_service_throughput.py`。基础吞吐扫描先在
+四卡各加载一个replica；随后逐模型比较每卡1、2、4个replica，并扫描：
 
 - context：96、512、2048、8192，以及模型声明的最大context；
 - 原生target维数：1、7、21；无协变量模型额外测D=64；
@@ -56,6 +56,7 @@ T_{req}=B\,[C(D+K)+HK],
 /data/xmy/CaFE/runtime/throughput-benchmark-20260818-true-batch/toto_fp32_high.ndjson
 /data/xmy/CaFE/runtime/throughput-benchmark-20260818-true-batch/toto_bf16.ndjson
 /data/xmy/CaFE/runtime/throughput-benchmark-20260818-true-batch/toto_fp32_final_smoke.ndjson
+/data/xmy/CaFE/runtime/replica-benchmark-20260818/*.ndjson
 ```
 
 早期 Toto 数据对应旧 adapter：REST bulk 虽然合并了传输，但 adapter 仍在
@@ -83,15 +84,61 @@ panel 对显存、尾延迟的压力。单个view自身超过上限时仍允许�
 当前代码中的四卡配置；“panel bulk”只在模型收到原生D>1请求时生效，模型级
 单变量拆分仍走普通bulk。
 
-| 模型 | 基础HTTP并发 | 普通bulk | panel bulk | endpoint在途预算 | 额外成本规则 |
-|---|---:|---:|---:|---:|---|
-| Timer-4.0 | 32 | 64 | 64 | 13,050,240 | 原生D>1按2倍token计 |
-| Chronos-2 | 32 | 64 | 64 | 6,525,120 | 无 |
-| timesfm2.5 | 32 | 64 | — | 6,525,120 | C>8192按2倍token计 |
-| tirex2 | 32 | 64 | 8 | 6,525,120 | 原生panel通常并发2；C>512且D≥16时并发8 |
-| moirai2 | 32 | 64 | — | 13,050,240 | 无 |
-| Timer-3.5 | 32 | 64 | — | 6,525,120 | 无 |
-| toto2.0 | 8 | 256 | 256 | 1,048,576 | request上限131,072；真实native batch |
+| 模型 | 每卡replica | 基础HTTP并发 | 普通bulk | panel bulk | endpoint在途预算 | 额外成本规则 |
+|---|---:|---:|---:|---:|---:|---|
+| Timer-4.0 | 2 | 32 | 64 | 64 | 13,050,240 | 原生D>1按2倍token计 |
+| Chronos-2 | 1 | 32 | 64 | 64 | 6,525,120 | 无 |
+| timesfm2.5 | 2 | 32 | 64 | — | 6,525,120 | C>8192按2倍token计 |
+| tirex2 | 2 | 32 | 64 | 8 | 6,525,120 | 原生panel通常并发2；C>512且D≥16时并发8 |
+| moirai2 | 2 | 32 | 64 | — | 13,050,240 | 无 |
+| Timer-3.5 | 1 | 32 | 64 | — | 6,525,120 | 无；双replica显存不足 |
+| toto2.0 | 1 | 8 | 256 | 256 | 1,048,576 | request上限131,072；真实native batch |
+
+### Replica扫描结论
+
+Replica扫描使用四张卡、相同bulk和token预算，比较代表性的短上下文
+`C=512`与长上下文；表中的吞吐为D=1的零失败case。多replica会复制模型权重，
+因此只在实际吞吐改善足以覆盖显存、加载时间和长序列退化时采用。CaFE按模型
+依次加载，选中的replica在该模型处理完所有数据集前保持驻留，不会按数据集反复
+加载。
+
+| 模型 | 1 replica短序列 | 候选多replica短序列 | 1 replica长序列 | 候选多replica长序列 | 采用 | 每卡显存MiB | 结论 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Timer-4.0 | 3,853 | 4,698（×2） | 454 | 371（×2） | 2 | 7,867 | short提升22%，长序列交给动态限流 |
+| Chronos-2 | 4,237 | 3,901（×2） | 276 | 217（×2） | 1 | 5,486 | 双replica全形状退化 |
+| timesfm2.5 | 2,531 | 3,468（×2） | 209 | 237（×2） | 2 | 10,791 | 短、长均提升 |
+| tirex2 | 416 | 615（×2） | 428 | 560（×2） | 2 | 2,583 | D=1提升，panel仍由低并发保护 |
+| moirai2 | 13,964 | 17,442（×2） | 3,047 | 2,896（×2） | 2 | 5,431 | short提升25%，长序列小幅退化 |
+| Timer-3.5 | 1,938 | OOM（×2） | 687 | OOM（×2） | 1 | 21,696 | 单replica已接近单卡容量上限 |
+| toto2.0 | 1,961 | 1,458（×2） | 140 | 134（×2） | 1 | 11,326 | 双replica复制大权重且更慢 |
+
+Timer-4.0与Moirai2的选择针对本轮GIFT-Eval short-term工作负载；如果单独运行
+medium/long实验，建议重新固定每卡1个replica的配置，而不是把short-term拓扑
+视为所有长度的通用最优值。每卡4个replica只在少数短序列case继续小幅改善，
+却明显增加加载时间、显存占用和长序列退化，因此未进入默认配置。
+
+### 七模型端到端核验
+
+使用`gift_restaurant_d`的8个官方实例运行generation、research validation、
+inference和analysis四阶段，7个模型各产生248条预测，全部
+`status=complete`且`failure_count=0`。manifest记录的实际worker数为：
+
+| 模型 | 实际worker | 加载秒数 | 推理调用总秒数 |
+|---|---:|---:|---:|
+| Timer-4.0 | 8 | 27.17 | 31.30 |
+| Chronos-2 | 4 | 9.03 | 11.53 |
+| timesfm2.5 | 8 | 22.12 | 26.02 |
+| tirex2 | 8 | 19.07 | 36.95 |
+| moirai2 | 8 | 17.11 | 20.79 |
+| Timer-3.5 | 4 | 28.15 | 31.44 |
+| toto2.0 | 4 | 35.24 | 37.90 |
+
+完整四阶段约199秒。该小实验主要用于验证加载拓扑、路由、预测落盘和分析闭环；
+模型加载占比很高，不能用其端到端平均值外推全量数据吞吐。服务器产物位于：
+
+```text
+/data/xmy/CaFE/runtime/replica-topology-e2e-20260818/
+```
 
 ### 单变量吞吐
 

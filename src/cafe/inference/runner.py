@@ -41,11 +41,11 @@ DEFAULT_MODELS = (
 )
 MODEL_EXECUTION_CONFIG = {
     # CaFE has a fixed H=48 and runs on RTX 5090 services. These defaults were
-    # measured end-to-end on one four-card endpoint on 2026-08-04 using both
-    # the main native-target mix and a hierarchy/covariate request mix. The x8
-    # preset below overrides whole-service concurrency where applicable.
+    # measured end-to-end on one four-card endpoint, most recently including
+    # per-model replica scans on 2026-08-18. The x8 preset below overrides
+    # whole-service concurrency where applicable.
     "Timer-4.0": {
-        "replicas_per_device": 1,
+        "replicas_per_device": 2,
         "http_concurrency": 32,
         "task_batch_size": 192,
         "transport": "msgpack_bulk",
@@ -63,7 +63,7 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "moirai2": {
-        "replicas_per_device": 1,
+        "replicas_per_device": 2,
         "http_concurrency": 8,
         "task_batch_size": 256,
         "transport": "msgpack_bulk",
@@ -80,13 +80,13 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "timesfm2.5": {
-        "replicas_per_device": 1,
+        "replicas_per_device": 2,
         "http_concurrency": 32,
         "task_batch_size": 64,
         "transport": "msgpack_bulk",
     },
     "tirex2": {
-        "replicas_per_device": 1,
+        "replicas_per_device": 2,
         "http_concurrency": 8,
         "task_batch_size": 512,
         "transport": "msgpack_bulk",

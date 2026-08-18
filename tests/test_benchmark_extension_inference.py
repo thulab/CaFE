@@ -13,8 +13,8 @@ from cafe.benchmark_extension.inference import (
     _run_streaming_bulk_model,
     model_task_row,
 )
-from cafe.inference.runner import input_adaptation_plan
 from cafe.benchmark_extension.storage import iter_prediction_parquet
+from cafe.inference.runner import MODEL_EXECUTION_CONFIG, input_adaptation_plan
 
 
 def _sample() -> dict:
@@ -68,6 +68,22 @@ def test_zero_compatible_rows_are_a_completed_model_invocation() -> None:
     statuses = {"tirex2": {"status": "complete", "compatible_sample_count": 0}}
     predictions = {"tirex2": {"row_count": 0, "parts": []}}
     assert _requested_execution_complete(["tirex2"], statuses, predictions)
+
+
+def test_four_card_replica_presets_match_measured_topologies() -> None:
+    assert {
+        model_id: int(config["replicas_per_device"])
+        for model_id, config in MODEL_EXECUTION_CONFIG.items()
+        if model_id in inference_module.DEFAULT_MODELS
+    } == {
+        "Timer-4.0": 2,
+        "Timer-3.5": 1,
+        "Chronos-2": 1,
+        "moirai2": 2,
+        "toto2.0": 1,
+        "timesfm2.5": 2,
+        "tirex2": 2,
+    }
 
 
 def test_group_row_limit_controls_input_adaptation_not_bulk_batch_rows() -> None:

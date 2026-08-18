@@ -44,6 +44,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint", default="http://127.0.0.1:10810")
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1,2,3")
+    parser.add_argument(
+        "--replicas-per-device",
+        type=int,
+        default=None,
+        help=(
+            "Override the model execution preset when comparing worker replicas."
+        ),
+    )
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument(
         "--contexts", nargs="+", type=int, default=list(DEFAULT_CONTEXTS)
@@ -72,6 +80,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--preserve-loaded-model", action="store_true")
+    parser.add_argument(
+        "--exact-contexts",
+        action="store_true",
+        help="Do not automatically add the model maximum context length.",
+    )
     return parser.parse_args()
 
 
@@ -118,12 +131,18 @@ def _covariate_dimension(model: dict[str, Any]) -> int:
     return 2 if maximum < 0 else min(2, maximum)
 
 
-def _contexts(model: dict[str, Any], requested: list[int]) -> list[int]:
+def _contexts(
+    model: dict[str, Any],
+    requested: list[int],
+    *,
+    include_model_maximum: bool = True,
+) -> list[int]:
     limits = model.get("forecast_limits") or {}
     maximum = int(limits.get("max_input_length", -1))
     values = set(int(value) for value in requested if value > 0)
     if maximum > 0:
-        values.add(maximum)
+        if include_model_maximum:
+            values.add(maximum)
         values = {min(value, maximum) for value in values}
     return sorted(values)
 
@@ -287,6 +306,7 @@ def _case_key(row: dict[str, Any]) -> tuple[Any, ...]:
         row["covariate_dim"],
         row["batch_rows"],
         row["concurrency"],
+        row.get("replicas_per_device", 1),
     )
 
 
@@ -308,12 +328,17 @@ def main() -> int:
             for model_id in args.models:
                 model = catalog[model_id]
                 control.unload_all_loaded()
+                replicas_per_device = int(
+                    args.replicas_per_device
+                    if args.replicas_per_device is not None
+                    else MODEL_EXECUTION_CONFIG[model_id]["replicas_per_device"]
+                )
+                if replicas_per_device <= 0:
+                    raise ValueError("replicas_per_device must be positive")
                 load_seconds, topology = control.ensure_loaded(
                     model_id,
                     devices=args.devices,
-                    replicas_per_device=int(
-                        MODEL_EXECUTION_CONFIG[model_id]["replicas_per_device"]
-                    ),
+                    replicas_per_device=replicas_per_device,
                     timeout_seconds=args.load_timeout_seconds,
                 )
                 dimensions = [
@@ -321,7 +346,11 @@ def main() -> int:
                     for value in args.target_dims
                     if _supports_native_dimension(model, value)
                 ]
-                for context in _contexts(model, list(args.contexts)):
+                for context in _contexts(
+                    model,
+                    list(args.contexts),
+                    include_model_maximum=not args.exact_contexts,
+                ):
                     for target_dim in dimensions:
                         covariate_dim = _case_covariate_dimension(
                             model, target_dim
@@ -347,8 +376,9 @@ def main() -> int:
                         )
                         for concurrency in args.concurrencies:
                             base = {
-                                "schema_version": "cafe.timer_service_throughput.v1",
+                                "schema_version": "cafe.timer_service_throughput.v2",
                                 "model_id": model_id,
+                                "replicas_per_device": replicas_per_device,
                                 "context_length": context,
                                 "horizon": args.horizon,
                                 "target_dim": target_dim,
