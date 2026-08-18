@@ -524,11 +524,16 @@ async def _run_streaming_bulk_model(
             "failed_view_count": 0,
             "bulk_request_count": 0,
             "attempt_count": 0,
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
             "maximum_request_input_tokens": 0,
             "maximum_weighted_request_input_tokens": 0,
             "minimum_dynamic_concurrency_ceiling": concurrency,
         }
     )
+    deferred_jobs: list[list[tuple[Any, ...]]] = [
+        [] for _endpoint in endpoints
+    ]
     prediction_dir.mkdir(parents=True, exist_ok=True)
     part_records: list[dict[str, Any]] = []
     failure_path.parent.mkdir(parents=True, exist_ok=True)
@@ -561,8 +566,22 @@ async def _run_streaming_bulk_model(
             nonlocal current_writer
             if current_writer is None or current_shard is None:
                 return
-            for queue in queues:
-                await queue.join()
+            while True:
+                for queue in queues:
+                    await queue.join()
+                pending_tail_retry = False
+                for queue, jobs in zip(queues, deferred_jobs, strict=True):
+                    if not jobs:
+                        continue
+                    pending_tail_retry = True
+                    pending = list(jobs)
+                    jobs.clear()
+                    for job in pending:
+                        payload_bytes = int(job[3])
+                        await acquire_bytes(payload_bytes)
+                        await queue.put(job)
+                if not pending_tail_retry:
+                    break
             row_count = current_writer.close()
             part_records.append(
                 {
@@ -587,13 +606,16 @@ async def _run_streaming_bulk_model(
             endpoint_index += 1
             payload_bytes = _batch_bytes(chunk)
             await acquire_bytes(payload_bytes)
-            await queue.put((group_key, chunk, current_writer, payload_bytes))
+            await queue.put(
+                (group_key, chunk, current_writer, payload_bytes, 0)
+            )
         await finish_shard()
         for queue in queues:
             for _worker in range(concurrency):
                 await queue.put(None)
 
     async def endpoint_workers(
+        endpoint_index: int,
         endpoint: str,
         queue: asyncio.Queue[Any],
         token_limiter: _InputTokenLimiter,
@@ -618,9 +640,18 @@ async def _run_streaming_bulk_model(
                     try:
                         if job is None:
                             return
-                        group_key, chunk, writer, payload_bytes = job
+                        (
+                            group_key,
+                            chunk,
+                            writer,
+                            payload_bytes,
+                            tail_retry_round,
+                        ) = job
                         stats = group_stats[group_key]
-                        stats["logical_view_count"] += len(chunk)
+                        if tail_retry_round == 0:
+                            stats["logical_view_count"] += len(chunk)
+                        else:
+                            stats["tail_retry_bulk_request_count"] += 1
                         children = [
                             child
                             for _sample, _plan, child_rows in chunk
@@ -697,6 +728,17 @@ async def _run_streaming_bulk_model(
                         stats["attempt_count"] += int(result["attempts"])
                         forecasts = result["forecasts"]
                         if forecasts is None:
+                            if tail_retry_round == 0:
+                                deferred_jobs[endpoint_index].append(
+                                    (
+                                        group_key,
+                                        chunk,
+                                        writer,
+                                        payload_bytes,
+                                        1,
+                                    )
+                                )
+                                continue
                             stats["failed_view_count"] += len(chunk)
                             for sample, plan, _children in chunk:
                                 failure_handle.write(
@@ -714,6 +756,10 @@ async def _run_streaming_bulk_model(
                                 )
                             continue
                         stats["bulk_request_count"] += 1
+                        if tail_retry_round > 0:
+                            stats["tail_retry_recovered_view_count"] += len(
+                                chunk
+                            )
                         child_offset = 0
                         prediction_rows = []
                         for sample, plan, child_rows in chunk:
@@ -749,26 +795,27 @@ async def _run_streaming_bulk_model(
             producer(),
             *(
                 endpoint_workers(
+                    endpoint_index,
                     endpoint,
                     queue,
                     token_limiter,
                     native_multivariate_semaphore,
                     large_panel_semaphore,
                 )
-                for (
+                for endpoint_index, (
                     endpoint,
                     queue,
                     token_limiter,
                     native_multivariate_semaphore,
                     large_panel_semaphore,
-                ) in zip(
+                ) in enumerate(zip(
                     endpoints,
                     queues,
                     token_limiters,
                     native_multivariate_semaphores,
                     large_panel_semaphores,
                     strict=True,
-                )
+                ))
             ),
         )
         prediction_count = sum(int(record["row_count"]) for record in part_records)
@@ -787,6 +834,12 @@ async def _run_streaming_bulk_model(
         "http_concurrency_per_endpoint": concurrency,
         "bulk_request_count": sum(row["bulk_request_count"] for row in group_stats.values()),
         "attempt_count": sum(row["attempt_count"] for row in group_stats.values()),
+        "tail_retry_bulk_request_count": sum(
+            row["tail_retry_bulk_request_count"] for row in group_stats.values()
+        ),
+        "tail_retry_recovered_view_count": sum(
+            row["tail_retry_recovered_view_count"] for row in group_stats.values()
+        ),
         "shape_group_count": len(group_stats),
         "maximum_inflight_bytes": int(maximum_inflight_bytes),
         "maximum_request_input_tokens": int(

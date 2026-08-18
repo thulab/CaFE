@@ -366,3 +366,93 @@ def test_streaming_bulk_writes_atomic_source_shards_without_task_file(
         for part in parts
         for row in iter_prediction_parquet(part["path"])
     ] == ["sample-0", "sample-1"]
+
+
+def test_streaming_bulk_recovers_failed_request_after_shard_drain(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    model = {
+        "model_id": "fixture",
+        "forecast_limits": {
+            "max_input_length": 16,
+            "min_input_length": 1,
+            "max_output_length": 8,
+            "input_mode": {
+                "max_target_count": -1,
+                "max_history_covariate_count": 0,
+                "supports_future_covariates": False,
+            },
+        },
+    }
+
+    def samples():
+        yield {
+            "schema_version": "fixture",
+            "sample_id": "sample-0",
+            "source_shard_index": 0,
+            "context_length": 10,
+            "horizon": 2,
+            "target_dim": 1,
+            "target_column_names": ["target_0"],
+            "covariate_dim": 0,
+            "covariate_column_names": [],
+            "covariates": None,
+            "frequency": "H",
+            "target": np.arange(12.0)[:, None],
+        }
+
+    call_count = 0
+
+    async def flaky_forecast(
+        _client,
+        *,
+        children,
+        **_kwargs,
+    ):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {
+                "forecasts": None,
+                "attempts": 3,
+                "elapsed_seconds": 3.0,
+                "error": "HTTP 503 admission exhausted",
+            }
+        return {
+            "forecasts": np.zeros((len(children), 1, 2), dtype=np.float32),
+            "attempts": 1,
+            "elapsed_seconds": 0.01,
+            "error": None,
+        }
+
+    monkeypatch.setattr(
+        inference_module,
+        "_forecast_bulk_with_retry",
+        flaky_forecast,
+    )
+    summary, stats, parts = asyncio.run(
+        _run_streaming_bulk_model(
+            model_id="fixture",
+            model=model,
+            execution={"task_batch_size": 2, "http_concurrency": 1},
+            endpoints=["http://endpoint-a"],
+            api_prefix="/ai/api/v1",
+            sample_factory=samples,
+            prediction_dir=tmp_path / "predictions",
+            failure_path=tmp_path / "failures.jsonl",
+            forecast_timeout_seconds=30,
+            max_attempts=3,
+            maximum_open_groups=2,
+            maximum_inflight_batches=1,
+            maximum_inflight_bytes=1024 * 1024,
+        )
+    )
+    assert summary["compatible_sample_count"] == 1
+    assert stats["prediction_count"] == 1
+    assert stats["failure_count"] == 0
+    assert stats["attempt_count"] == 4
+    assert stats["tail_retry_bulk_request_count"] == 1
+    assert stats["tail_retry_recovered_view_count"] == 1
+    assert len(parts) == 1
+    assert (tmp_path / "failures.jsonl").read_text() == ""
