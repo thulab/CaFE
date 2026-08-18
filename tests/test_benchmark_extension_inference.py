@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import numpy as np
+import pytest
 
+from cafe import core as protocol
 from cafe.benchmark_extension import inference as inference_module
 from cafe.benchmark_extension.inference import (
     _InputTokenLimiter,
@@ -84,6 +87,43 @@ def test_four_card_replica_presets_match_measured_topologies() -> None:
         "timesfm2.5": 2,
         "tirex2": 2,
     }
+
+
+def test_publication_v3_validation_remains_readable_for_inference(
+    tmp_path: Path,
+) -> None:
+    generation_path = tmp_path / "01_generation" / "manifest.json"
+    generation = {
+        "schema_version": inference_module.GENERATION_SCHEMA,
+        "config": {
+            "pipeline_schema_version": inference_module.PIPELINE_SCHEMA,
+        },
+    }
+    protocol.write_json(generation_path, generation)
+    validation_path = tmp_path / "02_validation" / "report.json"
+    legacy = {
+        "schema_version": (
+            inference_module.LEGACY_PUBLICATION_VALIDATION_SCHEMA
+        ),
+        "validation_policy": (
+            inference_module.LEGACY_PUBLICATION_VALIDATION_POLICY
+        ),
+        "accepted": True,
+        "generation_manifest_sha256": protocol.file_sha256(generation_path),
+    }
+    protocol.write_json(validation_path, legacy)
+
+    loaded, loaded_generation_path, loaded_validation_path = (
+        inference_module._validated_inputs(tmp_path)
+    )
+    assert loaded == generation
+    assert loaded_generation_path == generation_path
+    assert loaded_validation_path == validation_path
+
+    legacy["validation_policy"] = "research_only"
+    protocol.write_json(validation_path, legacy)
+    with pytest.raises(ValueError, match="validation is not accepted"):
+        inference_module._validated_inputs(tmp_path)
 
 
 def test_group_row_limit_controls_input_adaptation_not_bulk_batch_rows() -> None:

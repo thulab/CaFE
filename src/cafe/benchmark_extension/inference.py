@@ -41,6 +41,12 @@ from cafe.inference.runner import (
 
 INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v4"
 TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v3"
+LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
+    "cafe.benchmark_extension_validation.v3"
+)
+LEGACY_PUBLICATION_VALIDATION_POLICY = (
+    "stream_all_compact_contracts_and_exactly_replay_from_source_arrow_v1"
+)
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 SERVICE_DEVICE_BATCH_INPUT_TOKENS = (11520 + 10000) * 50 + 11520
 DEFAULT_MAX_REQUEST_INPUT_TOKENS = round(
@@ -196,7 +202,17 @@ def _validated_inputs(dataset_root: Path) -> tuple[dict[str, Any], Path, Path]:
         raise ValueError("unsupported generation manifest")
     if generation.get("config", {}).get("pipeline_schema_version") != PIPELINE_SCHEMA:
         raise ValueError("generation is not current pipeline v7")
-    if validation.get("schema_version") != VALIDATION_SCHEMA or not validation.get("accepted"):
+    validation_schema = validation.get("schema_version")
+    current_validation = validation_schema == VALIDATION_SCHEMA
+    legacy_publication_validation = (
+        validation_schema == LEGACY_PUBLICATION_VALIDATION_SCHEMA
+        and validation.get("validation_policy")
+        == LEGACY_PUBLICATION_VALIDATION_POLICY
+    )
+    if (
+        not (current_validation or legacy_publication_validation)
+        or not validation.get("accepted")
+    ):
         raise ValueError("generation validation is not accepted")
     if validation.get("generation_manifest_sha256") != protocol.file_sha256(
         generation_manifest_path
