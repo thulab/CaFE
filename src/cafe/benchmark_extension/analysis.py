@@ -487,44 +487,56 @@ def run_analysis(
             "response_ratio": 0.0,
         }
     )
-    model_summaries: list[dict[str, Any]] = []
+    model_ids = [str(value) for value in inference_manifest["config"]["models"]]
+    prediction_parts_by_model = {
+        model_id: {
+            int(record["source_shard_index"]): record
+            for record in (
+                inference_manifest["model_predictions"][model_id].get("parts") or []
+            )
+        }
+        for model_id in model_ids
+    }
+    official_counts: defaultdict[str, int] = defaultdict(int)
+    treatment_counts: defaultdict[str, int] = defaultdict(int)
     try:
-        for model_id in inference_manifest["config"]["models"]:
-            prediction_record = inference_manifest["model_predictions"][model_id]
-            parts = {
-                int(record["source_shard_index"]): record
-                for record in prediction_record.get("parts") or []
+        current_shard: int | None = None
+        predictions_by_model: dict[str, dict[str, np.ndarray]] = {}
+        baselines: dict[str, dict[str, Any]] = {}
+        treatments: dict[str, dict[str, Any]] = {}
+        for sample in iter_replayed_samples(
+            generation_manifest,
+            gift_eval_dir=gift_root,
+            replay_workers=max(1, int(replay_workers)),
+        ):
+            shard = int(sample.get("source_shard_index", 0))
+            if current_shard != shard:
+                current_shard = shard
+                predictions_by_model = {
+                    model_id: _load_prediction_part(
+                        prediction_parts_by_model[model_id].get(shard)
+                    )
+                    for model_id in model_ids
+                }
+                baselines.clear()
+                treatments.clear()
+            sample_id = str(sample["sample_id"])
+            forecasts = {
+                model_id: predictions_by_model[model_id].get(sample_id)
+                for model_id in model_ids
             }
-            current_shard: int | None = None
-            predictions: dict[str, np.ndarray] = {}
-            baselines: dict[str, dict[str, Any]] = {}
-            treatments: dict[str, dict[str, Any]] = {}
-            official_count = 0
-            treatment_count = 0
-            for sample in iter_replayed_samples(
-                generation_manifest,
-                gift_eval_dir=gift_root,
-                replay_workers=max(1, int(replay_workers)),
-            ):
-                shard = int(sample.get("source_shard_index", 0))
-                if current_shard != shard:
-                    current_shard = shard
-                    predictions = _load_prediction_part(parts.get(shard))
-                    baselines.clear()
-                    treatments.clear()
-                sample_id = str(sample["sample_id"])
-                forecast = predictions.get(sample_id)
-                table = str(sample["evaluation_table"])
-                if table == "gift_eval_official_baseline":
-                    future = _future(sample)
-                    state = {
-                        "row": sample,
-                        "future": future,
-                        "mask": np.asarray(sample["future_observed_mask"], dtype=bool),
-                        "scales": np.asarray(sample["mase_scale_by_target"], dtype=float),
-                        "forecast": forecast,
-                    }
-                    baselines[sample_id] = state
+            table = str(sample["evaluation_table"])
+            if table == "gift_eval_official_baseline":
+                future = _future(sample)
+                state = {
+                    "row": sample,
+                    "future": future,
+                    "mask": np.asarray(sample["future_observed_mask"], dtype=bool),
+                    "scales": np.asarray(sample["mase_scale_by_target"], dtype=float),
+                    "forecasts": forecasts,
+                }
+                baselines[sample_id] = state
+                for model_id, forecast in forecasts.items():
                     if forecast is None:
                         continue
                     error = forecast - future
@@ -537,56 +549,70 @@ def run_analysis(
                         )
                     )
                     mae = float(np.mean(np.abs(_masked(error, state["mask"]))))
-                    metric = {
-                        "schema_version": "cafe.forecast_accuracy_metric.v2",
-                        "model_id": model_id,
-                        "dataset_id": sample["dataset_id"],
-                        "official_instance_id": sample["official_instance_id"],
-                        "sample_id": sample_id,
-                        "sample_kind": "official_baseline",
-                        "capability_id": None,
-                        "capability_level": 0,
-                        "mase": mase,
-                        "mae": mae,
-                    }
-                    accuracy_writer.write(metric)
-                    aggregate = accuracy_aggregates[(model_id, "official_baseline", None, 0)]
+                    accuracy_writer.write(
+                        {
+                            "schema_version": "cafe.forecast_accuracy_metric.v2",
+                            "model_id": model_id,
+                            "dataset_id": sample["dataset_id"],
+                            "official_instance_id": sample["official_instance_id"],
+                            "sample_id": sample_id,
+                            "sample_kind": "official_baseline",
+                            "capability_id": None,
+                            "capability_level": 0,
+                            "mase": mase,
+                            "mae": mae,
+                        }
+                    )
+                    aggregate = accuracy_aggregates[
+                        (model_id, "official_baseline", None, 0)
+                    ]
                     aggregate["count"] += 1
                     aggregate["mase"] += mase
                     aggregate["mae"] += mae
-                    official_count += 1
-                    continue
-                if table == "gift_eval_capability_treatment":
-                    baseline = baselines[str(sample["baseline_sample_id"])]
-                    future = _future(sample)
-                    treatments[sample_id] = {
-                        "row": sample,
-                        "future": future,
-                        "forecast": forecast,
-                        "baseline": baseline,
-                    }
-                    if forecast is None or baseline["forecast"] is None:
+                    official_counts[model_id] += 1
+                continue
+            if table == "gift_eval_capability_treatment":
+                baseline = baselines[str(sample["baseline_sample_id"])]
+                future = _future(sample)
+                treatments[sample_id] = {
+                    "row": sample,
+                    "future": future,
+                    "forecasts": forecasts,
+                    "baseline": baseline,
+                }
+                mask = baseline["mask"]
+                scales = baseline["scales"]
+                truth_delta = future - baseline["future"]
+                affected = [int(value) for value in sample["affected_target_indices"]]
+                assessed_mask = np.zeros_like(mask, dtype=bool)
+                assessed_mask[:, affected] = mask[:, affected]
+                truth_values = _masked(truth_delta, assessed_mask)
+                denominator = max(
+                    float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8
+                )
+                for model_id, forecast in forecasts.items():
+                    baseline_forecast = baseline["forecasts"][model_id]
+                    if forecast is None or baseline_forecast is None:
                         continue
-                    mask = baseline["mask"]
-                    scales = baseline["scales"]
                     error = forecast - future
                     treatment_mase = float(
                         np.mean(_masked(np.abs(error) / scales[None, :], mask))
                     )
                     treatment_mae = float(np.mean(np.abs(_masked(error, mask))))
-                    accuracy_metric = {
-                        "schema_version": "cafe.forecast_accuracy_metric.v2",
-                        "model_id": model_id,
-                        "dataset_id": sample["dataset_id"],
-                        "official_instance_id": sample["official_instance_id"],
-                        "sample_id": sample_id,
-                        "sample_kind": "capability_treatment",
-                        "capability_id": sample["capability_id"],
-                        "capability_level": int(sample["capability_level"]),
-                        "mase": treatment_mase,
-                        "mae": treatment_mae,
-                    }
-                    accuracy_writer.write(accuracy_metric)
+                    accuracy_writer.write(
+                        {
+                            "schema_version": "cafe.forecast_accuracy_metric.v2",
+                            "model_id": model_id,
+                            "dataset_id": sample["dataset_id"],
+                            "official_instance_id": sample["official_instance_id"],
+                            "sample_id": sample_id,
+                            "sample_kind": "capability_treatment",
+                            "capability_id": sample["capability_id"],
+                            "capability_level": int(sample["capability_level"]),
+                            "mase": treatment_mase,
+                            "mae": treatment_mae,
+                        }
+                    )
                     accuracy_key = (
                         model_id,
                         "capability_treatment",
@@ -598,16 +624,8 @@ def run_analysis(
                     accuracy_aggregate["mase"] += treatment_mase
                     accuracy_aggregate["mae"] += treatment_mae
 
-                    truth_delta = future - baseline["future"]
-                    forecast_delta = forecast - baseline["forecast"]
-                    affected = [int(value) for value in sample["affected_target_indices"]]
-                    assessed_mask = np.zeros_like(mask, dtype=bool)
-                    assessed_mask[:, affected] = mask[:, affected]
-                    truth_values = _masked(truth_delta, assessed_mask)
+                    forecast_delta = forecast - baseline_forecast
                     forecast_values = _masked(forecast_delta, assessed_mask)
-                    denominator = max(
-                        float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8
-                    )
                     correlation = _correlation(forecast_values, truth_values)
                     nrmse = float(
                         np.sqrt(np.mean(np.square(forecast_values - truth_values)))
@@ -616,24 +634,25 @@ def run_analysis(
                     amplitude = float(
                         np.sqrt(np.mean(np.square(forecast_values))) / denominator
                     )
-                    effect_metric = {
-                        "schema_version": "cafe.capability_effect_metric.v2",
-                        "model_id": model_id,
-                        "dataset_id": sample["dataset_id"],
-                        "official_instance_id": sample["official_instance_id"],
-                        "sample_id": sample_id,
-                        "capability_id": sample["capability_id"],
-                        "capability_level": int(sample["capability_level"]),
-                        "controlled_coordinate": sample["controlled_coordinate"],
-                        "sampled_coordinate": float(sample["sampled_coordinate"]),
-                        "effect_nrmse": nrmse,
-                        "effect_correlation": correlation,
-                        "effect_amplitude_ratio": amplitude,
-                        "truth_effect_rms": denominator,
-                        "treatment_mase": treatment_mase,
-                        "treatment_mae": treatment_mae,
-                    }
-                    effect_writer.write(effect_metric)
+                    effect_writer.write(
+                        {
+                            "schema_version": "cafe.capability_effect_metric.v2",
+                            "model_id": model_id,
+                            "dataset_id": sample["dataset_id"],
+                            "official_instance_id": sample["official_instance_id"],
+                            "sample_id": sample_id,
+                            "capability_id": sample["capability_id"],
+                            "capability_level": int(sample["capability_level"]),
+                            "controlled_coordinate": sample["controlled_coordinate"],
+                            "sampled_coordinate": float(sample["sampled_coordinate"]),
+                            "effect_nrmse": nrmse,
+                            "effect_correlation": correlation,
+                            "effect_amplitude_ratio": amplitude,
+                            "truth_effect_rms": denominator,
+                            "treatment_mase": treatment_mase,
+                            "treatment_mae": treatment_mae,
+                        }
+                    )
                     effect_key = (
                         model_id,
                         str(sample["capability_id"]),
@@ -646,21 +665,26 @@ def run_analysis(
                     if correlation is not None:
                         effect_aggregate["correlation"] += correlation
                         effect_aggregate["correlation_count"] += 1
-                    treatment_count += 1
-                    continue
-                if table != "gift_eval_capability_input_ablation":
-                    raise ValueError(f"unknown evaluation table {table}")
-                source = treatments[str(sample["input_ablation_source_sample_id"])]
-                full_forecast = source["forecast"]
+                    treatment_counts[model_id] += 1
+                continue
+            if table != "gift_eval_capability_input_ablation":
+                raise ValueError(f"unknown evaluation table {table}")
+            source = treatments[str(sample["input_ablation_source_sample_id"])]
+            baseline = source["baseline"]
+            truth = source["future"]
+            mask = baseline["mask"]
+            assessed = [int(value) for value in sample["assessed_target_indices"]]
+            assessed_mask = np.zeros_like(mask, dtype=bool)
+            assessed_mask[:, assessed] = mask[:, assessed]
+            scales = baseline["scales"]
+            truth_effect = _masked(truth - baseline["future"], assessed_mask)
+            truth_effect_rms = max(
+                float(np.sqrt(np.mean(np.square(truth_effect)))), 1e-8
+            )
+            for model_id, forecast in forecasts.items():
+                full_forecast = source["forecasts"][model_id]
                 if forecast is None or full_forecast is None:
                     continue
-                baseline = source["baseline"]
-                truth = source["future"]
-                mask = baseline["mask"]
-                assessed = [int(value) for value in sample["assessed_target_indices"]]
-                assessed_mask = np.zeros_like(mask, dtype=bool)
-                assessed_mask[:, assessed] = mask[:, assessed]
-                scales = baseline["scales"]
                 full_mase = float(
                     np.mean(
                         _masked(
@@ -678,35 +702,32 @@ def run_analysis(
                     )
                 )
                 forecast_change = _masked(forecast - full_forecast, assessed_mask)
-                truth_effect = _masked(truth - baseline["future"], assessed_mask)
-                truth_effect_rms = max(
-                    float(np.sqrt(np.mean(np.square(truth_effect)))), 1e-8
-                )
                 response_ratio = float(
                     np.sqrt(np.mean(np.square(forecast_change))) / truth_effect_rms
                 )
-                ablation_metric = {
-                    "schema_version": "cafe.capability_input_ablation_metric.v2",
-                    "model_id": model_id,
-                    "dataset_id": sample["dataset_id"],
-                    "official_instance_id": sample["official_instance_id"],
-                    "sample_id": sample_id,
-                    "source_treatment_sample_id": source["row"]["sample_id"],
-                    "capability_id": source["row"]["capability_id"],
-                    "capability_level": int(source["row"]["capability_level"]),
-                    "assessed_target_indices": assessed,
-                    "ablated_input_indices": [
-                        int(value) for value in sample["ablated_input_indices"]
-                    ],
-                    "full_input_mase": full_mase,
-                    "ablated_input_mase": ablated_mase,
-                    "input_ablation_mase_degradation": ablated_mase - full_mase,
-                    "input_ablation_forecast_change_rms": float(
-                        np.sqrt(np.mean(np.square(forecast_change)))
-                    ),
-                    "input_ablation_response_ratio": response_ratio,
-                }
-                ablation_writer.write(ablation_metric)
+                ablation_writer.write(
+                    {
+                        "schema_version": "cafe.capability_input_ablation_metric.v2",
+                        "model_id": model_id,
+                        "dataset_id": sample["dataset_id"],
+                        "official_instance_id": sample["official_instance_id"],
+                        "sample_id": sample_id,
+                        "source_treatment_sample_id": source["row"]["sample_id"],
+                        "capability_id": source["row"]["capability_id"],
+                        "capability_level": int(source["row"]["capability_level"]),
+                        "assessed_target_indices": assessed,
+                        "ablated_input_indices": [
+                            int(value) for value in sample["ablated_input_indices"]
+                        ],
+                        "full_input_mase": full_mase,
+                        "ablated_input_mase": ablated_mase,
+                        "input_ablation_mase_degradation": ablated_mase - full_mase,
+                        "input_ablation_forecast_change_rms": float(
+                            np.sqrt(np.mean(np.square(forecast_change)))
+                        ),
+                        "input_ablation_response_ratio": response_ratio,
+                    }
+                )
                 ablation_key = (
                     model_id,
                     str(source["row"]["capability_id"]),
@@ -718,22 +739,6 @@ def run_analysis(
                 ablation_aggregate["ablated_mase"] += ablated_mase
                 ablation_aggregate["degradation"] += ablated_mase - full_mase
                 ablation_aggregate["response_ratio"] += response_ratio
-            official_key = (model_id, "official_baseline", None, 0)
-            official_values = accuracy_aggregates[official_key]
-            model_summaries.append(
-                {
-                    "schema_version": "cafe.official_accuracy_summary.v2",
-                    "model_id": model_id,
-                    "official_instance_count": official_count,
-                    "official_mase_mean": _mean_or_none(
-                        official_values["mase"], int(official_values["count"])
-                    ),
-                    "official_mae_mean": _mean_or_none(
-                        official_values["mae"], int(official_values["count"])
-                    ),
-                    "capability_treatment_count": treatment_count,
-                }
-            )
         accuracy_count = accuracy_writer.close()
         effect_count = effect_writer.close()
         ablation_count = ablation_writer.close()
@@ -742,6 +747,26 @@ def run_analysis(
         effect_writer.abort()
         ablation_writer.abort()
         raise
+
+    model_summaries: list[dict[str, Any]] = []
+    for model_id in model_ids:
+        official_values = accuracy_aggregates[
+            (model_id, "official_baseline", None, 0)
+        ]
+        model_summaries.append(
+            {
+                "schema_version": "cafe.official_accuracy_summary.v2",
+                "model_id": model_id,
+                "official_instance_count": official_counts[model_id],
+                "official_mase_mean": _mean_or_none(
+                    official_values["mase"], int(official_values["count"])
+                ),
+                "official_mae_mean": _mean_or_none(
+                    official_values["mae"], int(official_values["count"])
+                ),
+                "capability_treatment_count": treatment_counts[model_id],
+            }
+        )
 
     accuracy_summary: list[dict[str, Any]] = []
     for (model_id, kind, capability, level), values in sorted(
@@ -839,7 +864,7 @@ def run_analysis(
     protocol.write_json(ablation_summary_path, {"rows": ablation_summary})
     config = {
         "pipeline_schema_version": PIPELINE_SCHEMA,
-        "execution": "source_shard_streaming_with_partitioned_prediction_join",
+        "execution": "single_replay_source_shard_all_model_prediction_join",
         "row_artifact_format": "parquet_zstd",
         "replay_workers": int(replay_workers),
         "estimands": {

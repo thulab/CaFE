@@ -5,7 +5,7 @@ import argparse
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +35,24 @@ from cafe.inference.runner import DEFAULT_ENDPOINTS, DEFAULT_MODELS
 
 
 STAGES = ("generation", "validation", "inference", "analysis")
+
+
+def _analyse_dataset_process(
+    job: tuple[str, str, str],
+) -> str:
+    dataset_id, experiment_root_value, gift_eval_dir_value = job
+    experiment_root = Path(experiment_root_value)
+    manifest_path = (
+        experiment_root / dataset_id / "04_analysis" / "manifest.json"
+    )
+    if manifest_path.exists():
+        raise FileExistsError(f"completed analysis is immutable: {manifest_path}")
+    run_analysis(
+        experiment_root / dataset_id,
+        gift_eval_dir=Path(gift_eval_dir_value),
+        replay_workers=1,
+    )
+    return dataset_id
 
 
 def parse_args() -> argparse.Namespace:
@@ -530,28 +548,19 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             },
             inference_manifests,
         )
-        def analyse_one(dataset_id: str) -> None:
-            manifest_path = (
-                experiment_root / dataset_id / "04_analysis" / "manifest.json"
-            )
-            if manifest_path.exists():
-                raise FileExistsError(
-                    f"completed analysis is immutable: {manifest_path}"
-                )
-            run_analysis(
-                experiment_root / dataset_id,
-                gift_eval_dir=args.gift_eval_dir,
-                replay_workers=max(1, int(args.analysis_workers)),
-            )
-
-        # Dataset-level workers stay bounded; per-dataset replay uses the configured
-        # capability worker pool, so avoid unbounded nested parallelism.
+        # A process owns one dataset and replays each source shard once for every
+        # model.  Dataset processes avoid the Python GIL without nested worker
+        # pools or repeated source-Arrow scans.
         dataset_analysis_workers = max(
             1,
-            min(len(dataset_ids), max(1, int(args.validation_dataset_workers))),
+            min(len(dataset_ids), max(1, int(args.analysis_workers))),
         )
-        with ThreadPoolExecutor(max_workers=dataset_analysis_workers) as executor:
-            list(executor.map(analyse_one, dataset_ids))
+        jobs = [
+            (dataset_id, str(experiment_root), str(args.gift_eval_dir.resolve()))
+            for dataset_id in dataset_ids
+        ]
+        with ProcessPoolExecutor(max_workers=dataset_analysis_workers) as executor:
+            list(executor.map(_analyse_dataset_process, jobs))
     return experiment_root
 
 

@@ -164,11 +164,14 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         generation_dir / "manifest.json",
         {"config": {"dataset_id": "gift_fixture"}},
     )
-    monkeypatch.setattr(
-        analysis_module,
-        "iter_replayed_samples",
-        lambda *_args, **_kwargs: iter((baseline, treatment, ablation)),
-    )
+    replay_calls = 0
+
+    def replay_once(*_args, **_kwargs):
+        nonlocal replay_calls
+        replay_calls += 1
+        return iter((baseline, treatment, ablation))
+
+    monkeypatch.setattr(analysis_module, "iter_replayed_samples", replay_once)
     prediction_path = inference_dir / "models" / "model" / "predictions" / "part_000000.parquet"
     writer = PredictionParquetWriter(prediction_path)
     writer.write(model_id="model", sample_id="baseline", forecast=future)
@@ -179,26 +182,50 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         **parquet_file_record(prediction_path, row_count=prediction_count),
         "source_shard_index": 0,
     }
+    second_prediction_path = (
+        inference_dir / "models" / "model2" / "predictions" / "part_000000.parquet"
+    )
+    second_writer = PredictionParquetWriter(second_prediction_path)
+    second_writer.write(model_id="model2", sample_id="baseline", forecast=future)
+    second_writer.write(
+        model_id="model2", sample_id="treatment", forecast=future + 2.0
+    )
+    second_writer.write(
+        model_id="model2", sample_id="ablation", forecast=future + 1.0
+    )
+    second_prediction_count = second_writer.close()
+    second_prediction_record = {
+        **parquet_file_record(
+            second_prediction_path, row_count=second_prediction_count
+        ),
+        "source_shard_index": 0,
+    }
     protocol.write_json(
         inference_dir / "manifest.json",
         {
             "schema_version": INFERENCE_SCHEMA,
             "dataset_id": "gift_fixture",
-            "config": {"models": ["model"]},
+            "config": {"models": ["model", "model2"]},
             "model_predictions": {
                 "model": {
                     "format": "partitioned_parquet",
                     "row_count": 3,
                     "parts": [prediction_record],
-                }
+                },
+                "model2": {
+                    "format": "partitioned_parquet",
+                    "row_count": 3,
+                    "parts": [second_prediction_record],
+                },
             },
             "complete": True,
         },
     )
     manifest = run_analysis(dataset_root)
-    assert manifest["files"]["accuracy_rows"]["row_count"] == 2
-    assert manifest["files"]["capability_effect_rows"]["row_count"] == 1
-    assert manifest["files"]["input_ablation_rows"]["row_count"] == 1
+    assert replay_calls == 1
+    assert manifest["files"]["accuracy_rows"]["row_count"] == 4
+    assert manifest["files"]["capability_effect_rows"]["row_count"] == 2
+    assert manifest["files"]["input_ablation_rows"]["row_count"] == 2
     accuracy = protocol.read_json(dataset_root / "04_analysis" / "accuracy_summary.json")
     assert {row["sample_kind"] for row in accuracy["rows"]} == {
         "official_baseline",
