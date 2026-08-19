@@ -536,6 +536,8 @@ def run_analysis(
                     "forecasts": forecasts,
                 }
                 baselines[sample_id] = state
+                if not np.any(state["mask"]):
+                    continue
                 for model_id, forecast in forecasts.items():
                     if forecast is None:
                         continue
@@ -586,43 +588,58 @@ def run_analysis(
                 affected = [int(value) for value in sample["affected_target_indices"]]
                 assessed_mask = np.zeros_like(mask, dtype=bool)
                 assessed_mask[:, affected] = mask[:, affected]
-                truth_values = _masked(truth_delta, assessed_mask)
-                denominator = max(
-                    float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8
+                effect_is_observed = bool(np.any(assessed_mask))
+                truth_values = (
+                    _masked(truth_delta, assessed_mask)
+                    if effect_is_observed
+                    else np.empty(0, dtype=float)
+                )
+                denominator = (
+                    max(float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8)
+                    if effect_is_observed
+                    else None
                 )
                 for model_id, forecast in forecasts.items():
                     baseline_forecast = baseline["forecasts"][model_id]
                     if forecast is None or baseline_forecast is None:
                         continue
-                    error = forecast - future
-                    treatment_mase = float(
-                        np.mean(_masked(np.abs(error) / scales[None, :], mask))
-                    )
-                    treatment_mae = float(np.mean(np.abs(_masked(error, mask))))
-                    accuracy_writer.write(
-                        {
-                            "schema_version": "cafe.forecast_accuracy_metric.v2",
-                            "model_id": model_id,
-                            "dataset_id": sample["dataset_id"],
-                            "official_instance_id": sample["official_instance_id"],
-                            "sample_id": sample_id,
-                            "sample_kind": "capability_treatment",
-                            "capability_id": sample["capability_id"],
-                            "capability_level": int(sample["capability_level"]),
-                            "mase": treatment_mase,
-                            "mae": treatment_mae,
-                        }
-                    )
-                    accuracy_key = (
-                        model_id,
-                        "capability_treatment",
-                        str(sample["capability_id"]),
-                        int(sample["capability_level"]),
-                    )
-                    accuracy_aggregate = accuracy_aggregates[accuracy_key]
-                    accuracy_aggregate["count"] += 1
-                    accuracy_aggregate["mase"] += treatment_mase
-                    accuracy_aggregate["mae"] += treatment_mae
+                    treatment_mase: float | None = None
+                    treatment_mae: float | None = None
+                    if np.any(mask):
+                        error = forecast - future
+                        treatment_mase = float(
+                            np.mean(_masked(np.abs(error) / scales[None, :], mask))
+                        )
+                        treatment_mae = float(np.mean(np.abs(_masked(error, mask))))
+                        accuracy_writer.write(
+                            {
+                                "schema_version": "cafe.forecast_accuracy_metric.v2",
+                                "model_id": model_id,
+                                "dataset_id": sample["dataset_id"],
+                                "official_instance_id": sample["official_instance_id"],
+                                "sample_id": sample_id,
+                                "sample_kind": "capability_treatment",
+                                "capability_id": sample["capability_id"],
+                                "capability_level": int(sample["capability_level"]),
+                                "mase": treatment_mase,
+                                "mae": treatment_mae,
+                            }
+                        )
+                        accuracy_key = (
+                            model_id,
+                            "capability_treatment",
+                            str(sample["capability_id"]),
+                            int(sample["capability_level"]),
+                        )
+                        accuracy_aggregate = accuracy_aggregates[accuracy_key]
+                        accuracy_aggregate["count"] += 1
+                        accuracy_aggregate["mase"] += treatment_mase
+                        accuracy_aggregate["mae"] += treatment_mae
+                        treatment_counts[model_id] += 1
+
+                    if not effect_is_observed:
+                        continue
+                    assert denominator is not None
 
                     forecast_delta = forecast - baseline_forecast
                     forecast_values = _masked(forecast_delta, assessed_mask)
@@ -665,7 +682,6 @@ def run_analysis(
                     if correlation is not None:
                         effect_aggregate["correlation"] += correlation
                         effect_aggregate["correlation_count"] += 1
-                    treatment_counts[model_id] += 1
                 continue
             if table != "gift_eval_capability_input_ablation":
                 raise ValueError(f"unknown evaluation table {table}")
@@ -676,6 +692,8 @@ def run_analysis(
             assessed = [int(value) for value in sample["assessed_target_indices"]]
             assessed_mask = np.zeros_like(mask, dtype=bool)
             assessed_mask[:, assessed] = mask[:, assessed]
+            if not np.any(assessed_mask):
+                continue
             scales = baseline["scales"]
             truth_effect = _masked(truth - baseline["future"], assessed_mask)
             truth_effect_rms = max(

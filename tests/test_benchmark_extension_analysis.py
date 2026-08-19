@@ -231,3 +231,66 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         "official_baseline",
         "capability_treatment",
     }
+
+
+def test_analysis_skips_an_official_instance_without_observed_future(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    dataset_root = tmp_path / "gift_fixture"
+    generation_dir = dataset_root / "01_generation"
+    inference_dir = dataset_root / "03_inference"
+    future = np.arange(4.0)[:, None]
+    baseline = {
+        "evaluation_table": "gift_eval_official_baseline",
+        "source_shard_index": 0,
+        "sample_id": "unobserved",
+        "official_instance_id": "official",
+        "dataset_id": "gift_fixture",
+        "context_length": 2,
+        "target": np.vstack((np.zeros((2, 1)), future)).tolist(),
+        "future_observed_mask": np.zeros((4, 1), dtype=bool).tolist(),
+        "mase_scale_by_target": [1.0],
+        "capability_id": None,
+        "capability_level": 0,
+    }
+    protocol.write_json(
+        generation_dir / "manifest.json",
+        {"config": {"dataset_id": "gift_fixture"}},
+    )
+    monkeypatch.setattr(
+        analysis_module,
+        "iter_replayed_samples",
+        lambda *_args, **_kwargs: iter((baseline,)),
+    )
+    prediction_path = (
+        inference_dir / "models" / "model" / "predictions" / "part_000000.parquet"
+    )
+    writer = PredictionParquetWriter(prediction_path)
+    writer.write(model_id="model", sample_id="unobserved", forecast=future)
+    prediction_count = writer.close()
+    prediction_record = {
+        **parquet_file_record(prediction_path, row_count=prediction_count),
+        "source_shard_index": 0,
+    }
+    protocol.write_json(
+        inference_dir / "manifest.json",
+        {
+            "schema_version": INFERENCE_SCHEMA,
+            "dataset_id": "gift_fixture",
+            "config": {"models": ["model"]},
+            "model_predictions": {
+                "model": {
+                    "format": "partitioned_parquet",
+                    "row_count": 1,
+                    "parts": [prediction_record],
+                }
+            },
+            "complete": True,
+        },
+    )
+    manifest = run_analysis(dataset_root)
+    assert manifest["files"]["accuracy_rows"]["row_count"] == 0
+    summary = protocol.read_json(dataset_root / "04_analysis" / "official_accuracy.json")
+    assert summary["models"][0]["official_instance_count"] == 0
+    assert summary["models"][0]["official_mase_mean"] is None
