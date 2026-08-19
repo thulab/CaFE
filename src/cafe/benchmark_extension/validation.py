@@ -21,14 +21,19 @@ from cafe.benchmark_extension.generation import (
     materialized_samples_for_instance,
 )
 from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
-from cafe.benchmark_extension.mechanisms import SOURCE_DISTANCE_THRESHOLD
+from cafe.benchmark_extension.mechanisms import (
+    SOURCE_DISTANCE_MAXIMUM_CHANNEL,
+    SOURCE_DISTANCE_MAXIMUM_MACRO,
+    SOURCE_DISTANCE_MINIMUM_MACRO,
+    SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
+)
 from cafe.benchmark_extension.storage import (
     iter_compact_parquet,
     validate_parquet_record,
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v4"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v5"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -83,37 +88,74 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
     gate = row.get("source_distance_gate")
     if not isinstance(gate, dict):
         return "source_distance_gate_missing"
-    if gate.get("schema_version") != "cafe.treatment_source_distance_gate.v2":
+    if gate.get("schema_version") != "cafe.treatment_source_distance_gate.v3":
         return "source_distance_gate_schema"
     if gate.get("scope") != "treatment_history_vs_authentic_official_history":
         return "source_distance_gate_scope"
     if gate.get("treatment_only") is not True:
         return "source_distance_gate_not_treatment_only"
+    if gate.get("strength_reference") != (
+        "full_official_history_macro_normalized_rms"
+    ):
+        return "source_distance_gate_strength_reference"
     try:
-        required = float(gate["minimum_required_distance"])
-        observed = float(gate["minimum_observed_macro_distance"])
+        required = float(gate["minimum_required_macro_distance"])
+        maximum_macro = float(gate["maximum_allowed_macro_distance"])
+        maximum_channel = float(gate["maximum_allowed_channel_distance"])
+        observed_minimum = float(gate["minimum_observed_macro_distance"])
+        observed_maximum = float(gate["maximum_observed_macro_distance"])
+        observed_channel_maximum = float(gate["maximum_observed_channel_distance"])
+        full_context = int(gate["full_history_context_length"])
+        full_macro = float(gate["full_history_macro_normalized_rms"])
     except (KeyError, TypeError, ValueError):
         return "source_distance_gate_invalid_distance"
-    if not math.isfinite(required) or not math.isclose(
-        required,
-        SOURCE_DISTANCE_THRESHOLD,
-        rel_tol=0.0,
-        abs_tol=1e-12,
+    expected_thresholds = (
+        (required, SOURCE_DISTANCE_MINIMUM_MACRO),
+        (maximum_macro, SOURCE_DISTANCE_MAXIMUM_MACRO),
+        (maximum_channel, SOURCE_DISTANCE_MAXIMUM_CHANNEL),
+    )
+    if any(
+        not math.isfinite(value)
+        or not math.isclose(value, expected, rel_tol=0.0, abs_tol=1e-12)
+        for value, expected in expected_thresholds
     ):
         return "source_distance_gate_threshold"
-    by_suffix = gate.get("by_suffix")
-    if not isinstance(by_suffix, list) or not by_suffix:
-        return "source_distance_gate_suffixes_missing"
-    suffix_macros: list[float] = []
-    for suffix in by_suffix:
-        if not isinstance(suffix, dict):
-            return "source_distance_gate_suffix_invalid"
-        if int(suffix.get("context_length") or 0) <= 0:
+    if full_context <= 0 or not _finite_nonnegative(full_macro):
+        return "source_distance_gate_full_history_invalid"
+    if gate.get("model_max_contexts") != SOURCE_DISTANCE_MODEL_MAX_CONTEXTS:
+        return "source_distance_gate_model_context_policy"
+    by_context = gate.get("by_model_context")
+    if not isinstance(by_context, list) or not by_context:
+        return "source_distance_gate_contexts_missing"
+    context_macros: list[float] = []
+    context_channel_maxima: list[float] = []
+    observed_contexts: list[int] = []
+    observed_model_ids: set[str] = set()
+    for context_row in by_context:
+        if not isinstance(context_row, dict):
             return "source_distance_gate_context_invalid"
-        macro = suffix.get("macro_normalized_rms")
-        channels = suffix.get("channel_normalized_rms")
+        context = int(context_row.get("context_length") or 0)
+        if context <= 0 or context > full_context:
+            return "source_distance_gate_context_invalid"
+        model_ids = context_row.get("model_ids")
+        if not isinstance(model_ids, list) or not model_ids:
+            return "source_distance_gate_model_ids_missing"
+        if any(not isinstance(model_id, str) for model_id in model_ids):
+            return "source_distance_gate_model_ids_invalid"
+        if model_ids != sorted(set(model_ids)):
+            return "source_distance_gate_model_ids_order"
+        if any(
+            min(full_context, int(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(model_id, -1)))
+            != context
+            for model_id in model_ids
+        ):
+            return "source_distance_gate_model_context_mismatch"
+        observed_model_ids.update(model_ids)
+        observed_contexts.append(context)
+        macro = context_row.get("macro_normalized_rms")
+        channels = context_row.get("channel_normalized_rms")
         if not _finite_nonnegative(macro):
-            return "source_distance_gate_suffix_macro_invalid"
+            return "source_distance_gate_context_macro_invalid"
         if not isinstance(channels, list) or not channels:
             return "source_distance_gate_channels_missing"
         if not all(_finite_nonnegative(value) for value in channels):
@@ -122,17 +164,51 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
         if not math.isclose(
             float(macro), calculated_macro, rel_tol=1e-9, abs_tol=1e-12
         ):
-            return "source_distance_gate_suffix_macro_mismatch"
-        suffix_macros.append(float(macro))
+            return "source_distance_gate_context_macro_mismatch"
+        context_macros.append(float(macro))
+        context_channel_maxima.append(max(float(value) for value in channels))
+    if observed_model_ids != set(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS):
+        return "source_distance_gate_model_coverage"
+    if observed_contexts != sorted(set(observed_contexts)):
+        return "source_distance_gate_context_order"
+    if gate.get("evaluated_model_contexts") != observed_contexts:
+        return "source_distance_gate_context_list_mismatch"
+    full_channels = gate.get("full_history_channel_normalized_rms")
+    if not isinstance(full_channels, list) or not full_channels:
+        return "source_distance_gate_full_channels_missing"
+    if not all(_finite_nonnegative(value) for value in full_channels):
+        return "source_distance_gate_full_channel_invalid"
     if not math.isclose(
-        observed,
-        min(suffix_macros),
+        full_macro,
+        sum(float(value) for value in full_channels) / len(full_channels),
         rel_tol=1e-9,
         abs_tol=1e-12,
     ):
-        return "source_distance_gate_observed_mismatch"
-    if observed < required - 1e-12:
+        return "source_distance_gate_full_macro_mismatch"
+    if not math.isclose(
+        observed_minimum,
+        min(context_macros),
+        rel_tol=1e-9,
+        abs_tol=1e-12,
+    ):
+        return "source_distance_gate_minimum_mismatch"
+    if not math.isclose(
+        observed_maximum, max(context_macros), rel_tol=1e-9, abs_tol=1e-12
+    ):
+        return "source_distance_gate_maximum_mismatch"
+    if not math.isclose(
+        observed_channel_maximum,
+        max(context_channel_maxima),
+        rel_tol=1e-9,
+        abs_tol=1e-12,
+    ):
+        return "source_distance_gate_channel_maximum_mismatch"
+    if observed_minimum < required - 1e-12:
         return "source_distance_below_minimum"
+    if observed_maximum > maximum_macro + 1e-12:
+        return "source_distance_above_macro_maximum"
+    if observed_channel_maximum > maximum_channel + 1e-12:
+        return "source_distance_above_channel_maximum"
     if gate.get("accepted") is not True or gate.get("reason") is not None:
         return "source_distance_rejected"
     return None

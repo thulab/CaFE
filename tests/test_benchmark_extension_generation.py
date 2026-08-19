@@ -101,6 +101,25 @@ def test_generation_uses_all_official_instances_and_shared_baseline(
     # ceil(.1 * 800 / 48) official windows, no random origin sampling.
     assert manifest["official_instance_count"] == 2
     assert manifest["files"]["official_baselines"]["row_count"] == 2
+    assert manifest["config"]["source_distance_configuration"] == {
+        "strength_reference": "full_official_history_macro_normalized_rms",
+        "model_max_contexts": {
+            "tirex2": 2048,
+            "Timer-4.0": 8192,
+            "Chronos-2": 8192,
+            "Timer-3.5": 11520,
+            "timesfm2.5": 15360,
+            "moirai2": 16384,
+            "toto2.0": 16384,
+        },
+        "minimum_model_context_macro_distance": 0.10,
+        "maximum_model_context_macro_distance": 2.0,
+        "maximum_model_context_channel_distance": 3.0,
+    }
+    assert manifest["unavailable_reason_count_by_capability"] == {
+        "regime_switching": {},
+        "trend": {},
+    }
     treatments = list(iter_compact_parquet(dataset_root / "01_generation" / "treatment_contracts.parquet"))
     assert len(treatments) == 2 * 2 * 5
     assert {row["capability_level"] for row in treatments} == {1, 2, 3, 4, 5}

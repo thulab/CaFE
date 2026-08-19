@@ -78,18 +78,31 @@ d_C=\frac1{|A|}\sum_{d\in A}
 \left(\frac{x'_{t,d}-x_{t,d}}{s_d}\right)^2}.
 \]
 
-The checked suffixes are the available members of
-`{96,168,336,512,1024,L}`. Every treatment satisfies
+Amplitude-controlled levels are calibrated only on the complete official
+history, so the sampled coordinate is the full-history macro distance. Distance
+qualification then checks the distinct contexts that the seven evaluated models
+actually receive:
+
+`{min(L,2048), min(L,8192), min(L,11520), min(L,15360), min(L,16384)}`.
+
+Duplicate contexts are evaluated once and retain the corresponding model ids.
+Inference refuses to run when a service advertises a different maximum input
+length from the one frozen in the generation distance contract.
+Every treatment satisfies
 
 \[
 \min_C d_C\ge 0.10.
 \]
 
-For amplitude-controlled mechanisms the physical gain maps the sampled level
-coordinate to the distance range. For regime and intermittency, one shared
-amplitude is solved from the weakest of the five location/sparsity treatments.
-There is no upper distance threshold. The whole five-level group is unavailable
-when any treatment does not reach the lower bound.
+It also satisfies a maximum model-context macro distance of `2.0` and a maximum
+single-channel normalized RMS of `3.0`. These bounds are qualification checks;
+they never feed back into the physical gain. For regime and intermittency, one
+shared amplitude is solved from the weakest full-history distance of the five
+location/sparsity treatments. The whole five-level group is unavailable when
+any treatment violates a lower or upper bound.
+Generation records unavailable-reason counts by capability in the dataset
+manifest and preserves the failed level plus its complete distance evidence in
+the availability contract for later mechanism audits.
 
 ## 5. Capability availability
 
@@ -159,8 +172,8 @@ metrics use compressed Parquet; summaries and manifests use JSON.
 
 The active stages are generation, validation, inference, and analysis. Research
 validation scans every treatment contract in parallel and requires its stored
-treatment-to-source distance evidence to be internally consistent and above the
-protocol minimum. Publication validation additionally verifies manifests,
+treatment-to-source distance evidence to be internally consistent and within the
+protocol bounds. Publication validation additionally verifies manifests,
 source and artifact hashes, storage policy, row coverage, and an exact replay
 of every compact contract from the official Arrow data. Publication mode is
 opt-in through `--validation-mode publication`; research mode is the default.

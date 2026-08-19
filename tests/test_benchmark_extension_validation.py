@@ -132,6 +132,7 @@ def test_research_validation_rejects_stored_distance_below_threshold(
     assert report["failure_count"] == 1
     assert report["failures"][0]["reason"] in {
         "source_distance_gate_observed_mismatch",
+        "source_distance_gate_minimum_mismatch",
         "source_distance_below_minimum",
         "source_distance_rejected",
     }

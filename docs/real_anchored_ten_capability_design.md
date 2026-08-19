@@ -121,29 +121,62 @@ s_d=
 
 ### 2.3 treatment 到真实原序列的距离
 
-构造可用后缀长度集合
+能力档位只用完整官方历史定义。另根据当前七个参评模型的实际最大输入长度，检查每个模型真正收到的输入是否既可见又不过强。模型最大输入长度是协议人工配置，并与推理服务公布的限制一致：
+
+| 模型 | 最大输入长度 |
+|---|---:|
+| TiRex2 | 2,048 |
+| Timer-4.0、Chronos-2 | 8,192 |
+| Timer-3.5 | 11,520 |
+| TimesFM 2.5 | 15,360 |
+| Moirai2、Toto 2.0 | 16,384 |
+
+令上述模型上限为 \(M_m\)。对历史长度为 \(L\) 的实例，模型 \(m\) 实际收到的上下文长度是
 
 \[
-\mathcal C=\operatorname{unique}\bigl(
-\{\min(L,96),\min(L,168),\min(L,336),\min(L,512),
-\min(L,1024),L\}\bigr).
+c_m=\min(L,M_m).
 \]
 
-对任一 \(c\in\mathcal C\)，取历史最后 \(c\) 点，先计算每个受影响通道的尺度归一化 RMS，再对通道求算术平均：
+去重后的实际模型上下文集合为
 
 \[
-d_c(\Delta X)=\frac{1}{|A|}\sum_{d\in A}
+\mathcal C_{\mathrm{model}}
+=\operatorname{unique}\{c_m:m\in\mathcal M\}.
+\]
+
+因此，若 \(L\le2048\)，所有模型都看完整历史，距离只需计算一次；只有长历史才产生多个实际上下文。旧协议中的 96、168、336、512、1024 固定短后缀不对应当前任何参评模型，已不再使用。
+
+对任一 \(c\in\mathcal C_{\mathrm{model}}\)，取历史最后 \(c\) 点，先计算每个受影响通道的尺度归一化 RMS，再对通道求算术平均：
+
+\[
+d_{c,d}(\Delta X)=
 \sqrt{\frac{1}{c}\sum_{t=L-c}^{L-1}
 \left(\frac{\Delta x_{t,d}}{s_d}\right)^2}.
 \]
 
-人工固定的距离门为
-
 \[
-\min_{c\in\mathcal C}d_c(\Delta X^{(k)})\ge0.10.
+d_c^{\mathrm{macro}}(\Delta X)
+=\frac{1}{|A|}\sum_{d\in A}d_{c,d}(\Delta X).
 \]
 
-该门比较每一级 treatment 与同一个真实历史 \(X\)，不是比较相邻等级。协议不设距离上限，也不以未来差异门控。五级中任一级失败，整个“官方实例 × 能力”组合不可用。
+人工固定的资格门为
+
+\[
+\min_{c\in\mathcal C_{\mathrm{model}}}
+d_c^{\mathrm{macro}}(\Delta X^{(k)})\ge0.10,
+\]
+
+\[
+\max_{c\in\mathcal C_{\mathrm{model}}}
+d_c^{\mathrm{macro}}(\Delta X^{(k)})\le2,
+\]
+
+\[
+\max_{c\in\mathcal C_{\mathrm{model}}}
+\max_{d\in A}d_{c,d}(\Delta X^{(k)})\le3.
+\]
+
+该门比较每一级 treatment 与同一个真实历史 \(X\)，不是比较相邻等级。下限保证所有参评模型都能看到足够明显的 treatment；macro 上限 2 表示受影响通道的平均改变量不得达到两个以上原序列标准差的 RMS，单通道上限 3 防止 macro 平均掩盖个别通道的三标准差级异常。二者相对最高完整历史目标 0.55 仍保留局部上下文放大空间，但一旦越界就应检查机制形状，而不是继续放宽门限。资格门只负责接受或拒绝，不参与增益反推，也不使用未来差异。五级中任一级失败，整个“官方实例 × 能力”组合不可用。
 
 ### 2.4 五级强度与确定性抽样
 
@@ -157,10 +190,10 @@ d_c(\Delta X)=\frac{1}{|A|}\sum_{d\in A}
 | 4 | \([0.30,0.38]\) |
 | 5 | \([0.42,0.55]\) |
 
-能力先从历史估计未缩放的单位分量 \(B^X,B^Y\)，并计算
+能力先从历史估计未缩放的单位分量 \(B^X,B^Y\)，并只在完整官方历史上计算
 
 \[
-u=\min_{c\in\mathcal C}d_c(B^X).
+u=d_L^{\mathrm{macro}}(B^X).
 \]
 
 然后从 \(I_k\) 均匀抽取无量纲目标距离 \(\rho_k\)，换算成实例实际使用的物理增益
@@ -171,7 +204,7 @@ u=\min_{c\in\mathcal C}d_c(B^X).
 \Delta Y^{(k)}=\alpha_kB^Y.
 \]
 
-所以 \(\rho_k\) 是人工区间内抽出的目标距离，\(\alpha_k\) 才是依赖真实实例的乘数。
+所以 \(\rho_k\) 是 treatment 在完整官方历史上的目标距离，\(\alpha_k\) 才是依赖真实实例的乘数。模型上下文距离不会用于放大分量；若某个实际输入上下文不满足 2.3 节的上下限，直接拒绝该能力组，从而避免“为救活最弱后缀而让其他上下文爆炸”。
 
 运行参数 **augmentation_seed** 由用户手动配置。程序将官方实例 ID、能力 ID、等级等键值拼接后做 SHA-256，取摘要前 8 字节，与 augmentation_seed 相加并映射到 32 位种子，再初始化 NumPy 随机生成器。因此同一组键总会得到同一个结果。方向、脉冲宽度等五级共享量的键不包含等级。
 
@@ -454,7 +487,7 @@ j_k=\operatorname{clip}(\operatorname{round}(r_kL),8,L-8).
 最后计算五级中最弱的历史距离和共享增益：
 
 \[
-u_*=\min_{k=1}^{5}\min_{c\in\mathcal C}d_c(B^{X,(k)}),\qquad
+u_*=\min_{k=1}^{5}d_L^{\mathrm{macro}}(B^{X,(k)}),\qquad
 \alpha=\max\left(1,\frac{0.10}{u_*}\right).
 \]
 
@@ -682,7 +715,7 @@ q_k=\operatorname{clip}(\operatorname{round}(f_kq_{\max}),w+1,q_{\max}).
 程序要求至少三个中心小于 \(L\)，且至少一个中心位于 \([L,L+H)\)。最后像制度切换一样计算
 
 \[
-u_*=\min_{k=1}^{5}\min_{c\in\mathcal C}d_c(B^{X,(k)}),\qquad
+u_*=\min_{k=1}^{5}d_L^{\mathrm{macro}}(B^{X,(k)}),\qquad
 \alpha=\max\left(1,\frac{0.10}{u_*}\right),
 \]
 

@@ -35,9 +35,11 @@ writes source-sharded float32 Parquet forecasts. No model-specific task JSONL
 is materialized. Analysis scans one prediction shard at a time.
 
 Treatments modify the complete retained official history. Model-specific
-context truncation happens afterward. Each treatment is at least 0.10
-source-scale normalized RMS from its authentic source across standard context
-suffixes. There is no upper treatment-distance rejection threshold.
+context truncation happens afterward. Amplitude levels are calibrated by the
+full-history macro normalized RMS. Qualification checks the distinct contexts
+actually received by the seven evaluated models: every model-context macro
+distance must be in `[0.10, 2.0]`, and every affected channel must remain at or
+below `3.0`. These checks reject a treatment group but never rescale it.
 
 ## Capabilities
 

@@ -4,7 +4,7 @@
     "real_authentic_source": "#1565c0",
     "treatment_minus_source": "#d84315"
   },
-  "created_at": "2026-08-19T11:31:33.408044+00:00",
+  "created_at": "2026-08-19T16:00:21.115299+00:00",
   "figure_semantics": "benchmark_truth_paths_not_model_predictions_complete_official_instance_history_and_future",
   "records": [
     {
@@ -16,9 +16,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 244867,
+        "bytes": 245508,
         "path": "01_trend__five_levels.png",
-        "sha256": "68a8c23c8c610bbc78432c7af7a3d2e222364af6b32963f661b8c3ac709d9eb4"
+        "sha256": "0bf669fa334a985fffc7799cc140c7feb51c5d4de96ba0bb991e52755859fada"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -30,7 +30,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.11355362762290382,
-          "source_distance": 0.1135536276229038
+          "source_distance": 0.11381668642578563
         },
         {
           "coordinate_interval": [
@@ -39,7 +39,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.19826199107878942,
-          "source_distance": 0.19826199107878936
+          "source_distance": 0.19872128562641364
         },
         {
           "coordinate_interval": [
@@ -48,7 +48,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.2559935483218908,
-          "source_distance": 0.25599354832189075
+          "source_distance": 0.25658658403353407
         },
         {
           "coordinate_interval": [
@@ -57,7 +57,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.3232913148350845,
-          "source_distance": 0.32329131483508444
+          "source_distance": 0.32404025283066334
         },
         {
           "coordinate_interval": [
@@ -66,7 +66,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.49425227263700394,
-          "source_distance": 0.4942522726370039
+          "source_distance": 0.4953972594937275
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -81,9 +81,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 297743,
+        "bytes": 289949,
         "path": "02_multi_seasonal__five_levels.png",
-        "sha256": "d431c12a4b357db8a0dfa77c95995e8eef37429df2a8e59f932f5af7221ab652"
+        "sha256": "38cd9829729c2da0649d691bcac58114788a86ae5d4b102b95636d82c2af353d"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -95,7 +95,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.12591513005823557,
-          "source_distance": 0.12591513005823557
+          "source_distance": 0.1252939708632093
         },
         {
           "coordinate_interval": [
@@ -104,7 +104,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.16807286209960742,
-          "source_distance": 0.16807286209960745
+          "source_distance": 0.16724373216359997
         },
         {
           "coordinate_interval": [
@@ -113,7 +113,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.2597659787918915,
-          "source_distance": 0.2597659787918915
+          "source_distance": 0.2584845122500473
         },
         {
           "coordinate_interval": [
@@ -122,7 +122,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.37217828450539464,
-          "source_distance": 0.37217828450539464
+          "source_distance": 0.37034227033058725
         },
         {
           "coordinate_interval": [
@@ -131,7 +131,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.45194636854216763,
-          "source_distance": 0.4519463685421677
+          "source_distance": 0.44971684582834554
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -146,9 +146,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 277916,
+        "bytes": 287376,
         "path": "03_time_varying_seasonality__five_levels.png",
-        "sha256": "bdb1c730e2f97a181a4bbcfaad0d6c9274cedb69c4efd2a5356188ba5e9fabf0"
+        "sha256": "84dbbd57a4cc39871e3f40be01facc96c62cd42a6928e26dafccdbcadbade72e"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -160,7 +160,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.12878892322640795,
-          "source_distance": 0.12878892322640798
+          "source_distance": 0.12555489376622278
         },
         {
           "coordinate_interval": [
@@ -169,7 +169,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.1717903344314956,
-          "source_distance": 0.17179033443149558
+          "source_distance": 0.16747649292550038
         },
         {
           "coordinate_interval": [
@@ -178,7 +178,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.2746807268531986,
-          "source_distance": 0.2746807268531986
+          "source_distance": 0.26778319606767714
         },
         {
           "coordinate_interval": [
@@ -187,7 +187,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.3418428241180046,
-          "source_distance": 0.34184282411800454
+          "source_distance": 0.33325878027126
         },
         {
           "coordinate_interval": [
@@ -196,7 +196,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.4305548658184693,
-          "source_distance": 0.4305548658184693
+          "source_distance": 0.4197431664471256
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -225,7 +225,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.3096820649587314,
-          "source_distance": 0.8308671486537599
+          "source_distance": 0.8327919791092792
         },
         {
           "coordinate_interval": [
@@ -234,7 +234,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.3824978963482123,
-          "source_distance": 0.7858097494514357
+          "source_distance": 0.787630197570535
         },
         {
           "coordinate_interval": [
@@ -243,7 +243,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.5748746146714108,
-          "source_distance": 0.6520367193291988
+          "source_distance": 0.6535472618238868
         },
         {
           "coordinate_interval": [
@@ -252,7 +252,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.8193981387477447,
-          "source_distance": 0.4249937459335426
+          "source_distance": 0.42597830875673715
         },
         {
           "coordinate_interval": [
@@ -261,27 +261,27 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.926037485887158,
-          "source_distance": 0.2719132518376198
+          "source_distance": 0.2725431803517564
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
       "status": "generated_example"
     },
     {
-      "affected_target_index_shown": 5,
+      "affected_target_index_shown": 0,
       "augmentation_seed": 2026081601,
-      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "baseline_sample_id": "gift__gift_temperature_rain_d__T0__w00__o635__baseline",
       "capability_id": "nonlinear_persistence",
-      "dataset_id": "gift_ett1_h",
+      "dataset_id": "gift_temperature_rain_d",
       "delta_display": "treatment_minus_source",
-      "display_history": 16460,
+      "display_history": 635,
       "file": {
-        "bytes": 230031,
+        "bytes": 342395,
         "path": "05_nonlinear_persistence__five_levels.png",
-        "sha256": "cd299587bd2e374628776d635a51c3a73eb297fb7f183962271749024af88efe"
+        "sha256": "8fc491ed3eb40bd62a34fb1fc140c371f623dc4ce7130fef9121f5ec99c695a7"
       },
-      "full_treatment_history": 16460,
-      "horizon": 48,
+      "full_treatment_history": 635,
+      "horizon": 30,
       "levels": [
         {
           "coordinate_interval": [
@@ -289,8 +289,8 @@
             0.14
           ],
           "level": 1,
-          "sampled_coordinate": 0.10991662751187899,
-          "source_distance": 0.10991662751187901
+          "sampled_coordinate": 0.10773217194581697,
+          "source_distance": 0.10773217194581697
         },
         {
           "coordinate_interval": [
@@ -298,8 +298,8 @@
             0.2
           ],
           "level": 2,
-          "sampled_coordinate": 0.17430505855884554,
-          "source_distance": 0.1743050585588456
+          "sampled_coordinate": 0.1757481667935761,
+          "source_distance": 0.1757481667935761
         },
         {
           "coordinate_interval": [
@@ -307,8 +307,8 @@
             0.28
           ],
           "level": 3,
-          "sampled_coordinate": 0.2376487784268634,
-          "source_distance": 0.23764877842686347
+          "sampled_coordinate": 0.26804297219778833,
+          "source_distance": 0.2680429721977883
         },
         {
           "coordinate_interval": [
@@ -316,8 +316,8 @@
             0.38
           ],
           "level": 4,
-          "sampled_coordinate": 0.3359883509383993,
-          "source_distance": 0.33598835093839935
+          "sampled_coordinate": 0.3307644194772066,
+          "source_distance": 0.3307644194772066
         },
         {
           "coordinate_interval": [
@@ -325,11 +325,11 @@
             0.55
           ],
           "level": 5,
-          "sampled_coordinate": 0.44280551621305175,
-          "source_distance": 0.4428055162130518
+          "sampled_coordinate": 0.4225568887878315,
+          "source_distance": 0.4225568887878315
         }
       ],
-      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "official_instance_id": "gift__gift_temperature_rain_d__T0__w00__o635",
       "status": "generated_example"
     },
     {
@@ -364,7 +364,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.2547522232172671,
-          "source_distance": 0.40504629365049116
+          "source_distance": 0.40745015032516557
         },
         {
           "coordinate_interval": [
@@ -373,7 +373,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.34944352817259094,
-          "source_distance": 0.3423265984407288
+          "source_distance": 0.3430390375015649
         },
         {
           "coordinate_interval": [
@@ -382,7 +382,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.5608189901719791,
-          "source_distance": 0.26726124191242434
+          "source_distance": 0.27219210434299285
         },
         {
           "coordinate_interval": [
@@ -391,7 +391,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.7698049907816918,
-          "source_distance": 0.2314550249431378
+          "source_distance": 0.2324574333793896
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -406,9 +406,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 296721,
+        "bytes": 297397,
         "path": "07_common_factor__five_levels.png",
-        "sha256": "dfaef538c652accaa7b4ce3cbc40426ae1ac14416729bb5f301656b35bb2bdc0"
+        "sha256": "da6221a25ecf8a15e369af5fd41b015dc672c9160c18b84cf634677b0a77d8d6"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -420,7 +420,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.12852151034306797,
-          "source_distance": 0.12852151034306794
+          "source_distance": 0.11837009101457809
         },
         {
           "coordinate_interval": [
@@ -429,7 +429,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.19785540348958922,
-          "source_distance": 0.19785540348958922
+          "source_distance": 0.1822275668584372
         },
         {
           "coordinate_interval": [
@@ -438,7 +438,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.2737733689469467,
-          "source_distance": 0.2737733689469467
+          "source_distance": 0.2521490644882206
         },
         {
           "coordinate_interval": [
@@ -447,7 +447,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.3108658178576651,
-          "source_distance": 0.31086581785766504
+          "source_distance": 0.28631172365550867
         },
         {
           "coordinate_interval": [
@@ -456,7 +456,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.4249299779585587,
-          "source_distance": 0.42492997795855875
+          "source_distance": 0.39136639486660235
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -480,9 +480,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 280711,
+        "bytes": 281410,
         "path": "09_cross_series_dependence__five_levels.png",
-        "sha256": "a1f48cec2e9628bb53dde90d9813ad8e1ff1e834fcb129e30b1470f09bab365b"
+        "sha256": "7693da27b75672b61c68273481b5e0542f7d6f2003f140194d88716c18ca3969"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -494,7 +494,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.12150441719807412,
-          "source_distance": 0.12150441719807412
+          "source_distance": 0.12176070187835403
         },
         {
           "coordinate_interval": [
@@ -503,7 +503,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.19431531892349652,
-          "source_distance": 0.19431531892349654
+          "source_distance": 0.19472518089009988
         },
         {
           "coordinate_interval": [
@@ -512,7 +512,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.2731813241195294,
-          "source_distance": 0.2731813241195294
+          "source_distance": 0.2737575351736204
         },
         {
           "coordinate_interval": [
@@ -521,7 +521,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.3479396600158661,
-          "source_distance": 0.3479396600158661
+          "source_distance": 0.34867355600565964
         },
         {
           "coordinate_interval": [
@@ -530,7 +530,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.541613196663841,
-          "source_distance": 0.541613196663841
+          "source_distance": 0.542755600933112
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -545,9 +545,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 226576,
+        "bytes": 226727,
         "path": "10_covariate_response__five_levels.png",
-        "sha256": "3f70c29e4018967dbf5a2a1493954a37372714395b0b6bb59160d57584720e16"
+        "sha256": "2649f51f1276fbb19bb580e7c7d751c7bc54d6b28edbb69a68a8098696af08c8"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -559,7 +559,7 @@
           ],
           "level": 1,
           "sampled_coordinate": 0.11498778614093216,
-          "source_distance": 0.11498778614093216
+          "source_distance": 0.1149664959342997
         },
         {
           "coordinate_interval": [
@@ -568,7 +568,7 @@
           ],
           "level": 2,
           "sampled_coordinate": 0.17545160826422934,
-          "source_distance": 0.17545160826422934
+          "source_distance": 0.1754191230662852
         },
         {
           "coordinate_interval": [
@@ -577,7 +577,7 @@
           ],
           "level": 3,
           "sampled_coordinate": 0.2793630221445166,
-          "source_distance": 0.2793630221445165
+          "source_distance": 0.279311297551266
         },
         {
           "coordinate_interval": [
@@ -586,7 +586,7 @@
           ],
           "level": 4,
           "sampled_coordinate": 0.37728391566146163,
-          "source_distance": 0.3772839156614616
+          "source_distance": 0.37721406082910847
         },
         {
           "coordinate_interval": [
@@ -595,7 +595,7 @@
           ],
           "level": 5,
           "sampled_coordinate": 0.4865530240064253,
-          "source_distance": 0.4865530240064253
+          "source_distance": 0.48646293779147676
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",

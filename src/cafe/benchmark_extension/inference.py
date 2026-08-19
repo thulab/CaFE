@@ -18,6 +18,7 @@ from cafe.benchmark_extension.generation import (
     PIPELINE_SCHEMA,
     iter_replayed_samples,
 )
+from cafe.benchmark_extension.mechanisms import SOURCE_DISTANCE_MODEL_MAX_CONTEXTS
 from cafe.benchmark_extension.storage import (
     PredictionParquetWriter,
     parquet_file_record,
@@ -146,6 +147,21 @@ def _maximum_context(model: dict[str, Any]) -> int | None:
         return None
     parsed = int(value)
     return None if parsed < 0 else parsed
+
+
+def _validate_distance_context_contract(
+    model_id: str,
+    model: dict[str, Any],
+) -> None:
+    expected = SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(model_id)
+    if expected is None:
+        return
+    advertised = _maximum_context(model)
+    if advertised != expected:
+        raise ValueError(
+            f"model {model_id!r} advertises max input length {advertised}, "
+            f"but the generation distance contract requires {expected}"
+        )
 
 
 def model_task_row(sample: dict[str, Any], model: dict[str, Any]) -> dict[str, Any]:
@@ -1026,6 +1042,7 @@ def main() -> int:
             raise ValueError(f"model {model_id!r} unavailable on all endpoints")
         endpoint_list = [endpoint for endpoint, _catalog in candidates]
         model = candidates[0][1][model_id]
+        _validate_distance_context_contract(model_id, model)
         model_contract = protocol.canonical_json(
             {
                 "forecast_limits": model.get("forecast_limits") or {},

@@ -60,6 +60,18 @@ def test_native_panel_is_preserved_in_generation_task() -> None:
     assert np.asarray(row["target"]).shape == (250, 3)
 
 
+def test_inference_model_context_must_match_generation_distance_contract() -> None:
+    inference_module._validate_distance_context_contract(
+        "tirex2",
+        {"forecast_limits": {"max_input_length": 2048}},
+    )
+    with pytest.raises(ValueError, match="distance contract requires 2048"):
+        inference_module._validate_distance_context_contract(
+            "tirex2",
+            {"forecast_limits": {"max_input_length": 4096}},
+        )
+
+
 def test_model_major_partial_invocation_succeeds_before_global_completion() -> None:
     statuses = {"Timer-4.0": {"status": "complete"}}
     predictions = {"Timer-4.0": {"parts": [{"path": "part.parquet"}]}}

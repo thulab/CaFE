@@ -25,6 +25,10 @@ from cafe.benchmark_extension.gift_eval import (
 )
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
+    SOURCE_DISTANCE_MAXIMUM_CHANNEL,
+    SOURCE_DISTANCE_MAXIMUM_MACRO,
+    SOURCE_DISTANCE_MINIMUM_MACRO,
+    SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     CapabilityGroup,
     CapabilityTreatment,
     build_capability_group,
@@ -38,7 +42,7 @@ from cafe.benchmark_extension.storage import (
 
 
 PIPELINE_SCHEMA = "cafe.pipeline.v7"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v3"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v4"
 SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v3"
 CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v1"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
@@ -839,8 +843,12 @@ def generate_dataset(
     ablation_path = generation_dir / "input_ablation_contracts.parquet"
     availability_path = generation_dir / "availability.parquet"
     paths = (baseline_path, treatment_path, ablation_path, availability_path)
-    baseline_count = treatment_count = ablation_count = availability_count = instance_count = 0
+    baseline_count = treatment_count = ablation_count = availability_count = 0
+    instance_count = 0
     available_counts = {capability: 0 for capability in capability_ids}
+    unavailable_reason_counts: dict[str, dict[str, int]] = {
+        capability: {} for capability in capability_ids
+    }
     writers = {
         "official_baselines": CompactParquetWriter(baseline_path),
         "capability_treatments": CompactParquetWriter(treatment_path),
@@ -861,6 +869,11 @@ def generate_dataset(
             availability_count += 1
             if bool(compact["available"]):
                 available_counts[str(compact["capability_id"])] += 1
+            else:
+                capability = str(compact["capability_id"])
+                reason = str(compact["reason"])
+                reasons = unavailable_reason_counts[capability]
+                reasons[reason] = reasons.get(reason, 0) + 1
 
     try:
         if int(workers) > 1:
@@ -946,8 +959,21 @@ def generate_dataset(
             "counter_based_by_official_instance_capability_level_and_augmentation_seed"
         ),
         "source_distance_policy": (
-            "treatment_only_multicontext_minimum_source_distance_v2"
+            "full_history_strength_actual_model_context_bounds_v3"
         ),
+        "source_distance_configuration": {
+            "strength_reference": "full_official_history_macro_normalized_rms",
+            "model_max_contexts": dict(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS),
+            "minimum_model_context_macro_distance": (
+                SOURCE_DISTANCE_MINIMUM_MACRO
+            ),
+            "maximum_model_context_macro_distance": (
+                SOURCE_DISTANCE_MAXIMUM_MACRO
+            ),
+            "maximum_model_context_channel_distance": (
+                SOURCE_DISTANCE_MAXIMUM_CHANNEL
+            ),
+        },
         "input_ablation_policy": (
             "common_cross_auxiliary_history_least_aligned_circular_shift_v1"
         ),
@@ -989,6 +1015,10 @@ def generate_dataset(
         },
         "official_instance_count": instance_count,
         "available_instance_count_by_capability": available_counts,
+        "unavailable_reason_count_by_capability": {
+            capability: dict(sorted(reasons.items()))
+            for capability, reasons in unavailable_reason_counts.items()
+        },
         "treatment_count": treatment_count,
         "input_ablation_count": ablation_count,
     }

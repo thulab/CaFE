@@ -4,6 +4,9 @@ import numpy as np
 
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.mechanisms import (
+    SOURCE_DISTANCE_MAXIMUM_CHANNEL,
+    SOURCE_DISTANCE_MAXIMUM_MACRO,
+    SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     SOURCE_DISTANCE_THRESHOLD,
     _distance_gate,
     build_capability_group,
@@ -111,14 +114,42 @@ def test_treatment_distance_gate_is_from_authentic_source_not_adjacent_level() -
     )
 
 
-def test_treatment_distance_gate_has_no_upper_rejection_threshold() -> None:
+def test_treatment_distance_gate_rejects_excessive_model_context_distance() -> None:
     history = np.column_stack((np.arange(120.0), np.arange(120.0)))
     delta = np.full_like(history, 1000.0)
     gate = _distance_gate(delta, history, (0, 1))
-    assert gate["accepted"]
-    assert gate["maximum_observed_macro_distance"] > 1.0
-    assert "maximum_macro_distance" not in gate
-    assert "maximum_channel_distance" not in gate
+    assert not gate["accepted"]
+    assert gate["reason"] == "above_maximum_model_context_macro_distance"
+    assert gate["maximum_allowed_macro_distance"] == SOURCE_DISTANCE_MAXIMUM_MACRO
+    assert (
+        gate["maximum_allowed_channel_distance"]
+        == SOURCE_DISTANCE_MAXIMUM_CHANNEL
+    )
+
+
+def test_distance_gate_uses_actual_model_contexts_and_separate_full_history() -> None:
+    history = np.column_stack((np.arange(20_000.0), np.arange(20_000.0)))
+    delta = np.ones_like(history)
+    gate = _distance_gate(delta, history, (0, 1))
+    expected = sorted(set(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.values()))
+    assert gate["evaluated_model_contexts"] == expected
+    assert [row["context_length"] for row in gate["by_model_context"]] == expected
+    assert gate["full_history_context_length"] == 20_000
+    assert 20_000 not in gate["evaluated_model_contexts"]
+
+
+def test_strength_level_is_calibrated_on_full_history_not_weakest_context() -> None:
+    t = np.arange(3000.0)
+    instance = _instance(0.01 * t + np.sin(t / 11.0))
+    group = build_capability_group(instance, "trend", augmentation_seed=19)
+    assert group.available
+    for treatment in group.treatments:
+        gate = treatment.source_distance_gate
+        assert treatment.controlled_coordinate == "full_history_macro_normalized_rms"
+        assert np.isclose(
+            gate["full_history_macro_normalized_rms"],
+            treatment.sampled_coordinate,
+        )
 
 
 def test_common_and_cross_use_native_panel_without_channel_tasks() -> None:

@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v2"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v3"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -30,8 +30,20 @@ GENERATABLE_CAPABILITY_IDS = tuple(
     if capability != "hierarchical_coherence"
 )
 CAPABILITY_LEVELS = (1, 2, 3, 4, 5)
-SOURCE_DISTANCE_THRESHOLD = 0.10
-SOURCE_DISTANCE_SUFFIXES = (96, 168, 336, 512, 1024)
+SOURCE_DISTANCE_MINIMUM_MACRO = 0.10
+SOURCE_DISTANCE_MAXIMUM_MACRO = 2.0
+SOURCE_DISTANCE_MAXIMUM_CHANNEL = 3.0
+SOURCE_DISTANCE_MODEL_MAX_CONTEXTS = {
+    "tirex2": 2048,
+    "Timer-4.0": 8192,
+    "Chronos-2": 8192,
+    "Timer-3.5": 11520,
+    "timesfm2.5": 15360,
+    "moirai2": 16384,
+    "toto2.0": 16384,
+}
+# Kept as a compatibility alias for callers that only need the lower bound.
+SOURCE_DISTANCE_THRESHOLD = SOURCE_DISTANCE_MINIMUM_MACRO
 STRENGTH_INTERVALS = (
     (0.10, 0.14),
     (0.16, 0.20),
@@ -120,55 +132,78 @@ def _distance_gate(
 ) -> dict[str, Any]:
     delta = np.asarray(history_delta, dtype=float)
     scales = _scale_by_target(history)
-    suffixes = sorted(
-        {
-            min(int(history.shape[0]), value)
-            for value in (*SOURCE_DISTANCE_SUFFIXES, int(history.shape[0]))
-            if min(int(history.shape[0]), value) > 0
-        }
-    )
-    by_suffix: list[dict[str, Any]] = []
-    for suffix in suffixes:
-        standardized = delta[-suffix:, affected] / scales[list(affected)]
+    history_length = int(history.shape[0])
+    model_ids_by_context: dict[int, list[str]] = {}
+    for model_id, maximum in SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.items():
+        context = min(history_length, int(maximum))
+        model_ids_by_context.setdefault(context, []).append(model_id)
+    by_context: list[dict[str, Any]] = []
+    for context in sorted(model_ids_by_context):
+        standardized = delta[-context:, affected] / scales[list(affected)]
         channel = np.sqrt(np.mean(np.square(standardized), axis=0))
         macro = float(np.mean(channel))
-        by_suffix.append(
+        by_context.append(
             {
-                "context_length": int(suffix),
+                "context_length": int(context),
+                "model_ids": sorted(model_ids_by_context[context]),
                 "macro_normalized_rms": macro,
                 "channel_normalized_rms": channel.tolist(),
             }
         )
-    minimum_macro = min(row["macro_normalized_rms"] for row in by_suffix)
-    maximum_macro = max(row["macro_normalized_rms"] for row in by_suffix)
+    full_standardized = delta[:, affected] / scales[list(affected)]
+    full_channels = np.sqrt(np.mean(np.square(full_standardized), axis=0))
+    full_macro = float(np.mean(full_channels))
+    minimum_macro = min(row["macro_normalized_rms"] for row in by_context)
+    maximum_macro = max(row["macro_normalized_rms"] for row in by_context)
     maximum_channel = max(
-        max(row["channel_normalized_rms"], default=0.0) for row in by_suffix
+        max(row["channel_normalized_rms"], default=0.0) for row in by_context
     )
-    accepted = bool(minimum_macro >= SOURCE_DISTANCE_THRESHOLD - 1e-12)
+    below_minimum = minimum_macro < SOURCE_DISTANCE_MINIMUM_MACRO - 1e-12
+    above_macro_maximum = maximum_macro > SOURCE_DISTANCE_MAXIMUM_MACRO + 1e-12
+    above_channel_maximum = (
+        maximum_channel > SOURCE_DISTANCE_MAXIMUM_CHANNEL + 1e-12
+    )
+    accepted = not (below_minimum or above_macro_maximum or above_channel_maximum)
+    reason = None
+    if below_minimum:
+        reason = "below_minimum_model_context_macro_distance"
+    elif above_macro_maximum:
+        reason = "above_maximum_model_context_macro_distance"
+    elif above_channel_maximum:
+        reason = "above_maximum_model_context_channel_distance"
     return {
-        "schema_version": "cafe.treatment_source_distance_gate.v2",
-        "metric": "source_frozen_scale_multicontext_normalized_rms",
+        "schema_version": "cafe.treatment_source_distance_gate.v3",
+        "metric": "source_frozen_scale_actual_model_context_normalized_rms",
         "scope": "treatment_history_vs_authentic_official_history",
         "treatment_only": True,
-        "suffix_contexts": suffixes,
-        "minimum_required_distance": SOURCE_DISTANCE_THRESHOLD,
+        "strength_reference": "full_official_history_macro_normalized_rms",
+        "full_history_context_length": history_length,
+        "full_history_macro_normalized_rms": full_macro,
+        "full_history_channel_normalized_rms": full_channels.tolist(),
+        "model_max_contexts": dict(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS),
+        "evaluated_model_contexts": sorted(model_ids_by_context),
+        "minimum_required_macro_distance": SOURCE_DISTANCE_MINIMUM_MACRO,
+        "maximum_allowed_macro_distance": SOURCE_DISTANCE_MAXIMUM_MACRO,
+        "maximum_allowed_channel_distance": SOURCE_DISTANCE_MAXIMUM_CHANNEL,
         "minimum_observed_macro_distance": minimum_macro,
-        # Maxima remain descriptive diagnostics; they are not acceptance limits.
         "maximum_observed_macro_distance": maximum_macro,
         "maximum_observed_channel_distance": maximum_channel,
-        "by_suffix": by_suffix,
+        "by_model_context": by_context,
         "accepted": accepted,
-        "reason": None if accepted else "below_minimum_source_distance",
+        "reason": reason,
     }
 
 
-def _minimum_unit_distance(
+def _full_history_unit_distance(
     delta: np.ndarray,
     history: np.ndarray,
     affected: tuple[int, ...],
 ) -> float:
-    gate = _distance_gate(delta, history, affected)
-    return float(gate["minimum_observed_macro_distance"])
+    values = np.asarray(delta, dtype=float)
+    scales = _scale_by_target(history)[list(affected)]
+    standardized = values[:, affected] / scales
+    channel = np.sqrt(np.mean(np.square(standardized), axis=0))
+    return float(np.mean(channel))
 
 
 def _linear_extrapolation(values: np.ndarray, horizon: int) -> np.ndarray:
@@ -253,7 +288,7 @@ def _trend_units(
         * directions[stable][None, :]
         * scale[stable][None, :]
     )
-    unit_distance = _minimum_unit_distance(base[:length], history, tuple(stable))
+    unit_distance = _full_history_unit_distance(base[:length], history, tuple(stable))
     if unit_distance <= 1e-10:
         raise ValueError("trend_component_not_visible")
     units: list[_UnitTreatment] = []
@@ -272,7 +307,7 @@ def _trend_units(
                 history_delta=base[:length] * gain,
                 future_delta=base[length:] * gain,
                 affected=tuple(stable),
-                coordinate_name="minimum_multicontext_normalized_rms",
+                coordinate_name="full_history_macro_normalized_rms",
                 coordinate_interval=interval,
                 sampled_coordinate=draw,
                 metadata={
@@ -403,7 +438,7 @@ def _strength_scaled_units(
     *,
     metadata: dict[str, Any],
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
-    unit_distance = _minimum_unit_distance(
+    unit_distance = _full_history_unit_distance(
         history_component, instance.history, affected
     )
     if unit_distance <= 1e-10:
@@ -424,7 +459,7 @@ def _strength_scaled_units(
                 history_delta=history_component * gain,
                 future_delta=future_component * gain,
                 affected=affected,
-                coordinate_name="minimum_multicontext_normalized_rms",
+                coordinate_name="full_history_macro_normalized_rms",
                 coordinate_interval=interval,
                 sampled_coordinate=draw,
                 metadata={
@@ -571,12 +606,12 @@ def _shared_amplitude_units(
     capability_id: str,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
     minimum = min(
-        _minimum_unit_distance(unit.history_delta, instance.history, unit.affected)
+        _full_history_unit_distance(unit.history_delta, instance.history, unit.affected)
         for unit in units
     )
     if minimum <= 1e-10:
         raise ValueError(f"{capability_id}_weakest_level_not_visible")
-    shared_gain = max(1.0, SOURCE_DISTANCE_THRESHOLD / minimum)
+    shared_gain = max(1.0, SOURCE_DISTANCE_MINIMUM_MACRO / minimum)
     scaled = [
         _UnitTreatment(
             history_delta=unit.history_delta * shared_gain,
@@ -952,7 +987,7 @@ def build_capability_group(
             "parameter_draw_sha256": protocol.json_sha256(parameter_payload),
             "target_future_used_for_fit_or_parameter_draw": False,
             "source_distance_policy": (
-                "treatment_only_multicontext_minimum_source_distance_v2"
+                "full_history_strength_actual_model_context_bounds_v3"
             ),
         },
     )
