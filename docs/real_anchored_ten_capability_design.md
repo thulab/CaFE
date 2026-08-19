@@ -1,256 +1,1107 @@
-# Ten capability designs on authentic benchmark paths
+# CaFE v7：基于真实基准路径的十项能力公式设计
 
-This document defines the v7 GIFT-Eval implementation. In every formula,
-`x_{t,d}` is an authentic official history, `y_{h,d}` its official future,
-and `σ_d` a source-history scale. Fits and random draws do not use the target
-future. Treatments cover the complete history.
+本文从原始数据开始，完整说明 CaFE v7 如何在 GIFT-Eval 官方测试实例上构造十项能力评测。读者只按本文顺序阅读，就能知道每个量是什么、来自哪里、如何计算，哪些值来自数据采集，哪些值由程序推导，哪些值是人工配置，以及最终怎样得到 treatment 的历史与未来。
 
-## Common five-level rule
+本文描述当前代码的实际行为。数据适配实现在 **src/cafe/benchmark_extension/gift_eval.py**，能力公式实现在 **src/cafe/benchmark_extension/mechanisms.py**，紧凑重放契约由 **src/cafe/benchmark_extension/generation.py** 写出。
 
-Levels are `k=1,…,5`. Each controlled coordinate is drawn from an ordered,
-non-overlapping interval using a deterministic counter-based generator. For
-amplitude-like capabilities the intervals target minimum multicontext source
-distances:
+## 1. 从 GIFT-Eval 原始记录得到官方实例
 
-```text
-[0.10,0.14], [0.16,0.20], [0.22,0.28], [0.30,0.38], [0.42,0.55]
-```
+### 1.1 原始采集字段
 
-The physical component gain is instance-specific because component scales
-differ across capabilities and source paths.
+CaFE 不自行采集新的时间序列。真实数值全部来自本地保存的 GIFT-Eval 官方 Arrow 文件。每条记录读取三个原始字段：
 
-## 1. Trend
+| 字段 | 来源 | 含义 |
+|---|---|---|
+| **item_id** | Arrow 原始字段 | 原始记录标识 |
+| **target** | Arrow 原始字段 | 被预测的真实序列，原始形状为 \([T]\) 或 \([D,T]\) |
+| **freq** | Arrow 原始字段 | 采样频率，例如小时、天、周或月 |
 
-The history-only slope direction is estimated per target and accepted when
-the whole-history and half-history slope signs agree. The treatment is a
-linear ramp from the sample beginning:
+\(T\) 是原始记录的时间点总数，\(D\) 是原生目标通道数。单变量记录取 \(D=1\)。多变量记录保持为一个 \(D\) 维实例，generation 不会将其拆成多个单变量样本。程序只把 target 统一转成时间在前的矩阵 \([T,D]\)。
+
+### 1.2 预测长度与官方预测起点
+
+预测档位 **term** 是运行时人工配置，可取 short、medium 或 long，对应乘数
 
 \[
-x^{(k)}_{t,d}=x_{t,d}+
-\operatorname{sign}(\hat\beta_d)\,\sigma_d g_k\frac{t}{L-1},
+m_{\mathrm{term}}\in\{1,10,15\}.
+\]
+
+非 M4 数据集的基础预测长度 \(P\) 由采集到的 freq 按官方规则映射：年 1、季度 4、月 12、周 8、日 30、小时 48、分钟 48、秒 60。最终预测长度为
+
+\[
+H=m_{\mathrm{term}}P.
+\]
+
+M4 使用其官方长度：年 6、季度 8、月 18、周 13、日 14、小时 48，并固定只取一个测试窗口。
+
+对非 M4 数据集，先从同一配置的全部 Arrow 记录采集最短长度 \(T_{\min}\)，再计算官方窗口数
+
+\[
+W=\operatorname{clip}\!\left(
+\left\lceil\frac{0.1T_{\min}}{H}\right\rceil,1,20
+\right),
+\]
+
+其中 \(\operatorname{clip}(v,a,b)=\min(\max(v,a),b)\)。对一条总长度为 \(T\) 的记录，第 \(i\) 个预测起点为
+
+\[
+o_i=T-HW+iH,\qquad i=0,\ldots,W-1.
+\]
+
+这些起点固定复现 GIFT-Eval 的官方 test split，不是按 treatment 随机选取。每个起点形成一个实例：
+
+\[
+X=(x_{t,d})\in\mathbb R^{L\times D},\qquad
+x_{t,d}=\mathrm{target}_{t,d},\quad t=0,\ldots,L-1,
 \]
 
 \[
-y^{(k)}_{h,d}=y_{h,d}+
-\operatorname{sign}(\hat\beta_d)\,\sigma_d g_k
-\frac{L+h}{L-1}.
+Y=(y_{h,d})\in\mathbb R^{H\times D},\qquad
+y_{h,d}=\mathrm{target}_{L+h,d},\quad h=0,\ldots,H-1,
 \]
 
-Weak or direction-unstable targets are excluded. A sample with no stable
-target is unavailable.
+其中历史长度 \(L=o_i\)。所以 \(X\) 是预测起点前的完整官方历史，\(Y\) 是起点后的官方真实未来。
 
-## 2. Multi-seasonal
+### 1.3 缺失值处理
 
-After a linear detrend, the dominant carrier frequency and an independent
-non-harmonic secondary frequency are resolved from the history. The fitted
-secondary harmonic is extended analytically:
+Arrow 历史中的有限值是采集值。每个通道单独处理缺失：
+
+1. 至少有两个有限值时，只用该通道历史中的有限值做线性插值；历史两端使用最近的边界观测值保持不变；
+2. 只有一个有限值时，用该值填满历史；
+3. 整个通道都缺失时，用 0 填满并记录该通道。
+
+后文所有估计都使用这个只依赖历史的完整矩阵 \(X\)，不会用 \(Y\) 补历史。
+
+未来缺失位置仅为临时重放而用最后一个历史值填充，同时保留原始观测掩码；评分只计算 Arrow 中原本可观测的位置。未来真实值或填充值都不参与能力筛选、参数拟合和随机抽样。
+
+## 2. 公共符号、数据来源与 treatment 形式
+
+### 2.1 统一符号
+
+| 符号 | 定义与单位 | 来源 |
+|---|---|---|
+| \(X=(x_{t,d})\) | 完整官方历史，形状 \(L\times D\)，单位与原序列相同 | 从 Arrow target 截取并做历史内缺失处理 |
+| \(Y=(y_{h,d})\) | 官方未来，形状 \(H\times D\) | 从 Arrow target 截取 |
+| \(L\) | 当前实例的历史点数 | 官方预测起点 \(o_i\) |
+| \(H\) | 预测点数 | freq 与人工配置的 term |
+| \(D\) | 原生目标通道数 | Arrow target 的形状 |
+| \(t\) | 历史索引，\(0\le t<L\) | 实例内部索引 |
+| \(h\) | 未来索引，\(0\le h<H\)，对应整段路径索引 \(L+h\) | 实例内部索引 |
+| \(d\) | 通道索引，\(0\le d<D\) | Arrow 原生通道顺序 |
+| \(k\) | 能力等级，\(k\in\{1,2,3,4,5\}\) | 协议人工规定 |
+| \(\Delta X^{(k)},\Delta Y^{(k)}\) | 第 \(k\) 级增加的历史和未来能力分量 | 对应能力公式 |
+| \(X^{(k)},Y^{(k)}\) | 第 \(k\) 级 treatment | 原路径与能力分量相加 |
+| \(A\) | 距离校验和能力评分所用的受影响通道集合 | 对应能力规则 |
+
+所有可生成能力最终都采用
 
 \[
-x^{(k)}=x+g_k\widehat S_{secondary},\qquad
-y^{(k)}=y+g_k\widehat S^{ext}_{secondary}.
+X^{(k)}=X+\Delta X^{(k)},\qquad
+Y^{(k)}=Y+\Delta Y^{(k)}.
 \]
 
-The carrier and all remaining authentic nuisance paths stay unchanged.
+这不是另造一条合成序列，而是在真实官方历史和未来上叠加受控分量。generation 处理完整的 \(L\) 点历史；模型的最大上下文截断只在 inference 时进行。
 
-## 3. Time-varying seasonality
+### 2.2 通道冻结尺度
 
-A carrier and a slower envelope frequency are resolved from history. The
-controlled component is constrained amplitude modulation:
+仅从官方历史 \(X\) 计算通道尺度 \(s_d\)。Std 在实现中是总体标准差：
 
 \[
-M_t=\widehat S_{carrier,t}
-\sin(2\pi f_{env}t),qquad
-x^{(k)}=x+g_kM.
+s_d=
+\begin{cases}
+\operatorname{Std}(x_{0,d},\ldots,x_{L-1,d}),
+&\text{若该值有限且大于 }10^{-8},\\
+\operatorname{Std}(x_{1,d}-x_{0,d},\ldots,x_{L-1,d}-x_{L-2,d}),
+&\text{若上一项不可用且本项有限并大于 }10^{-8},\\
+1,&\text{其他情况。}
+\end{cases}
 \]
 
-The same phase-locked basis is analytically extended over the horizon.
+\(s_d\) 与原通道单位相同。它由历史采集值推导，不是人工填写，也不会随能力等级变化。
 
-## 4. Regime switching
+### 2.3 treatment 到真实原序列的距离
 
-Amplitude and direction are shared across all five levels. The controlled
-coordinate is the change-location fraction `r_k`:
-
-```text
-[.20,.32], [.38,.50], [.56,.66], [.72,.82], [.87,.94]
-```
-
-With `j_k=round(r_k L)`,
+构造可用后缀长度集合
 
 \[
-x^{(k)}_{t,d}=x_{t,d}+A_d\mathbf1[t\ge j_k],
-\qquad y^{(k)}_{h,d}=y_{h,d}+A_d.
+\mathcal C=\operatorname{unique}\bigl(
+\{\min(L,96),\min(L,168),\min(L,336),\min(L,512),
+\min(L,1024),L\}\bigr).
 \]
 
-Higher levels place the change nearer the forecast origin, reducing the
-available post-change evidence. They do not increase the future effect.
-
-## 5. Nonlinear persistence
-
-For each target, history fits a linear lag state and an augmented quadratic
-state. Eligible targets have positive incremental predictive gain. With
-`q_t=z_{t-1}²-E[z²]`, the controlled component is
+对任一 \(c\in\mathcal C\)，取历史最后 \(c\) 点，先计算每个受影响通道的尺度归一化 RMS，再对通道求算术平均：
 
 \[
-M_{t,d}=\sigma_d\hat\gamma_d q_{t,d},qquad
-x^{(k)}=x+g_kM.
+d_c(\Delta X)=\frac{1}{|A|}\sum_{d\in A}
+\sqrt{\frac{1}{c}\sum_{t=L-c}^{L-1}
+\left(\frac{\Delta x_{t,d}}{s_d}\right)^2}.
 \]
 
-The future component uses a bounded zero-innovation rollout from the final
-history state.
-
-## 6. Predictable intermittency
-
-Pulse shape and positive amplitude are shared. The controlled coordinate is
-the event gap as a fraction of the largest gap supported by both history and
-horizon:
-
-```text
-[.10,.18], [.22,.30], [.34,.44], [.50,.64], [.72,.92]
-```
+人工固定的距离门为
 
 \[
-x^{(k)}_t=x_t+A\sum_n p(t-\phi_k-nq_k).
+\min_{c\in\mathcal C}d_c(\Delta X^{(k)})\ge0.10.
 \]
 
-Higher levels have a larger `q_k` and therefore sparser events. Every level
-contains at least three visible history events and one deterministically
-scheduled future event.
+该门比较每一级 treatment 与同一个真实历史 \(X\)，不是比较相邻等级。协议不设距离上限，也不以未来差异门控。五级中任一级失败，整个“官方实例 × 能力”组合不可用。
 
-## 7. Common factor
+### 2.4 五级强度与确定性抽样
 
-This mechanism uses a native panel with `D≥3`. History-only PCA gives factor
-`f_t` and loading `ℓ`; an AR(1) state extends the factor:
+趋势、多季节性、时变季节性、非线性持续性、共同因子、跨序列依赖和协变量响应使用相同的目标距离区间：
+
+| 等级 \(k\) | 人工配置区间 \(I_k\) |
+|---|---|
+| 1 | \([0.10,0.14]\) |
+| 2 | \([0.16,0.20]\) |
+| 3 | \([0.22,0.28]\) |
+| 4 | \([0.30,0.38]\) |
+| 5 | \([0.42,0.55]\) |
+
+能力先从历史估计未缩放的单位分量 \(B^X,B^Y\)，并计算
 
 \[
-x^{(k)}_t=x_t+g_k f_t\ell,
-\qquad y^{(k)}_h=y_h+g_k f^{ext}_h\ell.
+u=\min_{c\in\mathcal C}d_c(B^X).
 \]
 
-The top factor share and at least three nondegenerate loadings are required.
-
-## 8. Hierarchical coherence
-
-The current GIFT adapter does not infer a hierarchy from separate univariate
-records. This capability remains qualification-only and emits no treatment or
-rank. A future adapter can add it when the benchmark supplies an explicit
-summing matrix and raw-support policy.
-
-## 9. Cross-series dependence
-
-On a native `D≥2` panel, history selects a driver, responder, and lag by the
-responder's incremental predictive gain. The isolated transfer component is
+然后从 \(I_k\) 均匀抽取无量纲目标距离 \(\rho_k\)，换算成实例实际使用的物理增益
 
 \[
-M_{t,j}=\hat\beta z_{t-\ell,i},\qquad
-x^{(k)}_{t,j}=x_{t,j}+g_kM_{t,j}.
+\alpha_k=\frac{\rho_k}{u},\qquad
+\Delta X^{(k)}=\alpha_kB^X,\qquad
+\Delta Y^{(k)}=\alpha_kB^Y.
 \]
 
-The driver is unchanged. A history-only linear extension supplies the future
-driver path. The claim is directed predictive transfer, not causality.
+所以 \(\rho_k\) 是人工区间内抽出的目标距离，\(\alpha_k\) 才是依赖真实实例的乘数。
 
-## 10. Covariate response
+运行参数 **augmentation_seed** 由用户手动配置。程序将官方实例 ID、能力 ID、等级等键值拼接后做 SHA-256，取摘要前 8 字节，与 augmentation_seed 相加并映射到 32 位种子，再初始化 NumPy 随机生成器。因此同一组键总会得到同一个结果。方向、脉冲宽度等五级共享量的键不包含等级。
 
-The adapter derives periodic sine/cosine calendar features from the source
-frequency. They are deterministic and known through the official horizon.
-For an eligible target and selected calendar feature `c_t`,
+制度切换和可预测间歇性以位置或事件间隔定义等级，并为五级共同求一个幅度，详见对应章节。
+
+### 2.5 先用自然语言理解十项能力
+
+后面的公式不是十种任意的数据扰动，而是十种不同的预测结构。先建立下面这张概念地图，再看公式会更容易：
+
+| 能力 | 一句话概念 | 主要考察模型是否能识别 | 可能对应的现实情况 |
+|---|---|---|---|
+| 趋势 | 序列沿一个长期方向持续抬升或下降 | 长期斜率并把它延续到未来 | 需求长期增长、设备性能缓慢衰减 |
+| 多季节性 | 同一序列同时叠加两个独立周期 | 主周期之外的第二周期 | 用电量同时有日周期和周周期 |
+| 时变季节性 | 周期还在，但周期振幅随更慢节奏改变 | “周期的强弱也在变化” | 夏季空调使每日用电振幅变大 |
+| 制度切换 | 某个时刻后整体水平永久跳到新制度 | 最近发生的结构突变 | 调价、传感器重新标定、政策切换 |
+| 非线性持续性 | 下一点除线性依赖前一点外，还依赖前一点偏离均值的平方 | 状态幅度带来的非线性一阶依赖 | 极端负荷后的反应强度不同于普通波动 |
+| 可预测间歇性 | 事件按可推断间隔稀疏出现 | 稀疏事件的间隔和下次出现时间 | 定期补货、批处理作业、周期性维护 |
+| 共同因子 | 多个通道同时受同一个潜在状态驱动 | 面板中的同步共变结构 | 多地区负荷受共同天气影响 |
+| 层级一致性 | 上层序列等于下层序列之和 | 预测是否满足聚合约束 | SKU—门店—地区—全国销量 |
+| 跨序列依赖 | 一个通道的过去领先另一个通道 | 有方向、有滞后的跨通道预测信息 | 上游流量领先下游流量 |
+| 协变量响应 | 目标按已知未来协变量发生系统性变化 | 利用未来已知外部路径 | 小时用电对日历时刻的响应 |
+
+每项能力以下都按同一逻辑展开：
+
+1. 先说明它在概念上假设什么，以及不假设什么；
+2. 再说明它考察的模型能力和现实对应；
+3. 然后给出 treatment 公式，并紧接着解释公式中的局部变量；
+4. 最后说明这些参数如何从真实历史中提取、哪些阈值是人工配置。
+
+## 3. 能力一：趋势（trend）
+
+### 3.1 整体概念、考察能力与现实含义
+
+趋势表示：在短期波动之外，序列存在一个覆盖较长时间范围的持续上升或下降方向。这里考察的不是模型能否跟随最后两三个点，而是它能否从完整历史中辨认一个方向稳定的长期斜率，并把该方向继续延伸到预测区间。
+
+现实中可能对应需求规模长期增长、人口或装机容量增长、设备效率缓慢衰减、库存长期消耗等。当前实现只构造**线性**趋势，不代表指数增长、饱和增长或任意曲线趋势。
+
+### 3.2 treatment 怎样表示这个概念
+
+对方向稳定的通道 \(d\)，先定义一条从历史开头为 0、之后匀速变化的单位斜坡：
 
 \[
-x^{(k)}_{t,d}=x_{t,d}+g_k\hat\beta_dc_t,
-\qquad y^{(k)}_{h,d}=y_{h,d}+g_k\hat\beta_dc_h.
+B^X_{t,d}=s_dv_d\frac{t}{L-1},\qquad
+B^Y_{h,d}=s_dv_d\frac{L+h}{L-1}.
 \]
 
-Baseline and treatment expose the same calendar path; only the target response
-coefficient is enhanced.
+第 \(k\) 级 treatment 为
 
-## Source-distance gate
+\[
+x^{(k)}_{t,d}=x_{t,d}+\alpha_kB^X_{t,d},\qquad
+y^{(k)}_{h,d}=y_{h,d}+\alpha_kB^Y_{h,d}.
+\]
 
-Each treatment—not adjacent levels—is compared with its authentic source on
-all available suffixes in `{96,168,336,512,1024,L}`. The minimum normalized
-RMS is 0.10, with no upper distance threshold. Regime and intermittency solve
-one shared amplitude from the weakest level, preserving their
-location/sparsity coordinate across the five-level group.
+局部变量含义如下：
 
-## Actual v7 curve examples
+| 变量 | 含义 |
+|---|---|
+| \(v_d\) | 第 \(d\) 个通道从真实历史估计出的稳定方向，取 \(+1\) 或 \(-1\) |
+| \(s_d\) | 第 \(d\) 个通道的历史尺度，使斜坡适配原序列单位 |
+| \(t/(L-1)\) | 历史内从 0 增长到 1 的相对位置 |
+| \((L+h)/(L-1)\) | 同一斜坡延伸到未来第 \(h\) 点的位置 |
+| \(\alpha_k\) | 第 \(k\) 级的实例级物理增益，由公共距离规则求得 |
 
-These figures come from validated v7 compact contracts replayed against the
-source Arrow files, not an
-illustrative synthetic generator or model forecasts. Five columns are the
-five independently drawn level parameters. Grey is the authentic official
-source, blue is the treatment, and the lower row is their difference. Every
-figure displays that official instance's complete input history and official
-future; generation applies the same treatment before model-specific context
-truncation. Each
-source is the lexicographically first validated group, selected without future
-targets or model results.
+不在受影响集合 \(A\) 的通道分量取 0。未来公式只是延伸已确定的直线，不读取 \(Y\)。
 
-### Trend
+### 3.3 参数怎样从真实曲线提取
 
-![Trend five-level example](figures/native-extension-examples/01_trend__five_levels.png)
+要求 \(L\ge16\)。对通道 \(d\)，先从真实历史计算
 
-Source: `gift_ett1_h`, official origin `o16460`. The ramp follows the
-history-estimated trend sign. Since the complete official history is shown,
-the lower row directly displays the uncentered linear difference from the
-history start, with its slope increasing across levels.
+\[
+z_{t,d}=\frac{x_{t,d}-\bar x_d}{s_d},\qquad
+\bar x_d=\frac1L\sum_{t=0}^{L-1}x_{t,d},\qquad
+r_t=\frac{t}{L-1}.
+\]
 
-### Multi-seasonal
+分别用普通最小二乘拟合全历史斜率 \(b_d\)、前半段斜率 \(b_d^{(1)}\) 和后半段斜率 \(b_d^{(2)}\)。三次回归都以 \(z_{t,d}\) 为响应、\(r_t\) 为自变量并含截距。通道只有满足
 
-![Multi-seasonal five-level example](figures/native-extension-examples/02_multi_seasonal__five_levels.png)
+\[
+|b_d|\ge0.05,\qquad
+\operatorname{sign}(b_d^{(1)})=
+\operatorname{sign}(b_d^{(2)})=
+\operatorname{sign}(b_d)
+\]
 
-Source: `gift_ett1_h`, `o16460`. Only the independent secondary harmonic is
-enhanced.
+才进入 \(A\)，并令 \(v_d=\operatorname{sign}(b_d)\)。这意味着整体、前半段和后半段方向必须一致，避免把一次局部波动误当成长期趋势。
 
-### Time-varying seasonality
+\(X,\bar x_d,s_d,b_d,b_d^{(1)},b_d^{(2)}\) 都从真实历史提取；最短长度 16、斜率阈值 0.05 和五级强度区间是人工配置。没有合格通道时，该能力不可用。
 
-![Time-varying seasonality five-level example](figures/native-extension-examples/03_time_varying_seasonality__five_levels.png)
+## 4. 能力二：多季节性（multi-seasonal）
 
-Source: `gift_ett1_h`, `o16460`. A phase-locked carrier is multiplied by a
-slower history-resolved envelope.
+### 4.1 整体概念、考察能力与现实含义
 
-### Regime switching
+多季节性表示：同一条曲线上同时存在两个彼此独立的重复节奏，而不是只有一个周期及其简单倍频。例如小时用电既可能每天重复，也可能在工作日—周末之间每周重复；零售销量也可能同时有周周期和年周期。
 
-![Regime switching five-level example](figures/native-extension-examples/04_regime_switching__five_levels.png)
+该能力考察模型能否在强主周期存在时继续识别并外推较弱的第二周期。当前实现只增强一个第二正弦谐波，不等价于任意复杂季节形状，也不把主频的整数倍误算成新季节。
 
-Source: `gift_ett1_h`, `o16460`. Amplitude is shared and the change point moves
-toward the forecast origin.
+### 4.2 treatment 公式与变量
 
-### Nonlinear persistence
+假设已经从真实历史找到第二频率 \(m_{s,d}\)，令
 
-![Nonlinear persistence five-level example](figures/native-extension-examples/05_nonlinear_persistence__five_levels.png)
+\[
+\omega_{s,d}=\frac{2\pi m_{s,d}}L.
+\]
 
-Source: `gift_ett1_h`, `o16460`. The future delta uses a zero-innovation
-history-state rollout.
+第二季节分量写成正弦和余弦的线性组合：
 
-### Predictable intermittency
+\[
+S_d(n)=a_{s,d}\sin(\omega_{s,d}n)+
+b_{s,d}\cos(\omega_{s,d}n).
+\]
 
-![Predictable intermittency five-level example](figures/native-extension-examples/06_predictable_intermittency__five_levels.png)
+于是
 
-Source: `gift_ett1_h`, `o16460`. Pulse shape and amplitude are shared while the
-event gap grows.
+\[
+B^X_{t,d}=S_d(t),\qquad
+B^Y_{h,d}=S_d(L+h),
+\]
 
-### Common factor
+并形成
 
-![Common factor five-level example](figures/native-extension-examples/07_common_factor__five_levels.png)
+\[
+X^{(k)}=X+\alpha_kB^X,\qquad
+Y^{(k)}=Y+\alpha_kB^Y.
+\]
 
-Source: native D=7 `gift_ett1_h`, `o16460`. The plot shows one affected panel
-target; no generation-time channel task was created.
+| 变量 | 含义 |
+|---|---|
+| \(m_{s,d}\) | 历史长度 \(L\) 内第二季节完成的循环次数 |
+| \(L/m_{s,d}\) | 第二季节的周期长度，单位为时间点 |
+| \(\omega_{s,d}\) | 第二季节的角频率 |
+| \(a_{s,d},b_{s,d}\) | 第二季节的正弦、余弦系数，二者共同决定振幅和相位 |
+| \(S_d(n)\) | 在整段历史与未来索引 \(n\) 上的第二季节曲线 |
+| \(\alpha_k\) | 第 \(k\) 级增强幅度 |
 
-### Hierarchical coherence
+主周期和其他真实变化仍保留在 \(X,Y\) 中，只额外增强 \(S_d\)。
 
-![Hierarchy qualification status](figures/native-extension-examples/08_hierarchical_coherence__five_levels.png)
+### 4.3 参数怎样从真实曲线提取
 
-No five-level treatment is emitted until an adapter supplies an explicit
-summing matrix.
+要求 \(L\ge24\)。对每个通道：
 
-### Cross-series dependence
+1. 用 \([1,q_t]\) 对真实历史线性去趋势，其中 \(q_t\) 在 \([-1,1]\) 等距取值；
+2. 将残差乘 Hann 窗并计算实数 FFT 功率谱；
+3. 只保留 \(m\in[2,\lfloor L/4\rfloor]\)，按功率取前 16 个；
+4. 把最高功率索引记为主频 \(m_{c,d}\)；
+5. 按功率寻找第一个满足
 
-![Cross-series dependence five-level example](figures/native-extension-examples/09_cross_series_dependence__five_levels.png)
+\[
+|m_{s,d}-m_{c,d}|>1,\qquad
+|m_{s,d}-a m_{c,d}|>1,\quad a=2,\ldots,8
+\]
 
-Source: native D=7 `gift_ett1_h`, `o16460`. The driver is unchanged and the
-selected responder is plotted.
+的第二频率。这样会排除紧邻主频和主频第 2 至第 8 倍的简单谐波。
 
-### Covariate response
+选定 \(m_{s,d}\) 后，只用真实历史拟合
 
-![Covariate response five-level example](figures/native-extension-examples/10_covariate_response__five_levels.png)
+\[
+(a_{s,d},b_{s,d})=
+\arg\min_{a,b}\sum_{t=0}^{L-1}
+\left[x_{t,d}-a\sin(\omega_{s,d}t)-b\cos(\omega_{s,d}t)\right]^2.
+\]
 
-Source: `gift_ett1_h`, `o16460`. All levels share the same known-future
-calendar path and change only the target response.
+只有 \(\operatorname{Std}(S_d(0{:}L-1))\ge0.01s_d\) 的通道进入 \(A\)，不合格通道分量取 0。频率和系数来自真实历史；搜索范围、谐波排除范围和 0.01 可见性阈值是人工配置。未来只是解析延伸 \(S_d(L+h)\)，不读取 \(Y\)。
+
+## 5. 能力三：时变季节性（time-varying seasonality）
+
+### 5.1 整体概念、考察能力与现实含义
+
+时变季节性表示：重复周期本身仍存在，但每一轮周期的强弱并不恒定，而是被一个更慢的过程调制。例如每天都有用电高峰，但夏季每天的峰谷差比春季更大；每天都有交通早晚高峰，但节假日期间高峰振幅会变弱。
+
+该能力考察模型能否同时识别“快周期是什么”和“快周期的振幅正怎样缓慢变化”。它改变的是周期振幅，不改变载波频率；当前实现采用规则的正弦包络，不代表突发性或任意形状的振幅变化。
+
+### 5.2 treatment 公式与变量
+
+设 \(C_d(n)\) 是快季节载波，\(E_d(n)\) 是慢包络：
+
+\[
+C_d(n)=a_{c,d}\sin(\omega_{c,d}n)+b_{c,d}\cos(\omega_{c,d}n),
+\]
+
+\[
+E_d(n)=\sin\left(\frac{2\pi m_{e,d}n}{L}\right).
+\]
+
+二者乘积就是“振幅随慢周期改变”的单位分量：
+
+\[
+M_d(n)=C_d(n)E_d(n),\qquad
+B^X_{t,d}=M_d(t),\qquad B^Y_{h,d}=M_d(L+h).
+\]
+
+最终
+
+\[
+X^{(k)}=X+\alpha_kB^X,\qquad
+Y^{(k)}=Y+\alpha_kB^Y.
+\]
+
+| 变量 | 含义 |
+|---|---|
+| \(m_{c,d}\) | 快载波在长度 \(L\) 内的循环次数 |
+| \(\omega_{c,d}=2\pi m_{c,d}/L\) | 快载波角频率 |
+| \(a_{c,d},b_{c,d}\) | 快载波的振幅与相位系数 |
+| \(m_{e,d}\) | 慢包络在长度 \(L\) 内的循环次数 |
+| \(C_d(n)\) | 原历史中拟合出的快速季节形状 |
+| \(E_d(n)\) | 人工限定为正弦形状的慢振幅包络 |
+| \(M_d(n)\) | 快载波与慢包络的乘积，即被增强的时变季节分量 |
+
+### 5.3 参数怎样从真实曲线提取
+
+要求 \(L\ge24\)。对每个通道，用 \([1,q_t]\) 对历史去线性趋势，将残差乘 Hann 窗，计算实数 FFT 功率谱，只保留 \(m\in[2,\lfloor L/4\rfloor]\) 并取功率前 16 个。最高功率索引是 \(m_{c,d}\)，再按功率选择第一个满足
+
+\[
+2\le m_{e,d}<\frac{m_{c,d}}2
+\]
+
+的索引作为慢包络频率。该条件保证包络周期大于载波周期的两倍。
+
+用真实历史拟合载波系数：
+
+\[
+(a_{c,d},b_{c,d})=
+\arg\min_{a,b}\sum_{t=0}^{L-1}
+\left[x_{t,d}-a\sin(\omega_{c,d}t)-b\cos(\omega_{c,d}t)\right]^2.
+\]
+
+只有 \(\operatorname{Std}(M_d(0{:}L-1))\ge0.01s_d\) 的通道进入 \(A\)。频率和载波系数来自真实历史；慢包络的正弦形式、搜索范围和可见性阈值是人工规则。未来只延伸同一组解析函数，不读取 \(Y\)。
+
+## 6. 能力四：制度切换（regime switching）
+
+### 6.1 整体概念、考察能力与现实含义
+
+制度切换表示：序列在某一时刻进入了一个新的稳定水平，并且这个改变持续到未来。典型情况包括永久调价、政策生效、传感器重新标定、生产线改造或用户规模发生结构性跃迁。
+
+该能力考察模型能否减少对旧制度的依赖、识别最近的新水平并据此预测。它不是短暂异常点，也不是逐渐变化的趋势；当前实现只构造一步完成、之后永久保持的均值跳变。
+
+五级不改变跳变幅度，而是把同一个跳变放到越来越靠近预测起点的位置。等级越高，模型看到的新制度样本越少，任务越难。
+
+### 6.2 treatment 公式与变量
+
+设第 \(k\) 级的跳变位置为 \(j_k\)，方向为 \(v_d\)，共享物理增益为 \(\alpha\)：
+
+\[
+B^{X,(k)}_{t,d}=s_dv_d\mathbf1[t\ge j_k],\qquad
+B^{Y,(k)}_{h,d}=s_dv_d.
+\]
+
+\[
+x^{(k)}_{t,d}=x_{t,d}+\alpha s_dv_d\mathbf1[t\ge j_k],\qquad
+y^{(k)}_{h,d}=y_{h,d}+\alpha s_dv_d.
+\]
+
+| 变量 | 含义 |
+|---|---|
+| \(j_k\) | 第 \(k\) 级跳变在历史中的整数索引 |
+| \(v_d\) | 通道跳变方向，\(+1\) 表示上移，\(-1\) 表示下移 |
+| \(s_d\) | 从真实历史得到的通道尺度，也是未调整跳变幅度 |
+| \(\mathbf1[t\ge j_k]\) | 跳变前为 0、跳变后为 1 |
+| \(\alpha\) | 五级共享的幅度修正，保证所有等级通过距离门 |
+
+### 6.3 参数如何确定
+
+要求 \(L\ge40\)。位置并不是从真实曲线检测出的已有变点，而是人为控制的实验坐标。五级人工区间为：
+
+| 等级 \(k\) | 位置比例区间 \(R_k\) |
+|---|---|
+| 1 | \([0.20,0.32]\) |
+| 2 | \([0.38,0.50]\) |
+| 3 | \([0.56,0.66]\) |
+| 4 | \([0.72,0.82]\) |
+| 5 | \([0.87,0.94]\) |
+
+从 \(R_k\) 确定性均匀抽取 \(r_k\)，再计算
+
+\[
+j_k=\operatorname{clip}(\operatorname{round}(r_kL),8,L-8).
+\]
+
+这样跳变前后至少各有 8 个历史点。\(v_d\) 也是确定性等概率抽取，并在五级共享；它不是从真实历史趋势推断出的方向。真实历史只提供 \(L\) 和 \(s_d\)。
+
+最后计算五级中最弱的历史距离和共享增益：
+
+\[
+u_*=\min_{k=1}^{5}\min_{c\in\mathcal C}d_c(B^{X,(k)}),\qquad
+\alpha=\max\left(1,\frac{0.10}{u_*}\right).
+\]
+
+所以五级的未来效应和物理跳变幅度相同，只有 \(j_k\) 不同；未来延续已注入的制度，不读取 \(Y\)。
+
+## 7. 能力五：非线性持续性（nonlinear persistence）
+
+### 7.1 先说整体概念：它究竟是不是“前若干点经过非线性函数”
+
+不是。当前能力五不是一般形式的
+
+\[
+x_t=F(x_{t-1},x_{t-2},\ldots,x_{t-p}),
+\]
+
+也不尝试学习任意非线性函数 \(F\)。它只研究一个非常具体、可控的一阶非线性：
+
+> 当前点除与前一个点线性相关外，是否还与“前一个点偏离均值的幅度平方”相关。
+
+也就是说，当前实现只使用前 **1** 个点，不使用前若干点。它比较的两种关系是：
+
+\[
+\text{普通线性：}\quad z_{t+1}\approx a+bz_t,
+\]
+
+\[
+\text{增加非线性后：}\quad
+z_{t+1}\approx a'+b'z_t+\gamma(z_t^2-\text{历史平方均值}).
+\]
+
+平方项使模型面对一种“幅度依赖”：前一点离正常水平越远，其对下一点的影响不再只是按正负和大小线性变化，还多出一个与偏离幅度平方相关的效应。
+
+### 7.2 主要考察什么，现实中可能对应什么
+
+它主要考察模型能否：
+
+1. 从历史中区分普通 AR(1) 线性持续性和额外的二次依赖；
+2. 识别“处在极端状态”和“处在普通状态”会产生不同的下一步反应；
+3. 把这种幅度依赖延伸到预测区间，而不是只做线性外推。
+
+现实中可把它看成一类简化的幅度依赖机制，例如高负荷状态下的损耗或调整强度可能非线性增大、极端拥堵后的下一时刻反应可能不同于普通波动、某些物理量的作用强度可能近似与状态平方相关。
+
+但必须明确边界：
+
+- 平方项对正、负偏离是对称的，只关心“离均值有多远”，不能表达正向极端和负向极端采用完全不同的规律；
+- 它不是门槛模型、饱和模型、神经网络非线性或多滞后非线性；
+- 它不是把整条真实序列替换成递归生成的 AR 过程，而是在真实路径上叠加一个从真实历史拟合出的二次能力分量。
+
+因此更准确的中文名称可以理解为“**一阶二次状态持续性**”，而不是泛指所有非线性时序依赖。
+
+### 7.3 treatment 公式：怎样把这个概念加到真实路径上
+
+先把通道 \(d\) 的历史标准化：
+
+\[
+z_{t,d}=\frac{x_{t,d}-\bar x_d}{s_d}.
+\]
+
+定义居中的二次状态
+
+\[
+\bar q_d=\frac1{L-1}\sum_{t=0}^{L-2}z_{t,d}^2,\qquad
+q_{t,d}=z_{t,d}^2-\bar q_d.
+\]
+
+当 \(|z_{t,d}|\) 大于历史通常幅度时，\(q_{t,d}\) 往往为正；幅度较小时往往为负。设真实历史拟合出的二次系数为 \(\gamma_d\)，则历史单位分量为
+
+\[
+B^X_{0,d}=0,\qquad
+B^X_{t,d}=s_d\gamma_dq_{t-1,d},\quad t=1,\ldots,L-1.
+\]
+
+这条公式的含义是：第 \(t\) 点增加的非线性分量，由真实历史第 \(t-1\) 点的二次状态决定。
+
+未来没有真实的 \(z_{L+h,d}\) 可用，因此从最后一个历史状态 \(r_0=z_{L-1,d}\) 开始，用历史拟合出的线性骨架滚动：
+
+\[
+r_{h+1}=\operatorname{clip}(a'_d+b'_dr_h,-8,8).
+\]
+
+基于这个无噪声状态路径计算未来二次分量：
+
+\[
+B^Y_{h,d}=s_d\gamma_d(r_h^2-\bar q_d),
+\]
+
+最终第 \(k\) 级 treatment 是
+
+\[
+X^{(k)}=X+\alpha_kB^X,\qquad
+Y^{(k)}=Y+\alpha_kB^Y.
+\]
+
+公式中的局部变量逐一解释如下：
+
+| 变量 | 含义 | 来源 |
+|---|---|---|
+| \(z_{t,d}\) | 第 \(d\) 个通道在时刻 \(t\) 的标准化真实历史状态 | 由 \(x_{t,d},\bar x_d,s_d\) 计算 |
+| \(\bar q_d\) | 历史前 \(L-1\) 个状态平方的平均值 | 从真实历史计算 |
+| \(q_{t,d}\) | 居中的状态平方，表示该点幅度相对历史通常幅度有多极端 | 从 \(z_{t,d}\) 计算 |
+| \(\gamma_d\) | 二次状态对下一点的历史拟合系数 | 从增广回归提取 |
+| \(a'_d,b'_d\) | 增广回归中的截距和线性一次项系数 | 从真实历史拟合 |
+| \(r_h\) | 为计算未来 delta 而滚动出的无噪声标准化状态 | 从最后历史状态开始递推 |
+| \([-8,8]\) | 防止远期线性滚动数值爆炸的人工截断范围 | 协议配置 |
+| \(B^X,B^Y\) | 未做五级强度缩放的历史和未来二次分量 | 由上述公式计算 |
+| \(\alpha_k\) | 第 \(k\) 级物理增益 | 由公共距离区间换算 |
+
+这里的未来滚动只用于构造二次 treatment delta。二次项本身不反馈进入 \(r_{h+1}\)，也不生成未来随机创新。这使被评测的二次效应与基础状态路径分离。
+
+### 7.4 参数怎样从真实曲线提取
+
+要求 \(L\ge48\)。对每个通道，先用真实历史构造 \(z_{t,d}\) 和 \(q_{t,d}\)，再对同一个下一步响应 \(z_{t+1,d}\) 拟合两套模型。
+
+基线模型只有线性一阶依赖：
+
+\[
+z_{t+1,d}=a_d+b_dz_{t,d}+\varepsilon_{t,d}.
+\]
+
+增广模型加入二次状态：
+
+\[
+z_{t+1,d}=a'_d+b'_dz_{t,d}+\gamma_dq_{t,d}+\varepsilon'_{t,d},
+\quad t=0,\ldots,L-2.
+\]
+
+令两者的历史内均方误差分别为 \(\operatorname{MSE}_{lin,d}\) 和 \(\operatorname{MSE}_{quad,d}\)，定义二次项相对线性模型带来的增量解释度
+
+\[
+R^2_{inc,d}=1-\frac{\operatorname{MSE}_{quad,d}}
+{\operatorname{MSE}_{lin,d}}.
+\]
+
+如果线性模型已经几乎零误差，代码把增量记为 0。通道只有满足
+
+\[
+R^2_{inc,d}\ge0.005,\qquad |\gamma_d|\ge10^{-4}
+\]
+
+才进入 \(A\)。这一步的目的不是证明真实系统一定服从二次动力学，而是先确认真实历史中确实有可辨认的二次信号，再沿该信号方向做受控增强。
+
+\(z,q,a,b,a',b',\gamma,R^2_{inc}\) 全部从真实历史提取；最短长度 48、两个资格阈值、状态截断范围和五级强度区间是人工配置。官方未来 \(Y\) 不参与拟合、筛选或状态初始化。
+
+## 8. 能力六：可预测间歇性（predictable intermittency）
+
+### 8.1 整体概念、考察能力与现实含义
+
+间歇性表示：大部分时间没有额外事件，只有少数时刻出现短脉冲；“可预测”表示这些脉冲不是完全随机到达，而是以固定间隔排列，模型可以从历史事件间距推断下一次事件。
+
+它考察模型能否从长段普通观测中记住稀疏事件的间隔和相位。现实中可能对应定期补货、批量订单、周期性维护、轮询任务或按固定班次发生的作业。当前实现采用等间隔、等宽、等幅的正矩形脉冲，不表示随机到达、大小不一或正负混合的事件。
+
+五级控制稀疏度：等级越高，事件间隔通常越长，但五级共享脉冲宽度和幅度。
+
+### 8.2 treatment 公式与变量
+
+设第 \(k\) 级的事件中心集合为 \(\mathcal E_k\)，脉冲宽度为 \(w\)。矩形脉冲计数为
+
+\[
+p_k(n)=\sum_{c\in\mathcal E_k}\sum_{a=0}^{w-1}\mathbf1[n=c+a].
+\]
+
+所有通道都受影响，单位分量为
+
+\[
+B^{X,(k)}_{t,d}=s_dp_k(t),\qquad
+B^{Y,(k)}_{h,d}=s_dp_k(L+h).
+\]
+
+使用五级共享增益 \(\alpha\) 后，
+
+\[
+X^{(k)}=X+\alpha B^{X,(k)},\qquad
+Y^{(k)}=Y+\alpha B^{Y,(k)}.
+\]
+
+| 变量 | 含义 |
+|---|---|
+| \(\mathcal E_k\) | 第 \(k\) 级全部历史和未来事件中心 |
+| \(w\) | 每个事件持续的时间点数，五级共享 |
+| \(p_k(n)\) | 索引 \(n\) 是否落在某个事件脉冲内 |
+| \(s_d\) | 第 \(d\) 个通道未调整的正脉冲幅度 |
+| \(q_k\) | 相邻事件中心之间的整数间隔 |
+| \(\lambda_k\) | 最后历史事件中心距离历史末尾的相位滞后 |
+| \(\alpha\) | 五级共享幅度修正 |
+
+### 8.3 参数如何确定
+
+要求 \(L\ge24\)。最大合法间隔由历史长度和预测长度共同决定：
+
+\[
+q_{\max}=\min\left(H,\max\left(3,\left\lfloor\frac{L-1}{3}\right\rfloor\right)\right),
+\]
+
+并要求 \(q_{\max}\ge8\)。人工配置的间隔比例区间为：
+
+| 等级 \(k\) | 区间 \(Q_k\) |
+|---|---|
+| 1 | \([0.10,0.18]\) |
+| 2 | \([0.22,0.30]\) |
+| 3 | \([0.34,0.44]\) |
+| 4 | \([0.50,0.64]\) |
+| 5 | \([0.72,0.92]\) |
+
+脉冲宽度 \(w\) 从整数集合 \(\{1,2,3\}\) 中确定性均匀抽取，五级共享。对第 \(k\) 级，从 \(Q_k\) 抽取 \(f_k\)，再计算
+
+\[
+q_k=\operatorname{clip}(\operatorname{round}(f_kq_{\max}),w+1,q_{\max}).
+\]
+
+整数舍入后相邻等级可能得到相同的 \(q_k\)，但抽样比例区间本身有序且不重叠。
+
+确定性抽取相位滞后
+
+\[
+\lambda_k\in\{0,1,\ldots,\min(q_k,H)-1\},
+\]
+
+把最后一个历史事件中心放在 \(c_{0,k}=L-1-\lambda_k\)。事件中心集合为
+
+\[
+\mathcal E_k=\{c_{0,k}+nq_k:n\in\mathbb Z,\quad
+0\le c_{0,k}+nq_k<L+H\}.
+\]
+
+程序要求至少三个中心小于 \(L\)，且至少一个中心位于 \([L,L+H)\)。最后像制度切换一样计算
+
+\[
+u_*=\min_{k=1}^{5}\min_{c\in\mathcal C}d_c(B^{X,(k)}),\qquad
+\alpha=\max\left(1,\frac{0.10}{u_*}\right),
+\]
+
+这里 \(L,H,s_d\) 来自真实实例；五级比例区间、脉冲宽度、相位和事件间隔是受控的确定性生成量，并不是从真实曲线中检测已有事件。未来事件由这些量预先安排，不是观察 \(Y\) 后挑选的。
+
+## 9. 能力七：共同因子（common factor）
+
+### 9.1 整体概念、考察能力与现实含义
+
+共同因子表示：多个通道并不是各自独立变化，而是同时受一个看不见的公共状态驱动。公共状态在某一时刻增强时，不同通道按各自载荷一起上升或下降。
+
+该能力考察多变量模型能否利用跨通道同步共变，而不是只独立外推每个通道。现实中可能对应多个地区的负荷共同受天气影响、多只资产共同受市场状态影响、多个传感器共同受机器运行工况影响。
+
+它只适用于 Arrow 原始记录本身就是多变量面板的实例，不会把不同单变量记录拼成面板。当前实现只使用 PCA 第一因子和 AR(1) 延伸，不表示多个潜在因子或非线性因子。
+
+### 9.2 treatment 公式与变量
+
+设标准化历史的第一共同因子为 \(f_t\)，各通道载荷为 \(\ell_d\)，未来因子状态为 \(f_h^F\)。单位分量为
+
+\[
+B^X_{t,d}=s_d\ell_df_t,\qquad
+B^Y_{h,d}=s_d\ell_df_h^F.
+\]
+
+最终
+
+\[
+X^{(k)}=X+\alpha_kB^X,\qquad
+Y^{(k)}=Y+\alpha_kB^Y.
+\]
+
+| 变量 | 含义 |
+|---|---|
+| \(f_t\) | 时刻 \(t\) 的公共因子状态 |
+| \(\ell_d\) | 公共因子作用于通道 \(d\) 的方向和相对强度 |
+| \(s_d\) | 把标准化因子效应恢复到通道原单位的尺度 |
+| \(\phi\) | 公共因子的一阶持续系数 |
+| \(f_h^F\) | 从最后历史因子状态滚动出的未来因子 |
+| \(\alpha_k\) | 第 \(k\) 级增强强度 |
+
+分量实际按载荷作用于所有通道；只有载荷足够大的通道进入 \(A\) 并用于距离门和评分。
+
+### 9.3 参数怎样从真实面板提取
+
+要求 \(D\ge3\) 且 \(L\ge24\)。先标准化真实面板：
+
+\[
+z_{t,d}=\frac{x_{t,d}-\bar x_d}{s_d},\qquad
+Z=(z_{t,d})\in\mathbb R^{L\times D}.
+\]
+
+对 \(Z\) 做奇异值分解 \(Z=U\Sigma V^\top\)。第一右奇异向量就是载荷 \(\ell=V_{1,:}\)，第一因子解释份额为
+
+\[
+\eta=\frac{\sigma_1^2}{\sum_j\sigma_j^2}.
+\]
+
+要求 \(\eta\ge1/D+0.02\)。受影响通道集合为
+
+\[
+A=\{d:|\ell_d|\ge0.25\max_j|\ell_j|\},
+\]
+
+并要求 \(|A|\ge3\)。然后从真实历史计算因子
+
+\[
+f_t=\sum_{d=0}^{D-1}z_{t,d}\ell_d.
+\]
+
+用无截距 AR(1) 从历史估计
+
+\[
+\widehat\phi=
+\frac{\sum_{t=0}^{L-2}f_tf_{t+1}}
+{\sum_{t=0}^{L-2}f_t^2},\qquad
+\phi=\operatorname{clip}(\widehat\phi,-0.98,0.98).
+\]
+
+若分母不大于 \(10^{-12}\)，先令 \(\widehat\phi=0\)。未来从最后历史因子状态无噪声递推：
+
+\[
+f^F_0=\phi f_{L-1},\qquad
+f^F_h=\phi f^F_{h-1}\quad(h\ge1).
+\]
+
+载荷、解释份额、因子和 AR 系数都来自真实面板历史；维数、长度、解释份额、载荷阈值和 AR 截断范围是人工规则。官方未来不参与 PCA 或状态延伸。
+
+## 10. 能力八：层级一致性（hierarchical coherence）
+
+### 10.1 整体概念、考察能力与现实含义
+
+层级一致性表示：同一业务系统中的序列存在精确加总关系。例如“全国销量 = 各地区销量之和”“地区销量 = 各门店销量之和”。模型不仅要预测每个节点，还要让所有预测同时满足这些恒等式。
+
+它考察模型能否理解已知聚合结构并产生相互一致的预测，而不是只考察曲线相关性。现实中典型的是 SKU—门店—地区—全国销量、组织预算层级或电网区域汇总。
+
+### 10.2 应有的数学结构与变量
+
+层级结构通常写成
+
+\[
+x_t=Sb_t,
+\]
+
+其中：
+
+| 变量 | 含义 | 合法来源 |
+|---|---|---|
+| \(b_t\) | 时刻 \(t\) 的所有底层序列值 | 数据集原始底层记录 |
+| \(x_t\) | 同一时刻所有底层和聚合层节点 | 数据集记录或由 \(Sb_t\) 计算 |
+| \(S\) | 明确每个上层节点由哪些底层节点相加的求和矩阵 | 官方业务层级或数据元数据 |
+
+预测也应满足 \(\widehat x_{L+h}=S\widehat b_{L+h}\)。这里的关键不是从数值曲线拟合 \(S\)，而是从数据语义中采集真实 \(S\)。
+
+### 10.3 为什么当前没有 treatment
+
+当前适配器统一读取 item_id、target 和 freq，没有读取可用于所有实例的显式求和矩阵、节点顺序和底层支持策略。即使数据集名称含有 hierarchical，当前代码也不会把不同单变量记录按名称推断成树。
+
+因此 v7 的实际行为是：
+
+- 标记为 **qualification_only_no_generation**；
+- 不生成五级 \(\Delta X^{(k)},\Delta Y^{(k)}\)；
+- 不产生该能力排名。
+
+这不是遗漏公式，而是缺少不能合法猜测的真实输入 \(S\)。未来只有适配器能明确采集 \(S\)、节点顺序和底层支持范围后，才能继续设计 treatment 参数。
+
+## 11. 能力九：跨序列依赖（cross-series dependence）
+
+### 11.1 整体概念、考察能力与现实含义
+
+跨序列依赖表示：一个通道的变化比另一个通道更早出现，因此前者的过去可以帮助预测后者。它与共同因子的区别是：共同因子强调多个通道同步变化；跨序列依赖强调“谁领先谁、领先几步”。
+
+该能力考察模型是否会读取辅助通道历史，并利用有方向、有滞后的预测信息。现实中可能对应上游流量领先下游流量、原材料价格领先成品价格、入口流量领先服务器负载。
+
+这里的“驱动”只表示历史预测信息，不能据此声称因果关系。当前实现只增强一对通道之间的线性滞后传递，不表示多驱动、非线性传递或反馈网络。
+
+### 11.2 treatment 的核心公式与变量
+
+设选中的驱动通道为 \(i^*\)，响应通道为 \(j^*\)，滞后为 \(\ell^*\)，传递系数为 \(\beta^*\)。只有响应通道被修改：
+
+\[
+B^X_{t,j^*}=
+\begin{cases}
+0,&0\le t<\ell^*,\\
+s_{j^*}\beta^*z_{t-\ell^*,i^*},&\ell^*\le t<L,
+\end{cases}
+\]
+
+\[
+B^Y_{h,j^*}=s_{j^*}\beta^*z^{ext}_{L+h-\ell^*,i^*},
+\]
+
+\[
+X^{(k)}=X+\alpha_kB^X,\qquad
+Y^{(k)}=Y+\alpha_kB^Y.
+\]
+
+其他通道的 \(B^X,B^Y\) 都为 0。也就是“响应通道当前增加的分量，等于驱动通道 \(\ell^*\) 步之前的标准化状态乘传递系数”。驱动通道本身不修改。
+
+| 变量 | 含义 |
+|---|---|
+| \(i^*\) | 领先的驱动通道索引 |
+| \(j^*\) | 被预测、被增强的响应通道索引 |
+| \(\ell^*\) | 驱动领先响应的时间点数 |
+| \(\beta^*\) | 驱动历史到响应通道的线性传递系数 |
+| \(z_{t,i^*}\) | 标准化驱动历史 |
+| \(z^{ext}_{n,i^*}\) | 真实驱动历史与历史线性外推连接成的路径 |
+| \(s_{j^*}\) | 把响应分量恢复到原单位的尺度 |
+| \(\alpha_k\) | 第 \(k\) 级增强强度 |
+
+### 11.3 参数怎样从真实面板提取
+
+要求 \(D\ge2\) 且 \(L\ge48\)。
+
+先得到标准化历史 \(z_{t,d}=(x_{t,d}-\bar x_d)/s_d\)。最大候选滞后为
+
+\[
+\ell_{\max}=\min\left(24,\max\left(1,\left\lfloor\frac L8\right\rfloor\right)\right).
+\]
+
+遍历所有驱动通道 \(i\)、不同的响应通道 \(j\) 和滞后 \(\ell=1,\ldots,\ell_{\max}\)。对 \(t=\ell,\ldots,L-1\)，拟合只含响应自身上一时刻的基线模型
+
+\[
+z_{t,j}=a+bz_{t-1,j}+\varepsilon_t,
+\]
+
+以及加入驱动通道滞后值的完整模型
+
+\[
+z_{t,j}=a'+b'z_{t-1,j}+\beta z_{t-\ell,i}+\varepsilon'_t.
+\]
+
+定义历史内增量解释度
+
+\[
+R^2_{inc}(i,j,\ell)=
+1-\frac{\operatorname{MSE}_{full}}{\operatorname{MSE}_{own}}.
+\]
+
+基线误差不大于 \(10^{-12}\) 时取 0。选择
+
+\[
+(i^*,j^*,\ell^*)=
+\arg\max_{i\ne j,\ 1\le\ell\le\ell_{\max}}
+R^2_{inc}(i,j,\ell),
+\]
+
+并要求最大值至少为人工阈值 0.0025。记完整模型中选中驱动项的系数为 \(\beta^*\)。
+
+### 11.4 未来驱动路径怎样只从历史得到
+
+未来所需驱动索引若仍小于 \(L\)，直接使用已采集历史；超出历史后使用历史线性外推。外推窗口长度为
+
+\[
+w=\min\left(L,\max\left(16,\min\left(256,\left\lfloor\frac L2\right\rfloor\right)\right)\right).
+\]
+
+取标准化驱动通道最后 \(w\) 点，以局部索引 \(0,\ldots,w-1\) 拟合带截距直线，并在 \(w,\ldots,w+H-1\) 上外推。把真实历史与外推连接为
+
+\[
+z^{ext}_{n,i^*}=
+\begin{cases}
+z_{n,i^*},&n<L,\\
+\widetilde z_{n,i^*},&L\le n<L+H.
+\end{cases}
+\]
+
+未来单位分量为
+
+关系选择、\(\beta^*\) 和驱动外推只使用 \(X\)。官方响应未来与驱动未来均不参与构造。
+
+## 12. 能力十：协变量响应（covariate response）
+
+### 12.1 整体概念、考察能力与现实含义
+
+协变量响应表示：目标序列除了依赖自身历史，还会系统性地响应一条在预测时已经知道的外部路径。例如预测小时用电时，未来每一点属于一天中的哪个时刻是已知的；模型应利用这个信息改变预测。
+
+该能力考察模型能否学习“已知未来特征 → 目标变化”的响应关系，并在预测区间使用未来特征。现实中还可能对应已公布的价格、促销计划或天气预报，但当前实现**没有采集这些真实外部字段**，只使用由 freq 和索引生成的周期日历基函数。
+
+因此它测的是一个受限版本：目标对固定正弦/余弦日历相位的线性响应，不是任意外生变量或非线性响应。
+
+### 12.2 treatment 的核心公式与变量
+
+设选中的目标为 \(d^*\)，日历列为 \(j^*\)，历史拟合响应系数为 \(\beta^*\)，则
+
+\[
+B^X_{t,d^*}=s_{d^*}\beta^*c_{t,j^*},\qquad
+B^Y_{h,d^*}=s_{d^*}\beta^*c_{L+h,j^*}.
+\]
+
+| 变量 | 含义 |
+|---|---|
+| \(d^*\) | 对日历协变量响应最明显的目标通道 |
+| \(j^*\) | 被选中的正弦或余弦日历列 |
+| \(c_{n,j^*}\) | 整条记录索引 \(n\) 上已知的日历值 |
+| \(\beta^*\) | 目标对该日历列的历史拟合响应系数 |
+| \(s_{d^*}\) | 把响应分量恢复到目标原单位的尺度 |
+| \(\alpha_k\) | 第 \(k\) 级增强强度 |
+
+### 12.3 协变量从哪里来
+
+当前适配器没有从 Arrow 采集天气、价格、节假日等外生字段。它只读取 freq，再按人工配置的周期表生成两个确定性基函数。因此这些量是“由采集频率派生的已知未来协变量”，不是原始观测协变量。
+
+日历周期 \(P_{cal}\) 为：年 1、季度 4、月 12、周 52、日 7、小时 24、分钟 60、秒 60。对整条 Arrow 记录的全局索引 \(n=0,\ldots,T-1\)，生成
+
+\[
+c_{n,\sin}=\sin\left(\frac{2\pi n}{P_{cal}}\right),\qquad
+c_{n,\cos}=\cos\left(\frac{2\pi n}{P_{cal}}\right).
+\]
+
+历史协变量取 \(n=0,\ldots,L-1\)，未来协变量取 \(n=L,\ldots,L+H-1\)。年频 \(P_{cal}=1\) 时不生成协变量，本能力不可用；另外要求 \(L\ge24\)。
+
+这里没有真实时间戳，所以“日历”的准确含义是与频率对应的固定索引周期，不包含时区、节假日或不规则月份长度。
+
+### 12.4 参数怎样从真实曲线提取
+
+对每个目标 \(d\)，令响应 \(r_{t,d}=x_{t,d}/s_d\)。拟合带线性时间趋势的基线模型
+
+\[
+r_{t,d}=a_d+b_dt+\varepsilon_{t,d},
+\]
+
+以及加入所有日历列的完整模型
+
+\[
+r_{t,d}=a'_d+b'_dt+
+\sum_{j\in\{\sin,\cos\}}\beta_{d,j}c_{t,j}
++\varepsilon'_{t,d}.
+\]
+
+定义
+
+\[
+R^2_{inc,d}=1-
+\frac{\operatorname{MSE}_{calendar,d}}
+{\operatorname{MSE}_{trend,d}}.
+\]
+
+基线误差不大于 \(10^{-12}\) 时取 0。在每个目标内选择绝对系数最大的列
+
+\[
+j_d^*=\arg\max_j|\beta_{d,j}|,
+\]
+
+再选择增量解释度最大的目标
+
+\[
+d^*=\arg\max_dR^2_{inc,d}.
+\]
+
+要求 \(R^2_{inc,d^*}\ge0.0025\)。最终 \(j^*=j_{d^*}^*\)、\(\beta^*=\beta_{d^*,j^*}\)、\(A=\{d^*\}\)。目标、列与系数来自历史，0.0025 是人工资格阈值。
+
+### 12.5 最终 treatment
+
+单位分量只作用于选中目标：
+
+\[
+B^X_{t,d^*}=s_{d^*}\beta^*c_{t,j^*},\qquad
+B^Y_{h,d^*}=s_{d^*}\beta^*c_{L+h,j^*}.
+\]
+
+其他通道取 0，再按公共强度规则形成
+
+\[
+X^{(k)}=X+\alpha_kB^X,\qquad
+Y^{(k)}=Y+\alpha_kB^Y.
+\]
+
+baseline 与 treatment 使用同一条日历路径；变化的是目标对该协变量的响应分量。未来协变量可由频率和索引预先计算，\(Y\) 不参与选择、拟合或未来分量计算。
+
+## 13. 数据来源与人工配置汇总
+
+为避免混淆，全部关键输入可归为四类：
+
+| 类别 | 具体内容 |
+|---|---|
+| 原始采集 | Arrow 中的 item_id、target、freq；其中 target 提供真实历史和真实未来 |
+| 从采集值推导 | \(L,H,D\)、缺失处理后的 \(X\)、尺度 \(s_d\)、趋势方向、频率、回归系数、PCA 载荷、AR 系数、驱动/响应通道和滞后 |
+| 确定性生成 | 由 freq 和索引生成的正弦/余弦协变量；由稳定哈希种子生成的等级坐标、制度方向、脉冲宽度与相位 |
+| 人工配置 | term、augmentation_seed、五级区间、距离下限 0.10、各能力最短长度、频率筛选范围、解释度与可见性阈值、截断上下界 |
+
+最重要的数据使用边界是：官方未来 \(Y\) 只作为最终 treatment future 的真实底座和评分真值，不参与能力资格判定、参数拟合、随机抽样或历史距离门。唯一合法使用的未来侧输入是可由历史状态解析延伸的分量、只依赖历史的外推，以及由频率和索引确定的已知未来日历基函数。
+
+## 14. 完整生成顺序与不可用规则
+
+对一个“官方实例 × 能力 × augmentation_seed”组合，执行顺序如下：
+
+1. 从 Arrow 按固定起点构造 \(X,Y,L,H,D\)，只用历史处理历史缺失；
+2. 从 \(X\) 计算冻结尺度 \(s_d\)；
+3. 按能力的历史资格规则选择方向、频率、通道、滞后、载荷或回归系数；
+4. 不读取目标未来，构造历史单位分量和合法的未来延伸；
+5. 按确定性随机键抽取五级参数；
+6. 对振幅型能力把目标距离 \(\rho_k\) 换成物理增益 \(\alpha_k\)；对制度切换和间歇性求五级共享增益；
+7. 形成 \(X^{(k)}\) 和 \(Y^{(k)}\)；
+8. 分别检查五级与真实 \(X\) 的多上下文距离；任一级失败则整组不生成；
+9. generation 只保存实例索引、选中参数、增益、距离证据和数组哈希等重放契约，不重复保存完整 \(X,Y\) 或日历曲线；
+10. inference 从 Arrow 重建实例并重放契约，之后才按模型最大上下文截断历史。
+
+能力不可用不会删除官方 baseline。它只表示该实例在对应能力下没有五级 treatment。除层级一致性固定为资格占位外，常见原因包括历史太短、没有稳定趋势、频率不可分辨、可见事件不足、原生通道数不足或历史内增量预测信息未达到人工阈值。
+
+## 15. v7 已验证真实曲线示例
+
+以下图片由 v7 已验证紧凑契约针对源 Arrow 文件重放得到，不是另行生成的合成示意数据。蓝色始终为官方真实原路径（real/authentic source），灰色始终为修改后的 treatment，下排为二者之差；五列对应五个等级。每图均展示完整官方历史和官方未来。
+
+### 趋势
+
+![趋势五级示例](figures/native-extension-examples/01_trend__five_levels.png)
+
+来源：gift_ett1_h，官方起点 o16460。下排可见从历史起点开始、沿历史估计方向增长的线性差值。
+
+### 多季节性
+
+![多季节性五级示例](figures/native-extension-examples/02_multi_seasonal__five_levels.png)
+
+来源：gift_ett1_h，o16460。增强的是与主频分离的第二谐波。
+
+### 时变季节性
+
+![时变季节性五级示例](figures/native-extension-examples/03_time_varying_seasonality__five_levels.png)
+
+来源：gift_ett1_h，o16460。历史主载波与更慢的相位锁定包络相乘。
+
+### 制度切换
+
+![制度切换五级示例](figures/native-extension-examples/04_regime_switching__five_levels.png)
+
+来源：gift_ett1_h，o16460。五级共享幅度，变化点逐级靠近预测起点。
+
+### 非线性持续性
+
+![非线性持续性五级示例](figures/native-extension-examples/05_nonlinear_persistence__five_levels.png)
+
+来源：gift_ett1_h，o16460。未来差值来自最后历史状态开始的零创新滚动。
+
+### 可预测间歇性
+
+![可预测间歇性五级示例](figures/native-extension-examples/06_predictable_intermittency__five_levels.png)
+
+来源：gift_ett1_h，o16460。五级共享脉冲宽度和幅度，事件间隔总体增大。
+
+### 共同因子
+
+![共同因子五级示例](figures/native-extension-examples/07_common_factor__five_levels.png)
+
+来源：原生 \(D=7\) 的 gift_ett1_h，o16460。图片展示一个受影响通道；generation 未拆分面板。
+
+### 层级一致性
+
+![层级一致性资格状态](figures/native-extension-examples/08_hierarchical_coherence__five_levels.png)
+
+当前没有显式求和矩阵，因此不生成五级 treatment。
+
+### 跨序列依赖
+
+![跨序列依赖五级示例](figures/native-extension-examples/09_cross_series_dependence__five_levels.png)
+
+来源：原生 \(D=7\) 的 gift_ett1_h，o16460。驱动通道不变，图中展示被增强的响应通道。
+
+### 协变量响应
+
+![协变量响应五级示例](figures/native-extension-examples/10_covariate_response__five_levels.png)
+
+来源：gift_ett1_h，o16460。五级共享同一条已知未来日历路径，只增强目标响应。

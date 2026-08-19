@@ -1,5 +1,10 @@
 {
-  "created_at": "2026-08-17T12:30:53.205163+00:00",
+  "color_semantics": {
+    "modified_treatment": "#9aa0a6",
+    "real_authentic_source": "#1565c0",
+    "treatment_minus_source": "#d84315"
+  },
+  "created_at": "2026-08-19T11:31:33.408044+00:00",
   "figure_semantics": "benchmark_truth_paths_not_model_predictions_complete_official_instance_history_and_future",
   "records": [
     {
@@ -11,9 +16,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 241960,
+        "bytes": 244867,
         "path": "01_trend__five_levels.png",
-        "sha256": "7b550ea0e4b94ff200f5f6033007d7820ee912c137e1d4244a1ad3e339da8688"
+        "sha256": "68a8c23c8c610bbc78432c7af7a3d2e222364af6b32963f661b8c3ac709d9eb4"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -76,9 +81,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 296806,
+        "bytes": 297743,
         "path": "02_multi_seasonal__five_levels.png",
-        "sha256": "09de9203b99fc1e72c55fbdab7b18476ee7660c3af05694b56cf5edc413c6f58"
+        "sha256": "d431c12a4b357db8a0dfa77c95995e8eef37429df2a8e59f932f5af7221ab652"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -141,9 +146,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 253270,
+        "bytes": 277916,
         "path": "03_time_varying_seasonality__five_levels.png",
-        "sha256": "b7d40434127c202162108283d87d620d2612787776f498fe137521d6a7a4c875"
+        "sha256": "bdb1c730e2f97a181a4bbcfaad0d6c9274cedb69c4efd2a5356188ba5e9fabf0"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -206,9 +211,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 206268,
+        "bytes": 208333,
         "path": "04_regime_switching__five_levels.png",
-        "sha256": "b0d7e51e2107c5b37215a690dff83341662150e86e1c686d6eda5c71df2414cd"
+        "sha256": "e1070c2b8a38769372e033f9f0df7893dc02f03d006e7e60e16abd430b1d4281"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -271,9 +276,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 233118,
+        "bytes": 230031,
         "path": "05_nonlinear_persistence__five_levels.png",
-        "sha256": "03c08d0f3fca334b82554e1464c3f883c1f1a677896dc5e71a4e109caceaf2fa"
+        "sha256": "cd299587bd2e374628776d635a51c3a73eb297fb7f183962271749024af88efe"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -336,9 +341,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 196798,
+        "bytes": 219724,
         "path": "06_predictable_intermittency__five_levels.png",
-        "sha256": "b1eafe13bdcb8a76a05a893c8520fcb698325933ab67253d727e89e5ce8eaae5"
+        "sha256": "4595b6ab91d016f7d5863f5b10b32d2aff97614aeaa77e44f055811b890f6000"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -401,9 +406,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 263693,
+        "bytes": 296721,
         "path": "07_common_factor__five_levels.png",
-        "sha256": "a3cf8542155b24a31652459323dad4bf3288167ea290958cb28feddd4c8937bf"
+        "sha256": "dfaef538c652accaa7b4ce3cbc40426ae1ac14416729bb5f301656b35bb2bdc0"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -475,9 +480,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 254371,
+        "bytes": 280711,
         "path": "09_cross_series_dependence__five_levels.png",
-        "sha256": "54de3c8f2691604fc559c948c4caadc27b2d61c7047d67c9ef756a1ba03995d6"
+        "sha256": "a1f48cec2e9628bb53dde90d9813ad8e1ff1e834fcb129e30b1470f09bab365b"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -540,9 +545,9 @@
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 185597,
+        "bytes": 226576,
         "path": "10_covariate_response__five_levels.png",
-        "sha256": "4f83cba0507c5bd74824a279fa7556908698eb012ee8b4517c1d678143cecdd5"
+        "sha256": "3f70c29e4018967dbf5a2a1493954a37372714395b0b6bb59160d57584720e16"
       },
       "full_treatment_history": 16460,
       "horizon": 48,

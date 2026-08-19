@@ -14,6 +14,9 @@ from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
 
 
 PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v2"
+REAL_COLOR = "#1565c0"
+TREATMENT_COLOR = "#9aa0a6"
+DELTA_COLOR = "#d84315"
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,8 +106,22 @@ def _plot_group(
         zip(rows, treatment_values, delta_values, displayed_deltas, strict=True)
     ):
         axis = axes[0, index]
-        axis.plot(x, source, color="#9aa0a6", linewidth=1.0, label="authentic source")
-        axis.plot(x, values, color="#1565c0", linewidth=1.2, label="treatment")
+        axis.plot(
+            x,
+            source,
+            color=REAL_COLOR,
+            linewidth=1.2,
+            label="real / authentic source",
+            zorder=3,
+        )
+        axis.plot(
+            x,
+            values,
+            color=TREATMENT_COLOR,
+            linewidth=1.0,
+            label="modified treatment",
+            zorder=2,
+        )
         axis.axvline(0, color="#263238", linewidth=0.8)
         axis.axvspan(0, horizon - 1, color="#ffecb3", alpha=0.35)
         axis.set_ylim(*y_limits)
@@ -114,7 +131,7 @@ def _plot_group(
             fontsize=8,
         )
         bottom = axes[1, index]
-        bottom.plot(x, displayed_delta, color="#d84315", linewidth=1.2)
+        bottom.plot(x, displayed_delta, color=DELTA_COLOR, linewidth=1.2)
         bottom.axhline(0, color="#9e9e9e", linewidth=0.7)
         bottom.axvline(0, color="#263238", linewidth=0.8)
         bottom.axvspan(0, horizon - 1, color="#ffecb3", alpha=0.35)
@@ -241,6 +258,11 @@ def main() -> int:
             "benchmark_truth_paths_not_model_predictions_complete_official_"
             "instance_history_and_future"
         ),
+        "color_semantics": {
+            "real_authentic_source": REAL_COLOR,
+            "modified_treatment": TREATMENT_COLOR,
+            "treatment_minus_source": DELTA_COLOR,
+        },
         "records": records,
     }
     core.write_json(args.output_dir.resolve() / "manifest.json", manifest)
