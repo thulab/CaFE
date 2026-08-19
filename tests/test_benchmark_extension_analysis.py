@@ -13,6 +13,8 @@ from cafe.benchmark_extension.analysis import (
     run_analysis,
 )
 from cafe.benchmark_extension.inference import INFERENCE_SCHEMA
+from cafe.benchmark_extension.generation import _baseline_row
+from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.storage import (
     PredictionParquetWriter,
     parquet_file_record,
@@ -169,9 +171,16 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
     def replay_once(*_args, **_kwargs):
         nonlocal replay_calls
         replay_calls += 1
-        return iter((baseline, treatment, ablation))
+        yield None, {"source_shard_index": 0}, [], []
 
-    monkeypatch.setattr(analysis_module, "iter_replayed_samples", replay_once)
+    monkeypatch.setattr(
+        analysis_module, "iter_replay_contract_work_items", replay_once
+    )
+    monkeypatch.setattr(
+        analysis_module,
+        "_replay_contract_instance",
+        lambda *_args: [baseline, treatment, ablation],
+    )
     prediction_path = inference_dir / "models" / "model" / "predictions" / "part_000000.parquet"
     writer = PredictionParquetWriter(prediction_path)
     writer.write(model_id="model", sample_id="baseline", forecast=future)
@@ -260,8 +269,15 @@ def test_analysis_skips_an_official_instance_without_observed_future(
     )
     monkeypatch.setattr(
         analysis_module,
-        "iter_replayed_samples",
-        lambda *_args, **_kwargs: iter((baseline,)),
+        "iter_replay_contract_work_items",
+        lambda *_args, **_kwargs: iter(
+            ((None, {"source_shard_index": 0}, [], []),)
+        ),
+    )
+    monkeypatch.setattr(
+        analysis_module,
+        "_replay_contract_instance",
+        lambda *_args: [baseline],
     )
     prediction_path = (
         inference_dir / "models" / "model" / "predictions" / "part_000000.parquet"
@@ -294,3 +310,97 @@ def test_analysis_skips_an_official_instance_without_observed_future(
     summary = protocol.read_json(dataset_root / "04_analysis" / "official_accuracy.json")
     assert summary["models"][0]["official_instance_count"] == 0
     assert summary["models"][0]["official_mase_mean"] is None
+
+
+def test_analysis_parallelizes_source_shards_without_repeating_source_scan(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    dataset_root = tmp_path / "gift_fixture"
+    generation_dir = dataset_root / "01_generation"
+    inference_dir = dataset_root / "03_inference"
+    protocol.write_json(
+        generation_dir / "manifest.json",
+        {"config": {"dataset_id": "gift_fixture"}},
+    )
+    work_items = []
+    prediction_records = []
+    for shard in range(2):
+        history = (np.arange(8.0) + shard)[:, None]
+        future = (np.arange(8.0, 12.0) + shard)[:, None]
+        instance = GiftEvalInstance(
+            dataset_id="gift_fixture",
+            config_id="fixture/H",
+            item_id=f"item_{shard}",
+            official_instance_id=f"official_{shard}",
+            frequency="H",
+            term="short",
+            window_index=0,
+            window_count=1,
+            forecast_origin=8,
+            prediction_length=4,
+            history=history,
+            future=future,
+            future_observed_mask=np.ones((4, 1), dtype=bool),
+            history_covariates=np.empty((8, 0)),
+            future_covariates=np.empty((4, 0)),
+            covariate_column_names=(),
+            target_column_names=("target",),
+            source_target_length=12,
+            history_imputation={"policy": "none"},
+        )
+        baseline = {**_baseline_row(instance), "source_shard_index": shard}
+        work_items.append((instance, baseline, [], []))
+        prediction_path = (
+            inference_dir
+            / "models"
+            / "model"
+            / "predictions"
+            / f"part_{shard:06d}.parquet"
+        )
+        writer = PredictionParquetWriter(prediction_path)
+        writer.write(
+            model_id="model",
+            sample_id=str(baseline["sample_id"]),
+            forecast=future,
+        )
+        prediction_records.append(
+            {
+                **parquet_file_record(prediction_path, row_count=writer.close()),
+                "source_shard_index": shard,
+            }
+        )
+    source_scans = 0
+
+    def iter_work_items(*_args, **_kwargs):
+        nonlocal source_scans
+        source_scans += 1
+        yield from work_items
+
+    monkeypatch.setattr(
+        analysis_module,
+        "iter_replay_contract_work_items",
+        iter_work_items,
+    )
+    protocol.write_json(
+        inference_dir / "manifest.json",
+        {
+            "schema_version": INFERENCE_SCHEMA,
+            "dataset_id": "gift_fixture",
+            "config": {"models": ["model"]},
+            "model_predictions": {
+                "model": {
+                    "format": "partitioned_parquet",
+                    "row_count": 2,
+                    "parts": prediction_records,
+                }
+            },
+            "complete": True,
+        },
+    )
+    manifest = run_analysis(dataset_root, replay_workers=2)
+    assert source_scans == 1
+    assert manifest["config"]["source_shard_count"] == 2
+    assert manifest["config"]["shard_workers"] == 2
+    assert manifest["files"]["accuracy_rows"]["row_count"] == 2
+    assert not (dataset_root / "04_analysis" / ".source_shard_parts").exists()

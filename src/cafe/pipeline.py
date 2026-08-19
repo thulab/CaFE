@@ -5,7 +5,7 @@ import argparse
 import shutil
 import subprocess
 import sys
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,24 +35,6 @@ from cafe.inference.runner import DEFAULT_ENDPOINTS, DEFAULT_MODELS
 
 
 STAGES = ("generation", "validation", "inference", "analysis")
-
-
-def _analyse_dataset_process(
-    job: tuple[str, str, str],
-) -> str:
-    dataset_id, experiment_root_value, gift_eval_dir_value = job
-    experiment_root = Path(experiment_root_value)
-    manifest_path = (
-        experiment_root / dataset_id / "04_analysis" / "manifest.json"
-    )
-    if manifest_path.exists():
-        raise FileExistsError(f"completed analysis is immutable: {manifest_path}")
-    run_analysis(
-        experiment_root / dataset_id,
-        gift_eval_dir=Path(gift_eval_dir_value),
-        replay_workers=1,
-    )
-    return dataset_id
 
 
 def parse_args() -> argparse.Namespace:
@@ -548,19 +530,22 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             },
             inference_manifests,
         )
-        # A process owns one dataset and replays each source shard once for every
-        # model.  Dataset processes avoid the Python GIL without nested worker
-        # pools or repeated source-Arrow scans.
-        dataset_analysis_workers = max(
-            1,
-            min(len(dataset_ids), max(1, int(args.analysis_workers))),
-        )
-        jobs = [
-            (dataset_id, str(experiment_root), str(args.gift_eval_dir.resolve()))
-            for dataset_id in dataset_ids
-        ]
-        with ProcessPoolExecutor(max_workers=dataset_analysis_workers) as executor:
-            list(executor.map(_analyse_dataset_process, jobs))
+        # Each dataset scans its source Arrow once and dispatches source shards
+        # across the process pool.  This avoids the single-process long tail for
+        # datasets that dominate the official instance count.
+        for dataset_id in dataset_ids:
+            manifest_path = (
+                experiment_root / dataset_id / "04_analysis" / "manifest.json"
+            )
+            if manifest_path.exists():
+                raise FileExistsError(
+                    f"completed analysis is immutable: {manifest_path}"
+                )
+            run_analysis(
+                experiment_root / dataset_id,
+                gift_eval_dir=args.gift_eval_dir.resolve(),
+                replay_workers=max(1, int(args.analysis_workers)),
+            )
     return experiment_root
 
 

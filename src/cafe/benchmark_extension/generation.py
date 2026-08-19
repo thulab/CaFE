@@ -539,6 +539,45 @@ def iter_replayed_samples(
     parameters to authentic instances, and prefetches independent instances.
     """
 
+    workers = max(1, int(replay_workers))
+    if workers == 1:
+        for work in iter_replay_contract_work_items(
+            manifest, gift_eval_dir=gift_eval_dir
+        ):
+            yield from _replay_contract_instance(*work)
+        return
+    iterator = iter(
+        iter_replay_contract_work_items(manifest, gift_eval_dir=gift_eval_dir)
+    )
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        pending: deque[Any] = deque()
+        for _index in range(workers):
+            work = next(iterator, None)
+            if work is None:
+                break
+            pending.append(executor.submit(_replay_contract_instance, *work))
+        while pending:
+            yield from pending.popleft().result()
+            work = next(iterator, None)
+            if work is not None:
+                pending.append(executor.submit(_replay_contract_instance, *work))
+
+
+ReplayContractWorkItem = tuple[
+    GiftEvalInstance,
+    dict[str, Any],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]
+
+
+def iter_replay_contract_work_items(
+    manifest: dict[str, Any],
+    *,
+    gift_eval_dir: Path,
+) -> Iterator[ReplayContractWorkItem]:
+    """Join official instances with their compact contracts exactly once."""
+
     config = manifest["config"]
     files = manifest["files"]
     baseline_rows = iter(iter_compact_parquet(Path(files["official_baselines"]["path"])))
@@ -555,56 +594,33 @@ def iter_replayed_samples(
     treatment_group = next(treatment_groups, None)
     ablation_group = next(ablation_groups, None)
 
-    def work_items() -> Iterator[
-        tuple[GiftEvalInstance, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]
-    ]:
-        nonlocal treatment_group, ablation_group
-        for instance in iter_gift_eval_instances(
-            str(config["dataset_id"]),
-            gift_eval_dir,
-            term=str(config["term"]),
-            max_instances=config.get("max_instances"),
-        ):
-            baseline_contract = next(baseline_rows, None)
-            if baseline_contract is None:
-                raise ValueError("official baseline contract stream ended early")
-            official_id = str(instance.official_instance_id)
-            if str(baseline_contract["official_instance_id"]) != official_id:
-                raise ValueError("official baseline contract order mismatch")
-            treatments: list[dict[str, Any]] = []
-            if treatment_group is not None and treatment_group[0] == official_id:
-                treatments = treatment_group[1]
-                treatment_group = next(treatment_groups, None)
-            ablations: list[dict[str, Any]] = []
-            if ablation_group is not None and ablation_group[0] == official_id:
-                ablations = ablation_group[1]
-                ablation_group = next(ablation_groups, None)
-            yield instance, baseline_contract, treatments, ablations
-        if next(baseline_rows, None) is not None:
-            raise ValueError("official baseline contract stream has extra rows")
-        if treatment_group is not None or next(treatment_groups, None) is not None:
-            raise ValueError("treatment contract stream has unmatched rows")
-        if ablation_group is not None or next(ablation_groups, None) is not None:
-            raise ValueError("ablation contract stream has unmatched rows")
-
-    workers = max(1, int(replay_workers))
-    if workers == 1:
-        for work in work_items():
-            yield from _replay_contract_instance(*work)
-        return
-    iterator = iter(work_items())
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        pending: deque[Any] = deque()
-        for _index in range(workers):
-            work = next(iterator, None)
-            if work is None:
-                break
-            pending.append(executor.submit(_replay_contract_instance, *work))
-        while pending:
-            yield from pending.popleft().result()
-            work = next(iterator, None)
-            if work is not None:
-                pending.append(executor.submit(_replay_contract_instance, *work))
+    for instance in iter_gift_eval_instances(
+        str(config["dataset_id"]),
+        gift_eval_dir,
+        term=str(config["term"]),
+        max_instances=config.get("max_instances"),
+    ):
+        baseline_contract = next(baseline_rows, None)
+        if baseline_contract is None:
+            raise ValueError("official baseline contract stream ended early")
+        official_id = str(instance.official_instance_id)
+        if str(baseline_contract["official_instance_id"]) != official_id:
+            raise ValueError("official baseline contract order mismatch")
+        treatments: list[dict[str, Any]] = []
+        if treatment_group is not None and treatment_group[0] == official_id:
+            treatments = treatment_group[1]
+            treatment_group = next(treatment_groups, None)
+        ablations: list[dict[str, Any]] = []
+        if ablation_group is not None and ablation_group[0] == official_id:
+            ablations = ablation_group[1]
+            ablation_group = next(ablation_groups, None)
+        yield instance, baseline_contract, treatments, ablations
+    if next(baseline_rows, None) is not None:
+        raise ValueError("official baseline contract stream has extra rows")
+    if treatment_group is not None or next(treatment_groups, None) is not None:
+        raise ValueError("treatment contract stream has unmatched rows")
+    if ablation_group is not None or next(ablation_groups, None) is not None:
+        raise ValueError("ablation contract stream has unmatched rows")
 
 
 def _group_contract_rows(
