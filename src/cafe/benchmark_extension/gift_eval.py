@@ -12,7 +12,7 @@ import pyarrow.ipc as pa_ipc
 from cafe import core as protocol
 
 
-GIFT_EVAL_ADAPTER_SCHEMA = "cafe.gift_eval_native_adapter.v1"
+GIFT_EVAL_ADAPTER_SCHEMA = "cafe.gift_eval_native_adapter.v2"
 GIFT_EVAL_SOURCE_REVISION = (
     "SalesforceAIResearch/gift-eval@26df7582a5a2a2ef7602b5ded3a9a12fd4da74b2:"
     "src/gift_eval/data.py"
@@ -36,8 +36,17 @@ M4_PREDICTION_LENGTHS = {
 TERM_MULTIPLIERS = {"short": 1, "medium": 10, "long": 15}
 
 
-def iter_gift_arrow_target_records(path: Path) -> Iterator[tuple[str, str, np.ndarray]]:
-    """Stream native records from Arrow without materializing the whole table."""
+@dataclass(frozen=True)
+class GiftArrowRecord:
+    item_id: str
+    frequency: str
+    target: np.ndarray
+    past_covariates: np.ndarray | None
+    known_future_covariates: np.ndarray | None
+
+
+def iter_gift_arrow_records(path: Path) -> Iterator[GiftArrowRecord]:
+    """Stream native targets and benchmark-declared covariates from Arrow."""
 
     arrow_files = sorted(path.glob("data-*.arrow"))
     if len(arrow_files) != 1:
@@ -51,16 +60,51 @@ def iter_gift_arrow_target_records(path: Path) -> Iterator[tuple[str, str, np.nd
                 f"{sorted(required - set(reader.schema.names))}"
             )
         indexes = {name: reader.schema.get_field_index(name) for name in required}
+        past_index = reader.schema.get_field_index("past_feat_dynamic_real")
+        known_index = reader.schema.get_field_index("feat_dynamic_real")
         for batch in reader:
             item_ids = batch.column(indexes["item_id"])
             targets = batch.column(indexes["target"])
             frequencies = batch.column(indexes["freq"])
+            past_covariates = (
+                None if past_index < 0 else batch.column(past_index)
+            )
+            known_covariates = (
+                None if known_index < 0 else batch.column(known_index)
+            )
             for index in range(batch.num_rows):
-                yield (
-                    str(item_ids[index].as_py()),
-                    str(frequencies[index].as_py()),
-                    np.asarray(targets[index].as_py(), dtype=float),
+                past_value = (
+                    None
+                    if past_covariates is None
+                    else past_covariates[index].as_py()
                 )
+                known_value = (
+                    None
+                    if known_covariates is None
+                    else known_covariates[index].as_py()
+                )
+                yield GiftArrowRecord(
+                    item_id=str(item_ids[index].as_py()),
+                    frequency=str(frequencies[index].as_py()),
+                    target=np.asarray(targets[index].as_py(), dtype=float),
+                    past_covariates=(
+                        None
+                        if past_value is None
+                        else np.asarray(past_value, dtype=float)
+                    ),
+                    known_future_covariates=(
+                        None
+                        if known_value is None
+                        else np.asarray(known_value, dtype=float)
+                    ),
+                )
+
+
+def iter_gift_arrow_target_records(path: Path) -> Iterator[tuple[str, str, np.ndarray]]:
+    """Compatibility target-only view over :func:`iter_gift_arrow_records`."""
+
+    for record in iter_gift_arrow_records(path):
+        yield record.item_id, record.frequency, record.target
 
 
 def gift_arrow_target_summary(path: Path) -> tuple[str, int, int]:
@@ -109,6 +153,8 @@ class GiftEvalInstance:
     history_covariates: np.ndarray
     future_covariates: np.ndarray
     covariate_column_names: tuple[str, ...]
+    covariate_availability: tuple[str, ...]
+    future_covariate_visible: tuple[bool, ...]
     target_column_names: tuple[str, ...]
     source_target_length: int
     history_imputation: dict[str, object]
@@ -120,6 +166,14 @@ class GiftEvalInstance:
     @property
     def context_length(self) -> int:
         return int(self.history.shape[0])
+
+    @property
+    def covariate_dim(self) -> int:
+        return int(self.history_covariates.shape[1])
+
+    @property
+    def has_visible_future_covariates(self) -> bool:
+        return any(self.future_covariate_visible)
 
 
 def _normalized_frequency(frequency: str) -> str:
@@ -248,31 +302,39 @@ def _fill_future_for_storage(
     return values, observed
 
 
-def _calendar_period(frequency: str) -> int:
-    normalized = _normalized_frequency(frequency)
-    return {
-        "A": 1,
-        "Q": 4,
-        "M": 12,
-        "W": 52,
-        "D": 7,
-        "H": 24,
-        "T": 60,
-        "S": 60,
-    }[normalized]
+def _covariate_time_major(values: np.ndarray | None, target_length: int) -> np.ndarray:
+    if values is None:
+        return np.empty((target_length, 0), dtype=float)
+    array = np.asarray(values, dtype=float)
+    if array.ndim == 1:
+        if array.size != target_length:
+            raise ValueError("GIFT-Eval covariate length does not match target")
+        return array.reshape(-1, 1)
+    if array.ndim != 2:
+        raise ValueError(f"unsupported GIFT-Eval covariate shape {array.shape}")
+    if array.shape[-1] == target_length:
+        return array.T
+    if array.shape[0] == target_length:
+        return array
+    raise ValueError("GIFT-Eval covariate length does not match target")
 
 
-def _known_calendar_covariates(
-    length: int,
-    frequency: str,
-) -> tuple[np.ndarray, tuple[str, ...]]:
-    period = _calendar_period(frequency)
-    if period <= 1:
-        return np.zeros((length, 0), dtype=float), ()
-    index = np.arange(length, dtype=float)
-    angle = 2.0 * math.pi * index / float(period)
-    values = np.column_stack((np.sin(angle), np.cos(angle)))
-    return values, (f"calendar_sin_p{period}", f"calendar_cos_p{period}")
+def _impute_covariates(
+    history: np.ndarray,
+    future: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
+    if history.shape[1] == 0:
+        return history.copy(), future.copy(), {"policy": "no_native_covariates"}
+    imputed_history, audit = _impute_history(history)
+    imputed_future = np.asarray(future, dtype=float).copy()
+    for column in range(imputed_future.shape[1]):
+        finite = np.isfinite(imputed_future[:, column])
+        if not np.all(finite):
+            imputed_future[~finite, column] = imputed_history[-1, column]
+    return imputed_history, imputed_future, {
+        **audit,
+        "policy": "history_only_linear_interpolation_and_future_edge_hold_v1",
+    }
 
 
 def gift_eval_asset_path(dataset_id: str, gift_eval_dir: Path) -> Path:
@@ -310,18 +372,20 @@ def iter_gift_eval_instances(
         dataset_id, minimum_length, horizon
     )
     emitted = 0
-    for item_id, record_frequency, raw_target in iter_gift_arrow_target_records(asset_path):
-        if record_frequency != frequency:
+    for record in iter_gift_arrow_records(asset_path):
+        if record.frequency != frequency:
             raise ValueError("GIFT-Eval config must have one frequency")
         for instance in gift_eval_instances_for_record(
             dataset_id=dataset_id,
             config_id=dataset.config_id,
-            item_id=item_id,
+            item_id=record.item_id,
             frequency=frequency,
             term=term,
-            raw_target=raw_target,
+            raw_target=record.target,
             prediction_length_value=horizon,
             window_count=windows,
+            raw_past_covariates=record.past_covariates,
+            raw_known_future_covariates=record.known_future_covariates,
         ):
             yield instance
             emitted += 1
@@ -340,11 +404,34 @@ def gift_eval_instances_for_record(
     prediction_length_value: int,
     window_count: int,
     maximum_windows: int | None = None,
+    raw_past_covariates: np.ndarray | None = None,
+    raw_known_future_covariates: np.ndarray | None = None,
 ) -> Iterator[GiftEvalInstance]:
     """Build official windows for one native record without cross-record state."""
 
     target = _time_major(raw_target)
-    calendar, calendar_names = _known_calendar_covariates(target.shape[0], frequency)
+    past_covariates = _covariate_time_major(
+        raw_past_covariates, target.shape[0]
+    )
+    known_covariates = _covariate_time_major(
+        raw_known_future_covariates, target.shape[0]
+    )
+    covariates = np.column_stack((past_covariates, known_covariates))
+    covariate_names = tuple(
+        [
+            f"past_feat_dynamic_real_{index}"
+            for index in range(past_covariates.shape[1])
+        ]
+        + [
+            f"feat_dynamic_real_{index}"
+            for index in range(known_covariates.shape[1])
+        ]
+    )
+    availability = tuple(
+        ["past_only"] * past_covariates.shape[1]
+        + ["known_future"] * known_covariates.shape[1]
+    )
+    future_visible = tuple(value == "known_future" for value in availability)
     origins = official_forecast_origins(
         target.shape[0],
         prediction_length_value=prediction_length_value,
@@ -358,6 +445,12 @@ def gift_eval_instances_for_record(
         raw_future = target[origin : origin + prediction_length_value]
         history, imputation = _impute_history(raw_history)
         future, observed = _fill_future_for_storage(raw_future, history)
+        history_covariates, future_covariates, covariate_imputation = (
+            _impute_covariates(
+                covariates[:origin],
+                covariates[origin : origin + prediction_length_value],
+            )
+        )
         token = protocol.safe_id(str(item_id)) or "item"
         instance_id = (
             f"gift__{protocol.safe_id(dataset_id)}__{token}__"
@@ -377,14 +470,19 @@ def gift_eval_instances_for_record(
             history=history,
             future=future,
             future_observed_mask=observed,
-            history_covariates=calendar[:origin],
-            future_covariates=calendar[origin : origin + prediction_length_value],
-            covariate_column_names=calendar_names,
+            history_covariates=history_covariates,
+            future_covariates=future_covariates,
+            covariate_column_names=covariate_names,
+            covariate_availability=availability,
+            future_covariate_visible=future_visible,
             target_column_names=tuple(
                 f"target_{index}" for index in range(history.shape[1])
             ),
             source_target_length=int(target.shape[0]),
-            history_imputation=imputation,
+            history_imputation={
+                **imputation,
+                "covariates": covariate_imputation,
+            },
         )
         emitted += 1
         if maximum_windows is not None and emitted >= int(maximum_windows):

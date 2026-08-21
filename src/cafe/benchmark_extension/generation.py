@@ -18,7 +18,7 @@ from cafe.benchmark_extension.gift_eval import (
     gift_arrow_target_summary,
     gift_eval_asset_path,
     gift_eval_instances_for_record,
-    iter_gift_arrow_target_records,
+    iter_gift_arrow_records,
     iter_gift_eval_instances,
     official_window_count_from_minimum_length,
     prediction_length,
@@ -48,10 +48,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v9"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v6"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v5"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v3"
+PIPELINE_SCHEMA = "cafe.pipeline.v10"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v7"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v6"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v4"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -181,6 +181,8 @@ def _baseline_row(instance: GiftEvalInstance) -> dict[str, Any]:
         "target_column_names": list(instance.target_column_names),
         "covariate_dim": int(covariates.shape[1]),
         "covariate_column_names": list(instance.covariate_column_names),
+        "covariate_availability": list(instance.covariate_availability),
+        "future_covariate_visible": list(instance.future_covariate_visible),
         "covariates": covariates if covariates.shape[1] else None,
         "frequency": instance.frequency,
         "term": instance.term,
@@ -217,9 +219,13 @@ def _treatment_row(
     stored_history_delta = history - instance.history
     stored_future_delta = future - instance.future
     target = np.vstack((history, future))
-    covariates = np.vstack(
-        (instance.history_covariates, instance.future_covariates)
+    history_covariates = (
+        instance.history_covariates + treatment.history_covariate_delta
     )
+    future_covariates = (
+        instance.future_covariates + treatment.future_covariate_delta
+    )
+    covariates = np.vstack((history_covariates, future_covariates))
     season = _season_length(instance.frequency)
     mase, mase_by_target = _mase_scale(instance.history, season)
     mechanism_gate = _mechanism_scoring_gate(
@@ -268,6 +274,8 @@ def _treatment_row(
         "affected_target_indices": list(treatment.affected_target_indices),
         "covariate_dim": int(covariates.shape[1]),
         "covariate_column_names": list(instance.covariate_column_names),
+        "covariate_availability": list(instance.covariate_availability),
+        "future_covariate_visible": list(instance.future_covariate_visible),
         "covariates": covariates if covariates.shape[1] else None,
         "frequency": instance.frequency,
         "term": instance.term,
@@ -285,6 +293,13 @@ def _treatment_row(
         "source_future_sha256": _target_sha256(instance.future),
         "history_delta_sha256": _target_sha256(stored_history_delta),
         "future_delta_sha256": _target_sha256(stored_future_delta),
+        "covariate_sha256": _target_sha256(covariates),
+        "history_covariate_delta_sha256": _target_sha256(
+            treatment.history_covariate_delta
+        ),
+        "future_covariate_delta_sha256": _target_sha256(
+            treatment.future_covariate_delta
+        ),
         "source_distance_gate": treatment.source_distance_gate,
         "horizon_support_gate": treatment.horizon_support_gate,
         "mechanism_scoring_gate": mechanism_gate,
@@ -380,9 +395,87 @@ def _input_ablation_row(
     so the row measures whether a model actually uses cross-channel inputs.
     """
 
-    if group.capability_id not in {"common_factor", "cross_series_dependence"}:
+    if group.capability_id not in {
+        "common_factor",
+        "cross_series_dependence",
+        "covariate_impulse_response",
+    }:
         return None
     metadata = treatment.metadata
+    if group.capability_id == "covariate_impulse_response":
+        assessed = (int(metadata["eligible_target_index"]),)
+        covariate = int(metadata["covariate_index"])
+        impulse_delta = np.asarray(
+            treatment.history_covariate_delta[:, covariate], dtype=float
+        )
+        shifted, shift, correlation = _least_aligned_circular_shift(
+            impulse_delta,
+            official_instance_id=instance.official_instance_id,
+            capability_id=group.capability_id,
+            capability_level=treatment.level,
+            augmentation_seed=augmentation_seed,
+            channel=covariate,
+        )
+        source_covariates = np.asarray(treatment_row["covariates"], dtype=float)
+        result_covariates = source_covariates.copy()
+        context = int(treatment_row["context_length"])
+        result_covariates[:context, covariate] = (
+            instance.history_covariates[:, covariate] + shifted
+        )
+        target = np.asarray(treatment_row["target"], dtype=float)
+        row = dict(treatment_row)
+        row.update(
+            {
+                "evaluation_table": "gift_eval_capability_input_ablation",
+                "sample_id": f"{treatment_row['sample_id']}__input_ablation",
+                "counterfactual_pair_id": (
+                    f"{treatment_row['counterfactual_pair_id']}__input_ablation"
+                ),
+                "counterfactual_member": 2,
+                "input_ablation_source_sample_id": treatment_row["sample_id"],
+                "input_ablation_source_target_sha256": treatment_row["target_sha256"],
+                "assessed_target_indices": list(assessed),
+                "ablated_input_indices": [covariate],
+                "target": target.copy(),
+                "covariates": result_covariates,
+                "target_sha256": treatment_row["target_sha256"],
+                "history_sha256": treatment_row["history_sha256"],
+                "future_sha256": treatment_row["future_sha256"],
+                "covariate_sha256": _target_sha256(result_covariates),
+                "input_ablation_delta_sha256": _target_sha256(
+                    result_covariates - source_covariates
+                ),
+                "source_distance_gate": {
+                    "policy": "not_applicable_auxiliary_input_ablation",
+                    "status": "not_applicable",
+                },
+                "anti_copy_gate": {
+                    "policy": "not_applicable_auxiliary_input_ablation",
+                    "status": "not_applicable",
+                },
+                "input_ablation_metadata": {
+                    "policy": "shift_only_constructed_covariate_impulse_v1",
+                    "assessed_target_history_unchanged": True,
+                    "scored_future_unchanged": True,
+                    "authentic_covariate_path_unchanged": True,
+                    "channel_audit": {
+                        str(covariate): {
+                            "circular_shift": shift,
+                            "absolute_alignment_correlation": (
+                                None if correlation is None else abs(correlation)
+                            ),
+                            "source_impulse_delta_sha256": _target_sha256(
+                                impulse_delta
+                            ),
+                            "ablated_impulse_delta_sha256": _target_sha256(shifted),
+                        }
+                    },
+                },
+                "included_in_capability_ranking": False,
+                "excluded_from_primary_score": True,
+            }
+        )
+        return row
     if group.capability_id == "cross_series_dependence":
         assessed = (int(metadata["responder_target_index"]),)
         ablated = (int(metadata["driver_target_index"]),)
@@ -749,17 +842,28 @@ def _replay_contract_instance(
         contracts = treatment_contracts[index:stop]
         deltas = replay_treatment_deltas(instance, contracts)
         for contract in contracts:
-            history_delta, future_delta = deltas[str(contract["sample_id"])]
+            (
+                history_delta,
+                future_delta,
+                history_covariate_delta,
+                future_covariate_delta,
+            ) = deltas[str(contract["sample_id"])]
             target = np.vstack(
                 (
                     instance.history + history_delta,
                     instance.future + future_delta,
                 )
             )
+            treatment_covariates = np.vstack(
+                (
+                    instance.history_covariates + history_covariate_delta,
+                    instance.future_covariates + future_covariate_delta,
+                )
+            )
             row = _dense_contract_row(
                 contract,
                 target=target,
-                covariates=covariates,
+                covariates=treatment_covariates,
                 future_observed_mask=instance.future_observed_mask,
             )
             treatments_by_sample[str(row["sample_id"])] = row
@@ -771,19 +875,33 @@ def _replay_contract_instance(
         if source is None:
             raise ValueError("ablation contract has no matching treatment")
         target = np.asarray(source["target"], dtype=float).copy()
+        ablated_covariates = np.asarray(source["covariates"], dtype=float).copy()
         context = int(contract["context_length"])
         audit = contract["input_ablation_metadata"]["channel_audit"]
-        for raw_channel in contract["ablated_input_indices"]:
-            channel = int(raw_channel)
+        if str(contract["capability_id"]) == "covariate_impulse_response":
+            metadata = contract["mechanism_metadata"]
+            channel = int(metadata["covariate_index"])
             shift = int(audit[str(channel)]["circular_shift"])
-            target[:context, channel] = np.roll(
-                target[:context, channel], shift
+            source_impulse = (
+                np.asarray(source["covariates"], dtype=float)[:context, channel]
+                - instance.history_covariates[:, channel]
             )
+            ablated_covariates[:context, channel] = (
+                instance.history_covariates[:, channel]
+                + np.roll(source_impulse, shift)
+            )
+        else:
+            for raw_channel in contract["ablated_input_indices"]:
+                channel = int(raw_channel)
+                shift = int(audit[str(channel)]["circular_shift"])
+                target[:context, channel] = np.roll(
+                    target[:context, channel], shift
+                )
         output.append(
             _dense_contract_row(
                 contract,
                 target=target,
-                covariates=covariates,
+                covariates=ablated_covariates,
                 future_observed_mask=instance.future_observed_mask,
             )
         )
@@ -813,6 +931,16 @@ def _compact_record_batch(
             prediction_length_value=int(work["horizon"]),
             window_count=int(work["window_count"]),
             maximum_windows=int(item["maximum_windows"]),
+            raw_past_covariates=(
+                None
+                if item.get("past_covariates") is None
+                else np.asarray(item["past_covariates"], dtype=float)
+            ),
+            raw_known_future_covariates=(
+                None
+                if item.get("known_future_covariates") is None
+                else np.asarray(item["known_future_covariates"], dtype=float)
+            ),
         ):
             for kind, row in materialized_samples_for_instance(
                 instance,
@@ -865,8 +993,8 @@ def _parallel_work_batches(
             "records": records,
         }
 
-    for item_id, record_frequency, target in iter_gift_arrow_target_records(asset_path):
-        if record_frequency != frequency:
+    for record in iter_gift_arrow_records(asset_path):
+        if record.frequency != frequency:
             raise ValueError("GIFT-Eval config must have one frequency")
         maximum = windows if remaining is None else min(windows, int(remaining))
         if maximum <= 0:
@@ -877,8 +1005,10 @@ def _parallel_work_batches(
             current = []
             current_instances = 0
         item = {
-            "item_id": str(item_id),
-            "target": np.asarray(target, dtype=float),
+            "item_id": str(record.item_id),
+            "target": np.asarray(record.target, dtype=float),
+            "past_covariates": record.past_covariates,
+            "known_future_covariates": record.known_future_covariates,
             "maximum_windows": int(maximum),
         }
         current.append(item)
@@ -1020,6 +1150,9 @@ def generate_dataset(
             else "nonformal_source_order_prefix"
         ),
         "native_target_policy": "preserve_gift_eval_target_dimension",
+        "native_covariate_policy": (
+            "preserve_source_fields_and_declared_future_visibility"
+        ),
         "treatment_history_scope": "entire_official_input_history",
         "randomness_policy": (
             "counter_based_by_official_instance_capability_level_and_augmentation_seed"
@@ -1052,6 +1185,13 @@ def generate_dataset(
                     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO
                 ),
             },
+            "covariate_impulse_response": {
+                "continuation": "fixed_causal_kernel_from_visible_impulses",
+                "future_energy": (
+                    "minimum_0.05_mase_rms_for_all_levels_by_construction"
+                ),
+                "past_only_future_input": "omitted",
+            },
             "other_capabilities": "capability_specific_or_not_applicable",
         },
         "source_distance_configuration": {
@@ -1068,14 +1208,14 @@ def generate_dataset(
             ),
         },
         "input_ablation_policy": (
-            "common_cross_auxiliary_history_least_aligned_circular_shift_v1"
+            "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2"
         ),
         "artifact_storage": {
             "format": "parquet",
             "compression": "zstd",
             "dense_targets_stored": False,
             "dense_covariates_stored": False,
-            "replay_policy": "source_arrow_plus_deterministic_contract_v1",
+            "replay_policy": "source_arrow_plus_deterministic_contract_v2",
         },
         "generation_execution": {
             "workers": int(workers),

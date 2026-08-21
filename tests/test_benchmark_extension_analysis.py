@@ -453,6 +453,8 @@ def test_analysis_parallelizes_source_shards_without_repeating_source_scan(
             history_covariates=np.empty((8, 0)),
             future_covariates=np.empty((4, 0)),
             covariate_column_names=(),
+            covariate_availability=(),
+            future_covariate_visible=(),
             target_column_names=("target",),
             source_target_length=12,
             history_imputation={"policy": "none"},

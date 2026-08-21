@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v5"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v6"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -22,7 +22,7 @@ CAPABILITY_IDS = (
     "common_factor",
     "hierarchical_coherence",
     "cross_series_dependence",
-    "covariate_response",
+    "covariate_impulse_response",
 )
 GENERATABLE_CAPABILITY_IDS = tuple(
     capability
@@ -86,6 +86,8 @@ class CapabilityTreatment:
     metadata: dict[str, Any]
     source_distance_gate: dict[str, Any]
     horizon_support_gate: dict[str, Any] | None
+    history_covariate_delta: np.ndarray
+    future_covariate_delta: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,8 @@ class _UnitTreatment:
     coordinate_interval: tuple[float, float]
     sampled_coordinate: float
     metadata: dict[str, Any]
+    history_covariate_delta: np.ndarray | None = None
+    future_covariate_delta: np.ndarray | None = None
 
 
 def _rng(*parts: object, augmentation_seed: int) -> np.random.Generator:
@@ -587,6 +591,8 @@ def _strength_scaled_units(
     affected: tuple[int, ...],
     *,
     metadata: dict[str, Any],
+    history_covariate_component: np.ndarray | None = None,
+    future_covariate_component: np.ndarray | None = None,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
     unit_distance = _full_history_unit_distance(
         history_component, instance.history, affected
@@ -617,6 +623,16 @@ def _strength_scaled_units(
                     "unit_component_distance": unit_distance,
                     "physical_component_gain": gain,
                 },
+                history_covariate_delta=(
+                    None
+                    if history_covariate_component is None
+                    else np.asarray(history_covariate_component * gain, dtype=float)
+                ),
+                future_covariate_delta=(
+                    None
+                    if future_covariate_component is None
+                    else np.asarray(future_covariate_component * gain, dtype=float)
+                ),
             )
         )
     return units, {"unit_component_distance": unit_distance}
@@ -1079,62 +1095,139 @@ def _cross_series_units(
     )
 
 
-def _covariate_units(
+def _covariate_impulse_units(
     instance: GiftEvalInstance,
     augmentation_seed: int,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
     history = instance.history
     covariates = instance.history_covariates
-    if covariates.shape[1] == 0 or history.shape[0] < 24:
-        raise ValueError("no_legal_known_future_calendar_covariate")
-    scales = _scale_by_target(history)
-    best: tuple[float, int, int, np.ndarray] | None = None
-    for target_index in range(history.shape[1]):
-        response = history[:, target_index] / scales[target_index]
-        baseline = np.column_stack((np.ones(response.size), np.arange(response.size)))
-        full = np.column_stack((baseline, covariates))
-        baseline_fit = baseline @ np.linalg.lstsq(baseline, response, rcond=None)[0]
-        coefficients = np.linalg.lstsq(full, response, rcond=None)[0]
-        full_fit = full @ coefficients
-        baseline_error = float(np.mean(np.square(response - baseline_fit)))
-        gain = (
-            0.0
-            if baseline_error <= 1e-12
-            else 1.0 - float(np.mean(np.square(response - full_fit))) / baseline_error
+    length = int(history.shape[0])
+    horizon = int(instance.prediction_length)
+    if covariates.shape[1] == 0:
+        raise ValueError("no_native_dynamic_covariate")
+    period = max(8, 2 * horizon)
+    if length < 2 * period:
+        raise ValueError("insufficient_history_for_repeated_covariate_impulses")
+    covariate_scales = np.sqrt(
+        np.mean(
+            np.square(covariates - np.mean(covariates, axis=0)),
+            axis=0,
         )
-        covariate_coefficients = coefficients[-covariates.shape[1] :]
-        column = int(np.argmax(np.abs(covariate_coefficients)))
-        if best is None or gain > best[0]:
-            best = (gain, target_index, column, covariate_coefficients)
-    if best is None or best[0] < 0.0025:
-        raise ValueError("known_future_covariate_incremental_gain_too_small")
-    gain, target_index, column, coefficients = best
-    beta = float(coefficients[column])
+    )
+    legal = np.flatnonzero(
+        np.isfinite(covariate_scales) & (covariate_scales > 1e-8)
+    )
+    if legal.size == 0:
+        raise ValueError("native_covariates_have_no_nonconstant_channel")
+    covariate = int(legal[np.argmax(covariate_scales[legal])])
+    scales = _scale_by_target(history)
+    target_index = int(np.argmax(scales))
+    total = length + horizon
+    impulse = np.zeros(total, dtype=float)
+    historical_centers: list[int] = []
+    center = length - 1
+    while center >= 0:
+        impulse[center] = 1.0
+        historical_centers.append(center)
+        center -= period
+    historical_centers.sort()
+    future_centers: list[int] = []
+    if instance.future_covariate_visible[covariate]:
+        future_center = length + max(0, horizon // 2)
+        if future_center < total:
+            impulse[future_center] = 1.0
+            future_centers.append(future_center)
+    kernel_index = np.arange(2 * horizon + 1, dtype=float)
+    kernel = np.exp(-math.log(2.0) * kernel_index / float(max(1, horizon)))
+    mase_scales = mase_scale_by_target(instance.history, instance.frequency)
+    minimum_coordinate = float(STRENGTH_INTERVALS[0][0])
+    terminal_amplitude = 1.0
+    constructed_minimum_future_effect = 0.0
+    response = np.zeros(total, dtype=float)
     history_component = np.zeros_like(history)
     future_component = np.zeros_like(instance.future)
-    history_component[:, target_index] = (
-        scales[target_index] * beta * instance.history_covariates[:, column]
+    for _attempt in range(24):
+        impulse[length - 1] = terminal_amplitude
+        response = np.convolve(impulse, kernel, mode="full")[:total]
+        history_component.fill(0.0)
+        future_component.fill(0.0)
+        history_component[:, target_index] = (
+            scales[target_index] * response[:length]
+        )
+        future_component[:, target_index] = (
+            scales[target_index] * response[length:]
+        )
+        unit_distance = _full_history_unit_distance(
+            history_component, instance.history, (target_index,)
+        )
+        unit_future_effect = mechanism_effect_signal(
+            future_component,
+            instance.future_observed_mask,
+            mase_scales,
+            (target_index,),
+        )[1]
+        if unit_distance > 1e-12:
+            constructed_minimum_future_effect = (
+                minimum_coordinate * unit_future_effect / unit_distance
+            )
+        if (
+            constructed_minimum_future_effect
+            >= MECHANISM_EFFECT_MINIMUM_MASE_RMS
+        ):
+            break
+        terminal_amplitude *= 2.0
+    else:
+        raise ValueError("cannot_construct_scoreable_covariate_response_tail")
+    history_covariate_component = np.zeros_like(instance.history_covariates)
+    future_covariate_component = np.zeros_like(instance.future_covariates)
+    history_covariate_component[:, covariate] = (
+        covariate_scales[covariate] * impulse[:length]
     )
-    future_component[:, target_index] = (
-        scales[target_index] * beta * instance.future_covariates[:, column]
+    if instance.future_covariate_visible[covariate]:
+        future_covariate_component[:, covariate] = (
+            covariate_scales[covariate] * impulse[length:]
+        )
+    history_covariate_component[length - 1, covariate] = (
+        covariate_scales[covariate] * terminal_amplitude
     )
+    future_rms = float(np.sqrt(np.mean(np.square(response[length:]))))
+    if future_rms <= 1e-8:
+        raise ValueError("constructed_impulse_response_has_zero_future_energy")
     return _strength_scaled_units(
         instance,
         augmentation_seed,
-        "covariate_response",
+        "covariate_impulse_response",
         history_component,
         future_component,
         (target_index,),
         metadata={
-            "component": "known_calendar_covariate_linear_response",
+            "component": "native_covariate_fixed_causal_impulse_response",
             "eligible_target_index": target_index,
-            "covariate_index": column,
-            "covariate_name": instance.covariate_column_names[column],
-            "incremental_r2": gain,
-            "response_coefficient": beta,
-            "known_future_covariate_path_used_for_delta": True,
+            "covariate_index": covariate,
+            "covariate_name": instance.covariate_column_names[covariate],
+            "covariate_availability": instance.covariate_availability[covariate],
+            "historical_impulse_centers": historical_centers,
+            "future_impulse_centers": future_centers,
+            "terminal_impulse_amplitude": terminal_amplitude,
+            "impulse_period": period,
+            "kernel": "exponential_half_life_equal_to_forecast_horizon",
+            "kernel_length": int(kernel.size),
+            "kernel_half_life": horizon,
+            "covariate_unit_scale": float(covariate_scales[covariate]),
+            "unit_future_response_rms": future_rms,
+            "constructed_minimum_future_effect_mase_rms": (
+                constructed_minimum_future_effect
+            ),
+            "minimum_required_future_effect_mase_rms": (
+                MECHANISM_EFFECT_MINIMUM_MASE_RMS
+            ),
+            "future_covariate_path_visible_to_model": bool(
+                instance.future_covariate_visible[covariate]
+            ),
             "target_future_used_for_delta": False,
         },
+        history_covariate_component=history_covariate_component,
+        future_covariate_component=future_covariate_component,
     )
 
 
@@ -1150,7 +1243,7 @@ _BUILDERS: dict[
     "predictable_intermittency": _intermittency_units,
     "common_factor": _common_factor_units,
     "cross_series_dependence": _cross_series_units,
-    "covariate_response": _covariate_units,
+    "covariate_impulse_response": _covariate_impulse_units,
 }
 
 
@@ -1357,6 +1450,16 @@ def build_capability_group(
                 metadata=unit.metadata,
                 source_distance_gate=gate,
                 horizon_support_gate=horizon_support_gate,
+                history_covariate_delta=(
+                    np.zeros_like(instance.history_covariates)
+                    if unit.history_covariate_delta is None
+                    else np.asarray(unit.history_covariate_delta, dtype=float)
+                ),
+                future_covariate_delta=(
+                    np.zeros_like(instance.future_covariates)
+                    if unit.future_covariate_delta is None
+                    else np.asarray(unit.future_covariate_delta, dtype=float)
+                ),
             )
         )
     parameter_payload = [
@@ -1367,6 +1470,12 @@ def build_capability_group(
             "gain": treatment.applied_component_gain,
             "history_delta_sha256": _array_sha256(treatment.history_delta),
             "future_delta_sha256": _array_sha256(treatment.future_delta),
+            "history_covariate_delta_sha256": _array_sha256(
+                treatment.history_covariate_delta
+            ),
+            "future_covariate_delta_sha256": _array_sha256(
+                treatment.future_covariate_delta
+            ),
         }
         for treatment in treatments
     ]
@@ -1391,7 +1500,7 @@ def build_capability_group(
 def replay_treatment_deltas(
     instance: GiftEvalInstance,
     contracts: list[dict[str, Any]],
-) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
     """Apply frozen treatment contracts without repeating capability selection.
 
     Generation has already selected channels, periods, joins, lags, loadings and
@@ -1409,15 +1518,19 @@ def replay_treatment_deltas(
     horizon = int(instance.prediction_length)
     length, dimension = history.shape
     scales = _scale_by_target(history)
-    shared_components: tuple[np.ndarray, np.ndarray] | None = None
+    shared_components: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None
 
-    def shared_component(row: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    def shared_component(
+        row: dict[str, Any],
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         nonlocal shared_components
         if shared_components is not None:
             return shared_components
         metadata = dict(row["mechanism_metadata"])
         component_h = np.zeros_like(history)
         component_f = np.zeros_like(instance.future)
+        covariate_h = np.zeros_like(instance.history_covariates)
+        covariate_f = np.zeros_like(instance.future_covariates)
         if capability_id == "trend":
             directions = np.asarray(metadata["direction_by_target"], dtype=float)
             extended = np.arange(length + horizon, dtype=float)
@@ -1533,27 +1646,38 @@ def replay_treatment_deltas(
                 component_f[step, responder] = (
                     scales[responder] * beta * extended_driver[source_index]
                 )
-        elif capability_id == "covariate_response":
+        elif capability_id == "covariate_impulse_response":
             target = int(metadata["eligible_target_index"])
             covariate = int(metadata["covariate_index"])
-            beta = float(metadata["response_coefficient"])
-            component_h[:, target] = (
-                scales[target] * beta * instance.history_covariates[:, covariate]
-            )
-            component_f[:, target] = (
-                scales[target] * beta * instance.future_covariates[:, covariate]
-            )
+            impulse = np.zeros(length + horizon, dtype=float)
+            for center in metadata["historical_impulse_centers"]:
+                impulse[int(center)] = 1.0
+            impulse[length - 1] = float(metadata["terminal_impulse_amplitude"])
+            for center in metadata["future_impulse_centers"]:
+                impulse[int(center)] = 1.0
+            kernel_index = np.arange(int(metadata["kernel_length"]), dtype=float)
+            half_life = float(metadata["kernel_half_life"])
+            kernel = np.exp(-math.log(2.0) * kernel_index / half_life)
+            response = np.convolve(impulse, kernel, mode="full")[: length + horizon]
+            component_h[:, target] = scales[target] * response[:length]
+            component_f[:, target] = scales[target] * response[length:]
+            covariate_scale = float(metadata["covariate_unit_scale"])
+            covariate_h[:, covariate] = covariate_scale * impulse[:length]
+            if bool(metadata["future_covariate_path_visible_to_model"]):
+                covariate_f[:, covariate] = covariate_scale * impulse[length:]
         else:
             raise ValueError(f"capability {capability_id!r} has level-specific replay")
-        shared_components = component_h, component_f
+        shared_components = component_h, component_f, covariate_h, covariate_f
         return shared_components
 
-    output: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    output: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
     for row in contracts:
         metadata = dict(row["mechanism_metadata"])
         if capability_id == "regime_switching":
             component_h = np.zeros_like(history)
             component_f = np.zeros_like(instance.future)
+            covariate_h = np.zeros_like(instance.history_covariates)
+            covariate_f = np.zeros_like(instance.future_covariates)
             join = int(metadata["change_index"])
             amplitude = np.asarray(
                 metadata["shared_amplitude_before_distance_adjustment"],
@@ -1575,11 +1699,15 @@ def replay_treatment_deltas(
                     if 0 <= index < combined.shape[0]:
                         combined[index] += amplitude
             component_h, component_f = combined[:length], combined[length:]
+            covariate_h = np.zeros_like(instance.history_covariates)
+            covariate_f = np.zeros_like(instance.future_covariates)
         else:
-            component_h, component_f = shared_component(row)
+            component_h, component_f, covariate_h, covariate_f = shared_component(row)
         gain = float(row["applied_component_gain"])
         output[str(row["sample_id"])] = (
             np.asarray(component_h * gain, dtype=float),
             np.asarray(component_f * gain, dtype=float),
+            np.asarray(covariate_h * gain, dtype=float),
+            np.asarray(covariate_f * gain, dtype=float),
         )
     return output

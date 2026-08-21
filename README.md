@@ -29,7 +29,7 @@ official samples.
 
 The source Arrow files remain the only stored copy of authentic paths.
 Generation writes compact replay contracts to ZSTD Parquet; it does not copy
-full targets or calendar covariates. Inference rebuilds bounded batches in
+full targets or native covariates. Inference rebuilds bounded batches in
 memory, sends MessagePack bulk requests across compatible endpoints/GPUs, and
 writes source-sharded float32 Parquet forecasts. No model-specific task JSONL
 is materialized. Analysis scans one prediction shard at a time.
@@ -54,7 +54,8 @@ instance:
 - predictable intermittency with level-controlled event sparsity;
 - native-panel common factor;
 - directed predictive cross-series transfer;
-- response to deterministic known-future calendar covariates.
+- causal impulse response to benchmark-native covariates, preserving each
+  source field's past-only or known-future visibility.
 
 Availability is instance-specific. Short or structurally unsuitable samples
 remain in the official baseline table and record a capability-unavailable
@@ -64,9 +65,10 @@ no ranked treatments.
 Analysis keeps three result families separate: baseline and treatment
 MASE/MAE; MASE-standardized pooled effect NRMSE, correlation, coverage, and
 amplitude ratio; and a
-common/cross input-ablation table. The ablation keeps the assessed target
-history and treatment future fixed while temporally misaligning auxiliary
-channels, so it measures whether intact panel inputs improve the forecast.
+common/cross/covariate input-ablation table. The ablation keeps the assessed
+target history and treatment future fixed while temporally misaligning only
+the relevant auxiliary treatment signal, so it measures whether intact inputs
+improve the forecast.
 
 ## Install and test
 
@@ -81,7 +83,7 @@ This runs generation and validation without starting model services:
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v9-smoke \
+  --experiment-id gift-v10-smoke \
   --dataset-id gift_ett1_h \
   --max-instances 2 \
   --augmentation-seed 2026081601 \
@@ -104,7 +106,7 @@ concurrent lightweight dataset scans.
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v9-formal \
+  --experiment-id gift-v10-formal \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
   --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \

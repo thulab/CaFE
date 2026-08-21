@@ -37,7 +37,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v7"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v8"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -254,11 +254,15 @@ def _mechanism_scoring_gate_reason(row: dict[str, Any]) -> str | None:
         return "mechanism_scoring_gate_reason"
     if bool(row.get("included_in_capability_ranking")) != expected_accepted:
         return "mechanism_scoring_gate_ranking_flag"
+    strict_future_effect_capabilities = {
+        "predictable_intermittency",
+        "covariate_impulse_response",
+    }
     if (
-        row.get("capability_id") == "predictable_intermittency"
+        row.get("capability_id") in strict_future_effect_capabilities
         and not expected_accepted
     ):
-        return "intermittency_future_effect_not_scoreable"
+        return f"{row.get('capability_id')}_future_effect_not_scoreable"
     return None
 
 

@@ -1,4 +1,4 @@
-# CaFE v9 scientific protocol
+# CaFE v10 scientific protocol
 
 ## 1. Estimand
 
@@ -13,9 +13,10 @@ The analysis reports three separate views:
 1. MASE and MAE on both unchanged official instances and treated instances;
 2. agreement between the model's forecast change and the treatment's truth
    change;
-3. for common-factor and cross-series treatments, prediction degradation when
-   the auxiliary input histories are temporally misaligned while the assessed
-   target history and scored future stay unchanged.
+3. for common-factor, cross-series, and covariate treatments, prediction
+   degradation when the constructed auxiliary input signal is temporally
+   misaligned while the assessed target history and scored future stay
+   unchanged.
 
 ## 2. Official GIFT-Eval instances
 
@@ -126,9 +127,15 @@ reason when it cannot support the required cycles, events, segments, stable
 trend direction, native panel dimension, predictive gain, or all five levels.
 The unchanged official baseline remains available.
 
-Hierarchical coherence is qualification-only. Covariate response uses the
-deterministic periodic calendar path implied by the source frequency; that
-path is shared by baseline and treatment and is known over the horizon.
+Hierarchical coherence is qualification-only. Covariate impulse response is
+available only when the source record has a native dynamic-real covariate.
+`past_feat_dynamic_real` is visible only in history; `feat_dynamic_real` is
+also visible over the forecast horizon. CaFE never upgrades a past-only field
+to known-future and does not synthesize calendar covariates from frequency.
+Repeated historical impulses and a terminal pre-origin impulse use one fixed
+causal kernel. The terminal amplitude is chosen from history scales and the
+observed mask so every level has future MASE-standardized effect RMS of at
+least `0.05`; the scoring gate verifies this construction invariant.
 
 ## 6. Validation
 
@@ -138,7 +145,7 @@ checks its source-distance, mechanism-scoring, and applicable capability-specifi
 horizon-support evidence in parallel. Publication validation additionally binds
 the source Arrow files, generation manifest, and every Parquet artifact hash,
 then independently rebuilds every official instance, five-level treatment, and
-input ablation. Dense targets, futures, and calendar covariates are transient
+input ablation. Dense targets, futures, and native covariates are transient
 replay values and are not generation artifacts.
 
 ## 7. Inference
@@ -185,9 +192,13 @@ lower pooled effect NRMSE ranks better. Levels are neutral capability
 coordinates: for regime and intermittency a higher level means less evidence,
 not a larger amplitude.
 
-For common factor and cross-series dependence, an additional attribution table
-compares the full treatment forecast with a forecast for the same treatment
-after auxiliary histories are temporally misaligned. The primary statistic is
+For common factor, cross-series dependence, and covariate impulse response, an
+additional attribution table compares the full treatment forecast with a
+forecast for the same treatment after the relevant constructed auxiliary
+history is temporally misaligned. For the covariate capability, the target
+history and future remain byte-identical and the authentic covariate path is
+unchanged; only the injected covariate impulse is shifted. The primary
+statistic is
 
 \[
 \Delta\operatorname{MASE}_{\mathrm{ablate}}=

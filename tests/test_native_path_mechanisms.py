@@ -67,7 +67,12 @@ def _instance(
                 ),
             )
         ),
-        covariate_column_names=("calendar_sin_p24", "calendar_cos_p24"),
+        covariate_column_names=(
+            "past_feat_dynamic_real_0",
+            "past_feat_dynamic_real_1",
+        ),
+        covariate_availability=("past_only", "past_only"),
+        future_covariate_visible=(False, False),
         target_column_names=tuple(f"target_{i}" for i in range(history.shape[1])),
         source_target_length=history.shape[0] + horizon,
         history_imputation={"policy": "fixture"},
@@ -266,17 +271,32 @@ def test_common_uses_nondecaying_latent_harmonic_on_long_horizon() -> None:
     )
 
 
-def test_covariate_uses_known_calendar_path_and_hierarchy_is_qualification_only() -> None:
+def test_covariate_impulse_uses_native_past_only_path_and_has_future_energy() -> None:
     t = np.arange(200.0)
     instance = _instance(np.sin(2.0 * np.pi * t / 24.0))
     covariate = build_capability_group(
-        instance, "covariate_response", augmentation_seed=1
+        instance, "covariate_impulse_response", augmentation_seed=1
     )
     hierarchy = build_capability_group(
         instance, "hierarchical_coherence", augmentation_seed=1
     )
     assert covariate.available
-    assert covariate.treatments[0].metadata[
-        "known_future_covariate_path_used_for_delta"
-    ]
+    treatment = covariate.treatments[0]
+    assert treatment.metadata["covariate_availability"] == "past_only"
+    assert not treatment.metadata["future_covariate_path_visible_to_model"]
+    assert np.any(treatment.history_covariate_delta)
+    assert not np.any(treatment.future_covariate_delta)
+    scales = mase_scale_by_target(instance.history, instance.frequency)
+    for row in covariate.treatments:
+        _, signal, observed_count = mechanism_effect_signal(
+            row.future_delta,
+            instance.future_observed_mask,
+            scales,
+            row.affected_target_indices,
+        )
+        assert observed_count > 0
+        assert signal >= MECHANISM_EFFECT_MINIMUM_MASE_RMS - 1e-12
+        assert row.metadata[
+            "constructed_minimum_future_effect_mase_rms"
+        ] >= MECHANISM_EFFECT_MINIMUM_MASE_RMS
     assert not hierarchy.available

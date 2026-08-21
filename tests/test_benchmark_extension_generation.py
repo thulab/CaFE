@@ -67,6 +67,14 @@ def _panel_fixture(tmp_path: Path, monkeypatch) -> Path:
             "start": ["2020-01-01"],
             "freq": ["H"],
             "target": [panel.tolist()],
+            "past_feat_dynamic_real": [
+                np.vstack(
+                    (
+                        np.sin(t / 13.0),
+                        np.cos(t / 17.0),
+                    )
+                ).tolist()
+            ],
         }
     )
     with pa.OSFile(str(asset / "data-00000-of-00001.arrow"), "wb") as sink:
@@ -209,6 +217,56 @@ def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatm
             )
 
 
+def test_covariate_impulse_ablation_keeps_target_and_shifts_only_impulse(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _panel_fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment-covariate" / "gift_panel_fixture"
+    manifest = generate_dataset(
+        "gift_panel_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=31,
+        capability_ids=("covariate_impulse_response",),
+        max_instances=1,
+    )
+    replayed = list(iter_replayed_samples(manifest, gift_eval_dir=gift_root))
+    baseline = next(
+        row
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_official_baseline"
+    )
+    treatments = {
+        row["sample_id"]: row
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_capability_treatment"
+    }
+    ablations = [
+        row
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_capability_input_ablation"
+    ]
+    assert len(treatments) == len(ablations) == 5
+    for ablation in ablations:
+        treatment = treatments[ablation["input_ablation_source_sample_id"]]
+        np.testing.assert_array_equal(ablation["target"], treatment["target"])
+        assert not np.array_equal(
+            ablation["covariates"], treatment["covariates"]
+        )
+        context = int(ablation["context_length"])
+        np.testing.assert_array_equal(
+            np.asarray(ablation["covariates"])[context:],
+            np.asarray(treatment["covariates"])[context:],
+        )
+        assert not np.array_equal(
+            np.asarray(treatment["covariates"])[:context],
+            np.asarray(baseline["covariates"])[:context],
+        )
+        assert ablation["future_covariate_visible"] == [False, False]
+
+
 def test_compact_contract_replay_matches_every_stored_delta_hash(
     tmp_path: Path,
     monkeypatch,
@@ -230,7 +288,7 @@ def test_compact_contract_replay_matches_every_stored_delta_hash(
             "predictable_intermittency",
             "common_factor",
             "cross_series_dependence",
-            "covariate_response",
+            "covariate_impulse_response",
         ),
         max_instances=1,
     )
@@ -270,7 +328,7 @@ def test_compact_contract_replay_matches_every_stored_delta_hash(
         )
     report = validate_generation(dataset_root)
     assert report["accepted"]
-    assert report["input_ablation_count"] == 10
+    assert report["input_ablation_count"] == 15
 
     ablation_path = dataset_root / "01_generation" / "input_ablation_contracts.parquet"
     tampered = list(iter_compact_parquet(ablation_path))

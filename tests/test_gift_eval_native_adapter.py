@@ -15,16 +15,25 @@ from cafe.benchmark_extension.gift_eval import (
 )
 
 
-def _write_arrow(path: Path, targets: list[np.ndarray], *, frequency: str) -> None:
+def _write_arrow(
+    path: Path,
+    targets: list[np.ndarray],
+    *,
+    frequency: str,
+    past_covariates: list[np.ndarray] | None = None,
+) -> None:
     path.mkdir(parents=True)
-    rows = pa.table(
-        {
-            "item_id": [f"item_{index}" for index in range(len(targets))],
-            "start": ["2020-01-01"] * len(targets),
-            "freq": [frequency] * len(targets),
-            "target": [values.tolist() for values in targets],
-        }
-    )
+    fields = {
+        "item_id": [f"item_{index}" for index in range(len(targets))],
+        "start": ["2020-01-01"] * len(targets),
+        "freq": [frequency] * len(targets),
+        "target": [values.tolist() for values in targets],
+    }
+    if past_covariates is not None:
+        fields["past_feat_dynamic_real"] = [
+            values.tolist() for values in past_covariates
+        ]
+    rows = pa.table(fields)
     with pa.OSFile(str(path / "data-00000-of-00001.arrow"), "wb") as sink:
         with pa_ipc.new_stream(sink, rows.schema) as writer:
             writer.write_table(rows)
@@ -55,7 +64,15 @@ def test_native_multivariate_record_is_not_channel_expanded(
 ) -> None:
     asset = tmp_path / "ett1" / "H"
     target = np.arange(7 * 600.0).reshape(7, 600)
-    _write_arrow(asset, [target], frequency="H")
+    covariates = np.vstack(
+        (np.sin(np.arange(600.0) / 12.0), np.cos(np.arange(600.0) / 12.0))
+    )
+    _write_arrow(
+        asset,
+        [target],
+        frequency="H",
+        past_covariates=[covariates],
+    )
     spec = protocol.DatasetSpec(
         "gift_fixture",
         "Fixture",
@@ -77,6 +94,27 @@ def test_native_multivariate_record_is_not_channel_expanded(
     assert rows[0].history.shape == (504, 7)
     assert rows[0].future.shape == (48, 7)
     assert rows[0].history_covariates.shape == (504, 2)
+    assert rows[0].covariate_availability == ("past_only", "past_only")
+    assert rows[0].future_covariate_visible == (False, False)
+
+
+def test_dataset_without_native_covariates_does_not_get_calendar_features(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    asset = tmp_path / "fixture"
+    _write_arrow(asset, [np.arange(600.0)], frequency="H")
+    spec = protocol.DatasetSpec(
+        "gift_fixture_no_covariates",
+        "Fixture",
+        "fixture",
+        "fixture",
+        "Test",
+    )
+    monkeypatch.setitem(protocol.DATASET_REGISTRY, spec.dataset_id, spec)
+    instance = next(iter_gift_eval_instances(spec.dataset_id, tmp_path))
+    assert instance.history_covariates.shape[1] == 0
+    assert instance.covariate_column_names == ()
 
 
 def test_history_imputation_never_reads_official_future(

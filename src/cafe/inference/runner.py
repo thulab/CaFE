@@ -911,11 +911,18 @@ def model_supports_sample(
         maximum_covariates = capability["max_history_covariate_count"]
         if maximum_covariates is not None and covariate_dim > maximum_covariates:
             return False
-        if not capability["supports_future_covariates"]:
+        if not capability["supports_history_covariates"]:
             return False
-        maximum_future_length = capability["max_future_covariate_length"]
-        if maximum_future_length is not None and horizon > maximum_future_length:
-            return False
+        future_visible = sample.get("future_covariate_visible")
+        requires_future = (
+            True if future_visible is None else any(bool(v) for v in future_visible)
+        )
+        if requires_future:
+            if not capability["supports_future_covariates"]:
+                return False
+            maximum_future_length = capability["max_future_covariate_length"]
+            if maximum_future_length is not None and horizon > maximum_future_length:
+                return False
     return True
 
 
@@ -941,6 +948,12 @@ def resolve_input_capability(model: dict[str, Any]) -> dict[str, Any]:
             input_mode.get("max_history_covariate_count"),
             default=(None if "max_history_covariate_count" in input_mode else 0),
         )
+        supports_history_covariates = bool(
+            input_mode.get(
+                "supports_history_covariates",
+                maximum_history_covariates != 0,
+            )
+        )
         supports_future_covariates = bool(
             input_mode.get("supports_future_covariates", False)
         )
@@ -962,15 +975,17 @@ def resolve_input_capability(model: dict[str, Any]) -> dict[str, Any]:
         supports_future_covariates = (
             maximum_history_covariates != 0 and legacy_future_length is not None
         )
+        supports_history_covariates = maximum_history_covariates != 0
         maximum_future_length = _normalize_unbounded_count(
             legacy_future_length,
             default=None,
         )
     return {
-        "schema_version": "cafe.resolved_input_capability.v2",
+        "schema_version": "cafe.resolved_input_capability.v3",
         "source_schema": source_schema,
         "max_target_count": maximum_targets,
         "max_history_covariate_count": maximum_history_covariates,
+        "supports_history_covariates": supports_history_covariates,
         "supports_future_covariates": supports_future_covariates,
         "max_future_covariate_length": maximum_future_length,
         "max_group_rows": _normalize_unbounded_count(
@@ -998,12 +1013,17 @@ def _supports_native_covariates(
     *,
     covariate_dim: int,
     horizon: int,
+    requires_future: bool,
 ) -> bool:
     if covariate_dim <= 0:
         return True
     maximum_covariates = capability["max_history_covariate_count"]
     if maximum_covariates is not None and covariate_dim > maximum_covariates:
         return False
+    if not capability["supports_history_covariates"]:
+        return False
+    if not requires_future:
+        return True
     if not capability["supports_future_covariates"]:
         return False
     maximum_future = capability["max_future_covariate_length"]
@@ -1027,6 +1047,13 @@ def input_adaptation_plan(
     target_dim = int(sample["target_dim"])
     covariate_dim = int(sample["covariate_dim"])
     horizon = int(sample["horizon"])
+    future_visibility = sample.get("future_covariate_visible")
+    if future_visibility is None:
+        future_visibility = [True] * covariate_dim
+    if len(future_visibility) != covariate_dim:
+        raise ValueError("future_covariate_visible must match covariate_dim")
+    future_covariate_dim = sum(bool(value) for value in future_visibility)
+    requires_future = future_covariate_dim > 0
     target_native = (
         True
         if policy_id is None
@@ -1042,6 +1069,7 @@ def input_adaptation_plan(
             capability,
             covariate_dim=covariate_dim,
             horizon=horizon,
+            requires_future=requires_future,
         )
     )
     maximum_group_rows = capability.get("max_group_rows")
@@ -1062,7 +1090,9 @@ def input_adaptation_plan(
     if covariate_dim == 0:
         covariate_mode = "none"
     elif covariates_native:
-        covariate_mode = "native"
+        covariate_mode = (
+            "native_known_future" if requires_future else "native_history_only"
+        )
     else:
         covariate_mode = "omitted_unsupported"
     target_request_count = target_dim if target_mode == "independent_univariate" else 1
@@ -1083,6 +1113,9 @@ def input_adaptation_plan(
         "target_request_count": target_request_count,
         "original_covariate_dim": covariate_dim,
         "request_covariate_dim": request_covariate_dim,
+        "request_future_covariate_dim": (
+            future_covariate_dim if covariates_native else 0
+        ),
         "resolved_input_capability": capability,
     }
 
@@ -1125,6 +1158,8 @@ def adapted_request_samples(
             child["covariates"] = None
             child["covariate_dim"] = 0
             child["covariate_column_names"] = []
+            child["covariate_availability"] = []
+            child["future_covariate_visible"] = []
         requests.append(child)
     return requests
 
@@ -1150,6 +1185,7 @@ def request_group_key(
         plan["covariate_mode"],
         plan["request_target_dim"],
         plan["request_covariate_dim"],
+        plan["request_future_covariate_dim"],
     )
 
 
@@ -1176,11 +1212,12 @@ def request_group_label(group: tuple[Any, ...]) -> str:
         covariate_mode,
         request_target_dim,
         request_covariate_dim,
+        request_future_covariate_dim,
     ) = group[5:]
     return (
         f"{base}__{target_mode}__{covariate_mode}__"
         f"requests{target_request_count}_t{request_target_dim}_"
-        f"c{request_covariate_dim}"
+        f"c{request_covariate_dim}_fc{request_future_covariate_dim}"
     )
 
 
@@ -1450,17 +1487,28 @@ def _bulk_request_content(
         "output_length": horizon,
     }
     if covariate_dim:
+        future_visibility = [
+            bool(value)
+            for value in children[0].get(
+                "future_covariate_visible", [True] * covariate_dim
+            )
+        ]
+        if len(future_visibility) != covariate_dim:
+            raise ValueError("future_covariate_visible must match covariate_dim")
+        for child in children[1:]:
+            observed_visibility = [
+                bool(value)
+                for value in child.get(
+                    "future_covariate_visible", [True] * covariate_dim
+                )
+            ]
+            if observed_visibility != future_visibility:
+                raise ValueError(
+                    "bulk forecast children must share covariate visibility"
+                )
         history_covariates = np.stack(
             [
                 np.asarray(child["covariates"], dtype=np.float32)[:context].T
-                for child in children
-            ]
-        )
-        future_covariates = np.stack(
-            [
-                np.asarray(child["covariates"], dtype=np.float32)[
-                    context : context + horizon
-                ].T
                 for child in children
             ]
         )
@@ -1470,10 +1518,29 @@ def _bulk_request_content(
                 "history_covariates": np.ascontiguousarray(
                     history_covariates
                 ).tobytes(),
-                "future_covariates_shape": list(future_covariates.shape),
-                "future_covariates": np.ascontiguousarray(future_covariates).tobytes(),
             }
         )
+        visible_indexes = [
+            index for index, visible in enumerate(future_visibility) if visible
+        ]
+        if visible_indexes:
+            future_covariates = np.stack(
+                [
+                    np.asarray(child["covariates"], dtype=np.float32)[
+                        context : context + horizon, visible_indexes
+                    ].T
+                    for child in children
+                ]
+            )
+            payload.update(
+                {
+                    "future_covariates_shape": list(future_covariates.shape),
+                    "future_covariates": np.ascontiguousarray(
+                        future_covariates
+                    ).tobytes(),
+                    "future_covariate_history_indices": visible_indexes,
+                }
+            )
     return (
         msgpack.packb(payload, use_bin_type=True),
         tuple(int(value) for value in targets.shape),

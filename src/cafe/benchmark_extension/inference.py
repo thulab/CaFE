@@ -40,8 +40,8 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v6"
-TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v3"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v7"
+TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v4"
 LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
     "cafe.benchmark_extension_validation.v3"
 )
@@ -217,7 +217,7 @@ def _validated_inputs(dataset_root: Path) -> tuple[dict[str, Any], Path, Path]:
     if generation.get("schema_version") != GENERATION_SCHEMA:
         raise ValueError("unsupported generation manifest")
     if generation.get("config", {}).get("pipeline_schema_version") != PIPELINE_SCHEMA:
-        raise ValueError("generation is not current pipeline v9")
+        raise ValueError("generation is not current pipeline v10")
     validation_schema = validation.get("schema_version")
     current_validation = validation_schema == VALIDATION_SCHEMA
     legacy_publication_validation = (
@@ -399,11 +399,17 @@ def _child_input_tokens(child: dict[str, Any]) -> int:
     horizon = int(child["horizon"])
     target_dim = int(child["target_dim"])
     covariate_dim = int(child["covariate_dim"])
+    future_covariate_dim = sum(
+        bool(value)
+        for value in child.get(
+            "future_covariate_visible", [True] * covariate_dim
+        )
+    )
     return max(
         1,
         context * target_dim
         + context * covariate_dim
-        + horizon * covariate_dim,
+        + horizon * future_covariate_dim,
     )
 
 

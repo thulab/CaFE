@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import msgpack
 import numpy as np
 import pytest
 
@@ -17,7 +18,11 @@ from cafe.benchmark_extension.inference import (
     model_task_row,
 )
 from cafe.benchmark_extension.storage import iter_prediction_parquet
-from cafe.inference.runner import MODEL_EXECUTION_CONFIG, input_adaptation_plan
+from cafe.inference.runner import (
+    MODEL_EXECUTION_CONFIG,
+    _bulk_request_content,
+    input_adaptation_plan,
+)
 
 
 def _sample() -> dict:
@@ -183,7 +188,7 @@ def test_group_row_limit_controls_input_adaptation_not_bulk_batch_rows() -> None
     )
     assert plan is not None
     assert plan["target_mode"] == "independent_univariate"
-    assert plan["covariate_mode"] == "native"
+    assert plan["covariate_mode"] == "native_known_future"
 
     model["forecast_limits"]["input_mode"]["max_target_count"] = -1
     native_plan = input_adaptation_plan(
@@ -194,6 +199,62 @@ def test_group_row_limit_controls_input_adaptation_not_bulk_batch_rows() -> None
     assert native_plan is not None
     assert native_plan["target_mode"] == "native_multivariate"
     assert native_plan["covariate_mode"] == "omitted_unsupported"
+
+
+def test_past_only_covariates_are_native_without_future_payload() -> None:
+    sample = _sample()
+    sample["context_length"] = 16
+    sample["covariate_dim"] = 2
+    sample["covariate_column_names"] = ["past_0", "past_1"]
+    sample["covariate_availability"] = ["past_only", "past_only"]
+    sample["future_covariate_visible"] = [False, False]
+    sample["covariates"] = np.zeros((250, 2))
+    model = {
+        "forecast_limits": {
+            "max_input_length": 16,
+            "min_input_length": 1,
+            "max_output_length": 64,
+            "max_group_rows": 64,
+            "input_mode": {
+                "max_target_count": -1,
+                "max_history_covariate_count": -1,
+                "supports_history_covariates": True,
+                "supports_future_covariates": False,
+            },
+        }
+    }
+    plan = input_adaptation_plan(
+        model,
+        sample,
+        policy_id=inference_module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    assert plan is not None
+    assert plan["covariate_mode"] == "native_history_only"
+    content, _shape, _horizon = _bulk_request_content("fixture", [sample])
+    payload = msgpack.unpackb(content, raw=False)
+    assert payload["history_covariates_shape"] == [1, 2, 16]
+    assert "future_covariates" not in payload
+    assert "future_covariates_shape" not in payload
+
+
+def test_mixed_covariate_visibility_sends_only_known_future_columns() -> None:
+    sample = _sample()
+    sample["context_length"] = 200
+    sample["covariate_dim"] = 2
+    sample["covariate_column_names"] = ["past_0", "known_0"]
+    sample["covariate_availability"] = ["past_only", "known_future"]
+    sample["future_covariate_visible"] = [False, True]
+    sample["covariates"] = np.column_stack(
+        (np.arange(250.0), 1000.0 + np.arange(250.0))
+    )
+
+    content, _shape, _horizon = _bulk_request_content("fixture", [sample])
+    payload = msgpack.unpackb(content, raw=False)
+    assert payload["history_covariates_shape"] == [1, 2, 200]
+    assert payload["future_covariates_shape"] == [1, 1, 50]
+    assert payload["future_covariate_history_indices"] == [1]
+    future = np.frombuffer(payload["future_covariates"], dtype=np.float32)
+    np.testing.assert_array_equal(future, 1000.0 + np.arange(200.0, 250.0))
 
 
 def test_bulk_batches_shrink_to_request_input_token_budget() -> None:
