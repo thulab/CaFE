@@ -4,16 +4,24 @@ import numpy as np
 
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.mechanisms import (
+    MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     SOURCE_DISTANCE_THRESHOLD,
     _distance_gate,
     build_capability_group,
+    mase_scale_by_target,
+    mechanism_effect_signal,
 )
 
 
-def _instance(values: np.ndarray, *, horizon: int = 48) -> GiftEvalInstance:
+def _instance(
+    values: np.ndarray,
+    *,
+    horizon: int = 48,
+    future_observed_mask: np.ndarray | None = None,
+) -> GiftEvalInstance:
     history = np.asarray(values, dtype=float)
     if history.ndim == 1:
         history = history[:, None]
@@ -30,7 +38,11 @@ def _instance(values: np.ndarray, *, horizon: int = 48) -> GiftEvalInstance:
         prediction_length=horizon,
         history=history,
         future=np.zeros((horizon, history.shape[1])),
-        future_observed_mask=np.ones((horizon, history.shape[1]), dtype=bool),
+        future_observed_mask=(
+            np.ones((horizon, history.shape[1]), dtype=bool)
+            if future_observed_mask is None
+            else np.asarray(future_observed_mask, dtype=bool)
+        ),
         history_covariates=np.column_stack(
             (
                 np.sin(2.0 * np.pi * np.arange(history.shape[0]) / 24.0),
@@ -95,6 +107,41 @@ def test_intermittency_levels_become_sparser_with_fixed_amplitude() -> None:
     amplitudes = [np.max(row.history_delta) for row in group.treatments]
     np.testing.assert_allclose(amplitudes, amplitudes[0])
     assert all(row.metadata["future_event_count"] >= 1 for row in group.treatments)
+    scales = mase_scale_by_target(instance.history, instance.frequency)
+    for treatment in group.treatments:
+        _, signal, observed_count = mechanism_effect_signal(
+            treatment.future_delta,
+            instance.future_observed_mask,
+            scales,
+            treatment.affected_target_indices,
+        )
+        assert observed_count > 0
+        assert signal >= MECHANISM_EFFECT_MINIMUM_MASE_RMS - 1e-12
+
+
+def test_intermittency_phase_targets_observed_future_cells() -> None:
+    mask = np.zeros((48, 1), dtype=bool)
+    mask[-1, 0] = True
+    instance = _instance(
+        np.sin(np.arange(600.0) / 15.0),
+        future_observed_mask=mask,
+    )
+    group = build_capability_group(
+        instance,
+        "predictable_intermittency",
+        augmentation_seed=13,
+    )
+    assert group.available
+    scales = mase_scale_by_target(instance.history, instance.frequency)
+    for treatment in group.treatments:
+        _, signal, observed_count = mechanism_effect_signal(
+            treatment.future_delta,
+            mask,
+            scales,
+            treatment.affected_target_indices,
+        )
+        assert observed_count == 1
+        assert signal >= MECHANISM_EFFECT_MINIMUM_MASE_RMS - 1e-12
 
 
 def test_treatment_distance_gate_is_from_authentic_source_not_adjacent_level() -> None:

@@ -8,12 +8,14 @@ from cafe import core as protocol
 from cafe.benchmark_extension import analysis as analysis_module
 from cafe.benchmark_extension.analysis import (
     _accuracy_rows,
+    _aggregate_effects,
+    _effect_measurement,
     _input_ablation_rows,
     analyse_model,
     run_analysis,
 )
 from cafe.benchmark_extension.inference import INFERENCE_SCHEMA
-from cafe.benchmark_extension.generation import _baseline_row
+from cafe.benchmark_extension.generation import PIPELINE_SCHEMA, _baseline_row
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.storage import (
     PredictionParquetWriter,
@@ -68,6 +70,99 @@ def test_effect_metric_uses_shared_official_baseline_prediction() -> None:
         "capability_treatment",
     ]
     assert [row["mase"] for row in accuracy] == [0.0, 0.0]
+
+
+def test_low_truth_effect_is_unavailable_without_epsilon_division() -> None:
+    truth_delta = np.full((4, 1), 0.01)
+    forecast_delta = np.full((4, 1), 0.05)
+    measurement = _effect_measurement(
+        truth_delta,
+        forecast_delta,
+        np.ones((4, 1), dtype=bool),
+        [0],
+        np.ones(1),
+    )
+    assert measurement["status"] == "unavailable_low_truth_effect"
+    assert measurement["nrmse"] is None
+    assert measurement["truth_mase_rms"] == 0.01
+
+    history = np.arange(20.0)[:, None]
+    future = np.arange(20.0, 24.0)[:, None]
+    baseline = {
+        "sample_id": "baseline",
+        "dataset_id": "gift_fixture",
+        "official_instance_id": "official",
+        "context_length": 20,
+        "target": np.vstack((history, future)).tolist(),
+        "future_observed_mask": np.ones((4, 1), dtype=bool).tolist(),
+        "mase_scale_by_target": [1.0],
+    }
+    treatment = {
+        **baseline,
+        "sample_id": "treatment",
+        "baseline_sample_id": "baseline",
+        "capability_id": "predictable_intermittency",
+        "capability_level": 5,
+        "controlled_coordinate": "gap",
+        "sampled_coordinate": 0.9,
+        "affected_target_indices": [0],
+        "target": np.vstack((history, future + 0.01)).tolist(),
+    }
+    _, effects = analyse_model(
+        "model",
+        {"baseline": baseline},
+        [treatment],
+        {"baseline": future, "treatment": future + 0.05},
+    )
+    assert effects[0]["effect_score_status"] == "unavailable_low_truth_effect"
+    assert effects[0]["effect_nrmse"] is None
+    assert effects[0]["treatment_mase"] > 0.0
+
+
+def test_effect_measurement_preserves_zero_and_one_interpretation() -> None:
+    truth_delta = np.full((4, 2), 2.0)
+    mask = np.ones((4, 2), dtype=bool)
+    scales = np.asarray([2.0, 4.0])
+    perfect = _effect_measurement(
+        truth_delta, truth_delta, mask, [0, 1], scales
+    )
+    no_response = _effect_measurement(
+        truth_delta, np.zeros_like(truth_delta), mask, [0, 1], scales
+    )
+    assert perfect["status"] == "scored"
+    assert perfect["nrmse"] == 0.0
+    assert no_response["nrmse"] == 1.0
+
+
+def test_effect_summary_uses_pooled_standardized_energy() -> None:
+    base = {
+        "model_id": "model",
+        "capability_id": "trend",
+        "capability_level": 1,
+        "effect_score_status": "scored",
+        "effect_correlation": None,
+        "effect_amplitude_ratio": 1.0,
+    }
+    summary = _aggregate_effects(
+        [
+            {
+                **base,
+                "official_instance_id": "large-effect",
+                "effect_nrmse": 0.0,
+                "standardized_squared_error_sum": 0.0,
+                "standardized_truth_squared_sum": 100.0,
+            },
+            {
+                **base,
+                "official_instance_id": "small-effect",
+                "effect_nrmse": 2.0,
+                "standardized_squared_error_sum": 4.0,
+                "standardized_truth_squared_sum": 1.0,
+            },
+        ]
+    )[0]
+    assert np.isclose(summary["effect_nrmse_mean"], 1.0)
+    assert np.isclose(summary["effect_nrmse_pooled"], np.sqrt(4.0 / 101.0))
 
 
 def test_input_ablation_reports_measured_degradation_without_model_type_shortcut() -> None:
@@ -214,7 +309,10 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         {
             "schema_version": INFERENCE_SCHEMA,
             "dataset_id": "gift_fixture",
-            "config": {"models": ["model", "model2"]},
+            "config": {
+                "pipeline_schema_version": PIPELINE_SCHEMA,
+                "models": ["model", "model2"],
+            },
             "model_predictions": {
                 "model": {
                     "format": "partitioned_parquet",
@@ -240,6 +338,13 @@ def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(
         "official_baseline",
         "capability_treatment",
     }
+    effects = protocol.read_json(
+        dataset_root / "04_analysis" / "capability_effect_summary.json"
+    )["rows"]
+    assert len(effects) == 2
+    assert all(row["effect_nrmse_pooled"] == 0.0 for row in effects)
+    assert all(row["effect_scoring_coverage"] == 1.0 for row in effects)
+    assert all(row["effect_score_metric"] == "mase_standardized_pooled_nrmse_v1" for row in effects)
 
 
 def test_analysis_skips_an_official_instance_without_observed_future(
@@ -294,7 +399,10 @@ def test_analysis_skips_an_official_instance_without_observed_future(
         {
             "schema_version": INFERENCE_SCHEMA,
             "dataset_id": "gift_fixture",
-            "config": {"models": ["model"]},
+            "config": {
+                "pipeline_schema_version": PIPELINE_SCHEMA,
+                "models": ["model"],
+            },
             "model_predictions": {
                 "model": {
                     "format": "partitioned_parquet",
@@ -387,7 +495,10 @@ def test_analysis_parallelizes_source_shards_without_repeating_source_scan(
         {
             "schema_version": INFERENCE_SCHEMA,
             "dataset_id": "gift_fixture",
-            "config": {"models": ["model"]},
+            "config": {
+                "pipeline_schema_version": PIPELINE_SCHEMA,
+                "models": ["model"],
+            },
             "model_predictions": {
                 "model": {
                     "format": "partitioned_parquet",

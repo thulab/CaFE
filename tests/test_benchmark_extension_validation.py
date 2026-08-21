@@ -55,6 +55,7 @@ def test_validation_accepts_exact_generated_pairs(tmp_path: Path, monkeypatch) -
     assert report["accepted"]
     assert report["validation_mode"] == "research"
     assert report["source_distance_gate_checked_count"] == 15
+    assert report["mechanism_scoring_gate_checked_count"] == 15
     assert report["official_baseline_count"] == 1
     assert report["treatment_count"] == 15
 
@@ -135,4 +136,35 @@ def test_research_validation_rejects_stored_distance_below_threshold(
         "source_distance_gate_minimum_mismatch",
         "source_distance_below_minimum",
         "source_distance_rejected",
+    }
+
+
+def test_research_validation_rejects_invalid_mechanism_scoring_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment" / "gift_fixture"
+    generate_dataset(
+        "gift_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=14,
+        capability_ids=("predictable_intermittency",),
+        max_instances=1,
+    )
+    treatment_path = dataset_root / "01_generation" / "treatment_contracts.parquet"
+    rows = list(iter_compact_parquet(treatment_path))
+    rows[0]["mechanism_scoring_gate"]["truth_effect_mase_rms"] = 0.0
+    write_compact_parquet(treatment_path, rows)
+
+    report = validate_generation(dataset_root, workers=2)
+    assert not report["accepted"]
+    assert report["failure_count"] == 1
+    assert report["failures"][0]["reason"] in {
+        "mechanism_scoring_gate_status",
+        "mechanism_scoring_gate_reason",
+        "mechanism_scoring_gate_ranking_flag",
+        "intermittency_future_effect_not_scoreable",
     }

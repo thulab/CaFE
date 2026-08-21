@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v3"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v4"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -44,6 +44,7 @@ SOURCE_DISTANCE_MODEL_MAX_CONTEXTS = {
 }
 # Kept as a compatibility alias for callers that only need the lower bound.
 SOURCE_DISTANCE_THRESHOLD = SOURCE_DISTANCE_MINIMUM_MACRO
+MECHANISM_EFFECT_MINIMUM_MASE_RMS = 0.05
 STRENGTH_INTERVALS = (
     (0.10, 0.14),
     (0.16, 0.20),
@@ -123,6 +124,64 @@ def _scale_by_target(history: np.ndarray) -> np.ndarray:
     )
     scales = np.where(np.isfinite(scales) & (scales > 1e-8), scales, fallback)
     return np.where(np.isfinite(scales) & (scales > 1e-8), scales, 1.0)
+
+
+def _season_length(frequency: str) -> int:
+    raw = str(frequency)
+    if raw.endswith(("H", "h")):
+        return 24
+    if raw.endswith("D"):
+        return 7
+    if raw.endswith(("M", "ME")):
+        return 12
+    if raw.endswith("W") or raw.startswith("W-"):
+        return 52
+    return 1
+
+
+def mase_scale_by_target(history: np.ndarray, frequency: str) -> np.ndarray:
+    """Return the authentic-history scale used by treatment MASE."""
+
+    values = np.asarray(history, dtype=float)
+    period = _season_length(frequency)
+    lag = min(max(1, period), max(1, values.shape[0] - 1))
+    differences = np.abs(values[lag:] - values[:-lag])
+    scales = (
+        np.mean(differences, axis=0)
+        if differences.size
+        else np.ones(values.shape[1])
+    )
+    fallback = np.mean(np.abs(np.diff(values, axis=0)), axis=0)
+    scales = np.where(
+        np.isfinite(scales) & (scales > 1e-8), scales, fallback
+    )
+    return np.where(np.isfinite(scales) & (scales > 1e-8), scales, 1.0)
+
+
+def mechanism_effect_signal(
+    future_delta: np.ndarray,
+    observed_mask: np.ndarray,
+    scale_by_target: np.ndarray,
+    affected: tuple[int, ...] | list[int],
+) -> tuple[float, float, int]:
+    """Measure scored future effect in raw and MASE-standardized units."""
+
+    delta = np.asarray(future_delta, dtype=float)
+    mask = np.asarray(observed_mask, dtype=bool)
+    scales = np.asarray(scale_by_target, dtype=float)
+    assessed = np.zeros_like(mask, dtype=bool)
+    indices = [int(value) for value in affected]
+    assessed[:, indices] = mask[:, indices]
+    count = int(np.count_nonzero(assessed))
+    if count == 0:
+        return 0.0, 0.0, 0
+    raw = delta[assessed]
+    standardized = (delta / scales[None, :])[assessed]
+    return (
+        float(np.sqrt(np.mean(np.square(raw)))),
+        float(np.sqrt(np.mean(np.square(standardized)))),
+        count,
+    )
 
 
 def _distance_gate(
@@ -563,14 +622,39 @@ def _intermittency_units(
             "phase",
             augmentation_seed=augmentation_seed,
         )
-        lag = int(phase_rng.integers(0, min(gap, instance.prediction_length)))
-        last_history_center = length - 1 - lag
-        centers = list(range(last_history_center, -1, -gap))[::-1]
-        centers.extend(range(last_history_center + gap, total, gap))
-        if sum(center < length for center in centers) < 3:
-            raise ValueError("too_few_visible_intermittent_events")
-        if not any(length <= center < total for center in centers):
-            raise ValueError("no_history_only_scheduled_future_event")
+        lag: int | None = None
+        centers: list[int] = []
+        phase_candidates = phase_rng.permutation(
+            min(gap, instance.prediction_length)
+        )
+        for candidate in phase_candidates:
+            candidate_lag = int(candidate)
+            last_history_center = length - 1 - candidate_lag
+            candidate_centers = list(
+                range(last_history_center, -1, -gap)
+            )[::-1]
+            candidate_centers.extend(
+                range(last_history_center + gap, total, gap)
+            )
+            if sum(center < length for center in candidate_centers) < 3:
+                continue
+            future_indices = {
+                center + offset - length
+                for center in candidate_centers
+                for offset in range(width)
+                if length <= center + offset < total
+            }
+            if not future_indices:
+                continue
+            if not np.any(
+                instance.future_observed_mask[sorted(future_indices)]
+            ):
+                continue
+            lag = candidate_lag
+            centers = candidate_centers
+            break
+        if lag is None:
+            raise ValueError("no_observed_scheduled_future_event")
         delta = np.zeros((total, dimension), dtype=float)
         for center in centers:
             for offset in range(width):
@@ -591,12 +675,17 @@ def _intermittency_units(
                     "history_event_count": sum(center < length for center in centers),
                     "future_event_count": sum(length <= center < total for center in centers),
                     "event_centers": centers,
+                    "phase_candidate_count": int(len(phase_candidates)),
+                    "future_event_observed_mask_required": True,
                     "positive_event_amplitude_before_distance_adjustment": scales.tolist(),
                 },
             )
         )
     return _shared_amplitude_units(
-        instance, units, "predictable_intermittency"
+        instance,
+        units,
+        "predictable_intermittency",
+        minimum_future_effect_mase_rms=MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     )
 
 
@@ -604,6 +693,8 @@ def _shared_amplitude_units(
     instance: GiftEvalInstance,
     units: list[_UnitTreatment],
     capability_id: str,
+    *,
+    minimum_future_effect_mase_rms: float | None = None,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
     minimum = min(
         _full_history_unit_distance(unit.history_delta, instance.history, unit.affected)
@@ -611,7 +702,29 @@ def _shared_amplitude_units(
     )
     if minimum <= 1e-10:
         raise ValueError(f"{capability_id}_weakest_level_not_visible")
-    shared_gain = max(1.0, SOURCE_DISTANCE_MINIMUM_MACRO / minimum)
+    history_gain = SOURCE_DISTANCE_MINIMUM_MACRO / minimum
+    future_gain = 0.0
+    future_signals: list[float] = []
+    if minimum_future_effect_mase_rms is not None:
+        mase_scales = mase_scale_by_target(instance.history, instance.frequency)
+        future_signals = [
+            mechanism_effect_signal(
+                unit.future_delta,
+                instance.future_observed_mask,
+                mase_scales,
+                unit.affected,
+            )[1]
+            for unit in units
+        ]
+        minimum_future_signal = min(future_signals)
+        if minimum_future_signal <= 1e-12:
+            raise ValueError("future_mechanism_effect_not_observable")
+        future_gain = (
+            float(minimum_future_effect_mase_rms) / minimum_future_signal
+        )
+    shared_gain = max(1.0, history_gain, future_gain)
+    if minimum_future_effect_mase_rms is not None:
+        shared_gain = float(np.nextafter(shared_gain, math.inf))
     scaled = [
         _UnitTreatment(
             history_delta=unit.history_delta * shared_gain,
@@ -624,16 +737,38 @@ def _shared_amplitude_units(
                 **unit.metadata,
                 "shared_amplitude_adjustment": shared_gain,
                 "amplitude_policy": (
-                    "one_history_only_gain_shared_by_all_five_levels_to_meet_"
-                    "treatment_source_distance"
+                    "one_gain_shared_by_all_five_levels_to_meet_treatment_"
+                    "source_distance_and_future_effect_visibility"
+                    if future_signals
+                    else "one_history_only_gain_shared_by_all_five_levels_to_"
+                    "meet_treatment_source_distance"
+                ),
+                "future_effect_mase_rms_before_adjustment": (
+                    future_signals[index] if future_signals else None
+                ),
+                "future_effect_mase_rms_after_adjustment": (
+                    future_signals[index] * shared_gain
+                    if future_signals
+                    else None
+                ),
+                "minimum_future_effect_mase_rms": (
+                    minimum_future_effect_mase_rms
                 ),
             },
         )
-        for unit in units
+        for index, unit in enumerate(units)
     ]
     return scaled, {
         "shared_amplitude_adjustment": shared_gain,
         "weakest_pre_adjustment_distance": minimum,
+        "minimum_future_effect_mase_rms": minimum_future_effect_mase_rms,
+        "minimum_future_effect_mase_rms_after_adjustment": (
+            min(future_signals) * shared_gain if future_signals else None
+        ),
+        "future_effect_signal_uses_target_values": False,
+        "future_effect_signal_uses_observed_mask": (
+            minimum_future_effect_mase_rms is not None
+        ),
     }
 
 

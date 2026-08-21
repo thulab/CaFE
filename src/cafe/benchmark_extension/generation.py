@@ -25,6 +25,7 @@ from cafe.benchmark_extension.gift_eval import (
 )
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
+    MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
@@ -32,6 +33,7 @@ from cafe.benchmark_extension.mechanisms import (
     CapabilityGroup,
     CapabilityTreatment,
     build_capability_group,
+    mechanism_effect_signal,
     replay_treatment_deltas,
 )
 from cafe.benchmark_extension.storage import (
@@ -41,10 +43,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v7"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v4"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v3"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v1"
+PIPELINE_SCHEMA = "cafe.pipeline.v8"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v5"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v4"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v2"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -91,6 +93,41 @@ def _mase_scale(history: np.ndarray, period: int) -> tuple[float, list[float]]:
     by_target = np.where(np.isfinite(by_target) & (by_target > 1e-8), by_target, fallback)
     by_target = np.where(np.isfinite(by_target) & (by_target > 1e-8), by_target, 1.0)
     return float(np.mean(by_target)), [float(value) for value in by_target]
+
+
+def _mechanism_scoring_gate(
+    future_delta: np.ndarray,
+    instance: GiftEvalInstance,
+    mase_scale_by_target: list[float],
+    affected_target_indices: tuple[int, ...],
+) -> dict[str, Any]:
+    raw_rms, mase_rms, observed_count = mechanism_effect_signal(
+        future_delta,
+        instance.future_observed_mask,
+        np.asarray(mase_scale_by_target, dtype=float),
+        affected_target_indices,
+    )
+    accepted = (
+        observed_count > 0
+        and mase_rms >= MECHANISM_EFFECT_MINIMUM_MASE_RMS - 1e-12
+    )
+    reason = None
+    if observed_count == 0:
+        reason = "no_observed_affected_future_cell"
+    elif not accepted:
+        reason = "future_truth_effect_below_minimum"
+    return {
+        "schema_version": "cafe.mechanism_scoring_gate.v1",
+        "metric": "observed_affected_future_mase_standardized_rms",
+        "scope": "treatment_future_delta_vs_authentic_official_future",
+        "minimum_required_mase_rms": MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+        "observed_future_cell_count": observed_count,
+        "truth_effect_raw_rms": raw_rms,
+        "truth_effect_mase_rms": mase_rms,
+        "target_future_values_used_for_parameter_selection": False,
+        "accepted": accepted,
+        "reason": reason,
+    }
 
 
 def _season_length(frequency: str) -> int:
@@ -180,6 +217,12 @@ def _treatment_row(
     )
     season = _season_length(instance.frequency)
     mase, mase_by_target = _mase_scale(instance.history, season)
+    mechanism_gate = _mechanism_scoring_gate(
+        stored_future_delta,
+        instance,
+        mase_by_target,
+        treatment.affected_target_indices,
+    )
     parameter_draw = {
         "capability_level": treatment.level,
         "controlled_coordinate": treatment.controlled_coordinate,
@@ -238,6 +281,7 @@ def _treatment_row(
         "history_delta_sha256": _target_sha256(stored_history_delta),
         "future_delta_sha256": _target_sha256(stored_future_delta),
         "source_distance_gate": treatment.source_distance_gate,
+        "mechanism_scoring_gate": mechanism_gate,
         "anti_copy_gate": {
             "policy": "treatment_to_authentic_source_distance_v1",
             "status": "accepted",
@@ -251,7 +295,7 @@ def _treatment_row(
         "input_history_semantics": (
             "entire_gift_eval_official_history_plus_capability_treatment"
         ),
-        "included_in_capability_ranking": True,
+        "included_in_capability_ranking": bool(mechanism_gate["accepted"]),
     }
 
 
@@ -977,6 +1021,11 @@ def generate_dataset(
         "source_distance_policy": (
             "full_history_strength_actual_model_context_bounds_v3"
         ),
+        "mechanism_scoring_policy": {
+            "metric": "observed_affected_future_mase_standardized_rms",
+            "minimum_required_mase_rms": MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+            "low_signal_policy": "treatment_accuracy_retained_mechanism_score_unavailable",
+        },
         "source_distance_configuration": {
             "strength_reference": "full_official_history_macro_normalized_rms",
             "model_max_contexts": dict(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS),

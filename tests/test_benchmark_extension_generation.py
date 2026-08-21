@@ -124,6 +124,11 @@ def test_generation_uses_all_official_instances_and_shared_baseline(
     assert len(treatments) == 2 * 2 * 5
     assert {row["capability_level"] for row in treatments} == {1, 2, 3, 4, 5}
     assert all(row["source_distance_gate"]["accepted"] for row in treatments)
+    assert all("mechanism_scoring_gate" in row for row in treatments)
+    assert all(
+        row["mechanism_scoring_gate"]["minimum_required_mase_rms"] == 0.05
+        for row in treatments
+    )
     assert all(row["counterfactual_member"] == 1 for row in treatments)
     assert len({row["baseline_sample_id"] for row in treatments}) == 2
     assert all("target" not in row and "covariates" not in row for row in treatments)

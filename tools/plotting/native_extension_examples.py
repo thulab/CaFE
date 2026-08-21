@@ -13,7 +13,7 @@ from cafe.benchmark_extension.generation import iter_replayed_samples
 from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
 
 
-PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v2"
+PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v3"
 REAL_COLOR = "#1565c0"
 TREATMENT_COLOR = "#9aa0a6"
 DELTA_COLOR = "#d84315"
@@ -21,7 +21,7 @@ DELTA_COLOR = "#d84315"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot five-level examples by replaying validated v7 contracts."
+        description="Plot five-level examples by replaying validated v8 contracts."
     )
     parser.add_argument("--dataset-root", type=Path, action="append", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -182,6 +182,12 @@ def _plot_group(
                 "source_distance": row["source_distance_gate"][
                     "minimum_observed_macro_distance"
                 ],
+                "future_effect_mase_rms": row["mechanism_scoring_gate"][
+                    "truth_effect_mase_rms"
+                ],
+                "mechanism_scoreable": row["mechanism_scoring_gate"][
+                    "accepted"
+                ],
             }
             for row in rows
         ],
@@ -204,7 +210,7 @@ def _plot_hierarchy(output_path: Path) -> dict[str, Any]:
     axis.text(
         0.5,
         0.36,
-        "Qualification-only in the v7 GIFT-Eval adapter\n"
+        "Qualification-only in the v8 GIFT-Eval adapter\n"
         "No explicit summing matrix is inferred from separate univariate records,\n"
         "so no five-level treatment or formal rank is emitted.",
         ha="center",

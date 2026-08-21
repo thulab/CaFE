@@ -22,6 +22,7 @@ from cafe.benchmark_extension.generation import (
 )
 from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
 from cafe.benchmark_extension.mechanisms import (
+    MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
@@ -33,7 +34,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v5"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v6"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -214,6 +215,54 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _mechanism_scoring_gate_reason(row: dict[str, Any]) -> str | None:
+    gate = row.get("mechanism_scoring_gate")
+    if not isinstance(gate, dict):
+        return "mechanism_scoring_gate_missing"
+    if gate.get("schema_version") != "cafe.mechanism_scoring_gate.v1":
+        return "mechanism_scoring_gate_schema"
+    if gate.get("metric") != "observed_affected_future_mase_standardized_rms":
+        return "mechanism_scoring_gate_metric"
+    try:
+        required = float(gate["minimum_required_mase_rms"])
+        mase_rms = float(gate["truth_effect_mase_rms"])
+        raw_rms = float(gate["truth_effect_raw_rms"])
+        observed_count = int(gate["observed_future_cell_count"])
+    except (KeyError, TypeError, ValueError):
+        return "mechanism_scoring_gate_values"
+    if not math.isclose(
+        required,
+        MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        return "mechanism_scoring_gate_threshold"
+    if not _finite_nonnegative(mase_rms) or not _finite_nonnegative(raw_rms):
+        return "mechanism_scoring_gate_nonfinite"
+    expected_accepted = observed_count > 0 and mase_rms >= required - 1e-12
+    if gate.get("accepted") != expected_accepted:
+        return "mechanism_scoring_gate_status"
+    expected_reason = None
+    if observed_count <= 0:
+        expected_reason = "no_observed_affected_future_cell"
+    elif not expected_accepted:
+        expected_reason = "future_truth_effect_below_minimum"
+    if gate.get("reason") != expected_reason:
+        return "mechanism_scoring_gate_reason"
+    if bool(row.get("included_in_capability_ranking")) != expected_accepted:
+        return "mechanism_scoring_gate_ranking_flag"
+    if (
+        row.get("capability_id") == "predictable_intermittency"
+        and not expected_accepted
+    ):
+        return "intermittency_future_effect_not_scoreable"
+    return None
+
+
+def _treatment_contract_reason(row: dict[str, Any]) -> str | None:
+    return _distance_gate_reason(row) or _mechanism_scoring_gate_reason(row)
+
+
 def _scan_treatment_row_group(
     work: tuple[str, int],
 ) -> tuple[int, int, list[dict[str, Any]]]:
@@ -230,7 +279,7 @@ def _scan_treatment_row_group(
             if not isinstance(row, dict):
                 raise TypeError("payload is not an object")
             sample_id = row.get("sample_id")
-            reason = _distance_gate_reason(row)
+            reason = _treatment_contract_reason(row)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             reason = f"source_distance_payload:{error}"
         if reason is not None:
@@ -451,7 +500,7 @@ def _publication_validation(
                             }
                         )
                     if kind == "capability_treatments":
-                        reason = _distance_gate_reason(expected)
+                        reason = _treatment_contract_reason(expected)
                         if reason is not None:
                             failures.append(
                                 {
@@ -489,7 +538,7 @@ def validate_generation(
     mode: str = "research",
     workers: int = DEFAULT_VALIDATION_WORKERS,
 ) -> dict[str, Any]:
-    """Validate every distance gate, with exact replay reserved for publication."""
+    """Validate treatment gates, with exact replay reserved for publication."""
 
     if mode not in VALIDATION_MODES:
         raise ValueError(f"unsupported validation mode: {mode}")
@@ -519,7 +568,10 @@ def validate_generation(
             manifest,
             workers=int(workers),
         )
-        policy = "research_all_treatment_source_distance_gates_v1"
+        policy = (
+            "research_all_treatment_source_distance_and_mechanism_scoring_"
+            "gates_v2"
+        )
 
     report = {
         "schema_version": VALIDATION_SCHEMA,
@@ -536,6 +588,9 @@ def validate_generation(
         "input_ablation_count": counts["input_ablations"],
         "availability_count": counts["availability"],
         "source_distance_gate_checked_count": counts["capability_treatments"],
+        "mechanism_scoring_gate_checked_count": counts[
+            "capability_treatments"
+        ],
         "failure_count": int(failure_count),
         "failures_truncated": failure_count > len(failures),
         "failures": failures,

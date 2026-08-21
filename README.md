@@ -62,7 +62,8 @@ reason. Hierarchical coherence is currently qualification-only and produces
 no ranked treatments.
 
 Analysis keeps three result families separate: baseline and treatment
-MASE/MAE; paired effect NRMSE, correlation, and amplitude ratio; and a
+MASE/MAE; MASE-standardized pooled effect NRMSE, correlation, coverage, and
+amplitude ratio; and a
 common/cross input-ablation table. The ablation keeps the assessed target
 history and treatment future fixed while temporally misaligning auxiliary
 channels, so it measures whether intact panel inputs improve the forecast.
@@ -80,7 +81,7 @@ This runs generation and validation without starting model services:
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v7-smoke \
+  --experiment-id gift-v8-smoke \
   --dataset-id gift_ett1_h \
   --max-instances 2 \
   --augmentation-seed 2026081601 \
@@ -91,7 +92,8 @@ uv run cafe run \
 all official GIFT-Eval test instances.
 
 Validation defaults to the research policy: it scans every treatment distance
-gate in parallel and writes the acceptance report required by inference. Add
+and mechanism-scoring gate in parallel and writes the acceptance report
+required by inference. Add
 `--validation-mode publication` for full manifest/hash checks and exact replay
 of every contract. `--validation-workers` controls the per-dataset process
 pool. When it is greater than one, datasets run sequentially to avoid nested
@@ -102,7 +104,7 @@ concurrent lightweight dataset scans.
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v7-formal \
+  --experiment-id gift-v8-formal \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
   --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \

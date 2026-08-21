@@ -21,6 +21,9 @@ from cafe.benchmark_extension.generation import (
     iter_replay_contract_work_items,
 )
 from cafe.benchmark_extension.inference import INFERENCE_SCHEMA
+from cafe.benchmark_extension.mechanisms import (
+    MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+)
 from cafe.benchmark_extension.storage import (
     DEFAULT_COMPRESSION,
     DEFAULT_COMPRESSION_LEVEL,
@@ -31,7 +34,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v4"
+ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v5"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 ACCURACY_METRIC_SCHEMA = pa.schema(
@@ -59,10 +62,16 @@ EFFECT_METRIC_SCHEMA = pa.schema(
         ("capability_level", pa.int8()),
         ("controlled_coordinate", pa.string()),
         ("sampled_coordinate", pa.float64()),
+        ("effect_score_status", pa.string()),
         ("effect_nrmse", pa.float64()),
         ("effect_correlation", pa.float64()),
         ("effect_amplitude_ratio", pa.float64()),
         ("truth_effect_rms", pa.float64()),
+        ("truth_effect_mase_rms", pa.float64()),
+        ("observed_effect_cell_count", pa.int64()),
+        ("standardized_squared_error_sum", pa.float64()),
+        ("standardized_truth_squared_sum", pa.float64()),
+        ("standardized_forecast_squared_sum", pa.float64()),
         ("treatment_mase", pa.float64()),
         ("treatment_mae", pa.float64()),
     ]
@@ -120,6 +129,78 @@ def _correlation(left: np.ndarray, right: np.ndarray) -> float | None:
     return float(np.corrcoef(x, y)[0, 1])
 
 
+def _effect_measurement(
+    truth_delta: np.ndarray,
+    forecast_delta: np.ndarray,
+    observed_mask: np.ndarray,
+    affected_target_indices: Iterable[int],
+    mase_scale_by_target: np.ndarray,
+) -> dict[str, Any]:
+    """Measure a paired forecast effect without inventing a denominator."""
+
+    mask = np.asarray(observed_mask, dtype=bool)
+    assessed = np.zeros_like(mask, dtype=bool)
+    affected = [int(value) for value in affected_target_indices]
+    assessed[:, affected] = mask[:, affected]
+    observed_count = int(np.count_nonzero(assessed))
+    if observed_count == 0:
+        return {
+            "status": "unavailable_no_observed_effect_cell",
+            "observed_count": 0,
+            "truth_raw_rms": 0.0,
+            "truth_mase_rms": 0.0,
+            "nrmse": None,
+            "correlation": None,
+            "amplitude_ratio": None,
+            "squared_error_sum": 0.0,
+            "truth_squared_sum": 0.0,
+            "forecast_squared_sum": 0.0,
+        }
+    scales = np.asarray(mase_scale_by_target, dtype=float)
+    truth = np.asarray(truth_delta, dtype=float)
+    forecast = np.asarray(forecast_delta, dtype=float)
+    truth_raw = truth[assessed]
+    truth_standardized = (truth / scales[None, :])[assessed]
+    forecast_standardized = (forecast / scales[None, :])[assessed]
+    truth_raw_rms = float(np.sqrt(np.mean(np.square(truth_raw))))
+    truth_mase_rms = float(
+        np.sqrt(np.mean(np.square(truth_standardized)))
+    )
+    difference = forecast_standardized - truth_standardized
+    squared_error_sum = float(np.sum(np.square(difference)))
+    truth_squared_sum = float(np.sum(np.square(truth_standardized)))
+    forecast_squared_sum = float(np.sum(np.square(forecast_standardized)))
+    if truth_mase_rms < MECHANISM_EFFECT_MINIMUM_MASE_RMS - 1e-12:
+        return {
+            "status": "unavailable_low_truth_effect",
+            "observed_count": observed_count,
+            "truth_raw_rms": truth_raw_rms,
+            "truth_mase_rms": truth_mase_rms,
+            "nrmse": None,
+            "correlation": None,
+            "amplitude_ratio": None,
+            "squared_error_sum": squared_error_sum,
+            "truth_squared_sum": truth_squared_sum,
+            "forecast_squared_sum": forecast_squared_sum,
+        }
+    return {
+        "status": "scored",
+        "observed_count": observed_count,
+        "truth_raw_rms": truth_raw_rms,
+        "truth_mase_rms": truth_mase_rms,
+        "nrmse": float(np.sqrt(squared_error_sum / truth_squared_sum)),
+        "correlation": _correlation(
+            forecast_standardized, truth_standardized
+        ),
+        "amplitude_ratio": float(
+            np.sqrt(forecast_squared_sum / truth_squared_sum)
+        ),
+        "squared_error_sum": squared_error_sum,
+        "truth_squared_sum": truth_squared_sum,
+        "forecast_squared_sum": forecast_squared_sum,
+    }
+
+
 def analyse_model(
     model_id: str,
     baselines: dict[str, dict[str, Any]],
@@ -150,26 +231,22 @@ def analyse_model(
         forecast_delta = treatment_forecast - baseline_forecast
         mask = np.asarray(treatment["future_observed_mask"], dtype=bool)
         affected = [int(value) for value in treatment["affected_target_indices"]]
-        assessed_mask = np.zeros_like(mask, dtype=bool)
-        assessed_mask[:, affected] = mask[:, affected]
-        truth_values = _masked(truth_delta, assessed_mask)
-        forecast_values = _masked(forecast_delta, assessed_mask)
-        denominator = max(float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8)
         scales = np.asarray(baseline["mase_scale_by_target"], dtype=float)
+        measurement = _effect_measurement(
+            truth_delta,
+            forecast_delta,
+            mask,
+            affected,
+            scales,
+        )
         treatment_error = treatment_forecast - _future(treatment)
         treatment_mase = float(
             np.mean(_masked(np.abs(treatment_error) / scales[None, :], mask))
         )
         treatment_mae = float(np.mean(np.abs(_masked(treatment_error, mask))))
-        effect_nrmse = float(
-            np.sqrt(np.mean(np.square(forecast_values - truth_values))) / denominator
-        )
-        amplitude_ratio = float(
-            np.sqrt(np.mean(np.square(forecast_values))) / denominator
-        )
         effect_rows.append(
             {
-                "schema_version": "cafe.capability_effect_metric.v1",
+                "schema_version": "cafe.capability_effect_metric.v3",
                 "model_id": model_id,
                 "dataset_id": treatment["dataset_id"],
                 "official_instance_id": treatment["official_instance_id"],
@@ -178,10 +255,22 @@ def analyse_model(
                 "capability_level": int(treatment["capability_level"]),
                 "controlled_coordinate": treatment["controlled_coordinate"],
                 "sampled_coordinate": float(treatment["sampled_coordinate"]),
-                "effect_nrmse": effect_nrmse,
-                "effect_correlation": _correlation(forecast_values, truth_values),
-                "effect_amplitude_ratio": amplitude_ratio,
-                "truth_effect_rms": denominator,
+                "effect_score_status": measurement["status"],
+                "effect_nrmse": measurement["nrmse"],
+                "effect_correlation": measurement["correlation"],
+                "effect_amplitude_ratio": measurement["amplitude_ratio"],
+                "truth_effect_rms": measurement["truth_raw_rms"],
+                "truth_effect_mase_rms": measurement["truth_mase_rms"],
+                "observed_effect_cell_count": measurement["observed_count"],
+                "standardized_squared_error_sum": measurement[
+                    "squared_error_sum"
+                ],
+                "standardized_truth_squared_sum": measurement[
+                    "truth_squared_sum"
+                ],
+                "standardized_forecast_squared_sum": measurement[
+                    "forecast_squared_sum"
+                ],
                 "treatment_mase": treatment_mase,
                 "treatment_mae": treatment_mae,
             }
@@ -381,36 +470,69 @@ def _aggregate_effects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         grouped[(row["model_id"], row["capability_id"], row["capability_level"])].append(row)
     aggregates: list[dict[str, Any]] = []
     for (model_id, capability, level), members in sorted(grouped.items()):
+        scored = [
+            row for row in members if row.get("effect_score_status") == "scored"
+        ]
         correlations = [
             float(row["effect_correlation"])
-            for row in members
+            for row in scored
             if row["effect_correlation"] is not None
         ]
+        truth_squared_sum = float(
+            sum(row["standardized_truth_squared_sum"] for row in scored)
+        )
+        squared_error_sum = float(
+            sum(row["standardized_squared_error_sum"] for row in scored)
+        )
         aggregates.append(
             {
-                "schema_version": "cafe.capability_effect_summary.v1",
+                "schema_version": "cafe.capability_effect_summary.v3",
                 "model_id": model_id,
                 "capability_id": capability,
                 "capability_level": level,
-                "official_instance_count": len(
-                    {row["official_instance_id"] for row in members}
+                "official_instance_count": len(scored),
+                "effect_candidate_count": len(members),
+                "effect_unavailable_low_signal_count": sum(
+                    row.get("effect_score_status")
+                    == "unavailable_low_truth_effect"
+                    for row in members
                 ),
-                "effect_nrmse_mean": float(
-                    np.mean([row["effect_nrmse"] for row in members])
+                "effect_scoring_coverage": (
+                    len(scored) / len(members) if members else None
+                ),
+                "effect_nrmse_pooled": (
+                    float(np.sqrt(squared_error_sum / truth_squared_sum))
+                    if truth_squared_sum > 0.0
+                    else None
+                ),
+                "effect_nrmse_mean": (
+                    float(np.mean([row["effect_nrmse"] for row in scored]))
+                    if scored
+                    else None
                 ),
                 "effect_correlation_mean": (
                     float(np.mean(correlations)) if correlations else None
                 ),
-                "effect_amplitude_ratio_mean": float(
-                    np.mean([row["effect_amplitude_ratio"] for row in members])
+                "effect_amplitude_ratio_mean": (
+                    float(
+                        np.mean(
+                            [row["effect_amplitude_ratio"] for row in scored]
+                        )
+                    )
+                    if scored
+                    else None
                 ),
             }
         )
     rank_groups: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in aggregates:
-        rank_groups[(row["capability_id"], row["capability_level"])].append(row)
+        if row["effect_nrmse_pooled"] is not None:
+            rank_groups[(row["capability_id"], row["capability_level"])].append(row)
     for members in rank_groups.values():
-        ordered = sorted(members, key=lambda row: (row["effect_nrmse_mean"], row["model_id"]))
+        ordered = sorted(
+            members,
+            key=lambda row: (row["effect_nrmse_pooled"], row["model_id"]),
+        )
         for rank, row in enumerate(ordered, start=1):
             row["effect_rank"] = rank
     return aggregates
@@ -441,11 +563,18 @@ def _accuracy_aggregate() -> dict[str, float]:
 
 def _effect_aggregate() -> dict[str, float]:
     return {
+        "candidate_count": 0.0,
         "count": 0.0,
+        "low_signal_count": 0.0,
+        "unobserved_count": 0.0,
         "nrmse": 0.0,
         "amplitude": 0.0,
         "correlation": 0.0,
         "correlation_count": 0.0,
+        "squared_error_sum": 0.0,
+        "truth_squared_sum": 0.0,
+        "forecast_squared_sum": 0.0,
+        "observed_cell_count": 0.0,
     }
 
 
@@ -549,19 +678,6 @@ def _consume_replayed_samples(
             scales = baseline["scales"]
             truth_delta = future - baseline["future"]
             affected = [int(value) for value in sample["affected_target_indices"]]
-            assessed_mask = np.zeros_like(mask, dtype=bool)
-            assessed_mask[:, affected] = mask[:, affected]
-            effect_is_observed = bool(np.any(assessed_mask))
-            truth_values = (
-                _masked(truth_delta, assessed_mask)
-                if effect_is_observed
-                else np.empty(0, dtype=float)
-            )
-            denominator = (
-                max(float(np.sqrt(np.mean(np.square(truth_values)))), 1e-8)
-                if effect_is_observed
-                else None
-            )
             for model_id, forecast in forecasts.items():
                 baseline_forecast = baseline["forecasts"][model_id]
                 if forecast is None or baseline_forecast is None:
@@ -599,22 +715,17 @@ def _consume_replayed_samples(
                     accuracy_aggregate["mase"] += treatment_mase
                     accuracy_aggregate["mae"] += treatment_mae
                     treatment_counts[model_id] += 1
-                if not effect_is_observed:
-                    continue
-                assert denominator is not None
                 forecast_delta = forecast - baseline_forecast
-                forecast_values = _masked(forecast_delta, assessed_mask)
-                correlation = _correlation(forecast_values, truth_values)
-                nrmse = float(
-                    np.sqrt(np.mean(np.square(forecast_values - truth_values)))
-                    / denominator
-                )
-                amplitude = float(
-                    np.sqrt(np.mean(np.square(forecast_values))) / denominator
+                measurement = _effect_measurement(
+                    truth_delta,
+                    forecast_delta,
+                    mask,
+                    affected,
+                    scales,
                 )
                 effect_writer.write(
                     {
-                        "schema_version": "cafe.capability_effect_metric.v2",
+                        "schema_version": "cafe.capability_effect_metric.v3",
                         "model_id": model_id,
                         "dataset_id": sample["dataset_id"],
                         "official_instance_id": sample["official_instance_id"],
@@ -623,10 +734,28 @@ def _consume_replayed_samples(
                         "capability_level": int(sample["capability_level"]),
                         "controlled_coordinate": sample["controlled_coordinate"],
                         "sampled_coordinate": float(sample["sampled_coordinate"]),
-                        "effect_nrmse": nrmse,
-                        "effect_correlation": correlation,
-                        "effect_amplitude_ratio": amplitude,
-                        "truth_effect_rms": denominator,
+                        "effect_score_status": measurement["status"],
+                        "effect_nrmse": measurement["nrmse"],
+                        "effect_correlation": measurement["correlation"],
+                        "effect_amplitude_ratio": measurement[
+                            "amplitude_ratio"
+                        ],
+                        "truth_effect_rms": measurement["truth_raw_rms"],
+                        "truth_effect_mase_rms": measurement[
+                            "truth_mase_rms"
+                        ],
+                        "observed_effect_cell_count": measurement[
+                            "observed_count"
+                        ],
+                        "standardized_squared_error_sum": measurement[
+                            "squared_error_sum"
+                        ],
+                        "standardized_truth_squared_sum": measurement[
+                            "truth_squared_sum"
+                        ],
+                        "standardized_forecast_squared_sum": measurement[
+                            "forecast_squared_sum"
+                        ],
                         "treatment_mase": treatment_mase,
                         "treatment_mae": treatment_mae,
                     }
@@ -637,9 +766,31 @@ def _consume_replayed_samples(
                     int(sample["capability_level"]),
                 )
                 effect_aggregate = effect_aggregates[effect_key]
+                effect_aggregate["candidate_count"] += 1
+                if measurement["status"] == "unavailable_low_truth_effect":
+                    effect_aggregate["low_signal_count"] += 1
+                    continue
+                if measurement["status"] != "scored":
+                    effect_aggregate["unobserved_count"] += 1
+                    continue
+                nrmse = float(measurement["nrmse"])
+                amplitude = float(measurement["amplitude_ratio"])
+                correlation = measurement["correlation"]
                 effect_aggregate["count"] += 1
                 effect_aggregate["nrmse"] += nrmse
                 effect_aggregate["amplitude"] += amplitude
+                effect_aggregate["squared_error_sum"] += measurement[
+                    "squared_error_sum"
+                ]
+                effect_aggregate["truth_squared_sum"] += measurement[
+                    "truth_squared_sum"
+                ]
+                effect_aggregate["forecast_squared_sum"] += measurement[
+                    "forecast_squared_sum"
+                ]
+                effect_aggregate["observed_cell_count"] += measurement[
+                    "observed_count"
+                ]
                 if correlation is not None:
                     effect_aggregate["correlation"] += correlation
                     effect_aggregate["correlation_count"] += 1
@@ -899,31 +1050,76 @@ def _write_sharded_analysis_outputs(
     effect_summary: list[dict[str, Any]] = []
     for (model_id, capability, level), values in sorted(effect_aggregates.items()):
         count = int(values["count"])
+        candidate_count = int(values["candidate_count"])
+        truth_squared_sum = float(values["truth_squared_sum"])
+        pooled_nrmse = (
+            float(
+                np.sqrt(
+                    float(values["squared_error_sum"]) / truth_squared_sum
+                )
+            )
+            if truth_squared_sum > 0.0
+            else None
+        )
+        pooled_amplitude = (
+            float(
+                np.sqrt(
+                    float(values["forecast_squared_sum"])
+                    / truth_squared_sum
+                )
+            )
+            if truth_squared_sum > 0.0
+            else None
+        )
         effect_summary.append(
             {
-                "schema_version": "cafe.capability_effect_summary.v2",
+                "schema_version": "cafe.capability_effect_summary.v3",
                 "model_id": model_id,
                 "capability_id": capability,
                 "capability_level": level,
                 "official_instance_count": count,
+                "effect_candidate_count": candidate_count,
+                "effect_unavailable_low_signal_count": int(
+                    values["low_signal_count"]
+                ),
+                "effect_unavailable_unobserved_count": int(
+                    values["unobserved_count"]
+                ),
+                "effect_scoring_coverage": (
+                    float(count / candidate_count)
+                    if candidate_count > 0
+                    else None
+                ),
+                "effect_score_metric": (
+                    "mase_standardized_pooled_nrmse_v1"
+                ),
+                "minimum_truth_effect_mase_rms": (
+                    MECHANISM_EFFECT_MINIMUM_MASE_RMS
+                ),
+                "effect_nrmse_pooled": pooled_nrmse,
                 "effect_nrmse_mean": _mean_or_none(values["nrmse"], count),
                 "effect_correlation_mean": _mean_or_none(
                     values["correlation"], int(values["correlation_count"])
                 ),
+                "effect_amplitude_ratio_pooled": pooled_amplitude,
                 "effect_amplitude_ratio_mean": _mean_or_none(
                     values["amplitude"], count
+                ),
+                "observed_effect_cell_count": int(
+                    values["observed_cell_count"]
                 ),
             }
         )
     rank_groups: defaultdict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
     for row in effect_summary:
-        rank_groups[(row["capability_id"], row["capability_level"])].append(row)
+        if row["effect_nrmse_pooled"] is not None:
+            rank_groups[(row["capability_id"], row["capability_level"])].append(row)
     for members in rank_groups.values():
         for rank, row in enumerate(
             sorted(
                 members,
                 key=lambda value: (
-                    value["effect_nrmse_mean"],
+                    value["effect_nrmse_pooled"],
                     value["model_id"],
                 ),
             ),
@@ -993,10 +1189,22 @@ def _write_sharded_analysis_outputs(
         "estimands": {
             "official_accuracy": "GIFT-Eval official future MASE/MAE",
             "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale",
-            "capability_effect": "forecast_delta_vs_truth_delta_on_affected_targets",
+            "capability_effect": (
+                "mase_standardized_pooled_forecast_delta_vs_truth_delta_"
+                "on_scoreable_affected_targets"
+            ),
             "input_ablation_attribution": (
                 "same_treatment_truth_with_auxiliary_histories_temporally_misaligned"
             ),
+        },
+        "mechanism_scoring_policy": {
+            "minimum_truth_effect_mase_rms": (
+                MECHANISM_EFFECT_MINIMUM_MASE_RMS
+            ),
+            "low_signal_status": "unavailable_low_truth_effect",
+            "low_signal_treatment_accuracy_retained": True,
+            "primary_metric": "mase_standardized_pooled_nrmse_v1",
+            "aggregation": "ratio_of_standardized_squared_sums",
         },
     }
     row_paths = {
@@ -1055,6 +1263,11 @@ def _run_analysis_sharded(
     inference_manifest = protocol.read_json(inference_manifest_path)
     if inference_manifest.get("schema_version") != INFERENCE_SCHEMA:
         raise ValueError("unsupported inference manifest")
+    if (
+        inference_manifest.get("config", {}).get("pipeline_schema_version")
+        != PIPELINE_SCHEMA
+    ):
+        raise ValueError("inference is not current pipeline v8")
     if not inference_manifest.get("complete"):
         raise ValueError("inference is incomplete")
     analysis_dir.mkdir(parents=True, exist_ok=True)

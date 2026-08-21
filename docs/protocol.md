@@ -1,4 +1,4 @@
-# CaFE v7 scientific protocol
+# CaFE v8 scientific protocol
 
 ## 1. Estimand
 
@@ -98,8 +98,12 @@ It also satisfies a maximum model-context macro distance of `2.0` and a maximum
 single-channel normalized RMS of `3.0`. These bounds are qualification checks;
 they never feed back into the physical gain. For regime and intermittency, one
 shared amplitude is solved from the weakest full-history distance of the five
-location/sparsity treatments. The whole five-level group is unavailable when
-any treatment violates a lower or upper bound.
+location/sparsity treatments. Intermittency additionally chooses a deterministic
+phase whose scheduled future pulse intersects the official observed mask, then
+uses the same shared amplitude to make every level's future truth-effect RMS at
+least `0.05` in authentic-history MASE units. No future target value or model
+output is used. The whole five-level group is unavailable when any treatment
+violates a lower or upper history-distance bound.
 Generation records unavailable-reason counts by capability in the dataset
 manifest and preserves the failed level plus its complete distance evidence in
 the availability contract for later mechanism audits.
@@ -145,10 +149,28 @@ treatment `a` and baseline `0`, the mechanism estimand is
 \Delta\hat y=\hat y^{(a)}-\hat y^{(0)}.
 \]
 
-On affected targets, CaFE reports effect NRMSE, correlation, and amplitude
-ratio. Ranks are separate by capability and level; lower effect NRMSE ranks
-better. Levels are neutral capability coordinates: for regime and
-intermittency a higher level means less evidence, not a larger amplitude.
+For target scale (s_{i,j}), mechanism scoring first computes
+
+\[
+q_i=\operatorname{RMS}\left(\Delta y_{i,t,j}/s_{i,j}\right).
+\]
+
+When (q_i<0.05), treatment MASE remains valid but the mechanism score is
+`unavailable_low_truth_effect`; CaFE never replaces a missing effect with an
+epsilon denominator. On the remaining affected and observed cells, the primary
+mechanism score is
+
+\[
+\operatorname{NRMSE}_{pooled}=\sqrt{\frac{
+\sum_{i,t,j}((\Delta\hat y-\Delta y)/s_{i,j})^2}{
+\sum_{i,t,j}(\Delta y/s_{i,j})^2}}.
+\]
+
+CaFE also reports coverage, low-signal count, valid-sample mean NRMSE,
+correlation, and amplitude ratio. Ranks are separate by capability and level;
+lower pooled effect NRMSE ranks better. Levels are neutral capability
+coordinates: for regime and intermittency a higher level means less evidence,
+not a larger amplitude.
 
 For common factor and cross-series dependence, an additional attribution table
 compares the full treatment forecast with a forecast for the same treatment
