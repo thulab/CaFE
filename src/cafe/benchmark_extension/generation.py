@@ -28,6 +28,16 @@ from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_HARMONIC_SHARE,
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+    NONLINEAR_EXTREME_STATE_MINIMUM_ABS,
+    NONLINEAR_HOLDOUT_FRACTION,
+    NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION,
+    NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO,
+    NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE,
+    NONLINEAR_MINIMUM_HISTORY,
+    NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN,
+    NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS,
+    NONLINEAR_PERSISTENCE_INTERVALS,
+    NONLINEAR_STABILITY_LIMIT,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
@@ -49,9 +59,9 @@ from cafe.benchmark_extension.storage import (
 
 
 PIPELINE_SCHEMA = "cafe.pipeline.v10"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v7"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v6"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v4"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v8"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v7"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v5"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -1183,6 +1193,36 @@ def generate_dataset(
                 ),
                 "minimum_tail_head_rms_ratio": (
                     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO
+                ),
+            },
+            "nonlinear_persistence": {
+                "mechanism": (
+                    "same_innovation_state_dependent_persistence_recurrence"
+                ),
+                "identifiability": "single_blocked_holdout_nonlinear_vs_linear_ar1",
+                "holdout_fraction": NONLINEAR_HOLDOUT_FRACTION,
+                "minimum_history_length": NONLINEAR_MINIMUM_HISTORY,
+                "minimum_holdout_incremental_r2": (
+                    NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN
+                ),
+                "ordinary_state_maximum_abs": (
+                    NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS
+                ),
+                "extreme_state_minimum_abs": (
+                    NONLINEAR_EXTREME_STATE_MINIMUM_ABS
+                ),
+                "stability_limit": NONLINEAR_STABILITY_LIMIT,
+                "headroom_fraction_intervals": [
+                    list(interval) for interval in NONLINEAR_PERSISTENCE_INTERVALS
+                ],
+                "minimum_future_profile_range": (
+                    NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE
+                ),
+                "maximum_future_peak_fraction": (
+                    NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION
+                ),
+                "maximum_tail_peak_ratio": (
+                    NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO
                 ),
             },
             "covariate_impulse_response": {

@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v6"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v7"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -45,11 +45,35 @@ SOURCE_DISTANCE_MODEL_MAX_CONTEXTS = {
 # Kept as a compatibility alias for callers that only need the lower bound.
 SOURCE_DISTANCE_THRESHOLD = SOURCE_DISTANCE_MINIMUM_MACRO
 MECHANISM_EFFECT_MINIMUM_MASE_RMS = 0.05
+STRICT_FUTURE_EFFECT_CAPABILITIES = frozenset(
+    {
+        "nonlinear_persistence",
+        "predictable_intermittency",
+        "covariate_impulse_response",
+    }
+)
 TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION = 0.25
 TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION = 0.25
 TVS_MINIMUM_INCREMENTAL_R2 = 0.01
 COMMON_FACTOR_MINIMUM_HARMONIC_SHARE = 0.05
 COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO = 0.50
+NONLINEAR_MINIMUM_HISTORY = 96
+NONLINEAR_HOLDOUT_FRACTION = 0.25
+NONLINEAR_MINIMUM_HOLDOUT_SIZE = 24
+NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN = 0.005
+NONLINEAR_MINIMUM_COEFFICIENT_ABS = 0.01
+NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS = 0.75
+NONLINEAR_EXTREME_STATE_MINIMUM_ABS = 1.50
+NONLINEAR_MINIMUM_TRAIN_ORDINARY_COUNT = 8
+NONLINEAR_MINIMUM_TRAIN_EXTREME_COUNT = 4
+NONLINEAR_MINIMUM_HOLDOUT_ORDINARY_COUNT = 4
+NONLINEAR_MINIMUM_HOLDOUT_EXTREME_COUNT = 2
+NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO = 0.10
+NONLINEAR_STABILITY_LIMIT = 0.98
+NONLINEAR_STATE_ABSOLUTE_LIMIT = 8.0
+NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE = 0.10
+NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION = 0.50
+NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO = 0.90
 STRENGTH_INTERVALS = (
     (0.10, 0.14),
     (0.16, 0.20),
@@ -70,6 +94,13 @@ INTERMITTENCY_GAP_INTERVALS = (
     (0.34, 0.44),
     (0.50, 0.64),
     (0.72, 0.92),
+)
+NONLINEAR_PERSISTENCE_INTERVALS = (
+    (0.20, 0.26),
+    (0.30, 0.38),
+    (0.42, 0.50),
+    (0.56, 0.66),
+    (0.72, 0.84),
 )
 
 
@@ -879,69 +910,437 @@ def _shared_amplitude_units(
     }
 
 
+def _nonlinear_state_response(values: np.ndarray | float) -> np.ndarray | float:
+    """Return a signed bounded-quadratic persistence response.
+
+    Dividing by ``1 + |z|`` makes the additional effective persistence tend to
+    a finite coefficient while retaining a second-order response near zero.
+    """
+
+    array = np.asarray(values, dtype=float)
+    response = array * np.abs(array) / (1.0 + np.abs(array))
+    return float(response) if array.ndim == 0 else response
+
+
+def _nonlinear_fit(values: np.ndarray, *, nonlinear: bool) -> np.ndarray:
+    previous = np.asarray(values[:-1], dtype=float)
+    response = np.asarray(values[1:], dtype=float)
+    columns = [np.ones(previous.size), previous]
+    if nonlinear:
+        columns.append(np.asarray(_nonlinear_state_response(previous)))
+    return np.linalg.lstsq(np.column_stack(columns), response, rcond=None)[0]
+
+
+def _nonlinear_channel_audit(z: np.ndarray) -> dict[str, Any]:
+    """Audit one standardized channel using one blocked holdout split.
+
+    The function deliberately performs a constant number of tiny regressions;
+    it does not search lags, thresholds, or hyperparameters.
+    """
+
+    values = np.asarray(z, dtype=float)
+    transition_count = values.size - 1
+    holdout_size = max(
+        NONLINEAR_MINIMUM_HOLDOUT_SIZE,
+        int(round(NONLINEAR_HOLDOUT_FRACTION * transition_count)),
+    )
+    split = transition_count - holdout_size
+    audit: dict[str, Any] = {
+        "schema_version": "cafe.nonlinear_identifiability_channel.v1",
+        "transition_count": transition_count,
+        "training_transition_count": split,
+        "holdout_transition_count": holdout_size,
+        "holdout_policy": "single_blocked_suffix_without_parameter_search",
+        "accepted": False,
+        "reason": None,
+    }
+    if split < 32 or holdout_size < NONLINEAR_MINIMUM_HOLDOUT_SIZE:
+        audit["reason"] = "insufficient_train_holdout_transitions"
+        return audit
+
+    previous = values[:-1]
+    response = values[1:]
+    train_previous = previous[:split]
+    train_response = response[:split]
+    holdout_previous = previous[split:]
+    holdout_response = response[split:]
+    support = {
+        "train_ordinary_count": int(
+            np.count_nonzero(
+                np.abs(train_previous) <= NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS
+            )
+        ),
+        "train_extreme_count": int(
+            np.count_nonzero(
+                np.abs(train_previous) >= NONLINEAR_EXTREME_STATE_MINIMUM_ABS
+            )
+        ),
+        "holdout_ordinary_count": int(
+            np.count_nonzero(
+                np.abs(holdout_previous) <= NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS
+            )
+        ),
+        "holdout_extreme_count": int(
+            np.count_nonzero(
+                np.abs(holdout_previous) >= NONLINEAR_EXTREME_STATE_MINIMUM_ABS
+            )
+        ),
+    }
+    audit["state_support"] = support
+    if (
+        support["train_ordinary_count"] < NONLINEAR_MINIMUM_TRAIN_ORDINARY_COUNT
+        or support["train_extreme_count"] < NONLINEAR_MINIMUM_TRAIN_EXTREME_COUNT
+        or support["holdout_ordinary_count"]
+        < NONLINEAR_MINIMUM_HOLDOUT_ORDINARY_COUNT
+        or support["holdout_extreme_count"]
+        < NONLINEAR_MINIMUM_HOLDOUT_EXTREME_COUNT
+    ):
+        audit["reason"] = "ordinary_and_extreme_state_support_insufficient"
+        return audit
+
+    train_values = values[: split + 1]
+    linear_train = _nonlinear_fit(train_values, nonlinear=False)
+    nonlinear_train = _nonlinear_fit(train_values, nonlinear=True)
+    linear_holdout = (
+        linear_train[0] + linear_train[1] * holdout_previous
+    )
+    nonlinear_holdout = (
+        nonlinear_train[0]
+        + nonlinear_train[1] * holdout_previous
+        + nonlinear_train[2]
+        * np.asarray(_nonlinear_state_response(holdout_previous))
+    )
+    linear_mse = float(np.mean(np.square(holdout_response - linear_holdout)))
+    nonlinear_mse = float(
+        np.mean(np.square(holdout_response - nonlinear_holdout))
+    )
+    holdout_gain = (
+        0.0
+        if linear_mse <= 1e-12
+        else 1.0 - nonlinear_mse / linear_mse
+    )
+    midpoint = values.size // 2
+    first_coefficients = _nonlinear_fit(values[: midpoint + 1], nonlinear=True)
+    second_coefficients = _nonlinear_fit(values[midpoint:], nonlinear=True)
+    full_nonlinear = _nonlinear_fit(values, nonlinear=True)
+    full_linear = _nonlinear_fit(values, nonlinear=False)
+    coefficient_values = np.asarray(
+        [
+            nonlinear_train[2],
+            first_coefficients[2],
+            second_coefficients[2],
+            full_nonlinear[2],
+        ],
+        dtype=float,
+    )
+    nonzero = np.abs(coefficient_values) >= NONLINEAR_MINIMUM_COEFFICIENT_ABS
+    sign_stable = bool(
+        np.all(nonzero)
+        and np.all(np.sign(coefficient_values) == np.sign(coefficient_values[-1]))
+    )
+    half_ratio = float(
+        min(abs(first_coefficients[2]), abs(second_coefficients[2]))
+        / max(abs(first_coefficients[2]), abs(second_coefficients[2]), 1e-12)
+    )
+    linear_persistence = float(full_linear[1])
+    direction = float(np.sign(full_nonlinear[2]))
+    stability_headroom = float(
+        NONLINEAR_STABILITY_LIMIT - direction * linear_persistence
+    )
+    audit.update(
+        {
+            "linear_holdout_mse": linear_mse,
+            "nonlinear_holdout_mse": nonlinear_mse,
+            "holdout_incremental_r2": holdout_gain,
+            "minimum_required_holdout_incremental_r2": (
+                NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN
+            ),
+            "training_nonlinear_coefficient": float(nonlinear_train[2]),
+            "first_half_nonlinear_coefficient": float(first_coefficients[2]),
+            "second_half_nonlinear_coefficient": float(second_coefficients[2]),
+            "full_history_nonlinear_coefficient": float(full_nonlinear[2]),
+            "minimum_required_coefficient_abs": (
+                NONLINEAR_MINIMUM_COEFFICIENT_ABS
+            ),
+            "coefficient_sign_stable": sign_stable,
+            "half_coefficient_magnitude_ratio": half_ratio,
+            "minimum_required_half_coefficient_ratio": (
+                NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO
+            ),
+            "linear_intercept": float(full_linear[0]),
+            "linear_persistence_coefficient": linear_persistence,
+            "nonlinear_direction": direction,
+            "stability_limit": NONLINEAR_STABILITY_LIMIT,
+            "stability_headroom": stability_headroom,
+        }
+    )
+    if holdout_gain < NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN:
+        audit["reason"] = "nonlinear_structure_does_not_beat_linear_ar_on_holdout"
+    elif not sign_stable:
+        audit["reason"] = "nonlinear_coefficient_direction_not_stable"
+    elif half_ratio < NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO:
+        audit["reason"] = "nonlinear_coefficient_magnitude_not_stable"
+    elif abs(linear_persistence) >= NONLINEAR_STABILITY_LIMIT:
+        audit["reason"] = "linear_skeleton_not_stable"
+    elif stability_headroom <= 0.0:
+        audit["reason"] = "no_stability_headroom_in_detected_direction"
+    else:
+        audit["accepted"] = True
+    return audit
+
+
+def _state_dependent_persistence_delta_batch(
+    z: np.ndarray,
+    *,
+    scale: float,
+    horizon: int,
+    linear_intercept: float,
+    linear_persistence: float,
+    nonlinear_coefficients: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, list[dict[str, float]]]:
+    """Apply all five nonlinear doses in one recurrence pass."""
+
+    source = np.asarray(z, dtype=float)
+    coefficients = np.asarray(nonlinear_coefficients, dtype=float).reshape(-1)
+    treated = np.empty((coefficients.size, source.size), dtype=float)
+    treated[:, 0] = source[0]
+    innovations = source[1:] - (
+        linear_intercept + linear_persistence * source[:-1]
+    )
+    for index in range(1, source.size):
+        previous = treated[:, index - 1]
+        treated[:, index] = (
+            linear_intercept
+            + linear_persistence * previous
+            + coefficients * np.asarray(_nonlinear_state_response(previous))
+            + innovations[index - 1]
+        )
+    if np.max(np.abs(treated)) > NONLINEAR_STATE_ABSOLUTE_LIMIT:
+        raise ValueError("nonlinear_treated_history_exceeds_state_limit")
+
+    history_delta = float(scale) * (treated - source[None, :])
+    future_delta = np.empty((coefficients.size, horizon), dtype=float)
+    linear_state = float(source[-1])
+    nonlinear_state = treated[:, -1].copy()
+    maximum_linear_future_state = abs(linear_state)
+    maximum_nonlinear_future_state = np.abs(nonlinear_state)
+    for step in range(horizon):
+        linear_state = linear_intercept + linear_persistence * linear_state
+        nonlinear_state = (
+            linear_intercept
+            + linear_persistence * nonlinear_state
+            + coefficients * np.asarray(_nonlinear_state_response(nonlinear_state))
+        )
+        if (
+            abs(linear_state) > NONLINEAR_STATE_ABSOLUTE_LIMIT
+            or np.max(np.abs(nonlinear_state)) > NONLINEAR_STATE_ABSOLUTE_LIMIT
+        ):
+            raise ValueError("nonlinear_future_rollout_exceeds_state_limit")
+        maximum_linear_future_state = max(
+            maximum_linear_future_state, abs(linear_state)
+        )
+        maximum_nonlinear_future_state = np.maximum(
+            maximum_nonlinear_future_state, np.abs(nonlinear_state)
+        )
+        future_delta[:, step] = float(scale) * (
+            nonlinear_state - linear_state
+        )
+    maximum_history = np.max(np.abs(treated), axis=1)
+    diagnostics = [
+        {
+            "maximum_treated_history_state_abs": float(maximum_history[index]),
+            "maximum_linear_future_state_abs": float(
+                maximum_linear_future_state
+            ),
+            "maximum_nonlinear_future_state_abs": float(
+                maximum_nonlinear_future_state[index]
+            ),
+        }
+        for index in range(coefficients.size)
+    ]
+    return history_delta, future_delta, diagnostics
+
+
+def _state_dependent_persistence_deltas(
+    z: np.ndarray,
+    *,
+    scale: float,
+    horizon: int,
+    linear_intercept: float,
+    linear_persistence: float,
+    nonlinear_coefficient: float,
+) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
+    """Scalar compatibility wrapper around the batched recurrence."""
+
+    history, future, diagnostics = _state_dependent_persistence_delta_batch(
+        z,
+        scale=scale,
+        horizon=horizon,
+        linear_intercept=linear_intercept,
+        linear_persistence=linear_persistence,
+        nonlinear_coefficients=np.asarray([nonlinear_coefficient], dtype=float),
+    )
+    return history[0], future[0], diagnostics[0]
+
+
 def _nonlinear_units(
     instance: GiftEvalInstance,
     augmentation_seed: int,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
-    history = instance.history
+    history = np.asarray(instance.history, dtype=float)
     length, dimension = history.shape
-    if length < 48:
-        raise ValueError("history_too_short_for_nonlinear_persistence")
+    if length < NONLINEAR_MINIMUM_HISTORY:
+        raise ValueError("history_too_short_for_state_dependent_persistence")
     scales = _scale_by_target(history)
-    component_h = np.zeros_like(history)
-    component_f = np.zeros_like(instance.future)
-    affected: list[int] = []
-    diagnostics: dict[str, Any] = {}
+    # Use the same per-channel reduction order as compact replay so the dense
+    # generation hashes remain bit-for-bit reproducible.
+    standardized = np.empty_like(history)
     for channel in range(dimension):
-        z = (history[:, channel] - np.mean(history[:, channel])) / scales[channel]
-        previous = z[:-1]
-        response = z[1:]
-        quadratic = np.square(previous) - float(np.mean(np.square(previous)))
-        linear_design = np.column_stack((np.ones(previous.size), previous))
-        nonlinear_design = np.column_stack((linear_design, quadratic))
-        linear_fit = linear_design @ np.linalg.lstsq(linear_design, response, rcond=None)[0]
-        coefficients = np.linalg.lstsq(nonlinear_design, response, rcond=None)[0]
-        nonlinear_fit = nonlinear_design @ coefficients
-        baseline_error = float(np.mean(np.square(response - linear_fit)))
-        gain = (
-            0.0
-            if baseline_error <= 1e-12
-            else 1.0 - float(np.mean(np.square(response - nonlinear_fit))) / baseline_error
-        )
-        beta = float(coefficients[-1])
-        if gain < 0.005 or abs(beta) < 1e-4:
-            continue
-        history_component = np.zeros(length, dtype=float)
-        history_component[1:] = scales[channel] * beta * quadratic
-        component_h[:, channel] = history_component
-        state = float(z[-1])
-        mean_square = float(np.mean(np.square(previous)))
-        for step in range(instance.prediction_length):
-            q = state * state - mean_square
-            component_f[step, channel] = scales[channel] * beta * q
-            state = float(coefficients[0] + coefficients[1] * state)
-            state = float(np.clip(state, -8.0, 8.0))
-        affected.append(channel)
-        diagnostics[str(channel)] = {
-            "in_sample_incremental_r2": gain,
-            "quadratic_coefficient": beta,
-            "future_innovation_policy": "zero_innovation_history_state_rollout",
-        }
+        standardized[:, channel] = (
+            history[:, channel] - np.mean(history[:, channel])
+        ) / scales[channel]
+    diagnostics: dict[str, Any] = {}
+    affected: list[int] = []
+    for channel in range(dimension):
+        audit = _nonlinear_channel_audit(standardized[:, channel])
+        diagnostics[str(channel)] = audit
+        if audit["accepted"]:
+            affected.append(channel)
     if not affected:
-        raise ValueError("nonlinear_incremental_predictive_gain_not_resolved")
-    return _strength_scaled_units(
-        instance,
-        augmentation_seed,
-        "nonlinear_persistence",
-        component_h,
-        component_f,
-        tuple(affected),
-        metadata={
-            "component": "history_fitted_quadratic_lag_state",
+        raise ValueError("state_dependent_persistence_not_identifiable_on_holdout")
+
+    headroom_fractions = [
+        float(
+            _rng(
+                instance.official_instance_id,
+                "nonlinear_persistence",
+                level,
+                augmentation_seed=augmentation_seed,
+            ).uniform(*interval)
+        )
+        for level, interval in zip(
+            CAPABILITY_LEVELS, NONLINEAR_PERSISTENCE_INTERVALS, strict=True
+        )
+    ]
+    history_deltas = [np.zeros_like(history) for _ in CAPABILITY_LEVELS]
+    future_deltas = [
+        np.zeros_like(instance.future) for _ in CAPABILITY_LEVELS
+    ]
+    level_diagnostics: list[dict[str, Any]] = [
+        {} for _ in CAPABILITY_LEVELS
+    ]
+    for channel in affected:
+        audit = diagnostics[str(channel)]
+        direction = float(audit["nonlinear_direction"])
+        coefficients = np.asarray(
+            [
+                direction
+                * headroom_fraction
+                * float(audit["stability_headroom"])
+                for headroom_fraction in headroom_fractions
+            ],
+            dtype=float,
+        )
+        effective_extreme_persistence = (
+            float(audit["linear_persistence_coefficient"]) + coefficients
+        )
+        if np.any(
+            np.abs(effective_extreme_persistence)
+            >= NONLINEAR_STABILITY_LIMIT
+        ):
+            raise ValueError("nonlinear_level_exceeds_stability_limit")
+        channel_history, channel_future, rollouts = (
+            _state_dependent_persistence_delta_batch(
+                standardized[:, channel],
+                scale=float(scales[channel]),
+                horizon=instance.prediction_length,
+                linear_intercept=float(audit["linear_intercept"]),
+                linear_persistence=float(
+                    audit["linear_persistence_coefficient"]
+                ),
+                nonlinear_coefficients=coefficients,
+            )
+        )
+        for index, _level in enumerate(CAPABILITY_LEVELS):
+            history_deltas[index][:, channel] = channel_history[index]
+            future_deltas[index][:, channel] = channel_future[index]
+            level_diagnostics[index][str(channel)] = {
+                "nonlinear_persistence_coefficient": float(
+                    coefficients[index]
+                ),
+                "effective_extreme_persistence_limit": float(
+                    effective_extreme_persistence[index]
+                ),
+                **rollouts[index],
+            }
+
+    units: list[_UnitTreatment] = []
+    full_distances: list[float] = []
+    for index, (level, interval, headroom_fraction) in enumerate(
+        zip(
+            CAPABILITY_LEVELS,
+            NONLINEAR_PERSISTENCE_INTERVALS,
+            headroom_fractions,
+            strict=True,
+        )
+    ):
+        history_delta = history_deltas[index]
+        future_delta = future_deltas[index]
+        for channel in affected:
+            effective = level_diagnostics[index][str(channel)][
+                "effective_extreme_persistence_limit"
+            ]
+            if abs(effective) >= NONLINEAR_STABILITY_LIMIT:
+                raise ValueError("nonlinear_level_exceeds_stability_limit")
+        distance = _full_history_unit_distance(
+            history_delta, history, tuple(affected)
+        )
+        full_distances.append(distance)
+        units.append(
+            _UnitTreatment(
+                history_delta=history_delta,
+                future_delta=future_delta,
+                affected=tuple(affected),
+                coordinate_name="stable_persistence_headroom_fraction",
+                coordinate_interval=interval,
+                sampled_coordinate=headroom_fraction,
+                metadata={
+                    "component": (
+                        "same_innovation_state_dependent_persistence_recurrence"
+                    ),
+                    "state_response": "z_abs_z_over_one_plus_abs_z",
+                    "future_innovation_policy": "zero_innovation_paired_rollout",
+                    "headroom_fraction": headroom_fraction,
+                    "physical_component_gain": 1.0,
+                    "identifiability_by_target": diagnostics,
+                    "level_diagnostics_by_target": level_diagnostics[index],
+                    "full_history_macro_normalized_rms": distance,
+                    "target_future_used_for_delta": False,
+                },
+            )
+        )
+    if any(
+        current <= previous + 1e-12
+        for previous, current in zip(full_distances, full_distances[1:])
+    ):
+        raise ValueError("nonlinear_treatment_distance_not_strictly_monotone")
+    return units, {
+        "nonlinear_identifiability_gate": {
+            "schema_version": "cafe.nonlinear_identifiability_gate.v1",
+            "method": "single_blocked_holdout_nonlinear_vs_linear_ar1",
+            "state_response": "z_abs_z_over_one_plus_abs_z",
+            "minimum_history_length": NONLINEAR_MINIMUM_HISTORY,
+            "affected_target_indices": affected,
             "diagnostics_by_target": diagnostics,
-            "target_future_used_for_delta": False,
+            "target_future_values_used": False,
+            "accepted": True,
+            "reason": None,
         },
-    )
+        "dose_policy": (
+            "ordered_fraction_of_detected_direction_stability_headroom"
+        ),
+        "full_history_distance_by_level": full_distances,
+    }
 
 
 def _common_factor_units(
@@ -1312,6 +1711,91 @@ def _horizon_support_gate(
             "accepted": accepted,
             "reason": None if accepted else "future_envelope_coverage_too_small",
         }
+    if capability_id == "nonlinear_persistence":
+        scales = _scale_by_target(instance.history)[list(unit.affected)]
+        standardized = unit.future_delta[:, unit.affected] / scales[None, :]
+        profile = np.zeros(instance.prediction_length, dtype=float)
+        for step in range(instance.prediction_length):
+            observed = instance.future_observed_mask[step, list(unit.affected)]
+            values = standardized[step, observed]
+            profile[step] = (
+                float(np.sqrt(np.mean(np.square(values))))
+                if values.size
+                else float("nan")
+            )
+        valid_indexes = np.flatnonzero(np.isfinite(profile))
+        if valid_indexes.size:
+            valid_profile = profile[valid_indexes]
+            peak_position = int(np.argmax(valid_profile))
+            peak_index = int(valid_indexes[peak_position])
+            peak = float(valid_profile[peak_position])
+            minimum = float(np.min(valid_profile))
+            relative_range = (peak - minimum) / max(peak, 1e-12)
+            tail_count = max(1, valid_profile.size // 4)
+            tail_rms = float(
+                np.sqrt(np.mean(np.square(valid_profile[-tail_count:])))
+            )
+            tail_peak_ratio = tail_rms / max(peak, 1e-12)
+            half_threshold = 0.5 * peak
+            crossings = valid_indexes[
+                (valid_indexes >= peak_index) & (profile[valid_indexes] <= half_threshold)
+            ]
+            truth_half_life = (
+                int(crossings[0] - peak_index) if crossings.size else None
+            )
+        else:
+            peak_index = -1
+            peak = 0.0
+            relative_range = 0.0
+            tail_rms = 0.0
+            tail_peak_ratio = float("inf")
+            truth_half_life = None
+        latest_peak = int(
+            math.floor(
+                NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION
+                * max(0, instance.prediction_length - 1)
+            )
+        )
+        accepted = (
+            peak > 0.0
+            and peak_index <= latest_peak
+            and relative_range >= NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE - 1e-12
+            and tail_peak_ratio <= NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO + 1e-12
+        )
+        reason = None
+        if peak <= 0.0:
+            reason = "nonlinear_future_effect_profile_empty"
+        elif peak_index > latest_peak:
+            reason = "nonlinear_future_effect_peaks_too_late"
+        elif relative_range < NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE - 1e-12:
+            reason = "nonlinear_future_effect_profile_too_flat"
+        elif tail_peak_ratio > NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO + 1e-12:
+            reason = "nonlinear_future_effect_does_not_decay"
+        return {
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "capability_id": capability_id,
+            "metric": "nonlinear_future_effect_decay_profile",
+            "horizon_partition": "whole_forecast_horizon",
+            "minimum_required_relative_range": (
+                NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE
+            ),
+            "maximum_allowed_peak_fraction": (
+                NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION
+            ),
+            "maximum_allowed_tail_peak_ratio": (
+                NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO
+            ),
+            "observed_relative_range": relative_range,
+            "observed_peak_index": peak_index,
+            "observed_peak_history_scale": peak,
+            "observed_tail_rms_history_scale": tail_rms,
+            "observed_tail_peak_ratio": tail_peak_ratio,
+            "truth_effect_half_life_from_peak": truth_half_life,
+            "truth_effect_half_life_censored": truth_half_life is None,
+            "target_future_values_used": False,
+            "accepted": accepted,
+            "reason": reason,
+        }
     if capability_id == "common_factor":
         scales = _scale_by_target(instance.history)[list(unit.affected)]
         standardized = unit.future_delta[:, unit.affected] / scales[None, :]
@@ -1429,6 +1913,31 @@ def build_capability_group(
                     "failed_horizon_support_gate": horizon_support_gate,
                 },
             )
+        if capability_id in STRICT_FUTURE_EFFECT_CAPABILITIES:
+            _raw, signal, observed_count = mechanism_effect_signal(
+                unit.future_delta,
+                instance.future_observed_mask,
+                mase_scale_by_target(instance.history, instance.frequency),
+                unit.affected,
+            )
+            if (
+                observed_count <= 0
+                or signal < MECHANISM_EFFECT_MINIMUM_MASE_RMS - 1e-12
+            ):
+                return CapabilityGroup(
+                    capability_id=capability_id,
+                    available=False,
+                    reason=f"level_{level}_future_effect_not_scoreable",
+                    treatments=(),
+                    group_metadata={
+                        **group_metadata,
+                        "failed_level": level,
+                        "failed_future_effect_mase_rms": signal,
+                        "minimum_required_future_effect_mase_rms": (
+                            MECHANISM_EFFECT_MINIMUM_MASE_RMS
+                        ),
+                    },
+                )
         treatments.append(
             CapabilityTreatment(
                 level=level,
@@ -1586,31 +2095,6 @@ def replay_treatment_deltas(
                 combined = carrier * envelope
                 component_h[:, channel] = combined[:length]
                 component_f[:, channel] = combined[length:]
-        elif capability_id == "nonlinear_persistence":
-            diagnostics = metadata["diagnostics_by_target"]
-            for raw_channel, diagnostic in diagnostics.items():
-                channel = int(raw_channel)
-                z = (history[:, channel] - np.mean(history[:, channel])) / scales[
-                    channel
-                ]
-                previous = z[:-1]
-                response = z[1:]
-                quadratic = np.square(previous) - float(
-                    np.mean(np.square(previous))
-                )
-                design = np.column_stack(
-                    (np.ones(previous.size), previous, quadratic)
-                )
-                coefficients = np.linalg.lstsq(design, response, rcond=None)[0]
-                beta = float(diagnostic["quadratic_coefficient"])
-                component_h[1:, channel] = scales[channel] * beta * quadratic
-                state = float(z[-1])
-                mean_square = float(np.mean(np.square(previous)))
-                for step in range(horizon):
-                    q = state * state - mean_square
-                    component_f[step, channel] = scales[channel] * beta * q
-                    state = float(coefficients[0] + coefficients[1] * state)
-                    state = float(np.clip(state, -8.0, 8.0))
         elif capability_id == "common_factor":
             loading = np.asarray(metadata["loading"], dtype=float)
             carrier = _harmonic_signal(
@@ -1671,6 +2155,53 @@ def replay_treatment_deltas(
         return shared_components
 
     output: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    if capability_id == "nonlinear_persistence":
+        history_components = [np.zeros_like(history) for _ in contracts]
+        future_components = [
+            np.zeros_like(instance.future) for _ in contracts
+        ]
+        affected = [
+            int(value) for value in contracts[0]["affected_target_indices"]
+        ]
+        for channel in affected:
+            first_metadata = contracts[0]["mechanism_metadata"]
+            audit = first_metadata["identifiability_by_target"][str(channel)]
+            coefficients = np.asarray(
+                [
+                    row["mechanism_metadata"][
+                        "level_diagnostics_by_target"
+                    ][str(channel)]["nonlinear_persistence_coefficient"]
+                    for row in contracts
+                ],
+                dtype=float,
+            )
+            z = (
+                history[:, channel] - np.mean(history[:, channel])
+            ) / scales[channel]
+            channel_history, channel_future, _rollout = (
+                _state_dependent_persistence_delta_batch(
+                    z,
+                    scale=float(scales[channel]),
+                    horizon=horizon,
+                    linear_intercept=float(audit["linear_intercept"]),
+                    linear_persistence=float(
+                        audit["linear_persistence_coefficient"]
+                    ),
+                    nonlinear_coefficients=coefficients,
+                )
+            )
+            for index in range(len(contracts)):
+                history_components[index][:, channel] = channel_history[index]
+                future_components[index][:, channel] = channel_future[index]
+        for index, row in enumerate(contracts):
+            gain = float(row["applied_component_gain"])
+            output[str(row["sample_id"])] = (
+                np.asarray(history_components[index] * gain, dtype=float),
+                np.asarray(future_components[index] * gain, dtype=float),
+                np.zeros_like(instance.history_covariates),
+                np.zeros_like(instance.future_covariates),
+            )
+        return output
     for row in contracts:
         metadata = dict(row["mechanism_metadata"])
         if capability_id == "regime_switching":

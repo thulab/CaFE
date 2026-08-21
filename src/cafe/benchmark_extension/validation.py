@@ -24,10 +24,19 @@ from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
 from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+    NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION,
+    NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO,
+    NONLINEAR_MINIMUM_COEFFICIENT_ABS,
+    NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE,
+    NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO,
+    NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN,
+    NONLINEAR_PERSISTENCE_INTERVALS,
+    NONLINEAR_STABILITY_LIMIT,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
+    STRICT_FUTURE_EFFECT_CAPABILITIES,
     TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
 )
@@ -37,7 +46,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v8"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v9"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -254,12 +263,8 @@ def _mechanism_scoring_gate_reason(row: dict[str, Any]) -> str | None:
         return "mechanism_scoring_gate_reason"
     if bool(row.get("included_in_capability_ranking")) != expected_accepted:
         return "mechanism_scoring_gate_ranking_flag"
-    strict_future_effect_capabilities = {
-        "predictable_intermittency",
-        "covariate_impulse_response",
-    }
     if (
-        row.get("capability_id") in strict_future_effect_capabilities
+        row.get("capability_id") in STRICT_FUTURE_EFFECT_CAPABILITIES
         and not expected_accepted
     ):
         return f"{row.get('capability_id')}_future_effect_not_scoreable"
@@ -269,7 +274,11 @@ def _mechanism_scoring_gate_reason(row: dict[str, Any]) -> str | None:
 def _horizon_support_gate_reason(row: dict[str, Any]) -> str | None:
     capability_id = row.get("capability_id")
     gate = row.get("horizon_support_gate")
-    if capability_id not in {"time_varying_seasonality", "common_factor"}:
+    if capability_id not in {
+        "time_varying_seasonality",
+        "nonlinear_persistence",
+        "common_factor",
+    }:
         return None if gate is None else "horizon_support_gate_not_applicable"
     if not isinstance(gate, dict):
         return "horizon_support_gate_missing"
@@ -339,6 +348,60 @@ def _horizon_support_gate_reason(row: dict[str, Any]) -> str | None:
         if observed_minimum < required - 1e-12:
             return "horizon_support_gate_below_minimum"
         return None
+    if capability_id == "nonlinear_persistence":
+        if gate.get("metric") != "nonlinear_future_effect_decay_profile":
+            return "horizon_support_gate_metric"
+        if gate.get("horizon_partition") != "whole_forecast_horizon":
+            return "horizon_support_gate_partition"
+        try:
+            required_range = float(gate["minimum_required_relative_range"])
+            maximum_peak_fraction = float(
+                gate["maximum_allowed_peak_fraction"]
+            )
+            maximum_tail_ratio = float(
+                gate["maximum_allowed_tail_peak_ratio"]
+            )
+            observed_range = float(gate["observed_relative_range"])
+            peak_index = int(gate["observed_peak_index"])
+            peak = float(gate["observed_peak_history_scale"])
+            tail_ratio = float(gate["observed_tail_peak_ratio"])
+        except (KeyError, TypeError, ValueError):
+            return "horizon_support_gate_values"
+        expected_thresholds = (
+            math.isclose(
+                required_range,
+                NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and math.isclose(
+                maximum_peak_fraction,
+                NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            and math.isclose(
+                maximum_tail_ratio,
+                NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        )
+        if not expected_thresholds:
+            return "horizon_support_gate_threshold"
+        horizon = int(row.get("horizon", 0))
+        latest_peak = int(
+            math.floor(maximum_peak_fraction * max(0, horizon - 1))
+        )
+        if (
+            peak <= 0.0
+            or peak_index < 0
+            or peak_index > latest_peak
+            or observed_range < required_range - 1e-12
+            or tail_ratio > maximum_tail_ratio + 1e-12
+        ):
+            return "horizon_support_gate_nonlinear_decay"
+        return None
     if gate.get("metric") != (
         "common_factor_tail_to_head_macro_normalized_rms_ratio"
     ):
@@ -389,9 +452,176 @@ def _horizon_support_gate_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
+    if row.get("capability_id") != "nonlinear_persistence":
+        return None
+    group = row.get("group_metadata")
+    metadata = row.get("mechanism_metadata")
+    if not isinstance(group, dict) or not isinstance(metadata, dict):
+        return "nonlinear_metadata_missing"
+    gate = group.get("nonlinear_identifiability_gate")
+    if not isinstance(gate, dict):
+        return "nonlinear_identifiability_gate_missing"
+    if gate.get("schema_version") != "cafe.nonlinear_identifiability_gate.v1":
+        return "nonlinear_identifiability_gate_schema"
+    if gate.get("method") != (
+        "single_blocked_holdout_nonlinear_vs_linear_ar1"
+    ):
+        return "nonlinear_identifiability_gate_method"
+    if (
+        gate.get("target_future_values_used") is not False
+        or gate.get("accepted") is not True
+        or gate.get("reason") is not None
+    ):
+        return "nonlinear_identifiability_gate_status"
+    affected = [int(value) for value in row.get("affected_target_indices") or []]
+    if affected != [int(value) for value in gate.get("affected_target_indices") or []]:
+        return "nonlinear_identifiability_gate_targets"
+    diagnostics = gate.get("diagnostics_by_target")
+    if not isinstance(diagnostics, dict) or not affected:
+        return "nonlinear_identifiability_gate_diagnostics"
+    for channel in affected:
+        audit = diagnostics.get(str(channel))
+        if not isinstance(audit, dict) or audit.get("accepted") is not True:
+            return "nonlinear_identifiability_target_rejected"
+        try:
+            gain = float(audit["holdout_incremental_r2"])
+            required_gain = float(
+                audit["minimum_required_holdout_incremental_r2"]
+            )
+            minimum_coefficient = float(
+                audit["minimum_required_coefficient_abs"]
+            )
+            coefficients = [
+                float(audit["training_nonlinear_coefficient"]),
+                float(audit["first_half_nonlinear_coefficient"]),
+                float(audit["second_half_nonlinear_coefficient"]),
+                float(audit["full_history_nonlinear_coefficient"]),
+            ]
+            half_ratio = float(audit["half_coefficient_magnitude_ratio"])
+            required_half_ratio = float(
+                audit["minimum_required_half_coefficient_ratio"]
+            )
+            linear_persistence = float(
+                audit["linear_persistence_coefficient"]
+            )
+            direction = float(audit["nonlinear_direction"])
+            stability_limit = float(audit["stability_limit"])
+            headroom = float(audit["stability_headroom"])
+        except (KeyError, TypeError, ValueError):
+            return "nonlinear_identifiability_target_values"
+        if (
+            not math.isclose(
+                required_gain,
+                NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or not math.isclose(
+                minimum_coefficient,
+                NONLINEAR_MINIMUM_COEFFICIENT_ABS,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or not math.isclose(
+                required_half_ratio,
+                NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+            or not math.isclose(
+                stability_limit,
+                NONLINEAR_STABILITY_LIMIT,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            return "nonlinear_identifiability_target_threshold"
+        signs = {math.copysign(1.0, value) for value in coefficients}
+        if (
+            gain < required_gain - 1e-12
+            or any(abs(value) < minimum_coefficient - 1e-12 for value in coefficients)
+            or len(signs) != 1
+            or audit.get("coefficient_sign_stable") is not True
+            or half_ratio < required_half_ratio - 1e-12
+            or abs(linear_persistence) >= stability_limit
+            or direction not in {-1.0, 1.0}
+            or headroom <= 0.0
+        ):
+            return "nonlinear_identifiability_target_invalid"
+    distances = group.get("full_history_distance_by_level")
+    if (
+        not isinstance(distances, list)
+        or len(distances) != 5
+        or any(not _finite_nonnegative(value) for value in distances)
+        or any(
+            float(current) <= float(previous) + 1e-12
+            for previous, current in zip(distances, distances[1:])
+        )
+    ):
+        return "nonlinear_level_distance_not_monotone"
+    if (
+        metadata.get("component")
+        != "same_innovation_state_dependent_persistence_recurrence"
+        or metadata.get("state_response") != "z_abs_z_over_one_plus_abs_z"
+        or metadata.get("target_future_used_for_delta") is not False
+        or row.get("controlled_coordinate")
+        != "stable_persistence_headroom_fraction"
+        or not math.isclose(
+            float(row.get("applied_component_gain", float("nan"))),
+            1.0,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        return "nonlinear_treatment_semantics"
+    level_details = metadata.get("level_diagnostics_by_target")
+    if not isinstance(level_details, dict):
+        return "nonlinear_level_diagnostics_missing"
+    coordinate = float(row["sampled_coordinate"])
+    level = int(row.get("capability_level", 0))
+    if level < 1 or level > len(NONLINEAR_PERSISTENCE_INTERVALS):
+        return "nonlinear_level_invalid"
+    expected_interval = NONLINEAR_PERSISTENCE_INTERVALS[level - 1]
+    stored_interval = row.get("coordinate_interval")
+    if (
+        not isinstance(stored_interval, list)
+        or len(stored_interval) != 2
+        or not all(
+            math.isclose(
+                float(stored), float(expected), rel_tol=0.0, abs_tol=1e-12
+            )
+            for stored, expected in zip(
+                stored_interval, expected_interval, strict=True
+            )
+        )
+        or coordinate < expected_interval[0] - 1e-12
+        or coordinate > expected_interval[1] + 1e-12
+    ):
+        return "nonlinear_level_coordinate"
+    for channel in affected:
+        audit = diagnostics[str(channel)]
+        detail = level_details.get(str(channel))
+        if not isinstance(detail, dict):
+            return "nonlinear_level_diagnostics_missing"
+        expected = (
+            float(audit["nonlinear_direction"])
+            * coordinate
+            * float(audit["stability_headroom"])
+        )
+        coefficient = float(detail["nonlinear_persistence_coefficient"])
+        effective = float(detail["effective_extreme_persistence_limit"])
+        if not math.isclose(
+            coefficient, expected, rel_tol=1e-9, abs_tol=1e-12
+        ) or abs(effective) >= NONLINEAR_STABILITY_LIMIT:
+            return "nonlinear_level_coefficient_mismatch"
+    return None
+
+
 def _treatment_contract_reason(row: dict[str, Any]) -> str | None:
     return (
         _distance_gate_reason(row)
+        or _nonlinear_identifiability_gate_reason(row)
         or _horizon_support_gate_reason(row)
         or _mechanism_scoring_gate_reason(row)
     )
@@ -399,7 +629,7 @@ def _treatment_contract_reason(row: dict[str, Any]) -> str | None:
 
 def _scan_treatment_row_group(
     work: tuple[str, int],
-) -> tuple[int, int, int, list[dict[str, Any]]]:
+) -> tuple[int, int, int, int, list[dict[str, Any]]]:
     path_string, row_group_index = work
     parquet = pq.ParquetFile(path_string)
     table = parquet.read_row_group(row_group_index, columns=("payload_json",))
@@ -407,6 +637,7 @@ def _scan_treatment_row_group(
     failures: list[dict[str, Any]] = []
     failure_count = 0
     horizon_support_count = 0
+    nonlinear_identifiability_count = 0
     for payload in payloads:
         sample_id: Any = None
         try:
@@ -416,6 +647,9 @@ def _scan_treatment_row_group(
             sample_id = row.get("sample_id")
             horizon_support_count += int(
                 row.get("horizon_support_gate") is not None
+            )
+            nonlinear_identifiability_count += int(
+                row.get("capability_id") == "nonlinear_persistence"
             )
             reason = _treatment_contract_reason(row)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -430,7 +664,13 @@ def _scan_treatment_row_group(
                         "reason": reason,
                     }
                 )
-    return len(payloads), horizon_support_count, failure_count, failures
+    return (
+        len(payloads),
+        horizon_support_count,
+        nonlinear_identifiability_count,
+        failure_count,
+        failures,
+    )
 
 
 def _research_validation(
@@ -444,6 +684,7 @@ def _research_validation(
         "official_baselines": int(manifest.get("official_instance_count", 0)),
         "capability_treatments": 0,
         "horizon_support_gates": 0,
+        "nonlinear_identifiability_gates": 0,
         "input_ablations": int(manifest.get("input_ablation_count", 0)),
         "availability": int(
             ((manifest.get("files") or {}).get("availability") or {}).get(
@@ -463,19 +704,21 @@ def _research_validation(
         if int(workers) > 1 and len(work) > 1:
             with ProcessPoolExecutor(max_workers=int(workers)) as executor:
                 results = executor.map(_scan_treatment_row_group, work)
-                for count, support_count, rejected, rows in results:
+                for count, support_count, nonlinear_count, rejected, rows in results:
                     counts["capability_treatments"] += count
                     counts["horizon_support_gates"] += support_count
+                    counts["nonlinear_identifiability_gates"] += nonlinear_count
                     failure_count += rejected
                     remaining = MAX_RECORDED_FAILURES - len(failures)
                     failures.extend(rows[: max(0, remaining)])
         else:
             for item in work:
-                count, support_count, rejected, rows = (
+                count, support_count, nonlinear_count, rejected, rows = (
                     _scan_treatment_row_group(item)
                 )
                 counts["capability_treatments"] += count
                 counts["horizon_support_gates"] += support_count
+                counts["nonlinear_identifiability_gates"] += nonlinear_count
                 failure_count += rejected
                 remaining = MAX_RECORDED_FAILURES - len(failures)
                 failures.extend(rows[: max(0, remaining)])
@@ -598,6 +841,7 @@ def _publication_validation(
 
     counts = {key: 0 for key in artifact_keys}
     horizon_support_count = 0
+    nonlinear_identifiability_count = 0
     if not failures and isinstance(config, dict):
         observed = {
             key: iter(iter_compact_parquet(path)) for key, path in paths.items()
@@ -647,6 +891,10 @@ def _publication_validation(
                         horizon_support_count += int(
                             expected.get("horizon_support_gate") is not None
                         )
+                        nonlinear_identifiability_count += int(
+                            expected.get("capability_id")
+                            == "nonlinear_persistence"
+                        )
                         reason = _treatment_contract_reason(expected)
                         if reason is not None:
                             failures.append(
@@ -676,6 +924,9 @@ def _publication_validation(
                     }
                 )
     counts["horizon_support_gates"] = horizon_support_count
+    counts["nonlinear_identifiability_gates"] = (
+        nonlinear_identifiability_count
+    )
     return counts, len(failures), failures[:MAX_RECORDED_FAILURES]
 
 
@@ -718,7 +969,7 @@ def validate_generation(
         )
         policy = (
             "research_all_treatment_source_distance_and_mechanism_scoring_"
-            "and_capability_horizon_support_gates_v3"
+            "capability_horizon_support_and_nonlinear_identifiability_gates_v4"
         )
 
     report = {
@@ -738,6 +989,9 @@ def validate_generation(
         "source_distance_gate_checked_count": counts["capability_treatments"],
         "horizon_support_gate_checked_count": counts.get(
             "horizon_support_gates", 0
+        ),
+        "nonlinear_identifiability_gate_checked_count": counts.get(
+            "nonlinear_identifiability_gates", 0
         ),
         "mechanism_scoring_gate_checked_count": counts[
             "capability_treatments"

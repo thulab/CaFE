@@ -12,6 +12,7 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_THRESHOLD,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     _distance_gate,
+    _nonlinear_state_response,
     build_capability_group,
     mase_scale_by_target,
     mechanism_effect_signal,
@@ -99,6 +100,60 @@ def test_regime_levels_control_location_and_share_amplitude() -> None:
     assert joins == sorted(joins)
     amplitudes = [np.max(np.abs(row.future_delta)) for row in group.treatments]
     np.testing.assert_allclose(amplitudes, amplitudes[0])
+
+
+def test_nonlinear_persistence_is_holdout_identifiable_and_self_recursive() -> None:
+    rng = np.random.default_rng(123)
+    values = np.zeros(5000, dtype=float)
+    values[0] = 1.0
+    for index in range(1, values.size):
+        values[index] = (
+            0.05 * values[index - 1]
+            + float(_nonlinear_state_response(values[index - 1]))
+            + rng.normal(0.0, 0.6)
+        )
+        values[index] = float(np.clip(values[index], -6.0, 6.0))
+    instance = _instance(values[:4970])
+    group = build_capability_group(
+        instance, "nonlinear_persistence", augmentation_seed=7
+    )
+    assert group.available
+    gate = group.group_metadata["nonlinear_identifiability_gate"]
+    audit = gate["diagnostics_by_target"]["0"]
+    assert gate["accepted"]
+    assert audit["holdout_incremental_r2"] >= audit[
+        "minimum_required_holdout_incremental_r2"
+    ]
+    assert audit["coefficient_sign_stable"]
+
+    distances = [
+        treatment.source_distance_gate["full_history_macro_normalized_rms"]
+        for treatment in group.treatments
+    ]
+    assert distances == sorted(distances)
+    assert all(treatment.horizon_support_gate["accepted"] for treatment in group.treatments)
+    treatment = group.treatments[2]
+    scale = float(np.std(instance.history[:, 0]))
+    mean = float(np.mean(instance.history[:, 0]))
+    source = (instance.history[:, 0] - mean) / scale
+    treated = source + treatment.history_delta[:, 0] / scale
+    detail = treatment.metadata["level_diagnostics_by_target"]["0"]
+    nonlinear_coefficient = float(
+        detail["nonlinear_persistence_coefficient"]
+    )
+    intercept = float(audit["linear_intercept"])
+    persistence = float(audit["linear_persistence_coefficient"])
+    source_innovations = source[1:] - (
+        intercept + persistence * source[:-1]
+    )
+    reconstructed = (
+        intercept
+        + persistence * treated[:-1]
+        + nonlinear_coefficient
+        * np.asarray(_nonlinear_state_response(treated[:-1]))
+        + source_innovations
+    )
+    np.testing.assert_allclose(treated[1:], reconstructed, atol=1e-12)
 
 
 def test_intermittency_levels_become_sparser_with_fixed_amplitude() -> None:

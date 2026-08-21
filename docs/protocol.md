@@ -80,7 +80,10 @@ d_C=\frac1{|A|}\sum_{d\in A}
 \]
 
 Amplitude-controlled levels are calibrated only on the complete official
-history, so the sampled coordinate is the full-history macro distance. Distance
+history, so the sampled coordinate is the full-history macro distance. State-
+dependent persistence is the exception: its coordinate is the ordered fraction
+of stability headroom used in the history-detected direction, while source
+distance remains a visibility and safety gate. Distance
 qualification then checks the distinct contexts that the seven evaluated models
 actually receive:
 
@@ -118,6 +121,9 @@ its forecast horizon is split into three relative sections only to verify that
 the tail-to-head macro RMS ratio is at least 0.50. The middle section is retained
 as diagnostic evidence. Other capabilities use their own support conditions or
 construction invariants and do not inherit these two gates.
+State-dependent persistence requires a non-flat, decaying future effect: its
+peak must occur in the first half of the horizon, tail RMS must be at most 0.90
+of the peak, and the relative profile range must be at least 0.10.
 
 ## 5. Capability availability
 
@@ -126,6 +132,15 @@ use the same formulas with their actual length. A cell records an unavailable
 reason when it cannot support the required cycles, events, segments, stable
 trend direction, native panel dimension, predictive gain, or all five levels.
 The unchanged official baseline remains available.
+
+State-dependent persistence requires at least 96 history points. A nonlinear
+AR(1) structure using `z*abs(z)/(1+abs(z))` is fitted once on a prefix and must
+beat linear AR(1) by at least 0.005 incremental R-squared on the contiguous
+held-out suffix. Ordinary and extreme states must appear in both partitions,
+the coefficient direction must agree across history halves, and every level
+must remain dynamically stable. Treatment history is generated recursively
+with the authentic linear innovations; future truth effect is the difference
+between paired nonlinear and linear zero-innovation rollouts.
 
 Hierarchical coherence is qualification-only. Covariate impulse response is
 available only when the source record has a native dynamic-real covariate.
@@ -141,8 +156,8 @@ least `0.05`; the scoring gate verifies this construction invariant.
 
 Generation performs mechanism qualification before it writes a treatment.
 Default research validation then scans every compact treatment contract and
-checks its source-distance, mechanism-scoring, and applicable capability-specific
-horizon-support evidence in parallel. Publication validation additionally binds
+checks its source-distance, mechanism-scoring, nonlinear-identifiability, and
+applicable capability-specific horizon-support evidence in parallel. Publication validation additionally binds
 the source Arrow files, generation manifest, and every Parquet artifact hash,
 then independently rebuilds every official instance, five-level treatment, and
 input ablation. Dense targets, futures, and native covariates are transient
@@ -191,6 +206,11 @@ correlation, and amplitude ratio. Ranks are separate by capability and level;
 lower pooled effect NRMSE ranks better. Levels are neutral capability
 coordinates: for regime and intermittency a higher level means less evidence,
 not a larger amplitude.
+
+For state-dependent persistence, analysis additionally reports peak-normalized
+effect-profile NRMSE and the absolute error in the first post-peak half-life.
+When truth or forecast does not halve inside the requested horizon, the row is
+explicitly censored. These diagnostics do not change the primary ranking.
 
 For common factor, cross-series dependence, and covariate impulse response, an
 additional attribution table compares the full treatment forecast with a

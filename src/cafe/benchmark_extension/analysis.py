@@ -34,7 +34,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v7"
+ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v8"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 ACCURACY_METRIC_SCHEMA = pa.schema(
@@ -66,6 +66,11 @@ EFFECT_METRIC_SCHEMA = pa.schema(
         ("effect_nrmse", pa.float64()),
         ("effect_correlation", pa.float64()),
         ("effect_amplitude_ratio", pa.float64()),
+        ("effect_decay_shape_nrmse", pa.float64()),
+        ("effect_half_life_status", pa.string()),
+        ("truth_effect_half_life", pa.float64()),
+        ("forecast_effect_half_life", pa.float64()),
+        ("effect_half_life_absolute_error", pa.float64()),
         ("truth_effect_rms", pa.float64()),
         ("truth_effect_mase_rms", pa.float64()),
         ("observed_effect_cell_count", pa.int64()),
@@ -201,6 +206,101 @@ def _effect_measurement(
     }
 
 
+def _effect_decay_measurement(
+    truth_delta: np.ndarray,
+    forecast_delta: np.ndarray,
+    observed_mask: np.ndarray,
+    affected_target_indices: Iterable[int],
+    mase_scale_by_target: np.ndarray,
+) -> dict[str, Any]:
+    """Compare amplitude-free response shape and peak-relative half-life."""
+
+    truth = np.asarray(truth_delta, dtype=float)
+    forecast = np.asarray(forecast_delta, dtype=float)
+    mask = np.asarray(observed_mask, dtype=bool)
+    scales = np.asarray(mase_scale_by_target, dtype=float)
+    affected = [int(value) for value in affected_target_indices]
+    truth_profile: list[float] = []
+    forecast_profile: list[float] = []
+    time_indexes: list[int] = []
+    for step in range(truth.shape[0]):
+        observed = mask[step, affected]
+        if not np.any(observed):
+            continue
+        selected = np.asarray(affected, dtype=int)[observed]
+        truth_values = truth[step, selected] / scales[selected]
+        forecast_values = forecast[step, selected] / scales[selected]
+        truth_profile.append(float(np.sqrt(np.mean(np.square(truth_values)))))
+        forecast_profile.append(
+            float(np.sqrt(np.mean(np.square(forecast_values))))
+        )
+        time_indexes.append(step)
+    if not truth_profile:
+        return {
+            "shape_nrmse": None,
+            "half_life_status": "unavailable_no_observed_effect_cell",
+            "truth_half_life": None,
+            "forecast_half_life": None,
+            "half_life_absolute_error": None,
+        }
+    truth_values = np.asarray(truth_profile, dtype=float)
+    forecast_values = np.asarray(forecast_profile, dtype=float)
+    times = np.asarray(time_indexes, dtype=int)
+    truth_peak = float(np.max(truth_values))
+    forecast_peak = float(np.max(forecast_values))
+    if truth_peak <= 1e-12:
+        return {
+            "shape_nrmse": None,
+            "half_life_status": "unavailable_zero_truth_profile",
+            "truth_half_life": None,
+            "forecast_half_life": None,
+            "half_life_absolute_error": None,
+        }
+    truth_normalized = truth_values / truth_peak
+    forecast_normalized = (
+        forecast_values / forecast_peak
+        if forecast_peak > 1e-12
+        else np.zeros_like(forecast_values)
+    )
+    shape_nrmse = float(
+        np.sqrt(
+            np.sum(np.square(forecast_normalized - truth_normalized))
+            / max(np.sum(np.square(truth_normalized)), 1e-12)
+        )
+    )
+
+    def half_life(profile: np.ndarray, peak: float) -> float | None:
+        if peak <= 1e-12:
+            return None
+        peak_position = int(np.argmax(profile))
+        crossing = np.flatnonzero(
+            (np.arange(profile.size) >= peak_position)
+            & (profile <= 0.5 * peak)
+        )
+        if not crossing.size:
+            return None
+        return float(times[int(crossing[0])] - times[peak_position])
+
+    truth_half_life = half_life(truth_values, truth_peak)
+    forecast_half_life = half_life(forecast_values, forecast_peak)
+    status = "scored"
+    if truth_half_life is None:
+        status = "censored_truth_not_halved_in_horizon"
+    elif forecast_half_life is None:
+        status = "censored_forecast_not_halved_in_horizon"
+    return {
+        "shape_nrmse": shape_nrmse,
+        "half_life_status": status,
+        "truth_half_life": truth_half_life,
+        "forecast_half_life": forecast_half_life,
+        "half_life_absolute_error": (
+            abs(forecast_half_life - truth_half_life)
+            if truth_half_life is not None and forecast_half_life is not None
+            else None
+        ),
+    }
+
+
 def analyse_model(
     model_id: str,
     baselines: dict[str, dict[str, Any]],
@@ -239,6 +339,23 @@ def analyse_model(
             affected,
             scales,
         )
+        decay = (
+            _effect_decay_measurement(
+                truth_delta,
+                forecast_delta,
+                mask,
+                affected,
+                scales,
+            )
+            if treatment["capability_id"] == "nonlinear_persistence"
+            else {
+                "shape_nrmse": None,
+                "half_life_status": "not_applicable",
+                "truth_half_life": None,
+                "forecast_half_life": None,
+                "half_life_absolute_error": None,
+            }
+        )
         treatment_error = treatment_forecast - _future(treatment)
         treatment_mase = float(
             np.mean(_masked(np.abs(treatment_error) / scales[None, :], mask))
@@ -246,7 +363,7 @@ def analyse_model(
         treatment_mae = float(np.mean(np.abs(_masked(treatment_error, mask))))
         effect_rows.append(
             {
-                "schema_version": "cafe.capability_effect_metric.v3",
+                "schema_version": "cafe.capability_effect_metric.v4",
                 "model_id": model_id,
                 "dataset_id": treatment["dataset_id"],
                 "official_instance_id": treatment["official_instance_id"],
@@ -259,6 +376,13 @@ def analyse_model(
                 "effect_nrmse": measurement["nrmse"],
                 "effect_correlation": measurement["correlation"],
                 "effect_amplitude_ratio": measurement["amplitude_ratio"],
+                "effect_decay_shape_nrmse": decay["shape_nrmse"],
+                "effect_half_life_status": decay["half_life_status"],
+                "truth_effect_half_life": decay["truth_half_life"],
+                "forecast_effect_half_life": decay["forecast_half_life"],
+                "effect_half_life_absolute_error": decay[
+                    "half_life_absolute_error"
+                ],
                 "truth_effect_rms": measurement["truth_raw_rms"],
                 "truth_effect_mase_rms": measurement["truth_mase_rms"],
                 "observed_effect_cell_count": measurement["observed_count"],
@@ -484,9 +608,20 @@ def _aggregate_effects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         squared_error_sum = float(
             sum(row["standardized_squared_error_sum"] for row in scored)
         )
+        decay_shapes = [
+            float(row["effect_decay_shape_nrmse"])
+            for row in scored
+            if row.get("effect_decay_shape_nrmse") is not None
+        ]
+        half_life_errors = [
+            float(row["effect_half_life_absolute_error"])
+            for row in scored
+            if row.get("effect_half_life_status") == "scored"
+            and row.get("effect_half_life_absolute_error") is not None
+        ]
         aggregates.append(
             {
-                "schema_version": "cafe.capability_effect_summary.v3",
+                "schema_version": "cafe.capability_effect_summary.v4",
                 "model_id": model_id,
                 "capability_id": capability,
                 "capability_level": level,
@@ -521,6 +656,21 @@ def _aggregate_effects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     )
                     if scored
                     else None
+                ),
+                "effect_decay_shape_nrmse_mean": (
+                    float(np.mean(decay_shapes)) if decay_shapes else None
+                ),
+                "effect_half_life_mae": (
+                    float(np.mean(half_life_errors))
+                    if half_life_errors
+                    else None
+                ),
+                "effect_half_life_scored_count": len(half_life_errors),
+                "effect_half_life_censored_count": sum(
+                    row.get("effect_half_life_status", "not_applicable").startswith(
+                        "censored_"
+                    )
+                    for row in scored
                 ),
             }
         )
@@ -575,6 +725,11 @@ def _effect_aggregate() -> dict[str, float]:
         "truth_squared_sum": 0.0,
         "forecast_squared_sum": 0.0,
         "observed_cell_count": 0.0,
+        "decay_shape_nrmse": 0.0,
+        "decay_shape_count": 0.0,
+        "half_life_absolute_error": 0.0,
+        "half_life_count": 0.0,
+        "half_life_censored_count": 0.0,
     }
 
 
@@ -723,9 +878,26 @@ def _consume_replayed_samples(
                     affected,
                     scales,
                 )
+                decay = (
+                    _effect_decay_measurement(
+                        truth_delta,
+                        forecast_delta,
+                        mask,
+                        affected,
+                        scales,
+                    )
+                    if sample["capability_id"] == "nonlinear_persistence"
+                    else {
+                        "shape_nrmse": None,
+                        "half_life_status": "not_applicable",
+                        "truth_half_life": None,
+                        "forecast_half_life": None,
+                        "half_life_absolute_error": None,
+                    }
+                )
                 effect_writer.write(
                     {
-                        "schema_version": "cafe.capability_effect_metric.v3",
+                        "schema_version": "cafe.capability_effect_metric.v4",
                         "model_id": model_id,
                         "dataset_id": sample["dataset_id"],
                         "official_instance_id": sample["official_instance_id"],
@@ -739,6 +911,17 @@ def _consume_replayed_samples(
                         "effect_correlation": measurement["correlation"],
                         "effect_amplitude_ratio": measurement[
                             "amplitude_ratio"
+                        ],
+                        "effect_decay_shape_nrmse": decay["shape_nrmse"],
+                        "effect_half_life_status": decay[
+                            "half_life_status"
+                        ],
+                        "truth_effect_half_life": decay["truth_half_life"],
+                        "forecast_effect_half_life": decay[
+                            "forecast_half_life"
+                        ],
+                        "effect_half_life_absolute_error": decay[
+                            "half_life_absolute_error"
                         ],
                         "truth_effect_rms": measurement["truth_raw_rms"],
                         "truth_effect_mase_rms": measurement[
@@ -794,6 +977,18 @@ def _consume_replayed_samples(
                 if correlation is not None:
                     effect_aggregate["correlation"] += correlation
                     effect_aggregate["correlation_count"] += 1
+                if decay["shape_nrmse"] is not None:
+                    effect_aggregate["decay_shape_nrmse"] += float(
+                        decay["shape_nrmse"]
+                    )
+                    effect_aggregate["decay_shape_count"] += 1
+                if decay["half_life_status"] == "scored":
+                    effect_aggregate["half_life_absolute_error"] += float(
+                        decay["half_life_absolute_error"]
+                    )
+                    effect_aggregate["half_life_count"] += 1
+                elif sample["capability_id"] == "nonlinear_persistence":
+                    effect_aggregate["half_life_censored_count"] += 1
             continue
         if table != "gift_eval_capability_input_ablation":
             raise ValueError(f"unknown evaluation table {table}")
@@ -1073,7 +1268,7 @@ def _write_sharded_analysis_outputs(
         )
         effect_summary.append(
             {
-                "schema_version": "cafe.capability_effect_summary.v3",
+                "schema_version": "cafe.capability_effect_summary.v4",
                 "model_id": model_id,
                 "capability_id": capability,
                 "capability_level": level,
@@ -1107,6 +1302,23 @@ def _write_sharded_analysis_outputs(
                 ),
                 "observed_effect_cell_count": int(
                     values["observed_cell_count"]
+                ),
+                "effect_decay_shape_nrmse_mean": _mean_or_none(
+                    values["decay_shape_nrmse"],
+                    int(values["decay_shape_count"]),
+                ),
+                "effect_decay_shape_scored_count": int(
+                    values["decay_shape_count"]
+                ),
+                "effect_half_life_mae": _mean_or_none(
+                    values["half_life_absolute_error"],
+                    int(values["half_life_count"]),
+                ),
+                "effect_half_life_scored_count": int(
+                    values["half_life_count"]
+                ),
+                "effect_half_life_censored_count": int(
+                    values["half_life_censored_count"]
                 ),
             }
         )
@@ -1205,6 +1417,12 @@ def _write_sharded_analysis_outputs(
             "low_signal_treatment_accuracy_retained": True,
             "primary_metric": "mase_standardized_pooled_nrmse_v1",
             "aggregation": "ratio_of_standardized_squared_sums",
+            "nonlinear_persistence_diagnostics": {
+                "decay_shape_metric": "peak_normalized_profile_nrmse",
+                "half_life_metric": "first_half_peak_crossing_after_peak",
+                "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+                "ranking_use": "diagnostic_only",
+            },
         },
     }
     row_paths = {

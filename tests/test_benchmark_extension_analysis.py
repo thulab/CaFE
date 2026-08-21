@@ -9,6 +9,7 @@ from cafe.benchmark_extension import analysis as analysis_module
 from cafe.benchmark_extension.analysis import (
     _accuracy_rows,
     _aggregate_effects,
+    _effect_decay_measurement,
     _effect_measurement,
     _input_ablation_rows,
     analyse_model,
@@ -132,6 +133,34 @@ def test_effect_measurement_preserves_zero_and_one_interpretation() -> None:
     assert perfect["status"] == "scored"
     assert perfect["nrmse"] == 0.0
     assert no_response["nrmse"] == 1.0
+
+
+def test_nonlinear_decay_diagnostics_measure_shape_and_half_life() -> None:
+    truth = np.asarray([1.0, 0.7, 0.49, 0.3, 0.1])[:, None]
+    perfect = _effect_decay_measurement(
+        truth,
+        truth,
+        np.ones_like(truth, dtype=bool),
+        [0],
+        np.ones(1),
+    )
+    assert perfect["shape_nrmse"] == 0.0
+    assert perfect["half_life_status"] == "scored"
+    assert perfect["truth_half_life"] == 2.0
+    assert perfect["forecast_half_life"] == 2.0
+    assert perfect["half_life_absolute_error"] == 0.0
+
+    no_response = _effect_decay_measurement(
+        truth,
+        np.zeros_like(truth),
+        np.ones_like(truth, dtype=bool),
+        [0],
+        np.ones(1),
+    )
+    assert no_response["shape_nrmse"] == 1.0
+    assert no_response["half_life_status"] == (
+        "censored_forecast_not_halved_in_horizon"
+    )
 
 
 def test_effect_summary_uses_pooled_standardized_energy() -> None:

@@ -50,7 +50,7 @@ instance:
 - independent secondary seasonality;
 - constrained time-varying seasonal amplitude;
 - regime change with level-controlled change location;
-- nonlinear persistence;
+- state-dependent persistence with held-out identifiability auditing;
 - predictable intermittency with level-controlled event sparsity;
 - native-panel common factor;
 - directed predictive cross-series transfer;

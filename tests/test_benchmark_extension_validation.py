@@ -8,6 +8,7 @@ import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
 from cafe.benchmark_extension.generation import generate_dataset
+from cafe.benchmark_extension.mechanisms import _nonlinear_state_response
 from cafe.benchmark_extension.storage import (
     iter_compact_parquet,
     parquet_file_record,
@@ -61,6 +62,44 @@ def _tvs_fixture(tmp_path: Path, monkeypatch) -> Path:
     )
     monkeypatch.setitem(protocol.DATASET_REGISTRY, spec.dataset_id, spec)
     return tmp_path / "gift-tvs"
+
+
+def _nonlinear_fixture(tmp_path: Path, monkeypatch) -> Path:
+    asset = tmp_path / "gift-nonlinear" / "fixture" / "H"
+    asset.mkdir(parents=True)
+    rng = np.random.default_rng(123)
+    # Short-term GIFT evaluation keeps rolling windows; w00 therefore starts
+    # 576 points before the source end.  This leaves the audited history
+    # ending at the selected extreme state at index 4969.
+    target = np.zeros(4970 + 576, dtype=float)
+    target[0] = 1.0
+    for index in range(1, target.size):
+        target[index] = (
+            0.05 * target[index - 1]
+            + float(_nonlinear_state_response(target[index - 1]))
+            + rng.normal(0.0, 0.6)
+        )
+        target[index] = float(np.clip(target[index], -6.0, 6.0))
+    table = pa.table(
+        {
+            "item_id": ["native-item"],
+            "start": ["2020-01-01"],
+            "freq": ["H"],
+            "target": [target.tolist()],
+        }
+    )
+    with pa.OSFile(str(asset / "data-00000-of-00001.arrow"), "wb") as sink:
+        with pa_ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
+    spec = protocol.DatasetSpec(
+        "gift_nonlinear_fixture",
+        "Nonlinear Fixture",
+        "fixture/H",
+        "fixture/H",
+        "Test",
+    )
+    monkeypatch.setitem(protocol.DATASET_REGISTRY, spec.dataset_id, spec)
+    return tmp_path / "gift-nonlinear"
 
 
 def test_validation_accepts_exact_generated_pairs(tmp_path: Path, monkeypatch) -> None:
@@ -230,4 +269,37 @@ def test_research_validation_checks_tvs_horizon_support_gate(
     assert not rejected["accepted"]
     assert rejected["failures"][0]["reason"] == (
         "horizon_support_gate_minimum_mismatch"
+    )
+
+
+def test_research_validation_checks_nonlinear_identifiability_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _nonlinear_fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment" / "gift_nonlinear_fixture"
+    generate_dataset(
+        "gift_nonlinear_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=7,
+        capability_ids=("nonlinear_persistence",),
+        max_instances=1,
+    )
+    accepted = validate_generation(dataset_root)
+    assert accepted["accepted"]
+    assert accepted["nonlinear_identifiability_gate_checked_count"] == 5
+
+    treatment_path = dataset_root / "01_generation" / "treatment_contracts.parquet"
+    rows = list(iter_compact_parquet(treatment_path))
+    audit = rows[0]["group_metadata"]["nonlinear_identifiability_gate"][
+        "diagnostics_by_target"
+    ]["0"]
+    audit["holdout_incremental_r2"] = 0.0
+    write_compact_parquet(treatment_path, rows)
+    rejected = validate_generation(dataset_root)
+    assert not rejected["accepted"]
+    assert rejected["failures"][0]["reason"] == (
+        "nonlinear_identifiability_target_invalid"
     )
