@@ -39,6 +39,30 @@ def _fixture(tmp_path: Path, monkeypatch) -> Path:
     return tmp_path / "gift"
 
 
+def _tvs_fixture(tmp_path: Path, monkeypatch) -> Path:
+    asset = tmp_path / "gift-tvs" / "fixture" / "H"
+    asset.mkdir(parents=True)
+    t = np.arange(1200.0)
+    carrier = np.sin(2.0 * np.pi * t / 12.0 + 0.2)
+    envelope = 1.0 + 0.7 * np.sin(2.0 * np.pi * t / 120.0 + 0.8)
+    table = pa.table(
+        {
+            "item_id": ["native-item"],
+            "start": ["2020-01-01"],
+            "freq": ["H"],
+            "target": [(carrier * envelope).tolist()],
+        }
+    )
+    with pa.OSFile(str(asset / "data-00000-of-00001.arrow"), "wb") as sink:
+        with pa_ipc.new_stream(sink, table.schema) as writer:
+            writer.write_table(table)
+    spec = protocol.DatasetSpec(
+        "gift_tvs_fixture", "TVS Fixture", "fixture/H", "fixture/H", "Test"
+    )
+    monkeypatch.setitem(protocol.DATASET_REGISTRY, spec.dataset_id, spec)
+    return tmp_path / "gift-tvs"
+
+
 def test_validation_accepts_exact_generated_pairs(tmp_path: Path, monkeypatch) -> None:
     gift_root = _fixture(tmp_path, monkeypatch)
     dataset_root = tmp_path / "experiment" / "gift_fixture"
@@ -168,3 +192,42 @@ def test_research_validation_rejects_invalid_mechanism_scoring_gate(
         "mechanism_scoring_gate_ranking_flag",
         "intermittency_future_effect_not_scoreable",
     }
+
+
+def test_research_validation_checks_tvs_horizon_support_gate(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _tvs_fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment" / "gift_tvs_fixture"
+    generate_dataset(
+        "gift_tvs_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=31,
+        capability_ids=("time_varying_seasonality",),
+        max_instances=1,
+    )
+    accepted = validate_generation(dataset_root)
+    assert accepted["accepted"]
+    assert accepted["horizon_support_gate_checked_count"] == 5
+    publication = validate_generation(
+        dataset_root,
+        gift_eval_dir=gift_root,
+        mode="publication",
+        workers=1,
+    )
+    assert publication["accepted"]
+
+    treatment_path = dataset_root / "01_generation" / "treatment_contracts.parquet"
+    rows = list(iter_compact_parquet(treatment_path))
+    rows[0]["horizon_support_gate"][
+        "minimum_observed_active_fraction"
+    ] = 0.0
+    write_compact_parquet(treatment_path, rows)
+    rejected = validate_generation(dataset_root)
+    assert not rejected["accepted"]
+    assert rejected["failures"][0]["reason"] == (
+        "horizon_support_gate_minimum_mismatch"
+    )

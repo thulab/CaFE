@@ -25,11 +25,16 @@ from cafe.benchmark_extension.gift_eval import (
 )
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
+    COMMON_FACTOR_MINIMUM_HARMONIC_SHARE,
+    COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
+    TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
+    TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
+    TVS_MINIMUM_INCREMENTAL_R2,
     CapabilityGroup,
     CapabilityTreatment,
     build_capability_group,
@@ -43,10 +48,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v8"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v5"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v4"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v2"
+PIPELINE_SCHEMA = "cafe.pipeline.v9"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v6"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v5"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v3"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -281,6 +286,7 @@ def _treatment_row(
         "history_delta_sha256": _target_sha256(stored_history_delta),
         "future_delta_sha256": _target_sha256(stored_future_delta),
         "source_distance_gate": treatment.source_distance_gate,
+        "horizon_support_gate": treatment.horizon_support_gate,
         "mechanism_scoring_gate": mechanism_gate,
         "anti_copy_gate": {
             "policy": "treatment_to_authentic_source_distance_v1",
@@ -1025,6 +1031,28 @@ def generate_dataset(
             "metric": "observed_affected_future_mase_standardized_rms",
             "minimum_required_mase_rms": MECHANISM_EFFECT_MINIMUM_MASE_RMS,
             "low_signal_policy": "treatment_accuracy_retained_mechanism_score_unavailable",
+        },
+        "capability_horizon_support_policy": {
+            "time_varying_seasonality": {
+                "continuation": "history_fitted_constrained_am",
+                "minimum_incremental_r2": TVS_MINIMUM_INCREMENTAL_R2,
+                "active_amplitude_fraction": (
+                    TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION
+                ),
+                "minimum_future_active_fraction": (
+                    TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION
+                ),
+            },
+            "common_factor": {
+                "continuation": "history_fitted_stable_latent_harmonic",
+                "minimum_latent_harmonic_share": (
+                    COMMON_FACTOR_MINIMUM_HARMONIC_SHARE
+                ),
+                "minimum_tail_head_rms_ratio": (
+                    COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO
+                ),
+            },
+            "other_capabilities": "capability_specific_or_not_applicable",
         },
         "source_distance_configuration": {
             "strength_reference": "full_official_history_macro_normalized_rms",

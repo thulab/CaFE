@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v4"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v5"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -45,6 +45,11 @@ SOURCE_DISTANCE_MODEL_MAX_CONTEXTS = {
 # Kept as a compatibility alias for callers that only need the lower bound.
 SOURCE_DISTANCE_THRESHOLD = SOURCE_DISTANCE_MINIMUM_MACRO
 MECHANISM_EFFECT_MINIMUM_MASE_RMS = 0.05
+TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION = 0.25
+TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION = 0.25
+TVS_MINIMUM_INCREMENTAL_R2 = 0.01
+COMMON_FACTOR_MINIMUM_HARMONIC_SHARE = 0.05
+COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO = 0.50
 STRENGTH_INTERVALS = (
     (0.10, 0.14),
     (0.16, 0.20),
@@ -80,6 +85,7 @@ class CapabilityTreatment:
     applied_component_gain: float
     metadata: dict[str, Any]
     source_distance_gate: dict[str, Any]
+    horizon_support_gate: dict[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -297,6 +303,34 @@ def _harmonic_component(
     return component[:length], component[length:]
 
 
+def _harmonic_signal(
+    *,
+    length: int,
+    horizon: int,
+    frequency_index: int,
+    sin_coefficient: float,
+    cos_coefficient: float,
+) -> np.ndarray:
+    all_t = np.arange(length + horizon, dtype=float)
+    omega = 2.0 * math.pi * float(frequency_index) / float(length)
+    return (
+        float(sin_coefficient) * np.sin(omega * all_t)
+        + float(cos_coefficient) * np.cos(omega * all_t)
+    )
+
+
+def _harmonic_coefficients(
+    values: np.ndarray,
+    frequency_index: int,
+) -> tuple[float, float]:
+    series = np.asarray(values, dtype=float)
+    t = np.arange(series.size, dtype=float)
+    omega = 2.0 * math.pi * float(frequency_index) / float(series.size)
+    design = np.column_stack((np.sin(omega * t), np.cos(omega * t)))
+    coefficients = np.linalg.lstsq(design, series, rcond=None)[0]
+    return float(coefficients[0]), float(coefficients[1])
+
+
 def _dominant_frequency_indexes(series: np.ndarray) -> list[int]:
     values = np.asarray(series, dtype=float)
     length = values.size
@@ -445,24 +479,71 @@ def _time_varying_units(
     component_f = np.zeros_like(instance.future)
     affected: list[int] = []
     details: dict[str, Any] = {}
-    all_t = np.arange(length + instance.prediction_length, dtype=float)
+    t = np.arange(length, dtype=float)
+    centered_t = np.linspace(-1.0, 1.0, length)
     for channel in range(dimension):
         ranked = _dominant_frequency_indexes(history[:, channel])
         if not ranked:
             continue
         carrier_index = ranked[0]
-        slower = next(
-            (index for index in ranked[1:] if 2 <= index < carrier_index / 2),
-            None,
-        )
-        if slower is None:
+        maximum_modulation_index = min(16, (carrier_index - 1) // 2)
+        if maximum_modulation_index < 2:
             continue
-        carrier_h, carrier_f = _harmonic_component(
-            history[:, channel], carrier_index, instance.prediction_length
+        series = np.asarray(history[:, channel], dtype=float)
+        trend_design = np.column_stack((np.ones(length), centered_t))
+        detrended = series - trend_design @ np.linalg.lstsq(
+            trend_design, series, rcond=None
+        )[0]
+        carrier_sin, carrier_cos = _harmonic_coefficients(
+            detrended, carrier_index
         )
-        envelope = np.sin(2.0 * math.pi * slower * all_t / length)
-        combined = np.concatenate((carrier_h, carrier_f)) * envelope
-        if np.std(combined[:length]) < 0.01 * _scale_by_target(history)[channel]:
+        carrier = _harmonic_signal(
+            length=length,
+            horizon=instance.prediction_length,
+            frequency_index=carrier_index,
+            sin_coefficient=carrier_sin,
+            cos_coefficient=carrier_cos,
+        )
+        carrier_history = carrier[:length]
+        residual = detrended - carrier_history
+        baseline_error = float(np.mean(np.square(residual)))
+        if baseline_error <= 1e-12:
+            continue
+        best: tuple[float, int, float, float, np.ndarray] | None = None
+        for modulation_index in range(2, maximum_modulation_index + 1):
+            omega = 2.0 * math.pi * float(modulation_index) / float(length)
+            design = np.column_stack(
+                (
+                    carrier_history * np.sin(omega * t),
+                    carrier_history * np.cos(omega * t),
+                )
+            )
+            coefficients = np.linalg.lstsq(design, residual, rcond=None)[0]
+            fitted = design @ coefficients
+            incremental_r2 = 1.0 - float(
+                np.mean(np.square(residual - fitted))
+            ) / baseline_error
+            candidate = (
+                incremental_r2,
+                modulation_index,
+                float(coefficients[0]),
+                float(coefficients[1]),
+                fitted,
+            )
+            if best is None or candidate[:2] > best[:2]:
+                best = candidate
+        if best is None or best[0] < TVS_MINIMUM_INCREMENTAL_R2:
+            continue
+        incremental_r2, slower, envelope_sin, envelope_cos, fitted = best
+        envelope = _harmonic_signal(
+            length=length,
+            horizon=instance.prediction_length,
+            frequency_index=slower,
+            sin_coefficient=envelope_sin,
+            cos_coefficient=envelope_cos,
+        )
+        combined = carrier * envelope
+        if np.std(fitted) < 0.01 * _scale_by_target(history)[channel]:
             continue
         component_h[:, channel] = combined[:length]
         component_f[:, channel] = combined[length:]
@@ -470,6 +551,16 @@ def _time_varying_units(
         details[str(channel)] = {
             "carrier_period": float(length / carrier_index),
             "modulation_period": float(length / slower),
+            "carrier_frequency_index": int(carrier_index),
+            "modulation_frequency_index": int(slower),
+            "carrier_sin_coefficient": carrier_sin,
+            "carrier_cos_coefficient": carrier_cos,
+            "envelope_sin_coefficient": envelope_sin,
+            "envelope_cos_coefficient": envelope_cos,
+            "envelope_amplitude": float(
+                math.hypot(envelope_sin, envelope_cos)
+            ),
+            "am_incremental_r2": float(incremental_r2),
         }
     if not affected:
         raise ValueError("constrained_am_envelope_not_resolved")
@@ -481,7 +572,7 @@ def _time_varying_units(
         component_f,
         tuple(affected),
         metadata={
-            "component": "phase_locked_carrier_times_slow_envelope",
+            "component": "history_fitted_constrained_am_carrier_envelope",
             "resolved_periods_by_target": details,
         },
     )
@@ -860,16 +951,45 @@ def _common_factor_units(
     if len(affected) < min(3, dimension):
         raise ValueError("too_few_nondegenerate_common_factor_loadings")
     factor = z @ loading
-    denominator = float(np.dot(factor[:-1], factor[:-1]))
-    phi = 0.0 if denominator <= 1e-12 else float(np.dot(factor[:-1], factor[1:]) / denominator)
-    phi = float(np.clip(phi, -0.98, 0.98))
-    future_factor = np.empty(instance.prediction_length, dtype=float)
-    state = float(factor[-1])
-    for step in range(instance.prediction_length):
-        state *= phi
-        future_factor[step] = state
-    history_component = factor[:, None] * loading[None, :] * scales[None, :]
-    future_component = future_factor[:, None] * loading[None, :] * scales[None, :]
+    factor_variance = float(np.var(factor))
+    if factor_variance <= 1e-12:
+        raise ValueError("common_factor_latent_variance_too_small")
+    best: tuple[float, int, float, float, np.ndarray] | None = None
+    for frequency_index in _dominant_frequency_indexes(factor):
+        sin_coefficient, cos_coefficient = _harmonic_coefficients(
+            factor, frequency_index
+        )
+        carrier = _harmonic_signal(
+            length=length,
+            horizon=instance.prediction_length,
+            frequency_index=frequency_index,
+            sin_coefficient=sin_coefficient,
+            cos_coefficient=cos_coefficient,
+        )
+        fitted_share = max(
+            0.0,
+            1.0
+            - float(np.mean(np.square(factor - carrier[:length])))
+            / factor_variance,
+        )
+        candidate = (
+            fitted_share,
+            frequency_index,
+            sin_coefficient,
+            cos_coefficient,
+            carrier,
+        )
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+    if best is None or best[0] < COMMON_FACTOR_MINIMUM_HARMONIC_SHARE:
+        raise ValueError("common_factor_stable_latent_carrier_not_resolved")
+    fitted_share, frequency_index, sin_coefficient, cos_coefficient, carrier = best
+    history_component = (
+        carrier[:length, None] * loading[None, :] * scales[None, :]
+    )
+    future_component = (
+        carrier[length:, None] * loading[None, :] * scales[None, :]
+    )
     return _strength_scaled_units(
         instance,
         augmentation_seed,
@@ -878,10 +998,15 @@ def _common_factor_units(
         future_component,
         affected,
         metadata={
-            "component": "history_pca_top1_factor_with_ar1_continuation",
+            "component": "history_pca_loading_with_stable_latent_harmonic",
             "top1_explained_share": share,
             "loading": loading.tolist(),
-            "factor_ar1": phi,
+            "latent_carrier_frequency_index": int(frequency_index),
+            "latent_carrier_period": float(length / frequency_index),
+            "latent_carrier_sin_coefficient": float(sin_coefficient),
+            "latent_carrier_cos_coefficient": float(cos_coefficient),
+            "latent_carrier_history_explained_share": float(fitted_share),
+            "future_continuation": "analytic_constant_amplitude_harmonic",
         },
     )
 
@@ -1029,6 +1154,120 @@ _BUILDERS: dict[
 }
 
 
+def _horizon_support_gate(
+    instance: GiftEvalInstance,
+    capability_id: str,
+    unit: _UnitTreatment,
+) -> dict[str, Any] | None:
+    if capability_id == "time_varying_seasonality":
+        details = unit.metadata["resolved_periods_by_target"]
+        future_t = np.arange(
+            instance.context_length,
+            instance.context_length + instance.prediction_length,
+            dtype=float,
+        )
+        by_target: dict[str, Any] = {}
+        active_fractions: list[float] = []
+        for channel in unit.affected:
+            row = details[str(channel)]
+            modulation_index = int(row["modulation_frequency_index"])
+            omega = (
+                2.0
+                * math.pi
+                * float(modulation_index)
+                / float(instance.context_length)
+            )
+            envelope = (
+                float(row["envelope_sin_coefficient"])
+                * np.sin(omega * future_t)
+                + float(row["envelope_cos_coefficient"])
+                * np.cos(omega * future_t)
+            )
+            amplitude = float(row["envelope_amplitude"])
+            observed = np.asarray(
+                instance.future_observed_mask[:, channel], dtype=bool
+            )
+            active = (
+                np.abs(envelope)
+                >= TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION * amplitude
+            )
+            fraction = (
+                float(np.mean(active[observed])) if np.any(observed) else 0.0
+            )
+            active_fractions.append(fraction)
+            by_target[str(channel)] = {
+                "observed_future_count": int(np.count_nonzero(observed)),
+                "active_future_count": int(np.count_nonzero(active & observed)),
+                "active_fraction": fraction,
+            }
+        minimum = min(active_fractions, default=0.0)
+        accepted = minimum >= TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION - 1e-12
+        return {
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "capability_id": capability_id,
+            "metric": "future_envelope_active_fraction_by_affected_target",
+            "horizon_partition": "whole_forecast_horizon",
+            "active_amplitude_fraction": (
+                TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION
+            ),
+            "minimum_required_active_fraction": (
+                TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION
+            ),
+            "minimum_observed_active_fraction": minimum,
+            "by_target": by_target,
+            "target_future_values_used": False,
+            "accepted": accepted,
+            "reason": None if accepted else "future_envelope_coverage_too_small",
+        }
+    if capability_id == "common_factor":
+        scales = _scale_by_target(instance.history)[list(unit.affected)]
+        standardized = unit.future_delta[:, unit.affected] / scales[None, :]
+        sections = np.array_split(
+            np.arange(instance.prediction_length, dtype=int), 3
+        )
+        section_rms: list[float] = []
+        section_names = ("head", "middle", "tail")
+        by_section: dict[str, Any] = {}
+        for name, indexes in zip(section_names, sections, strict=True):
+            channel_rms: list[float] = []
+            for position, channel in enumerate(unit.affected):
+                observed = instance.future_observed_mask[indexes, channel]
+                values = standardized[indexes, position][observed]
+                if values.size:
+                    channel_rms.append(
+                        float(np.sqrt(np.mean(np.square(values))))
+                    )
+            macro = float(np.mean(channel_rms)) if channel_rms else 0.0
+            section_rms.append(macro)
+            by_section[name] = {
+                "time_count": int(indexes.size),
+                "observed_target_count": len(channel_rms),
+                "macro_normalized_rms": macro,
+            }
+        head, _middle, tail = section_rms
+        ratio = tail / max(head, 1e-12)
+        accepted = (
+            head > 0.0
+            and tail > 0.0
+            and ratio >= COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO - 1e-12
+        )
+        return {
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "capability_id": capability_id,
+            "metric": "common_factor_tail_to_head_macro_normalized_rms_ratio",
+            "horizon_partition": "three_equal_relative_sections",
+            "minimum_required_tail_head_ratio": (
+                COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO
+            ),
+            "observed_tail_head_ratio": ratio,
+            "by_section": by_section,
+            "target_future_values_used": False,
+            "accepted": accepted,
+            "reason": None if accepted else "common_factor_tail_support_too_small",
+        }
+    return None
+
+
 def build_capability_group(
     instance: GiftEvalInstance,
     capability_id: str,
@@ -1077,6 +1316,26 @@ def build_capability_group(
                     "failed_source_distance_gate": gate,
                 },
             )
+        horizon_support_gate = _horizon_support_gate(
+            instance, capability_id, unit
+        )
+        if (
+            horizon_support_gate is not None
+            and not horizon_support_gate["accepted"]
+        ):
+            return CapabilityGroup(
+                capability_id=capability_id,
+                available=False,
+                reason=(
+                    f"level_{level}_{horizon_support_gate['reason']}"
+                ),
+                treatments=(),
+                group_metadata={
+                    **group_metadata,
+                    "failed_level": level,
+                    "failed_horizon_support_gate": horizon_support_gate,
+                },
+            )
         treatments.append(
             CapabilityTreatment(
                 level=level,
@@ -1097,6 +1356,7 @@ def build_capability_group(
                 ),
                 metadata=unit.metadata,
                 source_distance_gate=gate,
+                horizon_support_gate=horizon_support_gate,
             )
         )
     parameter_payload = [
@@ -1184,22 +1444,33 @@ def replay_treatment_deltas(
                 component_f[:, channel] = fitted_f
         elif capability_id == "time_varying_seasonality":
             details = metadata["resolved_periods_by_target"]
-            all_t = np.arange(length + horizon, dtype=float)
             for raw_channel, periods in details.items():
                 channel = int(raw_channel)
-                carrier_index = int(
-                    round(length / float(periods["carrier_period"]))
+                carrier = _harmonic_signal(
+                    length=length,
+                    horizon=horizon,
+                    frequency_index=int(periods["carrier_frequency_index"]),
+                    sin_coefficient=float(
+                        periods["carrier_sin_coefficient"]
+                    ),
+                    cos_coefficient=float(
+                        periods["carrier_cos_coefficient"]
+                    ),
                 )
-                modulation_index = int(
-                    round(length / float(periods["modulation_period"]))
+                envelope = _harmonic_signal(
+                    length=length,
+                    horizon=horizon,
+                    frequency_index=int(
+                        periods["modulation_frequency_index"]
+                    ),
+                    sin_coefficient=float(
+                        periods["envelope_sin_coefficient"]
+                    ),
+                    cos_coefficient=float(
+                        periods["envelope_cos_coefficient"]
+                    ),
                 )
-                carrier_h, carrier_f = _harmonic_component(
-                    history[:, channel], carrier_index, horizon
-                )
-                envelope = np.sin(
-                    2.0 * math.pi * modulation_index * all_t / length
-                )
-                combined = np.concatenate((carrier_h, carrier_f)) * envelope
+                combined = carrier * envelope
                 component_h[:, channel] = combined[:length]
                 component_f[:, channel] = combined[length:]
         elif capability_id == "nonlinear_persistence":
@@ -1229,18 +1500,21 @@ def replay_treatment_deltas(
                     state = float(np.clip(state, -8.0, 8.0))
         elif capability_id == "common_factor":
             loading = np.asarray(metadata["loading"], dtype=float)
-            z = (history - np.mean(history, axis=0)) / scales
-            factor = z @ loading
-            phi = float(metadata["factor_ar1"])
-            future_factor = np.empty(horizon, dtype=float)
-            state = float(factor[-1])
-            for step in range(horizon):
-                state *= phi
-                future_factor[step] = state
-            component_h = factor[:, None] * loading[None, :] * scales[None, :]
-            component_f = (
-                future_factor[:, None] * loading[None, :] * scales[None, :]
+            carrier = _harmonic_signal(
+                length=length,
+                horizon=horizon,
+                frequency_index=int(
+                    metadata["latent_carrier_frequency_index"]
+                ),
+                sin_coefficient=float(
+                    metadata["latent_carrier_sin_coefficient"]
+                ),
+                cos_coefficient=float(
+                    metadata["latent_carrier_cos_coefficient"]
+                ),
             )
+            component = carrier[:, None] * loading[None, :] * scales[None, :]
+            component_h, component_f = component[:length], component[length:]
         elif capability_id == "cross_series_dependence":
             driver = int(metadata["driver_target_index"])
             responder = int(metadata["responder_target_index"])

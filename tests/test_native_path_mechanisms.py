@@ -4,11 +4,13 @@ import numpy as np
 
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.mechanisms import (
+    COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     SOURCE_DISTANCE_THRESHOLD,
+    TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     _distance_gate,
     build_capability_group,
     mase_scale_by_target,
@@ -218,6 +220,50 @@ def test_common_and_cross_use_native_panel_without_channel_tasks() -> None:
     assert cross.available
     assert common.treatments[0].history_delta.shape == panel.shape
     assert cross.treatments[0].history_delta.shape == panel.shape
+
+
+def test_tvs_fits_envelope_phase_and_keeps_future_envelope_supported() -> None:
+    t = np.arange(600.0)
+    carrier = np.sin(2.0 * np.pi * t / 12.0 + 0.2)
+    envelope = 1.0 + 0.7 * np.sin(2.0 * np.pi * t / 120.0 + 0.8)
+    instance = _instance(carrier * envelope, horizon=480)
+    group = build_capability_group(
+        instance,
+        "time_varying_seasonality",
+        augmentation_seed=23,
+    )
+    assert group.available
+    treatment = group.treatments[0]
+    details = treatment.metadata["resolved_periods_by_target"]["0"]
+    assert treatment.metadata["component"] == (
+        "history_fitted_constrained_am_carrier_envelope"
+    )
+    assert abs(details["envelope_cos_coefficient"]) > 1e-3
+    assert details["am_incremental_r2"] > 0.5
+    gate = treatment.horizon_support_gate
+    assert gate is not None and gate["accepted"]
+    assert gate["minimum_observed_active_fraction"] >= (
+        TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION
+    )
+
+
+def test_common_uses_nondecaying_latent_harmonic_on_long_horizon() -> None:
+    t = np.arange(600.0)
+    factor = np.sin(2.0 * np.pi * t / 24.0 + 0.3)
+    panel = np.column_stack((factor, 0.8 * factor, -0.6 * factor))
+    instance = _instance(panel, horizon=480)
+    group = build_capability_group(instance, "common_factor", augmentation_seed=29)
+    assert group.available
+    treatment = group.treatments[-1]
+    assert treatment.metadata["component"] == (
+        "history_pca_loading_with_stable_latent_harmonic"
+    )
+    assert "factor_ar1" not in treatment.metadata
+    gate = treatment.horizon_support_gate
+    assert gate is not None and gate["accepted"]
+    assert gate["observed_tail_head_ratio"] >= (
+        COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO
+    )
 
 
 def test_covariate_uses_known_calendar_path_and_hierarchy_is_qualification_only() -> None:

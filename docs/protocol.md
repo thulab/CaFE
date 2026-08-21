@@ -1,4 +1,4 @@
-# CaFE v8 scientific protocol
+# CaFE v9 scientific protocol
 
 ## 1. Estimand
 
@@ -108,6 +108,16 @@ Generation records unavailable-reason counts by capability in the dataset
 manifest and preserves the failed level plus its complete distance evidence in
 the availability contract for later mechanism audits.
 
+Horizon support is capability-specific rather than a universal partition rule.
+TVS fits both coefficients of a slow harmonic envelope from history and requires
+each affected target to spend at least 25% of its observed forecast positions
+outside 25% of the fitted envelope amplitude. Common factor replaces recursive
+AR(1) continuation with a stable harmonic fitted to the authentic PCA factor;
+its forecast horizon is split into three relative sections only to verify that
+the tail-to-head macro RMS ratio is at least 0.50. The middle section is retained
+as diagnostic evidence. Other capabilities use their own support conditions or
+construction invariants and do not inherit these two gates.
+
 ## 5. Capability availability
 
 Availability is resolved per official instance and capability. Short histories
@@ -122,11 +132,14 @@ path is shared by baseline and treatment and is known over the horizon.
 
 ## 6. Validation
 
-Validation binds the source Arrow files, generation manifest, and every
-Parquet artifact hash. It streams the compact rows and independently rebuilds
-every official instance, five-level treatment, and input ablation. Dense
-targets, futures, and calendar covariates are transient replay values and are
-not generation artifacts.
+Generation performs mechanism qualification before it writes a treatment.
+Default research validation then scans every compact treatment contract and
+checks its source-distance, mechanism-scoring, and applicable capability-specific
+horizon-support evidence in parallel. Publication validation additionally binds
+the source Arrow files, generation manifest, and every Parquet artifact hash,
+then independently rebuilds every official instance, five-level treatment, and
+input ablation. Dense targets, futures, and calendar covariates are transient
+replay values and are not generation artifacts.
 
 ## 7. Inference
 

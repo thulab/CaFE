@@ -22,11 +22,14 @@ from cafe.benchmark_extension.generation import (
 )
 from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
 from cafe.benchmark_extension.mechanisms import (
+    COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
+    TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
+    TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
 )
 from cafe.benchmark_extension.storage import (
     iter_compact_parquet,
@@ -34,7 +37,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v6"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v7"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -259,19 +262,147 @@ def _mechanism_scoring_gate_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _horizon_support_gate_reason(row: dict[str, Any]) -> str | None:
+    capability_id = row.get("capability_id")
+    gate = row.get("horizon_support_gate")
+    if capability_id not in {"time_varying_seasonality", "common_factor"}:
+        return None if gate is None else "horizon_support_gate_not_applicable"
+    if not isinstance(gate, dict):
+        return "horizon_support_gate_missing"
+    if gate.get("schema_version") != "cafe.capability_horizon_support_gate.v1":
+        return "horizon_support_gate_schema"
+    if gate.get("capability_id") != capability_id:
+        return "horizon_support_gate_capability"
+    if gate.get("target_future_values_used") is not False:
+        return "horizon_support_gate_future_leakage"
+    if gate.get("accepted") is not True or gate.get("reason") is not None:
+        return "horizon_support_gate_rejected"
+    if capability_id == "time_varying_seasonality":
+        if gate.get("metric") != (
+            "future_envelope_active_fraction_by_affected_target"
+        ):
+            return "horizon_support_gate_metric"
+        if gate.get("horizon_partition") != "whole_forecast_horizon":
+            return "horizon_support_gate_partition"
+        try:
+            active_threshold = float(gate["active_amplitude_fraction"])
+            required = float(gate["minimum_required_active_fraction"])
+            observed_minimum = float(gate["minimum_observed_active_fraction"])
+        except (KeyError, TypeError, ValueError):
+            return "horizon_support_gate_values"
+        if not math.isclose(
+            active_threshold,
+            TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ) or not math.isclose(
+            required,
+            TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            return "horizon_support_gate_threshold"
+        by_target = gate.get("by_target")
+        if not isinstance(by_target, dict) or not by_target:
+            return "horizon_support_gate_targets"
+        fractions: list[float] = []
+        for target in by_target.values():
+            if not isinstance(target, dict):
+                return "horizon_support_gate_target_values"
+            try:
+                observed = int(target["observed_future_count"])
+                active = int(target["active_future_count"])
+                fraction = float(target["active_fraction"])
+            except (KeyError, TypeError, ValueError):
+                return "horizon_support_gate_target_values"
+            if observed <= 0 or active < 0 or active > observed:
+                return "horizon_support_gate_target_counts"
+            if not math.isclose(
+                fraction,
+                active / observed,
+                rel_tol=1e-9,
+                abs_tol=1e-12,
+            ):
+                return "horizon_support_gate_target_fraction"
+            fractions.append(fraction)
+        if not math.isclose(
+            observed_minimum,
+            min(fractions),
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            return "horizon_support_gate_minimum_mismatch"
+        if observed_minimum < required - 1e-12:
+            return "horizon_support_gate_below_minimum"
+        return None
+    if gate.get("metric") != (
+        "common_factor_tail_to_head_macro_normalized_rms_ratio"
+    ):
+        return "horizon_support_gate_metric"
+    if gate.get("horizon_partition") != "three_equal_relative_sections":
+        return "horizon_support_gate_partition"
+    try:
+        required = float(gate["minimum_required_tail_head_ratio"])
+        observed = float(gate["observed_tail_head_ratio"])
+    except (KeyError, TypeError, ValueError):
+        return "horizon_support_gate_values"
+    if not math.isclose(
+        required,
+        COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    ):
+        return "horizon_support_gate_threshold"
+    by_section = gate.get("by_section")
+    if not isinstance(by_section, dict) or set(by_section) != {
+        "head",
+        "middle",
+        "tail",
+    }:
+        return "horizon_support_gate_sections"
+    macros: dict[str, float] = {}
+    for name, section in by_section.items():
+        if not isinstance(section, dict):
+            return "horizon_support_gate_section_values"
+        try:
+            time_count = int(section["time_count"])
+            target_count = int(section["observed_target_count"])
+            macro = float(section["macro_normalized_rms"])
+        except (KeyError, TypeError, ValueError):
+            return "horizon_support_gate_section_values"
+        if time_count <= 0 or target_count <= 0 or not _finite_nonnegative(macro):
+            return "horizon_support_gate_section_values"
+        macros[name] = macro
+    calculated = macros["tail"] / max(macros["head"], 1e-12)
+    if not math.isclose(
+        observed, calculated, rel_tol=1e-9, abs_tol=1e-12
+    ):
+        return "horizon_support_gate_ratio_mismatch"
+    if macros["head"] <= 0.0 or macros["tail"] <= 0.0:
+        return "horizon_support_gate_zero_endpoint"
+    if observed < required - 1e-12:
+        return "horizon_support_gate_below_minimum"
+    return None
+
+
 def _treatment_contract_reason(row: dict[str, Any]) -> str | None:
-    return _distance_gate_reason(row) or _mechanism_scoring_gate_reason(row)
+    return (
+        _distance_gate_reason(row)
+        or _horizon_support_gate_reason(row)
+        or _mechanism_scoring_gate_reason(row)
+    )
 
 
 def _scan_treatment_row_group(
     work: tuple[str, int],
-) -> tuple[int, int, list[dict[str, Any]]]:
+) -> tuple[int, int, int, list[dict[str, Any]]]:
     path_string, row_group_index = work
     parquet = pq.ParquetFile(path_string)
     table = parquet.read_row_group(row_group_index, columns=("payload_json",))
     payloads = table.column(0).to_pylist()
     failures: list[dict[str, Any]] = []
     failure_count = 0
+    horizon_support_count = 0
     for payload in payloads:
         sample_id: Any = None
         try:
@@ -279,6 +410,9 @@ def _scan_treatment_row_group(
             if not isinstance(row, dict):
                 raise TypeError("payload is not an object")
             sample_id = row.get("sample_id")
+            horizon_support_count += int(
+                row.get("horizon_support_gate") is not None
+            )
             reason = _treatment_contract_reason(row)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
             reason = f"source_distance_payload:{error}"
@@ -292,7 +426,7 @@ def _scan_treatment_row_group(
                         "reason": reason,
                     }
                 )
-    return len(payloads), failure_count, failures
+    return len(payloads), horizon_support_count, failure_count, failures
 
 
 def _research_validation(
@@ -305,6 +439,7 @@ def _research_validation(
     counts = {
         "official_baselines": int(manifest.get("official_instance_count", 0)),
         "capability_treatments": 0,
+        "horizon_support_gates": 0,
         "input_ablations": int(manifest.get("input_ablation_count", 0)),
         "availability": int(
             ((manifest.get("files") or {}).get("availability") or {}).get(
@@ -324,15 +459,19 @@ def _research_validation(
         if int(workers) > 1 and len(work) > 1:
             with ProcessPoolExecutor(max_workers=int(workers)) as executor:
                 results = executor.map(_scan_treatment_row_group, work)
-                for count, rejected, rows in results:
+                for count, support_count, rejected, rows in results:
                     counts["capability_treatments"] += count
+                    counts["horizon_support_gates"] += support_count
                     failure_count += rejected
                     remaining = MAX_RECORDED_FAILURES - len(failures)
                     failures.extend(rows[: max(0, remaining)])
         else:
             for item in work:
-                count, rejected, rows = _scan_treatment_row_group(item)
+                count, support_count, rejected, rows = (
+                    _scan_treatment_row_group(item)
+                )
                 counts["capability_treatments"] += count
+                counts["horizon_support_gates"] += support_count
                 failure_count += rejected
                 remaining = MAX_RECORDED_FAILURES - len(failures)
                 failures.extend(rows[: max(0, remaining)])
@@ -454,6 +593,7 @@ def _publication_validation(
             failures.append({"scope": "manifest", "reason": f"source:{error}"})
 
     counts = {key: 0 for key in artifact_keys}
+    horizon_support_count = 0
     if not failures and isinstance(config, dict):
         observed = {
             key: iter(iter_compact_parquet(path)) for key, path in paths.items()
@@ -500,6 +640,9 @@ def _publication_validation(
                             }
                         )
                     if kind == "capability_treatments":
+                        horizon_support_count += int(
+                            expected.get("horizon_support_gate") is not None
+                        )
                         reason = _treatment_contract_reason(expected)
                         if reason is not None:
                             failures.append(
@@ -528,6 +671,7 @@ def _publication_validation(
                         "reason": f"{kind}_count:{count}!={declared}",
                     }
                 )
+    counts["horizon_support_gates"] = horizon_support_count
     return counts, len(failures), failures[:MAX_RECORDED_FAILURES]
 
 
@@ -570,7 +714,7 @@ def validate_generation(
         )
         policy = (
             "research_all_treatment_source_distance_and_mechanism_scoring_"
-            "gates_v2"
+            "and_capability_horizon_support_gates_v3"
         )
 
     report = {
@@ -588,6 +732,9 @@ def validate_generation(
         "input_ablation_count": counts["input_ablations"],
         "availability_count": counts["availability"],
         "source_distance_gate_checked_count": counts["capability_treatments"],
+        "horizon_support_gate_checked_count": counts.get(
+            "horizon_support_gates", 0
+        ),
         "mechanism_scoring_gate_checked_count": counts[
             "capability_treatments"
         ],

@@ -4,21 +4,21 @@
     "real_authentic_source": "#1565c0",
     "treatment_minus_source": "#d84315"
   },
-  "created_at": "2026-08-21T09:44:56.015713+00:00",
+  "created_at": "2026-08-21T10:41:45.196916+00:00",
   "figure_semantics": "benchmark_truth_paths_not_model_predictions_complete_official_instance_history_and_future",
   "records": [
     {
       "affected_target_index_shown": 2,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "trend",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 245508,
+        "bytes": 244857,
         "path": "01_trend__five_levels.png",
-        "sha256": "0bf669fa334a985fffc7799cc140c7feb51c5d4de96ba0bb991e52755859fada"
+        "sha256": "5c5c0ac2ae4d9cf5207d1141bf0cd777aadab2fdceb0443b0a81c7ca633e7d40"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -28,55 +28,60 @@
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.685883681891543,
+          "future_effect_mase_rms": 0.6261670465854975,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.11355362762290382,
-          "source_distance": 0.11381668642578563
+          "sampled_coordinate": 0.10366705246815663,
+          "source_distance": 0.10390720799019
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 1.1975369459076635,
+          "future_effect_mase_rms": 1.0204747968939778,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.19826199107878942,
-          "source_distance": 0.19872128562641364
+          "sampled_coordinate": 0.16894791076744223,
+          "source_distance": 0.16933929619551025
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 1.5462456034128862,
+          "future_effect_mase_rms": 1.6381740421488786,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2559935483218908,
-          "source_distance": 0.25658658403353407
+          "sampled_coordinate": 0.2712130497851615,
+          "source_distance": 0.27184134305677177
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 1.9527358305012943,
+          "future_effect_mase_rms": 2.1565634091895562,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.3232913148350845,
-          "source_distance": 0.32404025283066334
+          "sampled_coordinate": 0.3570366299383894,
+          "source_distance": 0.3578637424703505
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 2.985369781979159,
+          "future_effect_mase_rms": 2.9674009584028904,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.49425227263700394,
-          "source_distance": 0.4953972594937275
+          "sampled_coordinate": 0.4912773876017248,
+          "source_distance": 0.4924154828274853
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -84,16 +89,16 @@
     },
     {
       "affected_target_index_shown": 0,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "multi_seasonal",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 289949,
+        "bytes": 293481,
         "path": "02_multi_seasonal__five_levels.png",
-        "sha256": "38cd9829729c2da0649d691bcac58114788a86ae5d4b102b95636d82c2af353d"
+        "sha256": "ef25430be6e36b408696df6a36f253df4e3f1bf6628d6c1182a3ae8a42f4394d"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -103,55 +108,60 @@
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.37713123230190804,
+          "future_effect_mase_rms": 0.3603720159529156,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.12591513005823557,
-          "source_distance": 0.1252939708632093
+          "sampled_coordinate": 0.12031962715231832,
+          "source_distance": 0.11972607145561029
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 0.5033988018025942,
+          "future_effect_mase_rms": 0.5241187480108109,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.16807286209960742,
-          "source_distance": 0.16724373216359997
+          "sampled_coordinate": 0.17499075830693794,
+          "source_distance": 0.17412750129789778
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 0.7780309137320374,
+          "future_effect_mase_rms": 0.704750037767884,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2597659787918915,
-          "source_distance": 0.2584845122500473
+          "sampled_coordinate": 0.23529924085696205,
+          "source_distance": 0.23413847259207277
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 1.1147195337574862,
+          "future_effect_mase_rms": 1.072176284232845,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.37217828450539464,
-          "source_distance": 0.37034227033058725
+          "sampled_coordinate": 0.3579741074493114,
+          "source_distance": 0.35620816472010464
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 1.3536347127136372,
+          "future_effect_mase_rms": 1.529526758586331,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.45194636854216763,
-          "source_distance": 0.44971684582834554
+          "sampled_coordinate": 0.5106725305125968,
+          "source_distance": 0.5081533023798972
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -159,18 +169,18 @@
     },
     {
       "affected_target_index_shown": 0,
-      "augmentation_seed": 2026081601,
-      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "augmentation_seed": 2026082101,
+      "baseline_sample_id": "gift__gift_ett1_h__item_0__w15__o17180__baseline",
       "capability_id": "time_varying_seasonality",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
-      "display_history": 16460,
+      "display_history": 17180,
       "file": {
-        "bytes": 287376,
+        "bytes": 269960,
         "path": "03_time_varying_seasonality__five_levels.png",
-        "sha256": "84dbbd57a4cc39871e3f40be01facc96c62cd42a6928e26dafccdbcadbade72e"
+        "sha256": "f6bc30e28f4cd9b7c88b27705fab21a468dcd1aca3721a7d8b1eccf2bdf6b260"
       },
-      "full_treatment_history": 16460,
+      "full_treatment_history": 17180,
       "horizon": 48,
       "levels": [
         {
@@ -178,72 +188,217 @@
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.014763109124409814,
+          "future_effect_mase_rms": 0.22385133540276758,
+          "horizon_support_gate": {
+            "accepted": true,
+            "active_amplitude_fraction": 0.25,
+            "by_target": {
+              "0": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "2": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "5": {
+                "active_fraction": 0.7916666666666666,
+                "active_future_count": 38,
+                "observed_future_count": 48
+              }
+            },
+            "capability_id": "time_varying_seasonality",
+            "horizon_partition": "whole_forecast_horizon",
+            "metric": "future_envelope_active_fraction_by_affected_target",
+            "minimum_observed_active_fraction": 0.7916666666666666,
+            "minimum_required_active_fraction": 0.25,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 1,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.12878892322640795,
-          "source_distance": 0.12555489376622278
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.10846311537010671,
+          "source_distance": 0.10983437147684168
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 0.01969237252859483,
+          "future_effect_mase_rms": 0.33132276335906147,
+          "horizon_support_gate": {
+            "accepted": true,
+            "active_amplitude_fraction": 0.25,
+            "by_target": {
+              "0": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "2": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "5": {
+                "active_fraction": 0.7916666666666666,
+                "active_future_count": 38,
+                "observed_future_count": 48
+              }
+            },
+            "capability_id": "time_varying_seasonality",
+            "horizon_partition": "whole_forecast_horizon",
+            "metric": "future_envelope_active_fraction_by_affected_target",
+            "minimum_observed_active_fraction": 0.7916666666666666,
+            "minimum_required_active_fraction": 0.25,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 2,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.1717903344314956,
-          "source_distance": 0.16747649292550038
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.1605364517584743,
+          "source_distance": 0.16256605038355715
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 0.03148672605777699,
+          "future_effect_mase_rms": 0.5159875817462001,
+          "horizon_support_gate": {
+            "accepted": true,
+            "active_amplitude_fraction": 0.25,
+            "by_target": {
+              "0": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "2": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "5": {
+                "active_fraction": 0.7916666666666666,
+                "active_future_count": 38,
+                "observed_future_count": 48
+              }
+            },
+            "capability_id": "time_varying_seasonality",
+            "horizon_partition": "whole_forecast_horizon",
+            "metric": "future_envelope_active_fraction_by_affected_target",
+            "minimum_observed_active_fraction": 0.7916666666666666,
+            "minimum_required_active_fraction": 0.25,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 3,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.2746807268531986,
-          "source_distance": 0.26778319606767714
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.25001244914524884,
+          "source_distance": 0.2531732572824699
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 0.03918553544374794,
+          "future_effect_mase_rms": 0.7421869390479424,
+          "horizon_support_gate": {
+            "accepted": true,
+            "active_amplitude_fraction": 0.25,
+            "by_target": {
+              "0": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "2": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "5": {
+                "active_fraction": 0.7916666666666666,
+                "active_future_count": 38,
+                "observed_future_count": 48
+              }
+            },
+            "capability_id": "time_varying_seasonality",
+            "horizon_partition": "whole_forecast_horizon",
+            "metric": "future_envelope_active_fraction_by_affected_target",
+            "minimum_observed_active_fraction": 0.7916666666666666,
+            "minimum_required_active_fraction": 0.25,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 4,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.3418428241180046,
-          "source_distance": 0.33325878027126
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.35961325605363387,
+          "source_distance": 0.364159703680034
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 0.04935462079257713,
+          "future_effect_mase_rms": 0.9666694176374879,
+          "horizon_support_gate": {
+            "accepted": true,
+            "active_amplitude_fraction": 0.25,
+            "by_target": {
+              "0": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "2": {
+                "active_fraction": 1.0,
+                "active_future_count": 48,
+                "observed_future_count": 48
+              },
+              "5": {
+                "active_fraction": 0.7916666666666666,
+                "active_future_count": 38,
+                "observed_future_count": 48
+              }
+            },
+            "capability_id": "time_varying_seasonality",
+            "horizon_partition": "whole_forecast_horizon",
+            "metric": "future_envelope_active_fraction_by_affected_target",
+            "minimum_observed_active_fraction": 0.7916666666666666,
+            "minimum_required_active_fraction": 0.25,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 5,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.4305548658184693,
-          "source_distance": 0.4197431664471256
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.4683821804382787,
+          "source_distance": 0.4743037503933755
         }
       ],
-      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "official_instance_id": "gift__gift_ett1_h__item_0__w15__o17180",
       "status": "generated_example"
     },
     {
       "affected_target_index_shown": 0,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "regime_switching",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 208333,
+        "bytes": 208932,
         "path": "04_regime_switching__five_levels.png",
-        "sha256": "e1070c2b8a38769372e033f9f0df7893dc02f03d006e7e60e16abd430b1d4281"
+        "sha256": "1faff5ca0deb682a8485da3d61d264833960b8228e3e6cec75d1f8ecabba99f1"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -254,10 +409,11 @@
             0.32
           ],
           "future_effect_mase_rms": 2.811090892190781,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.3096820649587314,
-          "source_distance": 0.8327919791092792
+          "sampled_coordinate": 0.2212070857877539,
+          "source_distance": 0.8845392404912006
         },
         {
           "coordinate_interval": [
@@ -265,10 +421,11 @@
             0.5
           ],
           "future_effect_mase_rms": 2.811090892190781,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.3824978963482123,
-          "source_distance": 0.787630197570535
+          "sampled_coordinate": 0.43682235817667725,
+          "source_distance": 0.7521940563694319
         },
         {
           "coordinate_interval": [
@@ -276,10 +433,11 @@
             0.66
           ],
           "future_effect_mase_rms": 2.811090892190781,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.5748746146714108,
-          "source_distance": 0.6535472618238868
+          "sampled_coordinate": 0.5933834888253329,
+          "source_distance": 0.6391465409287999
         },
         {
           "coordinate_interval": [
@@ -287,10 +445,11 @@
             0.82
           ],
           "future_effect_mase_rms": 2.811090892190781,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.8193981387477447,
-          "source_distance": 0.42597830875673715
+          "sampled_coordinate": 0.757669274765409,
+          "source_distance": 0.4934260210824415
         },
         {
           "coordinate_interval": [
@@ -298,10 +457,11 @@
             0.94
           ],
           "future_effect_mase_rms": 2.811090892190781,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.926037485887158,
-          "source_distance": 0.2725431803517564
+          "sampled_coordinate": 0.9145737739194605,
+          "source_distance": 0.2929427071758231
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -309,91 +469,96 @@
     },
     {
       "affected_target_index_shown": 0,
-      "augmentation_seed": 2026081601,
-      "baseline_sample_id": "gift__gift_temperature_rain_d__T0__w00__o635__baseline",
+      "augmentation_seed": 2026082101,
+      "baseline_sample_id": "gift__gift_m_dense_h__0__w00__o16560__baseline",
       "capability_id": "nonlinear_persistence",
-      "dataset_id": "gift_temperature_rain_d",
+      "dataset_id": "gift_m_dense_h",
       "delta_display": "treatment_minus_source",
-      "display_history": 635,
+      "display_history": 16560,
       "file": {
-        "bytes": 342395,
+        "bytes": 220413,
         "path": "05_nonlinear_persistence__five_levels.png",
-        "sha256": "8fc491ed3eb40bd62a34fb1fc140c371f623dc4ce7130fef9121f5ec99c695a7"
+        "sha256": "7a55e98b8452e4f01aba31302ad6e3da3e4dd713211feb2abc4d77c6a1e6d46d"
       },
-      "full_treatment_history": 635,
-      "horizon": 30,
+      "full_treatment_history": 16560,
+      "horizon": 48,
       "levels": [
         {
           "coordinate_interval": [
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.12789299088837036,
+          "future_effect_mase_rms": 0.44733814099326824,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.10773217194581697,
-          "source_distance": 0.10773217194581697
+          "sampled_coordinate": 0.1393556545024062,
+          "source_distance": 0.13665950778827346
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 0.2086373855498173,
+          "future_effect_mase_rms": 0.6410368393943182,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.1757481667935761,
-          "source_distance": 0.1757481667935761
+          "sampled_coordinate": 0.19969705269395613,
+          "source_distance": 0.19583346671773366
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 0.3182040868741116,
+          "future_effect_mase_rms": 0.8169547663196117,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.26804297219778833,
-          "source_distance": 0.2680429721977883
+          "sampled_coordinate": 0.25449935010357866,
+          "source_distance": 0.24957549115446917
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 0.39266312116747437,
+          "future_effect_mase_rms": 1.0779083126563556,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.3307644194772066,
-          "source_distance": 0.3307644194772066
+          "sampled_coordinate": 0.3357921103491849,
+          "source_distance": 0.3292954611950307
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 0.5016334800596085,
+          "future_effect_mase_rms": 1.7100270839275615,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.4225568887878315,
-          "source_distance": 0.4225568887878315
+          "sampled_coordinate": 0.5327109889812695,
+          "source_distance": 0.5224045038396892
         }
       ],
-      "official_instance_id": "gift__gift_temperature_rain_d__T0__w00__o635",
+      "official_instance_id": "gift__gift_m_dense_h__0__w00__o16560",
       "status": "generated_example"
     },
     {
       "affected_target_index_shown": 0,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "predictable_intermittency",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 218768,
+        "bytes": 220463,
         "path": "06_predictable_intermittency__five_levels.png",
-        "sha256": "1bb298b581b81fe86a8af455288a0aeef4b91ed74cc54c5e6f4c48378251039a"
+        "sha256": "ab3def7d1aeefa8619000697e11a0b768ceb8118fb9c74b84fb52f13a09b3ebc"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -403,43 +568,47 @@
             0.1,
             0.18
           ],
-          "future_effect_mase_rms": 1.4055454460953907,
+          "future_effect_mase_rms": 1.6229840833228528,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.17631321820175894,
-          "source_distance": 0.5
+          "sampled_coordinate": 0.11538845346364415,
+          "source_distance": 0.577068291019356
         },
         {
           "coordinate_interval": [
             0.22,
             0.3
           ],
-          "future_effect_mase_rms": 1.147623051075422,
+          "future_effect_mase_rms": 1.0735030665721002,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2547522232172671,
-          "source_distance": 0.4082482904638631
+          "sampled_coordinate": 0.2855274939240134,
+          "source_distance": 0.3775951866748305
         },
         {
           "coordinate_interval": [
             0.34,
             0.44
           ],
-          "future_effect_mase_rms": 0.9938707161999217,
+          "future_effect_mase_rms": 0.9938707161999216,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.34944352817259094,
-          "source_distance": 0.3423265984407289
+          "sampled_coordinate": 0.40462226831916337,
+          "source_distance": 0.32325251352464385
         },
         {
           "coordinate_interval": [
             0.5,
             0.64
           ],
-          "future_effect_mase_rms": 0.573811525537711,
+          "future_effect_mase_rms": 0.8114920416614264,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.5608189901719791,
+          "sampled_coordinate": 0.5662817849745078,
           "source_distance": 0.27219210434299285
         },
         {
@@ -447,11 +616,12 @@
             0.72,
             0.92
           ],
-          "future_effect_mase_rms": 0.5738115255377109,
+          "future_effect_mase_rms": 0.573811525537711,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.7698049907816918,
-          "source_distance": 0.2317562027217395
+          "sampled_coordinate": 0.8759166969898857,
+          "source_distance": 0.21819125068388973
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -459,16 +629,16 @@
     },
     {
       "affected_target_index_shown": 0,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "common_factor",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 297397,
+        "bytes": 242310,
         "path": "07_common_factor__five_levels.png",
-        "sha256": "da6221a25ecf8a15e369af5fd41b015dc672c9160c18b84cf634677b0a77d8d6"
+        "sha256": "31157820b0e24c337331553d983b355d1b085946eb38f0f7b8b9389c4490185b"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -478,55 +648,195 @@
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.031176317222184703,
+          "future_effect_mase_rms": 0.2880003574138923,
+          "horizon_support_gate": {
+            "accepted": true,
+            "by_section": {
+              "head": {
+                "macro_normalized_rms": 0.10266599160088503,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "middle": {
+                "macro_normalized_rms": 0.11314497133105471,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "tail": {
+                "macro_normalized_rms": 0.09443989061276865,
+                "observed_target_count": 7,
+                "time_count": 16
+              }
+            },
+            "capability_id": "common_factor",
+            "horizon_partition": "three_equal_relative_sections",
+            "metric": "common_factor_tail_to_head_macro_normalized_rms_ratio",
+            "minimum_required_tail_head_ratio": 0.5,
+            "observed_tail_head_ratio": 0.9198751128796825,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 1,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.12852151034306797,
-          "source_distance": 0.11837009101457809
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.10371144701045693,
+          "source_distance": 0.10370035501626358
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 0.04799510063995666,
+          "future_effect_mase_rms": 0.5368744166737839,
+          "horizon_support_gate": {
+            "accepted": true,
+            "by_section": {
+              "head": {
+                "macro_normalized_rms": 0.19138429149151465,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "middle": {
+                "macro_normalized_rms": 0.2109186288114025,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "tail": {
+                "macro_normalized_rms": 0.17604964673915505,
+                "observed_target_count": 7,
+                "time_count": 16
+              }
+            },
+            "capability_id": "common_factor",
+            "horizon_partition": "three_equal_relative_sections",
+            "metric": "common_factor_tail_to_head_macro_normalized_rms_ratio",
+            "minimum_required_tail_head_ratio": 0.5,
+            "observed_tail_head_ratio": 0.9198751128796823,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 2,
-          "mechanism_scoreable": false,
-          "sampled_coordinate": 0.19785540348958922,
-          "source_distance": 0.1822275668584372
+          "mechanism_scoreable": true,
+          "sampled_coordinate": 0.1933331719311515,
+          "source_distance": 0.19331249484600557
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 0.06641102625150232,
+          "future_effect_mase_rms": 0.626228619075581,
+          "horizon_support_gate": {
+            "accepted": true,
+            "by_section": {
+              "head": {
+                "macro_normalized_rms": 0.22323716096591956,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "middle": {
+                "macro_normalized_rms": 0.2460226778474643,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "tail": {
+                "macro_normalized_rms": 0.20535030864246506,
+                "observed_target_count": 7,
+                "time_count": 16
+              }
+            },
+            "capability_id": "common_factor",
+            "horizon_partition": "three_equal_relative_sections",
+            "metric": "common_factor_tail_to_head_macro_normalized_rms_ratio",
+            "minimum_required_tail_head_ratio": 0.5,
+            "observed_tail_head_ratio": 0.9198751128796823,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2737733689469467,
-          "source_distance": 0.2521490644882206
+          "sampled_coordinate": 0.22551040153867488,
+          "source_distance": 0.2254862830817783
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 0.07540878818801698,
+          "future_effect_mase_rms": 0.9631352676044305,
+          "horizon_support_gate": {
+            "accepted": true,
+            "by_section": {
+              "head": {
+                "macro_normalized_rms": 0.34333720340592494,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "middle": {
+                "macro_normalized_rms": 0.3783811701470285,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "tail": {
+                "macro_normalized_rms": 0.3158273487388197,
+                "observed_target_count": 7,
+                "time_count": 16
+              }
+            },
+            "capability_id": "common_factor",
+            "horizon_partition": "three_equal_relative_sections",
+            "metric": "common_factor_tail_to_head_macro_normalized_rms_ratio",
+            "minimum_required_tail_head_ratio": 0.5,
+            "observed_tail_head_ratio": 0.9198751128796824,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.3108658178576651,
-          "source_distance": 0.28631172365550867
+          "sampled_coordinate": 0.3468334316214318,
+          "source_distance": 0.3467963376022035
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 0.1030780898441761,
+          "future_effect_mase_rms": 1.4166842723178004,
+          "horizon_support_gate": {
+            "accepted": true,
+            "by_section": {
+              "head": {
+                "macro_normalized_rms": 0.5050177607726447,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "middle": {
+                "macro_normalized_rms": 0.556564244627641,
+                "observed_target_count": 7,
+                "time_count": 16
+              },
+              "tail": {
+                "macro_normalized_rms": 0.4645532696969809,
+                "observed_target_count": 7,
+                "time_count": 16
+              }
+            },
+            "capability_id": "common_factor",
+            "horizon_partition": "three_equal_relative_sections",
+            "metric": "common_factor_tail_to_head_macro_normalized_rms_ratio",
+            "minimum_required_tail_head_ratio": 0.5,
+            "observed_tail_head_ratio": 0.9198751128796823,
+            "reason": null,
+            "schema_version": "cafe.capability_horizon_support_gate.v1",
+            "target_future_values_used": false
+          },
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.4249299779585587,
-          "source_distance": 0.39136639486660235
+          "sampled_coordinate": 0.5101603940993858,
+          "source_distance": 0.5101058321750068
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -535,24 +845,24 @@
     {
       "capability_id": "hierarchical_coherence",
       "file": {
-        "bytes": 39373,
+        "bytes": 39382,
         "path": "08_hierarchical_coherence__five_levels.png",
-        "sha256": "c220845b52ecf8eeb8f85ce2e8a0ec40a9c009cb0e4c2601a76a088a12133764"
+        "sha256": "73b6a47566bcc53c5cc718f1324ab8e184daa81ab16a9daa1c34cf4deb5e7b54"
       },
       "status": "qualification_only_no_generation"
     },
     {
       "affected_target_index_shown": 2,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "cross_series_dependence",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 281410,
+        "bytes": 281430,
         "path": "09_cross_series_dependence__five_levels.png",
-        "sha256": "7693da27b75672b61c68273481b5e0542f7d6f2003f140194d88716c18ca3969"
+        "sha256": "5abfd56c72f7c5a11f82be187f93c8770bc66f77d66bc3522b16931c916de74f"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -562,55 +872,60 @@
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.3222249693941868,
+          "future_effect_mase_rms": 0.3192176510228616,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.12150441719807412,
-          "source_distance": 0.12176070187835403
+          "sampled_coordinate": 0.12037041921298958,
+          "source_distance": 0.12062431199412912
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 0.5153166373439281,
+          "future_effect_mase_rms": 0.49601632977788457,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.19431531892349652,
-          "source_distance": 0.19472518089009988
+          "sampled_coordinate": 0.18703756938420826,
+          "source_distance": 0.18743208066845088
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 0.7244662032326015,
+          "future_effect_mase_rms": 0.6909490947077532,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2731813241195294,
-          "source_distance": 0.2737575351736204
+          "sampled_coordinate": 0.2605427109632214,
+          "source_distance": 0.26109226386770235
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 0.9227223905520142,
+          "future_effect_mase_rms": 0.7959026400595625,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.3479396600158661,
-          "source_distance": 0.34867355600565964
+          "sampled_coordinate": 0.30011853708501074,
+          "source_distance": 0.3007515657855025
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 1.4363370463642704,
+          "future_effect_mase_rms": 1.322322489892283,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.541613196663841,
-          "source_distance": 0.542755600933112
+          "sampled_coordinate": 0.49862064936910094,
+          "source_distance": 0.49967237108137585
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
@@ -618,16 +933,16 @@
     },
     {
       "affected_target_index_shown": 2,
-      "augmentation_seed": 2026081601,
+      "augmentation_seed": 2026082101,
       "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
       "capability_id": "covariate_response",
       "dataset_id": "gift_ett1_h",
       "delta_display": "treatment_minus_source",
       "display_history": 16460,
       "file": {
-        "bytes": 226727,
+        "bytes": 235374,
         "path": "10_covariate_response__five_levels.png",
-        "sha256": "2649f51f1276fbb19bb580e7c7d751c7bc54d6b28edbb69a68a8098696af08c8"
+        "sha256": "507a929dbe3b1f994537b4d2a1707a65fc8753ea80fc910c9adae92f1ff70f53"
       },
       "full_treatment_history": 16460,
       "horizon": 48,
@@ -637,61 +952,66 @@
             0.1,
             0.14
           ],
-          "future_effect_mase_rms": 0.32341421527168873,
+          "future_effect_mase_rms": 0.3930464178403507,
+          "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.11498778614093216,
-          "source_distance": 0.1149664959342997
+          "sampled_coordinate": 0.13974505542410542,
+          "source_distance": 0.13971918136212289
         },
         {
           "coordinate_interval": [
             0.16,
             0.2
           ],
-          "future_effect_mase_rms": 0.493474534203007,
+          "future_effect_mase_rms": 0.5225278146121553,
+          "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.17545160826422934,
-          "source_distance": 0.1754191230662852
+          "sampled_coordinate": 0.1857813100417879,
+          "source_distance": 0.18574691227997353
         },
         {
           "coordinate_interval": [
             0.22,
             0.28
           ],
-          "future_effect_mase_rms": 0.7857353864701844,
+          "future_effect_mase_rms": 0.7682538316404,
+          "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2793630221445166,
-          "source_distance": 0.279311297551266
+          "sampled_coordinate": 0.27314757089575326,
+          "source_distance": 0.2730969971050865
         },
         {
           "coordinate_interval": [
             0.3,
             0.38
           ],
-          "future_effect_mase_rms": 1.06114732367081,
+          "future_effect_mase_rms": 0.8447911988195698,
+          "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.37728391566146163,
-          "source_distance": 0.37721406082910847
+          "sampled_coordinate": 0.30035992580598836,
+          "source_distance": 0.30030431359621257
         },
         {
           "coordinate_interval": [
             0.42,
             0.55
           ],
-          "future_effect_mase_rms": 1.3684772072595843,
+          "future_effect_mase_rms": 1.5254606254863483,
+          "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.4865530240064253,
-          "source_distance": 0.48646293779147676
+          "sampled_coordinate": 0.5423674405359136,
+          "source_distance": 0.5422670201759148
         }
       ],
       "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
       "status": "generated_example"
     }
   ],
-  "schema_version": "cafe.native_extension_example_plotter.v3",
+  "schema_version": "cafe.native_extension_example_plotter.v4",
   "selection_policy": "lexicographically_first_validated_official_instance_per_capability"
 }
