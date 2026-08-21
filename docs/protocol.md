@@ -1,4 +1,4 @@
-# CaFE v10 scientific protocol
+# CaFE v11 scientific protocol
 
 ## 1. Estimand
 
@@ -139,8 +139,12 @@ beat linear AR(1) by at least 0.005 incremental R-squared on the contiguous
 held-out suffix. Ordinary and extreme states must appear in both partitions,
 the coefficient direction must agree across history halves, and every level
 must remain dynamically stable. Treatment history is generated recursively
-with the authentic linear innovations; future truth effect is the difference
-between paired nonlinear and linear zero-innovation rollouts.
+with the authentic linear innovations. The nonlinear model must also retain
+positive predictive gain over linear AR in rolling multi-step pseudo-forecasts
+inside the held-out history. Future innovations use 128 centered circular
+moving-block bootstrap paths drawn only from historical residuals; each path is
+shared by the linear and nonlinear branches, and their paired differences are
+averaged into the conditional-mean truth effect.
 
 Hierarchical coherence is qualification-only. Covariate impulse response is
 available only when the source record has a native dynamic-real covariate.

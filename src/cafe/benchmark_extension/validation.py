@@ -26,10 +26,14 @@ from cafe.benchmark_extension.mechanisms import (
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION,
     NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO,
+    NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH,
+    NONLINEAR_FUTURE_INNOVATION_PATH_COUNT,
     NONLINEAR_MINIMUM_COEFFICIENT_ABS,
     NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE,
     NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO,
     NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN,
+    NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN,
+    NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT,
     NONLINEAR_PERSISTENCE_INTERVALS,
     NONLINEAR_STABILITY_LIMIT,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
@@ -46,7 +50,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v9"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v10"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -349,7 +353,9 @@ def _horizon_support_gate_reason(row: dict[str, Any]) -> str | None:
             return "horizon_support_gate_below_minimum"
         return None
     if capability_id == "nonlinear_persistence":
-        if gate.get("metric") != "nonlinear_future_effect_decay_profile":
+        if gate.get("metric") != (
+            "innovation_marginalized_future_effect_decay_profile"
+        ):
             return "horizon_support_gate_metric"
         if gate.get("horizon_partition") != "whole_forecast_horizon":
             return "horizon_support_gate_partition"
@@ -462,10 +468,11 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
     gate = group.get("nonlinear_identifiability_gate")
     if not isinstance(gate, dict):
         return "nonlinear_identifiability_gate_missing"
-    if gate.get("schema_version") != "cafe.nonlinear_identifiability_gate.v1":
+    if gate.get("schema_version") != "cafe.nonlinear_identifiability_gate.v2":
         return "nonlinear_identifiability_gate_schema"
     if gate.get("method") != (
-        "single_blocked_holdout_nonlinear_vs_linear_ar1"
+        "blocked_suffix_one_step_and_rolling_multistep_"
+        "nonlinear_vs_linear_ar1"
     ):
         return "nonlinear_identifiability_gate_method"
     if (
@@ -508,6 +515,16 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
             direction = float(audit["nonlinear_direction"])
             stability_limit = float(audit["stability_limit"])
             headroom = float(audit["stability_headroom"])
+            multistep = audit["multistep_holdout"]
+            multistep_gain = float(multistep["incremental_r2"])
+            required_multistep_gain = float(
+                multistep["minimum_required_incremental_r2"]
+            )
+            multistep_origin_count = int(multistep["origin_count"])
+            multistep_horizon = int(multistep["forecast_horizon"])
+            multistep_linear_mse = float(multistep["linear_mse"])
+            multistep_nonlinear_mse = float(multistep["nonlinear_mse"])
+            multistep_bootstrap = multistep["innovation_bootstrap"]
         except (KeyError, TypeError, ValueError):
             return "nonlinear_identifiability_target_values"
         if (
@@ -535,9 +552,20 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
                 rel_tol=0.0,
                 abs_tol=1e-12,
             )
+            or not math.isclose(
+                required_multistep_gain,
+                NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
         ):
             return "nonlinear_identifiability_target_threshold"
         signs = {math.copysign(1.0, value) for value in coefficients}
+        calculated_multistep_gain = (
+            0.0
+            if multistep_linear_mse <= 1e-12
+            else 1.0 - multistep_nonlinear_mse / multistep_linear_mse
+        )
         if (
             gain < required_gain - 1e-12
             or any(abs(value) < minimum_coefficient - 1e-12 for value in coefficients)
@@ -547,6 +575,26 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
             or abs(linear_persistence) >= stability_limit
             or direction not in {-1.0, 1.0}
             or headroom <= 0.0
+            or not isinstance(multistep, dict)
+            or multistep.get("accepted") is not True
+            or multistep.get("reason") is not None
+            or multistep_gain <= required_multistep_gain + 1e-12
+            or multistep_origin_count < 1
+            or multistep_origin_count > NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT
+            or multistep_horizon < 1
+            or not math.isclose(
+                multistep_gain,
+                calculated_multistep_gain,
+                rel_tol=1e-9,
+                abs_tol=1e-12,
+            )
+            or not isinstance(multistep_bootstrap, dict)
+            or int(multistep_bootstrap.get("path_count", -1))
+            != NONLINEAR_FUTURE_INNOVATION_PATH_COUNT
+            or multistep_bootstrap.get("method")
+            != "centered_circular_moving_block_bootstrap"
+            or multistep_bootstrap.get("innovation_pool")
+            != "linear_skeleton_training_prefix_residuals"
         ):
             return "nonlinear_identifiability_target_invalid"
     distances = group.get("full_history_distance_by_level")
@@ -561,9 +609,13 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
     ):
         return "nonlinear_level_distance_not_monotone"
     if (
-        metadata.get("component")
+        group.get("future_estimand")
+        != "paired_conditional_mean_over_shared_bootstrapped_innovations"
+        or metadata.get("component")
         != "same_innovation_state_dependent_persistence_recurrence"
         or metadata.get("state_response") != "z_abs_z_over_one_plus_abs_z"
+        or metadata.get("future_innovation_policy")
+        != "history_innovation_marginalized_shared_path_mean"
         or metadata.get("target_future_used_for_delta") is not False
         or row.get("controlled_coordinate")
         != "stable_persistence_headroom_fraction"
@@ -578,6 +630,9 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
     level_details = metadata.get("level_diagnostics_by_target")
     if not isinstance(level_details, dict):
         return "nonlinear_level_diagnostics_missing"
+    bootstrap_by_target = metadata.get("future_innovation_bootstrap_by_target")
+    if not isinstance(bootstrap_by_target, dict):
+        return "nonlinear_future_bootstrap_missing"
     coordinate = float(row["sampled_coordinate"])
     level = int(row.get("capability_level", 0))
     if level < 1 or level > len(NONLINEAR_PERSISTENCE_INTERVALS):
@@ -615,6 +670,40 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
             coefficient, expected, rel_tol=1e-9, abs_tol=1e-12
         ) or abs(effective) >= NONLINEAR_STABILITY_LIMIT:
             return "nonlinear_level_coefficient_mismatch"
+        bootstrap = bootstrap_by_target.get(str(channel))
+        if not isinstance(bootstrap, dict):
+            return "nonlinear_future_bootstrap_missing"
+        expected_block_length = min(
+            int(audit["transition_count"]),
+            max(
+                NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH,
+                int(math.ceil(math.sqrt(int(row.get("horizon", 0))))),
+            ),
+        )
+        try:
+            path_count = int(bootstrap["path_count"])
+            block_length = int(bootstrap["block_length"])
+            seed = int(bootstrap["seed"])
+        except (KeyError, TypeError, ValueError):
+            return "nonlinear_future_bootstrap_values"
+        if (
+            bootstrap.get("schema_version")
+            != "cafe.nonlinear_innovation_bootstrap.v1"
+            or bootstrap.get("method")
+            != "centered_circular_moving_block_bootstrap"
+            or bootstrap.get("innovation_pool")
+            != "linear_skeleton_full_history_residuals"
+            or bootstrap.get("aggregation") != "paired_path_mean"
+            or bootstrap.get("shared_across_linear_and_nonlinear_branches")
+            is not True
+            or bootstrap.get("ensemble_centered_at_each_horizon_step") is not True
+            or bootstrap.get("target_future_values_used") is not False
+            or path_count != NONLINEAR_FUTURE_INNOVATION_PATH_COUNT
+            or block_length != expected_block_length
+            or seed < 0
+            or int(detail.get("future_innovation_path_count", -1)) != path_count
+        ):
+            return "nonlinear_future_bootstrap_invalid"
     return None
 
 
@@ -969,7 +1058,7 @@ def validate_generation(
         )
         policy = (
             "research_all_treatment_source_distance_and_mechanism_scoring_"
-            "capability_horizon_support_and_nonlinear_identifiability_gates_v4"
+            "capability_horizon_support_and_nonlinear_identifiability_gates_v5"
         )
 
     report = {

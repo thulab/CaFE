@@ -48,7 +48,12 @@ def _fixture(tmp_path: Path, monkeypatch) -> Path:
     return tmp_path / "gift"
 
 
-def _panel_fixture(tmp_path: Path, monkeypatch) -> Path:
+def _panel_fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    include_covariates: bool = True,
+) -> Path:
     asset = tmp_path / "gift-panel" / "fixture-panel" / "H"
     asset.mkdir(parents=True)
     rng = np.random.default_rng(7)
@@ -61,22 +66,22 @@ def _panel_fixture(tmp_path: Path, monkeypatch) -> Path:
             -0.6 * driver + 0.08 * rng.normal(size=t.size),
         )
     )
-    table = pa.table(
-        {
-            "item_id": ["native-panel"],
-            "start": ["2020-01-01"],
-            "freq": ["H"],
-            "target": [panel.tolist()],
-            "past_feat_dynamic_real": [
-                np.vstack(
-                    (
-                        np.sin(t / 13.0),
-                        np.cos(t / 17.0),
-                    )
-                ).tolist()
-            ],
-        }
-    )
+    columns = {
+        "item_id": ["native-panel"],
+        "start": ["2020-01-01"],
+        "freq": ["H"],
+        "target": [panel.tolist()],
+    }
+    if include_covariates:
+        columns["past_feat_dynamic_real"] = [
+            np.vstack(
+                (
+                    np.sin(t / 13.0),
+                    np.cos(t / 17.0),
+                )
+            ).tolist()
+        ]
+    table = pa.table(columns)
     with pa.OSFile(str(asset / "data-00000-of-00001.arrow"), "wb") as sink:
         with pa_ipc.new_stream(sink, table.schema) as writer:
             writer.write_table(table)
@@ -265,6 +270,36 @@ def test_covariate_impulse_ablation_keeps_target_and_shifts_only_impulse(
             np.asarray(baseline["covariates"])[:context],
         )
         assert ablation["future_covariate_visible"] == [False, False]
+
+
+def test_replay_handles_panel_ablations_without_native_covariates(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _panel_fixture(
+        tmp_path,
+        monkeypatch,
+        include_covariates=False,
+    )
+    dataset_root = tmp_path / "experiment-no-covariates" / "gift_panel_fixture"
+    manifest = generate_dataset(
+        "gift_panel_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=37,
+        capability_ids=("common_factor",),
+        max_instances=1,
+    )
+
+    replayed = list(iter_replayed_samples(manifest, gift_eval_dir=gift_root))
+    ablations = [
+        row
+        for row in replayed
+        if row["evaluation_table"] == "gift_eval_capability_input_ablation"
+    ]
+    assert len(ablations) == 5
+    assert all(row["covariates"] is None for row in ablations)
 
 
 def test_compact_contract_replay_matches_every_stored_delta_hash(

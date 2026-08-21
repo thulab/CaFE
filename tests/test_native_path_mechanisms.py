@@ -12,6 +12,7 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_THRESHOLD,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     _distance_gate,
+    _nonlinear_innovation_bootstrap_paths,
     _nonlinear_state_response,
     build_capability_group,
     mase_scale_by_target,
@@ -125,6 +126,8 @@ def test_nonlinear_persistence_is_holdout_identifiable_and_self_recursive() -> N
         "minimum_required_holdout_incremental_r2"
     ]
     assert audit["coefficient_sign_stable"]
+    assert audit["multistep_holdout"]["accepted"]
+    assert audit["multistep_holdout"]["incremental_r2"] > 0.0
 
     distances = [
         treatment.source_distance_gate["full_history_macro_normalized_rms"]
@@ -154,6 +157,53 @@ def test_nonlinear_persistence_is_holdout_identifiable_and_self_recursive() -> N
         + source_innovations
     )
     np.testing.assert_allclose(treated[1:], reconstructed, atol=1e-12)
+
+    assert treatment.metadata["future_innovation_policy"] == (
+        "history_innovation_marginalized_shared_path_mean"
+    )
+    bootstrap = treatment.metadata[
+        "future_innovation_bootstrap_by_target"
+    ]["0"]
+    paths, replayed_bootstrap = _nonlinear_innovation_bootstrap_paths(
+        source_innovations,
+        horizon=instance.prediction_length,
+        path_count=int(bootstrap["path_count"]),
+        seed=int(bootstrap["seed"]),
+    )
+    assert np.any(np.abs(paths) > 0.0)
+    assert replayed_bootstrap["block_length"] == bootstrap["block_length"]
+    linear_states = np.full(paths.shape[0], source[-1], dtype=float)
+    nonlinear_states = np.full(paths.shape[0], treated[-1], dtype=float)
+    expected_future = np.empty(instance.prediction_length, dtype=float)
+    deprecated_deterministic_future = np.empty(instance.prediction_length, dtype=float)
+    deterministic_linear = float(source[-1])
+    deterministic_nonlinear = float(treated[-1])
+    for step in range(instance.prediction_length):
+        linear_states = intercept + persistence * linear_states + paths[:, step]
+        nonlinear_states = (
+            intercept
+            + persistence * nonlinear_states
+            + nonlinear_coefficient
+            * np.asarray(_nonlinear_state_response(nonlinear_states))
+            + paths[:, step]
+        )
+        expected_future[step] = scale * float(
+            np.mean(nonlinear_states - linear_states)
+        )
+        deterministic_linear = intercept + persistence * deterministic_linear
+        deterministic_nonlinear = (
+            intercept
+            + persistence * deterministic_nonlinear
+            + nonlinear_coefficient
+            * float(_nonlinear_state_response(deterministic_nonlinear))
+        )
+        deprecated_deterministic_future[step] = scale * (
+            deterministic_nonlinear - deterministic_linear
+        )
+    np.testing.assert_allclose(
+        treatment.future_delta[:, 0], expected_future, atol=1e-12
+    )
+    assert not np.allclose(expected_future, deprecated_deterministic_future)
 
 
 def test_intermittency_levels_become_sparser_with_fixed_amplitude() -> None:

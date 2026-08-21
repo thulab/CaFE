@@ -29,12 +29,16 @@ from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     NONLINEAR_EXTREME_STATE_MINIMUM_ABS,
+    NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH,
+    NONLINEAR_FUTURE_INNOVATION_PATH_COUNT,
     NONLINEAR_HOLDOUT_FRACTION,
     NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION,
     NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO,
     NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE,
     NONLINEAR_MINIMUM_HISTORY,
     NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN,
+    NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN,
+    NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT,
     NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS,
     NONLINEAR_PERSISTENCE_INTERVALS,
     NONLINEAR_STABILITY_LIMIT,
@@ -58,10 +62,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v10"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v8"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v7"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v5"
+PIPELINE_SCHEMA = "cafe.pipeline.v11"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v9"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v8"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v6"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -885,7 +889,12 @@ def _replay_contract_instance(
         if source is None:
             raise ValueError("ablation contract has no matching treatment")
         target = np.asarray(source["target"], dtype=float).copy()
-        ablated_covariates = np.asarray(source["covariates"], dtype=float).copy()
+        source_covariates = source.get("covariates")
+        ablated_covariates = (
+            np.empty((target.shape[0], 0), dtype=float)
+            if source_covariates is None
+            else np.asarray(source_covariates, dtype=float).copy()
+        )
         context = int(contract["context_length"])
         audit = contract["input_ablation_metadata"]["channel_audit"]
         if str(contract["capability_id"]) == "covariate_impulse_response":
@@ -1199,11 +1208,20 @@ def generate_dataset(
                 "mechanism": (
                     "same_innovation_state_dependent_persistence_recurrence"
                 ),
-                "identifiability": "single_blocked_holdout_nonlinear_vs_linear_ar1",
+                "identifiability": (
+                    "blocked_suffix_one_step_and_rolling_multistep_"
+                    "nonlinear_vs_linear_ar1"
+                ),
                 "holdout_fraction": NONLINEAR_HOLDOUT_FRACTION,
                 "minimum_history_length": NONLINEAR_MINIMUM_HISTORY,
                 "minimum_holdout_incremental_r2": (
                     NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN
+                ),
+                "minimum_multistep_holdout_incremental_r2": (
+                    NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN
+                ),
+                "multistep_audit_origin_count": (
+                    NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT
                 ),
                 "ordinary_state_maximum_abs": (
                     NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS
@@ -1215,6 +1233,17 @@ def generate_dataset(
                 "headroom_fraction_intervals": [
                     list(interval) for interval in NONLINEAR_PERSISTENCE_INTERVALS
                 ],
+                "future_innovation_policy": (
+                    "centered_circular_moving_block_bootstrap_shared_by_"
+                    "paired_branches"
+                ),
+                "future_innovation_path_count": (
+                    NONLINEAR_FUTURE_INNOVATION_PATH_COUNT
+                ),
+                "future_innovation_minimum_block_length": (
+                    NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH
+                ),
+                "future_aggregation": "paired_path_mean",
                 "minimum_future_profile_range": (
                     NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE
                 ),

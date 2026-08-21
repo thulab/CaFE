@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v7"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v8"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -69,8 +69,12 @@ NONLINEAR_MINIMUM_TRAIN_EXTREME_COUNT = 4
 NONLINEAR_MINIMUM_HOLDOUT_ORDINARY_COUNT = 4
 NONLINEAR_MINIMUM_HOLDOUT_EXTREME_COUNT = 2
 NONLINEAR_MINIMUM_HALF_COEFFICIENT_RATIO = 0.10
+NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN = 0.0
+NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT = 4
 NONLINEAR_STABILITY_LIMIT = 0.98
 NONLINEAR_STATE_ABSOLUTE_LIMIT = 8.0
+NONLINEAR_FUTURE_INNOVATION_PATH_COUNT = 128
+NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH = 4
 NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE = 0.10
 NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION = 0.50
 NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO = 0.90
@@ -931,7 +935,155 @@ def _nonlinear_fit(values: np.ndarray, *, nonlinear: bool) -> np.ndarray:
     return np.linalg.lstsq(np.column_stack(columns), response, rcond=None)[0]
 
 
-def _nonlinear_channel_audit(z: np.ndarray) -> dict[str, Any]:
+def _nonlinear_innovation_bootstrap_paths(
+    innovations: np.ndarray,
+    *,
+    horizon: int,
+    path_count: int,
+    seed: int,
+    innovation_pool: str = "linear_skeleton_full_history_residuals",
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Draw centered circular moving-block paths from historical innovations."""
+
+    pool = np.asarray(innovations, dtype=float).reshape(-1)
+    if pool.size < 2:
+        raise ValueError("nonlinear_innovation_pool_too_short")
+    if horizon < 1 or path_count < 2:
+        raise ValueError("nonlinear_innovation_bootstrap_shape_invalid")
+    centered = pool - float(np.mean(pool))
+    block_length = min(
+        centered.size,
+        max(
+            NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH,
+            int(math.ceil(math.sqrt(horizon))),
+        ),
+    )
+    block_count = int(math.ceil(horizon / block_length))
+    starts = np.random.default_rng(int(seed)).integers(
+        0,
+        centered.size,
+        size=(int(path_count), block_count),
+    )
+    offsets = np.arange(block_length, dtype=int)
+    indexes = (starts[:, :, None] + offsets[None, None, :]) % centered.size
+    paths = centered[indexes.reshape(int(path_count), -1)[:, :horizon]]
+    # Finite bootstrap ensembles otherwise carry a small horizon-specific mean
+    # shock.  Removing it keeps the estimand focused on persistence while
+    # retaining each sampled path's local block structure.
+    paths = paths - np.mean(paths, axis=0, keepdims=True)
+    return paths, {
+        "schema_version": "cafe.nonlinear_innovation_bootstrap.v1",
+        "method": "centered_circular_moving_block_bootstrap",
+        "innovation_pool": innovation_pool,
+        "path_count": int(path_count),
+        "block_length": int(block_length),
+        "seed": int(seed),
+        "aggregation": "paired_path_mean",
+        "shared_across_linear_and_nonlinear_branches": True,
+        "ensemble_centered_at_each_horizon_step": True,
+        "target_future_values_used": False,
+    }
+
+
+def _nonlinear_multistep_holdout_audit(
+    values: np.ndarray,
+    *,
+    split: int,
+    prediction_horizon: int,
+    linear_train: np.ndarray,
+    nonlinear_train: np.ndarray,
+    seed: int,
+) -> dict[str, Any]:
+    holdout_size = values.size - 1 - split
+    audit_horizon = min(
+        max(1, int(prediction_horizon)),
+        max(4, holdout_size // 2),
+    )
+    latest_origin = values.size - 1 - audit_horizon
+    if latest_origin < split:
+        return {
+            "accepted": False,
+            "reason": "insufficient_multistep_holdout_support",
+        }
+    origin_count = min(
+        NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT,
+        latest_origin - split + 1,
+    )
+    origins = np.unique(
+        np.linspace(split, latest_origin, num=origin_count, dtype=int)
+    )
+    train_previous = values[:split]
+    train_response = values[1 : split + 1]
+    innovations = train_response - (
+        float(linear_train[0]) + float(linear_train[1]) * train_previous
+    )
+    paths, bootstrap = _nonlinear_innovation_bootstrap_paths(
+        innovations,
+        horizon=audit_horizon,
+        path_count=NONLINEAR_FUTURE_INNOVATION_PATH_COUNT,
+        seed=seed,
+        innovation_pool="linear_skeleton_training_prefix_residuals",
+    )
+    linear_forecasts: list[np.ndarray] = []
+    nonlinear_forecasts: list[np.ndarray] = []
+    observations: list[np.ndarray] = []
+    for origin in origins:
+        linear_state = np.full(paths.shape[0], values[origin], dtype=float)
+        nonlinear_state = linear_state.copy()
+        linear_mean = np.empty(audit_horizon, dtype=float)
+        nonlinear_mean = np.empty(audit_horizon, dtype=float)
+        for step in range(audit_horizon):
+            innovation = paths[:, step]
+            linear_state = (
+                float(linear_train[0])
+                + float(linear_train[1]) * linear_state
+                + innovation
+            )
+            nonlinear_state = (
+                float(nonlinear_train[0])
+                + float(nonlinear_train[1]) * nonlinear_state
+                + float(nonlinear_train[2])
+                * np.asarray(_nonlinear_state_response(nonlinear_state))
+                + innovation
+            )
+            linear_mean[step] = float(np.mean(linear_state))
+            nonlinear_mean[step] = float(np.mean(nonlinear_state))
+        linear_forecasts.append(linear_mean)
+        nonlinear_forecasts.append(nonlinear_mean)
+        observations.append(values[origin + 1 : origin + 1 + audit_horizon])
+    actual = np.concatenate(observations)
+    linear = np.concatenate(linear_forecasts)
+    nonlinear = np.concatenate(nonlinear_forecasts)
+    linear_mse = float(np.mean(np.square(actual - linear)))
+    nonlinear_mse = float(np.mean(np.square(actual - nonlinear)))
+    gain = (
+        0.0
+        if linear_mse <= 1e-12
+        else 1.0 - nonlinear_mse / linear_mse
+    )
+    accepted = gain > NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN + 1e-12
+    return {
+        "accepted": accepted,
+        "reason": None if accepted else "nonlinear_does_not_beat_linear_multistep",
+        "origin_indices": [int(value) for value in origins],
+        "origin_count": int(origins.size),
+        "forecast_horizon": int(audit_horizon),
+        "linear_mse": linear_mse,
+        "nonlinear_mse": nonlinear_mse,
+        "incremental_r2": gain,
+        "minimum_required_incremental_r2": (
+            NONLINEAR_MINIMUM_MULTISTEP_HOLDOUT_R2_GAIN
+        ),
+        "innovation_bootstrap": bootstrap,
+    }
+
+
+def _nonlinear_channel_audit(
+    z: np.ndarray,
+    *,
+    prediction_horizon: int,
+    multistep_seed: int,
+) -> dict[str, Any]:
     """Audit one standardized channel using one blocked holdout split.
 
     The function deliberately performs a constant number of tiny regressions;
@@ -946,7 +1098,7 @@ def _nonlinear_channel_audit(z: np.ndarray) -> dict[str, Any]:
     )
     split = transition_count - holdout_size
     audit: dict[str, Any] = {
-        "schema_version": "cafe.nonlinear_identifiability_channel.v1",
+        "schema_version": "cafe.nonlinear_identifiability_channel.v2",
         "transition_count": transition_count,
         "training_transition_count": split,
         "holdout_transition_count": holdout_size,
@@ -1024,6 +1176,14 @@ def _nonlinear_channel_audit(z: np.ndarray) -> dict[str, Any]:
     second_coefficients = _nonlinear_fit(values[midpoint:], nonlinear=True)
     full_nonlinear = _nonlinear_fit(values, nonlinear=True)
     full_linear = _nonlinear_fit(values, nonlinear=False)
+    multistep = _nonlinear_multistep_holdout_audit(
+        values,
+        split=split,
+        prediction_horizon=prediction_horizon,
+        linear_train=linear_train,
+        nonlinear_train=nonlinear_train,
+        seed=multistep_seed,
+    )
     coefficient_values = np.asarray(
         [
             nonlinear_train[2],
@@ -1072,6 +1232,7 @@ def _nonlinear_channel_audit(z: np.ndarray) -> dict[str, Any]:
             "nonlinear_direction": direction,
             "stability_limit": NONLINEAR_STABILITY_LIMIT,
             "stability_headroom": stability_headroom,
+            "multistep_holdout": multistep,
         }
     )
     if holdout_gain < NONLINEAR_MINIMUM_HOLDOUT_R2_GAIN:
@@ -1084,6 +1245,8 @@ def _nonlinear_channel_audit(z: np.ndarray) -> dict[str, Any]:
         audit["reason"] = "linear_skeleton_not_stable"
     elif stability_headroom <= 0.0:
         audit["reason"] = "no_stability_headroom_in_detected_direction"
+    elif multistep.get("accepted") is not True:
+        audit["reason"] = "nonlinear_structure_does_not_beat_linear_multistep"
     else:
         audit["accepted"] = True
     return audit
@@ -1097,8 +1260,9 @@ def _state_dependent_persistence_delta_batch(
     linear_intercept: float,
     linear_persistence: float,
     nonlinear_coefficients: np.ndarray,
+    future_innovation_paths: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, list[dict[str, float]]]:
-    """Apply all five nonlinear doses in one recurrence pass."""
+    """Apply all doses and marginalize paired future innovation paths."""
 
     source = np.asarray(z, dtype=float)
     coefficients = np.asarray(nonlinear_coefficients, dtype=float).reshape(-1)
@@ -1119,32 +1283,54 @@ def _state_dependent_persistence_delta_batch(
         raise ValueError("nonlinear_treated_history_exceeds_state_limit")
 
     history_delta = float(scale) * (treated - source[None, :])
+    future_innovations = np.asarray(future_innovation_paths, dtype=float)
+    if future_innovations.ndim != 2 or future_innovations.shape[1] != horizon:
+        raise ValueError("nonlinear_future_innovation_paths_shape_invalid")
+    path_count = future_innovations.shape[0]
     future_delta = np.empty((coefficients.size, horizon), dtype=float)
-    linear_state = float(source[-1])
-    nonlinear_state = treated[:, -1].copy()
-    maximum_linear_future_state = abs(linear_state)
-    maximum_nonlinear_future_state = np.abs(nonlinear_state)
+    linear_state = np.full(path_count, source[-1], dtype=float)
+    nonlinear_state = np.broadcast_to(
+        treated[:, -1, None], (coefficients.size, path_count)
+    ).copy()
+    maximum_linear_future_state = float(np.max(np.abs(linear_state)))
+    maximum_nonlinear_future_state = np.max(
+        np.abs(nonlinear_state), axis=1
+    )
+    half_path_count = path_count // 2
+    half_ensemble_max_abs_difference = np.zeros(coefficients.size, dtype=float)
     for step in range(horizon):
-        linear_state = linear_intercept + linear_persistence * linear_state
+        innovation = future_innovations[:, step]
+        linear_state = (
+            linear_intercept + linear_persistence * linear_state + innovation
+        )
         nonlinear_state = (
             linear_intercept
             + linear_persistence * nonlinear_state
-            + coefficients * np.asarray(_nonlinear_state_response(nonlinear_state))
+            + coefficients[:, None]
+            * np.asarray(_nonlinear_state_response(nonlinear_state))
+            + innovation[None, :]
         )
         if (
-            abs(linear_state) > NONLINEAR_STATE_ABSOLUTE_LIMIT
+            np.max(np.abs(linear_state)) > NONLINEAR_STATE_ABSOLUTE_LIMIT
             or np.max(np.abs(nonlinear_state)) > NONLINEAR_STATE_ABSOLUTE_LIMIT
         ):
             raise ValueError("nonlinear_future_rollout_exceeds_state_limit")
         maximum_linear_future_state = max(
-            maximum_linear_future_state, abs(linear_state)
+            maximum_linear_future_state, float(np.max(np.abs(linear_state)))
         )
         maximum_nonlinear_future_state = np.maximum(
-            maximum_nonlinear_future_state, np.abs(nonlinear_state)
+            maximum_nonlinear_future_state,
+            np.max(np.abs(nonlinear_state), axis=1),
         )
-        future_delta[:, step] = float(scale) * (
-            nonlinear_state - linear_state
-        )
+        paired_delta = nonlinear_state - linear_state[None, :]
+        future_delta[:, step] = float(scale) * np.mean(paired_delta, axis=1)
+        if half_path_count:
+            first_half = np.mean(paired_delta[:, :half_path_count], axis=1)
+            second_half = np.mean(paired_delta[:, half_path_count:], axis=1)
+            half_ensemble_max_abs_difference = np.maximum(
+                half_ensemble_max_abs_difference,
+                float(scale) * np.abs(first_half - second_half),
+            )
     maximum_history = np.max(np.abs(treated), axis=1)
     diagnostics = [
         {
@@ -1154,6 +1340,10 @@ def _state_dependent_persistence_delta_batch(
             ),
             "maximum_nonlinear_future_state_abs": float(
                 maximum_nonlinear_future_state[index]
+            ),
+            "future_innovation_path_count": int(path_count),
+            "future_effect_half_ensemble_max_abs_difference": float(
+                half_ensemble_max_abs_difference[index]
             ),
         }
         for index in range(coefficients.size)
@@ -1169,6 +1359,7 @@ def _state_dependent_persistence_deltas(
     linear_intercept: float,
     linear_persistence: float,
     nonlinear_coefficient: float,
+    future_innovation_paths: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, float]]:
     """Scalar compatibility wrapper around the batched recurrence."""
 
@@ -1179,6 +1370,7 @@ def _state_dependent_persistence_deltas(
         linear_intercept=linear_intercept,
         linear_persistence=linear_persistence,
         nonlinear_coefficients=np.asarray([nonlinear_coefficient], dtype=float),
+        future_innovation_paths=future_innovation_paths,
     )
     return history[0], future[0], diagnostics[0]
 
@@ -1202,7 +1394,18 @@ def _nonlinear_units(
     diagnostics: dict[str, Any] = {}
     affected: list[int] = []
     for channel in range(dimension):
-        audit = _nonlinear_channel_audit(standardized[:, channel])
+        multistep_seed = protocol.stable_seed(
+            instance.official_instance_id,
+            "nonlinear_persistence",
+            "multistep_holdout",
+            channel,
+            base=int(augmentation_seed),
+        )
+        audit = _nonlinear_channel_audit(
+            standardized[:, channel],
+            prediction_horizon=instance.prediction_length,
+            multistep_seed=multistep_seed,
+        )
         diagnostics[str(channel)] = audit
         if audit["accepted"]:
             affected.append(channel)
@@ -1229,6 +1432,7 @@ def _nonlinear_units(
     level_diagnostics: list[dict[str, Any]] = [
         {} for _ in CAPABILITY_LEVELS
     ]
+    future_bootstrap_by_target: dict[str, Any] = {}
     for channel in affected:
         audit = diagnostics[str(channel)]
         direction = float(audit["nonlinear_direction"])
@@ -1249,9 +1453,30 @@ def _nonlinear_units(
             >= NONLINEAR_STABILITY_LIMIT
         ):
             raise ValueError("nonlinear_level_exceeds_stability_limit")
+        source = standardized[:, channel]
+        full_innovations = source[1:] - (
+            float(audit["linear_intercept"])
+            + float(audit["linear_persistence_coefficient"]) * source[:-1]
+        )
+        bootstrap_seed = protocol.stable_seed(
+            instance.official_instance_id,
+            "nonlinear_persistence",
+            "future_innovation_bootstrap",
+            channel,
+            base=int(augmentation_seed),
+        )
+        future_innovation_paths, bootstrap = (
+            _nonlinear_innovation_bootstrap_paths(
+                full_innovations,
+                horizon=instance.prediction_length,
+                path_count=NONLINEAR_FUTURE_INNOVATION_PATH_COUNT,
+                seed=bootstrap_seed,
+            )
+        )
+        future_bootstrap_by_target[str(channel)] = bootstrap
         channel_history, channel_future, rollouts = (
             _state_dependent_persistence_delta_batch(
-                standardized[:, channel],
+                source,
                 scale=float(scales[channel]),
                 horizon=instance.prediction_length,
                 linear_intercept=float(audit["linear_intercept"]),
@@ -1259,6 +1484,7 @@ def _nonlinear_units(
                     audit["linear_persistence_coefficient"]
                 ),
                 nonlinear_coefficients=coefficients,
+                future_innovation_paths=future_innovation_paths,
             )
         )
         for index, _level in enumerate(CAPABILITY_LEVELS):
@@ -1309,7 +1535,12 @@ def _nonlinear_units(
                         "same_innovation_state_dependent_persistence_recurrence"
                     ),
                     "state_response": "z_abs_z_over_one_plus_abs_z",
-                    "future_innovation_policy": "zero_innovation_paired_rollout",
+                    "future_innovation_policy": (
+                        "history_innovation_marginalized_shared_path_mean"
+                    ),
+                    "future_innovation_bootstrap_by_target": (
+                        future_bootstrap_by_target
+                    ),
                     "headroom_fraction": headroom_fraction,
                     "physical_component_gain": 1.0,
                     "identifiability_by_target": diagnostics,
@@ -1326,8 +1557,11 @@ def _nonlinear_units(
         raise ValueError("nonlinear_treatment_distance_not_strictly_monotone")
     return units, {
         "nonlinear_identifiability_gate": {
-            "schema_version": "cafe.nonlinear_identifiability_gate.v1",
-            "method": "single_blocked_holdout_nonlinear_vs_linear_ar1",
+            "schema_version": "cafe.nonlinear_identifiability_gate.v2",
+            "method": (
+                "blocked_suffix_one_step_and_rolling_multistep_"
+                "nonlinear_vs_linear_ar1"
+            ),
             "state_response": "z_abs_z_over_one_plus_abs_z",
             "minimum_history_length": NONLINEAR_MINIMUM_HISTORY,
             "affected_target_indices": affected,
@@ -1338,6 +1572,9 @@ def _nonlinear_units(
         },
         "dose_policy": (
             "ordered_fraction_of_detected_direction_stability_headroom"
+        ),
+        "future_estimand": (
+            "paired_conditional_mean_over_shared_bootstrapped_innovations"
         ),
         "full_history_distance_by_level": full_distances,
     }
@@ -1774,7 +2011,7 @@ def _horizon_support_gate(
         return {
             "schema_version": "cafe.capability_horizon_support_gate.v1",
             "capability_id": capability_id,
-            "metric": "nonlinear_future_effect_decay_profile",
+            "metric": "innovation_marginalized_future_effect_decay_profile",
             "horizon_partition": "whole_forecast_horizon",
             "minimum_required_relative_range": (
                 NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE
@@ -2166,6 +2403,9 @@ def replay_treatment_deltas(
         for channel in affected:
             first_metadata = contracts[0]["mechanism_metadata"]
             audit = first_metadata["identifiability_by_target"][str(channel)]
+            bootstrap = first_metadata[
+                "future_innovation_bootstrap_by_target"
+            ][str(channel)]
             coefficients = np.asarray(
                 [
                     row["mechanism_metadata"][
@@ -2178,6 +2418,18 @@ def replay_treatment_deltas(
             z = (
                 history[:, channel] - np.mean(history[:, channel])
             ) / scales[channel]
+            innovations = z[1:] - (
+                float(audit["linear_intercept"])
+                + float(audit["linear_persistence_coefficient"]) * z[:-1]
+            )
+            future_innovation_paths, _bootstrap_replay = (
+                _nonlinear_innovation_bootstrap_paths(
+                    innovations,
+                    horizon=horizon,
+                    path_count=int(bootstrap["path_count"]),
+                    seed=int(bootstrap["seed"]),
+                )
+            )
             channel_history, channel_future, _rollout = (
                 _state_dependent_persistence_delta_batch(
                     z,
@@ -2188,6 +2440,7 @@ def replay_treatment_deltas(
                         audit["linear_persistence_coefficient"]
                     ),
                     nonlinear_coefficients=coefficients,
+                    future_innovation_paths=future_innovation_paths,
                 )
             )
             for index in range(len(contracts)):
