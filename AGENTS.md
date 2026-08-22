@@ -3,8 +3,9 @@
 ## Project
 
 CaFE is a Capability-Focused Extension of existing forecasting benchmarks.
-The current adapter reads GIFT-Eval's official test instances and adds paired
-capability treatments directly to their authentic histories and futures.
+The current adapter reads the complete-future-label subset of GIFT-Eval's
+official test instances and adds paired capability treatments directly to
+their authentic histories and futures.
 
 ## Architecture
 

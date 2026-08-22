@@ -40,8 +40,8 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v8"
-TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v5"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v9"
+TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v6"
 LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
     "cafe.benchmark_extension_validation.v3"
 )
@@ -217,7 +217,7 @@ def _validated_inputs(dataset_root: Path) -> tuple[dict[str, Any], Path, Path]:
     if generation.get("schema_version") != GENERATION_SCHEMA:
         raise ValueError("unsupported generation manifest")
     if generation.get("config", {}).get("pipeline_schema_version") != PIPELINE_SCHEMA:
-        raise ValueError("generation is not current pipeline v11")
+        raise ValueError("generation is not current pipeline v12")
     validation_schema = validation.get("schema_version")
     current_validation = validation_schema == VALIDATION_SCHEMA
     legacy_publication_validation = (

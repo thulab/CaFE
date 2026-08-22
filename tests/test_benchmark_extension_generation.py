@@ -21,11 +21,18 @@ def _array_sha256(values: np.ndarray) -> str:
     return hashlib.sha256(np.asarray(values, dtype="<f8").tobytes()).hexdigest()
 
 
-def _fixture(tmp_path: Path, monkeypatch) -> Path:
+def _fixture(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    missing_final_label: bool = False,
+) -> Path:
     asset = tmp_path / "gift" / "fixture" / "H"
     asset.mkdir(parents=True)
     t = np.arange(800.0)
     target = 0.02 * t + np.sin(t / 10.0)
+    if missing_final_label:
+        target[-1] = np.nan
     table = pa.table(
         {
             "item_id": ["native-item"],
@@ -173,6 +180,48 @@ def test_augmentation_seed_changes_parameters_not_official_instances(
     assert [row["sampled_coordinate"] for row in rows[0]] != [
         row["sampled_coordinate"] for row in rows[1]
     ]
+
+
+def test_generation_excludes_incomplete_future_label_windows_and_audits_counts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _fixture(tmp_path, monkeypatch, missing_final_label=True)
+    dataset_root = tmp_path / "experiment-complete-labels" / "gift_fixture"
+    manifest = generate_dataset(
+        "gift_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=13,
+        capability_ids=("trend",),
+        max_instances=None,
+        workers=2,
+    )
+    assert manifest["official_instance_count"] == 1
+    assert manifest["official_window_selection_audit"] == {
+        "official_window_count": 2,
+        "complete_future_label_count": 1,
+        "partially_missing_future_label_count": 1,
+        "fully_missing_future_label_count": 0,
+    }
+    assert manifest["config"]["future_label_eligibility_policy"] == (
+        "require_every_horizon_target_cell_finite_v1"
+    )
+    baselines = list(
+        iter_compact_parquet(
+            dataset_root / "01_generation" / "official_instances.parquet"
+        )
+    )
+    assert len(baselines) == 1
+    assert baselines[0]["official_instance_id"].endswith("__w00__o704")
+    report = validate_generation(
+        dataset_root,
+        gift_eval_dir=gift_root,
+        mode="publication",
+        workers=1,
+    )
+    assert report["accepted"]
 
 
 def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatment(

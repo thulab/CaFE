@@ -8,6 +8,7 @@ import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import (
+    future_label_window_audit,
     iter_gift_eval_instances,
     official_forecast_origins,
     official_window_count,
@@ -140,3 +141,37 @@ def test_history_imputation_never_reads_official_future(
     _write_arrow(replacement / "fixture", [target], frequency="H")
     second = next(iter_gift_eval_instances(spec.dataset_id, replacement))
     np.testing.assert_array_equal(first.history, second.history)
+
+
+def test_forecast_window_with_any_missing_target_cell_is_excluded(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    asset = tmp_path / "fixture"
+    target = np.vstack((np.arange(800.0), np.arange(800.0) + 10.0))
+    target[1, -1] = np.nan
+    _write_arrow(asset, [target], frequency="H")
+    spec = protocol.DatasetSpec(
+        "gift_fixture_complete_labels",
+        "Fixture",
+        "fixture",
+        "fixture",
+        "Test",
+    )
+    monkeypatch.setitem(protocol.DATASET_REGISTRY, spec.dataset_id, spec)
+
+    audit = future_label_window_audit(
+        target,
+        prediction_length_value=48,
+        window_count=2,
+    )
+    assert audit == {
+        "official_window_count": 2,
+        "complete_future_label_count": 1,
+        "partially_missing_future_label_count": 1,
+        "fully_missing_future_label_count": 0,
+    }
+    instances = list(iter_gift_eval_instances(spec.dataset_id, tmp_path))
+    assert len(instances) == 1
+    assert instances[0].window_index == 0
+    assert bool(np.all(instances[0].future_observed_mask))

@@ -12,7 +12,7 @@ import pyarrow.ipc as pa_ipc
 from cafe import core as protocol
 
 
-GIFT_EVAL_ADAPTER_SCHEMA = "cafe.gift_eval_native_adapter.v2"
+GIFT_EVAL_ADAPTER_SCHEMA = "cafe.gift_eval_native_adapter.v3"
 GIFT_EVAL_SOURCE_REVISION = (
     "SalesforceAIResearch/gift-eval@26df7582a5a2a2ef7602b5ded3a9a12fd4da74b2:"
     "src/gift_eval/data.py"
@@ -258,6 +258,43 @@ def official_forecast_origins(
     )
 
 
+def future_label_window_audit(
+    raw_target: np.ndarray,
+    *,
+    prediction_length_value: int,
+    window_count: int,
+) -> dict[str, int]:
+    """Count complete and incomplete official forecast windows.
+
+    CaFE's formal extension uses complete-case forecast labels: every target
+    cell in the complete H x D forecast horizon must be finite.  History
+    missingness remains a separate input-imputation concern.
+    """
+
+    target = _time_major(raw_target)
+    complete = partially_missing = fully_missing = 0
+    for origin in official_forecast_origins(
+        target.shape[0],
+        prediction_length_value=prediction_length_value,
+        window_count=window_count,
+    ):
+        if origin <= 0 or origin + prediction_length_value > target.shape[0]:
+            continue
+        observed = np.isfinite(target[origin : origin + prediction_length_value])
+        if bool(np.all(observed)):
+            complete += 1
+        elif bool(np.any(observed)):
+            partially_missing += 1
+        else:
+            fully_missing += 1
+    return {
+        "official_window_count": complete + partially_missing + fully_missing,
+        "complete_future_label_count": complete,
+        "partially_missing_future_label_count": partially_missing,
+        "fully_missing_future_label_count": fully_missing,
+    }
+
+
 def _time_major(values: np.ndarray) -> np.ndarray:
     array = np.asarray(values, dtype=float)
     if array.ndim == 1:
@@ -407,7 +444,10 @@ def gift_eval_instances_for_record(
     raw_past_covariates: np.ndarray | None = None,
     raw_known_future_covariates: np.ndarray | None = None,
 ) -> Iterator[GiftEvalInstance]:
-    """Build official windows for one native record without cross-record state."""
+    """Build complete-label official windows without cross-record state."""
+
+    if maximum_windows is not None and int(maximum_windows) <= 0:
+        return
 
     target = _time_major(raw_target)
     past_covariates = _covariate_time_major(
@@ -445,6 +485,8 @@ def gift_eval_instances_for_record(
         raw_future = target[origin : origin + prediction_length_value]
         history, imputation = _impute_history(raw_history)
         future, observed = _fill_future_for_storage(raw_future, history)
+        if not bool(np.all(observed)):
+            continue
         history_covariates, future_covariates, covariate_imputation = (
             _impute_covariates(
                 covariates[:origin],

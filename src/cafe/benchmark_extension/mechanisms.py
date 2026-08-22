@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v8"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v9"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -1985,7 +1985,7 @@ def _horizon_support_gate(
             peak = 0.0
             relative_range = 0.0
             tail_rms = 0.0
-            tail_peak_ratio = float("inf")
+            tail_peak_ratio = None
             truth_half_life = None
         latest_peak = int(
             math.floor(
@@ -1997,6 +1997,7 @@ def _horizon_support_gate(
             peak > 0.0
             and peak_index <= latest_peak
             and relative_range >= NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE - 1e-12
+            and tail_peak_ratio is not None
             and tail_peak_ratio <= NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO + 1e-12
         )
         reason = None
@@ -2006,7 +2007,10 @@ def _horizon_support_gate(
             reason = "nonlinear_future_effect_peaks_too_late"
         elif relative_range < NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE - 1e-12:
             reason = "nonlinear_future_effect_profile_too_flat"
-        elif tail_peak_ratio > NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO + 1e-12:
+        elif (
+            tail_peak_ratio is not None
+            and tail_peak_ratio > NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO + 1e-12
+        ):
             reason = "nonlinear_future_effect_does_not_decay"
         return {
             "schema_version": "cafe.capability_horizon_support_gate.v1",
@@ -2027,6 +2031,7 @@ def _horizon_support_gate(
             "observed_peak_history_scale": peak,
             "observed_tail_rms_history_scale": tail_rms,
             "observed_tail_peak_ratio": tail_peak_ratio,
+            "observed_profile_count": int(valid_indexes.size),
             "truth_effect_half_life_from_peak": truth_half_life,
             "truth_effect_half_life_censored": truth_half_life is None,
             "target_future_values_used": False,

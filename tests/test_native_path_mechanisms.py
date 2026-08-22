@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
@@ -204,6 +205,34 @@ def test_nonlinear_persistence_is_holdout_identifiable_and_self_recursive() -> N
         treatment.future_delta[:, 0], expected_future, atol=1e-12
     )
     assert not np.allclose(expected_future, deprecated_deterministic_future)
+
+
+def test_nonlinear_empty_observed_future_is_finite_unavailable_metadata() -> None:
+    rng = np.random.default_rng(123)
+    values = np.zeros(5000, dtype=float)
+    values[0] = 1.0
+    for index in range(1, values.size):
+        values[index] = (
+            0.05 * values[index - 1]
+            + float(_nonlinear_state_response(values[index - 1]))
+            + rng.normal(0.0, 0.6)
+        )
+        values[index] = float(np.clip(values[index], -6.0, 6.0))
+    instance = _instance(
+        values[:4970],
+        future_observed_mask=np.zeros((48, 1), dtype=bool),
+    )
+    group = build_capability_group(
+        instance,
+        "nonlinear_persistence",
+        augmentation_seed=7,
+    )
+    assert not group.available
+    assert group.reason == "level_1_nonlinear_future_effect_profile_empty"
+    failed = group.group_metadata["failed_horizon_support_gate"]
+    assert failed["observed_profile_count"] == 0
+    assert failed["observed_tail_peak_ratio"] is None
+    protocol.canonical_json(group.group_metadata)
 
 
 def test_intermittency_levels_become_sparser_with_fixed_amplitude() -> None:

@@ -84,7 +84,7 @@ This runs generation and validation without starting model services:
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v11-smoke \
+  --experiment-id gift-v12-smoke \
   --dataset-id gift_ett1_h \
   --max-instances 2 \
   --augmentation-seed 2026081601 \
@@ -107,7 +107,7 @@ concurrent lightweight dataset scans.
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v11-formal \
+  --experiment-id gift-v12-formal \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
   --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \

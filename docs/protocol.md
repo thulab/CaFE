@@ -1,4 +1,4 @@
-# CaFE v11 scientific protocol
+# CaFE v12 scientific protocol
 
 ## 1. Estimand
 
@@ -45,13 +45,17 @@ The parity source is pinned to GIFT-Eval revision
 `src/gift_eval/data.py`.
 
 Missing history values use history-only linear interpolation with edge hold.
-The future observed mask is retained and metrics use observed cells only.
+Forecast labels use a stricter complete-case policy than the official masked
+GIFT-Eval aggregate: an `H x D` official window is eligible only when every
+future target cell is finite. Partially and fully missing forecast windows are
+counted in the generation manifest but do not enter generation, inference, or
+analysis.
 
 ## 3. Treatment batches
 
-All official instances are used in formal mode. `--max-instances` creates a
-non-formal source-order prefix for smoke tests. Instance selection has no
-generation seed.
+All complete-label official instances are used in formal mode.
+`--max-instances` creates a non-formal source-order prefix of that eligible
+set for smoke tests. Instance selection has no generation seed.
 
 Transformation randomness is counter-based. A draw is keyed by:
 

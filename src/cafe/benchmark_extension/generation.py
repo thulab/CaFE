@@ -15,6 +15,7 @@ from cafe.benchmark_extension.gift_eval import (
     GIFT_EVAL_ADAPTER_SCHEMA,
     GIFT_EVAL_SOURCE_REVISION,
     GiftEvalInstance,
+    future_label_window_audit,
     gift_arrow_target_summary,
     gift_eval_asset_path,
     gift_eval_instances_for_record,
@@ -62,10 +63,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v11"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v9"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v8"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v6"
+PIPELINE_SCHEMA = "cafe.pipeline.v12"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v10"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v9"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v7"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -929,7 +930,7 @@ def _replay_contract_instance(
 
 def _compact_record_batch(
     work: dict[str, Any],
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, Any]:
     """Worker entry point: fit contracts for source records, return no arrays."""
 
     output = {
@@ -937,9 +938,17 @@ def _compact_record_batch(
         "capability_treatments": [],
         "input_ablations": [],
         "availability": [],
+        "selection_audit": {
+            "official_window_count": 0,
+            "complete_future_label_count": 0,
+            "partially_missing_future_label_count": 0,
+            "fully_missing_future_label_count": 0,
+        },
     }
     instance_index = int(work["start_instance_index"])
     for item in work["records"]:
+        for key in output["selection_audit"]:
+            output["selection_audit"][key] += int(item[key])
         for instance in gift_eval_instances_for_record(
             dataset_id=str(work["dataset_id"]),
             config_id=str(work["config_id"]),
@@ -1015,10 +1024,19 @@ def _parallel_work_batches(
     for record in iter_gift_arrow_records(asset_path):
         if record.frequency != frequency:
             raise ValueError("GIFT-Eval config must have one frequency")
-        maximum = windows if remaining is None else min(windows, int(remaining))
-        if maximum <= 0:
+        if remaining is not None and int(remaining) <= 0:
             break
-        if current and current_instances + maximum > int(shard_size):
+        label_audit = future_label_window_audit(
+            record.target,
+            prediction_length_value=horizon,
+            window_count=windows,
+        )
+        eligible = int(label_audit["complete_future_label_count"])
+        maximum = eligible if remaining is None else min(eligible, int(remaining))
+        if current and (
+            current_instances + maximum > int(shard_size)
+            or len(current) >= int(shard_size)
+        ):
             yield work(current, next_instance_index)
             next_instance_index += current_instances
             current = []
@@ -1029,6 +1047,7 @@ def _parallel_work_batches(
             "past_covariates": record.past_covariates,
             "known_future_covariates": record.known_future_covariates,
             "maximum_windows": int(maximum),
+            **label_audit,
         }
         current.append(item)
         current_instances += maximum
@@ -1060,6 +1079,12 @@ def generate_dataset(
     paths = (baseline_path, treatment_path, ablation_path, availability_path)
     baseline_count = treatment_count = ablation_count = availability_count = 0
     instance_count = 0
+    selection_audit = {
+        "official_window_count": 0,
+        "complete_future_label_count": 0,
+        "partially_missing_future_label_count": 0,
+        "fully_missing_future_label_count": 0,
+    }
     available_counts = {capability: 0 for capability in capability_ids}
     unavailable_reason_counts: dict[str, dict[str, int]] = {
         capability: {} for capability in capability_ids
@@ -1090,6 +1115,18 @@ def generate_dataset(
                 reasons = unavailable_reason_counts[capability]
                 reasons[reason] = reasons.get(reason, 0) + 1
 
+    def consume_result(result: dict[str, Any]) -> None:
+        for key in selection_audit:
+            selection_audit[key] += int(result["selection_audit"][key])
+        for kind in (
+            "official_baselines",
+            "capability_treatments",
+            "input_ablations",
+            "availability",
+        ):
+            for compact in result[kind]:
+                consume(kind, compact)
+
     try:
         if int(workers) > 1:
             batches = iter(
@@ -1113,34 +1150,23 @@ def generate_dataset(
                 while pending:
                     future = pending.pop(0)
                     result = future.result()
-                    for kind in (
-                        "official_baselines",
-                        "capability_treatments",
-                        "input_ablations",
-                        "availability",
-                    ):
-                        for compact in result[kind]:
-                            consume(kind, compact)
+                    consume_result(result)
                     try:
                         pending.append(executor.submit(_compact_record_batch, next(batches)))
                     except StopIteration:
                         pass
-            instance_count = baseline_count
         else:
-            for instance_index, instance in enumerate(iter_gift_eval_instances(
+            for batch in _parallel_work_batches(
                 dataset_id,
-                gift_eval_dir,
+                gift_eval_dir=gift_eval_dir,
                 term=term,
+                augmentation_seed=augmentation_seed,
+                capability_ids=capability_ids,
                 max_instances=max_instances,
-            )):
-                instance_count += 1
-                for kind, row in materialized_samples_for_instance(
-                    instance,
-                    augmentation_seed=augmentation_seed,
-                    capability_ids=capability_ids,
-                    source_shard_index=instance_index // max(1, int(shard_size)),
-                ):
-                    consume(kind, compact_contract_row(row))
+                shard_size=shard_size,
+            ):
+                consume_result(_compact_record_batch(batch))
+        instance_count = baseline_count
         for writer in writers.values():
             writer.close()
     except Exception:
@@ -1164,9 +1190,12 @@ def generate_dataset(
         "max_instances": max_instances,
         "formal": max_instances is None,
         "instance_selection": (
-            "all_official_test_instances"
+            "complete_future_label_subset_of_official_test_instances"
             if max_instances is None
-            else "nonformal_source_order_prefix"
+            else "nonformal_complete_label_source_order_prefix"
+        ),
+        "future_label_eligibility_policy": (
+            "require_every_horizon_target_cell_finite_v1"
         ),
         "native_target_policy": "preserve_gift_eval_target_dimension",
         "native_covariate_policy": (
@@ -1316,6 +1345,7 @@ def generate_dataset(
             },
         },
         "official_instance_count": instance_count,
+        "official_window_selection_audit": selection_audit,
         "available_instance_count_by_capability": available_counts,
         "unavailable_reason_count_by_capability": {
             capability: dict(sorted(reasons.items()))
