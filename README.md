@@ -21,11 +21,13 @@ split offset, and rolling origin distance. Native multivariate targets remain
 one benchmark sample. A univariate-only model is adapted during inference and
 its channel forecasts are reassembled.
 
-Every supported instance×capability cell produces five treatments. Parameter
-draws come from ordered, non-overlapping level intervals and are reproducible
-from `official_instance_id`, capability, level, and `augmentation_seed`.
-Changing the augmentation seed creates another treatment batch over the same
-official samples.
+Every supported instance×capability cell produces five treatments. Each
+capability has one explicit level coordinate: amplitude for amplitude-controlled
+mechanisms, period count for multi-seasonality, change location for regime
+switching, and event spacing for intermittency. All draws are reproducible from
+`official_instance_id`, capability, level, and `augmentation_seed`. Changing the
+augmentation seed creates another treatment batch over the same official
+samples.
 
 The source Arrow files remain the only stored copy of authentic paths.
 Generation writes compact replay contracts to ZSTD Parquet; it does not copy
@@ -35,11 +37,13 @@ writes source-sharded float32 Parquet forecasts. No model-specific task JSONL
 is materialized. Analysis scans one prediction shard at a time.
 
 Treatments modify the complete retained official history. Model-specific
-context truncation happens afterward. Amplitude levels are calibrated by the
-full-history macro normalized RMS. Qualification checks the distinct contexts
-actually received by the seven evaluated models: every model-context macro
-distance must be in `[0.10, 2.0]`, and every affected channel must remain at or
-below `3.0`. These checks reject a treatment group but never rescale it.
+context truncation happens afterward. Amplitude-controlled levels are calibrated
+by the full-history macro normalized RMS. Multi-seasonality instead keeps one
+shared full-history RMS across all five levels so that only the number of periods
+changes. Qualification checks the distinct contexts actually received by the
+seven evaluated models: every model-context macro distance must be in
+`[0.10, 2.0]`, and every affected channel must remain at or below `3.0`. These
+checks reject a treatment group but never rescale it.
 
 ## Capabilities
 
@@ -47,7 +51,9 @@ The GIFT-Eval adapter attempts these nine generatable mechanisms per official
 instance:
 
 - whole-history linear trend in the sample's own trend direction;
-- independent secondary seasonality;
+- controlled multi-period extrapolation: levels contain 2–6 independent
+  periods at fixed total RMS, using the first stable real anchor among the top
+  three history spectrum candidates or a deterministic protocol anchor;
 - constrained time-varying seasonal amplitude;
 - regime change with level-controlled change location;
 - state-dependent persistence with one-step and innovation-marginalized
@@ -84,7 +90,7 @@ This runs generation and validation without starting model services:
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v11-smoke \
+  --experiment-id gift-v12-smoke \
   --dataset-id gift_ett1_h \
   --max-instances 2 \
   --augmentation-seed 2026081601 \
@@ -107,7 +113,7 @@ concurrent lightweight dataset scans.
 
 ```bash
 uv run cafe run \
-  --experiment-id gift-v11-formal \
+  --experiment-id gift-v12-formal \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
   --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \

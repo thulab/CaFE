@@ -28,6 +28,19 @@ from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_HARMONIC_SHARE,
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+    MULTI_SEASONAL_COMPONENT_VISIBILITY,
+    MULTI_SEASONAL_HARMONIC_RELATIVE_TOLERANCE,
+    MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS,
+    MULTI_SEASONAL_MAXIMUM_HARMONIC_MULTIPLE,
+    MULTI_SEASONAL_MINIMUM_FREQUENCY_SEPARATION_CYCLES,
+    MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION,
+    MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES,
+    MULTI_SEASONAL_MINIMUM_PERIOD,
+    MULTI_SEASONAL_PERIOD_CANDIDATE_COUNT,
+    MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT,
+    MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL,
+    MULTI_SEASONAL_SPLIT_AMPLITUDE_RATIO_MINIMUM,
+    MULTI_SEASONAL_SPLIT_PHASE_COSINE_MINIMUM,
     NONLINEAR_EXTREME_STATE_MINIMUM_ABS,
     NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH,
     NONLINEAR_FUTURE_INNOVATION_PATH_COUNT,
@@ -62,10 +75,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v11"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v9"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v8"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v6"
+PIPELINE_SCHEMA = "cafe.pipeline.v12"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v10"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v9"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v7"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -1183,6 +1196,50 @@ def generate_dataset(
             "metric": "observed_affected_future_mase_standardized_rms",
             "minimum_required_mase_rms": MECHANISM_EFFECT_MINIMUM_MASE_RMS,
             "low_signal_policy": "treatment_accuracy_retained_mechanism_score_unavailable",
+        },
+        "multi_seasonal_policy": {
+            "level_coordinate": "additional_independent_period_count",
+            "maximum_additional_periods": (
+                MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS
+            ),
+            "total_controlled_period_counts": [2, 3, 4, 5, 6],
+            "history_anchor_candidate_count": (
+                MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT
+            ),
+            "history_anchor_component_visibility": (
+                MULTI_SEASONAL_COMPONENT_VISIBILITY
+            ),
+            "history_anchor_split_phase_cosine_minimum": (
+                MULTI_SEASONAL_SPLIT_PHASE_COSINE_MINIMUM
+            ),
+            "history_anchor_split_amplitude_ratio_minimum": (
+                MULTI_SEASONAL_SPLIT_AMPLITUDE_RATIO_MINIMUM
+            ),
+            "fallback": "protocol_generated_anchor",
+            "additional_period_source": "protocol_generated",
+            "period_candidate_count": MULTI_SEASONAL_PERIOD_CANDIDATE_COUNT,
+            "minimum_period": MULTI_SEASONAL_MINIMUM_PERIOD,
+            "minimum_shortest_context_cycles": (
+                MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES
+            ),
+            "minimum_future_cycle_fraction": (
+                MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION
+            ),
+            "minimum_frequency_separation_cycles": (
+                MULTI_SEASONAL_MINIMUM_FREQUENCY_SEPARATION_CYCLES
+            ),
+            "maximum_harmonic_multiple": (
+                MULTI_SEASONAL_MAXIMUM_HARMONIC_MULTIPLE
+            ),
+            "harmonic_relative_tolerance": (
+                MULTI_SEASONAL_HARMONIC_RELATIVE_TOLERANCE
+            ),
+            "component_energy_policy": (
+                "one_source_history_scale_rms_before_aggregate_gain"
+            ),
+            "shared_full_history_macro_rms_interval": list(
+                MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL
+            ),
         },
         "capability_horizon_support_policy": {
             "time_varying_seasonality": {

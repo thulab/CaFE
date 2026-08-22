@@ -98,7 +98,7 @@ def selected_dataset_ids(args: argparse.Namespace) -> list[str]:
     for dataset_id in output:
         dataset = protocol.resolve_dataset(dataset_id)
         if dataset.real_data_adapter not in {"gift_arrow", "gift_hierarchical_sales"}:
-            raise ValueError(f"v11 supports GIFT-Eval only: {dataset_id}")
+            raise ValueError(f"v12 supports GIFT-Eval only: {dataset_id}")
     return output
 
 
@@ -106,7 +106,7 @@ def _experiment_id(args: argparse.Namespace) -> str:
     if args.experiment_id:
         return str(args.experiment_id)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"gift-extension-v11-{args.augmentation_seed}-{timestamp}"
+    return f"gift-extension-v12-{args.augmentation_seed}-{timestamp}"
 
 
 def _stage_range(start_at: str, stop_after: str) -> tuple[str, ...]:

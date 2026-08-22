@@ -24,6 +24,13 @@ from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
 from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+    MULTI_SEASONAL_COMPONENT_VISIBILITY,
+    MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS,
+    MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION,
+    MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES,
+    MULTI_SEASONAL_MINIMUM_PERIOD,
+    MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT,
+    MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL,
     NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION,
     NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO,
     NONLINEAR_FUTURE_INNOVATION_MINIMUM_BLOCK_LENGTH,
@@ -43,6 +50,7 @@ from cafe.benchmark_extension.mechanisms import (
     STRICT_FUTURE_EFFECT_CAPABILITIES,
     TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
+    _independent_seasonal_period,
 )
 from cafe.benchmark_extension.storage import (
     iter_compact_parquet,
@@ -50,7 +58,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v10"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v11"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -707,9 +715,198 @@ def _nonlinear_identifiability_gate_reason(row: dict[str, Any]) -> str | None:
     return None
 
 
+def _multi_seasonal_contract_reason(row: dict[str, Any]) -> str | None:
+    if row.get("capability_id") != "multi_seasonal":
+        return None
+    metadata = row.get("mechanism_metadata")
+    group = row.get("group_metadata")
+    if not isinstance(metadata, dict) or not isinstance(group, dict):
+        return "multi_seasonal_metadata_missing"
+    try:
+        level = int(row["capability_level"])
+        coordinate = float(row["sampled_coordinate"])
+        context = int(row["context_length"])
+        horizon = int(row["horizon"])
+        shared_distance = float(
+            metadata["shared_full_history_macro_normalized_rms"]
+        )
+        gate_distance = float(
+            row["source_distance_gate"][
+                "full_history_macro_normalized_rms"
+            ]
+        )
+    except (KeyError, TypeError, ValueError):
+        return "multi_seasonal_metadata_values"
+    interval = row.get("coordinate_interval")
+    if (
+        level < 1
+        or level > MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS
+        or row.get("controlled_coordinate")
+        != "additional_independent_period_count"
+        or not math.isclose(coordinate, level, rel_tol=0.0, abs_tol=1e-12)
+        or not isinstance(interval, list)
+        or len(interval) != 2
+        or any(
+            not math.isclose(float(value), level, rel_tol=0.0, abs_tol=1e-12)
+            for value in interval
+        )
+        or int(metadata.get("additional_independent_period_count", -1))
+        != level
+        or int(metadata.get("total_controlled_period_count", -1))
+        != level + 1
+    ):
+        return "multi_seasonal_level_coordinate"
+    if (
+        metadata.get("component")
+        != "hybrid_anchor_protocol_generated_nested_independent_periods"
+        or metadata.get("amplitude_policy")
+        != "each_nested_level_normalized_to_one_shared_full_history_macro_rms"
+        or group.get("period_policy")
+        != (
+            "stable_history_anchor_else_protocol_anchor_plus_protocol_"
+            "generated_independent_additional_periods"
+        )
+        or group.get("target_future_used_for_fit_or_parameter_draw") is not False
+    ):
+        return "multi_seasonal_treatment_semantics"
+    if (
+        shared_distance < MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL[0] - 1e-12
+        or shared_distance
+        > MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL[1] + 1e-12
+        or not math.isclose(
+            shared_distance, gate_distance, rel_tol=1e-9, abs_tol=1e-12
+        )
+        or not math.isclose(
+            shared_distance,
+            float(
+                group.get(
+                    "shared_full_history_macro_normalized_rms",
+                    float("nan"),
+                )
+            ),
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        )
+    ):
+        return "multi_seasonal_shared_distance"
+    affected = [int(value) for value in row.get("affected_target_indices") or []]
+    resolved = metadata.get("resolved_periods_by_target")
+    if (
+        not affected
+        or not isinstance(resolved, dict)
+        or set(resolved) != {str(value) for value in affected}
+    ):
+        return "multi_seasonal_targets"
+    shortest_context = min(
+        context, min(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.values())
+    )
+    expected_bounds = (
+        MULTI_SEASONAL_MINIMUM_PERIOD,
+        min(
+            shortest_context / MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES,
+            horizon / MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION,
+        ),
+    )
+    for channel in affected:
+        details = resolved.get(str(channel))
+        if not isinstance(details, dict):
+            return "multi_seasonal_target_metadata"
+        components = details.get("components")
+        bounds = details.get("period_bounds")
+        search = details.get("history_anchor_search")
+        if (
+            not isinstance(components, list)
+            or len(components) != level + 1
+            or not isinstance(bounds, list)
+            or len(bounds) != 2
+            or not all(
+                math.isclose(
+                    float(stored),
+                    float(expected),
+                    rel_tol=1e-9,
+                    abs_tol=1e-12,
+                )
+                for stored, expected in zip(
+                    bounds, expected_bounds, strict=True
+                )
+            )
+            or not isinstance(search, dict)
+            or int(search.get("maximum_candidate_count", -1))
+            != MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT
+        ):
+            return "multi_seasonal_target_metadata"
+        source = details.get("anchor_source")
+        accepted_rank = search.get("accepted_rank")
+        if source == "history_top3_stable_harmonic":
+            if (
+                not isinstance(accepted_rank, int)
+                or accepted_rank < 1
+                or accepted_rank > MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT
+                or search.get("fallback_reason") is not None
+            ):
+                return "multi_seasonal_history_anchor"
+        elif source == "protocol_generated":
+            if accepted_rank is not None or not search.get("fallback_reason"):
+                return "multi_seasonal_protocol_anchor"
+        else:
+            return "multi_seasonal_anchor_source"
+        periods: list[float] = []
+        for index, component in enumerate(components):
+            if not isinstance(component, dict):
+                return "multi_seasonal_component_metadata"
+            try:
+                period = float(component["period"])
+                sin_coefficient = float(component["sin_coefficient"])
+                cos_coefficient = float(component["cos_coefficient"])
+                normalized_std = float(
+                    component[
+                        "history_normalized_std_before_aggregate_gain"
+                    ]
+                )
+            except (KeyError, TypeError, ValueError):
+                return "multi_seasonal_component_metadata"
+            expected_role = "anchor" if index == 0 else "additional"
+            expected_source = source if index == 0 else "protocol_generated"
+            if (
+                component.get("role") != expected_role
+                or component.get("source") != expected_source
+                or not math.isfinite(period)
+                or period < expected_bounds[0] - 1e-12
+                or period > expected_bounds[1] + 1e-12
+                or not math.isfinite(sin_coefficient)
+                or not math.isfinite(cos_coefficient)
+                or not math.isclose(
+                    normalized_std, 1.0, rel_tol=1e-9, abs_tol=1e-12
+                )
+            ):
+                return "multi_seasonal_component_values"
+            periods.append(period)
+        if any(
+            not _independent_seasonal_period(
+                left, right, shortest_context
+            )
+            for index, left in enumerate(periods)
+            for right in periods[index + 1 :]
+        ):
+            return "multi_seasonal_period_independence"
+        if source == "history_top3_stable_harmonic":
+            anchor = components[0]
+            stability = anchor.get("history_split_stability")
+            if (
+                anchor.get("history_candidate_rank") != accepted_rank
+                or not isinstance(stability, dict)
+                or stability.get("accepted") is not True
+                or float(anchor.get("history_fit_normalized_std", 0.0))
+                < MULTI_SEASONAL_COMPONENT_VISIBILITY - 1e-12
+            ):
+                return "multi_seasonal_history_anchor"
+    return None
+
+
 def _treatment_contract_reason(row: dict[str, Any]) -> str | None:
     return (
         _distance_gate_reason(row)
+        or _multi_seasonal_contract_reason(row)
         or _nonlinear_identifiability_gate_reason(row)
         or _horizon_support_gate_reason(row)
         or _mechanism_scoring_gate_reason(row)

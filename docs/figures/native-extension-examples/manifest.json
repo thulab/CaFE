@@ -4,7 +4,7 @@
     "real_authentic_source": "#1565c0",
     "treatment_minus_source": "#d84315"
   },
-  "created_at": "2026-08-21T14:21:09.136667+00:00",
+  "created_at": "2026-08-22T11:25:30.722559+00:00",
   "figure_semantics": "benchmark_truth_paths_not_model_predictions; complete official future; complete history except capability-specific recent-history focus",
   "records": [
     {
@@ -91,82 +91,188 @@
     {
       "affected_target_index_shown": 0,
       "augmentation_seed": 2026081601,
-      "baseline_sample_id": "gift__gift_ett1_h__item_0__w00__o16460__baseline",
+      "baseline_sample_id": "gift__gift_restaurant_d__air_ba937bf13d40fb24__w00__o436__baseline",
       "capability_id": "multi_seasonal",
-      "dataset_id": "gift_ett1_h",
+      "dataset_id": "gift_restaurant_d",
       "delta_display": "treatment_minus_source",
-      "display_history": 16460,
+      "display_history": 436,
       "display_policy": "complete_official_history_and_future",
       "file": {
-        "bytes": 289949,
+        "bytes": 551811,
         "path": "02_multi_seasonal__five_levels.png",
-        "sha256": "38cd9829729c2da0649d691bcac58114788a86ae5d4b102b95636d82c2af353d"
+        "sha256": "9aa4c5f5a03d4f40361df43202b855f7f9121c0e71bb1706e536acae1d1d6080"
       },
-      "full_treatment_history": 16460,
-      "horizon": 48,
+      "full_treatment_history": 436,
+      "future_estimand": null,
+      "future_innovation_policy": null,
+      "future_path_band": null,
+      "horizon": 30,
       "levels": [
         {
           "coordinate_interval": [
-            0.1,
-            0.14
+            1.0,
+            1.0
           ],
-          "future_effect_mase_rms": 0.37713123230190804,
+          "future_effect_mase_rms": 0.31142114598699827,
           "horizon_support_gate": null,
           "level": 1,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.12591513005823557,
-          "source_distance": 0.1252939708632093
+          "periods_by_target": {
+            "0": [
+              7.032258064516129,
+              9.640887928452662
+            ]
+          },
+          "sampled_coordinate": 1.0,
+          "source_distance": 0.27322143503340934,
+          "total_controlled_period_count": 2
         },
         {
           "coordinate_interval": [
-            0.16,
-            0.2
+            2.0,
+            2.0
           ],
-          "future_effect_mase_rms": 0.5033988018025942,
+          "future_effect_mase_rms": 0.3077153287807076,
           "horizon_support_gate": null,
           "level": 2,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.16807286209960742,
-          "source_distance": 0.16724373216359997
+          "periods_by_target": {
+            "0": [
+              7.032258064516129,
+              9.640887928452662,
+              17.639795984575564
+            ]
+          },
+          "sampled_coordinate": 2.0,
+          "source_distance": 0.27322143503340934,
+          "total_controlled_period_count": 3
         },
         {
           "coordinate_interval": [
-            0.22,
-            0.28
+            3.0,
+            3.0
           ],
-          "future_effect_mase_rms": 0.7780309137320374,
+          "future_effect_mase_rms": 0.31727458137880443,
           "horizon_support_gate": null,
           "level": 3,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.2597659787918915,
-          "source_distance": 0.2584845122500473
+          "periods_by_target": {
+            "0": [
+              7.032258064516129,
+              9.640887928452662,
+              17.639795984575564,
+              30.609384511229496
+            ]
+          },
+          "sampled_coordinate": 3.0,
+          "source_distance": 0.2732214350334093,
+          "total_controlled_period_count": 4
         },
         {
           "coordinate_interval": [
-            0.3,
-            0.38
+            4.0,
+            4.0
           ],
-          "future_effect_mase_rms": 1.1147195337574862,
+          "future_effect_mase_rms": 0.34674282603570333,
           "horizon_support_gate": null,
           "level": 4,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.37217828450539464,
-          "source_distance": 0.37034227033058725
+          "periods_by_target": {
+            "0": [
+              7.032258064516129,
+              9.640887928452662,
+              17.639795984575564,
+              30.609384511229496,
+              16.90756907219036
+            ]
+          },
+          "sampled_coordinate": 4.0,
+          "source_distance": 0.27322143503340934,
+          "total_controlled_period_count": 5
         },
         {
           "coordinate_interval": [
-            0.42,
-            0.55
+            5.0,
+            5.0
           ],
-          "future_effect_mase_rms": 1.3536347127136372,
+          "future_effect_mase_rms": 0.3796586888574755,
           "horizon_support_gate": null,
           "level": 5,
           "mechanism_scoreable": true,
-          "sampled_coordinate": 0.45194636854216763,
-          "source_distance": 0.44971684582834554
+          "periods_by_target": {
+            "0": [
+              7.032258064516129,
+              9.640887928452662,
+              17.639795984575564,
+              30.609384511229496,
+              16.90756907219036,
+              11.00666493021517
+            ]
+          },
+          "sampled_coordinate": 5.0,
+          "source_distance": 0.27322143503340934,
+          "total_controlled_period_count": 6
         }
       ],
-      "official_instance_id": "gift__gift_ett1_h__item_0__w00__o16460",
+      "multi_seasonal_anchor_by_target": {
+        "0": {
+          "anchor_source": "history_top3_stable_harmonic",
+          "components": [
+            {
+              "cos_coefficient": 10.276779957490561,
+              "frequency_index": 62,
+              "history_candidate_rank": 1,
+              "history_fit_normalized_std": 0.4106051640283433,
+              "history_normalized_std_before_aggregate_gain": 1.0,
+              "history_split_stability": {
+                "accepted": true,
+                "coefficient_amplitude_ratio": 0.8763527910548154,
+                "coefficient_phase_cosine": 0.753116828041804,
+                "first_half_normalized_std": 0.46736685579211484,
+                "minimum_required_amplitude_ratio": 0.5,
+                "minimum_required_half_normalized_std": 0.05,
+                "minimum_required_phase_cosine": 0.5,
+                "second_half_normalized_std": 0.40957824851993324
+              },
+              "period": 7.032258064516129,
+              "role": "anchor",
+              "sin_coefficient": 12.011725579435714,
+              "source": "history_top3_stable_harmonic"
+            },
+            {
+              "cos_coefficient": -10.503001415303766,
+              "frequency_index": null,
+              "history_normalized_std_before_aggregate_gain": 1.0,
+              "period": 9.640887928452662,
+              "phase": 3.86927170456046,
+              "role": "additional",
+              "sin_coefficient": -11.791235906225818,
+              "source": "protocol_generated"
+            }
+          ],
+          "history_anchor_search": {
+            "accepted_frequency_index": 62,
+            "accepted_rank": 1,
+            "attempts": [
+              {
+                "frequency_index": 62,
+                "full_history_normalized_std": 0.4106051640283433,
+                "period": 7.032258064516129,
+                "rank": 1,
+                "rejection_reasons": []
+              }
+            ],
+            "fallback_reason": null,
+            "maximum_candidate_count": 3
+          },
+          "period_bounds": [
+            4.0,
+            60.0
+          ]
+        }
+      },
+      "official_instance_id": "gift__gift_restaurant_d__air_ba937bf13d40fb24__w00__o436",
+      "shared_full_history_macro_normalized_rms": 0.27322143503340934,
       "status": "generated_example"
     },
     {
@@ -1120,9 +1226,9 @@
       "status": "generated_example"
     }
   ],
-  "schema_version": "cafe.native_extension_example_plotter.v7",
+  "schema_version": "cafe.native_extension_example_plotter.v8",
   "selection_policy": "lexicographically_first_validated_official_instance_per_capability",
   "updated_capabilities": [
-    "nonlinear_persistence"
+    "multi_seasonal"
   ]
 }

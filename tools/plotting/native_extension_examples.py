@@ -18,7 +18,7 @@ from cafe.benchmark_extension.mechanisms import (
 )
 
 
-PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v7"
+PLOTTER_SCHEMA = "cafe.native_extension_example_plotter.v8"
 REAL_COLOR = "#1565c0"
 TREATMENT_COLOR = "#9aa0a6"
 DELTA_COLOR = "#d84315"
@@ -270,6 +270,14 @@ def _plot_group(
                 f"level {row['capability_level']} · "
                 f"headroom ρ={row['sampled_coordinate']:.3f}"
             )
+        elif capability == "multi_seasonal":
+            total_periods = int(
+                row["mechanism_metadata"]["total_controlled_period_count"]
+            )
+            title = (
+                f"level {row['capability_level']}\n"
+                f"{total_periods} controlled periods"
+            )
         else:
             title = (
                 f"level {row['capability_level']}\n"
@@ -313,7 +321,11 @@ def _plot_group(
         (
             "state-dependent persistence"
             if capability == "nonlinear_persistence"
-            else capability
+            else (
+                "multi-seasonality · fixed total RMS, increasing period count"
+                if capability == "multi_seasonal"
+                else capability
+            )
         )
         + f": five treatments on one official {baseline['dataset_id']} instance",
         fontsize=12,
@@ -350,6 +362,18 @@ def _plot_group(
         "future_path_band": (
             future_band[2] if future_band is not None else None
         ),
+        "multi_seasonal_anchor_by_target": (
+            rows[0]["mechanism_metadata"].get("resolved_periods_by_target")
+            if capability == "multi_seasonal"
+            else None
+        ),
+        "shared_full_history_macro_normalized_rms": (
+            rows[0]["mechanism_metadata"].get(
+                "shared_full_history_macro_normalized_rms"
+            )
+            if capability == "multi_seasonal"
+            else None
+        ),
         "levels": [
             {
                 "level": row["capability_level"],
@@ -365,6 +389,26 @@ def _plot_group(
                     "accepted"
                 ],
                 "horizon_support_gate": row.get("horizon_support_gate"),
+                "total_controlled_period_count": (
+                    row["mechanism_metadata"].get(
+                        "total_controlled_period_count"
+                    )
+                    if capability == "multi_seasonal"
+                    else None
+                ),
+                "periods_by_target": (
+                    {
+                        target: [
+                            component["period"]
+                            for component in details["components"]
+                        ]
+                        for target, details in row["mechanism_metadata"][
+                            "resolved_periods_by_target"
+                        ].items()
+                    }
+                    if capability == "multi_seasonal"
+                    else None
+                ),
             }
             for row in rows
         ],
@@ -538,7 +582,7 @@ def _plot_hierarchy(output_path: Path) -> dict[str, Any]:
     axis.text(
         0.5,
         0.36,
-        "Qualification-only in the v11 GIFT-Eval adapter\n"
+        "Qualification-only in the v12 GIFT-Eval adapter\n"
         "No explicit summing matrix is inferred from separate univariate records,\n"
         "so no five-level treatment or formal rank is emitted.",
         ha="center",

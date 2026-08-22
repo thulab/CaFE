@@ -11,12 +11,19 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     SOURCE_DISTANCE_THRESHOLD,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
+    _dominant_frequency_indexes,
     _distance_gate,
+    _independent_seasonal_period,
     _nonlinear_innovation_bootstrap_paths,
     _nonlinear_state_response,
     build_capability_group,
     mase_scale_by_target,
     mechanism_effect_signal,
+    replay_treatment_deltas,
+)
+from cafe.benchmark_extension.generation import (
+    compact_contract_row,
+    materialized_samples_for_instance,
 )
 
 
@@ -309,6 +316,147 @@ def test_strength_level_is_calibrated_on_full_history_not_weakest_context() -> N
             gate["full_history_macro_normalized_rms"],
             treatment.sampled_coordinate,
         )
+
+
+def test_multi_seasonal_levels_add_nested_independent_periods_at_fixed_rms() -> None:
+    length = 1200
+    t = np.arange(float(length))
+    frequency_indexes = (13, 17, 23, 29, 37, 43)
+    amplitudes = (2.0, 0.8, 0.7, 0.6, 0.5, 0.4)
+    values = sum(
+        amplitude
+        * np.sin(
+            2.0 * np.pi * frequency_index * t / length + 0.1 * index
+        )
+        for index, (frequency_index, amplitude) in enumerate(
+            zip(frequency_indexes, amplitudes, strict=True)
+        )
+    )
+    instance = _instance(values, horizon=120)
+    group = build_capability_group(
+        instance, "multi_seasonal", augmentation_seed=17
+    )
+    assert group.available
+    shared_distances = []
+    for level, treatment in enumerate(group.treatments, start=1):
+        assert treatment.controlled_coordinate == (
+            "additional_independent_period_count"
+        )
+        assert treatment.sampled_coordinate == float(level)
+        details = treatment.metadata["resolved_periods_by_target"]["0"]
+        assert details["anchor_source"] == "history_top3_stable_harmonic"
+        assert len(details["components"]) == level + 1
+        assert details["components"][0]["role"] == "anchor"
+        assert details["components"][0]["frequency_index"] == (
+            frequency_indexes[0]
+        )
+        assert details["history_anchor_search"]["accepted_rank"] == 1
+        assert all(
+            row["role"] == "additional"
+            and row["source"] == "protocol_generated"
+            and np.isclose(
+                row["history_normalized_std_before_aggregate_gain"], 1.0
+            )
+            for row in details["components"][1:]
+        )
+        periods = [row["period"] for row in details["components"]]
+        assert all(
+            _independent_seasonal_period(
+                left,
+                right,
+                min(length, 2048),
+            )
+            for index, left in enumerate(periods)
+            for right in periods[index + 1 :]
+        )
+        shared_distances.append(
+            treatment.source_distance_gate[
+                "full_history_macro_normalized_rms"
+            ]
+        )
+    np.testing.assert_allclose(shared_distances, shared_distances[0])
+
+    dense_rows = [
+        row
+        for kind, row in materialized_samples_for_instance(
+            instance,
+            augmentation_seed=17,
+            capability_ids=("multi_seasonal",),
+        )
+        if kind == "capability_treatments"
+    ]
+    contracts = [compact_contract_row(row) for row in dense_rows]
+    replayed = replay_treatment_deltas(instance, contracts)
+    for row in dense_rows:
+        context = int(row["context_length"])
+        history_delta, future_delta, _covariate_h, _covariate_f = replayed[
+            str(row["sample_id"])
+        ]
+        np.testing.assert_array_equal(
+            instance.history + history_delta,
+            np.asarray(row["target"][:context]),
+        )
+        np.testing.assert_array_equal(
+            instance.future + future_delta,
+            np.asarray(row["target"][context:]),
+        )
+
+
+def test_multi_seasonal_checks_next_history_anchor_candidate() -> None:
+    length = 1200
+    t = np.arange(float(length))
+    values = 2.0 * np.sin(2.0 * np.pi * 8 * t / length) + 1.5 * np.sin(
+        2.0 * np.pi * 13 * t / length + 0.3
+    )
+    group = build_capability_group(
+        _instance(values, horizon=48),
+        "multi_seasonal",
+        augmentation_seed=17,
+    )
+    assert group.available
+    details = group.treatments[0].metadata["resolved_periods_by_target"]["0"]
+    assert details["anchor_source"] == "history_top3_stable_harmonic"
+    search = details["history_anchor_search"]
+    assert search["accepted_rank"] == 2
+    assert search["accepted_frequency_index"] == 13
+    assert search["attempts"][0]["rejection_reasons"] == [
+        "period_outside_supported_range"
+    ]
+
+
+def test_multi_seasonal_uses_protocol_anchor_when_history_has_none() -> None:
+    length = 1200
+    group = build_capability_group(
+        _instance(np.zeros(length), horizon=120),
+        "multi_seasonal",
+        augmentation_seed=17,
+    )
+    assert group.available
+    for level, treatment in enumerate(group.treatments, start=1):
+        details = treatment.metadata["resolved_periods_by_target"]["0"]
+        assert details["anchor_source"] == "protocol_generated"
+        assert len(details["components"]) == level + 1
+        assert all(
+            component["source"] == "protocol_generated"
+            for component in details["components"]
+        )
+
+
+def test_multi_seasonal_rejects_context_too_short_for_period_pool() -> None:
+    group = build_capability_group(
+        _instance(np.zeros(12), horizon=48),
+        "multi_seasonal",
+        augmentation_seed=17,
+    )
+    assert not group.available
+    assert group.reason == "history_or_horizon_too_short_for_artificial_period_pool"
+
+
+def test_dominant_frequency_indexes_never_leave_declared_range() -> None:
+    values = np.arange(24.0)
+    indexes = _dominant_frequency_indexes(values)
+    assert indexes
+    assert all(2 <= index <= len(values) // 4 for index in indexes)
 
 
 def test_common_and_cross_use_native_panel_without_channel_tasks() -> None:
