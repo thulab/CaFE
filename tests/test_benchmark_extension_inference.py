@@ -93,6 +93,7 @@ def test_distributed_worker_mapping_is_optional_and_exact() -> None:
 
 
 def test_distributed_worker_command_uses_an_explicit_python_prefix() -> None:
+    assert Path(inference_module.sys.executable).is_file()
     args = argparse.Namespace(
         preprocess_workers=4,
         max_open_shape_groups=8,
