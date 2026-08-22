@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 from pathlib import Path
 
@@ -89,6 +90,42 @@ def test_distributed_worker_mapping_is_optional_and_exact() -> None:
             ["http://unknown:10810=worker"],
             configured_endpoints=endpoints,
         )
+
+
+def test_distributed_worker_command_uses_an_explicit_python_prefix() -> None:
+    args = argparse.Namespace(
+        preprocess_workers=4,
+        max_open_shape_groups=8,
+        max_inflight_batches=16,
+        max_inflight_mib=512,
+        load_timeout_seconds=1800,
+        forecast_timeout_seconds=1200,
+        max_attempts=3,
+        max_request_input_tokens=None,
+        client_inflight_input_tokens=None,
+        reuse_loaded_model=False,
+        preserve_loaded_model=False,
+    )
+    command = inference_module._distributed_worker_command(
+        python_prefix=["/data/xmy/CaFE/.venv/bin/python"],
+        dataset_id="gift_fixture",
+        output_root=Path("/data/xmy/CaFE/runtime/experiments/fixture"),
+        gift_eval_dir=Path("/data/xmy/CaFE/data/gift-eval"),
+        model_id="Timer-4.0",
+        endpoint="http://127.0.0.1:10810",
+        api_prefix="/ai/api/v1",
+        devices="0,1,2,3",
+        part_index=0,
+        part_count=3,
+        worker_output_dir=Path("/data/xmy/CaFE/runtime/worker"),
+        args=args,
+    )
+    assert command[0] == "/data/xmy/CaFE/.venv/bin/python"
+    assert command[1:4] == [
+        "-m",
+        "cafe.benchmark_extension.distributed_worker",
+        "--dataset-id",
+    ]
 
 
 def test_native_panel_is_preserved_in_generation_task() -> None:

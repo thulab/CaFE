@@ -1424,7 +1424,10 @@ def run_distributed_streaming_model(
             output = _command_output(command, cwd=protocol.REPO_ROOT)
         else:
             command = _distributed_worker_command(
-                python_prefix=["uv", "run", "python"],
+                # Use the project-local interpreter explicitly.  Worker hosts are
+                # deliberately provisioned under /data and need not expose uv on
+                # the non-interactive SSH PATH.
+                python_prefix=[str(remote_repo_root / ".venv" / "bin" / "python")],
                 dataset_id=dataset_root.name,
                 output_root=output_root,
                 gift_eval_dir=remote_repo_root / "data" / "gift-eval",
