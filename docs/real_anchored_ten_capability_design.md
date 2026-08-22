@@ -469,10 +469,6 @@ Y^{(k)}=Y+\alpha_kB^{(k)}_{L{:}L+H-1}.
 
 所有周期、相位、正余弦系数、anchor 搜索证据和每级增益都写入紧凑契约。Inference 从源 Arrow 重建真实底座后，按契约解析延伸同一组周期；生成和重放都不读取官方未来目标值来选频率、相位或增益。
 
-### 4.6 GIFT-Eval 可用率审计
-
-用 `tools/auditing/multi_season_builder_availability.py` 在本地 20 个 GIFT-Eval short 数据配置上遍历全部 120,784 个预测标签完整的官方实例后，五级多季节性 treatment 的最终可用率为 100%，20 个配置都不低于 50%。这里的“可用”已经包含周期池能否选足、五档源距离门能否通过等最终 builder 条件，不只是先看频谱候选。
-
 ## 5. 能力三：时变季节性（time-varying seasonality）
 
 ### 5.1 整体概念、考察能力与现实含义
