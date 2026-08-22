@@ -68,6 +68,7 @@ from cafe.benchmark_extension.mechanisms import (
     build_capability_group,
     mechanism_effect_signal,
     replay_treatment_deltas,
+    replay_treatment_deltas_for_history_suffix,
 )
 from cafe.benchmark_extension.storage import (
     CompactParquetWriter,
@@ -702,6 +703,9 @@ def iter_replayed_samples(
     *,
     gift_eval_dir: Path,
     replay_workers: int = 1,
+    source_shard_count: int = 1,
+    source_shard_index: int = 0,
+    maximum_context: int | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Reconstruct dense rows from frozen compact contracts and source Arrow.
 
@@ -711,27 +715,59 @@ def iter_replayed_samples(
     """
 
     workers = max(1, int(replay_workers))
-    if workers == 1:
+    shard_count = int(source_shard_count)
+    shard_index = int(source_shard_index)
+    if shard_count < 1 or not 0 <= shard_index < shard_count:
+        raise ValueError("invalid source-shard partition")
+    if maximum_context is not None and int(maximum_context) < 1:
+        raise ValueError("maximum context must be positive")
+
+    def selected_work_items() -> Iterator[ReplayContractWorkItem]:
         for work in iter_replay_contract_work_items(
             manifest, gift_eval_dir=gift_eval_dir
         ):
-            yield from _replay_contract_instance(*work)
+            baseline_contract = work[1]
+            source_shard = int(baseline_contract.get("source_shard_index", 0))
+            if source_shard % shard_count == shard_index:
+                yield work
+
+    def history_start(work: ReplayContractWorkItem) -> int:
+        if maximum_context is None:
+            return 0
+        return max(0, int(work[0].context_length) - int(maximum_context))
+
+    if workers == 1:
+        for work in selected_work_items():
+            yield from _replay_contract_instance(
+                *work,
+                history_start=history_start(work),
+            )
         return
-    iterator = iter(
-        iter_replay_contract_work_items(manifest, gift_eval_dir=gift_eval_dir)
-    )
+    iterator = iter(selected_work_items())
     with ThreadPoolExecutor(max_workers=workers) as executor:
         pending: deque[Any] = deque()
         for _index in range(workers):
             work = next(iterator, None)
             if work is None:
                 break
-            pending.append(executor.submit(_replay_contract_instance, *work))
+            pending.append(
+                executor.submit(
+                    _replay_contract_instance,
+                    *work,
+                    history_start=history_start(work),
+                )
+            )
         while pending:
             yield from pending.popleft().result()
             work = next(iterator, None)
             if work is not None:
-                pending.append(executor.submit(_replay_contract_instance, *work))
+                pending.append(
+                    executor.submit(
+                        _replay_contract_instance,
+                        *work,
+                        history_start=history_start(work),
+                    )
+                )
 
 
 ReplayContractWorkItem = tuple[
@@ -818,6 +854,7 @@ def _dense_contract_row(
     target: np.ndarray,
     covariates: np.ndarray,
     future_observed_mask: np.ndarray,
+    materialized_history_start: int = 0,
 ) -> dict[str, Any]:
     row = dict(contract)
     source_schema = row.pop("source_sample_schema_version", SAMPLE_SCHEMA)
@@ -835,6 +872,7 @@ def _dense_contract_row(
             "future_observed_mask": np.asarray(
                 future_observed_mask, dtype=bool
             ),
+            "materialized_history_start": int(materialized_history_start),
         }
     )
     return row
@@ -845,15 +883,48 @@ def _replay_contract_instance(
     baseline_contract: dict[str, Any],
     treatment_contracts: list[dict[str, Any]],
     ablation_contracts: list[dict[str, Any]],
+    *,
+    history_start: int = 0,
 ) -> list[dict[str, Any]]:
+    start = int(history_start)
+    if start < 0 or start > int(instance.context_length):
+        raise ValueError("history suffix start is outside the official history")
+    # Input ablations are defined as circular shifts over the complete treated
+    # history.  They are uncommon and require arbitrary prefix values, so keep
+    # their exact full replay and slice only after the counterfactual is built.
+    if start and ablation_contracts:
+        full_rows = _replay_contract_instance(
+            instance,
+            baseline_contract,
+            treatment_contracts,
+            ablation_contracts,
+            history_start=0,
+        )
+        context = int(instance.context_length)
+        for row in full_rows:
+            target = np.asarray(row["target"], dtype=float)
+            row["target"] = np.vstack((target[start:context], target[context:]))
+            if row.get("covariates") is not None:
+                covariates = np.asarray(row["covariates"], dtype=float)
+                row["covariates"] = np.vstack(
+                    (covariates[start:context], covariates[context:])
+                )
+            row["materialized_history_start"] = start
+        return full_rows
+
+    visible_history = np.asarray(instance.history[start:], dtype=float)
+    visible_history_covariates = np.asarray(
+        instance.history_covariates[start:], dtype=float
+    )
     covariates = np.vstack(
-        (instance.history_covariates, instance.future_covariates)
+        (visible_history_covariates, instance.future_covariates)
     )
     baseline = _dense_contract_row(
         baseline_contract,
-        target=np.vstack((instance.history, instance.future)),
+        target=np.vstack((visible_history, instance.future)),
         covariates=covariates,
         future_observed_mask=instance.future_observed_mask,
+        materialized_history_start=start,
     )
     output = [baseline]
     treatments_by_sample: dict[str, dict[str, Any]] = {}
@@ -868,7 +939,11 @@ def _replay_contract_instance(
         ):
             stop += 1
         contracts = treatment_contracts[index:stop]
-        deltas = replay_treatment_deltas(instance, contracts)
+        deltas = replay_treatment_deltas_for_history_suffix(
+            instance,
+            contracts,
+            history_start=start,
+        )
         for contract in contracts:
             (
                 history_delta,
@@ -878,13 +953,13 @@ def _replay_contract_instance(
             ) = deltas[str(contract["sample_id"])]
             target = np.vstack(
                 (
-                    instance.history + history_delta,
+                    visible_history + history_delta,
                     instance.future + future_delta,
                 )
             )
             treatment_covariates = np.vstack(
                 (
-                    instance.history_covariates + history_covariate_delta,
+                    visible_history_covariates + history_covariate_delta,
                     instance.future_covariates + future_covariate_delta,
                 )
             )
@@ -893,6 +968,7 @@ def _replay_contract_instance(
                 target=target,
                 covariates=treatment_covariates,
                 future_observed_mask=instance.future_observed_mask,
+                materialized_history_start=start,
             )
             treatments_by_sample[str(row["sample_id"])] = row
             output.append(row)
@@ -936,6 +1012,7 @@ def _replay_contract_instance(
                 target=target,
                 covariates=ablated_covariates,
                 future_observed_mask=instance.future_observed_mask,
+                materialized_history_start=start,
             )
         )
     return output

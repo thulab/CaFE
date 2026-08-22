@@ -62,6 +62,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1")
+    parser.add_argument(
+        "--distributed-worker",
+        action="append",
+        default=[],
+        metavar="ENDPOINT=SSH_HOST_OR_LOCAL",
+        help=(
+            "Optionally materialize each endpoint partition on that worker host. "
+            "Repeat once per configured endpoint."
+        ),
+    )
+    parser.add_argument(
+        "--distributed-repo-root",
+        default="/data/xmy/CaFE",
+    )
     parser.add_argument("--max-instances", type=int, default=None)
     parser.add_argument("--start-at", choices=STAGES, default="generation")
     parser.add_argument("--stop-after", choices=STAGES, default="analysis")
@@ -182,6 +196,12 @@ def _inference_command(
         command.append("--resume")
     if args.prepare_only:
         command.append("--prepare-only")
+    for worker in args.distributed_worker:
+        command.extend(("--distributed-worker", str(worker)))
+    if args.distributed_worker:
+        command.extend(
+            ("--distributed-repo-root", str(args.distributed_repo_root))
+        )
     max_request_input_tokens = getattr(args, "max_request_input_tokens", None)
     client_inflight_input_tokens = getattr(
         args, "client_inflight_input_tokens", None
@@ -451,6 +471,12 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             **common,
             "models": list(args.models),
             "endpoints": list(args.endpoints),
+            "distributed_workers": list(args.distributed_worker),
+            "distributed_repo_root": (
+                str(args.distributed_repo_root)
+                if args.distributed_worker
+                else None
+            ),
             "model_input_policy": (
                 "full_treatment_then_model_max_context_truncation"
             ),

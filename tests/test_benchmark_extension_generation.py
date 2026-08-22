@@ -432,3 +432,81 @@ def test_compact_contract_replay_matches_every_stored_delta_hash(
     assert any(
         row["scope"] == "input_ablations" for row in rejected["failures"]
     )
+
+
+def test_model_context_replay_matches_full_replay_and_shard_partitions(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment-suffix" / "gift_fixture"
+    manifest = generate_dataset(
+        "gift_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=41,
+        capability_ids=(
+            "trend",
+            "multi_seasonal",
+            "time_varying_seasonality",
+            "regime_switching",
+            "predictable_intermittency",
+        ),
+        max_instances=None,
+        shard_size=1,
+    )
+    full = {
+        row["sample_id"]: row
+        for row in iter_replayed_samples(manifest, gift_eval_dir=gift_root)
+    }
+    suffix = {
+        row["sample_id"]: row
+        for row in iter_replayed_samples(
+            manifest,
+            gift_eval_dir=gift_root,
+            replay_workers=2,
+            maximum_context=96,
+        )
+    }
+    assert suffix.keys() == full.keys()
+    for sample_id, row in suffix.items():
+        source = full[sample_id]
+        context = int(source["context_length"])
+        start = max(0, context - 96)
+        expected_target = np.vstack(
+            (
+                np.asarray(source["target"])[start:context],
+                np.asarray(source["target"])[context:],
+            )
+        )
+        np.testing.assert_allclose(row["target"], expected_target, atol=1e-12)
+        if source.get("covariates") is not None:
+            expected_covariates = np.vstack(
+                (
+                    np.asarray(source["covariates"])[start:context],
+                    np.asarray(source["covariates"])[context:],
+                )
+            )
+            np.testing.assert_allclose(
+                row["covariates"], expected_covariates, atol=1e-12
+            )
+        assert row["materialized_history_start"] == start
+
+    partitions = [
+        {
+            row["sample_id"]
+            for row in iter_replayed_samples(
+                manifest,
+                gift_eval_dir=gift_root,
+                source_shard_count=2,
+                source_shard_index=index,
+                maximum_context=96,
+            )
+        }
+        for index in range(2)
+    ]
+    assert partitions[0]
+    assert partitions[1]
+    assert partitions[0].isdisjoint(partitions[1])
+    assert partitions[0] | partitions[1] == set(full)

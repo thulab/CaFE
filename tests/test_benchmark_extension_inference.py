@@ -55,6 +55,42 @@ def test_model_context_truncation_happens_after_full_history_treatment() -> None
     )
 
 
+def test_model_context_accepts_an_exact_pre_materialized_suffix() -> None:
+    model = {
+        "model_id": "fixture",
+        "forecast_limits": {"max_input_length": 96, "min_input_length": 1},
+    }
+    sample = _sample()
+    sample["materialized_history_start"] = 104
+    sample["target"] = np.asarray(sample["target"])[104:]
+    row = model_task_row(sample, model)
+    assert row["source_context_length"] == 200
+    assert row["context_length"] == 96
+    np.testing.assert_array_equal(row["target"], sample["target"])
+
+
+def test_distributed_worker_mapping_is_optional_and_exact() -> None:
+    endpoints = ["http://host-a:10810", "http://host-b:10811"]
+    assert inference_module.parse_distributed_workers(
+        [], configured_endpoints=endpoints
+    ) == {}
+    assert inference_module.parse_distributed_workers(
+        [
+            "http://host-a:10810=host-a",
+            "http://host-b:10811=local",
+        ],
+        configured_endpoints=endpoints,
+    ) == {
+        "http://host-a:10810": "host-a",
+        "http://host-b:10811": "local",
+    }
+    with pytest.raises(ValueError, match="does not match"):
+        inference_module.parse_distributed_workers(
+            ["http://unknown:10810=worker"],
+            configured_endpoints=endpoints,
+        )
+
+
 def test_native_panel_is_preserved_in_generation_task() -> None:
     model = {
         "model_id": "fixture",

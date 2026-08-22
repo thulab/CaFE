@@ -36,6 +36,18 @@ memory, sends MessagePack bulk requests across compatible endpoints/GPUs, and
 writes source-sharded float32 Parquet forecasts. No model-specific task JSONL
 is materialized. Analysis scans one prediction shard at a time.
 
+Multi-host inference is optional.  Supplying one `--distributed-worker`
+mapping per endpoint moves source-shard replay, bulk construction, the local
+service request, and prediction writing onto that endpoint's host.  Omitting
+the mappings retains the ordinary single-orchestrator path.  For example:
+
+```bash
+--endpoints http://192.168.99.90:10810 http://192.168.99.92:10810 \
+--distributed-worker http://192.168.99.90:10810=192.168.99.90 \
+--distributed-worker http://192.168.99.92:10810=local \
+--distributed-repo-root /data/xmy/CaFE
+```
+
 Treatments modify the complete retained official history. Model-specific
 context truncation happens afterward. Amplitude-controlled levels are calibrated
 by the full-history macro normalized RMS. Multi-seasonality instead keeps one

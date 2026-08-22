@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import shlex
+import subprocess
 import time
 from collections import OrderedDict, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import numpy as np
@@ -138,7 +141,54 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preprocess-workers", type=int, default=4)
     parser.add_argument("--reuse-loaded-model", action="store_true")
     parser.add_argument("--preserve-loaded-model", action="store_true")
+    parser.add_argument(
+        "--distributed-worker",
+        action="append",
+        default=[],
+        metavar="ENDPOINT=SSH_HOST_OR_LOCAL",
+        help=(
+            "Run one source-shard partition beside this endpoint. Repeat for "
+            "one or more endpoints; omit to retain central request materialization."
+        ),
+    )
+    parser.add_argument(
+        "--distributed-repo-root",
+        default="/data/xmy/CaFE",
+        help="Repository and runtime root shared by distributed worker hosts.",
+    )
     return parser.parse_args()
+
+
+def parse_distributed_workers(
+    values: list[str],
+    *,
+    configured_endpoints: list[str],
+) -> dict[str, str]:
+    workers: dict[str, str] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError(
+                "--distributed-worker must use ENDPOINT=SSH_HOST_OR_LOCAL"
+            )
+        endpoint, host = (part.strip() for part in value.rsplit("=", 1))
+        if not endpoint or not host:
+            raise ValueError("distributed worker endpoint and host must be non-empty")
+        if endpoint in workers:
+            raise ValueError(f"duplicate distributed worker for {endpoint!r}")
+        workers[endpoint] = host
+    unknown = sorted(set(workers) - set(configured_endpoints))
+    if unknown:
+        raise ValueError(
+            "distributed worker does not match --endpoints: " + ", ".join(unknown)
+        )
+    return workers
+
+
+def _loopback_endpoint(endpoint: str) -> str:
+    parsed = urlsplit(endpoint)
+    if not parsed.scheme or parsed.port is None:
+        raise ValueError(f"distributed endpoint requires an explicit port: {endpoint!r}")
+    return urlunsplit((parsed.scheme, f"127.0.0.1:{parsed.port}", "", "", ""))
 
 
 def _maximum_context(model: dict[str, Any]) -> int | None:
@@ -181,7 +231,13 @@ def model_task_row(sample: dict[str, Any], model: dict[str, Any]) -> dict[str, A
         else np.asarray(row["covariates"], dtype=float)
     )
     start = source_context - context
-    sliced = target[start:]
+    materialized_start = int(sample.get("materialized_history_start", 0))
+    relative_start = start - materialized_start
+    if relative_start < 0:
+        raise ValueError(
+            f"sample {row['sample_id']} materialized after the required model context"
+        )
+    sliced = target[relative_start:]
     row.update(
         {
             "schema_version": TASK_SCHEMA,
@@ -195,7 +251,7 @@ def model_task_row(sample: dict[str, Any], model: dict[str, Any]) -> dict[str, A
             ),
             "target": sliced,
             "covariates": (
-                None if covariates is None else covariates[start:]
+                None if covariates is None else covariates[relative_start:]
             ),
             "target_sha256": _array_sha256(sliced),
         }
@@ -983,6 +1039,436 @@ def run_streaming_model(
     }
 
 
+def _command_output(command: list[str], *, cwd: Path | None = None) -> str:
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if completed.returncode:
+        tail = "\n".join(completed.stdout.splitlines()[-80:])
+        raise RuntimeError(
+            f"distributed command failed ({completed.returncode}): "
+            f"{' '.join(command)}\n{tail}"
+        )
+    return completed.stdout
+
+
+def _remote_output(
+    host: str,
+    command: str,
+) -> str:
+    return _command_output(["ssh", "-o", "BatchMode=yes", host, command]).strip()
+
+
+def _sync_distributed_inputs(
+    *,
+    host: str,
+    remote_repo_root: Path,
+    local_dataset_root: Path,
+    remote_experiment_root: Path,
+    generation: dict[str, Any],
+) -> None:
+    """Copy immutable source/contracts only when the remote hashes differ."""
+
+    remote_dataset_root = remote_experiment_root / local_dataset_root.name
+    generation_path = local_dataset_root / "01_generation" / "manifest.json"
+    validation_path = local_dataset_root / "02_validation" / "report.json"
+    local_revision = _command_output(
+        ["git", "rev-parse", "HEAD"], cwd=protocol.REPO_ROOT
+    ).strip()
+    remote_revision = _remote_output(
+        host,
+        f"cd {shlex.quote(str(remote_repo_root))} && git rev-parse HEAD",
+    )
+    if remote_revision != local_revision:
+        raise RuntimeError(
+            f"distributed worker {host} revision {remote_revision} != {local_revision}"
+        )
+    _remote_output(
+        host,
+        "mkdir -p "
+        + shlex.quote(str(remote_dataset_root))
+        + " "
+        + shlex.quote(str(remote_repo_root / "data" / "gift-eval")),
+    )
+
+    def remote_sha(path: Path) -> str | None:
+        output = _remote_output(
+            host,
+            "if test -f "
+            + shlex.quote(str(path))
+            + "; then sha256sum "
+            + shlex.quote(str(path))
+            + " | awk '{print $1}'; fi",
+        )
+        return output or None
+
+    pairs = (
+        (
+            local_dataset_root / "01_generation",
+            remote_dataset_root / "01_generation",
+            generation_path,
+        ),
+        (
+            local_dataset_root / "02_validation",
+            remote_dataset_root / "02_validation",
+            validation_path,
+        ),
+    )
+    for local_dir, remote_dir, local_identity in pairs:
+        if remote_sha(remote_dir / local_identity.name) == protocol.file_sha256(
+            local_identity
+        ):
+            continue
+        _command_output(
+            [
+                "rsync",
+                "-a",
+                str(local_dir) + "/",
+                f"{host}:{remote_dir}/",
+            ]
+        )
+        if remote_sha(remote_dir / local_identity.name) != protocol.file_sha256(
+            local_identity
+        ):
+            raise RuntimeError(f"failed to synchronize {local_identity} to {host}")
+
+    for record in generation.get("source_files") or []:
+        local_source = Path(str(record["path"]))
+        try:
+            relative = local_source.resolve().relative_to(protocol.REPO_ROOT.resolve())
+        except ValueError as error:
+            raise ValueError(
+                f"distributed source is outside the repository: {local_source}"
+            ) from error
+        remote_source = remote_repo_root / relative
+        if remote_sha(remote_source) == str(record["sha256"]):
+            continue
+        _remote_output(host, "mkdir -p " + shlex.quote(str(remote_source.parent)))
+        _command_output(["rsync", "-a", str(local_source), f"{host}:{remote_source}"])
+        if remote_sha(remote_source) != str(record["sha256"]):
+            raise RuntimeError(f"failed to synchronize {local_source} to {host}")
+
+
+def _distributed_worker_command(
+    *,
+    python_prefix: list[str],
+    dataset_id: str,
+    output_root: Path,
+    gift_eval_dir: Path,
+    model_id: str,
+    endpoint: str,
+    api_prefix: str,
+    devices: str,
+    part_index: int,
+    part_count: int,
+    worker_output_dir: Path,
+    args: argparse.Namespace,
+) -> list[str]:
+    command = [
+        *python_prefix,
+        "-m",
+        "cafe.benchmark_extension.distributed_worker",
+        "--dataset-id",
+        dataset_id,
+        "--output-root",
+        str(output_root),
+        "--gift-eval-dir",
+        str(gift_eval_dir),
+        "--model-id",
+        model_id,
+        "--endpoint",
+        endpoint,
+        "--api-prefix",
+        api_prefix,
+        "--devices",
+        devices,
+        "--part-index",
+        str(part_index),
+        "--part-count",
+        str(part_count),
+        "--worker-output-dir",
+        str(worker_output_dir),
+        "--preprocess-workers",
+        str(args.preprocess_workers),
+        "--max-open-shape-groups",
+        str(args.max_open_shape_groups),
+        "--max-inflight-batches",
+        str(args.max_inflight_batches),
+        "--max-inflight-mib",
+        str(args.max_inflight_mib),
+        "--load-timeout-seconds",
+        str(args.load_timeout_seconds),
+        "--forecast-timeout-seconds",
+        str(args.forecast_timeout_seconds),
+        "--max-attempts",
+        str(args.max_attempts),
+        "--resume",
+    ]
+    if args.max_request_input_tokens is not None:
+        command.extend(
+            ("--max-request-input-tokens", str(args.max_request_input_tokens))
+        )
+    if args.client_inflight_input_tokens is not None:
+        command.extend(
+            (
+                "--client-inflight-input-tokens",
+                str(args.client_inflight_input_tokens),
+            )
+        )
+    if args.reuse_loaded_model:
+        command.append("--reuse-loaded-model")
+    if args.preserve_loaded_model:
+        command.append("--preserve-loaded-model")
+    return command
+
+
+def _aggregate_distributed_statuses(
+    *,
+    model_id: str,
+    endpoints: list[str],
+    statuses: list[dict[str, Any]],
+    local_worker_dirs: list[Path],
+) -> dict[str, Any]:
+    from cafe.benchmark_extension.distributed_worker import WORKER_STATUS_SCHEMA
+
+    count = len(statuses)
+    observed_parts: set[int] = set()
+    prediction_parts: list[dict[str, Any]] = []
+    normalized_statuses: list[dict[str, Any]] = []
+    for status, worker_dir in zip(statuses, local_worker_dirs, strict=True):
+        if status.get("schema_version") != WORKER_STATUS_SCHEMA:
+            raise ValueError("distributed worker status schema mismatch")
+        partition = status.get("source_shard_partition") or {}
+        index = int(partition.get("part_index", -1))
+        if int(partition.get("part_count", -1)) != count or index in observed_parts:
+            raise ValueError("distributed worker partition coverage is invalid")
+        observed_parts.add(index)
+        normalized = dict(status)
+        normalized_parts: list[dict[str, Any]] = []
+        for record in status.get("prediction_parts") or []:
+            source_shard = int(record["source_shard_index"])
+            if source_shard % count != index:
+                raise ValueError("prediction part is outside its worker partition")
+            local_part = worker_dir / "predictions" / Path(str(record["path"])).name
+            if (
+                not local_part.is_file()
+                or protocol.file_sha256(local_part) != record["sha256"]
+            ):
+                raise ValueError(f"distributed prediction part is invalid: {local_part}")
+            normalized_record = {**record, "path": str(local_part)}
+            normalized_parts.append(normalized_record)
+            prediction_parts.append(normalized_record)
+        normalized["prediction_parts"] = normalized_parts
+        normalized_statuses.append(normalized)
+    if observed_parts != set(range(count)):
+        raise ValueError("distributed worker partitions are incomplete")
+    source_shards = [int(row["source_shard_index"]) for row in prediction_parts]
+    if len(source_shards) != len(set(source_shards)):
+        raise ValueError("distributed workers emitted duplicate source shards")
+
+    summed_fields = (
+        "prediction_count",
+        "failure_count",
+        "expected_original_view_count",
+        "compatible_sample_count",
+        "unsupported_window_view_count",
+        "native_view_count",
+        "adapted_view_count",
+        "split_target_view_count",
+        "covariates_omitted_view_count",
+        "expected_http_request_count",
+        "bulk_request_count",
+        "attempt_count",
+        "tail_retry_bulk_request_count",
+        "tail_retry_recovered_view_count",
+        "shape_group_count",
+    )
+    first = normalized_statuses[0]
+    aggregate = {
+        "model_id": model_id,
+        "status": (
+            "complete"
+            if all(row.get("status") == "complete" for row in normalized_statuses)
+            else "incomplete"
+        ),
+        **{
+            field: sum(int(row.get(field, 0)) for row in normalized_statuses)
+            for field in summed_fields
+        },
+        "endpoint_count": count,
+        "http_concurrency_per_endpoint": int(first["http_concurrency_per_endpoint"]),
+        "maximum_inflight_bytes_per_endpoint": int(first["maximum_inflight_bytes"]),
+        "maximum_request_input_tokens": max(
+            int(row.get("maximum_request_input_tokens", 0))
+            for row in normalized_statuses
+        ),
+        "client_inflight_input_tokens_per_endpoint": int(
+            first["client_inflight_input_tokens_per_endpoint"]
+        ),
+        "native_multivariate_input_token_multiplier": first[
+            "native_multivariate_input_token_multiplier"
+        ],
+        "native_multivariate_http_concurrency": first[
+            "native_multivariate_http_concurrency"
+        ],
+        "very_long_context_threshold": first["very_long_context_threshold"],
+        "very_long_context_input_token_multiplier": first[
+            "very_long_context_input_token_multiplier"
+        ],
+        "large_panel_context_threshold": first["large_panel_context_threshold"],
+        "large_panel_target_dim_threshold": first[
+            "large_panel_target_dim_threshold"
+        ],
+        "large_panel_http_concurrency": first["large_panel_http_concurrency"],
+        "shape_group_token_stats": [
+            {**group, "worker_part_index": index}
+            for index, row in enumerate(normalized_statuses)
+            for group in row.get("shape_group_token_stats") or []
+        ],
+        "endpoints": endpoints,
+        "loaded_topologies": [
+            topology
+            for row in normalized_statuses
+            for topology in row.get("loaded_topologies") or []
+        ],
+        "load_seconds_max": max(
+            float(row.get("load_seconds_max", 0.0)) for row in normalized_statuses
+        ),
+        "elapsed_seconds": max(
+            float(row.get("elapsed_seconds", 0.0)) for row in normalized_statuses
+        ),
+        "prediction_parts": sorted(
+            prediction_parts, key=lambda row: int(row["source_shard_index"])
+        ),
+        "distributed_execution": {
+            "policy": "source_shard_modulo_near_endpoint_replay_v1",
+            "worker_count": count,
+            "worker_statuses": normalized_statuses,
+        },
+    }
+    complete = (
+        aggregate["failure_count"] == 0
+        and aggregate["prediction_count"] == aggregate["compatible_sample_count"]
+    )
+    if not complete:
+        aggregate["status"] = "incomplete"
+    return aggregate
+
+
+def run_distributed_streaming_model(
+    *,
+    args: argparse.Namespace,
+    generation: dict[str, Any],
+    dataset_root: Path,
+    model_id: str,
+    endpoints: list[str],
+    worker_hosts: dict[str, str],
+) -> dict[str, Any]:
+    remote_repo_root = Path(str(args.distributed_repo_root))
+    remote_experiment_root = remote_repo_root / "runtime" / "experiments" / args.output_root.name
+    local_model_root = dataset_root / "03_inference" / "distributed_workers" / safe_filename(model_id)
+    descriptors: list[tuple[str, str, Path, Path, Path]] = []
+    for index, endpoint in enumerate(endpoints):
+        host = worker_hosts[endpoint]
+        local_worker_dir = local_model_root / f"worker_{index:03d}"
+        if host.lower() == "local":
+            worker_output = local_worker_dir
+            output_root = args.output_root.resolve()
+            gift_eval_dir = args.gift_eval_dir.resolve()
+        else:
+            _sync_distributed_inputs(
+                host=host,
+                remote_repo_root=remote_repo_root,
+                local_dataset_root=dataset_root,
+                remote_experiment_root=remote_experiment_root,
+                generation=generation,
+            )
+            worker_output = (
+                remote_experiment_root
+                / dataset_root.name
+                / "03_inference"
+                / "distributed_workers"
+                / safe_filename(model_id)
+                / f"worker_{index:03d}"
+            )
+            output_root = remote_experiment_root
+            gift_eval_dir = remote_repo_root / "data" / "gift-eval"
+        descriptors.append(
+            (endpoint, host, local_worker_dir, worker_output, output_root)
+        )
+
+    def run_one(index: int) -> dict[str, Any]:
+        endpoint, host, local_worker_dir, worker_output, output_root = descriptors[index]
+        local_worker_dir.mkdir(parents=True, exist_ok=True)
+        service_endpoint = _loopback_endpoint(endpoint)
+        if host.lower() == "local":
+            command = _distributed_worker_command(
+                python_prefix=[sys.executable],
+                dataset_id=dataset_root.name,
+                output_root=output_root,
+                gift_eval_dir=args.gift_eval_dir.resolve(),
+                model_id=model_id,
+                endpoint=service_endpoint,
+                api_prefix=args.api_prefix,
+                devices=args.devices,
+                part_index=index,
+                part_count=len(descriptors),
+                worker_output_dir=worker_output,
+                args=args,
+            )
+            output = _command_output(command, cwd=protocol.REPO_ROOT)
+        else:
+            command = _distributed_worker_command(
+                python_prefix=["uv", "run", "python"],
+                dataset_id=dataset_root.name,
+                output_root=output_root,
+                gift_eval_dir=remote_repo_root / "data" / "gift-eval",
+                model_id=model_id,
+                endpoint=service_endpoint,
+                api_prefix=args.api_prefix,
+                devices=args.devices,
+                part_index=index,
+                part_count=len(descriptors),
+                worker_output_dir=worker_output,
+                args=args,
+            )
+            remote_command = (
+                f"cd {shlex.quote(str(remote_repo_root))} && "
+                + " ".join(shlex.quote(value) for value in command)
+            )
+            output = _command_output(
+                ["ssh", "-o", "BatchMode=yes", host, remote_command]
+            )
+            _command_output(
+                [
+                    "rsync",
+                    "-a",
+                    f"{host}:{worker_output}/",
+                    str(local_worker_dir) + "/",
+                ]
+            )
+        (local_worker_dir / "worker.log").write_text(output, encoding="utf-8")
+        status_path = local_worker_dir / "status.json"
+        if not status_path.is_file():
+            raise RuntimeError(f"distributed worker did not write {status_path}")
+        return protocol.read_json(status_path)
+
+    with ThreadPoolExecutor(max_workers=len(descriptors)) as executor:
+        futures = [executor.submit(run_one, index) for index in range(len(descriptors))]
+        statuses = [future.result() for future in futures]
+    return _aggregate_distributed_statuses(
+        model_id=model_id,
+        endpoints=endpoints,
+        statuses=statuses,
+        local_worker_dirs=[row[2] for row in descriptors],
+    )
+
+
 def main() -> int:
     args = parse_args()
     if args.max_request_input_tokens is not None and args.max_request_input_tokens < 1:
@@ -994,6 +1480,15 @@ def main() -> int:
         raise ValueError("client-inflight-input-tokens must be positive")
     if len(args.models) != len(set(args.models)):
         raise ValueError("models must be unique")
+    distributed_workers = parse_distributed_workers(
+        list(args.distributed_worker),
+        configured_endpoints=list(args.endpoints),
+    )
+    if distributed_workers and set(distributed_workers) != set(args.endpoints):
+        raise ValueError(
+            "distributed mode requires exactly one --distributed-worker for "
+            "each configured endpoint"
+        )
     execute_models = list(args.execute_models or args.models)
     if len(execute_models) != len(set(execute_models)):
         raise ValueError("execute-models must be unique")
@@ -1107,29 +1602,40 @@ def main() -> int:
             execution["client_inflight_input_tokens"] = int(
                 args.client_inflight_input_tokens
             )
-        status = run_streaming_model(
-            model_id=model_id,
-            model=model,
-            execution=execution,
-            endpoints=endpoint_list,
-            api_prefix=args.api_prefix,
-            devices=args.devices,
-            sample_factory=lambda: iter_replayed_samples(
-                generation,
-                gift_eval_dir=args.gift_eval_dir.resolve(),
-                replay_workers=max(1, int(args.preprocess_workers)),
-            ),
-            prediction_dir=prediction_dir,
-            failure_path=failure_path,
-            load_timeout_seconds=args.load_timeout_seconds,
-            forecast_timeout_seconds=args.forecast_timeout_seconds,
-            max_attempts=args.max_attempts,
-            maximum_open_groups=args.max_open_shape_groups,
-            maximum_inflight_batches=args.max_inflight_batches,
-            maximum_inflight_bytes=max(1, int(args.max_inflight_mib)) * 1024 * 1024,
-            unload_before_load=not bool(args.reuse_loaded_model),
-            unload_after=not bool(args.preserve_loaded_model),
-        )
+        if distributed_workers:
+            status = run_distributed_streaming_model(
+                args=args,
+                generation=generation,
+                dataset_root=dataset_root,
+                model_id=model_id,
+                endpoints=endpoint_list,
+                worker_hosts=distributed_workers,
+            )
+        else:
+            status = run_streaming_model(
+                model_id=model_id,
+                model=model,
+                execution=execution,
+                endpoints=endpoint_list,
+                api_prefix=args.api_prefix,
+                devices=args.devices,
+                sample_factory=lambda: iter_replayed_samples(
+                    generation,
+                    gift_eval_dir=args.gift_eval_dir.resolve(),
+                    replay_workers=max(1, int(args.preprocess_workers)),
+                    maximum_context=_maximum_context(model),
+                ),
+                prediction_dir=prediction_dir,
+                failure_path=failure_path,
+                load_timeout_seconds=args.load_timeout_seconds,
+                forecast_timeout_seconds=args.forecast_timeout_seconds,
+                max_attempts=args.max_attempts,
+                maximum_open_groups=args.max_open_shape_groups,
+                maximum_inflight_batches=args.max_inflight_batches,
+                maximum_inflight_bytes=max(1, int(args.max_inflight_mib)) * 1024 * 1024,
+                unload_before_load=not bool(args.reuse_loaded_model),
+                unload_after=not bool(args.preserve_loaded_model),
+            )
         status_by_model[model_id] = status
         prediction_records[model_id] = {
             "format": "partitioned_parquet",
@@ -1153,7 +1659,9 @@ def main() -> int:
             "native_if_supported_else_inference_only_independent_univariate_reassembly"
         ),
         "request_materialization": (
-            "bounded_in_memory_source_contract_replay_no_model_task_artifact"
+            "distributed_near_endpoint_source_shard_replay_no_model_task_artifact"
+            if distributed_workers
+            else "bounded_in_memory_source_contract_replay_no_model_task_artifact"
         ),
         "transport": "msgpack_bulk",
         "endpoint_policy": "model_major_all_compatible_endpoints",
@@ -1178,6 +1686,15 @@ def main() -> int:
         "max_inflight_batches_per_endpoint": int(args.max_inflight_batches),
         "max_inflight_mib": int(args.max_inflight_mib),
         "preprocess_workers": int(args.preprocess_workers),
+        "distributed_workers": distributed_workers,
+        "distributed_repo_root": (
+            str(args.distributed_repo_root) if distributed_workers else None
+        ),
+        "distributed_execution_policy": (
+            "source_shard_modulo_near_endpoint_replay_v1"
+            if distributed_workers
+            else None
+        ),
     }
     manifest = {
         "schema_version": INFERENCE_SCHEMA,

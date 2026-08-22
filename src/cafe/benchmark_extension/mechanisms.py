@@ -2924,3 +2924,158 @@ def replay_treatment_deltas(
             np.asarray(covariate_f * gain, dtype=float),
         )
     return output
+
+
+def replay_treatment_deltas_for_history_suffix(
+    instance: GiftEvalInstance,
+    contracts: list[dict[str, Any]],
+    *,
+    history_start: int,
+) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """Replay a frozen treatment while materializing only a history suffix.
+
+    The frozen mechanism is still defined on the complete official history.
+    ``history_start`` only changes which already-defined treatment values are
+    materialized for a model request.  Pointwise/analytic mechanisms avoid
+    allocating the discarded prefix; stateful and structural fallbacks replay
+    the full contract and slice the result to preserve exact semantics.
+    """
+
+    if not contracts:
+        return {}
+    full_history = np.asarray(instance.history, dtype=float)
+    full_length, dimension = full_history.shape
+    start = int(history_start)
+    if start < 0 or start > full_length:
+        raise ValueError("history suffix start is outside the official history")
+    if start == 0:
+        return replay_treatment_deltas(instance, contracts)
+
+    capability_ids = {str(row["capability_id"]) for row in contracts}
+    if len(capability_ids) != 1:
+        raise ValueError("treatment replay group mixes capabilities")
+    capability_id = capability_ids.pop()
+    optimized = {
+        "trend",
+        "time_varying_seasonality",
+        "regime_switching",
+        "predictable_intermittency",
+        "multi_seasonal",
+    }
+    if capability_id not in optimized:
+        return {
+            sample_id: (history[start:], future, history_covariates[start:], future_covariates)
+            for sample_id, (
+                history,
+                future,
+                history_covariates,
+                future_covariates,
+            ) in replay_treatment_deltas(instance, contracts).items()
+        }
+
+    horizon = int(instance.prediction_length)
+    visible_length = full_length - start
+    scales = _scale_by_target(full_history)
+
+    def empty_components() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        return (
+            np.zeros((visible_length, dimension), dtype=float),
+            np.zeros_like(instance.future, dtype=float),
+            np.zeros((visible_length, instance.history_covariates.shape[1]), dtype=float),
+            np.zeros_like(instance.future_covariates, dtype=float),
+        )
+
+    output: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    for row in contracts:
+        metadata = dict(row["mechanism_metadata"])
+        component_h, component_f, covariate_h, covariate_f = empty_components()
+        if capability_id == "trend":
+            directions = np.asarray(metadata["direction_by_target"], dtype=float)
+            affected = [int(value) for value in row["affected_target_indices"]]
+            absolute_time = np.arange(start, full_length + horizon, dtype=float)
+            absolute_time /= max(1, full_length - 1)
+            component = np.zeros((visible_length + horizon, dimension), dtype=float)
+            component[:, affected] = (
+                absolute_time[:, None]
+                * directions[affected][None, :]
+                * scales[affected][None, :]
+            )
+            component_h = component[:visible_length]
+            component_f = component[visible_length:]
+        elif capability_id == "time_varying_seasonality":
+            absolute_time = np.arange(start, full_length + horizon, dtype=float)
+            for raw_channel, periods in metadata["resolved_periods_by_target"].items():
+                channel = int(raw_channel)
+                carrier_omega = (
+                    2.0
+                    * math.pi
+                    * float(periods["carrier_frequency_index"])
+                    / float(full_length)
+                )
+                envelope_omega = (
+                    2.0
+                    * math.pi
+                    * float(periods["modulation_frequency_index"])
+                    / float(full_length)
+                )
+                carrier = (
+                    float(periods["carrier_sin_coefficient"])
+                    * np.sin(carrier_omega * absolute_time)
+                    + float(periods["carrier_cos_coefficient"])
+                    * np.cos(carrier_omega * absolute_time)
+                )
+                envelope = (
+                    float(periods["envelope_sin_coefficient"])
+                    * np.sin(envelope_omega * absolute_time)
+                    + float(periods["envelope_cos_coefficient"])
+                    * np.cos(envelope_omega * absolute_time)
+                )
+                combined = carrier * envelope
+                component_h[:, channel] = combined[:visible_length]
+                component_f[:, channel] = combined[visible_length:]
+        elif capability_id == "regime_switching":
+            join = int(metadata["change_index"])
+            amplitude = np.asarray(
+                metadata["shared_amplitude_before_distance_adjustment"],
+                dtype=float,
+            )
+            direction = np.asarray(metadata["direction_by_target"], dtype=float)
+            visible_indexes = np.arange(start, full_length)
+            component_h[visible_indexes >= join] = direction * amplitude
+            component_f[:] = direction * amplitude
+        elif capability_id == "predictable_intermittency":
+            combined = np.zeros((visible_length + horizon, dimension), dtype=float)
+            amplitude = np.asarray(
+                metadata["positive_event_amplitude_before_distance_adjustment"],
+                dtype=float,
+            )
+            width = int(metadata["pulse_width"])
+            for center in metadata["event_centers"]:
+                for offset in range(width):
+                    relative_index = int(center) + offset - start
+                    if 0 <= relative_index < combined.shape[0]:
+                        combined[relative_index] += amplitude
+            component_h = combined[:visible_length]
+            component_f = combined[visible_length:]
+        elif capability_id == "multi_seasonal":
+            absolute_time = np.arange(start, full_length + horizon, dtype=float)
+            for raw_channel, periods in metadata["resolved_periods_by_target"].items():
+                channel = int(raw_channel)
+                for component in periods["components"]:
+                    omega = 2.0 * math.pi / float(component["period"])
+                    signal = (
+                        float(component["sin_coefficient"])
+                        * np.sin(omega * absolute_time)
+                        + float(component["cos_coefficient"])
+                        * np.cos(omega * absolute_time)
+                    )
+                    component_h[:, channel] += signal[:visible_length]
+                    component_f[:, channel] += signal[visible_length:]
+        gain = float(row["applied_component_gain"])
+        output[str(row["sample_id"])] = (
+            np.asarray(component_h * gain, dtype=float),
+            np.asarray(component_f * gain, dtype=float),
+            np.asarray(covariate_h * gain, dtype=float),
+            np.asarray(covariate_f * gain, dtype=float),
+        )
+    return output
