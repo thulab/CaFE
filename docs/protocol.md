@@ -1,4 +1,4 @@
-# CaFE v12 scientific protocol
+# CaFE v13 scientific protocol
 
 ## 1. Estimand
 
@@ -63,9 +63,13 @@ Transformation randomness is counter-based. A draw is keyed by:
 official_instance_id × capability_id × capability_level × augmentation_seed
 ```
 
-The five levels use ordered, non-overlapping intervals. Shared nuisance values
-such as direction, pulse shape, or regime amplitude are keyed without the
-level and remain fixed across the group.
+The five levels use an explicit, capability-specific ordered coordinate. Most
+amplitude-controlled mechanisms draw from non-overlapping intervals.
+Multi-seasonality instead uses the integer number of additional periods
+`1,2,3,4,5`; regime switching and intermittency use location or spacing.
+Shared nuisance values such as direction, pulse shape, total multi-seasonal
+RMS, or regime amplitude are keyed without the level and remain fixed across
+the group.
 
 The treatment is first applied to the complete official history. Inference
 then takes the suffix allowed by each model's maximum input context.
@@ -87,7 +91,10 @@ Amplitude-controlled levels are calibrated only on the complete official
 history, so the sampled coordinate is the full-history macro distance. State-
 dependent persistence is the exception: its coordinate is the ordered fraction
 of stability headroom used in the history-detected direction, while source
-distance remains a visibility and safety gate. Distance
+distance remains a visibility and safety gate. Multi-seasonality is another
+structural exception: its coordinate is the number of additional independent
+periods, while all five levels share one full-history macro RMS drawn from
+`[0.22,0.28]`. Distance
 qualification then checks the distinct contexts that the seven evaluated models
 actually receive:
 
@@ -136,6 +143,19 @@ use the same formulas with their actual length. A cell records an unavailable
 reason when it cannot support the required cycles, events, segments, stable
 trend direction, native panel dimension, predictive gain, or all five levels.
 The unchanged official baseline remains available.
+
+Multi-seasonality keeps the authentic target as its base and adds nested sets
+of analytic periods. Per target channel it checks only the three strongest
+detrended history-spectrum candidates and accepts the first one that lies in the
+supported period range, is visible on the full history and both history halves,
+and retains compatible phase and amplitude across the halves. If none passes,
+a deterministic protocol-generated period becomes the anchor. Five more
+protocol periods are chosen from a 512-point log-spaced pool. Every pair must be
+frequency-separated and outside a 5% neighborhood of integer harmonics 2–8.
+Each component has equal pre-aggregation history energy; levels contain 2–6
+periods and are separately normalized to the shared total RMS before the same
+analytic paths continue through the forecast horizon. No future target value is
+used to select or phase a period.
 
 State-dependent persistence requires at least 96 history points. A nonlinear
 AR(1) structure using `z*abs(z)/(1+abs(z))` is fitted once on a prefix and must

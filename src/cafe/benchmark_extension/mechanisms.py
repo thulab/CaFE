@@ -11,7 +11,7 @@ from cafe import core as protocol
 from cafe.benchmark_extension.gift_eval import GiftEvalInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v9"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v10"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -57,6 +57,19 @@ TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION = 0.25
 TVS_MINIMUM_INCREMENTAL_R2 = 0.01
 COMMON_FACTOR_MINIMUM_HARMONIC_SHARE = 0.05
 COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO = 0.50
+MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS = 5
+MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT = 3
+MULTI_SEASONAL_COMPONENT_VISIBILITY = 0.05
+MULTI_SEASONAL_SPLIT_PHASE_COSINE_MINIMUM = 0.50
+MULTI_SEASONAL_SPLIT_AMPLITUDE_RATIO_MINIMUM = 0.50
+MULTI_SEASONAL_MAXIMUM_HARMONIC_MULTIPLE = 8
+MULTI_SEASONAL_MINIMUM_PERIOD = 4.0
+MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES = 3.0
+MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION = 0.50
+MULTI_SEASONAL_MINIMUM_FREQUENCY_SEPARATION_CYCLES = 0.50
+MULTI_SEASONAL_HARMONIC_RELATIVE_TOLERANCE = 0.05
+MULTI_SEASONAL_PERIOD_CANDIDATE_COUNT = 512
+MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL = (0.22, 0.28)
 NONLINEAR_MINIMUM_HISTORY = 96
 NONLINEAR_HOLDOUT_FRACTION = 0.25
 NONLINEAR_MINIMUM_HOLDOUT_SIZE = 24
@@ -381,8 +394,205 @@ def _dominant_frequency_indexes(series: np.ndarray) -> list[int]:
     spectrum = np.abs(np.fft.rfft(detrended * np.hanning(length))) ** 2
     indexes = np.arange(spectrum.size)
     valid = (indexes >= 2) & (indexes <= length // 4)
-    ranked = np.argsort(np.where(valid, spectrum, -np.inf))[::-1]
-    return [int(index) for index in ranked[:16] if np.isfinite(spectrum[index])]
+    valid_indexes = indexes[valid]
+    ranked = valid_indexes[np.argsort(spectrum[valid_indexes])[::-1]]
+    return [int(index) for index in ranked[:16]]
+
+
+def _independent_seasonal_period(
+    left: float,
+    right: float,
+    context_length: int,
+) -> bool:
+    left_frequency = 1.0 / float(left)
+    right_frequency = 1.0 / float(right)
+    separation = abs(left_frequency - right_frequency) * context_length
+    if separation < MULTI_SEASONAL_MINIMUM_FREQUENCY_SEPARATION_CYCLES:
+        return False
+    ratio = max(left_frequency, right_frequency) / min(
+        left_frequency, right_frequency
+    )
+    for multiple in range(2, MULTI_SEASONAL_MAXIMUM_HARMONIC_MULTIPLE + 1):
+        if (
+            abs(ratio - multiple) / multiple
+            <= MULTI_SEASONAL_HARMONIC_RELATIVE_TOLERANCE
+        ):
+            return False
+    return True
+
+
+def _segmented_harmonic_fit(
+    values: np.ndarray,
+    frequency_index: int,
+    start: int,
+    stop: int,
+) -> tuple[np.ndarray, float]:
+    series = np.asarray(values, dtype=float)
+    segment = series[start:stop]
+    if segment.size < 8:
+        return np.zeros(2, dtype=float), 0.0
+    local_t = np.linspace(-1.0, 1.0, segment.size)
+    trend = np.column_stack((np.ones(segment.size), local_t))
+    detrended = segment - trend @ np.linalg.lstsq(
+        trend, segment, rcond=None
+    )[0]
+    absolute_t = np.arange(start, stop, dtype=float)
+    omega = 2.0 * math.pi * float(frequency_index) / float(series.size)
+    harmonic = np.column_stack(
+        (np.sin(omega * absolute_t), np.cos(omega * absolute_t))
+    )
+    coefficients = np.linalg.lstsq(harmonic, detrended, rcond=None)[0]
+    fitted = harmonic @ coefficients
+    return np.asarray(coefficients, dtype=float), float(np.std(fitted))
+
+
+def _harmonic_split_stability(
+    values: np.ndarray,
+    frequency_index: int,
+    scale: float,
+) -> dict[str, Any]:
+    series = np.asarray(values, dtype=float)
+    midpoint = series.size // 2
+    first, first_std = _segmented_harmonic_fit(
+        series, frequency_index, 0, midpoint
+    )
+    second, second_std = _segmented_harmonic_fit(
+        series, frequency_index, midpoint, series.size
+    )
+    first_amplitude = float(np.linalg.norm(first))
+    second_amplitude = float(np.linalg.norm(second))
+    denominator = first_amplitude * second_amplitude
+    phase_cosine = (
+        float(np.dot(first, second) / denominator)
+        if denominator > 1e-12
+        else -1.0
+    )
+    amplitude_ratio = min(first_amplitude, second_amplitude) / max(
+        first_amplitude, second_amplitude, 1e-12
+    )
+    normalized_stds = (first_std / scale, second_std / scale)
+    accepted = (
+        min(normalized_stds) >= MULTI_SEASONAL_COMPONENT_VISIBILITY - 1e-12
+        and phase_cosine
+        >= MULTI_SEASONAL_SPLIT_PHASE_COSINE_MINIMUM - 1e-12
+        and amplitude_ratio
+        >= MULTI_SEASONAL_SPLIT_AMPLITUDE_RATIO_MINIMUM - 1e-12
+    )
+    return {
+        "first_half_normalized_std": float(normalized_stds[0]),
+        "second_half_normalized_std": float(normalized_stds[1]),
+        "coefficient_phase_cosine": phase_cosine,
+        "coefficient_amplitude_ratio": amplitude_ratio,
+        "minimum_required_half_normalized_std": (
+            MULTI_SEASONAL_COMPONENT_VISIBILITY
+        ),
+        "minimum_required_phase_cosine": (
+            MULTI_SEASONAL_SPLIT_PHASE_COSINE_MINIMUM
+        ),
+        "minimum_required_amplitude_ratio": (
+            MULTI_SEASONAL_SPLIT_AMPLITUDE_RATIO_MINIMUM
+        ),
+        "accepted": accepted,
+    }
+
+
+def _continuous_harmonic_signal(
+    *,
+    length: int,
+    horizon: int,
+    period: float,
+    sin_coefficient: float,
+    cos_coefficient: float,
+) -> np.ndarray:
+    all_t = np.arange(length + horizon, dtype=float)
+    omega = 2.0 * math.pi / float(period)
+    return (
+        float(sin_coefficient) * np.sin(omega * all_t)
+        + float(cos_coefficient) * np.cos(omega * all_t)
+    )
+
+
+def _normalized_continuous_harmonic(
+    *,
+    length: int,
+    horizon: int,
+    period: float,
+    sin_coefficient: float,
+    cos_coefficient: float,
+    target_scale: float,
+) -> tuple[np.ndarray, float, float]:
+    signal = _continuous_harmonic_signal(
+        length=length,
+        horizon=horizon,
+        period=period,
+        sin_coefficient=sin_coefficient,
+        cos_coefficient=cos_coefficient,
+    )
+    history_std = float(np.std(signal[:length]))
+    if history_std <= 1e-12:
+        raise ValueError("multi_seasonal_component_has_zero_history_energy")
+    adjustment = float(target_scale) / history_std
+    adjusted_sin = float(sin_coefficient) * adjustment
+    adjusted_cos = float(cos_coefficient) * adjustment
+    normalized = _continuous_harmonic_signal(
+        length=length,
+        horizon=horizon,
+        period=period,
+        sin_coefficient=adjusted_sin,
+        cos_coefficient=adjusted_cos,
+    )
+    return (
+        normalized,
+        adjusted_sin,
+        adjusted_cos,
+    )
+
+
+def _protocol_generated_periods(
+    instance: GiftEvalInstance,
+    channel: int,
+    *,
+    shortest_context: int,
+    existing_periods: tuple[float, ...],
+    required_count: int,
+    augmentation_seed: int,
+) -> tuple[list[float], tuple[float, float]]:
+    minimum = MULTI_SEASONAL_MINIMUM_PERIOD
+    maximum = min(
+        shortest_context / MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES,
+        instance.prediction_length
+        / MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION,
+    )
+    if maximum <= minimum + 1e-12:
+        raise ValueError("history_or_horizon_too_short_for_artificial_period_pool")
+    candidates = np.geomspace(
+        minimum,
+        maximum,
+        MULTI_SEASONAL_PERIOD_CANDIDATE_COUNT,
+    )
+    order = _rng(
+        instance.official_instance_id,
+        "multi_seasonal",
+        "period_pool",
+        channel,
+        augmentation_seed=augmentation_seed,
+    ).permutation(candidates.size)
+    selected = list(existing_periods)
+    generated: list[float] = []
+    for raw_index in order:
+        period = float(candidates[int(raw_index)])
+        if not all(
+            _independent_seasonal_period(
+                period, previous, shortest_context
+            )
+            for previous in selected
+        ):
+            continue
+        selected.append(period)
+        generated.append(period)
+        if len(generated) == required_count:
+            return generated, (minimum, maximum)
+    raise ValueError("artificial_independent_period_pool_exhausted")
 
 
 def _trend_units(
@@ -454,58 +664,266 @@ def _trend_units(
     return units, {"stable_trend_target_indices": stable}
 
 
-def _secondary_seasonal_units(
+def _multi_seasonal_units(
     instance: GiftEvalInstance,
     augmentation_seed: int,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
     history = instance.history
     length, dimension = history.shape
-    history_component = np.zeros_like(history)
-    future_component = np.zeros_like(instance.future)
-    affected: list[int] = []
-    resolved: dict[str, Any] = {}
+    scales = _scale_by_target(history)
+    shortest_context = min(
+        length, min(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.values())
+    )
+    components_by_target: dict[int, list[dict[str, Any]]] = {}
+    period_bounds_by_target: dict[str, list[float]] = {}
+    anchor_search_by_target: dict[str, dict[str, Any]] = {}
     for channel in range(dimension):
         ranked = _dominant_frequency_indexes(history[:, channel])
-        if not ranked:
-            continue
-        carrier = ranked[0]
-        secondary = next(
-            (
-                index
-                for index in ranked[1:]
-                if abs(index - carrier) > 1
-                and all(abs(index - harmonic * carrier) > 1 for harmonic in range(2, 9))
+        components: list[dict[str, Any]] = []
+        anchor_period: float | None = None
+        anchor_search: dict[str, Any] = {
+            "maximum_candidate_count": (
+                MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT
             ),
-            None,
-        )
-        if secondary is None:
-            continue
-        component_h, component_f = _harmonic_component(
-            history[:, channel], secondary, instance.prediction_length
-        )
-        if np.std(component_h) < 0.01 * _scale_by_target(history)[channel]:
-            continue
-        history_component[:, channel] = component_h
-        future_component[:, channel] = component_f
-        affected.append(channel)
-        resolved[str(channel)] = {
-            "carrier_period": float(length / carrier),
-            "secondary_period": float(length / secondary),
+            "attempts": [],
+            "accepted_rank": None,
+            "accepted_frequency_index": None,
+            "fallback_reason": None,
         }
-    if not affected:
-        raise ValueError("independent_secondary_seasonality_not_resolved")
-    return _strength_scaled_units(
-        instance,
-        augmentation_seed,
-        "multi_seasonal",
-        history_component,
-        future_component,
-        tuple(affected),
-        metadata={
-            "component": "history_fitted_independent_secondary_harmonic",
-            "resolved_periods_by_target": resolved,
-        },
+        for rank, carrier_index in enumerate(
+            ranked[:MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT], start=1
+        ):
+            candidate_period = float(length / carrier_index)
+            maximum_period = min(
+                shortest_context / MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES,
+                instance.prediction_length
+                / MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION,
+            )
+            rejection_reasons: list[str] = []
+            if not (
+                MULTI_SEASONAL_MINIMUM_PERIOD
+                <= candidate_period
+                <= maximum_period
+            ):
+                rejection_reasons.append("period_outside_supported_range")
+                anchor_search["attempts"].append(
+                    {
+                        "rank": rank,
+                        "frequency_index": int(carrier_index),
+                        "period": candidate_period,
+                        "rejection_reasons": rejection_reasons,
+                    }
+                )
+                continue
+            fitted_h, _fitted_f = _harmonic_component(
+                history[:, channel], carrier_index, instance.prediction_length
+            )
+            normalized_std = float(np.std(fitted_h) / scales[channel])
+            if normalized_std < MULTI_SEASONAL_COMPONENT_VISIBILITY:
+                rejection_reasons.append("full_history_component_too_weak")
+            stability = _harmonic_split_stability(
+                history[:, channel], carrier_index, float(scales[channel])
+            )
+            if not stability["accepted"]:
+                rejection_reasons.append("split_half_stability_failed")
+            anchor_search["attempts"].append(
+                {
+                    "rank": rank,
+                    "frequency_index": int(carrier_index),
+                    "period": candidate_period,
+                    "full_history_normalized_std": normalized_std,
+                    "rejection_reasons": rejection_reasons,
+                }
+            )
+            if rejection_reasons:
+                continue
+            raw_sin, raw_cos = _harmonic_coefficients(
+                history[:, channel], carrier_index
+            )
+            signal, sin_coefficient, cos_coefficient = (
+                _normalized_continuous_harmonic(
+                    length=length,
+                    horizon=instance.prediction_length,
+                    period=candidate_period,
+                    sin_coefficient=raw_sin,
+                    cos_coefficient=raw_cos,
+                    target_scale=float(scales[channel]),
+                )
+            )
+            anchor_period = candidate_period
+            anchor_search["accepted_rank"] = rank
+            anchor_search["accepted_frequency_index"] = int(carrier_index)
+            components.append(
+                {
+                    "role": "anchor",
+                    "source": "history_top3_stable_harmonic",
+                    "period": candidate_period,
+                    "frequency_index": int(carrier_index),
+                    "history_candidate_rank": rank,
+                    "sin_coefficient": sin_coefficient,
+                    "cos_coefficient": cos_coefficient,
+                    "history_component": signal[:length],
+                    "future_component": signal[length:],
+                    "history_normalized_std_before_aggregate_gain": 1.0,
+                    "history_fit_normalized_std": normalized_std,
+                    "history_split_stability": stability,
+                }
+            )
+            break
+
+        if anchor_period is None:
+            anchor_search["fallback_reason"] = (
+                "no_ranked_history_frequency"
+                if not ranked
+                else "top3_history_anchor_candidates_rejected"
+            )
+        anchor_search_by_target[str(channel)] = anchor_search
+
+        required_generated = MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS
+        if anchor_period is None:
+            required_generated += 1
+        generated_periods, bounds = _protocol_generated_periods(
+            instance,
+            channel,
+            shortest_context=shortest_context,
+            existing_periods=(
+                () if anchor_period is None else (anchor_period,)
+            ),
+            required_count=required_generated,
+            augmentation_seed=augmentation_seed,
+        )
+        period_bounds_by_target[str(channel)] = list(bounds)
+        for generated_index, period in enumerate(generated_periods):
+            role = (
+                "anchor"
+                if anchor_period is None and generated_index == 0
+                else "additional"
+            )
+            phase = float(
+                _rng(
+                    instance.official_instance_id,
+                    "multi_seasonal",
+                    "phase",
+                    channel,
+                    generated_index,
+                    augmentation_seed=augmentation_seed,
+                ).uniform(0.0, 2.0 * math.pi)
+            )
+            raw_sin = math.sqrt(2.0) * scales[channel] * math.cos(phase)
+            raw_cos = math.sqrt(2.0) * scales[channel] * math.sin(phase)
+            signal, sin_coefficient, cos_coefficient = (
+                _normalized_continuous_harmonic(
+                    length=length,
+                    horizon=instance.prediction_length,
+                    period=period,
+                    sin_coefficient=float(raw_sin),
+                    cos_coefficient=float(raw_cos),
+                    target_scale=float(scales[channel]),
+                )
+            )
+            components.append(
+                {
+                    "role": role,
+                    "source": "protocol_generated",
+                    "period": period,
+                    "frequency_index": None,
+                    "phase": phase,
+                    "sin_coefficient": sin_coefficient,
+                    "cos_coefficient": cos_coefficient,
+                    "history_component": signal[:length],
+                    "future_component": signal[length:],
+                    "history_normalized_std_before_aggregate_gain": 1.0,
+                }
+            )
+            if role == "anchor":
+                anchor_period = period
+        if len(components) != MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS + 1:
+            raise ValueError("multi_seasonal_component_count_mismatch")
+        components_by_target[channel] = components
+
+    affected = tuple(range(dimension))
+
+    shared_distance = float(
+        _rng(
+            instance.official_instance_id,
+            "multi_seasonal",
+            "shared_distance",
+            augmentation_seed=augmentation_seed,
+        ).uniform(*MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL)
     )
+    units: list[_UnitTreatment] = []
+    for level in CAPABILITY_LEVELS:
+        history_component = np.zeros_like(history)
+        future_component = np.zeros_like(instance.future)
+        resolved: dict[str, Any] = {}
+        for channel in affected:
+            selected = components_by_target[channel][: level + 1]
+            for row in selected:
+                history_component[:, channel] += row["history_component"]
+                future_component[:, channel] += row["future_component"]
+            resolved[str(channel)] = {
+                "anchor_source": str(selected[0]["source"]),
+                "history_anchor_search": anchor_search_by_target[str(channel)],
+                "period_bounds": period_bounds_by_target[str(channel)],
+                "components": [
+                    {
+                        key: value
+                        for key, value in row.items()
+                        if key not in {"history_component", "future_component"}
+                    }
+                    for row in selected
+                ],
+            }
+        unit_distance = _full_history_unit_distance(
+            history_component, history, affected
+        )
+        if unit_distance <= 1e-10:
+            raise ValueError("multi_seasonal_aggregate_component_not_visible")
+        gain = shared_distance / unit_distance
+        units.append(
+            _UnitTreatment(
+                history_delta=history_component * gain,
+                future_delta=future_component * gain,
+                affected=affected,
+                coordinate_name="additional_independent_period_count",
+                coordinate_interval=(float(level), float(level)),
+                sampled_coordinate=float(level),
+                metadata={
+                    "component": (
+                        "hybrid_anchor_protocol_generated_nested_independent_"
+                        "periods"
+                    ),
+                    "resolved_periods_by_target": resolved,
+                    "additional_independent_period_count": int(level),
+                    "total_controlled_period_count": int(level + 1),
+                    "history_anchor_component_visibility_threshold": (
+                        MULTI_SEASONAL_COMPONENT_VISIBILITY
+                    ),
+                    "shared_full_history_macro_normalized_rms": shared_distance,
+                    "shared_distance_interval": list(
+                        MULTI_SEASONAL_SHARED_DISTANCE_INTERVAL
+                    ),
+                    "amplitude_policy": (
+                        "each_nested_level_normalized_to_one_shared_full_history_"
+                        "macro_rms"
+                    ),
+                    "unit_component_distance": unit_distance,
+                    "physical_component_gain": gain,
+                },
+            )
+        )
+    return units, {
+        "eligible_target_indices": list(affected),
+        "shared_full_history_macro_normalized_rms": shared_distance,
+        "maximum_additional_periods": (
+            MULTI_SEASONAL_MAXIMUM_ADDITIONAL_PERIODS
+        ),
+        "shortest_evaluated_model_context": shortest_context,
+        "period_policy": (
+            "stable_history_anchor_else_protocol_anchor_plus_protocol_generated_"
+            "independent_additional_periods"
+        ),
+    }
 
 
 def _time_varying_units(
@@ -1872,7 +2290,7 @@ _BUILDERS: dict[
     Callable[[GiftEvalInstance, int], tuple[list[_UnitTreatment], dict[str, Any]]],
 ] = {
     "trend": _trend_units,
-    "multi_seasonal": _secondary_seasonal_units,
+    "multi_seasonal": _multi_seasonal_units,
     "time_varying_seasonality": _time_varying_units,
     "regime_switching": _regime_units,
     "nonlinear_persistence": _nonlinear_units,
@@ -2294,18 +2712,6 @@ def replay_treatment_deltas(
                 * scales[affected][None, :]
             )
             component_h, component_f = component[:length], component[length:]
-        elif capability_id == "multi_seasonal":
-            details = metadata["resolved_periods_by_target"]
-            for raw_channel, periods in details.items():
-                channel = int(raw_channel)
-                frequency_index = int(
-                    round(length / float(periods["secondary_period"]))
-                )
-                fitted_h, fitted_f = _harmonic_component(
-                    history[:, channel], frequency_index, horizon
-                )
-                component_h[:, channel] = fitted_h
-                component_f[:, channel] = fitted_f
         elif capability_id == "time_varying_seasonality":
             details = metadata["resolved_periods_by_target"]
             for raw_channel, periods in details.items():
@@ -2490,6 +2896,24 @@ def replay_treatment_deltas(
             component_h, component_f = combined[:length], combined[length:]
             covariate_h = np.zeros_like(instance.history_covariates)
             covariate_f = np.zeros_like(instance.future_covariates)
+        elif capability_id == "multi_seasonal":
+            component_h = np.zeros_like(history)
+            component_f = np.zeros_like(instance.future)
+            covariate_h = np.zeros_like(instance.history_covariates)
+            covariate_f = np.zeros_like(instance.future_covariates)
+            details = metadata["resolved_periods_by_target"]
+            for raw_channel, periods in details.items():
+                channel = int(raw_channel)
+                for component in periods["components"]:
+                    signal = _continuous_harmonic_signal(
+                        length=length,
+                        horizon=horizon,
+                        period=float(component["period"]),
+                        sin_coefficient=float(component["sin_coefficient"]),
+                        cos_coefficient=float(component["cos_coefficient"]),
+                    )
+                    component_h[:, channel] += signal[:length]
+                    component_f[:, channel] += signal[length:]
         else:
             component_h, component_f, covariate_h, covariate_f = shared_component(row)
         gain = float(row["applied_component_gain"])
