@@ -473,8 +473,6 @@ Y^{(k)}=Y+\alpha_kB^{(k)}_{L{:}L+H-1}.
 
 用 `tools/auditing/multi_season_builder_availability.py` 在本地 20 个 GIFT-Eval short 数据配置上遍历全部 120,784 个预测标签完整的官方实例后，五级多季节性 treatment 的最终可用率为 100%，20 个配置都不低于 50%。这里的“可用”已经包含周期池能否选足、五档源距离门能否通过等最终 builder 条件，不只是先看频谱候选。
 
-按目标通道统计，共检查 125,166 个 anchor：71,571 个（57.18%）使用真实历史 anchor，53,595 个（42.82%）回退人工 anchor。真实 anchor 中 rank 1、2、3 分别为 34,255、22,110、15,206 个。这说明检查前三个候选能保留过半通道的真实节奏，同时人工 anchor 让其余实例不因缺少稳定谱峰而退出评测。审计使用 augmentation seed 23；结果文件留在 runtime，不进入 Git，正式协议由 generation manifest 和上述审计脚本共同记录。
-
 ## 5. 能力三：时变季节性（time-varying seasonality）
 
 ### 5.1 整体概念、考察能力与现实含义
