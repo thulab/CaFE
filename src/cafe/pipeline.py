@@ -35,6 +35,7 @@ from cafe.inference.runner import DEFAULT_ENDPOINTS, DEFAULT_MODELS
 
 
 STAGES = ("generation", "validation", "inference", "analysis")
+MINIMUM_PLANNED_SOURCE_SHARDS = 3
 
 
 def parse_args() -> argparse.Namespace:
@@ -287,6 +288,32 @@ def _storage_preflight(
     }
 
 
+def _generation_shard_sizes(
+    storage_preflight: dict[str, Any],
+    *,
+    requested_shard_size: int,
+) -> dict[str, int]:
+    """Keep large datasets dense while giving small datasets parallel work.
+
+    The layout is independent of the active inference topology: a single worker
+    can consume all shards, while up to three near-endpoint workers avoid a
+    one-large-shard tail on small native panels.
+    """
+
+    requested = max(1, int(requested_shard_size))
+    output: dict[str, int] = {}
+    for row in storage_preflight.get("datasets") or []:
+        dataset_id = str(row["dataset_id"])
+        upper_bound = max(1, int(row["official_instance_upper_bound"]))
+        balanced_size = max(
+            1,
+            (upper_bound + MINIMUM_PLANNED_SOURCE_SHARDS - 1)
+            // MINIMUM_PLANNED_SOURCE_SHARDS,
+        )
+        output[dataset_id] = min(requested, balanced_size)
+    return output
+
+
 def _freeze_storage_preflight(
     experiment_root: Path,
     computed: dict[str, Any],
@@ -374,6 +401,10 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         computed_preflight,
         disk_budget_gb=float(args.disk_budget_gb),
     )
+    generation_shard_sizes = _generation_shard_sizes(
+        computed_preflight,
+        requested_shard_size=int(args.generation_shard_size),
+    )
     common = {
         "pipeline_schema_version": PIPELINE_SCHEMA,
         "dataset_ids": dataset_ids,
@@ -389,6 +420,10 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         "execution": {
             "generation_workers": int(args.generation_workers),
             "generation_shard_size": int(args.generation_shard_size),
+            "generation_source_shard_policy": (
+                "requested_cap_with_three_planned_source_shards_v1"
+            ),
+            "generation_shard_size_by_dataset": generation_shard_sizes,
             "validation_dataset_workers": validation_dataset_workers,
             "requested_validation_dataset_workers": (
                 requested_validation_dataset_workers
@@ -432,7 +467,7 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 capability_ids=tuple(args.capabilities),
                 max_instances=args.max_instances,
                 workers=args.generation_workers,
-                shard_size=args.generation_shard_size,
+                shard_size=generation_shard_sizes[dataset_id],
             )
     generation_manifests = [
         experiment_root / dataset_id / "01_generation" / "manifest.json"

@@ -48,6 +48,11 @@ the mappings retains the ordinary single-orchestrator path.  For example:
 --distributed-repo-root /data/xmy/CaFE
 ```
 
+Generation keeps the requested source-shard size as a cap and plans roughly
+three shards for smaller datasets.  This layout is topology-independent: one
+host can consume every shard, while two or three near-endpoint workers avoid a
+single-shard tail without fragmenting large datasets into thousands of files.
+
 Treatments modify the complete retained official history. Model-specific
 context truncation happens afterward. Amplitude-controlled levels are calibrated
 by the full-history macro normalized RMS. Multi-seasonality instead keeps one

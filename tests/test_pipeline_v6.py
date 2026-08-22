@@ -98,3 +98,26 @@ def test_preparation_pipeline_uses_official_instances_without_services(
     assert protocol.read_json(
         experiment_root / "gift_fixture" / "02_validation" / "report.json"
     )["accepted"]
+def test_generation_shard_sizes_balance_small_datasets_without_fragmenting_large() -> None:
+    preflight = {
+        "datasets": [
+            {
+                "dataset_id": "small",
+                "official_instance_upper_bound": 15,
+            },
+            {
+                "dataset_id": "panel",
+                "official_instance_upper_bound": 315,
+            },
+            {
+                "dataset_id": "large",
+                "official_instance_upper_bound": 95_912,
+            },
+        ]
+    }
+    assert pipeline._generation_shard_sizes(
+        preflight, requested_shard_size=256
+    ) == {"small": 5, "panel": 105, "large": 256}
+    assert pipeline._generation_shard_sizes(
+        preflight, requested_shard_size=32
+    ) == {"small": 5, "panel": 32, "large": 32}
