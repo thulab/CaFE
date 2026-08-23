@@ -90,6 +90,29 @@ def _validate_model_protocol(
     _validate_forecast_limits(model_id, model, generation)
 
 
+def _relocate_generation_files(
+    generation: dict[str, Any],
+    dataset_root: Path,
+) -> dict[str, Any]:
+    """Point replay at hash-identical files synchronized beside the manifest."""
+
+    relocated: dict[str, dict[str, Any]] = {}
+    generation_dir = dataset_root / "01_generation"
+    for name, value in (generation.get("files") or {}).items():
+        record = dict(value)
+        candidate = generation_dir / Path(str(record["path"])).name
+        if (
+            not candidate.is_file()
+            or protocol.file_sha256(candidate) != str(record["sha256"])
+        ):
+            raise ValueError(f"synchronized generation file is invalid: {candidate}")
+        record["path"] = str(candidate.resolve())
+        relocated[str(name)] = record
+    if not relocated:
+        raise ValueError("generation manifest has no replay files")
+    return {**generation, "files": relocated}
+
+
 def run_worker(args: argparse.Namespace) -> dict[str, Any]:
     if args.part_count < 1 or not 0 <= args.part_index < args.part_count:
         raise ValueError("invalid distributed worker partition")
@@ -104,6 +127,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
 
     dataset_root = args.output_root.resolve() / args.dataset_id
     generation, _generation_path, _validation_path = _validated_inputs(dataset_root)
+    generation = _relocate_generation_files(generation, dataset_root)
     health = health_catalog(args.endpoint, args.api_prefix)
     if health is None or args.model_id not in health[1]:
         raise RuntimeError(

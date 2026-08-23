@@ -20,7 +20,10 @@ from cafe.benchmark_extension.inference import (
     model_task_row,
 )
 from cafe.benchmark_extension.storage import iter_prediction_parquet
-from cafe.benchmark_extension.distributed_worker import _validate_model_protocol
+from cafe.benchmark_extension.distributed_worker import (
+    _relocate_generation_files,
+    _validate_model_protocol,
+)
 from cafe.inference.runner import (
     MODEL_EXECUTION_CONFIG,
     _bulk_request_content,
@@ -74,6 +77,28 @@ def test_distributed_worker_reuses_the_term_and_horizon_preflight() -> None:
         }
     }
     _validate_model_protocol(generation, "Timer-4.0", model)
+
+
+def test_distributed_worker_relocates_hash_identical_contracts(tmp_path: Path) -> None:
+    generation_dir = tmp_path / "01_generation"
+    generation_dir.mkdir()
+    contract = generation_dir / "treatment_contracts.parquet"
+    contract.write_bytes(b"compact-contract")
+    generation = {
+        "files": {
+            "capability_treatments": {
+                "path": "/orchestrator/experiment/treatment_contracts.parquet",
+                "sha256": protocol.file_sha256(contract),
+            }
+        }
+    }
+    relocated = _relocate_generation_files(generation, tmp_path)
+    assert relocated["files"]["capability_treatments"]["path"] == str(
+        contract.resolve()
+    )
+    assert generation["files"]["capability_treatments"]["path"].startswith(
+        "/orchestrator/"
+    )
 
 
 def test_model_context_truncation_happens_after_full_history_treatment() -> None:
