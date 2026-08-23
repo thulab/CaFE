@@ -1,10 +1,10 @@
 # 四卡 RTX 5090 推理吞吐调优
 
-更新时间：2026-08-18
+更新时间：2026-08-24
 
 本文记录 CaFE 在 `timecho92` 本机访问 Timer REST Service 时的吞吐测试，
 并给出按输入 token 成本动态控制 bulk 大小与 HTTP 并发的推荐配置。这里的
-`view/s` 指一个原始 benchmark view 完成一次 H=48 预测；多变量 view 不按
+短期扫描中的 `view/s` 指一个原始 benchmark view 完成一次 H=48 预测；多变量 view 不按
 通道重复计数，另以 `target-series/s` 报告通道吞吐。
 
 ## 测试环境
@@ -90,7 +90,7 @@ panel 对显存、尾延迟的压力。单个view自身超过上限时仍允许�
 | Chronos-2 | 1 | 32 | 64 | 64 | 6,525,120 | 无 |
 | timesfm2.5 | 2 | 32 | 64 | — | 6,525,120 | C>8192按2倍token计 |
 | tirex2 | 2 | 32 | 64 | 8 | 6,525,120 | 原生panel通常并发2；C>512且D≥16时并发8 |
-| moirai2 | 2 | 32 | 64 | — | 13,050,240 | 无 |
+| moirai2 | 2 | 32 | 8 | — | 13,050,240 | 长上下文 activation 边界；并行请求保持32 |
 | Timer-3.5 | 1 | 32 | 64 | — | 6,525,120 | 无；双replica显存不足 |
 | toto2.0 | 1 | 8 | 256 | 256 | 1,048,576 | request上限131,072；真实native batch |
 
@@ -116,6 +116,48 @@ Timer-4.0与Moirai2的选择针对本轮GIFT-Eval short-term工作负载；如�
 medium/long实验，建议重新固定每卡1个replica的配置，而不是把short-term拓扑
 视为所有长度的通用最优值。每卡4个replica只在少数短序列case继续小幅改善，
 却明显增加加载时间、显存占用和长序列退化，因此未进入默认配置。
+
+### Medium/long 六模型协议与实测
+
+CaFE v14 对 medium/long 使用当前20个本地配置与 GIFT-Eval 官方 medium/long
+配置的11项交集，并固定排除最大输出只有320点的 TiRex2。其余六模型服务端声明
+的最大输出为 Timer-4.0 960、Chronos-2 1024、TimesFM2.5 1024，以及
+Moirai2、Timer-3.5、Toto2.0 各2048，因此覆盖当前交集的 H=480/600
+（medium）和 H=720/900（long）。Inference 在加载模型前逐数据集检查该上限；
+模型使用 known-future covariate 时还会检查其 future-covariate horizon。
+
+2026-08-24 在 timecho92 上用 Electricity（D=1）、Jena Weather（D=21）和
+BizITObs Application（D=2）各最多2个官方实例做了六模型端到端 smoke。
+Medium 共201个逻辑 view/模型，long 共170个逻辑 view/模型；36个
+model×dataset 状态全部 complete，失败、429、503均为0。小批实验包含模型装卸，
+所以总表吞吐只用于比较长短期相对成本，不用于外推全量 wall time。
+
+| 模型 | medium views/s | long views/s | Jena medium views/s | Jena long views/s |
+|---|---:|---:|---:|---:|
+| Timer-4.0 | 4.49 | 4.15 | 30.76 | 28.46 |
+| Chronos-2 | 8.45 | 7.69 | 24.12 | 22.59 |
+| timesfm2.5 | 3.73 | 3.27 | 4.88 | 4.91 |
+| moirai2 | 2.41 | 1.56 | 1.91 | 1.28 |
+| Timer-3.5 | 3.36 | 2.88 | 4.56 | 4.53 |
+| toto2.0 | 3.65 | 3.07 | 7.20 | 7.04 |
+
+首次 medium smoke 暴露 Moirai2 在 C=16,384、H=480 时把37行放入一个
+bulk会额外申请约8.27 GiB并 OOM。将 Moirai2 单 bulk 固定为8行后重新运行：
+medium/long Jena 均能持续利用四卡，观测显存约15–22 GiB/卡，且保持8个
+replica与32个并行HTTP请求。这个边界只限制单请求的 activation 峰值，不收缩
+endpoint并行额度，是当前 medium/long 推荐配置。
+
+对应的不可变服务器实验目录为：
+
+```text
+/data/xmy/CaFE/runtime/experiments/gift-v14-medium-sixmodel-smoke-b-20260823
+/data/xmy/CaFE/runtime/experiments/gift-v14-long-sixmodel-smoke-20260823
+/data/xmy/CaFE/runtime/experiments/gift-v14-medium-official-intersection-preflight-20260824
+/data/xmy/CaFE/runtime/experiments/gift-v14-long-official-intersection-preflight-20260824
+```
+
+后两个实验不显式传 dataset ids，实际都恰好生成11个交集配置；共22个
+research validation report 全部 accepted。
 
 ### 七模型端到端核验
 
@@ -195,14 +237,17 @@ warm-up的L96；其最大context为2048，长panel结果见下一表。
 
 ## CaFE动态策略
 
-CaFE使用两层成本约束：
+CaFE使用三层成本约束。服务端仍按输入数组元素做准入；CaFE 的客户端调度成本
+额外加入 `H × target_dim × output_horizon_token_multiplier`，使相同输入在
+medium/long 下自动缩小bulk并降低有效在途并发：
 
 1. 单请求限制：每个bulk不超过推荐的`maximum_request_input_tokens`；仅当单个
    benchmark view本身已超过该值时，允许它单独发送。
 2. Endpoint限制：worker数仍由模型的基础HTTP并发控制，但实际请求还必须取得
-   加权token额度，使该endpoint当前全部请求满足
-   `sum(weight(T_req, C, D)) <= client_inflight_input_tokens`。权重只用于客户端
-   调度；服务端仍按原始元素数准入。单个超大请求在endpoint空闲时可独占执行。
+   加权工作量额度，使该endpoint当前全部请求满足
+   `sum(weight(T_req + H D, C, D)) <= client_inflight_input_tokens`。权重只用于
+   客户端调度；服务端仍按原始输入元素数准入。单个超大请求在endpoint空闲时
+   可独占执行。
 3. Shape限制：TiRex原生panel使用更小的bulk和并发；TimesFM对实测进入饱和区
    的超长context提高成本权重。Toto用较小的统一request token上限自然缩小长
    context bulk。单变量拆分不会误用原生panel权重。
