@@ -1323,6 +1323,16 @@ def _distributed_worker_command(
     return command
 
 
+def _remote_worker_python_prefix(remote_repo_root: Path) -> list[str]:
+    """Run the worker tree's source with dependencies from its local venv."""
+
+    return [
+        "env",
+        f"PYTHONPATH={remote_repo_root / 'src'}",
+        str(remote_repo_root / ".venv" / "bin" / "python"),
+    ]
+
+
 def _aggregate_distributed_statuses(
     *,
     model_id: str,
@@ -1526,7 +1536,7 @@ def run_distributed_streaming_model(
                 # Use the project-local interpreter explicitly.  Worker hosts are
                 # deliberately provisioned under /data and need not expose uv on
                 # the non-interactive SSH PATH.
-                python_prefix=[str(remote_repo_root / ".venv" / "bin" / "python")],
+                python_prefix=_remote_worker_python_prefix(remote_repo_root),
                 dataset_id=dataset_root.name,
                 output_root=output_root,
                 gift_eval_dir=remote_repo_root / "data" / "gift-eval",

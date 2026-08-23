@@ -164,6 +164,15 @@ def test_distributed_worker_command_uses_an_explicit_python_prefix() -> None:
     ]
 
 
+def test_remote_worker_prefix_selects_the_worker_source_tree() -> None:
+    root = Path("/data/xmy/CaFE-worker")
+    assert inference_module._remote_worker_python_prefix(root) == [
+        "env",
+        "PYTHONPATH=/data/xmy/CaFE-worker/src",
+        "/data/xmy/CaFE-worker/.venv/bin/python",
+    ]
+
+
 def test_native_panel_is_preserved_in_generation_task() -> None:
     model = {
         "model_id": "fixture",
