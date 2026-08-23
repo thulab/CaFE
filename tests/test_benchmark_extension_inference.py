@@ -42,6 +42,12 @@ def _sample() -> dict:
     }
 
 
+def test_moirai_long_context_bulk_rows_are_memory_bounded() -> None:
+    config = inference_module.MODEL_INPUT_TOKEN_CONFIG["moirai2"]
+    assert config["maximum_bulk_rows"] == 8
+    assert config["native_multivariate_maximum_bulk_rows"] == 8
+
+
 def test_model_context_truncation_happens_after_full_history_treatment() -> None:
     model = {
         "model_id": "fixture",

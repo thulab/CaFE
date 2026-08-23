@@ -100,6 +100,11 @@ MODEL_INPUT_TOKEN_CONFIG["moirai2"].update(
         "client_inflight_input_tokens": (
             DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS * 2
         ),
+        # Long-context Moirai requests have a much larger activation footprint
+        # than their scalar input-token count suggests. Keep each request small
+        # while allowing independent requests to fill the replicas.
+        "maximum_bulk_rows": 8,
+        "native_multivariate_maximum_bulk_rows": 8,
     }
 )
 MODEL_INPUT_TOKEN_CONFIG["Timer-3.5"].update({"http_concurrency": 32})
