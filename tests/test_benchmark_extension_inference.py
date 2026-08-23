@@ -311,6 +311,52 @@ def test_past_only_covariates_are_native_without_future_payload() -> None:
     assert "future_covariates_shape" not in payload
 
 
+def test_timesfm_omits_past_only_covariates_that_cannot_be_paired() -> None:
+    sample = _sample()
+    sample["context_length"] = 16
+    sample["covariate_dim"] = 2
+    sample["covariate_column_names"] = ["past_0", "past_1"]
+    sample["covariate_availability"] = ["past_only", "past_only"]
+    sample["future_covariate_visible"] = [False, False]
+    sample["covariates"] = np.zeros((250, 2))
+    model = {
+        "model_id": "timesfm2.5",
+        "forecast_limits": {
+            "max_input_length": 16,
+            "min_input_length": 1,
+            "max_output_length": 64,
+            "max_group_rows": 64,
+            "input_mode": {
+                "max_target_count": 1,
+                "max_history_covariate_count": -1,
+                "supports_future_covariates": True,
+            },
+        },
+    }
+    plan = input_adaptation_plan(
+        model,
+        sample,
+        policy_id=inference_module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    assert plan is not None
+    assert plan["covariate_mode"] == "omitted_unsupported"
+    assert plan["request_covariate_dim"] == 0
+    assert plan["request_future_covariate_dim"] == 0
+    assert plan["covariate_omission_reason"] == (
+        "model_requires_history_and_future_covariates_together"
+    )
+    children = inference_module.adapted_request_samples(sample, plan)
+    assert len(children) == sample["target_dim"]
+    assert all(child["covariates"] is None for child in children)
+    assert all(child["covariate_dim"] == 0 for child in children)
+    content, _shape, _horizon = _bulk_request_content(
+        "timesfm2.5", children
+    )
+    payload = msgpack.unpackb(content, raw=False)
+    assert "history_covariates" not in payload
+    assert "future_covariates" not in payload
+
+
 def test_mixed_covariate_visibility_sends_only_known_future_columns() -> None:
     sample = _sample()
     sample["context_length"] = 200

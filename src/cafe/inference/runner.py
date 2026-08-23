@@ -23,6 +23,13 @@ import numpy as np
 from cafe import core as protocol
 
 INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v3-group-row-aware"
+
+# TimesFM's XReg path accepts covariates only when their history and forecast
+# horizon are supplied together.  GIFT-Eval past-only covariates therefore
+# cannot be forwarded to this model without inventing future values.
+_MODELS_REQUIRING_PAIRED_HISTORY_FUTURE_COVARIATES = frozenset(
+    {"timesfm2.5"}
+)
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 DEFAULT_ENDPOINTS = (
     "http://127.0.0.1:10810",
@@ -987,6 +994,13 @@ def resolve_input_capability(model: dict[str, Any]) -> dict[str, Any]:
         "max_history_covariate_count": maximum_history_covariates,
         "supports_history_covariates": supports_history_covariates,
         "supports_future_covariates": supports_future_covariates,
+        "requires_future_covariates_with_history": bool(
+            input_mode.get("requires_future_covariates_with_history", False)
+            if isinstance(input_mode, dict)
+            else False
+        )
+        or str(model.get("model_id", ""))
+        in _MODELS_REQUIRING_PAIRED_HISTORY_FUTURE_COVARIATES,
         "max_future_covariate_length": maximum_future_length,
         "max_group_rows": _normalize_unbounded_count(
             limits.get("max_group_rows"),
@@ -1072,6 +1086,19 @@ def input_adaptation_plan(
             requires_future=requires_future,
         )
     )
+    paired_history_future_covariates = bool(
+        capability.get("requires_future_covariates_with_history", False)
+    )
+    if (
+        covariates_native
+        and covariate_dim > 0
+        and paired_history_future_covariates
+        and not requires_future
+    ):
+        # Omitting the past-only covariates is the only future-blind legal
+        # adaptation.  Supplying truth or fabricated future values would
+        # change the benchmark task.
+        covariates_native = False
     maximum_group_rows = capability.get("max_group_rows")
     if (
         covariates_native
@@ -1115,6 +1142,13 @@ def input_adaptation_plan(
         "request_covariate_dim": request_covariate_dim,
         "request_future_covariate_dim": (
             future_covariate_dim if covariates_native else 0
+        ),
+        "covariate_omission_reason": (
+            "model_requires_history_and_future_covariates_together"
+            if covariate_dim > 0
+            and paired_history_future_covariates
+            and not requires_future
+            else None
         ),
         "resolved_input_capability": capability,
     }
