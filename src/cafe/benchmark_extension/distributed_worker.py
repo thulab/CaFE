@@ -13,9 +13,11 @@ from cafe.benchmark_extension.inference import (
     MODEL_INPUT_TOKEN_CONFIG,
     _maximum_context,
     _validate_distance_context_contract,
+    _validate_forecast_limits,
     _validated_inputs,
     run_streaming_model,
 )
+from cafe.benchmark_extension.mechanisms import source_distance_model_max_contexts
 from cafe.inference.runner import (
     INPUT_ADAPTATION_POLICY_ID,
     MODEL_EXECUTION_CONFIG,
@@ -72,6 +74,22 @@ def _completed_status(path: Path) -> dict[str, Any] | None:
     return status
 
 
+def _validate_model_protocol(
+    generation: dict[str, Any],
+    model_id: str,
+    model: dict[str, Any],
+) -> None:
+    config = generation.get("config") or {}
+    expected_contexts = source_distance_model_max_contexts(str(config.get("term")))
+    if (
+        config.get("source_distance_configuration", {}).get("model_max_contexts")
+        != expected_contexts
+    ):
+        raise ValueError("generation source-distance model protocol is inconsistent")
+    _validate_distance_context_contract(model_id, model, expected_contexts)
+    _validate_forecast_limits(model_id, model, generation)
+
+
 def run_worker(args: argparse.Namespace) -> dict[str, Any]:
     if args.part_count < 1 or not 0 <= args.part_index < args.part_count:
         raise ValueError("invalid distributed worker partition")
@@ -92,7 +110,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
             f"model {args.model_id!r} is unavailable at {args.endpoint!r}"
         )
     model = health[1][args.model_id]
-    _validate_distance_context_contract(args.model_id, model)
+    _validate_model_protocol(generation, args.model_id, model)
     execution = {
         **dict(MODEL_EXECUTION_CONFIG[args.model_id]),
         **dict(MODEL_INPUT_TOKEN_CONFIG[args.model_id]),

@@ -20,6 +20,7 @@ from cafe.benchmark_extension.inference import (
     model_task_row,
 )
 from cafe.benchmark_extension.storage import iter_prediction_parquet
+from cafe.benchmark_extension.distributed_worker import _validate_model_protocol
 from cafe.inference.runner import (
     MODEL_EXECUTION_CONFIG,
     _bulk_request_content,
@@ -46,6 +47,33 @@ def test_moirai_long_context_bulk_rows_are_memory_bounded() -> None:
     config = inference_module.MODEL_INPUT_TOKEN_CONFIG["moirai2"]
     assert config["maximum_bulk_rows"] == 8
     assert config["native_multivariate_maximum_bulk_rows"] == 8
+
+
+def test_distributed_worker_reuses_the_term_and_horizon_preflight() -> None:
+    contexts = {
+        "Timer-4.0": 8192,
+        "Chronos-2": 8192,
+        "Timer-3.5": 11520,
+        "timesfm2.5": 15360,
+        "moirai2": 16384,
+        "toto2.0": 16384,
+    }
+    generation = {
+        "config": {
+            "term": "medium",
+            "prediction_length": 480,
+            "observed_covariate_availability": [],
+            "source_distance_configuration": {"model_max_contexts": contexts},
+        }
+    }
+    model = {
+        "forecast_limits": {
+            "max_input_length": 8192,
+            "max_output_length": 960,
+            "input_mode": {"supports_future_covariates": True},
+        }
+    }
+    _validate_model_protocol(generation, "Timer-4.0", model)
 
 
 def test_model_context_truncation_happens_after_full_history_treatment() -> None:
