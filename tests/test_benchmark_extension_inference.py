@@ -13,6 +13,7 @@ from cafe.benchmark_extension import inference as inference_module
 from cafe.benchmark_extension.inference import (
     _InputTokenLimiter,
     _batch_input_tokens,
+    _batch_scheduling_tokens,
     _iter_model_bulk_batches,
     _requested_execution_complete,
     _run_streaming_bulk_model,
@@ -143,12 +144,46 @@ def test_inference_model_context_must_match_generation_distance_contract() -> No
     inference_module._validate_distance_context_contract(
         "tirex2",
         {"forecast_limits": {"max_input_length": 2048}},
+        {"tirex2": 2048},
     )
     with pytest.raises(ValueError, match="distance contract requires 2048"):
         inference_module._validate_distance_context_contract(
             "tirex2",
             {"forecast_limits": {"max_input_length": 4096}},
+            {"tirex2": 2048},
         )
+
+
+def test_medium_forecast_limit_preflight_rejects_tirex2() -> None:
+    generation = {
+        "config": {
+            "prediction_length": 480,
+            "observed_covariate_availability": [],
+        }
+    }
+    with pytest.raises(ValueError, match="supports at most H=320"):
+        inference_module._validate_forecast_limits(
+            "tirex2",
+            {
+                "forecast_limits": {
+                    "max_output_length": 320,
+                    "max_future_covs_length": 320,
+                    "input_mode": {"supports_future_covariates": True},
+                }
+            },
+            generation,
+        )
+    inference_module._validate_forecast_limits(
+        "Timer-4.0",
+        {
+            "forecast_limits": {
+                "max_output_length": 960,
+                "max_future_covs_length": 960,
+                "input_mode": {"supports_future_covariates": True},
+            }
+        },
+        generation,
+    )
 
 
 def test_model_major_partial_invocation_succeeds_before_global_completion() -> None:
@@ -405,8 +440,14 @@ def test_bulk_batches_shrink_to_request_input_token_budget() -> None:
             summary=summary,
         )
     )
-    assert [len(chunk) for _shard, _key, chunk in batches] == [2, 2, 1]
-    assert all(_batch_input_tokens(chunk) <= 1200 for _shard, _key, chunk in batches)
+    assert [len(chunk) for _shard, _key, chunk in batches] == [1, 1, 1, 1, 1]
+    assert all(
+        _batch_scheduling_tokens(
+            chunk, output_horizon_token_multiplier=1.0
+        )
+        <= 1200
+        for _shard, _key, chunk in batches
+    )
 
 
 def test_input_token_limiter_reduces_only_expensive_request_concurrency() -> None:

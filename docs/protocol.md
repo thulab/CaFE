@@ -1,4 +1,4 @@
-# CaFE v13 scientific protocol
+# CaFE v14 scientific protocol
 
 ## 1. Estimand
 
@@ -39,6 +39,11 @@ This is the split and `generate_instances` rule in GIFT-Eval. Records remain
 native: a `[D,T]` target produces one `D`-target instance. Channel splitting,
 when required by a model, is an inference adaptation and is reassembled before
 scoring.
+
+The configured short suite contains the twenty source configurations currently
+available to CaFE. Medium and long use the eleven-configuration intersection
+between those sources and GIFT-Eval's fixed 21-configuration medium/long list.
+They do not mechanically reuse all twenty short configurations.
 
 The parity source is pinned to GIFT-Eval revision
 `26df7582a5a2a2ef7602b5ded3a9a12fd4da74b2`,
@@ -95,10 +100,15 @@ distance remains a visibility and safety gate. Multi-seasonality is another
 structural exception: its coordinate is the number of additional independent
 periods, while all five levels share one full-history macro RMS drawn from
 `[0.22,0.28]`. Distance
-qualification then checks the distinct contexts that the seven evaluated models
-actually receive:
+qualification then checks the distinct contexts that the evaluated models
+actually receive. Short uses seven models; medium and long omit TiRex2 because
+its advertised maximum output length is 320, below every medium/long horizon.
+The corresponding context sets are:
 
-`{min(L,2048), min(L,8192), min(L,11520), min(L,15360), min(L,16384)}`.
+```text
+short:       {min(L,2048), min(L,8192), min(L,11520), min(L,15360), min(L,16384)}
+medium/long: {min(L,8192), min(L,11520), min(L,15360), min(L,16384)}
+```
 
 Duplicate contexts are evaluated once and retain the corresponding model ids.
 Inference refuses to run when a service advertises a different maximum input

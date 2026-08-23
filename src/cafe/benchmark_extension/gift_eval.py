@@ -35,6 +35,52 @@ M4_PREDICTION_LENGTHS = {
 }
 TERM_MULTIPLIERS = {"short": 1, "medium": 10, "long": 15}
 
+# GIFT-Eval evaluates medium and long horizons on this fixed configuration
+# subset.  CaFE currently carries twenty source configurations; the active
+# suite is therefore the intersection between this list and DATASET_REGISTRY.
+OFFICIAL_MEDIUM_LONG_CONFIG_IDS = frozenset(
+    {
+        "electricity/15T",
+        "electricity/H",
+        "solar/10T",
+        "solar/H",
+        "kdd_cup_2018_with_missing/H",
+        "LOOP_SEATTLE/5T",
+        "LOOP_SEATTLE/H",
+        "SZ_TAXI/15T",
+        "M_DENSE/H",
+        "ett1/15T",
+        "ett1/H",
+        "ett2/15T",
+        "ett2/H",
+        "jena_weather/10T",
+        "jena_weather/H",
+        "bitbrains_fast_storage/5T",
+        "bitbrains_rnd/5T",
+        "bizitobs_application",
+        "bizitobs_service",
+        "bizitobs_l2c/5T",
+        "bizitobs_l2c/H",
+    }
+)
+
+
+def configured_dataset_ids_for_term(term: str) -> tuple[str, ...]:
+    """Return the source-available official configuration suite for ``term``."""
+
+    normalized = str(term)
+    if normalized not in TERM_MULTIPLIERS:
+        raise ValueError(f"unsupported GIFT-Eval term {term!r}")
+    registered = tuple(protocol.DATASET_REGISTRY)
+    if normalized == "short":
+        return registered
+    return tuple(
+        dataset_id
+        for dataset_id in registered
+        if protocol.DATASET_REGISTRY[dataset_id].config_id
+        in OFFICIAL_MEDIUM_LONG_CONFIG_IDS
+    )
+
 
 @dataclass(frozen=True)
 class GiftArrowRecord:

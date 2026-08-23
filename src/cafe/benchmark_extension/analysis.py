@@ -34,7 +34,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v11"
+ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v12"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 ACCURACY_METRIC_SCHEMA = pa.schema(
@@ -1485,7 +1485,7 @@ def _run_analysis_sharded(
         inference_manifest.get("config", {}).get("pipeline_schema_version")
         != PIPELINE_SCHEMA
     ):
-        raise ValueError("inference is not current pipeline v13")
+        raise ValueError("inference is not current pipeline v14")
     if not inference_manifest.get("complete"):
         raise ValueError("inference is incomplete")
     analysis_dir.mkdir(parents=True, exist_ok=True)

@@ -42,6 +42,27 @@ SOURCE_DISTANCE_MODEL_MAX_CONTEXTS = {
     "moirai2": 16384,
     "toto2.0": 16384,
 }
+SOURCE_DISTANCE_MODEL_MAX_CONTEXTS_BY_TERM = {
+    "short": SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
+    "medium": {
+        model_id: maximum
+        for model_id, maximum in SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.items()
+        if model_id != "tirex2"
+    },
+    "long": {
+        model_id: maximum
+        for model_id, maximum in SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.items()
+        if model_id != "tirex2"
+    },
+}
+
+
+def source_distance_model_max_contexts(term: str) -> dict[str, int]:
+    try:
+        values = SOURCE_DISTANCE_MODEL_MAX_CONTEXTS_BY_TERM[str(term)]
+    except KeyError as error:
+        raise ValueError(f"unsupported GIFT-Eval term {term!r}") from error
+    return dict(values)
 # Kept as a compatibility alias for callers that only need the lower bound.
 SOURCE_DISTANCE_THRESHOLD = SOURCE_DISTANCE_MINIMUM_MACRO
 MECHANISM_EFFECT_MINIMUM_MASE_RMS = 0.05
@@ -246,12 +267,21 @@ def _distance_gate(
     history_delta: np.ndarray,
     history: np.ndarray,
     affected: tuple[int, ...],
+    *,
+    model_max_contexts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     delta = np.asarray(history_delta, dtype=float)
     scales = _scale_by_target(history)
     history_length = int(history.shape[0])
     model_ids_by_context: dict[int, list[str]] = {}
-    for model_id, maximum in SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.items():
+    configured_contexts = dict(
+        SOURCE_DISTANCE_MODEL_MAX_CONTEXTS
+        if model_max_contexts is None
+        else model_max_contexts
+    )
+    if not configured_contexts:
+        raise ValueError("source distance requires at least one model context")
+    for model_id, maximum in configured_contexts.items():
         context = min(history_length, int(maximum))
         model_ids_by_context.setdefault(context, []).append(model_id)
     by_context: list[dict[str, Any]] = []
@@ -297,7 +327,7 @@ def _distance_gate(
         "full_history_context_length": history_length,
         "full_history_macro_normalized_rms": full_macro,
         "full_history_channel_normalized_rms": full_channels.tolist(),
-        "model_max_contexts": dict(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS),
+        "model_max_contexts": configured_contexts,
         "evaluated_model_contexts": sorted(model_ids_by_context),
         "minimum_required_macro_distance": SOURCE_DISTANCE_MINIMUM_MACRO,
         "maximum_allowed_macro_distance": SOURCE_DISTANCE_MAXIMUM_MACRO,
@@ -671,9 +701,8 @@ def _multi_seasonal_units(
     history = instance.history
     length, dimension = history.shape
     scales = _scale_by_target(history)
-    shortest_context = min(
-        length, min(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.values())
-    )
+    model_max_contexts = source_distance_model_max_contexts(instance.term)
+    shortest_context = min(length, min(model_max_contexts.values()))
     components_by_target: dict[int, list[dict[str, Any]]] = {}
     period_bounds_by_target: dict[str, list[float]] = {}
     anchor_search_by_target: dict[str, dict[str, Any]] = {}
@@ -2536,10 +2565,12 @@ def build_capability_group(
         raise RuntimeError(f"{capability_id} did not produce five levels")
     treatments: list[CapabilityTreatment] = []
     for level, unit in zip(CAPABILITY_LEVELS, units, strict=True):
+        model_max_contexts = source_distance_model_max_contexts(instance.term)
         gate = _distance_gate(
             unit.history_delta,
             instance.history,
             unit.affected,
+            model_max_contexts=model_max_contexts,
         )
         if not gate["accepted"]:
             return CapabilityGroup(

@@ -32,6 +32,7 @@ def _instance(
     values: np.ndarray,
     *,
     horizon: int = 48,
+    term: str = "short",
     future_observed_mask: np.ndarray | None = None,
 ) -> GiftEvalInstance:
     history = np.asarray(values, dtype=float)
@@ -43,7 +44,7 @@ def _instance(
         item_id="item",
         official_instance_id="gift__fixture__item__w00__o600",
         frequency="H",
-        term="short",
+        term=term,
         window_index=0,
         window_count=1,
         forecast_origin=history.shape[0],
@@ -331,6 +332,26 @@ def test_distance_gate_uses_actual_model_contexts_and_separate_full_history() ->
     assert [row["context_length"] for row in gate["by_model_context"]] == expected
     assert gate["full_history_context_length"] == 20_000
     assert 20_000 not in gate["evaluated_model_contexts"]
+
+
+def test_medium_treatments_exclude_tirex_distance_context() -> None:
+    t = np.arange(10_000.0)
+    instance = _instance(
+        0.01 * t + np.sin(t / 11.0), horizon=480, term="medium"
+    )
+    group = build_capability_group(instance, "trend", augmentation_seed=19)
+    assert group.available
+    for treatment in group.treatments:
+        contexts = treatment.source_distance_gate["model_max_contexts"]
+        assert "tirex2" not in contexts
+        assert set(contexts) == {
+            "Timer-4.0",
+            "Chronos-2",
+            "Timer-3.5",
+            "timesfm2.5",
+            "moirai2",
+            "toto2.0",
+        }
 
 
 def test_strength_level_is_calibrated_on_full_history_not_weakest_context() -> None:

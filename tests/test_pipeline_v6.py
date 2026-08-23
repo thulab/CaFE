@@ -15,6 +15,54 @@ def test_v7_pipeline_has_no_calibration_stage() -> None:
     assert pipeline.STAGES == ("generation", "validation", "inference", "analysis")
 
 
+def test_medium_long_defaults_use_official_config_intersection_and_six_models() -> None:
+    expected_datasets = [
+        "gift_electricity_h",
+        "gift_solar_h",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_kdd_cup_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_service",
+    ]
+    expected_models = [
+        "Timer-4.0",
+        "Chronos-2",
+        "timesfm2.5",
+        "moirai2",
+        "Timer-3.5",
+        "toto2.0",
+    ]
+    for term in ("medium", "long"):
+        args = argparse.Namespace(
+            term=term,
+            dataset_id=None,
+            dataset_ids=None,
+            models=None,
+        )
+        assert pipeline.selected_dataset_ids(args) == expected_datasets
+        assert pipeline.selected_model_ids(args) == expected_models
+
+
+def test_medium_long_reject_tirex_and_nonofficial_registered_config() -> None:
+    with np.testing.assert_raises_regex(ValueError, "fixed medium"):
+        pipeline.selected_model_ids(
+            argparse.Namespace(term="medium", models=["tirex2"])
+        )
+    with np.testing.assert_raises_regex(ValueError, "not in the source-available"):
+        pipeline.selected_dataset_ids(
+            argparse.Namespace(
+                term="long",
+                dataset_id=["gift_bitbrains_fast_h"],
+                dataset_ids=None,
+            )
+        )
+
+
 def test_storage_preflight_is_stable_across_resume(tmp_path: Path) -> None:
     experiment_root = tmp_path / "experiment"
     experiment_root.mkdir()

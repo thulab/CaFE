@@ -25,12 +25,14 @@ from cafe.benchmark_extension.validation import (
     validate_generation,
 )
 from cafe.benchmark_extension.gift_eval import (
+    configured_dataset_ids_for_term,
     gift_arrow_target_summary,
     gift_eval_asset_path,
     iter_gift_arrow_target_records,
     official_window_count_from_minimum_length,
     prediction_length,
 )
+from cafe.benchmark_extension.mechanisms import source_distance_model_max_contexts
 from cafe.inference.runner import DEFAULT_ENDPOINTS, DEFAULT_MODELS
 
 
@@ -59,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         choices=CAPABILITY_IDS,
         default=list(CAPABILITY_IDS),
     )
-    parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
+    parser.add_argument("--models", nargs="+", default=None)
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1")
@@ -108,12 +110,37 @@ def parse_args() -> argparse.Namespace:
 
 
 def selected_dataset_ids(args: argparse.Namespace) -> list[str]:
-    values = list(args.dataset_ids or args.dataset_id or ["gift_electricity_h"])
+    configured = configured_dataset_ids_for_term(args.term)
+    values = list(args.dataset_ids or args.dataset_id or configured)
     output = list(dict.fromkeys(str(value) for value in values))
     for dataset_id in output:
         dataset = protocol.resolve_dataset(dataset_id)
         if dataset.real_data_adapter not in {"gift_arrow", "gift_hierarchical_sales"}:
-            raise ValueError(f"v13 supports GIFT-Eval only: {dataset_id}")
+            raise ValueError(f"v14 supports GIFT-Eval only: {dataset_id}")
+        if args.term in {"medium", "long"} and dataset_id not in configured:
+            raise ValueError(
+                f"{dataset_id} is not in the source-available official "
+                f"GIFT-Eval {args.term} configuration intersection"
+            )
+    return output
+
+
+def selected_model_ids(args: argparse.Namespace) -> list[str]:
+    allowed = source_distance_model_max_contexts(args.term)
+    values = list(
+        args.models
+        if args.models is not None
+        else [model_id for model_id in DEFAULT_MODELS if model_id in allowed]
+    )
+    output = list(dict.fromkeys(str(value) for value in values))
+    if len(output) != len(values):
+        raise ValueError("models must be unique")
+    disallowed = sorted(set(output) - set(allowed))
+    if disallowed:
+        raise ValueError(
+            f"models not in the fixed {args.term} benchmark protocol: "
+            + ", ".join(disallowed)
+        )
     return output
 
 
@@ -121,7 +148,7 @@ def _experiment_id(args: argparse.Namespace) -> str:
     if args.experiment_id:
         return str(args.experiment_id)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"gift-extension-v13-{args.augmentation_seed}-{timestamp}"
+    return f"gift-extension-v14-{args.augmentation_seed}-{timestamp}"
 
 
 def _stage_range(start_at: str, stop_after: str) -> tuple[str, ...]:
@@ -372,6 +399,7 @@ def _freeze_storage_preflight(
 
 def run_pipeline(args: argparse.Namespace) -> Path:
     dataset_ids = selected_dataset_ids(args)
+    args.models = selected_model_ids(args)
     stages = _stage_range(args.start_at, args.stop_after)
     validation_workers = int(
         getattr(args, "validation_workers", DEFAULT_VALIDATION_WORKERS)
@@ -408,7 +436,11 @@ def run_pipeline(args: argparse.Namespace) -> Path:
     common = {
         "pipeline_schema_version": PIPELINE_SCHEMA,
         "dataset_ids": dataset_ids,
+        "dataset_suite": (
+            "source_available_intersection_with_official_gift_eval_term_configs_v1"
+        ),
         "term": args.term,
+        "benchmark_model_ids": list(args.models),
         "capability_ids": list(args.capabilities),
         "augmentation_seed": int(args.augmentation_seed),
         "max_instances": args.max_instances,

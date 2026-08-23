@@ -59,7 +59,6 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
-    SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     TVS_MINIMUM_INCREMENTAL_R2,
@@ -69,6 +68,7 @@ from cafe.benchmark_extension.mechanisms import (
     mechanism_effect_signal,
     replay_treatment_deltas,
     replay_treatment_deltas_for_history_suffix,
+    source_distance_model_max_contexts,
 )
 from cafe.benchmark_extension.storage import (
     CompactParquetWriter,
@@ -77,10 +77,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v13"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v11"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v10"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v8"
+PIPELINE_SCHEMA = "cafe.pipeline.v14"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v12"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v11"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v9"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 
@@ -1161,6 +1161,13 @@ def generate_dataset(
     workers: int = 1,
     shard_size: int = 256,
 ) -> dict[str, Any]:
+    source_path = gift_eval_asset_path(dataset_id, gift_eval_dir)
+    frequency, minimum_length, _record_count = gift_arrow_target_summary(source_path)
+    horizon = prediction_length(dataset_id, frequency, term=term)
+    official_windows = official_window_count_from_minimum_length(
+        dataset_id, minimum_length, horizon
+    )
+    model_max_contexts = source_distance_model_max_contexts(term)
     generation_dir = dataset_root / "01_generation"
     baseline_path = generation_dir / "official_instances.parquet"
     treatment_path = generation_dir / "treatment_contracts.parquet"
@@ -1179,6 +1186,7 @@ def generate_dataset(
     unavailable_reason_counts: dict[str, dict[str, int]] = {
         capability: {} for capability in capability_ids
     }
+    observed_covariate_availability: set[str] = set()
     writers = {
         "official_baselines": CompactParquetWriter(baseline_path),
         "capability_treatments": CompactParquetWriter(treatment_path),
@@ -1191,6 +1199,9 @@ def generate_dataset(
         writers[kind].write(compact)
         if kind == "official_baselines":
             baseline_count += 1
+            observed_covariate_availability.update(
+                str(value) for value in compact.get("covariate_availability") or []
+            )
         elif kind == "capability_treatments":
             treatment_count += 1
         elif kind == "input_ablations":
@@ -1263,7 +1274,6 @@ def generate_dataset(
         for writer in writers.values():
             writer.abort()
         raise
-    source_path = gift_eval_asset_path(dataset_id, gift_eval_dir)
     source_files = [
         {**protocol.file_record(path), "path": str(path.resolve())}
         for path in sorted(source_path.glob("data-*.arrow"))
@@ -1275,6 +1285,9 @@ def generate_dataset(
         "dataset_id": dataset_id,
         "gift_eval_source_root": str(gift_eval_dir.resolve()),
         "term": term,
+        "frequency": frequency,
+        "prediction_length": int(horizon),
+        "official_window_count": int(official_windows),
         "augmentation_seed": int(augmentation_seed),
         "capability_ids": list(capability_ids),
         "max_instances": max_instances,
@@ -1290,6 +1303,9 @@ def generate_dataset(
         "native_target_policy": "preserve_gift_eval_target_dimension",
         "native_covariate_policy": (
             "preserve_source_fields_and_declared_future_visibility"
+        ),
+        "observed_covariate_availability": sorted(
+            observed_covariate_availability
         ),
         "treatment_history_scope": "entire_official_input_history",
         "randomness_policy": (
@@ -1428,7 +1444,7 @@ def generate_dataset(
         },
         "source_distance_configuration": {
             "strength_reference": "full_official_history_macro_normalized_rms",
-            "model_max_contexts": dict(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS),
+            "model_max_contexts": model_max_contexts,
             "minimum_model_context_macro_distance": (
                 SOURCE_DISTANCE_MINIMUM_MACRO
             ),

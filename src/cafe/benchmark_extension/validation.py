@@ -20,7 +20,10 @@ from cafe.benchmark_extension.generation import (
     compact_contract_row,
     materialized_samples_for_instance,
 )
-from cafe.benchmark_extension.gift_eval import iter_gift_eval_instances
+from cafe.benchmark_extension.gift_eval import (
+    iter_gift_eval_instances,
+    prediction_length,
+)
 from cafe.benchmark_extension.mechanisms import (
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
@@ -46,11 +49,11 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
-    SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     STRICT_FUTURE_EFFECT_CAPABILITIES,
     TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     _independent_seasonal_period,
+    source_distance_model_max_contexts,
 )
 from cafe.benchmark_extension.storage import (
     iter_compact_parquet,
@@ -58,7 +61,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v12"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v13"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -147,7 +150,13 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
         return "source_distance_gate_threshold"
     if full_context <= 0 or not _finite_nonnegative(full_macro):
         return "source_distance_gate_full_history_invalid"
-    if gate.get("model_max_contexts") != SOURCE_DISTANCE_MODEL_MAX_CONTEXTS:
+    try:
+        expected_model_contexts = source_distance_model_max_contexts(
+            str(row["term"])
+        )
+    except (KeyError, ValueError):
+        return "source_distance_gate_term"
+    if gate.get("model_max_contexts") != expected_model_contexts:
         return "source_distance_gate_model_context_policy"
     by_context = gate.get("by_model_context")
     if not isinstance(by_context, list) or not by_context:
@@ -170,7 +179,7 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
         if model_ids != sorted(set(model_ids)):
             return "source_distance_gate_model_ids_order"
         if any(
-            min(full_context, int(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(model_id, -1)))
+            min(full_context, int(expected_model_contexts.get(model_id, -1)))
             != context
             for model_id in model_ids
         ):
@@ -192,7 +201,7 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
             return "source_distance_gate_context_macro_mismatch"
         context_macros.append(float(macro))
         context_channel_maxima.append(max(float(value) for value in channels))
-    if observed_model_ids != set(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS):
+    if observed_model_ids != set(expected_model_contexts):
         return "source_distance_gate_model_coverage"
     if observed_contexts != sorted(set(observed_contexts)):
         return "source_distance_gate_context_order"
@@ -797,9 +806,11 @@ def _multi_seasonal_contract_reason(row: dict[str, Any]) -> str | None:
         or set(resolved) != {str(value) for value in affected}
     ):
         return "multi_seasonal_targets"
-    shortest_context = min(
-        context, min(SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.values())
-    )
+    try:
+        model_max_contexts = source_distance_model_max_contexts(str(row["term"]))
+    except (KeyError, ValueError):
+        return "multi_seasonal_term"
+    shortest_context = min(context, min(model_max_contexts.values()))
     expected_bounds = (
         MULTI_SEASONAL_MINIMUM_PERIOD,
         min(
@@ -1231,6 +1242,24 @@ def validate_generation(
         raise ValueError("validation workers must be positive")
     manifest_path = dataset_root / "01_generation" / "manifest.json"
     manifest = protocol.read_json(manifest_path)
+    manifest_failures: list[dict[str, Any]] = []
+    config = manifest.get("config") or {}
+    try:
+        term = str(config["term"])
+        expected_contexts = source_distance_model_max_contexts(term)
+        expected_horizon = prediction_length(
+            str(config["dataset_id"]), str(config["frequency"]), term=term
+        )
+        if config.get("source_distance_configuration", {}).get(
+            "model_max_contexts"
+        ) != expected_contexts:
+            raise ValueError("source_distance_model_contexts")
+        if int(config.get("prediction_length", -1)) != expected_horizon:
+            raise ValueError("prediction_length")
+    except (KeyError, TypeError, ValueError) as error:
+        manifest_failures.append(
+            {"scope": "manifest", "reason": f"term_protocol:{error}"}
+        )
     if mode == "publication":
         config = manifest.get("config") or {}
         gift_root = (
@@ -1258,6 +1287,8 @@ def validate_generation(
             "capability_horizon_support_and_nonlinear_identifiability_gates_v5"
         )
 
+    failure_count += len(manifest_failures)
+    failures = [*manifest_failures, *failures][:MAX_RECORDED_FAILURES]
     report = {
         "schema_version": VALIDATION_SCHEMA,
         "created_at": protocol.utc_now(),

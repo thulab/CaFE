@@ -22,7 +22,7 @@ from cafe.benchmark_extension.generation import (
     PIPELINE_SCHEMA,
     iter_replayed_samples,
 )
-from cafe.benchmark_extension.mechanisms import SOURCE_DISTANCE_MODEL_MAX_CONTEXTS
+from cafe.benchmark_extension.mechanisms import source_distance_model_max_contexts
 from cafe.benchmark_extension.storage import (
     PredictionParquetWriter,
     parquet_file_record,
@@ -44,8 +44,8 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v10"
-TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v6"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v11"
+TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v7"
 LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
     "cafe.benchmark_extension_validation.v3"
 )
@@ -63,6 +63,7 @@ MODEL_INPUT_TOKEN_CONFIG = {
         "maximum_request_input_tokens": DEFAULT_MAX_REQUEST_INPUT_TOKENS,
         "client_inflight_input_tokens": DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS,
         "native_multivariate_input_token_multiplier": 1.0,
+        "output_horizon_token_multiplier": 1.0,
         "maximum_bulk_rows": 64,
         "native_multivariate_maximum_bulk_rows": 64,
     }
@@ -203,15 +204,54 @@ def _maximum_context(model: dict[str, Any]) -> int | None:
 def _validate_distance_context_contract(
     model_id: str,
     model: dict[str, Any],
+    expected_contexts: dict[str, int],
 ) -> None:
-    expected = SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(model_id)
+    expected = expected_contexts.get(model_id)
     if expected is None:
-        return
+        raise ValueError(
+            f"model {model_id!r} is not part of the generation term protocol"
+        )
     advertised = _maximum_context(model)
     if advertised != expected:
         raise ValueError(
             f"model {model_id!r} advertises max input length {advertised}, "
             f"but the generation distance contract requires {expected}"
+        )
+
+
+def _validate_forecast_limits(
+    model_id: str,
+    model: dict[str, Any],
+    generation: dict[str, Any],
+) -> None:
+    config = generation.get("config") or {}
+    horizon = int(config.get("prediction_length") or 0)
+    if horizon <= 0:
+        raise ValueError("generation does not declare a positive prediction length")
+    limits = model.get("forecast_limits") or {}
+    maximum_output = int(limits.get("max_output_length") or -1)
+    if maximum_output >= 0 and horizon > maximum_output:
+        raise ValueError(
+            f"model {model_id!r} supports at most H={maximum_output}, "
+            f"but the generation task requires H={horizon}"
+        )
+    input_mode = limits.get("input_mode") or {}
+    uses_future_covariates = bool(input_mode.get("supports_future_covariates"))
+    source_has_known_future = "known_future" in set(
+        config.get("observed_covariate_availability") or []
+    )
+    maximum_future_covariates = int(
+        limits.get("max_future_covs_length") or -1
+    )
+    if (
+        uses_future_covariates
+        and source_has_known_future
+        and maximum_future_covariates >= 0
+        and horizon > maximum_future_covariates
+    ):
+        raise ValueError(
+            f"model {model_id!r} supports future covariates through at most "
+            f"H={maximum_future_covariates}, but the task requires H={horizon}"
         )
 
 
@@ -274,7 +314,7 @@ def _validated_inputs(dataset_root: Path) -> tuple[dict[str, Any], Path, Path]:
     if generation.get("schema_version") != GENERATION_SCHEMA:
         raise ValueError("unsupported generation manifest")
     if generation.get("config", {}).get("pipeline_schema_version") != PIPELINE_SCHEMA:
-        raise ValueError("generation is not current pipeline v13")
+        raise ValueError("generation is not current pipeline v14")
     validation_schema = validation.get("schema_version")
     current_validation = validation_schema == VALIDATION_SCHEMA
     legacy_publication_validation = (
@@ -321,6 +361,9 @@ def _iter_model_bulk_batches(
             DEFAULT_MAX_REQUEST_INPUT_TOKENS,
         )
     )
+    output_horizon_token_multiplier = float(
+        execution.get("output_horizon_token_multiplier", 1.0)
+    )
     for dense_sample in samples:
         source_shard = int(dense_sample.get("source_shard_index", 0))
         if current_shard is None:
@@ -354,7 +397,10 @@ def _iter_model_bulk_batches(
         key = request_group_key(sample, plan=plan)
         child_count = int(plan["target_request_count"])
         item = (sample, plan, children)
-        item_input_tokens = _batch_input_tokens([item])
+        item_input_tokens = _batch_scheduling_tokens(
+            [item],
+            output_horizon_token_multiplier=output_horizon_token_multiplier,
+        )
         item_batch_size = task_batch_size
         if int(plan["request_target_dim"]) > 1:
             item_batch_size = min(
@@ -483,6 +529,37 @@ def _batch_input_tokens(
     )
 
 
+def _child_scheduling_tokens(
+    child: dict[str, Any],
+    *,
+    output_horizon_token_multiplier: float,
+) -> int:
+    output_cost = round(
+        int(child["horizon"])
+        * int(child["target_dim"])
+        * float(output_horizon_token_multiplier)
+    )
+    return max(1, _child_input_tokens(child) + output_cost)
+
+
+def _batch_scheduling_tokens(
+    chunk: list[tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]],
+    *,
+    output_horizon_token_multiplier: float,
+) -> int:
+    return max(
+        1,
+        sum(
+            _child_scheduling_tokens(
+                child,
+                output_horizon_token_multiplier=output_horizon_token_multiplier,
+            )
+            for _sample, _plan, children in chunk
+            for child in children
+        ),
+    )
+
+
 class _InputTokenLimiter:
     """Bound an endpoint by request cost while allowing one oversized request."""
 
@@ -561,6 +638,9 @@ async def _run_streaming_bulk_model(
     )
     very_long_context_input_token_multiplier = float(
         execution.get("very_long_context_input_token_multiplier", 1.0)
+    )
+    output_horizon_token_multiplier = float(
+        execution.get("output_horizon_token_multiplier", 1.0)
     )
     large_panel_context_threshold = int(
         execution.get("large_panel_context_threshold", -1)
@@ -739,11 +819,20 @@ async def _run_streaming_bulk_model(
                         request_input_tokens = sum(
                             _child_input_tokens(child) for child in children
                         )
+                        request_work_tokens = sum(
+                            _child_scheduling_tokens(
+                                child,
+                                output_horizon_token_multiplier=(
+                                    output_horizon_token_multiplier
+                                ),
+                            )
+                            for child in children
+                        )
                         native_target_dim = max(
                             int(child["target_dim"]) for child in children
                         )
                         weighted_input_tokens = round(
-                            request_input_tokens
+                            request_work_tokens
                             * (
                                 native_multivariate_input_token_multiplier
                                 if native_target_dim > 1
@@ -940,6 +1029,7 @@ async def _run_streaming_bulk_model(
         "very_long_context_input_token_multiplier": (
             very_long_context_input_token_multiplier
         ),
+        "output_horizon_token_multiplier": output_horizon_token_multiplier,
         "large_panel_context_threshold": large_panel_context_threshold,
         "large_panel_target_dim_threshold": large_panel_target_dim_threshold,
         "large_panel_http_concurrency": large_panel_http_concurrency,
@@ -1321,6 +1411,9 @@ def _aggregate_distributed_statuses(
         "very_long_context_input_token_multiplier": first[
             "very_long_context_input_token_multiplier"
         ],
+        "output_horizon_token_multiplier": first[
+            "output_horizon_token_multiplier"
+        ],
         "large_panel_context_threshold": first["large_panel_context_threshold"],
         "large_panel_target_dim_threshold": first[
             "large_panel_target_dim_threshold"
@@ -1535,6 +1628,16 @@ def main() -> int:
         str(row["model_id"]): row
         for row in (previous_manifest or {}).get("model_statuses", [])
     }
+    generation_config = generation.get("config") or {}
+    term = str(generation_config.get("term"))
+    expected_distance_contexts = source_distance_model_max_contexts(term)
+    if (
+        generation_config.get("source_distance_configuration", {}).get(
+            "model_max_contexts"
+        )
+        != expected_distance_contexts
+    ):
+        raise ValueError("generation source-distance model protocol is inconsistent")
     for model_id in args.models:
         if model_id not in execute_models:
             continue
@@ -1547,7 +1650,10 @@ def main() -> int:
             raise ValueError(f"model {model_id!r} unavailable on all endpoints")
         endpoint_list = [endpoint for endpoint, _catalog in candidates]
         model = candidates[0][1][model_id]
-        _validate_distance_context_contract(model_id, model)
+        _validate_distance_context_contract(
+            model_id, model, expected_distance_contexts
+        )
+        _validate_forecast_limits(model_id, model, generation)
         model_contract = protocol.canonical_json(
             {
                 "forecast_limits": model.get("forecast_limits") or {},
