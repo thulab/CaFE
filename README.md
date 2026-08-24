@@ -64,8 +64,8 @@ checks reject a treatment group but never rescale it.
 
 ## Capabilities
 
-The GIFT-Eval adapter attempts these nine generatable mechanisms per official
-instance:
+By default, the GIFT-Eval adapter attempts these eight generatable mechanisms
+per official instance:
 
 - whole-history linear trend in the sample's own trend direction;
 - controlled multi-period extrapolation: levels contain 2–6 independent
@@ -73,8 +73,6 @@ instance:
   three history spectrum candidates or a deterministic protocol anchor;
 - constrained time-varying seasonal amplitude;
 - regime change with level-controlled change location;
-- state-dependent persistence with one-step and innovation-marginalized
-  multi-step held-out identifiability auditing;
 - predictable intermittency with level-controlled event sparsity;
 - native-panel common factor;
 - directed predictive cross-series transfer;
@@ -84,7 +82,9 @@ instance:
 Availability is instance-specific. Short or structurally unsuitable samples
 remain in the official baseline table and record a capability-unavailable
 reason. Hierarchical coherence is currently qualification-only and produces
-no ranked treatments.
+no ranked treatments. State-dependent persistence remains implemented for
+explicit research runs, but is excluded from the default capability set while
+its treatment and scoring design are reconsidered.
 
 Analysis keeps three result families separate: baseline and treatment
 MASE/MAE; MASE-standardized pooled effect NRMSE, correlation, coverage, and

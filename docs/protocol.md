@@ -79,6 +79,10 @@ the group.
 The treatment is first applied to the complete official history. Inference
 then takes the suffix allowed by each model's maximum input context.
 
+The default pipeline runs eight ranked capabilities. State-dependent
+persistence remains available only when explicitly selected with
+`--capabilities`; hierarchical coherence remains qualification-only.
+
 ## 4. Treatment-to-source distance
 
 The anti-contamination check compares every treatment directly with its

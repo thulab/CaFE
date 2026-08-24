@@ -29,6 +29,11 @@ GENERATABLE_CAPABILITY_IDS = tuple(
     for capability in CAPABILITY_IDS
     if capability != "hierarchical_coherence"
 )
+DEFAULT_CAPABILITY_IDS = tuple(
+    capability
+    for capability in GENERATABLE_CAPABILITY_IDS
+    if capability != "nonlinear_persistence"
+)
 CAPABILITY_LEVELS = (1, 2, 3, 4, 5)
 SOURCE_DISTANCE_MINIMUM_MACRO = 0.10
 SOURCE_DISTANCE_MAXIMUM_MACRO = 2.0

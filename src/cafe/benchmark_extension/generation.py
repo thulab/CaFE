@@ -26,6 +26,7 @@ from cafe.benchmark_extension.gift_eval import (
 )
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
+    DEFAULT_CAPABILITY_IDS,
     COMMON_FACTOR_MINIMUM_HARMONIC_SHARE,
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
     MECHANISM_EFFECT_MINIMUM_MASE_RMS,
@@ -101,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         "--capabilities",
         nargs="+",
         choices=CAPABILITY_IDS,
-        default=list(CAPABILITY_IDS),
+        default=list(DEFAULT_CAPABILITY_IDS),
     )
     parser.add_argument(
         "--max-instances",

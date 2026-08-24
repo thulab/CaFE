@@ -9,10 +9,29 @@ import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
 from cafe import pipeline
+from cafe.benchmark_extension import generation
+from cafe.benchmark_extension.mechanisms import (
+    CAPABILITY_IDS,
+    DEFAULT_CAPABILITY_IDS,
+)
 
 
 def test_v7_pipeline_has_no_calibration_stage() -> None:
     assert pipeline.STAGES == ("generation", "validation", "inference", "analysis")
+
+
+def test_default_pipeline_runs_eight_capabilities_but_keeps_persistence_optional(
+    monkeypatch,
+) -> None:
+    assert len(DEFAULT_CAPABILITY_IDS) == 8
+    assert "nonlinear_persistence" in CAPABILITY_IDS
+    assert "nonlinear_persistence" not in DEFAULT_CAPABILITY_IDS
+    assert "hierarchical_coherence" not in DEFAULT_CAPABILITY_IDS
+
+    monkeypatch.setattr("sys.argv", ["cafe.pipeline"])
+    assert tuple(pipeline.parse_args().capabilities) == DEFAULT_CAPABILITY_IDS
+    monkeypatch.setattr("sys.argv", ["cafe.generation", "--dataset-id", "fixture"])
+    assert tuple(generation.parse_args().capabilities) == DEFAULT_CAPABILITY_IDS
 
 
 def test_medium_long_defaults_use_official_config_intersection_and_six_models() -> None:

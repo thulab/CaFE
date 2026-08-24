@@ -18,7 +18,10 @@ from cafe.benchmark_extension.generation import (
     PIPELINE_SCHEMA,
     generate_dataset,
 )
-from cafe.benchmark_extension.mechanisms import CAPABILITY_IDS
+from cafe.benchmark_extension.mechanisms import (
+    CAPABILITY_IDS,
+    DEFAULT_CAPABILITY_IDS,
+)
 from cafe.benchmark_extension.validation import (
     DEFAULT_VALIDATION_WORKERS,
     VALIDATION_MODES,
@@ -59,7 +62,7 @@ def parse_args() -> argparse.Namespace:
         "--capabilities",
         nargs="+",
         choices=CAPABILITY_IDS,
-        default=list(CAPABILITY_IDS),
+        default=list(DEFAULT_CAPABILITY_IDS),
     )
     parser.add_argument("--models", nargs="+", default=None)
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
