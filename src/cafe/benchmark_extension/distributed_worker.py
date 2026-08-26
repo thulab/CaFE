@@ -80,12 +80,24 @@ def _validate_model_protocol(
     model: dict[str, Any],
 ) -> None:
     config = generation.get("config") or {}
-    expected_contexts = source_distance_model_max_contexts(str(config.get("term")))
-    if (
-        config.get("source_distance_configuration", {}).get("model_max_contexts")
-        != expected_contexts
-    ):
+    raw_contexts = config.get("source_distance_configuration", {}).get(
+        "model_max_contexts"
+    )
+    if not isinstance(raw_contexts, dict) or not raw_contexts:
         raise ValueError("generation source-distance model protocol is inconsistent")
+    expected_contexts = {
+        str(key): int(value) for key, value in raw_contexts.items()
+    }
+    if str(config.get("benchmark_id") or "gift_eval") == "gift_eval":
+        term_contexts = source_distance_model_max_contexts(str(config.get("term")))
+        if any(
+            model_id not in term_contexts
+            or maximum != int(term_contexts[model_id])
+            for model_id, maximum in expected_contexts.items()
+        ):
+            raise ValueError(
+                "generation source-distance model protocol is inconsistent"
+            )
     _validate_distance_context_contract(model_id, model, expected_contexts)
     _validate_forecast_limits(model_id, model, generation)
 

@@ -3,13 +3,25 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
+from cafe.benchmark_extension.adapters import (
+    BenchmarkSourceSpec,
+    BenchmarkTaskSpec,
+)
+from cafe.benchmark_extension.native import (
+    GiftEvalInstance,
+    NativeForecastInstance,
+    default_seasonality,
+    fill_unobserved_future,
+    impute_dynamic_covariates,
+    impute_history_only,
+)
 
 
 GIFT_EVAL_ADAPTER_SCHEMA = "cafe.gift_eval_native_adapter.v3"
@@ -181,47 +193,6 @@ def read_gift_arrow_targets(path: Path) -> tuple[str, list[tuple[str, np.ndarray
     return next(iter(frequencies)), records
 
 
-@dataclass(frozen=True)
-class GiftEvalInstance:
-    dataset_id: str
-    config_id: str
-    item_id: str
-    official_instance_id: str
-    frequency: str
-    term: str
-    window_index: int
-    window_count: int
-    forecast_origin: int
-    prediction_length: int
-    history: np.ndarray
-    future: np.ndarray
-    future_observed_mask: np.ndarray
-    history_covariates: np.ndarray
-    future_covariates: np.ndarray
-    covariate_column_names: tuple[str, ...]
-    covariate_availability: tuple[str, ...]
-    future_covariate_visible: tuple[bool, ...]
-    target_column_names: tuple[str, ...]
-    source_target_length: int
-    history_imputation: dict[str, object]
-
-    @property
-    def target_dim(self) -> int:
-        return int(self.history.shape[1])
-
-    @property
-    def context_length(self) -> int:
-        return int(self.history.shape[0])
-
-    @property
-    def covariate_dim(self) -> int:
-        return int(self.history_covariates.shape[1])
-
-    @property
-    def has_visible_future_covariates(self) -> bool:
-        return any(self.future_covariate_visible)
-
-
 def _normalized_frequency(frequency: str) -> str:
     raw = str(frequency).strip()
     aliases = {
@@ -351,38 +322,15 @@ def _time_major(values: np.ndarray) -> np.ndarray:
 
 
 def _impute_history(history: np.ndarray) -> tuple[np.ndarray, dict[str, object]]:
-    values = np.asarray(history, dtype=float).copy()
-    fractions: list[float] = []
-    empty_channels: list[int] = []
-    x = np.arange(values.shape[0], dtype=float)
-    for channel in range(values.shape[1]):
-        column = values[:, channel]
-        finite = np.isfinite(column)
-        fractions.append(float(np.mean(finite)))
-        if not np.any(finite):
-            values[:, channel] = 0.0
-            empty_channels.append(channel)
-        elif int(np.sum(finite)) == 1:
-            values[:, channel] = float(column[finite][0])
-        else:
-            values[:, channel] = np.interp(x, x[finite], column[finite])
-    return values, {
-        "policy": "history_only_linear_interpolation_edge_hold_v1",
-        "observed_fraction_by_target": fractions,
-        "all_missing_target_indices": empty_channels,
-    }
+    values, _observed, audit = impute_history_only(history)
+    return values, audit
 
 
 def _fill_future_for_storage(
     future: np.ndarray,
     history: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    values = np.asarray(future, dtype=float).copy()
-    observed = np.isfinite(values)
-    for channel in range(values.shape[1]):
-        fallback = float(history[-1, channel])
-        values[~observed[:, channel], channel] = fallback
-    return values, observed
+    return fill_unobserved_future(future, history)
 
 
 def _covariate_time_major(values: np.ndarray | None, target_length: int) -> np.ndarray:
@@ -406,18 +354,7 @@ def _impute_covariates(
     history: np.ndarray,
     future: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
-    if history.shape[1] == 0:
-        return history.copy(), future.copy(), {"policy": "no_native_covariates"}
-    imputed_history, audit = _impute_history(history)
-    imputed_future = np.asarray(future, dtype=float).copy()
-    for column in range(imputed_future.shape[1]):
-        finite = np.isfinite(imputed_future[:, column])
-        if not np.all(finite):
-            imputed_future[~finite, column] = imputed_history[-1, column]
-    return imputed_history, imputed_future, {
-        **audit,
-        "policy": "history_only_linear_interpolation_and_future_edge_hold_v1",
-    }
+    return impute_dynamic_covariates(history, future)
 
 
 def gift_eval_asset_path(dataset_id: str, gift_eval_dir: Path) -> Path:
@@ -438,6 +375,7 @@ def iter_gift_eval_instances(
     *,
     term: str = "short",
     max_instances: int | None = None,
+    selected_model_max_contexts: Mapping[str, int] | None = None,
 ) -> Iterator[GiftEvalInstance]:
     """Yield the exact native GIFT-Eval test instances in source order.
 
@@ -469,6 +407,7 @@ def iter_gift_eval_instances(
             window_count=windows,
             raw_past_covariates=record.past_covariates,
             raw_known_future_covariates=record.known_future_covariates,
+            selected_model_max_contexts=selected_model_max_contexts,
         ):
             yield instance
             emitted += 1
@@ -489,6 +428,7 @@ def gift_eval_instances_for_record(
     maximum_windows: int | None = None,
     raw_past_covariates: np.ndarray | None = None,
     raw_known_future_covariates: np.ndarray | None = None,
+    selected_model_max_contexts: Mapping[str, int] | None = None,
 ) -> Iterator[GiftEvalInstance]:
     """Build complete-label official windows without cross-record state."""
 
@@ -571,7 +511,100 @@ def gift_eval_instances_for_record(
                 **imputation,
                 "covariates": covariate_imputation,
             },
+            benchmark_id="gift_eval",
+            suite_id=str(term),
+            task_id=f"{dataset_id}__{term}",
+            history_observed_mask=np.ones_like(history, dtype=bool),
+            covariate_types=tuple("continuous_numeric" for _ in covariate_names),
+            source_locator={
+                "item_id": str(item_id),
+                "window_index": int(window_index),
+                "forecast_origin": int(origin),
+            },
+            native_protocol={
+                "split": "gift_eval_official_rolling_origin",
+                "term": str(term),
+                "window_count": int(window_count),
+            },
+            selected_model_max_contexts=dict(
+                selected_model_max_contexts or {}
+            ),
         )
         emitted += 1
         if maximum_windows is not None and emitted >= int(maximum_windows):
             return
+
+
+class GiftEvalAdapter:
+    """Adapter exposing GIFT-Eval tasks through the native window contract."""
+
+    benchmark_id = "gift_eval"
+    adapter_schema_version = GIFT_EVAL_ADAPTER_SCHEMA
+
+    def __init__(self, source_root: Path, *, term: str = "short") -> None:
+        if str(term) not in TERM_MULTIPLIERS:
+            raise ValueError(f"unsupported GIFT-Eval term {term!r}")
+        self.source_root = source_root.resolve()
+        self.term = str(term)
+
+    def list_tasks(self, suite_id: str) -> tuple[BenchmarkTaskSpec, ...]:
+        term = self.term if not suite_id else str(suite_id)
+        tasks: list[BenchmarkTaskSpec] = []
+        for dataset_id in configured_dataset_ids_for_term(term):
+            dataset = protocol.resolve_dataset(dataset_id)
+            asset = gift_eval_asset_path(dataset_id, self.source_root)
+            frequency, minimum_length, _ = gift_arrow_target_summary(asset)
+            horizon = prediction_length(dataset_id, frequency, term=term)
+            windows = official_window_count_from_minimum_length(
+                dataset_id, minimum_length, horizon
+            )
+            native_config = {
+                "dataset_id": dataset_id,
+                "config_id": dataset.config_id,
+                "term": term,
+            }
+            tasks.append(
+                BenchmarkTaskSpec(
+                    benchmark_id=self.benchmark_id,
+                    suite_id=term,
+                    task_id=f"{dataset_id}__{term}",
+                    source_dataset_id=dataset_id,
+                    display_name=dataset.logical_name,
+                    frequency=frequency,
+                    horizon=horizon,
+                    seasonality=default_seasonality(frequency),
+                    window_count=windows,
+                    native_config=native_config,
+                    config_sha256=protocol.json_sha256(native_config),
+                )
+            )
+        return tuple(tasks)
+
+    def iter_instances(
+        self,
+        task: BenchmarkTaskSpec,
+        *,
+        max_instances: int | None = None,
+        selected_model_max_contexts: Mapping[str, int] | None = None,
+    ) -> Iterator[NativeForecastInstance]:
+        if task.benchmark_id != self.benchmark_id:
+            raise ValueError("task does not belong to the GIFT-Eval adapter")
+        yield from iter_gift_eval_instances(
+            task.source_dataset_id,
+            self.source_root,
+            term=task.suite_id,
+            max_instances=max_instances,
+            selected_model_max_contexts=selected_model_max_contexts,
+        )
+
+    def source_spec(self) -> BenchmarkSourceSpec:
+        return BenchmarkSourceSpec(
+            benchmark_id=self.benchmark_id,
+            adapter_schema_version=self.adapter_schema_version,
+            source_revision=GIFT_EVAL_SOURCE_REVISION,
+            source_root=self.source_root,
+        )
+
+    def source_artifacts(self, task: BenchmarkTaskSpec) -> tuple[Path, ...]:
+        asset = gift_eval_asset_path(task.source_dataset_id, self.source_root)
+        return tuple(sorted(asset.glob("data-*.arrow")))

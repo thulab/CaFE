@@ -3,10 +3,11 @@
 ## 1. Estimand
 
 CaFE measures model behavior on capability-focused extensions of existing
-benchmark tasks. A source task is a GIFT-Eval official test instance. Its
-history, forecast origin, horizon, native target dimension, and observed
-future are retained. A treatment modifies the authentic history and adds a
-history-only or legally known-future component to the authentic future.
+benchmark tasks. A source sample is a benchmark-adapter native forecast
+window. Its history, forecast origin, horizon, native target dimension,
+dynamic/static covariate roles, and observed future are retained. A treatment
+modifies the authentic history and adds a history-only or legally known-future
+component to the authentic future.
 
 The analysis reports three separate views:
 
@@ -55,6 +56,30 @@ GIFT-Eval aggregate: an `H x D` official window is eligible only when every
 future target cell is finite. Partially and fully missing forecast windows are
 counted in the generation manifest but do not enter generation, inference, or
 analysis.
+
+### 2.1 FEV Mini-20 instances
+
+The FEV adapter pins package/tag `v0.8.0`, upstream commit
+`f1afffbf97bc51a4a233080d331633c6f7ab32f6`, and the official
+`tasks_mini.yaml` SHA-256. It delegates split construction to
+`Task.iter_windows` and consumes `get_input_data` and `get_ground_truth`; CaFE
+does not re-split or normalize lookback/horizon lengths. One series × native
+window is one CaFE instance, while multiple target columns remain one native
+multivariate target.
+
+Past-dynamic columns remain history-only, known-dynamic columns retain their
+official future visibility, and static values remain separate metadata. The
+covariate impulse capability may select only continuous numeric dynamic
+columns, never binary/categorical controls. Categorical dynamic fields use a
+deterministic sorted-category code only for model transport and retain their
+categorical type plus vocabulary in the native contract. Missing target
+history uses history-only interpolation with the original mask retained;
+unobserved future cells retain the official score mask and receive only an
+unscored storage placeholder. Generation freezes the FEV task configuration
+and dataset fingerprint. The 20 locally snapshotted Parquet
+files are pinned to `autogluon/fev_datasets` commit
+`f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8` and form the single
+authentic-series copy; experiment directories contain replay contracts only.
 
 ## 3. Treatment batches
 
@@ -105,7 +130,7 @@ structural exception: its coordinate is the number of additional independent
 periods, while all five levels share one full-history macro RMS drawn from
 `[0.22,0.28]`. Distance
 qualification then checks the distinct contexts that the evaluated models
-actually receive. Short uses seven models; medium and long omit TiRex2 because
+actually receive. The default GIFT short run uses seven models; medium and long omit TiRex2 because
 its advertised maximum output length is 320, below every medium/long horizon.
 The corresponding context sets are:
 
@@ -117,6 +142,9 @@ medium/long: {min(L,8192), min(L,11520), min(L,15360), min(L,16384)}
 Duplicate contexts are evaluated once and retain the corresponding model ids.
 Inference refuses to run when a service advertises a different maximum input
 length from the one frozen in the generation distance contract.
+For FEV, the selected service catalog is queried before generation, models are
+admitted by each task's actual horizon, and their advertised maximum input
+lengths are frozen directly; no GIFT term label is assigned.
 Every treatment satisfies
 
 \[
@@ -199,7 +227,8 @@ least `0.05`; the scoring gate verifies this construction invariant.
 Generation performs mechanism qualification before it writes a treatment.
 Default research validation then scans every compact treatment contract and
 checks its source-distance, mechanism-scoring, nonlinear-identifiability, and
-applicable capability-specific horizon-support evidence in parallel. Publication validation additionally binds
+applicable capability-specific horizon-support evidence in parallel. GIFT
+publication validation additionally binds
 the source Arrow files, generation manifest, and every Parquet artifact hash,
 then independently rebuilds every official instance, five-level treatment, and
 input ablation. Dense targets, futures, and native covariates are transient
@@ -275,6 +304,11 @@ attribution audit is reported separately and is not folded into effect NRMSE.
 
 Analysis loads one source shard and its prediction shard at a time. Per-sample
 metrics use compressed Parquet; summaries and manifests use JSON.
+After every task is analysed, the analysis stage computes arithmetic means of
+the task-level estimands. A GIFT dataset and an FEV task each receive weight
+one. Confidence intervals and pairwise model differences use a deterministic
+nonparametric bootstrap over tasks; pairwise comparisons resample only the
+common task set so model results remain paired.
 
 ## 9. Artifacts and stage contracts
 
@@ -289,8 +323,8 @@ opt-in through `--validation-mode publication`; research mode is the default.
 provenance, and upstream artifact hashes. A protocol change starts a new
 experiment id.
 
-The original GIFT-Eval Arrow files are the sole persistent copy of authentic
-series. Generation stores replay contracts in ZSTD Parquet, inference stores
+The original GIFT-Eval Arrow files or pinned FEV Mini Parquet files are the sole
+persistent copy of authentic series. Generation stores replay contracts in ZSTD Parquet, inference stores
 float32 prediction shards, and analysis stores scalar metric Parquet. A
-preflight estimates the complete experiment footprint and enforces the
-configured disk budget before generation begins.
+GIFT pipeline preflight estimates the complete experiment footprint and
+enforces the configured disk budget before generation begins.

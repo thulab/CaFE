@@ -35,6 +35,7 @@ from cafe.benchmark_extension.storage import (
 
 
 ANALYSIS_SCHEMA = "cafe.benchmark_extension_analysis.v12"
+SUITE_ANALYSIS_SCHEMA = "cafe.benchmark_extension_suite_analysis.v1"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 ACCURACY_METRIC_SCHEMA = pa.schema(
@@ -773,7 +774,7 @@ def _consume_replayed_samples(
             for model_id in model_ids
         }
         table = str(sample["evaluation_table"])
-        if table == "gift_eval_official_baseline":
+        if table in {"gift_eval_official_baseline", "benchmark_official_baseline"}:
             future = _future(sample)
             state = {
                 "row": sample,
@@ -820,7 +821,10 @@ def _consume_replayed_samples(
                 aggregate["mae"] += mae
                 official_counts[model_id] += 1
             continue
-        if table == "gift_eval_capability_treatment":
+        if table in {
+            "gift_eval_capability_treatment",
+            "benchmark_capability_treatment",
+        }:
             baseline = baselines[str(sample["baseline_sample_id"])]
             future = _future(sample)
             treatments[sample_id] = {
@@ -990,7 +994,10 @@ def _consume_replayed_samples(
                 elif sample["capability_id"] == "nonlinear_persistence":
                     effect_aggregate["half_life_censored_count"] += 1
             continue
-        if table != "gift_eval_capability_input_ablation":
+        if table not in {
+            "gift_eval_capability_input_ablation",
+            "benchmark_capability_input_ablation",
+        }:
             raise ValueError(f"unknown evaluation table {table}")
         source = treatments[str(sample["input_ablation_source_sample_id"])]
         baseline = source["baseline"]
@@ -1185,6 +1192,208 @@ def run_analysis(
         gift_eval_dir=gift_eval_dir,
         shard_workers=max(1, int(replay_workers)),
     )
+
+
+def _bootstrap_task_mean(
+    values: list[float],
+    *,
+    seed: int,
+    repetitions: int,
+) -> tuple[float, float]:
+    array = np.asarray(values, dtype=float)
+    if array.size == 0:
+        raise ValueError("cannot bootstrap an empty task set")
+    if array.size == 1 or repetitions < 1:
+        value = float(np.mean(array))
+        return value, value
+    rng = np.random.default_rng(int(seed))
+    indices = rng.integers(0, array.size, size=(int(repetitions), array.size))
+    means = np.mean(array[indices], axis=1)
+    lower, upper = np.quantile(means, [0.025, 0.975])
+    return float(lower), float(upper)
+
+
+def aggregate_analysis_tasks(
+    experiment_root: Path,
+    task_ids: Iterable[str],
+    *,
+    bootstrap_seed: int = 20260826,
+    bootstrap_repetitions: int = 2000,
+) -> dict[str, Any]:
+    """Write task-equal suite metrics inside the analysis stage.
+
+    Each GIFT dataset or FEV task contributes one value. Pairwise uncertainty
+    resamples only the common task set, preserving model pairing.
+    """
+
+    task_ids = tuple(dict.fromkeys(str(value) for value in task_ids))
+    if not task_ids:
+        raise ValueError("suite analysis requires at least one task")
+    observations: defaultdict[
+        tuple[str, str, str | None, int | None], dict[str, float]
+    ] = defaultdict(dict)
+    benchmark_ids: set[str] = set()
+    suite_ids: set[str] = set()
+    upstream: list[Path] = []
+    for task_id in task_ids:
+        task_root = experiment_root / task_id
+        generation_path = task_root / "01_generation" / "manifest.json"
+        analysis_path = task_root / "04_analysis" / "manifest.json"
+        generation = protocol.read_json(generation_path)
+        analysis = protocol.read_json(analysis_path)
+        config = generation.get("config") or {}
+        benchmark_ids.add(str(config.get("benchmark_id") or "gift_eval"))
+        suite_ids.add(str(config.get("suite_id") or config.get("term") or "native"))
+        upstream.append(analysis_path)
+
+        accuracy = protocol.read_json(
+            Path(str(analysis["files"]["official_accuracy"]["path"]))
+        )
+        for row in accuracy.get("models") or []:
+            value = row.get("official_mase_mean")
+            if value is not None and math.isfinite(float(value)):
+                observations[("official_mase", str(row["model_id"]), None, None)][
+                    task_id
+                ] = float(value)
+
+        effects = protocol.read_json(
+            Path(str(analysis["files"]["capability_effect_summary"]["path"]))
+        )
+        for row in effects.get("rows") or []:
+            value = row.get("effect_nrmse_pooled")
+            if value is not None and math.isfinite(float(value)):
+                observations[
+                    (
+                        "capability_effect_nrmse",
+                        str(row["model_id"]),
+                        str(row["capability_id"]),
+                        int(row["capability_level"]),
+                    )
+                ][task_id] = float(value)
+
+        ablations = protocol.read_json(
+            Path(str(analysis["files"]["input_ablation_summary"]["path"]))
+        )
+        for row in ablations.get("rows") or []:
+            value = row.get("input_ablation_mase_degradation_mean")
+            if value is not None and math.isfinite(float(value)):
+                observations[
+                    (
+                        "input_ablation_mase_degradation",
+                        str(row["model_id"]),
+                        str(row["capability_id"]),
+                        int(row["capability_level"]),
+                    )
+                ][task_id] = float(value)
+
+    rows: list[dict[str, Any]] = []
+    for index, (key, by_task) in enumerate(sorted(observations.items())):
+        metric, model_id, capability_id, level = key
+        values = list(by_task.values())
+        lower, upper = _bootstrap_task_mean(
+            values,
+            seed=int(bootstrap_seed) + index,
+            repetitions=int(bootstrap_repetitions),
+        )
+        rows.append(
+            {
+                "metric": metric,
+                "model_id": model_id,
+                "capability_id": capability_id,
+                "capability_level": level,
+                "task_count": len(values),
+                "suite_task_count": len(task_ids),
+                "task_coverage": len(values) / len(task_ids),
+                "task_equal_mean": float(np.mean(values)),
+                "task_bootstrap_95_ci_lower": lower,
+                "task_bootstrap_95_ci_upper": upper,
+            }
+        )
+
+    pairwise: list[dict[str, Any]] = []
+    groups: defaultdict[
+        tuple[str, str | None, int | None],
+        dict[str, dict[str, float]],
+    ] = defaultdict(dict)
+    for (metric, model_id, capability_id, level), by_task in observations.items():
+        groups[(metric, capability_id, level)][model_id] = by_task
+    pair_index = 0
+    for (metric, capability_id, level), by_model in sorted(groups.items()):
+        model_ids = sorted(by_model)
+        for left_index, left_model in enumerate(model_ids):
+            for right_model in model_ids[left_index + 1 :]:
+                common = sorted(
+                    set(by_model[left_model]) & set(by_model[right_model])
+                )
+                if not common:
+                    continue
+                differences = [
+                    by_model[left_model][task] - by_model[right_model][task]
+                    for task in common
+                ]
+                lower, upper = _bootstrap_task_mean(
+                    differences,
+                    seed=int(bootstrap_seed) + 100_000 + pair_index,
+                    repetitions=int(bootstrap_repetitions),
+                )
+                pair_index += 1
+                pairwise.append(
+                    {
+                        "metric": metric,
+                        "capability_id": capability_id,
+                        "capability_level": level,
+                        "left_model_id": left_model,
+                        "right_model_id": right_model,
+                        "paired_task_count": len(common),
+                        "task_equal_mean_difference_left_minus_right": float(
+                            np.mean(differences)
+                        ),
+                        "paired_task_bootstrap_95_ci_lower": lower,
+                        "paired_task_bootstrap_95_ci_upper": upper,
+                    }
+                )
+
+    output_dir = experiment_root / "04_analysis_suite"
+    output_dir.mkdir(parents=True, exist_ok=False)
+    summary_path = output_dir / "task_equal_summary.json"
+    protocol.write_json(
+        summary_path,
+        {
+            "schema_version": SUITE_ANALYSIS_SCHEMA,
+            "aggregation_unit": "benchmark_task",
+            "task_ids": list(task_ids),
+            "bootstrap_seed": int(bootstrap_seed),
+            "bootstrap_repetitions": int(bootstrap_repetitions),
+            "rows": rows,
+            "paired_model_comparisons": pairwise,
+        },
+    )
+    config = {
+        "pipeline_schema_version": PIPELINE_SCHEMA,
+        "benchmark_ids": sorted(benchmark_ids),
+        "suite_ids": sorted(suite_ids),
+        "task_ids": list(task_ids),
+        "aggregation": "arithmetic_mean_of_task_level_estimands",
+        "uncertainty": "paired_nonparametric_task_bootstrap",
+        "bootstrap_seed": int(bootstrap_seed),
+        "bootstrap_repetitions": int(bootstrap_repetitions),
+    }
+    manifest = {
+        "schema_version": SUITE_ANALYSIS_SCHEMA,
+        "created_at": protocol.utc_now(),
+        "config": config,
+        "config_sha256": protocol.json_sha256(config),
+        "upstream_analysis": [
+            {
+                "path": str(path.resolve()),
+                "sha256": protocol.file_sha256(path),
+            }
+            for path in upstream
+        ],
+        "files": {"task_equal_summary": protocol.file_record(summary_path)},
+    }
+    protocol.write_json(output_dir / "manifest.json", manifest)
+    return manifest
 
 
 def _write_sharded_analysis_outputs(
@@ -1399,7 +1608,7 @@ def _write_sharded_analysis_outputs(
         "source_shard_count": int(source_shard_count),
         "source_scan_count": 1,
         "estimands": {
-            "official_accuracy": "GIFT-Eval official future MASE/MAE",
+            "official_accuracy": "benchmark-native official future MASE/MAE",
             "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale",
             "capability_effect": (
                 "mase_standardized_pooled_forecast_delta_vs_truth_delta_"
@@ -1467,16 +1676,6 @@ def _run_analysis_sharded(
     inference_dir = dataset_root / "03_inference"
     analysis_dir = dataset_root / "04_analysis"
     generation_manifest = protocol.read_json(generation_dir / "manifest.json")
-    source_root = generation_manifest.get("config", {}).get("gift_eval_source_root")
-    gift_root = (
-        Path(str(source_root)).resolve()
-        if gift_eval_dir is None and source_root
-        else (
-            protocol.REPO_ROOT / "data" / "gift-eval"
-            if gift_eval_dir is None
-            else gift_eval_dir.resolve()
-        )
-    )
     inference_manifest_path = inference_dir / "manifest.json"
     inference_manifest = protocol.read_json(inference_manifest_path)
     if inference_manifest.get("schema_version") != INFERENCE_SCHEMA:
@@ -1549,7 +1748,7 @@ def _run_analysis_sharded(
         current_shard: int | None = None
         current_items: list[ReplayContractWorkItem] = []
         for work in iter_replay_contract_work_items(
-            generation_manifest, gift_eval_dir=gift_root
+            generation_manifest, gift_eval_dir=gift_eval_dir
         ):
             shard = int(work[1].get("source_shard_index", 0))
             if current_shard is None:

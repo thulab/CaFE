@@ -131,6 +131,29 @@ def test_validation_accepts_exact_generated_pairs(tmp_path: Path, monkeypatch) -
     assert publication["validation_mode"] == "publication"
 
 
+def test_validation_accepts_selected_gift_model_context_subset(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gift_root = _fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "selected-model-experiment" / "gift_fixture"
+    manifest = generate_dataset(
+        "gift_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=21,
+        capability_ids=("trend",),
+        max_instances=1,
+        model_max_contexts={"Timer-4.0": 8192},
+    )
+    assert manifest["config"]["source_distance_configuration"][
+        "model_max_contexts"
+    ] == {"Timer-4.0": 8192}
+    assert validate_generation(dataset_root, mode="research", workers=1)[
+        "accepted"
+    ]
+
+
 def test_validation_rejects_self_consistent_treatment_source_rewrite(
     tmp_path: Path,
     monkeypatch,

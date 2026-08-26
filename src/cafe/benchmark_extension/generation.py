@@ -11,6 +11,12 @@ from typing import Any, Iterator
 import numpy as np
 
 from cafe import core as protocol
+from cafe.benchmark_extension.adapters import (
+    BenchmarkAdapter,
+    BenchmarkTaskSpec,
+    task_spec_from_dict,
+    task_spec_to_dict,
+)
 from cafe.benchmark_extension.gift_eval import (
     GIFT_EVAL_ADAPTER_SCHEMA,
     GIFT_EVAL_SOURCE_REVISION,
@@ -71,6 +77,7 @@ from cafe.benchmark_extension.mechanisms import (
     replay_treatment_deltas_for_history_suffix,
     source_distance_model_max_contexts,
 )
+from cafe.benchmark_extension.native import NativeForecastInstance
 from cafe.benchmark_extension.storage import (
     CompactParquetWriter,
     iter_compact_parquet,
@@ -83,6 +90,48 @@ GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v12"
 SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v11"
 CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v9"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
+
+GENERIC_OFFICIAL_BASELINE = "benchmark_official_baseline"
+GENERIC_CAPABILITY_TREATMENT = "benchmark_capability_treatment"
+GENERIC_INPUT_ABLATION = "benchmark_capability_input_ablation"
+
+
+def _evaluation_table(instance: NativeForecastInstance, kind: str) -> str:
+    if instance.benchmark_id == "gift_eval":
+        return {
+            "baseline": "gift_eval_official_baseline",
+            "treatment": "gift_eval_capability_treatment",
+            "ablation": "gift_eval_capability_input_ablation",
+        }[kind]
+    return {
+        "baseline": GENERIC_OFFICIAL_BASELINE,
+        "treatment": GENERIC_CAPABILITY_TREATMENT,
+        "ablation": GENERIC_INPUT_ABLATION,
+    }[kind]
+
+
+def _sample_semantics(
+    instance: NativeForecastInstance, *, treatment: bool
+) -> tuple[str, str]:
+    if instance.benchmark_id == "gift_eval":
+        if treatment:
+            return (
+                "gift_eval_official_future_plus_history_only_capability_delta",
+                "entire_gift_eval_official_history_plus_capability_treatment",
+            )
+        return (
+            "gift_eval_official_future",
+            "gift_eval_official_history_after_history_only_imputation",
+        )
+    if treatment:
+        return (
+            f"{instance.benchmark_id}_native_future_plus_capability_delta",
+            f"entire_{instance.benchmark_id}_native_history_plus_capability_treatment",
+        )
+    return (
+        f"{instance.benchmark_id}_native_future",
+        f"{instance.benchmark_id}_native_history_after_adapter_policy",
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,12 +168,53 @@ def _target_sha256(values: np.ndarray) -> str:
     return hashlib.sha256(np.asarray(values, dtype="<f8").tobytes()).hexdigest()
 
 
-def _mase_scale(history: np.ndarray, period: int) -> tuple[float, list[float]]:
+def _mase_scale(
+    history: np.ndarray,
+    period: int,
+    *,
+    observed_mask: np.ndarray | None = None,
+) -> tuple[float, list[float]]:
     values = np.asarray(history, dtype=float)
     lag = min(max(1, int(period)), max(1, values.shape[0] - 1))
     differences = np.abs(values[lag:] - values[:-lag])
-    by_target = np.mean(differences, axis=0) if differences.size else np.ones(values.shape[1])
-    fallback = np.mean(np.abs(np.diff(values, axis=0)), axis=0)
+    if observed_mask is None:
+        by_target = (
+            np.mean(differences, axis=0)
+            if differences.size
+            else np.ones(values.shape[1])
+        )
+        fallback = np.mean(np.abs(np.diff(values, axis=0)), axis=0)
+    else:
+        observed = np.asarray(observed_mask, dtype=bool)
+        if observed.shape != values.shape:
+            raise ValueError("history observed mask shape mismatch")
+        valid = observed[lag:] & observed[:-lag]
+        by_target = np.asarray(
+            [
+                (
+                    float(np.mean(differences[:, channel][valid[:, channel]]))
+                    if np.any(valid[:, channel])
+                    else float("nan")
+                )
+                for channel in range(values.shape[1])
+            ]
+        )
+        adjacent = np.abs(np.diff(values, axis=0))
+        adjacent_valid = observed[1:] & observed[:-1]
+        fallback = np.asarray(
+            [
+                (
+                    float(
+                        np.mean(
+                            adjacent[:, channel][adjacent_valid[:, channel]]
+                        )
+                    )
+                    if np.any(adjacent_valid[:, channel])
+                    else float("nan")
+                )
+                for channel in range(values.shape[1])
+            ]
+        )
     by_target = np.where(np.isfinite(by_target) & (by_target > 1e-8), by_target, fallback)
     by_target = np.where(np.isfinite(by_target) & (by_target > 1e-8), by_target, 1.0)
     return float(np.mean(by_target)), [float(value) for value in by_target]
@@ -165,31 +255,32 @@ def _mechanism_scoring_gate(
     }
 
 
-def _season_length(frequency: str) -> int:
-    raw = str(frequency)
-    if raw.endswith(("H", "h")):
-        return 24
-    if raw.endswith("D"):
-        return 7
-    if raw.endswith(("M", "ME")):
-        return 12
-    if raw.endswith("W") or raw.startswith("W-"):
-        return 52
-    return 1
-
-
 def _baseline_row(instance: GiftEvalInstance) -> dict[str, Any]:
     target = np.vstack((instance.history, instance.future))
     covariates = np.vstack(
         (instance.history_covariates, instance.future_covariates)
     )
-    season = _season_length(instance.frequency)
-    mase, mase_by_target = _mase_scale(instance.history, season)
+    season = instance.resolved_seasonality
+    scoring_semantics, input_semantics = _sample_semantics(
+        instance, treatment=False
+    )
+    mase, mase_by_target = _mase_scale(
+        instance.history,
+        season,
+        observed_mask=(
+            instance.history_observed_mask
+            if instance.benchmark_id != "gift_eval"
+            else None
+        ),
+    )
     return {
         "schema_version": SAMPLE_SCHEMA,
         "pipeline_schema_version": PIPELINE_SCHEMA,
-        "benchmark_track": "gift_eval_capability_extension",
-        "evaluation_table": "gift_eval_official_baseline",
+        "benchmark_track": f"{instance.benchmark_id}_capability_extension",
+        "benchmark_id": instance.benchmark_id,
+        "suite_id": instance.suite_id,
+        "task_id": instance.resolved_task_id,
+        "evaluation_table": _evaluation_table(instance, "baseline"),
         "sample_id": f"{instance.official_instance_id}__baseline",
         "official_instance_id": instance.official_instance_id,
         "baseline_sample_id": None,
@@ -213,6 +304,8 @@ def _baseline_row(instance: GiftEvalInstance) -> dict[str, Any]:
         "covariate_column_names": list(instance.covariate_column_names),
         "covariate_availability": list(instance.covariate_availability),
         "future_covariate_visible": list(instance.future_covariate_visible),
+        "covariate_types": list(instance.covariate_types),
+        "static_covariates": dict(instance.static_covariates),
         "covariates": covariates if covariates.shape[1] else None,
         "frequency": instance.frequency,
         "term": instance.term,
@@ -220,14 +313,16 @@ def _baseline_row(instance: GiftEvalInstance) -> dict[str, Any]:
         "target": target,
         "future_observed_mask": instance.future_observed_mask,
         "history_imputation": instance.history_imputation,
+        "source_locator": dict(instance.source_locator),
+        "native_protocol": dict(instance.native_protocol),
         "mase_scale": mase,
         "mase_scale_by_target": mase_by_target,
         "mase_period": season,
         "target_sha256": _target_sha256(target),
         "history_sha256": _target_sha256(instance.history),
         "future_sha256": _target_sha256(instance.future),
-        "scoring_target_semantics": "gift_eval_official_future",
-        "input_history_semantics": "gift_eval_official_history_after_history_only_imputation",
+        "scoring_target_semantics": scoring_semantics,
+        "input_history_semantics": input_semantics,
         "included_in_capability_ranking": False,
     }
 
@@ -256,8 +351,16 @@ def _treatment_row(
         instance.future_covariates + treatment.future_covariate_delta
     )
     covariates = np.vstack((history_covariates, future_covariates))
-    season = _season_length(instance.frequency)
-    mase, mase_by_target = _mase_scale(instance.history, season)
+    season = instance.resolved_seasonality
+    mase, mase_by_target = _mase_scale(
+        instance.history,
+        season,
+        observed_mask=(
+            instance.history_observed_mask
+            if instance.benchmark_id != "gift_eval"
+            else None
+        ),
+    )
     mechanism_gate = _mechanism_scoring_gate(
         stored_future_delta,
         instance,
@@ -272,11 +375,17 @@ def _treatment_row(
         "applied_component_gain": treatment.applied_component_gain,
         "augmentation_seed": int(augmentation_seed),
     }
+    scoring_semantics, input_semantics = _sample_semantics(
+        instance, treatment=True
+    )
     return {
         "schema_version": SAMPLE_SCHEMA,
         "pipeline_schema_version": PIPELINE_SCHEMA,
-        "benchmark_track": "gift_eval_capability_extension",
-        "evaluation_table": "gift_eval_capability_treatment",
+        "benchmark_track": f"{instance.benchmark_id}_capability_extension",
+        "benchmark_id": instance.benchmark_id,
+        "suite_id": instance.suite_id,
+        "task_id": instance.resolved_task_id,
+        "evaluation_table": _evaluation_table(instance, "treatment"),
         "sample_id": f"{pair_id}__treatment",
         "official_instance_id": instance.official_instance_id,
         "baseline_sample_id": baseline_id,
@@ -306,6 +415,8 @@ def _treatment_row(
         "covariate_column_names": list(instance.covariate_column_names),
         "covariate_availability": list(instance.covariate_availability),
         "future_covariate_visible": list(instance.future_covariate_visible),
+        "covariate_types": list(instance.covariate_types),
+        "static_covariates": dict(instance.static_covariates),
         "covariates": covariates if covariates.shape[1] else None,
         "frequency": instance.frequency,
         "term": instance.term,
@@ -313,6 +424,8 @@ def _treatment_row(
         "target": target,
         "future_observed_mask": instance.future_observed_mask,
         "history_imputation": instance.history_imputation,
+        "source_locator": dict(instance.source_locator),
+        "native_protocol": dict(instance.native_protocol),
         "mase_scale": mase,
         "mase_scale_by_target": mase_by_target,
         "mase_period": season,
@@ -340,12 +453,8 @@ def _treatment_row(
         },
         "mechanism_metadata": treatment.metadata,
         "group_metadata": group.group_metadata,
-        "scoring_target_semantics": (
-            "gift_eval_official_future_plus_history_only_capability_delta"
-        ),
-        "input_history_semantics": (
-            "entire_gift_eval_official_history_plus_capability_treatment"
-        ),
+        "scoring_target_semantics": scoring_semantics,
+        "input_history_semantics": input_semantics,
         "included_in_capability_ranking": bool(mechanism_gate["accepted"]),
     }
 
@@ -456,7 +565,7 @@ def _input_ablation_row(
         row = dict(treatment_row)
         row.update(
             {
-                "evaluation_table": "gift_eval_capability_input_ablation",
+                "evaluation_table": _evaluation_table(instance, "ablation"),
                 "sample_id": f"{treatment_row['sample_id']}__input_ablation",
                 "counterfactual_pair_id": (
                     f"{treatment_row['counterfactual_pair_id']}__input_ablation"
@@ -551,7 +660,7 @@ def _input_ablation_row(
     row = dict(treatment_row)
     row.update(
         {
-            "evaluation_table": "gift_eval_capability_input_ablation",
+            "evaluation_table": _evaluation_table(instance, "ablation"),
             "sample_id": f"{treatment_row['sample_id']}__input_ablation",
             "counterfactual_pair_id": (
                 f"{treatment_row['counterfactual_pair_id']}__input_ablation"
@@ -602,6 +711,9 @@ def _availability_row(
 ) -> dict[str, Any]:
     return {
         "schema_version": "cafe.instance_capability_availability.v1",
+        "benchmark_id": instance.benchmark_id,
+        "suite_id": instance.suite_id,
+        "task_id": instance.resolved_task_id,
         "dataset_id": instance.dataset_id,
         "official_instance_id": instance.official_instance_id,
         "capability_id": group.capability_id,
@@ -702,7 +814,7 @@ def _materialized_capability_rows(
 def iter_replayed_samples(
     manifest: dict[str, Any],
     *,
-    gift_eval_dir: Path,
+    gift_eval_dir: Path | None = None,
     replay_workers: int = 1,
     source_shard_count: int = 1,
     source_shard_index: int = 0,
@@ -772,7 +884,7 @@ def iter_replayed_samples(
 
 
 ReplayContractWorkItem = tuple[
-    GiftEvalInstance,
+    NativeForecastInstance,
     dict[str, Any],
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -782,9 +894,9 @@ ReplayContractWorkItem = tuple[
 def iter_replay_contract_work_items(
     manifest: dict[str, Any],
     *,
-    gift_eval_dir: Path,
+    gift_eval_dir: Path | None = None,
 ) -> Iterator[ReplayContractWorkItem]:
-    """Join official instances with their compact contracts exactly once."""
+    """Join benchmark-native instances with compact contracts exactly once."""
 
     config = manifest["config"]
     files = manifest["files"]
@@ -802,12 +914,53 @@ def iter_replay_contract_work_items(
     treatment_group = next(treatment_groups, None)
     ablation_group = next(ablation_groups, None)
 
-    for instance in iter_gift_eval_instances(
-        str(config["dataset_id"]),
-        gift_eval_dir,
-        term=str(config["term"]),
-        max_instances=config.get("max_instances"),
-    ):
+    benchmark_id = str(config.get("benchmark_id") or "gift_eval")
+    model_max_contexts = config.get("source_distance_configuration", {}).get(
+        "model_max_contexts"
+    )
+    if benchmark_id == "gift_eval":
+        source_root = (
+            Path(str(config["gift_eval_source_root"])).resolve()
+            if gift_eval_dir is None and config.get("gift_eval_source_root")
+            else (
+                protocol.REPO_ROOT / "data" / "gift-eval"
+                if gift_eval_dir is None
+                else gift_eval_dir.resolve()
+            )
+        )
+        instances: Iterator[NativeForecastInstance] = iter_gift_eval_instances(
+            str(config["dataset_id"]),
+            source_root,
+            term=str(config["term"]),
+            max_instances=config.get("max_instances"),
+            selected_model_max_contexts=model_max_contexts,
+        )
+    elif benchmark_id == "fev_bench":
+        from cafe.benchmark_extension.fev_bench import FevBenchAdapter
+
+        source = config.get("benchmark_source") or {}
+        suite_artifact = source.get("suite_artifact")
+        if not suite_artifact:
+            raise ValueError("FEV replay requires a frozen suite artifact")
+        adapter = FevBenchAdapter(
+            Path(str(suite_artifact)),
+            source_root=(
+                None
+                if not source.get("source_root")
+                else Path(str(source["source_root"]))
+            ),
+            source_revision=str(source.get("source_revision") or "unpinned"),
+        )
+        task = task_spec_from_dict(config["task_spec"])
+        instances = adapter.iter_instances(
+            task,
+            max_instances=config.get("max_instances"),
+            selected_model_max_contexts=model_max_contexts,
+        )
+    else:
+        raise ValueError(f"unsupported benchmark replay adapter: {benchmark_id}")
+
+    for instance in instances:
         baseline_contract = next(baseline_rows, None)
         if baseline_contract is None:
             raise ValueError("official baseline contract stream ended early")
@@ -1060,6 +1213,10 @@ def _compact_record_batch(
                 if item.get("known_future_covariates") is None
                 else np.asarray(item["known_future_covariates"], dtype=float)
             ),
+            selected_model_max_contexts={
+                str(model_id): int(maximum)
+                for model_id, maximum in work["model_max_contexts"].items()
+            },
         ):
             for kind, row in materialized_samples_for_instance(
                 instance,
@@ -1083,6 +1240,7 @@ def _parallel_work_batches(
     capability_ids: tuple[str, ...],
     max_instances: int | None,
     shard_size: int,
+    model_max_contexts: dict[str, int],
 ) -> Iterator[dict[str, Any]]:
     dataset = protocol.resolve_dataset(dataset_id)
     asset_path = gift_eval_asset_path(dataset_id, gift_eval_dir)
@@ -1109,6 +1267,7 @@ def _parallel_work_batches(
             "capability_ids": capability_ids,
             "start_instance_index": int(start_index),
             "source_shard_size": int(shard_size),
+            "model_max_contexts": dict(model_max_contexts),
             "records": records,
         }
 
@@ -1150,6 +1309,322 @@ def _parallel_work_batches(
         yield work(current, next_instance_index)
 
 
+def _native_instance_size(instance: NativeForecastInstance) -> int:
+    arrays = (
+        instance.history,
+        instance.future,
+        instance.future_observed_mask,
+        instance.history_covariates,
+        instance.future_covariates,
+    )
+    return sum(int(np.asarray(value).nbytes) for value in arrays)
+
+
+def _compact_native_instance_batch(
+    work: dict[str, Any],
+) -> dict[str, Any]:
+    output = {
+        "official_baselines": [],
+        "capability_treatments": [],
+        "input_ablations": [],
+        "availability": [],
+    }
+    for instance_index, instance in work["instances"]:
+        for kind, row in materialized_samples_for_instance(
+            instance,
+            augmentation_seed=int(work["augmentation_seed"]),
+            capability_ids=tuple(str(value) for value in work["capability_ids"]),
+            source_shard_index=(
+                int(instance_index)
+                // max(1, int(work["source_shard_size"]))
+            ),
+        ):
+            output[kind].append(compact_contract_row(row))
+    return output
+
+
+def _native_instance_batches(
+    adapter: BenchmarkAdapter,
+    task: BenchmarkTaskSpec,
+    *,
+    augmentation_seed: int,
+    capability_ids: tuple[str, ...],
+    max_instances: int | None,
+    shard_size: int,
+    model_max_contexts: dict[str, int],
+    maximum_batch_bytes: int = 128 * 1024 * 1024,
+) -> Iterator[dict[str, Any]]:
+    current: list[tuple[int, NativeForecastInstance]] = []
+    current_bytes = 0
+
+    def work(
+        instances: list[tuple[int, NativeForecastInstance]],
+    ) -> dict[str, Any]:
+        return {
+            "augmentation_seed": int(augmentation_seed),
+            "capability_ids": capability_ids,
+            "source_shard_size": int(shard_size),
+            "instances": instances,
+        }
+
+    for instance_index, instance in enumerate(
+        adapter.iter_instances(
+            task,
+            max_instances=max_instances,
+            selected_model_max_contexts=model_max_contexts,
+        )
+    ):
+        size = _native_instance_size(instance)
+        if current and (
+            len(current) >= int(shard_size)
+            or current_bytes + size > int(maximum_batch_bytes)
+        ):
+            yield work(current)
+            current = []
+            current_bytes = 0
+        current.append((instance_index, instance))
+        current_bytes += size
+    if current:
+        yield work(current)
+
+
+def generate_benchmark_task(
+    adapter: BenchmarkAdapter,
+    task: BenchmarkTaskSpec,
+    *,
+    dataset_root: Path,
+    augmentation_seed: int,
+    capability_ids: tuple[str, ...],
+    model_max_contexts: dict[str, int],
+    max_instances: int | None = None,
+    workers: int = 1,
+    shard_size: int = 256,
+) -> dict[str, Any]:
+    """Generate compact CaFE contracts from any benchmark adapter."""
+
+    if not model_max_contexts:
+        raise ValueError("benchmark task generation requires selected model contexts")
+    generation_dir = dataset_root / "01_generation"
+    baseline_path = generation_dir / "official_instances.parquet"
+    treatment_path = generation_dir / "treatment_contracts.parquet"
+    ablation_path = generation_dir / "input_ablation_contracts.parquet"
+    availability_path = generation_dir / "availability.parquet"
+    writers = {
+        "official_baselines": CompactParquetWriter(baseline_path),
+        "capability_treatments": CompactParquetWriter(treatment_path),
+        "input_ablations": CompactParquetWriter(ablation_path),
+        "availability": CompactParquetWriter(availability_path),
+    }
+    counts = {kind: 0 for kind in writers}
+    available_counts = {capability: 0 for capability in capability_ids}
+    unavailable_reason_counts: dict[str, dict[str, int]] = {
+        capability: {} for capability in capability_ids
+    }
+    observed_covariate_availability: set[str] = set()
+    observed_covariate_types: set[str] = set()
+
+    def consume(result: dict[str, Any]) -> None:
+        for kind in writers:
+            for row in result[kind]:
+                writers[kind].write(row)
+                counts[kind] += 1
+                if kind == "official_baselines":
+                    observed_covariate_availability.update(
+                        str(value)
+                        for value in row.get("covariate_availability") or []
+                    )
+                    observed_covariate_types.update(
+                        str(value) for value in row.get("covariate_types") or []
+                    )
+                elif kind == "availability":
+                    capability = str(row["capability_id"])
+                    if bool(row["available"]):
+                        available_counts[capability] += 1
+                    else:
+                        reason = str(row["reason"])
+                        reasons = unavailable_reason_counts[capability]
+                        reasons[reason] = reasons.get(reason, 0) + 1
+
+    batches = _native_instance_batches(
+        adapter,
+        task,
+        augmentation_seed=augmentation_seed,
+        capability_ids=capability_ids,
+        max_instances=max_instances,
+        shard_size=shard_size,
+        model_max_contexts=model_max_contexts,
+    )
+    try:
+        if int(workers) <= 1:
+            for batch in batches:
+                consume(_compact_native_instance_batch(batch))
+        else:
+            with ProcessPoolExecutor(max_workers=int(workers)) as executor:
+                pending: deque[Any] = deque()
+                iterator = iter(batches)
+                for _ in range(max(1, int(workers) * 2)):
+                    batch = next(iterator, None)
+                    if batch is None:
+                        break
+                    pending.append(
+                        executor.submit(_compact_native_instance_batch, batch)
+                    )
+                while pending:
+                    consume(pending.popleft().result())
+                    batch = next(iterator, None)
+                    if batch is not None:
+                        pending.append(
+                            executor.submit(_compact_native_instance_batch, batch)
+                        )
+        for writer in writers.values():
+            writer.close()
+    except Exception:
+        for writer in writers.values():
+            writer.abort()
+        raise
+
+    source_spec = adapter.source_spec()
+    source_files = [
+        {**protocol.file_record(path), "path": str(path.resolve())}
+        for path in adapter.source_artifacts(task)
+    ]
+    config = {
+        "pipeline_schema_version": PIPELINE_SCHEMA,
+        "adapter_schema_version": adapter.adapter_schema_version,
+        "benchmark_id": task.benchmark_id,
+        "suite_id": task.suite_id,
+        "task_id": task.task_id,
+        "dataset_id": task.source_dataset_id,
+        "task_spec": task_spec_to_dict(task),
+        "benchmark_source": {
+            "source_root": str(source_spec.source_root),
+            "source_revision": source_spec.source_revision,
+            "suite_artifact": (
+                None
+                if source_spec.suite_artifact is None
+                else str(source_spec.suite_artifact)
+            ),
+            "source_manifest": (
+                None
+                if source_spec.source_manifest is None
+                else str(source_spec.source_manifest)
+            ),
+        },
+        "term": "native",
+        "frequency": task.frequency,
+        "seasonality": int(task.seasonality),
+        "prediction_length": int(task.horizon),
+        "official_window_count": int(task.window_count),
+        "augmentation_seed": int(augmentation_seed),
+        "capability_ids": list(capability_ids),
+        "max_instances": max_instances,
+        "formal": max_instances is None,
+        "instance_selection": (
+            "all_adapter_eligible_native_instances"
+            if max_instances is None
+            else "nonformal_adapter_source_order_prefix"
+        ),
+        "future_label_eligibility_policy": (
+            "adapter_native_complete_future_labels_v1"
+        ),
+        "native_target_policy": "preserve_benchmark_target_dimension",
+        "native_covariate_policy": (
+            "preserve_dynamic_visibility_static_values_and_semantic_types"
+        ),
+        "observed_covariate_availability": sorted(
+            observed_covariate_availability
+        ),
+        "observed_covariate_types": sorted(observed_covariate_types),
+        "treatment_history_scope": "entire_benchmark_native_input_history",
+        "randomness_policy": (
+            "counter_based_by_benchmark_instance_capability_level_and_seed"
+        ),
+        "source_distance_policy": (
+            "full_history_strength_actual_selected_model_context_bounds_v4"
+        ),
+        "source_distance_configuration": {
+            "strength_reference": "full_native_history_macro_normalized_rms",
+            "model_max_contexts": {
+                str(model_id): int(maximum)
+                for model_id, maximum in model_max_contexts.items()
+            },
+            "minimum_model_context_macro_distance": (
+                SOURCE_DISTANCE_MINIMUM_MACRO
+            ),
+            "maximum_model_context_macro_distance": (
+                SOURCE_DISTANCE_MAXIMUM_MACRO
+            ),
+            "maximum_model_context_channel_distance": (
+                SOURCE_DISTANCE_MAXIMUM_CHANNEL
+            ),
+        },
+        "mechanism_scoring_policy": {
+            "metric": "authentic_history_mase_scaled_future_effect_rms",
+            "minimum_required_mase_rms": MECHANISM_EFFECT_MINIMUM_MASE_RMS,
+        },
+        "covariate_impulse_policy": (
+            "continuous_numeric_dynamic_covariates_only_v1"
+        ),
+        "input_ablation_policy": (
+            "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2"
+        ),
+        "artifact_storage": {
+            "format": "parquet",
+            "compression": "zstd",
+            "dense_targets_stored": False,
+            "dense_covariates_stored": False,
+            "replay_policy": "benchmark_adapter_plus_deterministic_contract_v1",
+        },
+        "generation_execution": {
+            "workers": int(workers),
+            "shard_size": int(shard_size),
+            "maximum_dense_batch_bytes": 128 * 1024 * 1024,
+        },
+    }
+    instance_count = counts["official_baselines"]
+    manifest = {
+        "schema_version": GENERATION_SCHEMA,
+        "created_at": protocol.utc_now(),
+        "benchmark_id": task.benchmark_id,
+        "suite_id": task.suite_id,
+        "task_id": task.task_id,
+        "dataset_id": task.source_dataset_id,
+        "config": config,
+        "config_sha256": protocol.json_sha256(config),
+        "source_files": source_files,
+        "files": {
+            "official_baselines": parquet_file_record(
+                baseline_path, row_count=counts["official_baselines"]
+            ),
+            "capability_treatments": parquet_file_record(
+                treatment_path, row_count=counts["capability_treatments"]
+            ),
+            "input_ablations": parquet_file_record(
+                ablation_path, row_count=counts["input_ablations"]
+            ),
+            "availability": parquet_file_record(
+                availability_path, row_count=counts["availability"]
+            ),
+        },
+        "official_instance_count": instance_count,
+        "official_window_selection_audit": {
+            "official_window_count": instance_count,
+            "complete_future_label_count": instance_count,
+            "partially_missing_future_label_count": 0,
+            "fully_missing_future_label_count": 0,
+        },
+        "available_instance_count_by_capability": available_counts,
+        "unavailable_reason_count_by_capability": {
+            capability: dict(sorted(reasons.items()))
+            for capability, reasons in unavailable_reason_counts.items()
+        },
+        "treatment_count": counts["capability_treatments"],
+        "input_ablation_count": counts["input_ablations"],
+    }
+    protocol.write_json(generation_dir / "manifest.json", manifest)
+    return manifest
+
+
 def generate_dataset(
     dataset_id: str,
     *,
@@ -1161,6 +1636,7 @@ def generate_dataset(
     max_instances: int | None,
     workers: int = 1,
     shard_size: int = 256,
+    model_max_contexts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     source_path = gift_eval_asset_path(dataset_id, gift_eval_dir)
     frequency, minimum_length, _record_count = gift_arrow_target_summary(source_path)
@@ -1168,7 +1644,14 @@ def generate_dataset(
     official_windows = official_window_count_from_minimum_length(
         dataset_id, minimum_length, horizon
     )
-    model_max_contexts = source_distance_model_max_contexts(term)
+    model_max_contexts = (
+        source_distance_model_max_contexts(term)
+        if not model_max_contexts
+        else {
+            str(model_id): int(maximum)
+            for model_id, maximum in model_max_contexts.items()
+        }
+    )
     generation_dir = dataset_root / "01_generation"
     baseline_path = generation_dir / "official_instances.parquet"
     treatment_path = generation_dir / "treatment_contracts.parquet"
@@ -1240,7 +1723,8 @@ def generate_dataset(
                 capability_ids=capability_ids,
                 max_instances=max_instances,
                 shard_size=shard_size,
-                )
+                model_max_contexts=model_max_contexts,
+            )
             )
             with ProcessPoolExecutor(max_workers=int(workers)) as executor:
                 pending: list[Any] = []
@@ -1266,6 +1750,7 @@ def generate_dataset(
                 capability_ids=capability_ids,
                 max_instances=max_instances,
                 shard_size=shard_size,
+                model_max_contexts=model_max_contexts,
             ):
                 consume_result(_compact_record_batch(batch))
         instance_count = baseline_count

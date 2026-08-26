@@ -8,7 +8,10 @@ from typing import Any, Callable
 import numpy as np
 
 from cafe import core as protocol
-from cafe.benchmark_extension.gift_eval import GiftEvalInstance
+from cafe.benchmark_extension.native import NativeForecastInstance
+
+
+GiftEvalInstance = NativeForecastInstance
 
 
 MECHANISM_SCHEMA = "cafe.native_path_mechanism.v10"
@@ -68,6 +71,24 @@ def source_distance_model_max_contexts(term: str) -> dict[str, int]:
     except KeyError as error:
         raise ValueError(f"unsupported GIFT-Eval term {term!r}") from error
     return dict(values)
+
+
+def source_distance_model_max_contexts_for_instance(
+    instance: NativeForecastInstance,
+) -> dict[str, int]:
+    """Resolve the experiment model contexts without imposing GIFT terms.
+
+    New benchmark adapters bind the contexts selected for the experiment to
+    each emitted instance.  The term lookup remains only as a compatibility
+    fallback for existing GIFT fixtures and v14 replay.
+    """
+
+    if instance.selected_model_max_contexts:
+        return {
+            str(model_id): int(maximum)
+            for model_id, maximum in instance.selected_model_max_contexts.items()
+        }
+    return source_distance_model_max_contexts(instance.term)
 # Kept as a compatibility alias for callers that only need the lower bound.
 SOURCE_DISTANCE_THRESHOLD = SOURCE_DISTANCE_MINIMUM_MACRO
 MECHANISM_EFFECT_MINIMUM_MASE_RMS = 0.05
@@ -706,7 +727,7 @@ def _multi_seasonal_units(
     history = instance.history
     length, dimension = history.shape
     scales = _scale_by_target(history)
-    model_max_contexts = source_distance_model_max_contexts(instance.term)
+    model_max_contexts = source_distance_model_max_contexts_for_instance(instance)
     shortest_context = min(length, min(model_max_contexts.values()))
     components_by_target: dict[int, list[dict[str, Any]]] = {}
     period_bounds_by_target: dict[str, list[float]] = {}
@@ -2202,11 +2223,21 @@ def _covariate_impulse_units(
             axis=0,
         )
     )
+    continuous = np.ones(covariates.shape[1], dtype=bool)
+    if instance.covariate_types:
+        if len(instance.covariate_types) != covariates.shape[1]:
+            raise ValueError("covariate_type_count_mismatch")
+        continuous = np.asarray(
+            [kind == "continuous_numeric" for kind in instance.covariate_types],
+            dtype=bool,
+        )
     legal = np.flatnonzero(
-        np.isfinite(covariate_scales) & (covariate_scales > 1e-8)
+        continuous
+        & np.isfinite(covariate_scales)
+        & (covariate_scales > 1e-8)
     )
     if legal.size == 0:
-        raise ValueError("native_covariates_have_no_nonconstant_channel")
+        raise ValueError("no_nonconstant_continuous_dynamic_covariate")
     covariate = int(legal[np.argmax(covariate_scales[legal])])
     scales = _scale_by_target(history)
     target_index = int(np.argmax(scales))
@@ -2570,7 +2601,7 @@ def build_capability_group(
         raise RuntimeError(f"{capability_id} did not produce five levels")
     treatments: list[CapabilityTreatment] = []
     for level, unit in zip(CAPABILITY_LEVELS, units, strict=True):
-        model_max_contexts = source_distance_model_max_contexts(instance.term)
+        model_max_contexts = source_distance_model_max_contexts_for_instance(instance)
         gate = _distance_gate(
             unit.history_delta,
             instance.history,

@@ -1,14 +1,15 @@
 # CaFE
 
 CaFE (Capability-Focused Extension) extends existing time-series benchmarks
-with controlled capability treatments. Its active implementation starts from
-GIFT-Eval's official test instances, modifies their authentic paths, and asks
-forecasting models to predict the corresponding treated futures.
+with controlled capability treatments. Its benchmark-neutral native-window
+contract currently supports GIFT-Eval and the official FEV v0.8.0 Mini-20
+suite, modifies their authentic paths, and asks forecasting models to predict
+the corresponding treated futures.
 
 ## Pipeline
 
 ```text
-GIFT-Eval official native test instances
+benchmark-official native forecast windows
   → capability generation
   → pair and provenance validation
   → model inference
@@ -94,12 +95,31 @@ target history and treatment future fixed while temporally misaligning only
 the relevant auxiliary treatment signal, so it measures whether intact inputs
 improve the forecast.
 
+The analysis stage also writes a suite-level task-equal summary. A GIFT
+dataset and an FEV task each contribute one value, and model comparisons use a
+paired nonparametric bootstrap over their common tasks. This prevents large
+datasets or high-window-count tasks from dominating the benchmark result.
+
 ## Install and test
 
 ```bash
 uv sync --extra test
 uv run pytest
 ```
+
+Install FEV support and freeze the exact Mini-20 suite definition with:
+
+```bash
+uv sync --extra test --extra fev
+uv run python tools/snapshot_fev_mini.py
+```
+
+The snapshot pins FEV `v0.8.0`, upstream commit
+`f1afffbf97bc51a4a233080d331633c6f7ab32f6`, the suite SHA-256, and the
+`autogluon/fev_datasets` commit
+`f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8`. The 20 required Parquet files
+occupy about 19 MiB and form the single authentic-data copy; generation
+manifests freeze both file hashes and each selected task's dataset fingerprint.
 
 ## Smoke preparation
 
@@ -116,6 +136,23 @@ uv run cafe run \
 
 `--max-instances` selects a non-formal source-order prefix. Omitting it uses
 all official GIFT-Eval test instances.
+
+An FEV research smoke run uses the same four stages and queries the configured
+service for the selected models' actual context/output limits:
+
+```bash
+uv run python -m cafe.fev_pipeline \
+  --experiment-id fev-mini-smoke \
+  --task-id fev__ETT_1H \
+  --models Timer-4.0 \
+  --endpoints http://100.102.176.45:10810 \
+  --capabilities trend \
+  --max-instances 1
+```
+
+Omit `--task-id` and `--max-instances` for all 20 official tasks. FEV smoke
+runs intentionally use research validation; GIFT publication replay remains a
+separate stricter validation mode.
 
 Validation defaults to the research policy: it scans every treatment distance
 and mechanism-scoring gate in parallel and writes the acceptance report
@@ -146,6 +183,7 @@ Artifacts use this layout:
 <experiment>/
 ├── experiment.json
 ├── stage_contracts/
+├── 04_analysis_suite/
 └── <dataset_id>/
     ├── 01_generation/
     ├── 02_validation/

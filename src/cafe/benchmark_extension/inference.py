@@ -1644,15 +1644,27 @@ def main() -> int:
         for row in (previous_manifest or {}).get("model_statuses", [])
     }
     generation_config = generation.get("config") or {}
-    term = str(generation_config.get("term"))
-    expected_distance_contexts = source_distance_model_max_contexts(term)
-    if (
-        generation_config.get("source_distance_configuration", {}).get(
-            "model_max_contexts"
-        )
-        != expected_distance_contexts
-    ):
+    expected_distance_contexts = generation_config.get(
+        "source_distance_configuration", {}
+    ).get("model_max_contexts")
+    if not isinstance(expected_distance_contexts, dict) or not expected_distance_contexts:
         raise ValueError("generation source-distance model protocol is inconsistent")
+    expected_distance_contexts = {
+        str(model_id): int(maximum)
+        for model_id, maximum in expected_distance_contexts.items()
+    }
+    if str(generation_config.get("benchmark_id") or "gift_eval") == "gift_eval":
+        term_contexts = source_distance_model_max_contexts(
+            str(generation_config.get("term"))
+        )
+        if any(
+            model_id not in term_contexts
+            or maximum != int(term_contexts[model_id])
+            for model_id, maximum in expected_distance_contexts.items()
+        ):
+            raise ValueError(
+                "generation source-distance model protocol is inconsistent"
+            )
     for model_id in args.models:
         if model_id not in execute_models:
             continue

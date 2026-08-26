@@ -12,7 +12,7 @@ from typing import Any
 
 from cafe import core as protocol
 from cafe import provenance
-from cafe.benchmark_extension.analysis import run_analysis
+from cafe.benchmark_extension.analysis import aggregate_analysis_tasks, run_analysis
 from cafe.benchmark_extension.generation import (
     DEFAULT_OUTPUT_ROOT,
     PIPELINE_SCHEMA,
@@ -503,6 +503,10 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 max_instances=args.max_instances,
                 workers=args.generation_workers,
                 shard_size=generation_shard_sizes[dataset_id],
+                model_max_contexts={
+                    model_id: source_distance_model_max_contexts(args.term)[model_id]
+                    for model_id in args.models
+                } or None,
             )
     generation_manifests = [
         experiment_root / dataset_id / "01_generation" / "manifest.json"
@@ -642,6 +646,7 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 gift_eval_dir=args.gift_eval_dir.resolve(),
                 replay_workers=max(1, int(args.analysis_workers)),
             )
+        aggregate_analysis_tasks(experiment_root, dataset_ids)
     return experiment_root
 
 

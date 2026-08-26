@@ -151,12 +151,30 @@ def _distance_gate_reason(row: dict[str, Any]) -> str | None:
     if full_context <= 0 or not _finite_nonnegative(full_macro):
         return "source_distance_gate_full_history_invalid"
     try:
-        expected_model_contexts = source_distance_model_max_contexts(
-            str(row["term"])
-        )
-    except (KeyError, ValueError):
+        frozen_model_contexts = {
+            str(model_id): int(maximum)
+            for model_id, maximum in gate["model_max_contexts"].items()
+        }
+        if not frozen_model_contexts or any(
+            maximum < 1 for maximum in frozen_model_contexts.values()
+        ):
+            raise ValueError("invalid frozen model contexts")
+        if str(row.get("benchmark_id") or "gift_eval") == "gift_eval":
+            term_model_contexts = source_distance_model_max_contexts(
+                str(row["term"])
+            )
+            if any(
+                model_id not in term_model_contexts
+                or maximum != int(term_model_contexts[model_id])
+                for model_id, maximum in frozen_model_contexts.items()
+            ):
+                raise ValueError("invalid GIFT model contexts")
+            expected_model_contexts = frozen_model_contexts
+        else:
+            expected_model_contexts = frozen_model_contexts
+    except (AttributeError, KeyError, TypeError, ValueError):
         return "source_distance_gate_term"
-    if gate.get("model_max_contexts") != expected_model_contexts:
+    if frozen_model_contexts != expected_model_contexts:
         return "source_distance_gate_model_context_policy"
     by_context = gate.get("by_model_context")
     if not isinstance(by_context, list) or not by_context:
@@ -807,8 +825,28 @@ def _multi_seasonal_contract_reason(row: dict[str, Any]) -> str | None:
     ):
         return "multi_seasonal_targets"
     try:
-        model_max_contexts = source_distance_model_max_contexts(str(row["term"]))
-    except (KeyError, ValueError):
+        frozen_model_contexts = {
+            str(model_id): int(maximum)
+            for model_id, maximum in row["source_distance_gate"][
+                "model_max_contexts"
+            ].items()
+        }
+        if not frozen_model_contexts:
+            raise ValueError("missing frozen model contexts")
+        if str(row.get("benchmark_id") or "gift_eval") == "gift_eval":
+            term_model_contexts = source_distance_model_max_contexts(
+                str(row["term"])
+            )
+            if any(
+                model_id not in term_model_contexts
+                or maximum != int(term_model_contexts[model_id])
+                for model_id, maximum in frozen_model_contexts.items()
+            ):
+                raise ValueError("invalid GIFT model contexts")
+            model_max_contexts = frozen_model_contexts
+        else:
+            model_max_contexts = frozen_model_contexts
+    except (AttributeError, KeyError, TypeError, ValueError):
         return "multi_seasonal_term"
     shortest_context = min(context, min(model_max_contexts.values()))
     expected_bounds = (
@@ -1047,6 +1085,9 @@ def _publication_expected_batches(
                 gift_root,
                 term=str(config["term"]),
                 max_instances=config.get("max_instances"),
+                selected_model_max_contexts=config[
+                    "source_distance_configuration"
+                ]["model_max_contexts"],
             )
         ):
             output = {
@@ -1074,6 +1115,12 @@ def _publication_expected_batches(
             capability_ids=tuple(str(value) for value in config["capability_ids"]),
             max_instances=config.get("max_instances"),
             shard_size=shard_size,
+            model_max_contexts={
+                str(model_id): int(maximum)
+                for model_id, maximum in config["source_distance_configuration"][
+                    "model_max_contexts"
+                ].items()
+            },
         )
     )
     with ProcessPoolExecutor(max_workers=int(workers)) as executor:
@@ -1244,23 +1291,48 @@ def validate_generation(
     manifest = protocol.read_json(manifest_path)
     manifest_failures: list[dict[str, Any]] = []
     config = manifest.get("config") or {}
+    benchmark_id = str(config.get("benchmark_id") or "gift_eval")
     try:
-        term = str(config["term"])
-        expected_contexts = source_distance_model_max_contexts(term)
-        expected_horizon = prediction_length(
-            str(config["dataset_id"]), str(config["frequency"]), term=term
-        )
-        if config.get("source_distance_configuration", {}).get(
+        configured_contexts = config.get("source_distance_configuration", {}).get(
             "model_max_contexts"
-        ) != expected_contexts:
+        )
+        if not isinstance(configured_contexts, dict) or not configured_contexts:
             raise ValueError("source_distance_model_contexts")
-        if int(config.get("prediction_length", -1)) != expected_horizon:
+        if any(int(value) < 1 for value in configured_contexts.values()):
+            raise ValueError("source_distance_model_contexts")
+        if benchmark_id == "gift_eval":
+            term = str(config["term"])
+            expected_contexts = source_distance_model_max_contexts(term)
+            expected_horizon = prediction_length(
+                str(config["dataset_id"]), str(config["frequency"]), term=term
+            )
+            if any(
+                model_id not in expected_contexts
+                or int(maximum) != int(expected_contexts[model_id])
+                for model_id, maximum in configured_contexts.items()
+            ):
+                raise ValueError("source_distance_model_contexts")
+        else:
+            task_spec = config["task_spec"]
+            if str(task_spec["benchmark_id"]) != benchmark_id:
+                raise ValueError("task_benchmark_id")
+            expected_horizon = int(task_spec["horizon"])
+            if str(task_spec["task_id"]) != str(config["task_id"]):
+                raise ValueError("task_id")
+            if str(task_spec["frequency"]) != str(config["frequency"]):
+                raise ValueError("frequency")
+        if int(config.get("prediction_length", -1)) != int(expected_horizon):
             raise ValueError("prediction_length")
     except (KeyError, TypeError, ValueError) as error:
         manifest_failures.append(
-            {"scope": "manifest", "reason": f"term_protocol:{error}"}
+            {"scope": "manifest", "reason": f"benchmark_protocol:{error}"}
         )
     if mode == "publication":
+        if benchmark_id != "gift_eval":
+            raise ValueError(
+                "publication validation is currently defined only for GIFT-Eval; "
+                "use research validation for benchmark-extension smoke runs"
+            )
         config = manifest.get("config") or {}
         gift_root = (
             Path(str(config.get("gift_eval_source_root"))).resolve()
@@ -1292,6 +1364,7 @@ def validate_generation(
     report = {
         "schema_version": VALIDATION_SCHEMA,
         "created_at": protocol.utc_now(),
+        "benchmark_id": benchmark_id,
         "dataset_id": manifest.get("dataset_id"),
         "pipeline_schema_version": PIPELINE_SCHEMA,
         "generation_manifest_sha256": protocol.file_sha256(manifest_path),
