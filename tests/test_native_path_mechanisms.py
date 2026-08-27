@@ -21,6 +21,7 @@ from cafe.benchmark_extension.mechanisms import (
     mase_scale_by_target,
     mechanism_effect_signal,
     replay_treatment_deltas,
+    replay_treatment_deltas_for_history_suffix,
 )
 from cafe.benchmark_extension.generation import (
     compact_contract_row,
@@ -603,3 +604,138 @@ def test_covariate_impulse_uses_native_past_only_path_and_has_future_energy() ->
             "constructed_minimum_future_effect_mase_rms"
         ] >= MECHANISM_EFFECT_MINIMUM_MASE_RMS
     assert not hierarchy.available
+
+
+def test_default_capabilities_draw_seed_specific_structures_shared_by_levels() -> None:
+    length = 1200
+    t = np.arange(float(length))
+    rng = np.random.default_rng(77)
+    carrier = np.sin(2.0 * np.pi * t / 24.0 + 0.2)
+    envelope = 1.0 + 0.6 * np.sin(2.0 * np.pi * t / 240.0 + 0.8)
+    driver = 0.006 * t + carrier * envelope + 0.05 * rng.normal(size=length)
+    panel = np.column_stack(
+        (
+            driver,
+            0.85 * np.roll(driver, 3) + 0.08 * rng.normal(size=length),
+            -0.65 * driver + 0.08 * rng.normal(size=length),
+            0.45 * np.roll(driver, 7) + 0.10 * rng.normal(size=length),
+        )
+    )
+    instance = _instance(panel, horizon=120)
+    capabilities = (
+        "trend",
+        "multi_seasonal",
+        "time_varying_seasonality",
+        "regime_switching",
+        "predictable_intermittency",
+        "common_factor",
+        "cross_series_dependence",
+        "covariate_impulse_response",
+    )
+    for capability_id in capabilities:
+        first = build_capability_group(
+            instance, capability_id, augmentation_seed=101
+        )
+        repeated = build_capability_group(
+            instance, capability_id, augmentation_seed=101
+        )
+        second = build_capability_group(
+            instance, capability_id, augmentation_seed=202
+        )
+        assert first.available and repeated.available and second.available
+        assert first.group_metadata["structure_shared_across_levels"] is True
+        assert first.group_metadata["structure_draw_sha256"] == (
+            repeated.group_metadata["structure_draw_sha256"]
+        )
+        assert first.group_metadata["structure_draw_sha256"] != (
+            second.group_metadata["structure_draw_sha256"]
+        )
+        assert len(first.treatments) == 5
+
+
+def test_structurally_randomized_default_capabilities_replay_exactly() -> None:
+    length = 1200
+    t = np.arange(float(length))
+    rng = np.random.default_rng(91)
+    driver = (
+        0.004 * t
+        + np.sin(2.0 * np.pi * t / 24.0)
+        * (1.0 + 0.5 * np.sin(2.0 * np.pi * t / 240.0 + 0.3))
+        + 0.05 * rng.normal(size=length)
+    )
+    instance = _instance(
+        np.column_stack(
+            (
+                driver,
+                0.8 * np.roll(driver, 2) + 0.1 * rng.normal(size=length),
+                -0.7 * driver + 0.1 * rng.normal(size=length),
+            )
+        ),
+        horizon=120,
+    )
+    capabilities = (
+        "trend",
+        "multi_seasonal",
+        "time_varying_seasonality",
+        "regime_switching",
+        "predictable_intermittency",
+        "common_factor",
+        "cross_series_dependence",
+        "covariate_impulse_response",
+    )
+    dense_rows = [
+        row
+        for kind, row in materialized_samples_for_instance(
+            instance,
+            augmentation_seed=303,
+            capability_ids=capabilities,
+        )
+        if kind == "capability_treatments"
+    ]
+    assert {row["capability_id"] for row in dense_rows} == set(capabilities)
+    for capability_id in capabilities:
+        rows = [
+            row for row in dense_rows if row["capability_id"] == capability_id
+        ]
+        replayed = replay_treatment_deltas(
+            instance, [compact_contract_row(row) for row in rows]
+        )
+        suffix_start = length - 257
+        replayed_suffix = replay_treatment_deltas_for_history_suffix(
+            instance,
+            [compact_contract_row(row) for row in rows],
+            history_start=suffix_start,
+        )
+        for row in rows:
+            history_delta, future_delta, covariate_h, covariate_f = replayed[
+                str(row["sample_id"])
+            ]
+            context = int(row["context_length"])
+            np.testing.assert_array_equal(
+                instance.history + history_delta,
+                np.asarray(row["target"][:context]),
+            )
+            np.testing.assert_array_equal(
+                instance.future + future_delta,
+                np.asarray(row["target"][context:]),
+            )
+            expected_covariates = np.vstack(
+                (
+                    instance.history_covariates + covariate_h,
+                    instance.future_covariates + covariate_f,
+                )
+            )
+            np.testing.assert_array_equal(
+                expected_covariates, np.asarray(row["covariates"])
+            )
+            suffix_history, suffix_future, suffix_covariate_h, suffix_covariate_f = (
+                replayed_suffix[str(row["sample_id"])]
+            )
+            np.testing.assert_array_equal(
+                suffix_history, history_delta[suffix_start:]
+            )
+            np.testing.assert_array_equal(suffix_future, future_delta)
+            np.testing.assert_array_equal(
+                suffix_covariate_h, covariate_h[suffix_start:]
+            )
+            np.testing.assert_array_equal(suffix_covariate_f, covariate_f)

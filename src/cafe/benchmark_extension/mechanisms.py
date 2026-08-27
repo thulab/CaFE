@@ -14,7 +14,8 @@ from cafe.benchmark_extension.native import NativeForecastInstance
 GiftEvalInstance = NativeForecastInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v10"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v11"
+RANDOMNESS_SCHEMA = "cafe.structural_randomness.v1"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -213,6 +214,134 @@ def _rng(*parts: object, augmentation_seed: int) -> np.random.Generator:
     )
 
 
+def _structure_rng(
+    instance: GiftEvalInstance,
+    capability_id: str,
+    *parts: object,
+    augmentation_seed: int,
+) -> np.random.Generator:
+    """Return a domain-separated RNG for a seed-specific mechanism structure."""
+
+    return _rng(
+        RANDOMNESS_SCHEMA,
+        instance.official_instance_id,
+        capability_id,
+        "structure",
+        *parts,
+        augmentation_seed=augmentation_seed,
+    )
+
+
+def _random_nonempty_subset(
+    values: list[int] | tuple[int, ...],
+    rng: np.random.Generator,
+    *,
+    minimum_size: int = 1,
+) -> tuple[int, ...]:
+    candidates = np.asarray(values, dtype=int)
+    if candidates.size < minimum_size:
+        raise ValueError("structural_subset_has_too_few_candidates")
+    size = int(rng.integers(minimum_size, candidates.size + 1))
+    selected = rng.choice(candidates, size=size, replace=False)
+    return tuple(sorted(int(value) for value in selected))
+
+
+def _trend_profile(
+    *,
+    length: int,
+    horizon: int,
+    trend_type: str,
+    onset_fraction: float,
+    curvature_power: float,
+    knot_interval: int,
+    knot_phase: int,
+    slope_multipliers: tuple[float, ...],
+) -> np.ndarray:
+    total = int(length + horizon)
+    indexes = np.arange(total, dtype=float)
+    denominator = float(max(1, length - 1))
+    relative = indexes / denominator
+    if trend_type == "whole_history_linear":
+        return relative
+    if trend_type == "delayed_linear":
+        onset = float(onset_fraction) * denominator
+        return np.maximum(0.0, indexes - onset) / denominator
+    if trend_type == "slow_curvature":
+        return np.power(np.maximum(relative, 0.0), float(curvature_power))
+    if trend_type != "recurring_piecewise_linear":
+        raise ValueError(f"unknown trend type {trend_type!r}")
+    interval = max(2, int(knot_interval))
+    multipliers = np.asarray(slope_multipliers, dtype=float)
+    if not multipliers.size:
+        raise ValueError("piecewise trend requires slope multipliers")
+    segments = ((np.arange(total) + int(knot_phase)) // interval) % multipliers.size
+    increments = multipliers[segments] / denominator
+    profile = np.zeros(total, dtype=float)
+    if total > 1:
+        profile[1:] = np.cumsum(increments[:-1])
+    return profile
+
+
+def _transition_profile(
+    indexes: np.ndarray,
+    *,
+    join: int,
+    transition_type: str,
+    transition_width: int,
+) -> np.ndarray:
+    values = np.asarray(indexes, dtype=float)
+    width = max(1, int(transition_width))
+    if transition_type == "step":
+        return (values >= int(join)).astype(float)
+    progress = np.clip((values - float(join)) / float(width), 0.0, 1.0)
+    if transition_type == "ramp":
+        return progress
+    if transition_type == "sigmoid":
+        smooth = progress * progress * (3.0 - 2.0 * progress)
+        return smooth
+    raise ValueError(f"unknown regime transition type {transition_type!r}")
+
+
+def _pulse_weights(pulse_shape: str, width: int) -> np.ndarray:
+    width = max(1, int(width))
+    if pulse_shape == "rectangular" or width == 1:
+        return np.ones(width, dtype=float)
+    position = np.arange(width, dtype=float)
+    if pulse_shape == "triangular":
+        center = 0.5 * float(width - 1)
+        return 1.0 - np.abs(position - center) / max(1.0, center + 1.0)
+    if pulse_shape == "exponential_decay":
+        return np.exp(-math.log(2.0) * position / max(1.0, 0.5 * width))
+    raise ValueError(f"unknown intermittent pulse shape {pulse_shape!r}")
+
+
+def _impulse_kernel(
+    *,
+    kernel_type: str,
+    length: int,
+    half_life: float,
+    delay: int,
+) -> np.ndarray:
+    indexes = np.arange(int(length), dtype=float)
+    shifted = np.maximum(0.0, indexes - int(delay))
+    active = indexes >= int(delay)
+    if kernel_type == "exponential":
+        values = np.exp(-math.log(2.0) * shifted / max(1.0, float(half_life)))
+    elif kernel_type == "delayed_gamma":
+        scale = max(1.0, float(half_life))
+        values = (shifted / scale) * np.exp(1.0 - shifted / scale)
+    elif kernel_type == "triangular":
+        support = max(2.0, 2.0 * float(half_life))
+        values = np.maximum(0.0, 1.0 - shifted / support)
+    else:
+        raise ValueError(f"unknown impulse kernel {kernel_type!r}")
+    values = np.where(active, values, 0.0)
+    maximum = float(np.max(values))
+    if maximum <= 1e-12:
+        raise ValueError("impulse_kernel_has_zero_energy")
+    return values / maximum
+
+
 def _array_sha256(values: np.ndarray) -> str:
     array = np.asarray(values, dtype="<f8")
     return hashlib.sha256(array.tobytes()).hexdigest()
@@ -377,6 +506,31 @@ def _full_history_unit_distance(
     standardized = values[:, affected] / scales
     channel = np.sqrt(np.mean(np.square(standardized), axis=0))
     return float(np.mean(channel))
+
+
+def _strength_structure_passes_distance_bounds(
+    instance: GiftEvalInstance,
+    history_component: np.ndarray,
+    affected: tuple[int, ...],
+) -> bool:
+    """Check the two endpoint doses before a structure enters a seed pool."""
+
+    unit_distance = _full_history_unit_distance(
+        history_component, instance.history, affected
+    )
+    if unit_distance <= 1e-10:
+        return False
+    model_contexts = source_distance_model_max_contexts_for_instance(instance)
+    for coordinate in (STRENGTH_INTERVALS[0][0], STRENGTH_INTERVALS[-1][1]):
+        gate = _distance_gate(
+            history_component * (float(coordinate) / unit_distance),
+            instance.history,
+            affected,
+            model_max_contexts=model_contexts,
+        )
+        if not gate["accepted"]:
+            return False
+    return True
 
 
 def _linear_extrapolation(values: np.ndarray, horizon: int) -> np.ndarray:
@@ -678,15 +832,53 @@ def _trend_units(
             stable.append(channel)
     if not stable:
         raise ValueError("history_trend_direction_not_stable")
-    extended = np.arange(length + instance.prediction_length, dtype=float)
-    extended /= max(1, length - 1)
-    base = np.zeros((extended.size, dimension), dtype=float)
-    base[:, stable] = (
-        extended[:, None]
-        * directions[stable][None, :]
-        * scale[stable][None, :]
+    structure_rng = _structure_rng(
+        instance,
+        "trend",
+        augmentation_seed=augmentation_seed,
     )
-    unit_distance = _full_history_unit_distance(base[:length], history, tuple(stable))
+    trend_type = str(
+        structure_rng.choice(
+            np.asarray(
+                (
+                    "whole_history_linear",
+                    "delayed_linear",
+                    "slow_curvature",
+                    "recurring_piecewise_linear",
+                )
+            )
+        )
+    )
+    affected = _random_nonempty_subset(stable, structure_rng)
+    onset_fraction = float(structure_rng.uniform(0.10, 0.45))
+    curvature_power = float(structure_rng.uniform(0.65, 1.55))
+    maximum_interval = max(8, min(length // 3, max(8, instance.prediction_length)))
+    minimum_interval = max(8, min(maximum_interval, length // 8))
+    knot_interval = int(
+        structure_rng.integers(minimum_interval, maximum_interval + 1)
+    )
+    knot_phase = int(structure_rng.integers(0, knot_interval))
+    slope_multipliers = tuple(
+        float(value)
+        for value in structure_rng.uniform(0.35, 1.65, size=3)
+    )
+    extended = _trend_profile(
+        length=length,
+        horizon=instance.prediction_length,
+        trend_type=trend_type,
+        onset_fraction=onset_fraction,
+        curvature_power=curvature_power,
+        knot_interval=knot_interval,
+        knot_phase=knot_phase,
+        slope_multipliers=slope_multipliers,
+    )
+    base = np.zeros((extended.size, dimension), dtype=float)
+    base[:, affected] = (
+        extended[:, None]
+        * directions[list(affected)][None, :]
+        * scale[list(affected)][None, :]
+    )
+    unit_distance = _full_history_unit_distance(base[:length], history, affected)
     if unit_distance <= 1e-10:
         raise ValueError("trend_component_not_visible")
     units: list[_UnitTreatment] = []
@@ -704,20 +896,38 @@ def _trend_units(
             _UnitTreatment(
                 history_delta=base[:length] * gain,
                 future_delta=base[length:] * gain,
-                affected=tuple(stable),
+                affected=affected,
                 coordinate_name="full_history_macro_normalized_rms",
                 coordinate_interval=interval,
                 sampled_coordinate=draw,
                 metadata={
-                    "trend_type": "whole_history_linear",
+                    "trend_type": trend_type,
                     "direction_source": "history_only_stable_robust_slope_sign",
                     "direction_by_target": directions.tolist(),
+                    "onset_fraction": onset_fraction,
+                    "curvature_power": curvature_power,
+                    "knot_interval": knot_interval,
+                    "knot_phase": knot_phase,
+                    "slope_multipliers": list(slope_multipliers),
+                    "future_continuation": "same_profile_law_as_treatment_history",
                     "unit_component_distance": unit_distance,
                     "physical_linear_gain": gain,
                 },
             )
         )
-    return units, {"stable_trend_target_indices": stable}
+    structure = {
+        "trend_type": trend_type,
+        "affected_target_indices": list(affected),
+        "onset_fraction": onset_fraction,
+        "curvature_power": curvature_power,
+        "knot_interval": knot_interval,
+        "knot_phase": knot_phase,
+        "slope_multipliers": list(slope_multipliers),
+    }
+    return units, {
+        "stable_trend_target_indices": stable,
+        "structure_metadata": structure,
+    }
 
 
 def _multi_seasonal_units(
@@ -736,6 +946,7 @@ def _multi_seasonal_units(
         ranked = _dominant_frequency_indexes(history[:, channel])
         components: list[dict[str, Any]] = []
         anchor_period: float | None = None
+        anchor_candidates: list[dict[str, Any]] = []
         anchor_search: dict[str, Any] = {
             "maximum_candidate_count": (
                 MULTI_SEASONAL_REAL_ANCHOR_CANDIDATE_COUNT
@@ -805,10 +1016,7 @@ def _multi_seasonal_units(
                     target_scale=float(scales[channel]),
                 )
             )
-            anchor_period = candidate_period
-            anchor_search["accepted_rank"] = rank
-            anchor_search["accepted_frequency_index"] = int(carrier_index)
-            components.append(
+            anchor_candidates.append(
                 {
                     "role": "anchor",
                     "source": "history_top3_stable_harmonic",
@@ -824,7 +1032,27 @@ def _multi_seasonal_units(
                     "history_split_stability": stability,
                 }
             )
-            break
+
+        if anchor_candidates:
+            anchor_rng = _structure_rng(
+                instance,
+                "multi_seasonal",
+                "history_anchor",
+                channel,
+                augmentation_seed=augmentation_seed,
+            )
+            selected_anchor = anchor_candidates[
+                int(anchor_rng.integers(0, len(anchor_candidates)))
+            ]
+            anchor_period = float(selected_anchor["period"])
+            anchor_search["accepted_rank"] = int(
+                selected_anchor["history_candidate_rank"]
+            )
+            anchor_search["accepted_frequency_index"] = int(
+                selected_anchor["frequency_index"]
+            )
+            anchor_search["eligible_candidate_count"] = len(anchor_candidates)
+            components.append(selected_anchor)
 
         if anchor_period is None:
             anchor_search["fallback_reason"] = (
@@ -876,6 +1104,82 @@ def _multi_seasonal_units(
                     target_scale=float(scales[channel]),
                 )
             )
+            waveform_rng = _structure_rng(
+                instance,
+                "multi_seasonal",
+                "waveform",
+                channel,
+                generated_index,
+                augmentation_seed=augmentation_seed,
+            )
+            waveform_type = str(
+                waveform_rng.choice(np.asarray(("sinusoid", "two_harmonic")))
+            )
+            harmonic_components = [
+                {
+                    "multiple": 1,
+                    "sin_coefficient": sin_coefficient,
+                    "cos_coefficient": cos_coefficient,
+                }
+            ]
+            if waveform_type == "two_harmonic":
+                ratio = float(waveform_rng.uniform(0.15, 0.35))
+                harmonic_phase = float(waveform_rng.uniform(0.0, 2.0 * math.pi))
+                harmonic_components.append(
+                    {
+                        "multiple": 2,
+                        "sin_coefficient": (
+                            math.sqrt(2.0)
+                            * scales[channel]
+                            * ratio
+                            * math.cos(harmonic_phase)
+                        ),
+                        "cos_coefficient": (
+                            math.sqrt(2.0)
+                            * scales[channel]
+                            * ratio
+                            * math.sin(harmonic_phase)
+                        ),
+                    }
+                )
+                combined = signal.copy()
+                combined += _continuous_harmonic_signal(
+                    length=length,
+                    horizon=instance.prediction_length,
+                    period=period / 2.0,
+                    sin_coefficient=float(
+                        harmonic_components[1]["sin_coefficient"]
+                    ),
+                    cos_coefficient=float(
+                        harmonic_components[1]["cos_coefficient"]
+                    ),
+                )
+                adjustment = float(scales[channel]) / max(
+                    float(np.std(combined[:length])), 1e-12
+                )
+                signal = combined * adjustment
+                for harmonic in harmonic_components:
+                    harmonic["sin_coefficient"] = (
+                        float(harmonic["sin_coefficient"]) * adjustment
+                    )
+                    harmonic["cos_coefficient"] = (
+                        float(harmonic["cos_coefficient"]) * adjustment
+                    )
+                sin_coefficient = float(
+                    harmonic_components[0]["sin_coefficient"]
+                )
+                cos_coefficient = float(
+                    harmonic_components[0]["cos_coefficient"]
+                )
+                signal = np.zeros(length + instance.prediction_length, dtype=float)
+                for harmonic in harmonic_components:
+                    signal += _continuous_harmonic_signal(
+                        length=length,
+                        horizon=instance.prediction_length,
+                        period=period / int(harmonic["multiple"]),
+                        sin_coefficient=float(harmonic["sin_coefficient"]),
+                        cos_coefficient=float(harmonic["cos_coefficient"]),
+                    )
             components.append(
                 {
                     "role": role,
@@ -885,6 +1189,8 @@ def _multi_seasonal_units(
                     "phase": phase,
                     "sin_coefficient": sin_coefficient,
                     "cos_coefficient": cos_coefficient,
+                    "waveform_type": waveform_type,
+                    "harmonic_components": harmonic_components,
                     "history_component": signal[:length],
                     "future_component": signal[length:],
                     "history_normalized_std_before_aggregate_gain": 1.0,
@@ -967,6 +1273,19 @@ def _multi_seasonal_units(
                 },
             )
         )
+    structure = {
+        "anchor_frequency_by_target": {
+            channel: search.get("accepted_frequency_index")
+            for channel, search in anchor_search_by_target.items()
+        },
+        "component_waveforms_by_target": {
+            str(channel): [
+                str(row.get("waveform_type", "history_harmonic"))
+                for row in rows
+            ]
+            for channel, rows in components_by_target.items()
+        },
+    }
     return units, {
         "eligible_target_indices": list(affected),
         "shared_full_history_macro_normalized_rms": shared_distance,
@@ -978,6 +1297,7 @@ def _multi_seasonal_units(
             "stable_history_anchor_else_protocol_anchor_plus_protocol_generated_"
             "independent_additional_periods"
         ),
+        "structure_metadata": structure,
     }
 
 
@@ -989,64 +1309,140 @@ def _time_varying_units(
     length, dimension = history.shape
     component_h = np.zeros_like(history)
     component_f = np.zeros_like(instance.future)
-    affected: list[int] = []
-    details: dict[str, Any] = {}
+    resolved: dict[int, tuple[np.ndarray, dict[str, Any]]] = {}
     t = np.arange(length, dtype=float)
     centered_t = np.linspace(-1.0, 1.0, length)
+    scales = _scale_by_target(history)
     for channel in range(dimension):
         ranked = _dominant_frequency_indexes(history[:, channel])
         if not ranked:
-            continue
-        carrier_index = ranked[0]
-        maximum_modulation_index = min(16, (carrier_index - 1) // 2)
-        if maximum_modulation_index < 2:
             continue
         series = np.asarray(history[:, channel], dtype=float)
         trend_design = np.column_stack((np.ones(length), centered_t))
         detrended = series - trend_design @ np.linalg.lstsq(
             trend_design, series, rcond=None
         )[0]
-        carrier_sin, carrier_cos = _harmonic_coefficients(
-            detrended, carrier_index
-        )
-        carrier = _harmonic_signal(
-            length=length,
-            horizon=instance.prediction_length,
-            frequency_index=carrier_index,
-            sin_coefficient=carrier_sin,
-            cos_coefficient=carrier_cos,
-        )
-        carrier_history = carrier[:length]
-        residual = detrended - carrier_history
-        baseline_error = float(np.mean(np.square(residual)))
-        if baseline_error <= 1e-12:
-            continue
-        best: tuple[float, int, float, float, np.ndarray] | None = None
-        for modulation_index in range(2, maximum_modulation_index + 1):
-            omega = 2.0 * math.pi * float(modulation_index) / float(length)
-            design = np.column_stack(
-                (
-                    carrier_history * np.sin(omega * t),
-                    carrier_history * np.cos(omega * t),
-                )
+        candidates: list[dict[str, Any]] = []
+        for carrier_index in ranked[:4]:
+            maximum_modulation_index = min(16, (carrier_index - 1) // 2)
+            if maximum_modulation_index < 2:
+                continue
+            carrier_sin, carrier_cos = _harmonic_coefficients(
+                detrended, carrier_index
             )
-            coefficients = np.linalg.lstsq(design, residual, rcond=None)[0]
-            fitted = design @ coefficients
-            incremental_r2 = 1.0 - float(
-                np.mean(np.square(residual - fitted))
-            ) / baseline_error
-            candidate = (
-                incremental_r2,
-                modulation_index,
-                float(coefficients[0]),
-                float(coefficients[1]),
-                fitted,
+            carrier = _harmonic_signal(
+                length=length,
+                horizon=instance.prediction_length,
+                frequency_index=carrier_index,
+                sin_coefficient=carrier_sin,
+                cos_coefficient=carrier_cos,
             )
-            if best is None or candidate[:2] > best[:2]:
-                best = candidate
-        if best is None or best[0] < TVS_MINIMUM_INCREMENTAL_R2:
+            carrier_history = carrier[:length]
+            residual = detrended - carrier_history
+            baseline_error = float(np.mean(np.square(residual)))
+            if baseline_error <= 1e-12:
+                continue
+            quadrature = _harmonic_signal(
+                length=length,
+                horizon=instance.prediction_length,
+                frequency_index=carrier_index,
+                sin_coefficient=carrier_cos,
+                cos_coefficient=-carrier_sin,
+            )
+            for modulation_type, base in (
+                ("amplitude_modulation", carrier),
+                ("periodic_phase_drift", quadrature),
+            ):
+                for modulation_index in range(2, maximum_modulation_index + 1):
+                    omega = 2.0 * math.pi * float(modulation_index) / float(length)
+                    design = np.column_stack(
+                        (
+                            base[:length] * np.sin(omega * t),
+                            base[:length] * np.cos(omega * t),
+                        )
+                    )
+                    coefficients = np.linalg.lstsq(design, residual, rcond=None)[0]
+                    fitted = design @ coefficients
+                    incremental_r2 = 1.0 - float(
+                        np.mean(np.square(residual - fitted))
+                    ) / baseline_error
+                    if (
+                        incremental_r2 < TVS_MINIMUM_INCREMENTAL_R2
+                        or np.std(fitted) < 0.01 * scales[channel]
+                    ):
+                        continue
+                    candidate_envelope = _harmonic_signal(
+                        length=length,
+                        horizon=instance.prediction_length,
+                        frequency_index=modulation_index,
+                        sin_coefficient=float(coefficients[0]),
+                        cos_coefficient=float(coefficients[1]),
+                    )
+                    envelope_amplitude = float(np.linalg.norm(coefficients))
+                    observed = np.asarray(
+                        instance.future_observed_mask[:, channel], dtype=bool
+                    )
+                    active = (
+                        np.abs(candidate_envelope[length:])
+                        >= TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION
+                        * envelope_amplitude
+                    )
+                    active_fraction = (
+                        float(np.mean(active[observed]))
+                        if np.any(observed)
+                        else 0.0
+                    )
+                    if (
+                        active_fraction
+                        < TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION - 1e-12
+                    ):
+                        continue
+                    candidate_history = np.zeros_like(history)
+                    candidate_history[:, channel] = (
+                        base[:length] * candidate_envelope[:length]
+                    )
+                    if not _strength_structure_passes_distance_bounds(
+                        instance, candidate_history, (channel,)
+                    ):
+                        continue
+                    candidates.append(
+                        {
+                            "incremental_r2": float(incremental_r2),
+                            "carrier_index": int(carrier_index),
+                            "carrier_sin": float(carrier_sin),
+                            "carrier_cos": float(carrier_cos),
+                            "modulation_index": int(modulation_index),
+                            "envelope_sin": float(coefficients[0]),
+                            "envelope_cos": float(coefficients[1]),
+                            "modulation_type": modulation_type,
+                            "future_envelope_active_fraction": active_fraction,
+                            "base": base,
+                        }
+                    )
+        if not candidates:
             continue
-        incremental_r2, slower, envelope_sin, envelope_cos, fitted = best
+        candidates.sort(key=lambda row: float(row["incremental_r2"]), reverse=True)
+        relative_floor = 0.50 * float(candidates[0]["incremental_r2"])
+        qualified = [
+            row
+            for row in candidates
+            if float(row["incremental_r2"]) >= relative_floor - 1e-12
+        ]
+        pool = qualified[: min(8, len(qualified))]
+        selected = pool[
+            int(
+                _structure_rng(
+                    instance,
+                    "time_varying_seasonality",
+                    "candidate",
+                    channel,
+                    augmentation_seed=augmentation_seed,
+                ).integers(0, len(pool))
+            )
+        ]
+        slower = int(selected["modulation_index"])
+        envelope_sin = float(selected["envelope_sin"])
+        envelope_cos = float(selected["envelope_cos"])
         envelope = _harmonic_signal(
             length=length,
             horizon=instance.prediction_length,
@@ -1054,40 +1450,72 @@ def _time_varying_units(
             sin_coefficient=envelope_sin,
             cos_coefficient=envelope_cos,
         )
-        combined = carrier * envelope
-        if np.std(fitted) < 0.01 * _scale_by_target(history)[channel]:
-            continue
-        component_h[:, channel] = combined[:length]
-        component_f[:, channel] = combined[length:]
-        affected.append(channel)
-        details[str(channel)] = {
+        combined = np.asarray(selected["base"], dtype=float) * envelope
+        carrier_index = int(selected["carrier_index"])
+        resolved[channel] = (
+            combined,
+            {
             "carrier_period": float(length / carrier_index),
             "modulation_period": float(length / slower),
             "carrier_frequency_index": int(carrier_index),
             "modulation_frequency_index": int(slower),
-            "carrier_sin_coefficient": carrier_sin,
-            "carrier_cos_coefficient": carrier_cos,
+            "carrier_sin_coefficient": float(selected["carrier_sin"]),
+            "carrier_cos_coefficient": float(selected["carrier_cos"]),
             "envelope_sin_coefficient": envelope_sin,
             "envelope_cos_coefficient": envelope_cos,
             "envelope_amplitude": float(
                 math.hypot(envelope_sin, envelope_cos)
             ),
-            "am_incremental_r2": float(incremental_r2),
-        }
-    if not affected:
+            "am_incremental_r2": float(selected["incremental_r2"]),
+            "modulation_incremental_r2": float(selected["incremental_r2"]),
+            "modulation_type": str(selected["modulation_type"]),
+            "eligible_candidate_count": len(candidates),
+            "sampled_pool_size": len(pool),
+            },
+        )
+    if not resolved:
         raise ValueError("constrained_am_envelope_not_resolved")
-    return _strength_scaled_units(
+    affected = _random_nonempty_subset(
+        list(resolved),
+        _structure_rng(
+            instance,
+            "time_varying_seasonality",
+            "target_subset",
+            augmentation_seed=augmentation_seed,
+        ),
+    )
+    details: dict[str, Any] = {}
+    for channel in affected:
+        combined, detail = resolved[channel]
+        component_h[:, channel] = combined[:length]
+        component_f[:, channel] = combined[length:]
+        details[str(channel)] = detail
+    units, group = _strength_scaled_units(
         instance,
         augmentation_seed,
         "time_varying_seasonality",
         component_h,
         component_f,
-        tuple(affected),
+        affected,
         metadata={
             "component": "history_fitted_constrained_am_carrier_envelope",
             "resolved_periods_by_target": details,
         },
     )
+    return units, {
+        **group,
+        "structure_metadata": {
+            "affected_target_indices": list(affected),
+            "modulation_by_target": {
+                channel: row["modulation_type"]
+                for channel, row in details.items()
+            },
+            "carrier_by_target": {
+                channel: row["carrier_frequency_index"]
+                for channel, row in details.items()
+            },
+        }
+    }
 
 
 def _strength_scaled_units(
@@ -1155,13 +1583,25 @@ def _regime_units(
     if length < 40:
         raise ValueError("history_too_short_for_five_regime_locations")
     scales = _scale_by_target(history)
-    signs = _rng(
-        instance.official_instance_id,
+    structure_rng = _structure_rng(
+        instance,
         "regime_switching",
-        "shared-sign",
         augmentation_seed=augmentation_seed,
-    ).choice(np.asarray([-1.0, 1.0]), size=dimension)
+    )
+    affected = _random_nonempty_subset(tuple(range(dimension)), structure_rng)
+    signs = np.zeros(dimension, dtype=float)
+    signs[list(affected)] = structure_rng.choice(
+        np.asarray([-1.0, 1.0]), size=len(affected)
+    )
+    transition_type = str(
+        structure_rng.choice(np.asarray(("step", "ramp", "sigmoid")))
+    )
+    transition_width = int(
+        structure_rng.integers(2, max(3, min(length // 10, 64)) + 1)
+    )
     units: list[_UnitTreatment] = []
+    total = length + instance.prediction_length
+    all_indexes = np.arange(total, dtype=float)
     for level, interval in zip(
         CAPABILITY_LEVELS, REGIME_RECENCY_INTERVALS, strict=True
     ):
@@ -1174,14 +1614,20 @@ def _regime_units(
             ).uniform(*interval)
         )
         join = int(np.clip(round(recency * length), 8, length - 8))
-        history_delta = np.zeros_like(history)
-        history_delta[join:] = signs * scales
-        future_delta = np.tile(signs * scales, (instance.prediction_length, 1))
+        profile = _transition_profile(
+            all_indexes,
+            join=join,
+            transition_type=transition_type,
+            transition_width=transition_width,
+        )
+        delta = profile[:, None] * signs[None, :] * scales[None, :]
+        history_delta = delta[:length]
+        future_delta = delta[length:]
         units.append(
             _UnitTreatment(
                 history_delta=history_delta,
                 future_delta=future_delta,
-                affected=tuple(range(dimension)),
+                affected=affected,
                 coordinate_name="change_location_fraction_of_history",
                 coordinate_interval=interval,
                 sampled_coordinate=recency,
@@ -1190,10 +1636,23 @@ def _regime_units(
                     "post_change_history_length": length - join,
                     "shared_amplitude_before_distance_adjustment": scales.tolist(),
                     "direction_by_target": signs.tolist(),
+                    "transition_type": transition_type,
+                    "transition_width": transition_width,
                 },
             )
         )
-    return _shared_amplitude_units(instance, units, "regime_switching")
+    scaled, group = _shared_amplitude_units(
+        instance, units, "regime_switching"
+    )
+    return scaled, {
+        **group,
+        "structure_metadata": {
+            "transition_type": transition_type,
+            "transition_width": transition_width,
+            "affected_target_indices": list(affected),
+            "direction_by_target": signs.tolist(),
+        },
+    }
 
 
 def _intermittency_units(
@@ -1208,14 +1667,24 @@ def _intermittency_units(
     maximum_gap = min(instance.prediction_length, max(3, (length - 1) // 3))
     if maximum_gap < 8:
         raise ValueError("history_or_horizon_too_short_for_five_sparse_levels")
-    width = int(
-        _rng(
-            instance.official_instance_id,
-            "predictable_intermittency",
-            "shared-width",
-            augmentation_seed=augmentation_seed,
-        ).integers(1, min(4, maximum_gap))
+    structure_rng = _structure_rng(
+        instance,
+        "predictable_intermittency",
+        augmentation_seed=augmentation_seed,
     )
+    width = int(structure_rng.integers(1, min(5, maximum_gap)))
+    pulse_shape = str(
+        structure_rng.choice(
+            np.asarray(("rectangular", "triangular", "exponential_decay"))
+        )
+    )
+    pulse_weights = _pulse_weights(pulse_shape, width)
+    affected = _random_nonempty_subset(tuple(range(dimension)), structure_rng)
+    directions = np.zeros(dimension, dtype=float)
+    directions[list(affected)] = structure_rng.choice(
+        np.asarray([-1.0, 1.0]), size=len(affected)
+    )
+    jitter_fraction = float(structure_rng.uniform(0.0, 0.12))
     units: list[_UnitTreatment] = []
     total = length + instance.prediction_length
     for level, interval in zip(
@@ -1230,6 +1699,7 @@ def _intermittency_units(
             ).uniform(*interval)
         )
         gap = int(np.clip(round(fraction * maximum_gap), width + 1, maximum_gap))
+        jitter = min(max(0, int(round(jitter_fraction * gap))), max(0, gap // 4))
         phase_rng = _rng(
             instance.official_instance_id,
             "predictable_intermittency",
@@ -1245,12 +1715,26 @@ def _intermittency_units(
         for candidate in phase_candidates:
             candidate_lag = int(candidate)
             last_history_center = length - 1 - candidate_lag
-            candidate_centers = list(
-                range(last_history_center, -1, -gap)
-            )[::-1]
-            candidate_centers.extend(
-                range(last_history_center + gap, total, gap)
-            )
+            candidate_centers = [last_history_center]
+            backward = last_history_center
+            step_index = 0
+            while True:
+                step = gap + (jitter if step_index % 2 == 0 else -jitter)
+                backward -= max(width + 1, step)
+                if backward < 0:
+                    break
+                candidate_centers.append(backward)
+                step_index += 1
+            candidate_centers.sort()
+            forward = last_history_center
+            step_index = 0
+            while True:
+                step = gap + (jitter if step_index % 2 == 0 else -jitter)
+                forward += max(width + 1, step)
+                if forward >= total:
+                    break
+                candidate_centers.append(forward)
+                step_index += 1
             if sum(center < length for center in candidate_centers) < 3:
                 continue
             future_indices = {
@@ -1271,37 +1755,52 @@ def _intermittency_units(
         if lag is None:
             raise ValueError("no_observed_scheduled_future_event")
         delta = np.zeros((total, dimension), dtype=float)
+        amplitude = directions * scales
         for center in centers:
-            for offset in range(width):
+            for offset, weight in enumerate(pulse_weights):
                 index = center + offset
                 if 0 <= index < total:
-                    delta[index] += scales
+                    delta[index] += float(weight) * amplitude
         units.append(
             _UnitTreatment(
                 history_delta=delta[:length],
                 future_delta=delta[length:],
-                affected=tuple(range(dimension)),
+                affected=affected,
                 coordinate_name="event_gap_fraction_of_maximum_legal_gap",
                 coordinate_interval=interval,
                 sampled_coordinate=fraction,
                 metadata={
                     "event_gap": gap,
                     "pulse_width": width,
+                    "pulse_shape": pulse_shape,
+                    "pulse_weights": pulse_weights.tolist(),
+                    "event_gap_jitter": jitter,
                     "history_event_count": sum(center < length for center in centers),
                     "future_event_count": sum(length <= center < total for center in centers),
                     "event_centers": centers,
                     "phase_candidate_count": int(len(phase_candidates)),
                     "future_event_observed_mask_required": True,
                     "positive_event_amplitude_before_distance_adjustment": scales.tolist(),
+                    "event_amplitude_before_distance_adjustment": amplitude.tolist(),
                 },
             )
         )
-    return _shared_amplitude_units(
+    scaled, group = _shared_amplitude_units(
         instance,
         units,
         "predictable_intermittency",
         minimum_future_effect_mase_rms=MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     )
+    return scaled, {
+        **group,
+        "structure_metadata": {
+            "pulse_shape": pulse_shape,
+            "pulse_width": width,
+            "jitter_fraction": jitter_fraction,
+            "affected_target_indices": list(affected),
+            "direction_by_target": directions.tolist(),
+        },
+    }
 
 
 def _shared_amplitude_units(
@@ -2068,54 +2567,171 @@ def _common_factor_units(
     share = float(singular[0] ** 2 / np.sum(np.square(singular)))
     if share < 1.0 / dimension + 0.02:
         raise ValueError("top_common_factor_share_too_small")
-    loading = vt[0]
-    affected = tuple(
-        int(index)
-        for index in np.flatnonzero(np.abs(loading) >= 0.25 * np.max(np.abs(loading)))
-    )
-    if len(affected) < min(3, dimension):
-        raise ValueError("too_few_nondegenerate_common_factor_loadings")
-    factor = z @ loading
-    factor_variance = float(np.var(factor))
-    if factor_variance <= 1e-12:
-        raise ValueError("common_factor_latent_variance_too_small")
-    best: tuple[float, int, float, float, np.ndarray] | None = None
-    for frequency_index in _dominant_frequency_indexes(factor):
-        sin_coefficient, cos_coefficient = _harmonic_coefficients(
-            factor, frequency_index
+    loading_bases: list[tuple[str, np.ndarray]] = [("pc1", vt[0])]
+    if vt.shape[0] >= 2:
+        loading_bases.extend(
+            (
+                ("pc1_plus_pc2", vt[0] + 0.55 * vt[1]),
+                ("pc1_minus_pc2", vt[0] - 0.55 * vt[1]),
+            )
         )
-        carrier = _harmonic_signal(
-            length=length,
-            horizon=instance.prediction_length,
-            frequency_index=frequency_index,
-            sin_coefficient=sin_coefficient,
-            cos_coefficient=cos_coefficient,
+    if vt.shape[0] >= 3:
+        loading_bases.extend(
+            (
+                ("pc1_plus_pc3", vt[0] + 0.45 * vt[2]),
+                ("pc1_minus_pc3", vt[0] - 0.45 * vt[2]),
+            )
         )
-        fitted_share = max(
-            0.0,
-            1.0
-            - float(np.mean(np.square(factor - carrier[:length])))
-            / factor_variance,
+    expanded_loading_bases: list[tuple[str, np.ndarray]] = []
+    required_targets = min(3, dimension)
+    for loading_source, raw_loading in loading_bases:
+        normalized = np.asarray(raw_loading, dtype=float)
+        normalized /= max(float(np.linalg.norm(normalized)), 1e-12)
+        pivot = int(np.argmax(np.abs(normalized)))
+        if normalized[pivot] < 0.0:
+            normalized = -normalized
+        strongest = np.argsort(np.abs(normalized))[::-1][:required_targets]
+        for mask_fraction in (0.10, 0.20, 0.35):
+            masked = normalized.copy()
+            masked[
+                np.abs(masked)
+                < mask_fraction * float(np.max(np.abs(masked)))
+            ] = 0.0
+            if np.count_nonzero(masked) < required_targets:
+                masked[:] = 0.0
+                masked[strongest] = normalized[strongest]
+            expanded_loading_bases.append(
+                (
+                    f"{loading_source}_mask{int(mask_fraction * 100):02d}",
+                    masked,
+                )
+            )
+    loading_bases = expanded_loading_bases
+    candidates: list[dict[str, Any]] = []
+    total_variance = float(np.sum(np.var(z, axis=0)))
+    for loading_source, raw_loading in loading_bases:
+        loading = np.asarray(raw_loading, dtype=float)
+        loading /= max(float(np.linalg.norm(loading)), 1e-12)
+        pivot = int(np.argmax(np.abs(loading)))
+        if loading[pivot] < 0.0:
+            loading = -loading
+        affected = tuple(
+            int(index) for index in np.flatnonzero(np.abs(loading) > 0.0)
         )
-        candidate = (
-            fitted_share,
-            frequency_index,
-            sin_coefficient,
-            cos_coefficient,
-            carrier,
-        )
-        if best is None or candidate[:2] > best[:2]:
-            best = candidate
-    if best is None or best[0] < COMMON_FACTOR_MINIMUM_HARMONIC_SHARE:
+        if len(affected) < required_targets:
+            strongest = np.argsort(np.abs(loading))[::-1][:required_targets]
+            affected = tuple(sorted(int(value) for value in strongest))
+        effective_loading = np.zeros_like(loading)
+        effective_loading[list(affected)] = loading[list(affected)]
+        effective_loading /= max(float(np.linalg.norm(effective_loading)), 1e-12)
+        factor = z @ effective_loading
+        factor_variance = float(np.var(factor))
+        if factor_variance <= 1e-12:
+            continue
+        selected_share = factor_variance / max(total_variance, 1e-12)
+        for frequency_index in _dominant_frequency_indexes(factor)[:8]:
+            sin_coefficient, cos_coefficient = _harmonic_coefficients(
+                factor, frequency_index
+            )
+            carrier = _harmonic_signal(
+                length=length,
+                horizon=instance.prediction_length,
+                frequency_index=frequency_index,
+                sin_coefficient=sin_coefficient,
+                cos_coefficient=cos_coefficient,
+            )
+            fitted_share = max(
+                0.0,
+                1.0
+                - float(np.mean(np.square(factor - carrier[:length])))
+                / factor_variance,
+            )
+            if fitted_share < COMMON_FACTOR_MINIMUM_HARMONIC_SHARE:
+                continue
+            section_rms: list[float] = []
+            for section in np.array_split(
+                np.arange(instance.prediction_length, dtype=int), 3
+            ):
+                channel_rms: list[float] = []
+                for channel in affected:
+                    observed = instance.future_observed_mask[section, channel]
+                    values = (
+                        carrier[length:][section]
+                        * effective_loading[channel]
+                    )[observed]
+                    if values.size:
+                        channel_rms.append(
+                            float(np.sqrt(np.mean(np.square(values))))
+                        )
+                section_rms.append(
+                    float(np.mean(channel_rms)) if channel_rms else 0.0
+                )
+            tail_head_ratio = section_rms[-1] / max(section_rms[0], 1e-12)
+            if (
+                section_rms[0] <= 0.0
+                or section_rms[-1] <= 0.0
+                or tail_head_ratio
+                < COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO - 1e-12
+            ):
+                continue
+            candidate_history = (
+                carrier[:length, None]
+                * effective_loading[None, :]
+                * scales[None, :]
+            )
+            if not _strength_structure_passes_distance_bounds(
+                instance, candidate_history, affected
+            ):
+                continue
+            candidates.append(
+                {
+                    "fitted_share": fitted_share,
+                    "frequency_index": int(frequency_index),
+                    "sin_coefficient": float(sin_coefficient),
+                    "cos_coefficient": float(cos_coefficient),
+                    "carrier": carrier,
+                    "loading": effective_loading,
+                    "loading_source": loading_source,
+                    "affected": affected,
+                    "selected_factor_share": selected_share,
+                    "future_tail_head_ratio": tail_head_ratio,
+                }
+            )
+    if not candidates:
         raise ValueError("common_factor_stable_latent_carrier_not_resolved")
-    fitted_share, frequency_index, sin_coefficient, cos_coefficient, carrier = best
+    unique_candidates: dict[tuple[bytes, int], dict[str, Any]] = {}
+    for candidate in candidates:
+        key = (
+            np.asarray(candidate["loading"], dtype="<f8").tobytes(),
+            int(candidate["frequency_index"]),
+        )
+        unique_candidates.setdefault(key, candidate)
+    candidates = list(unique_candidates.values())
+    candidates.sort(key=lambda row: float(row["fitted_share"]), reverse=True)
+    pool = candidates[: min(12, len(candidates))]
+    selected = pool[
+        int(
+            _structure_rng(
+                instance,
+                "common_factor",
+                augmentation_seed=augmentation_seed,
+            ).integers(0, len(pool))
+        )
+    ]
+    fitted_share = float(selected["fitted_share"])
+    frequency_index = int(selected["frequency_index"])
+    sin_coefficient = float(selected["sin_coefficient"])
+    cos_coefficient = float(selected["cos_coefficient"])
+    carrier = np.asarray(selected["carrier"], dtype=float)
+    loading = np.asarray(selected["loading"], dtype=float)
+    affected = tuple(int(value) for value in selected["affected"])
     history_component = (
         carrier[:length, None] * loading[None, :] * scales[None, :]
     )
     future_component = (
         carrier[length:, None] * loading[None, :] * scales[None, :]
     )
-    return _strength_scaled_units(
+    units, group = _strength_scaled_units(
         instance,
         augmentation_seed,
         "common_factor",
@@ -2125,15 +2741,29 @@ def _common_factor_units(
         metadata={
             "component": "history_pca_loading_with_stable_latent_harmonic",
             "top1_explained_share": share,
+            "selected_factor_explained_share": float(
+                selected["selected_factor_share"]
+            ),
             "loading": loading.tolist(),
+            "loading_source": str(selected["loading_source"]),
             "latent_carrier_frequency_index": int(frequency_index),
             "latent_carrier_period": float(length / frequency_index),
             "latent_carrier_sin_coefficient": float(sin_coefficient),
             "latent_carrier_cos_coefficient": float(cos_coefficient),
             "latent_carrier_history_explained_share": float(fitted_share),
             "future_continuation": "analytic_constant_amplitude_harmonic",
+            "eligible_structure_count": len(candidates),
+            "sampled_pool_size": len(pool),
         },
     )
+    return units, {
+        **group,
+        "structure_metadata": {
+            "loading_source": str(selected["loading_source"]),
+            "affected_target_indices": list(affected),
+            "latent_carrier_frequency_index": frequency_index,
+        },
+    }
 
 
 def _cross_series_units(
@@ -2146,7 +2776,7 @@ def _cross_series_units(
         raise ValueError("cross_series_requires_native_panel_d_ge_2")
     scales = _scale_by_target(history)
     z = (history - np.mean(history, axis=0)) / scales
-    best: tuple[float, int, int, int, np.ndarray] | None = None
+    candidates: list[tuple[float, int, int, int, np.ndarray]] = []
     maximum_lag = min(24, max(1, length // 8))
     for driver in range(dimension):
         for responder in range(dimension):
@@ -2167,11 +2797,22 @@ def _cross_series_units(
                     if baseline_error <= 1e-12
                     else 1.0 - float(np.mean(np.square(y - full_fit))) / baseline_error
                 )
-                if best is None or incremental > best[0]:
-                    best = (incremental, driver, responder, lag, coefficients)
-    if best is None or best[0] < 0.0025:
+                if incremental >= 0.0025:
+                    candidates.append(
+                        (incremental, driver, responder, lag, coefficients)
+                    )
+    if not candidates:
         raise ValueError("directed_incremental_predictive_gain_too_small")
-    incremental, driver, responder, lag, coefficients = best
+    candidates.sort(key=lambda row: row[0], reverse=True)
+    pool = candidates[: min(12, len(candidates))]
+    selected_index = int(
+        _structure_rng(
+            instance,
+            "cross_series_dependence",
+            augmentation_seed=augmentation_seed,
+        ).integers(0, len(pool))
+    )
+    incremental, driver, responder, lag, coefficients = pool[selected_index]
     beta = float(coefficients[-1])
     component_h = np.zeros_like(history)
     component_h[lag:, responder] = scales[responder] * beta * z[:-lag, driver]
@@ -2184,7 +2825,7 @@ def _cross_series_units(
         component_f[step, responder] = (
             scales[responder] * beta * extended_driver[source_index]
         )
-    return _strength_scaled_units(
+    units, group = _strength_scaled_units(
         instance,
         augmentation_seed,
         "cross_series_dependence",
@@ -2200,8 +2841,20 @@ def _cross_series_units(
             "transfer_coefficient": beta,
             "claim_scope": "predictive_not_causal",
             "target_future_used_for_delta": False,
+            "eligible_edge_count": len(candidates),
+            "sampled_pool_size": len(pool),
+            "selected_edge_rank": selected_index + 1,
         },
     )
+    return units, {
+        **group,
+        "structure_metadata": {
+            "driver_target_index": driver,
+            "responder_target_index": responder,
+            "lag": lag,
+            "eligible_edge_count": len(candidates),
+        },
+    }
 
 
 def _covariate_impulse_units(
@@ -2214,8 +2867,8 @@ def _covariate_impulse_units(
     horizon = int(instance.prediction_length)
     if covariates.shape[1] == 0:
         raise ValueError("no_native_dynamic_covariate")
-    period = max(8, 2 * horizon)
-    if length < 2 * period:
+    base_period = max(8, 2 * horizon)
+    if length < 2 * base_period:
         raise ValueError("insufficient_history_for_repeated_covariate_impulses")
     covariate_scales = np.sqrt(
         np.mean(
@@ -2238,26 +2891,67 @@ def _covariate_impulse_units(
     )
     if legal.size == 0:
         raise ValueError("no_nonconstant_continuous_dynamic_covariate")
-    covariate = int(legal[np.argmax(covariate_scales[legal])])
+    structure_rng = _structure_rng(
+        instance,
+        "covariate_impulse_response",
+        augmentation_seed=augmentation_seed,
+    )
+    covariate = int(structure_rng.choice(legal))
     scales = _scale_by_target(history)
-    target_index = int(np.argmax(scales))
+    target_index = int(structure_rng.integers(0, history.shape[1]))
+    period_candidates = sorted(
+        {
+            max(8, int(round(1.5 * horizon))),
+            max(8, 2 * horizon),
+            max(8, int(round(2.5 * horizon))),
+        }
+    )
+    period_candidates = [
+        value for value in period_candidates if length >= 2 * value
+    ]
+    if not period_candidates:
+        period_candidates = [base_period]
+    period = int(structure_rng.choice(np.asarray(period_candidates)))
+    kernel_type = str(
+        structure_rng.choice(
+            np.asarray(("exponential", "delayed_gamma", "triangular"))
+        )
+    )
+    half_life = float(
+        horizon * structure_rng.choice(np.asarray((0.5, 1.0, 1.5)))
+    )
+    delay = int(
+        structure_rng.integers(0, max(1, horizon // 4) + 1)
+        if kernel_type != "exponential"
+        else 0
+    )
+    covariate_sign = float(structure_rng.choice(np.asarray((-1.0, 1.0))))
+    response_sign = float(structure_rng.choice(np.asarray((-1.0, 1.0))))
+    terminal_offset = int(
+        structure_rng.integers(0, max(1, horizon // 4) + 1)
+    )
+    terminal_index = length - 1 - terminal_offset
     total = length + horizon
     impulse = np.zeros(total, dtype=float)
     historical_centers: list[int] = []
-    center = length - 1
+    center = terminal_index
     while center >= 0:
-        impulse[center] = 1.0
+        impulse[center] = covariate_sign
         historical_centers.append(center)
         center -= period
     historical_centers.sort()
     future_centers: list[int] = []
     if instance.future_covariate_visible[covariate]:
-        future_center = length + max(0, horizon // 2)
+        future_center = length + int(structure_rng.integers(0, max(1, horizon)))
         if future_center < total:
-            impulse[future_center] = 1.0
+            impulse[future_center] = covariate_sign
             future_centers.append(future_center)
-    kernel_index = np.arange(2 * horizon + 1, dtype=float)
-    kernel = np.exp(-math.log(2.0) * kernel_index / float(max(1, horizon)))
+    kernel = _impulse_kernel(
+        kernel_type=kernel_type,
+        length=2 * horizon + 1,
+        half_life=half_life,
+        delay=delay,
+    )
     mase_scales = mase_scale_by_target(instance.history, instance.frequency)
     minimum_coordinate = float(STRENGTH_INTERVALS[0][0])
     terminal_amplitude = 1.0
@@ -2266,8 +2960,11 @@ def _covariate_impulse_units(
     history_component = np.zeros_like(history)
     future_component = np.zeros_like(instance.future)
     for _attempt in range(24):
-        impulse[length - 1] = terminal_amplitude
-        response = np.convolve(impulse, kernel, mode="full")[:total]
+        impulse[terminal_index] = covariate_sign * terminal_amplitude
+        response = (
+            response_sign
+            * np.convolve(impulse, kernel, mode="full")[:total]
+        )
         history_component.fill(0.0)
         future_component.fill(0.0)
         history_component[:, target_index] = (
@@ -2306,13 +3003,15 @@ def _covariate_impulse_units(
         future_covariate_component[:, covariate] = (
             covariate_scales[covariate] * impulse[length:]
         )
-    history_covariate_component[length - 1, covariate] = (
-        covariate_scales[covariate] * terminal_amplitude
+    history_covariate_component[terminal_index, covariate] = (
+        covariate_scales[covariate]
+        * covariate_sign
+        * terminal_amplitude
     )
     future_rms = float(np.sqrt(np.mean(np.square(response[length:]))))
     if future_rms <= 1e-8:
         raise ValueError("constructed_impulse_response_has_zero_future_energy")
-    return _strength_scaled_units(
+    units, group = _strength_scaled_units(
         instance,
         augmentation_seed,
         "covariate_impulse_response",
@@ -2320,18 +3019,24 @@ def _covariate_impulse_units(
         future_component,
         (target_index,),
         metadata={
-            "component": "native_covariate_fixed_causal_impulse_response",
+            "component": "native_covariate_sampled_causal_impulse_response",
             "eligible_target_index": target_index,
             "covariate_index": covariate,
             "covariate_name": instance.covariate_column_names[covariate],
             "covariate_availability": instance.covariate_availability[covariate],
             "historical_impulse_centers": historical_centers,
             "future_impulse_centers": future_centers,
-            "terminal_impulse_amplitude": terminal_amplitude,
+            "terminal_impulse_index": terminal_index,
+            "terminal_impulse_amplitude": (
+                covariate_sign * terminal_amplitude
+            ),
+            "covariate_impulse_sign": covariate_sign,
+            "target_response_sign": response_sign,
             "impulse_period": period,
-            "kernel": "exponential_half_life_equal_to_forecast_horizon",
+            "kernel": kernel_type,
             "kernel_length": int(kernel.size),
-            "kernel_half_life": horizon,
+            "kernel_half_life": half_life,
+            "kernel_delay": delay,
             "covariate_unit_scale": float(covariate_scales[covariate]),
             "unit_future_response_rms": future_rms,
             "constructed_minimum_future_effect_mase_rms": (
@@ -2348,6 +3053,20 @@ def _covariate_impulse_units(
         history_covariate_component=history_covariate_component,
         future_covariate_component=future_covariate_component,
     )
+    return units, {
+        **group,
+        "structure_metadata": {
+            "covariate_index": covariate,
+            "target_index": target_index,
+            "kernel_type": kernel_type,
+            "kernel_half_life": half_life,
+            "kernel_delay": delay,
+            "impulse_period": period,
+            "terminal_impulse_index": terminal_index,
+            "covariate_impulse_sign": covariate_sign,
+            "target_response_sign": response_sign,
+        },
+    }
 
 
 _BUILDERS: dict[
@@ -2715,6 +3434,10 @@ def build_capability_group(
         }
         for treatment in treatments
     ]
+    structure_metadata = group_metadata.get(
+        "structure_metadata",
+        {"capability_id": capability_id, "selection": "history_determined"},
+    )
     return CapabilityGroup(
         capability_id=capability_id,
         available=True,
@@ -2722,8 +3445,14 @@ def build_capability_group(
         treatments=tuple(treatments),
         group_metadata={
             **group_metadata,
+            "structure_metadata": structure_metadata,
             "schema_version": MECHANISM_SCHEMA,
+            "randomness_schema": RANDOMNESS_SCHEMA,
             "augmentation_seed": int(augmentation_seed),
+            "structure_draw_sha256": protocol.json_sha256(
+                structure_metadata
+            ),
+            "structure_shared_across_levels": True,
             "parameter_draw_sha256": protocol.json_sha256(parameter_payload),
             "target_future_used_for_fit_or_parameter_draw": False,
             "source_distance_policy": (
@@ -2769,8 +3498,19 @@ def replay_treatment_deltas(
         covariate_f = np.zeros_like(instance.future_covariates)
         if capability_id == "trend":
             directions = np.asarray(metadata["direction_by_target"], dtype=float)
-            extended = np.arange(length + horizon, dtype=float)
-            extended /= max(1, length - 1)
+            extended = _trend_profile(
+                length=length,
+                horizon=horizon,
+                trend_type=str(metadata["trend_type"]),
+                onset_fraction=float(metadata.get("onset_fraction", 0.0)),
+                curvature_power=float(metadata.get("curvature_power", 1.0)),
+                knot_interval=int(metadata.get("knot_interval", max(2, length))),
+                knot_phase=int(metadata.get("knot_phase", 0)),
+                slope_multipliers=tuple(
+                    float(value)
+                    for value in metadata.get("slope_multipliers", [1.0])
+                ),
+            )
             affected = [int(value) for value in row["affected_target_indices"]]
             component = np.zeros((length + horizon, dimension), dtype=float)
             component[:, affected] = (
@@ -2807,7 +3547,21 @@ def replay_treatment_deltas(
                         periods["envelope_cos_coefficient"]
                     ),
                 )
-                combined = carrier * envelope
+                if periods.get("modulation_type") == "periodic_phase_drift":
+                    base = _harmonic_signal(
+                        length=length,
+                        horizon=horizon,
+                        frequency_index=int(periods["carrier_frequency_index"]),
+                        sin_coefficient=float(
+                            periods["carrier_cos_coefficient"]
+                        ),
+                        cos_coefficient=-float(
+                            periods["carrier_sin_coefficient"]
+                        ),
+                    )
+                else:
+                    base = carrier
+                combined = base * envelope
                 component_h[:, channel] = combined[:length]
                 component_f[:, channel] = combined[length:]
         elif capability_id == "common_factor":
@@ -2849,15 +3603,26 @@ def replay_treatment_deltas(
             target = int(metadata["eligible_target_index"])
             covariate = int(metadata["covariate_index"])
             impulse = np.zeros(length + horizon, dtype=float)
+            impulse_sign = float(metadata.get("covariate_impulse_sign", 1.0))
             for center in metadata["historical_impulse_centers"]:
-                impulse[int(center)] = 1.0
-            impulse[length - 1] = float(metadata["terminal_impulse_amplitude"])
+                impulse[int(center)] = impulse_sign
+            terminal_index = int(metadata.get("terminal_impulse_index", length - 1))
+            impulse[terminal_index] = float(metadata["terminal_impulse_amplitude"])
             for center in metadata["future_impulse_centers"]:
-                impulse[int(center)] = 1.0
-            kernel_index = np.arange(int(metadata["kernel_length"]), dtype=float)
-            half_life = float(metadata["kernel_half_life"])
-            kernel = np.exp(-math.log(2.0) * kernel_index / half_life)
-            response = np.convolve(impulse, kernel, mode="full")[: length + horizon]
+                impulse[int(center)] = impulse_sign
+            kernel_name = str(metadata["kernel"])
+            if kernel_name == "exponential_half_life_equal_to_forecast_horizon":
+                kernel_name = "exponential"
+            kernel = _impulse_kernel(
+                kernel_type=kernel_name,
+                length=int(metadata["kernel_length"]),
+                half_life=float(metadata["kernel_half_life"]),
+                delay=int(metadata.get("kernel_delay", 0)),
+            )
+            response = (
+                float(metadata.get("target_response_sign", 1.0))
+                * np.convolve(impulse, kernel, mode="full")[: length + horizon]
+            )
             component_h[:, target] = scales[target] * response[:length]
             component_f[:, target] = scales[target] * response[length:]
             covariate_scale = float(metadata["covariate_unit_scale"])
@@ -2946,20 +3711,36 @@ def replay_treatment_deltas(
                 dtype=float,
             )
             direction = np.asarray(metadata["direction_by_target"], dtype=float)
-            component_h[join:] = direction * amplitude
-            component_f[:] = direction * amplitude
+            profile = _transition_profile(
+                np.arange(length + horizon, dtype=float),
+                join=join,
+                transition_type=str(metadata.get("transition_type", "step")),
+                transition_width=int(metadata.get("transition_width", 1)),
+            )
+            combined = profile[:, None] * direction[None, :] * amplitude[None, :]
+            component_h, component_f = combined[:length], combined[length:]
         elif capability_id == "predictable_intermittency":
             combined = np.zeros((length + horizon, dimension), dtype=float)
             amplitude = np.asarray(
-                metadata["positive_event_amplitude_before_distance_adjustment"],
+                metadata.get(
+                    "event_amplitude_before_distance_adjustment",
+                    metadata["positive_event_amplitude_before_distance_adjustment"],
+                ),
                 dtype=float,
             )
             width = int(metadata["pulse_width"])
+            weights = np.asarray(
+                metadata.get(
+                    "pulse_weights",
+                    _pulse_weights(str(metadata.get("pulse_shape", "rectangular")), width),
+                ),
+                dtype=float,
+            )
             for center in metadata["event_centers"]:
-                for offset in range(width):
+                for offset, weight in enumerate(weights):
                     index = int(center) + offset
                     if 0 <= index < combined.shape[0]:
-                        combined[index] += amplitude
+                        combined[index] += float(weight) * amplitude
             component_h, component_f = combined[:length], combined[length:]
             covariate_h = np.zeros_like(instance.history_covariates)
             covariate_f = np.zeros_like(instance.future_covariates)
@@ -2972,13 +3753,28 @@ def replay_treatment_deltas(
             for raw_channel, periods in details.items():
                 channel = int(raw_channel)
                 for component in periods["components"]:
-                    signal = _continuous_harmonic_signal(
-                        length=length,
-                        horizon=horizon,
-                        period=float(component["period"]),
-                        sin_coefficient=float(component["sin_coefficient"]),
-                        cos_coefficient=float(component["cos_coefficient"]),
-                    )
+                    harmonics = component.get("harmonic_components")
+                    if harmonics:
+                        signal = np.zeros(length + horizon, dtype=float)
+                        for harmonic in harmonics:
+                            signal += _continuous_harmonic_signal(
+                                length=length,
+                                horizon=horizon,
+                                period=(
+                                    float(component["period"])
+                                    / int(harmonic["multiple"])
+                                ),
+                                sin_coefficient=float(harmonic["sin_coefficient"]),
+                                cos_coefficient=float(harmonic["cos_coefficient"]),
+                            )
+                    else:
+                        signal = _continuous_harmonic_signal(
+                            length=length,
+                            horizon=horizon,
+                            period=float(component["period"]),
+                            sin_coefficient=float(component["sin_coefficient"]),
+                            cos_coefficient=float(component["cos_coefficient"]),
+                        )
                     component_h[:, channel] += signal[:length]
                     component_f[:, channel] += signal[length:]
         else:
@@ -3059,8 +3855,22 @@ def replay_treatment_deltas_for_history_suffix(
         if capability_id == "trend":
             directions = np.asarray(metadata["direction_by_target"], dtype=float)
             affected = [int(value) for value in row["affected_target_indices"]]
-            absolute_time = np.arange(start, full_length + horizon, dtype=float)
-            absolute_time /= max(1, full_length - 1)
+            full_profile = _trend_profile(
+                length=full_length,
+                horizon=horizon,
+                trend_type=str(metadata["trend_type"]),
+                onset_fraction=float(metadata.get("onset_fraction", 0.0)),
+                curvature_power=float(metadata.get("curvature_power", 1.0)),
+                knot_interval=int(
+                    metadata.get("knot_interval", max(2, full_length))
+                ),
+                knot_phase=int(metadata.get("knot_phase", 0)),
+                slope_multipliers=tuple(
+                    float(value)
+                    for value in metadata.get("slope_multipliers", [1.0])
+                ),
+            )
+            absolute_time = full_profile[start:]
             component = np.zeros((visible_length + horizon, dimension), dtype=float)
             component[:, affected] = (
                 absolute_time[:, None]
@@ -3097,6 +3907,13 @@ def replay_treatment_deltas_for_history_suffix(
                     + float(periods["envelope_cos_coefficient"])
                     * np.cos(envelope_omega * absolute_time)
                 )
+                if periods.get("modulation_type") == "periodic_phase_drift":
+                    carrier = (
+                        float(periods["carrier_cos_coefficient"])
+                        * np.sin(carrier_omega * absolute_time)
+                        - float(periods["carrier_sin_coefficient"])
+                        * np.cos(carrier_omega * absolute_time)
+                    )
                 combined = carrier * envelope
                 component_h[:, channel] = combined[:visible_length]
                 component_f[:, channel] = combined[visible_length:]
@@ -3107,21 +3924,37 @@ def replay_treatment_deltas_for_history_suffix(
                 dtype=float,
             )
             direction = np.asarray(metadata["direction_by_target"], dtype=float)
-            visible_indexes = np.arange(start, full_length)
-            component_h[visible_indexes >= join] = direction * amplitude
-            component_f[:] = direction * amplitude
+            profile = _transition_profile(
+                np.arange(start, full_length + horizon, dtype=float),
+                join=join,
+                transition_type=str(metadata.get("transition_type", "step")),
+                transition_width=int(metadata.get("transition_width", 1)),
+            )
+            combined = profile[:, None] * direction[None, :] * amplitude[None, :]
+            component_h = combined[:visible_length]
+            component_f = combined[visible_length:]
         elif capability_id == "predictable_intermittency":
             combined = np.zeros((visible_length + horizon, dimension), dtype=float)
             amplitude = np.asarray(
-                metadata["positive_event_amplitude_before_distance_adjustment"],
+                metadata.get(
+                    "event_amplitude_before_distance_adjustment",
+                    metadata["positive_event_amplitude_before_distance_adjustment"],
+                ),
                 dtype=float,
             )
             width = int(metadata["pulse_width"])
+            weights = np.asarray(
+                metadata.get(
+                    "pulse_weights",
+                    _pulse_weights(str(metadata.get("pulse_shape", "rectangular")), width),
+                ),
+                dtype=float,
+            )
             for center in metadata["event_centers"]:
-                for offset in range(width):
+                for offset, weight in enumerate(weights):
                     relative_index = int(center) + offset - start
                     if 0 <= relative_index < combined.shape[0]:
-                        combined[relative_index] += amplitude
+                        combined[relative_index] += float(weight) * amplitude
             component_h = combined[:visible_length]
             component_f = combined[visible_length:]
         elif capability_id == "multi_seasonal":
@@ -3129,13 +3962,30 @@ def replay_treatment_deltas_for_history_suffix(
             for raw_channel, periods in metadata["resolved_periods_by_target"].items():
                 channel = int(raw_channel)
                 for component in periods["components"]:
-                    omega = 2.0 * math.pi / float(component["period"])
-                    signal = (
-                        float(component["sin_coefficient"])
-                        * np.sin(omega * absolute_time)
-                        + float(component["cos_coefficient"])
-                        * np.cos(omega * absolute_time)
-                    )
+                    harmonics = component.get("harmonic_components")
+                    if harmonics:
+                        signal = np.zeros(visible_length + horizon, dtype=float)
+                        for harmonic in harmonics:
+                            omega = (
+                                2.0
+                                * math.pi
+                                * int(harmonic["multiple"])
+                                / float(component["period"])
+                            )
+                            signal += (
+                                float(harmonic["sin_coefficient"])
+                                * np.sin(omega * absolute_time)
+                                + float(harmonic["cos_coefficient"])
+                                * np.cos(omega * absolute_time)
+                            )
+                    else:
+                        omega = 2.0 * math.pi / float(component["period"])
+                        signal = (
+                            float(component["sin_coefficient"])
+                            * np.sin(omega * absolute_time)
+                            + float(component["cos_coefficient"])
+                            * np.cos(omega * absolute_time)
+                        )
                     component_h[:, channel] += signal[:visible_length]
                     component_f[:, channel] += signal[visible_length:]
         gain = float(row["applied_component_gain"])

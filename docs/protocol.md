@@ -1,4 +1,9 @@
-# CaFE v14 scientific protocol
+# CaFE v15 scientific protocol
+
+The v15 seed policy and the eight default mechanism structure families are
+specified in `docs/structural_randomness_v15.md`. One seed-selected structure
+is shared across the five levels of an instance-capability group; levels only
+change their declared difficulty coordinate.
 
 ## 1. Estimand
 

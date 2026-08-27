@@ -319,7 +319,7 @@ def _validated_inputs(dataset_root: Path) -> tuple[dict[str, Any], Path, Path]:
     if generation.get("schema_version") != GENERATION_SCHEMA:
         raise ValueError("unsupported generation manifest")
     if generation.get("config", {}).get("pipeline_schema_version") != PIPELINE_SCHEMA:
-        raise ValueError("generation is not current pipeline v14")
+        raise ValueError("generation is not current pipeline v15")
     validation_schema = validation.get("schema_version")
     current_validation = validation_schema == VALIDATION_SCHEMA
     legacy_publication_validation = (

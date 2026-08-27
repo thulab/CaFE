@@ -46,6 +46,7 @@ from cafe.benchmark_extension.mechanisms import (
     NONLINEAR_MULTISTEP_AUDIT_ORIGIN_COUNT,
     NONLINEAR_PERSISTENCE_INTERVALS,
     NONLINEAR_STABILITY_LIMIT,
+    RANDOMNESS_SCHEMA,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
@@ -61,7 +62,7 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v13"
+VALIDATION_SCHEMA = "cafe.benchmark_extension_validation.v14"
 VALIDATION_MODES = ("research", "publication")
 DEFAULT_VALIDATION_WORKERS = max(1, min(8, os.cpu_count() or 1))
 MAX_RECORDED_FAILURES = 100
@@ -954,12 +955,38 @@ def _multi_seasonal_contract_reason(row: dict[str, Any]) -> str | None:
 
 def _treatment_contract_reason(row: dict[str, Any]) -> str | None:
     return (
-        _distance_gate_reason(row)
+        _structural_randomness_reason(row)
+        or _distance_gate_reason(row)
         or _multi_seasonal_contract_reason(row)
         or _nonlinear_identifiability_gate_reason(row)
         or _horizon_support_gate_reason(row)
         or _mechanism_scoring_gate_reason(row)
     )
+
+
+def _structural_randomness_reason(row: dict[str, Any]) -> str | None:
+    group = row.get("group_metadata")
+    if not isinstance(group, dict):
+        return "structural_randomness_metadata_missing"
+    if (
+        row.get("randomness_schema") != RANDOMNESS_SCHEMA
+        or group.get("randomness_schema") != RANDOMNESS_SCHEMA
+    ):
+        return "structural_randomness_schema"
+    structure = group.get("structure_metadata")
+    digest = group.get("structure_draw_sha256")
+    if not isinstance(structure, dict) or not structure:
+        return "structural_randomness_structure_missing"
+    if digest != protocol.json_sha256(structure):
+        return "structural_randomness_hash"
+    if row.get("structure_draw_sha256") != digest:
+        return "structural_randomness_row_hash"
+    if (
+        group.get("structure_shared_across_levels") is not True
+        or row.get("structure_shared_across_levels") is not True
+    ):
+        return "structural_randomness_level_policy"
+    return None
 
 
 def _scan_treatment_row_group(

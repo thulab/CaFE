@@ -1684,7 +1684,7 @@ def _run_analysis_sharded(
         inference_manifest.get("config", {}).get("pipeline_schema_version")
         != PIPELINE_SCHEMA
     ):
-        raise ValueError("inference is not current pipeline v14")
+        raise ValueError("inference is not current pipeline v15")
     if not inference_manifest.get("complete"):
         raise ValueError("inference is incomplete")
     analysis_dir.mkdir(parents=True, exist_ok=True)

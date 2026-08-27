@@ -63,6 +63,7 @@ from cafe.benchmark_extension.mechanisms import (
     NONLINEAR_ORDINARY_STATE_MAXIMUM_ABS,
     NONLINEAR_PERSISTENCE_INTERVALS,
     NONLINEAR_STABILITY_LIMIT,
+    RANDOMNESS_SCHEMA,
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
@@ -85,10 +86,10 @@ from cafe.benchmark_extension.storage import (
 )
 
 
-PIPELINE_SCHEMA = "cafe.pipeline.v14"
-GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v12"
-SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v11"
-CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v9"
+PIPELINE_SCHEMA = "cafe.pipeline.v15"
+GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v13"
+SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v12"
+CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v10"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
 
 GENERIC_OFFICIAL_BASELINE = "benchmark_official_baseline"
@@ -406,6 +407,13 @@ def _treatment_row(
         "sampled_coordinate": treatment.sampled_coordinate,
         "applied_component_gain": treatment.applied_component_gain,
         "parameter_draw_sha256": protocol.json_sha256(parameter_draw),
+        "randomness_schema": group.group_metadata.get("randomness_schema"),
+        "structure_draw_sha256": group.group_metadata.get(
+            "structure_draw_sha256"
+        ),
+        "structure_shared_across_levels": group.group_metadata.get(
+            "structure_shared_across_levels"
+        ),
         "context_length": instance.context_length,
         "horizon": instance.prediction_length,
         "target_dim": instance.target_dim,
@@ -1537,8 +1545,9 @@ def generate_benchmark_task(
         "observed_covariate_types": sorted(observed_covariate_types),
         "treatment_history_scope": "entire_benchmark_native_input_history",
         "randomness_policy": (
-            "counter_based_by_benchmark_instance_capability_level_and_seed"
+            "seed_sampled_structure_shared_across_levels_plus_level_dose_v1"
         ),
+        "randomness_schema": RANDOMNESS_SCHEMA,
         "source_distance_policy": (
             "full_history_strength_actual_selected_model_context_bounds_v4"
         ),
@@ -1795,8 +1804,9 @@ def generate_dataset(
         ),
         "treatment_history_scope": "entire_official_input_history",
         "randomness_policy": (
-            "counter_based_by_official_instance_capability_level_and_augmentation_seed"
+            "seed_sampled_structure_shared_across_levels_plus_level_dose_v1"
         ),
+        "randomness_schema": RANDOMNESS_SCHEMA,
         "source_distance_policy": (
             "full_history_strength_actual_model_context_bounds_v3"
         ),

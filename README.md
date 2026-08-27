@@ -25,10 +25,11 @@ its channel forecasts are reassembled.
 Every supported instance×capability cell produces five treatments. Each
 capability has one explicit level coordinate: amplitude for amplitude-controlled
 mechanisms, period count for multi-seasonality, change location for regime
-switching, and event spacing for intermittency. All draws are reproducible from
-`official_instance_id`, capability, level, and `augmentation_seed`. Changing the
-augmentation seed creates another treatment batch over the same official
-samples.
+switching, and event spacing for intermittency. Each seed first selects one
+capability structure per official instance. That structure is shared by all
+five levels, while level-specific draws only control the declared difficulty
+coordinate. Changing `augmentation_seed` therefore creates a structurally
+different treatment batch over the same official samples.
 
 The source Arrow files remain the only stored copy of authentic paths.
 Generation writes compact replay contracts to ZSTD Parquet; it does not copy
@@ -68,17 +69,21 @@ checks reject a treatment group but never rescale it.
 By default, the GIFT-Eval adapter attempts these eight generatable mechanisms
 per official instance:
 
-- whole-history linear trend in the sample's own trend direction;
+- sampled linear, delayed, curved, or recurring piecewise-linear trend in the
+  sample's own stable trend direction;
 - controlled multi-period extrapolation: levels contain 2–6 independent
-  periods at fixed total RMS, using the first stable real anchor among the top
-  three history spectrum candidates or a deterministic protocol anchor;
-- constrained time-varying seasonal amplitude;
-- regime change with level-controlled change location;
-- predictable intermittency with level-controlled event sparsity;
-- native-panel common factor;
-- directed predictive cross-series transfer;
-- causal impulse response to benchmark-native covariates, preserving each
-  source field's past-only or known-future visibility.
+  periods at fixed total RMS, sampling a stable real anchor among the top three
+  history spectrum candidates or a protocol anchor, with sampled sinusoidal or
+  two-harmonic waveforms;
+- sampled carrier amplitude modulation or periodic phase drift;
+- sampled step, ramp, or sigmoid regime change with level-controlled location;
+- sampled pulse shape, sign, channel mask, and bounded recurring jitter with
+  level-controlled event sparsity;
+- sampled native-panel PC loading mixture and latent carrier;
+- sampled top-pool directed predictive cross-series transfer;
+- sampled causal impulse-response kernel, target, sign, timing, and legal
+  benchmark-native covariate, preserving each source field's past-only or
+  known-future visibility.
 
 Availability is instance-specific. Short or structurally unsuitable samples
 remain in the official baseline table and record a capability-unavailable
