@@ -14,8 +14,8 @@ from cafe.benchmark_extension.native import NativeForecastInstance
 GiftEvalInstance = NativeForecastInstance
 
 
-MECHANISM_SCHEMA = "cafe.native_path_mechanism.v11"
-RANDOMNESS_SCHEMA = "cafe.structural_randomness.v1"
+MECHANISM_SCHEMA = "cafe.native_path_mechanism.v12"
+RANDOMNESS_SCHEMA = "cafe.structural_randomness.v2"
 CAPABILITY_IDS = (
     "trend",
     "multi_seasonal",
@@ -114,6 +114,9 @@ MULTI_SEASONAL_MAXIMUM_HARMONIC_MULTIPLE = 8
 MULTI_SEASONAL_MINIMUM_PERIOD = 4.0
 MULTI_SEASONAL_MINIMUM_HISTORY_CYCLES = 3.0
 MULTI_SEASONAL_MINIMUM_FUTURE_CYCLE_FRACTION = 0.50
+CROSS_SERIES_CANDIDATE_POOL_SIZE = 12
+CROSS_SERIES_QUALIFICATION_SCAN_LIMIT = 48
+COVARIATE_IMPULSE_CANDIDATE_POOL_SIZE = 8
 MULTI_SEASONAL_MINIMUM_FREQUENCY_SEPARATION_CYCLES = 0.50
 MULTI_SEASONAL_HARMONIC_RELATIVE_TOLERANCE = 0.05
 MULTI_SEASONAL_PERIOD_CANDIDATE_COUNT = 512
@@ -140,11 +143,11 @@ NONLINEAR_MINIMUM_FUTURE_PROFILE_RANGE = 0.10
 NONLINEAR_MAXIMUM_FUTURE_PEAK_FRACTION = 0.50
 NONLINEAR_MAXIMUM_TAIL_TO_PEAK_RATIO = 0.90
 STRENGTH_INTERVALS = (
-    (0.10, 0.14),
-    (0.16, 0.20),
-    (0.22, 0.28),
-    (0.30, 0.38),
-    (0.42, 0.55),
+    (0.10, 0.15),
+    (0.17, 0.22),
+    (0.25, 0.32),
+    (0.36, 0.46),
+    (0.50, 0.65),
 )
 REGIME_RECENCY_INTERVALS = (
     (0.20, 0.32),
@@ -508,29 +511,120 @@ def _full_history_unit_distance(
     return float(np.mean(channel))
 
 
+def _strength_feasible_sampling_intervals(
+    instance: GiftEvalInstance,
+    history_component: np.ndarray,
+    affected: tuple[int, ...],
+    *,
+    future_component: np.ndarray | None = None,
+    minimum_future_effect_mase_rms: float | None = None,
+) -> tuple[tuple[tuple[float, float], ...] | None, dict[str, Any]]:
+    """Intersect nominal strength bands with analytically feasible doses."""
+
+    unit_distance = _full_history_unit_distance(
+        history_component,
+        instance.history,
+        affected,
+    )
+    if unit_distance <= 1e-10:
+        return None, {"reason": "controlled_component_not_visible"}
+    normalized = np.asarray(history_component, dtype=float) / unit_distance
+    unit_gate = _distance_gate(
+        normalized,
+        instance.history,
+        affected,
+        model_max_contexts=source_distance_model_max_contexts_for_instance(
+            instance
+        ),
+    )
+    minimum_macro_ratio = float(unit_gate["minimum_observed_macro_distance"])
+    maximum_macro_ratio = float(unit_gate["maximum_observed_macro_distance"])
+    maximum_channel_ratio = float(unit_gate["maximum_observed_channel_distance"])
+    lower_bound = (
+        SOURCE_DISTANCE_MINIMUM_MACRO / minimum_macro_ratio
+        if minimum_macro_ratio > 1e-12
+        else math.inf
+    )
+    upper_bound = min(
+        (
+            SOURCE_DISTANCE_MAXIMUM_MACRO / maximum_macro_ratio
+            if maximum_macro_ratio > 1e-12
+            else math.inf
+        ),
+        (
+            SOURCE_DISTANCE_MAXIMUM_CHANNEL / maximum_channel_ratio
+            if maximum_channel_ratio > 1e-12
+            else math.inf
+        ),
+    )
+    future_effect_per_coordinate: float | None = None
+    future_observed_count: int | None = None
+    if minimum_future_effect_mase_rms is not None:
+        if future_component is None:
+            raise ValueError("future component required for future-effect dose bound")
+        _raw, unit_future_effect, future_observed_count = mechanism_effect_signal(
+            future_component,
+            instance.future_observed_mask,
+            mase_scale_by_target(instance.history, instance.frequency),
+            affected,
+        )
+        future_effect_per_coordinate = (
+            float(unit_future_effect) / unit_distance
+        )
+        if future_effect_per_coordinate <= 1e-12 or future_observed_count <= 0:
+            lower_bound = math.inf
+        else:
+            lower_bound = max(
+                lower_bound,
+                float(minimum_future_effect_mase_rms)
+                / future_effect_per_coordinate,
+            )
+    effective: list[tuple[float, float]] = []
+    empty_levels: list[int] = []
+    for level, nominal in zip(CAPABILITY_LEVELS, STRENGTH_INTERVALS, strict=True):
+        lower = max(float(nominal[0]), lower_bound)
+        upper = min(float(nominal[1]), upper_bound)
+        if lower > upper + 1e-12:
+            empty_levels.append(level)
+        effective.append((lower, upper))
+    metadata = {
+        "schema_version": "cafe.strength_feasible_sampling.v1",
+        "nominal_intervals": [list(interval) for interval in STRENGTH_INTERVALS],
+        "global_feasible_coordinate_bounds": [lower_bound, upper_bound],
+        "effective_sampling_intervals": [list(interval) for interval in effective],
+        "minimum_model_context_macro_ratio_per_full_history_coordinate": (
+            minimum_macro_ratio
+        ),
+        "maximum_model_context_macro_ratio_per_full_history_coordinate": (
+            maximum_macro_ratio
+        ),
+        "maximum_model_context_channel_ratio_per_full_history_coordinate": (
+            maximum_channel_ratio
+        ),
+        "minimum_future_effect_mase_rms": minimum_future_effect_mase_rms,
+        "future_effect_mase_rms_per_full_history_coordinate": (
+            future_effect_per_coordinate
+        ),
+        "future_observed_count": future_observed_count,
+        "empty_levels": empty_levels,
+        "accepted": not empty_levels,
+    }
+    return (None if empty_levels else tuple(effective)), metadata
+
+
 def _strength_structure_passes_distance_bounds(
     instance: GiftEvalInstance,
     history_component: np.ndarray,
     affected: tuple[int, ...],
 ) -> bool:
-    """Check the two endpoint doses before a structure enters a seed pool."""
+    """Require a non-empty feasible dose subinterval at every level."""
 
-    unit_distance = _full_history_unit_distance(
-        history_component, instance.history, affected
+    intervals, _metadata = _strength_feasible_sampling_intervals(
+        instance,
+        history_component,
+        affected,
     )
-    if unit_distance <= 1e-10:
-        return False
-    model_contexts = source_distance_model_max_contexts_for_instance(instance)
-    for coordinate in (STRENGTH_INTERVALS[0][0], STRENGTH_INTERVALS[-1][1]):
-        gate = _distance_gate(
-            history_component * (float(coordinate) / unit_distance),
-            instance.history,
-            affected,
-            model_max_contexts=model_contexts,
-        )
-        if not gate["accepted"]:
-            return False
-    return True
+    return intervals is not None
 
 
 def _linear_extrapolation(values: np.ndarray, horizon: int) -> np.ndarray:
@@ -881,15 +975,27 @@ def _trend_units(
     unit_distance = _full_history_unit_distance(base[:length], history, affected)
     if unit_distance <= 1e-10:
         raise ValueError("trend_component_not_visible")
+    sampling_intervals, feasibility = _strength_feasible_sampling_intervals(
+        instance,
+        base[:length],
+        affected,
+    )
+    if sampling_intervals is None:
+        raise ValueError("trend_structure_has_no_feasible_dose")
     units: list[_UnitTreatment] = []
-    for level, interval in zip(CAPABILITY_LEVELS, STRENGTH_INTERVALS, strict=True):
+    for level, interval, sampling_interval in zip(
+        CAPABILITY_LEVELS,
+        STRENGTH_INTERVALS,
+        sampling_intervals,
+        strict=True,
+    ):
         draw = float(
             _rng(
                 instance.official_instance_id,
                 "trend",
                 level,
                 augmentation_seed=augmentation_seed,
-            ).uniform(*interval)
+            ).uniform(*sampling_interval)
         )
         gain = draw / unit_distance
         units.append(
@@ -912,6 +1018,7 @@ def _trend_units(
                     "future_continuation": "same_profile_law_as_treatment_history",
                     "unit_component_distance": unit_distance,
                     "physical_linear_gain": gain,
+                    "effective_sampling_interval": list(sampling_interval),
                 },
             )
         )
@@ -926,6 +1033,10 @@ def _trend_units(
     }
     return units, {
         "stable_trend_target_indices": stable,
+        "effective_sampling_intervals": [
+            list(interval) for interval in sampling_intervals
+        ],
+        "strength_feasibility": feasibility,
         "structure_metadata": structure,
     }
 
@@ -1529,21 +1640,40 @@ def _strength_scaled_units(
     metadata: dict[str, Any],
     history_covariate_component: np.ndarray | None = None,
     future_covariate_component: np.ndarray | None = None,
+    minimum_future_effect_mase_rms: float | None = None,
 ) -> tuple[list[_UnitTreatment], dict[str, Any]]:
     unit_distance = _full_history_unit_distance(
         history_component, instance.history, affected
     )
     if unit_distance <= 1e-10:
         raise ValueError("controlled_component_not_visible")
+    sampling_intervals, feasibility = _strength_feasible_sampling_intervals(
+        instance,
+        history_component,
+        affected,
+        future_component=future_component,
+        minimum_future_effect_mase_rms=minimum_future_effect_mase_rms,
+    )
+    if sampling_intervals is None:
+        empty = feasibility.get("empty_levels") or []
+        raise ValueError(
+            "strength_level_has_no_feasible_dose"
+            + (f"_{empty[0]}" if empty else "")
+        )
     units: list[_UnitTreatment] = []
-    for level, interval in zip(CAPABILITY_LEVELS, STRENGTH_INTERVALS, strict=True):
+    for level, interval, sampling_interval in zip(
+        CAPABILITY_LEVELS,
+        STRENGTH_INTERVALS,
+        sampling_intervals,
+        strict=True,
+    ):
         draw = float(
             _rng(
                 instance.official_instance_id,
                 capability_id,
                 level,
                 augmentation_seed=augmentation_seed,
-            ).uniform(*interval)
+            ).uniform(*sampling_interval)
         )
         gain = draw / unit_distance
         units.append(
@@ -1558,6 +1688,7 @@ def _strength_scaled_units(
                     **metadata,
                     "unit_component_distance": unit_distance,
                     "physical_component_gain": gain,
+                    "effective_sampling_interval": list(sampling_interval),
                 },
                 history_covariate_delta=(
                     None
@@ -1571,7 +1702,13 @@ def _strength_scaled_units(
                 ),
             )
         )
-    return units, {"unit_component_distance": unit_distance}
+    return units, {
+        "unit_component_distance": unit_distance,
+        "effective_sampling_intervals": [
+            list(interval) for interval in sampling_intervals
+        ],
+        "strength_feasibility": feasibility,
+    }
 
 
 def _regime_units(
@@ -2804,7 +2941,30 @@ def _cross_series_units(
     if not candidates:
         raise ValueError("directed_incremental_predictive_gain_too_small")
     candidates.sort(key=lambda row: row[0], reverse=True)
-    pool = candidates[: min(12, len(candidates))]
+    qualified: list[
+        tuple[int, tuple[float, int, int, int, np.ndarray]]
+    ] = []
+    scanned = candidates[:CROSS_SERIES_QUALIFICATION_SCAN_LIMIT]
+    qualification_scan_count = 0
+    for predictive_rank, candidate in enumerate(scanned, start=1):
+        qualification_scan_count = predictive_rank
+        _incremental, driver, responder, lag, coefficients = candidate
+        beta = float(coefficients[-1])
+        candidate_history = np.zeros_like(history)
+        candidate_history[lag:, responder] = (
+            scales[responder] * beta * z[:-lag, driver]
+        )
+        if _strength_structure_passes_distance_bounds(
+            instance,
+            candidate_history,
+            (responder,),
+        ):
+            qualified.append((predictive_rank, candidate))
+        if len(qualified) >= CROSS_SERIES_CANDIDATE_POOL_SIZE:
+            break
+    if not qualified:
+        raise ValueError("no_source_distance_qualified_predictive_edge")
+    pool = qualified
     selected_index = int(
         _structure_rng(
             instance,
@@ -2812,7 +2972,8 @@ def _cross_series_units(
             augmentation_seed=augmentation_seed,
         ).integers(0, len(pool))
     )
-    incremental, driver, responder, lag, coefficients = pool[selected_index]
+    predictive_rank, selected = pool[selected_index]
+    incremental, driver, responder, lag, coefficients = selected
     beta = float(coefficients[-1])
     component_h = np.zeros_like(history)
     component_h[lag:, responder] = scales[responder] * beta * z[:-lag, driver]
@@ -2842,8 +3003,11 @@ def _cross_series_units(
             "claim_scope": "predictive_not_causal",
             "target_future_used_for_delta": False,
             "eligible_edge_count": len(candidates),
+            "qualification_scan_count": qualification_scan_count,
+            "source_distance_qualified_edge_count": len(qualified),
             "sampled_pool_size": len(pool),
-            "selected_edge_rank": selected_index + 1,
+            "selected_pool_index": selected_index,
+            "selected_edge_rank": predictive_rank,
         },
     )
     return units, {
@@ -2853,8 +3017,201 @@ def _cross_series_units(
             "responder_target_index": responder,
             "lag": lag,
             "eligible_edge_count": len(candidates),
+            "qualification_scan_count": qualification_scan_count,
+            "source_distance_qualified_edge_count": len(qualified),
+            "selected_edge_rank": predictive_rank,
         },
     }
+
+
+def _covariate_impulse_candidate_descriptors(
+    instance: GiftEvalInstance,
+    legal_covariates: np.ndarray,
+    period_candidates: list[int],
+) -> list[dict[str, Any]]:
+    """Return a small seed-independent pool of structural descriptors."""
+
+    horizon = int(instance.prediction_length)
+    descriptors: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for candidate_index in range(COVARIATE_IMPULSE_CANDIDATE_POOL_SIZE):
+        rng = _rng(
+            RANDOMNESS_SCHEMA,
+            instance.official_instance_id,
+            "covariate_impulse_response",
+            "qualification_candidate",
+            candidate_index,
+            augmentation_seed=0,
+        )
+        covariate = int(rng.choice(legal_covariates))
+        target_index = int(rng.integers(0, instance.history.shape[1]))
+        period = int(rng.choice(np.asarray(period_candidates)))
+        kernel_type = str(
+            rng.choice(
+                np.asarray(("exponential", "delayed_gamma", "triangular"))
+            )
+        )
+        half_life = float(
+            horizon * rng.choice(np.asarray((0.5, 1.0, 1.5)))
+        )
+        delay = int(
+            rng.integers(0, max(1, horizon // 4) + 1)
+            if kernel_type != "exponential"
+            else 0
+        )
+        descriptor = {
+            "candidate_index": candidate_index,
+            "covariate_index": covariate,
+            "target_index": target_index,
+            "period": period,
+            "kernel_type": kernel_type,
+            "half_life": half_life,
+            "delay": delay,
+            "covariate_sign": float(rng.choice(np.asarray((-1.0, 1.0)))),
+            "response_sign": float(rng.choice(np.asarray((-1.0, 1.0)))),
+            "terminal_offset": int(
+                rng.integers(0, max(1, horizon // 4) + 1)
+            ),
+            "future_offset": int(rng.integers(0, max(1, horizon))),
+        }
+        key = tuple(
+            descriptor[name]
+            for name in (
+                "covariate_index",
+                "target_index",
+                "period",
+                "kernel_type",
+                "half_life",
+                "delay",
+                "covariate_sign",
+                "response_sign",
+                "terminal_offset",
+                "future_offset",
+            )
+        )
+        if key not in seen:
+            seen.add(key)
+            descriptors.append(descriptor)
+    return descriptors
+
+
+def _covariate_impulse_basis(
+    instance: GiftEvalInstance,
+    descriptor: dict[str, Any],
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[int],
+    list[int],
+    int,
+]:
+    length = int(instance.history.shape[0])
+    horizon = int(instance.prediction_length)
+    total = length + horizon
+    covariate = int(descriptor["covariate_index"])
+    covariate_sign = float(descriptor["covariate_sign"])
+    period = int(descriptor["period"])
+    terminal_index = length - 1 - int(descriptor["terminal_offset"])
+    base_impulse = np.zeros(total, dtype=float)
+    historical_centers: list[int] = []
+    center = terminal_index
+    while center >= 0:
+        base_impulse[center] = covariate_sign
+        historical_centers.append(center)
+        center -= period
+    historical_centers.sort()
+    base_impulse[terminal_index] = 0.0
+    future_centers: list[int] = []
+    if instance.future_covariate_visible[covariate]:
+        future_center = length + int(descriptor["future_offset"])
+        if future_center < total:
+            base_impulse[future_center] = covariate_sign
+            future_centers.append(future_center)
+    terminal_impulse = np.zeros(total, dtype=float)
+    terminal_impulse[terminal_index] = covariate_sign
+    kernel = _impulse_kernel(
+        kernel_type=str(descriptor["kernel_type"]),
+        length=2 * horizon + 1,
+        half_life=float(descriptor["half_life"]),
+        delay=int(descriptor["delay"]),
+    )
+    return (
+        base_impulse,
+        terminal_impulse,
+        kernel,
+        historical_centers,
+        future_centers,
+        terminal_index,
+    )
+
+
+def _qualify_covariate_impulse_candidate(
+    instance: GiftEvalInstance,
+    descriptor: dict[str, Any],
+    *,
+    target_scales: np.ndarray,
+) -> dict[str, Any] | None:
+    (
+        base_impulse,
+        terminal_impulse,
+        kernel,
+        _historical_centers,
+        _future_centers,
+        _terminal_index,
+    ) = _covariate_impulse_basis(instance, descriptor)
+    length = int(instance.history.shape[0])
+    total = int(length + instance.prediction_length)
+    target_index = int(descriptor["target_index"])
+    response_sign = float(descriptor["response_sign"])
+    base_response = response_sign * np.convolve(
+        base_impulse, kernel, mode="full"
+    )[:total]
+    terminal_response = response_sign * np.convolve(
+        terminal_impulse, kernel, mode="full"
+    )[:total]
+    history_component = np.zeros_like(instance.history)
+    future_component = np.zeros_like(instance.future)
+    terminal_amplitude = 1.0
+    for attempt in range(24):
+        response = base_response + terminal_amplitude * terminal_response
+        history_component[:, target_index] = (
+            target_scales[target_index] * response[:length]
+        )
+        future_component[:, target_index] = (
+            target_scales[target_index] * response[length:]
+        )
+        sampling_intervals, feasibility = _strength_feasible_sampling_intervals(
+            instance,
+            history_component,
+            (target_index,),
+            future_component=future_component,
+            minimum_future_effect_mase_rms=(
+                MECHANISM_EFFECT_MINIMUM_MASE_RMS
+            ),
+        )
+        if sampling_intervals is not None:
+            future_effect_per_coordinate = float(
+                feasibility["future_effect_mase_rms_per_full_history_coordinate"]
+            )
+            constructed_minimum_future_effect = (
+                float(sampling_intervals[0][0])
+                * future_effect_per_coordinate
+            )
+            return {
+                **descriptor,
+                "terminal_amplitude": terminal_amplitude,
+                "amplitude_attempt_count": attempt + 1,
+                "effective_sampling_intervals": [
+                    list(interval) for interval in sampling_intervals
+                ],
+                "strength_feasibility": feasibility,
+                "constructed_minimum_future_effect_mase_rms": (
+                    constructed_minimum_future_effect
+                ),
+            }
+        terminal_amplitude *= 2.0
+    return None
 
 
 def _covariate_impulse_units(
@@ -2891,14 +3248,6 @@ def _covariate_impulse_units(
     )
     if legal.size == 0:
         raise ValueError("no_nonconstant_continuous_dynamic_covariate")
-    structure_rng = _structure_rng(
-        instance,
-        "covariate_impulse_response",
-        augmentation_seed=augmentation_seed,
-    )
-    covariate = int(structure_rng.choice(legal))
-    scales = _scale_by_target(history)
-    target_index = int(structure_rng.integers(0, history.shape[1]))
     period_candidates = sorted(
         {
             max(8, int(round(1.5 * horizon))),
@@ -2911,89 +3260,58 @@ def _covariate_impulse_units(
     ]
     if not period_candidates:
         period_candidates = [base_period]
-    period = int(structure_rng.choice(np.asarray(period_candidates)))
-    kernel_type = str(
-        structure_rng.choice(
-            np.asarray(("exponential", "delayed_gamma", "triangular"))
+    target_scales = _scale_by_target(history)
+    descriptors = _covariate_impulse_candidate_descriptors(
+        instance,
+        legal,
+        period_candidates,
+    )
+    qualified = [
+        candidate
+        for descriptor in descriptors
+        if (
+            candidate := _qualify_covariate_impulse_candidate(
+                instance,
+                descriptor,
+                target_scales=target_scales,
+            )
         )
+        is not None
+    ]
+    if not qualified:
+        raise ValueError("no_qualified_covariate_impulse_structure")
+    selected_pool_index = int(
+        _structure_rng(
+            instance,
+            "covariate_impulse_response",
+            augmentation_seed=augmentation_seed,
+        ).integers(0, len(qualified))
     )
-    half_life = float(
-        horizon * structure_rng.choice(np.asarray((0.5, 1.0, 1.5)))
-    )
-    delay = int(
-        structure_rng.integers(0, max(1, horizon // 4) + 1)
-        if kernel_type != "exponential"
-        else 0
-    )
-    covariate_sign = float(structure_rng.choice(np.asarray((-1.0, 1.0))))
-    response_sign = float(structure_rng.choice(np.asarray((-1.0, 1.0))))
-    terminal_offset = int(
-        structure_rng.integers(0, max(1, horizon // 4) + 1)
-    )
-    terminal_index = length - 1 - terminal_offset
+    selected = qualified[selected_pool_index]
+    covariate = int(selected["covariate_index"])
+    target_index = int(selected["target_index"])
+    covariate_sign = float(selected["covariate_sign"])
+    response_sign = float(selected["response_sign"])
+    terminal_amplitude = float(selected["terminal_amplitude"])
+    (
+        base_impulse,
+        terminal_impulse,
+        kernel,
+        historical_centers,
+        future_centers,
+        terminal_index,
+    ) = _covariate_impulse_basis(instance, selected)
+    impulse = base_impulse + terminal_amplitude * terminal_impulse
     total = length + horizon
-    impulse = np.zeros(total, dtype=float)
-    historical_centers: list[int] = []
-    center = terminal_index
-    while center >= 0:
-        impulse[center] = covariate_sign
-        historical_centers.append(center)
-        center -= period
-    historical_centers.sort()
-    future_centers: list[int] = []
-    if instance.future_covariate_visible[covariate]:
-        future_center = length + int(structure_rng.integers(0, max(1, horizon)))
-        if future_center < total:
-            impulse[future_center] = covariate_sign
-            future_centers.append(future_center)
-    kernel = _impulse_kernel(
-        kernel_type=kernel_type,
-        length=2 * horizon + 1,
-        half_life=half_life,
-        delay=delay,
-    )
-    mase_scales = mase_scale_by_target(instance.history, instance.frequency)
-    minimum_coordinate = float(STRENGTH_INTERVALS[0][0])
-    terminal_amplitude = 1.0
-    constructed_minimum_future_effect = 0.0
-    response = np.zeros(total, dtype=float)
+    response = response_sign * np.convolve(impulse, kernel, mode="full")[:total]
     history_component = np.zeros_like(history)
     future_component = np.zeros_like(instance.future)
-    for _attempt in range(24):
-        impulse[terminal_index] = covariate_sign * terminal_amplitude
-        response = (
-            response_sign
-            * np.convolve(impulse, kernel, mode="full")[:total]
-        )
-        history_component.fill(0.0)
-        future_component.fill(0.0)
-        history_component[:, target_index] = (
-            scales[target_index] * response[:length]
-        )
-        future_component[:, target_index] = (
-            scales[target_index] * response[length:]
-        )
-        unit_distance = _full_history_unit_distance(
-            history_component, instance.history, (target_index,)
-        )
-        unit_future_effect = mechanism_effect_signal(
-            future_component,
-            instance.future_observed_mask,
-            mase_scales,
-            (target_index,),
-        )[1]
-        if unit_distance > 1e-12:
-            constructed_minimum_future_effect = (
-                minimum_coordinate * unit_future_effect / unit_distance
-            )
-        if (
-            constructed_minimum_future_effect
-            >= MECHANISM_EFFECT_MINIMUM_MASE_RMS
-        ):
-            break
-        terminal_amplitude *= 2.0
-    else:
-        raise ValueError("cannot_construct_scoreable_covariate_response_tail")
+    history_component[:, target_index] = (
+        target_scales[target_index] * response[:length]
+    )
+    future_component[:, target_index] = (
+        target_scales[target_index] * response[length:]
+    )
     history_covariate_component = np.zeros_like(instance.history_covariates)
     future_covariate_component = np.zeros_like(instance.future_covariates)
     history_covariate_component[:, covariate] = (
@@ -3003,14 +3321,12 @@ def _covariate_impulse_units(
         future_covariate_component[:, covariate] = (
             covariate_scales[covariate] * impulse[length:]
         )
-    history_covariate_component[terminal_index, covariate] = (
-        covariate_scales[covariate]
-        * covariate_sign
-        * terminal_amplitude
-    )
     future_rms = float(np.sqrt(np.mean(np.square(response[length:]))))
     if future_rms <= 1e-8:
         raise ValueError("constructed_impulse_response_has_zero_future_energy")
+    constructed_minimum_future_effect = float(
+        selected["constructed_minimum_future_effect_mase_rms"]
+    )
     units, group = _strength_scaled_units(
         instance,
         augmentation_seed,
@@ -3027,16 +3343,14 @@ def _covariate_impulse_units(
             "historical_impulse_centers": historical_centers,
             "future_impulse_centers": future_centers,
             "terminal_impulse_index": terminal_index,
-            "terminal_impulse_amplitude": (
-                covariate_sign * terminal_amplitude
-            ),
+            "terminal_impulse_amplitude": covariate_sign * terminal_amplitude,
             "covariate_impulse_sign": covariate_sign,
             "target_response_sign": response_sign,
-            "impulse_period": period,
-            "kernel": kernel_type,
+            "impulse_period": int(selected["period"]),
+            "kernel": str(selected["kernel_type"]),
             "kernel_length": int(kernel.size),
-            "kernel_half_life": half_life,
-            "kernel_delay": delay,
+            "kernel_half_life": float(selected["half_life"]),
+            "kernel_delay": int(selected["delay"]),
             "covariate_unit_scale": float(covariate_scales[covariate]),
             "unit_future_response_rms": future_rms,
             "constructed_minimum_future_effect_mase_rms": (
@@ -3045,6 +3359,16 @@ def _covariate_impulse_units(
             "minimum_required_future_effect_mase_rms": (
                 MECHANISM_EFFECT_MINIMUM_MASE_RMS
             ),
+            "candidate_pool_size": len(descriptors),
+            "qualified_candidate_count": len(qualified),
+            "selected_candidate_pool_index": selected_pool_index,
+            "selected_candidate_index": int(selected["candidate_index"]),
+            "terminal_amplitude_attempt_count": int(
+                selected["amplitude_attempt_count"]
+            ),
+            "effective_sampling_intervals": selected[
+                "effective_sampling_intervals"
+            ],
             "future_covariate_path_visible_to_model": bool(
                 instance.future_covariate_visible[covariate]
             ),
@@ -3052,19 +3376,23 @@ def _covariate_impulse_units(
         },
         history_covariate_component=history_covariate_component,
         future_covariate_component=future_covariate_component,
+        minimum_future_effect_mase_rms=MECHANISM_EFFECT_MINIMUM_MASE_RMS,
     )
     return units, {
         **group,
+        "candidate_pool_size": len(descriptors),
+        "qualified_candidate_count": len(qualified),
         "structure_metadata": {
             "covariate_index": covariate,
             "target_index": target_index,
-            "kernel_type": kernel_type,
-            "kernel_half_life": half_life,
-            "kernel_delay": delay,
-            "impulse_period": period,
+            "kernel_type": str(selected["kernel_type"]),
+            "kernel_half_life": float(selected["half_life"]),
+            "kernel_delay": int(selected["delay"]),
+            "impulse_period": int(selected["period"]),
             "terminal_impulse_index": terminal_index,
             "covariate_impulse_sign": covariate_sign,
             "target_response_sign": response_sign,
+            "selected_candidate_index": int(selected["candidate_index"]),
         },
     }
 

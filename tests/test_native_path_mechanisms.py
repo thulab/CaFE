@@ -11,12 +11,14 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
     SOURCE_DISTANCE_THRESHOLD,
+    STRENGTH_INTERVALS,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     _dominant_frequency_indexes,
     _distance_gate,
     _independent_seasonal_period,
     _nonlinear_innovation_bootstrap_paths,
     _nonlinear_state_response,
+    _strength_feasible_sampling_intervals,
     build_capability_group,
     mase_scale_by_target,
     mechanism_effect_signal,
@@ -639,18 +641,107 @@ def test_default_capabilities_draw_seed_specific_structures_shared_by_levels() -
         repeated = build_capability_group(
             instance, capability_id, augmentation_seed=101
         )
-        second = build_capability_group(
-            instance, capability_id, augmentation_seed=202
-        )
-        assert first.available and repeated.available and second.available
+        alternatives = [
+            build_capability_group(
+                instance, capability_id, augmentation_seed=seed
+            )
+            for seed in (202, 303, 404)
+        ]
+        assert first.available and repeated.available
+        assert all(group.available for group in alternatives)
         assert first.group_metadata["structure_shared_across_levels"] is True
         assert first.group_metadata["structure_draw_sha256"] == (
             repeated.group_metadata["structure_draw_sha256"]
         )
-        assert first.group_metadata["structure_draw_sha256"] != (
-            second.group_metadata["structure_draw_sha256"]
-        )
+        structure_hashes = {
+            first.group_metadata["structure_draw_sha256"],
+            *(
+                group.group_metadata["structure_draw_sha256"]
+                for group in alternatives
+            ),
+        }
+        assert len(structure_hashes) >= 2
         assert len(first.treatments) == 5
+
+
+def test_qualified_structure_pools_are_seed_invariant_and_diverse() -> None:
+    length = 1200
+    t = np.arange(float(length))
+    rng = np.random.default_rng(117)
+    driver = np.sin(2.0 * np.pi * t / 24.0) + 0.04 * rng.normal(size=length)
+    instance = _instance(
+        np.column_stack(
+            (
+                driver,
+                0.9 * np.roll(driver, 2) + 0.06 * rng.normal(size=length),
+                -0.7 * np.roll(driver, 5) + 0.08 * rng.normal(size=length),
+            )
+        ),
+        horizon=120,
+    )
+    for capability_id in (
+        "cross_series_dependence",
+        "covariate_impulse_response",
+    ):
+        groups = [
+            build_capability_group(
+                instance,
+                capability_id,
+                augmentation_seed=seed,
+            )
+            for seed in range(8)
+        ]
+        assert all(group.available for group in groups)
+        assert len(
+            {
+                group.group_metadata["structure_draw_sha256"]
+                for group in groups
+            }
+        ) >= 2
+        for group in groups:
+            assert all(
+                treatment.source_distance_gate["accepted"]
+                for treatment in group.treatments
+            )
+        if capability_id == "cross_series_dependence":
+            counts = {
+                group.group_metadata["structure_metadata"][
+                    "source_distance_qualified_edge_count"
+                ]
+                for group in groups
+            }
+        else:
+            counts = {
+                group.group_metadata["qualified_candidate_count"]
+                for group in groups
+            }
+        assert len(counts) == 1
+        assert next(iter(counts)) >= 2
+
+
+def test_strength_levels_use_expanded_nominal_and_feasible_subintervals() -> None:
+    assert STRENGTH_INTERVALS == (
+        (0.10, 0.15),
+        (0.17, 0.22),
+        (0.25, 0.32),
+        (0.36, 0.46),
+        (0.50, 0.65),
+    )
+    length = 12000
+    rng = np.random.default_rng(181)
+    instance = _instance(rng.normal(size=length), horizon=48)
+    component = np.ones_like(instance.history)
+    component[-2048:] *= 0.75
+    intervals, metadata = _strength_feasible_sampling_intervals(
+        instance,
+        component,
+        (0,),
+    )
+    assert intervals is not None
+    assert STRENGTH_INTERVALS[0][0] < intervals[0][0] < intervals[0][1]
+    assert intervals[0][1] == STRENGTH_INTERVALS[0][1]
+    assert metadata["accepted"]
+    assert metadata["empty_levels"] == []
 
 
 def test_structurally_randomized_default_capabilities_replay_exactly() -> None:

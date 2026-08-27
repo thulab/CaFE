@@ -32,6 +32,9 @@ from cafe.benchmark_extension.gift_eval import (
 )
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
+    COVARIATE_IMPULSE_CANDIDATE_POOL_SIZE,
+    CROSS_SERIES_CANDIDATE_POOL_SIZE,
+    CROSS_SERIES_QUALIFICATION_SCAN_LIMIT,
     DEFAULT_CAPABILITY_IDS,
     COMMON_FACTOR_MINIMUM_HARMONIC_SHARE,
     COMMON_FACTOR_MINIMUM_TAIL_HEAD_RMS_RATIO,
@@ -67,6 +70,7 @@ from cafe.benchmark_extension.mechanisms import (
     SOURCE_DISTANCE_MAXIMUM_CHANNEL,
     SOURCE_DISTANCE_MAXIMUM_MACRO,
     SOURCE_DISTANCE_MINIMUM_MACRO,
+    STRENGTH_INTERVALS,
     TVS_ENVELOPE_ACTIVE_AMPLITUDE_FRACTION,
     TVS_ENVELOPE_MINIMUM_ACTIVE_FRACTION,
     TVS_MINIMUM_INCREMENTAL_R2,
@@ -1545,9 +1549,25 @@ def generate_benchmark_task(
         "observed_covariate_types": sorted(observed_covariate_types),
         "treatment_history_scope": "entire_benchmark_native_input_history",
         "randomness_policy": (
-            "seed_sampled_structure_shared_across_levels_plus_level_dose_v1"
+            "qualified_pool_then_seed_sampled_structure_shared_across_levels_"
+            "plus_level_dose_v2"
         ),
         "randomness_schema": RANDOMNESS_SCHEMA,
+        "seed_independent_candidate_qualification": {
+            "cross_series_scan_limit": CROSS_SERIES_QUALIFICATION_SCAN_LIMIT,
+            "cross_series_pool_size": CROSS_SERIES_CANDIDATE_POOL_SIZE,
+            "covariate_impulse_pool_size": (
+                COVARIATE_IMPULSE_CANDIDATE_POOL_SIZE
+            ),
+            "qualification_uses_existing_gates_only": True,
+        },
+        "strength_level_intervals": [
+            list(interval) for interval in STRENGTH_INTERVALS
+        ],
+        "strength_sampling_policy": (
+            "uniform_within_nominal_level_intersected_with_analytic_"
+            "source_distance_and_future_effect_feasible_bounds_v1"
+        ),
         "source_distance_policy": (
             "full_history_strength_actual_selected_model_context_bounds_v4"
         ),
@@ -1804,9 +1824,25 @@ def generate_dataset(
         ),
         "treatment_history_scope": "entire_official_input_history",
         "randomness_policy": (
-            "seed_sampled_structure_shared_across_levels_plus_level_dose_v1"
+            "qualified_pool_then_seed_sampled_structure_shared_across_levels_"
+            "plus_level_dose_v2"
         ),
         "randomness_schema": RANDOMNESS_SCHEMA,
+        "seed_independent_candidate_qualification": {
+            "cross_series_scan_limit": CROSS_SERIES_QUALIFICATION_SCAN_LIMIT,
+            "cross_series_pool_size": CROSS_SERIES_CANDIDATE_POOL_SIZE,
+            "covariate_impulse_pool_size": (
+                COVARIATE_IMPULSE_CANDIDATE_POOL_SIZE
+            ),
+            "qualification_uses_existing_gates_only": True,
+        },
+        "strength_level_intervals": [
+            list(interval) for interval in STRENGTH_INTERVALS
+        ],
+        "strength_sampling_policy": (
+            "uniform_within_nominal_level_intersected_with_analytic_"
+            "source_distance_and_future_effect_feasible_bounds_v1"
+        ),
         "source_distance_policy": (
             "full_history_strength_actual_model_context_bounds_v3"
         ),

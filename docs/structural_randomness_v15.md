@@ -12,6 +12,24 @@ history-only capability qualification, treatment-to-source distance bounds,
 and a future-effect or horizon-support check where the mechanism needs one.
 No future target value participates in structure selection.
 
+Cross-series and covariate-impulse structures use bounded, seed-independent
+candidate pools. Existing distance and future-effect checks qualify the pool
+before `augmentation_seed` selects a structure, so the seed changes the
+mechanism realization without changing whether the instance is available.
+Cross-series reuses its existing predictive-edge ranking, scans at most 48
+edges, and retains at most 12. Covariate impulse constructs and checks at most
+8 descriptors rather than enumerating the covariate/target/kernel product.
+Qualification requires every level to have a non-empty feasible dose
+subinterval. The actual draw is uniform on the intersection of the nominal
+level band with the analytic source-distance and, where required,
+future-effect bounds. Borderline structures are therefore retained without
+allowing a seed-specific dose to change availability.
+
+The strength-controlled nominal bands are `0.10–0.15`, `0.17–0.22`,
+`0.25–0.32`, `0.36–0.46`, and `0.50–0.65`. The Level 1 lower bound remains
+`0.10`; upper levels are moderately expanded relative to the initial v15
+bands.
+
 ## Seeded structures
 
 | Capability | Seed-selected structure |
@@ -34,7 +52,7 @@ cycle visible in the treatment history, rather than a forecast-only change.
 
 Each available capability group records:
 
-- `randomness_schema = cafe.structural_randomness.v1`;
+- `randomness_schema = cafe.structural_randomness.v2`;
 - the frozen `structure_metadata`;
 - `structure_draw_sha256`;
 - `structure_shared_across_levels = true`.
@@ -42,4 +60,3 @@ Each available capability group records:
 Generation schema v13 and contract schema v10 store these fields while keeping
 the source benchmark artifacts as the only dense copy. Publication validation
 regenerates the same structure and compares the compact contract exactly.
-

@@ -3,7 +3,8 @@
 The v15 seed policy and the eight default mechanism structure families are
 specified in `docs/structural_randomness_v15.md`. One seed-selected structure
 is shared across the five levels of an instance-capability group; levels only
-change their declared difficulty coordinate.
+change their declared difficulty coordinate. Candidate-dependent gates run
+before seed selection for cross-series and covariate-impulse structures.
 
 ## 1. Estimand
 
