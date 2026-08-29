@@ -376,23 +376,72 @@ def _season_length(frequency: str) -> int:
     return 1
 
 
-def mase_scale_by_target(history: np.ndarray, frequency: str) -> np.ndarray:
+def mase_scale_by_target(
+    history: np.ndarray,
+    frequency_or_seasonality: str | int,
+    *,
+    observed_mask: np.ndarray | None = None,
+) -> np.ndarray:
     """Return the authentic-history scale used by treatment MASE."""
 
     values = np.asarray(history, dtype=float)
-    period = _season_length(frequency)
+    period = (
+        _season_length(frequency_or_seasonality)
+        if isinstance(frequency_or_seasonality, str)
+        else max(1, int(frequency_or_seasonality))
+    )
     lag = min(max(1, period), max(1, values.shape[0] - 1))
     differences = np.abs(values[lag:] - values[:-lag])
-    scales = (
-        np.mean(differences, axis=0)
-        if differences.size
-        else np.ones(values.shape[1])
-    )
-    fallback = np.mean(np.abs(np.diff(values, axis=0)), axis=0)
+    if observed_mask is None:
+        scales = (
+            np.mean(differences, axis=0)
+            if differences.size
+            else np.ones(values.shape[1])
+        )
+        fallback = np.mean(np.abs(np.diff(values, axis=0)), axis=0)
+    else:
+        observed = np.asarray(observed_mask, dtype=bool)
+        if observed.shape != values.shape:
+            raise ValueError("history observed mask shape mismatch")
+        valid = observed[lag:] & observed[:-lag]
+        scales = np.asarray(
+            [
+                (
+                    float(np.mean(differences[:, channel][valid[:, channel]]))
+                    if np.any(valid[:, channel])
+                    else float("nan")
+                )
+                for channel in range(values.shape[1])
+            ]
+        )
+        adjacent = np.abs(np.diff(values, axis=0))
+        adjacent_valid = observed[1:] & observed[:-1]
+        fallback = np.asarray(
+            [
+                (
+                    float(
+                        np.mean(
+                            adjacent[:, channel][adjacent_valid[:, channel]]
+                        )
+                    )
+                    if np.any(adjacent_valid[:, channel])
+                    else float("nan")
+                )
+                for channel in range(values.shape[1])
+            ]
+        )
     scales = np.where(
         np.isfinite(scales) & (scales > 1e-8), scales, fallback
     )
     return np.where(np.isfinite(scales) & (scales > 1e-8), scales, 1.0)
+
+
+def _instance_mase_scale_by_target(instance: GiftEvalInstance) -> np.ndarray:
+    return mase_scale_by_target(
+        instance.history,
+        instance.resolved_seasonality,
+        observed_mask=instance.history_observed_mask,
+    )
 
 
 def mechanism_effect_signal(
@@ -565,7 +614,7 @@ def _strength_feasible_sampling_intervals(
         _raw, unit_future_effect, future_observed_count = mechanism_effect_signal(
             future_component,
             instance.future_observed_mask,
-            mase_scale_by_target(instance.history, instance.frequency),
+            _instance_mase_scale_by_target(instance),
             affected,
         )
         future_effect_per_coordinate = (
@@ -1957,7 +2006,7 @@ def _shared_amplitude_units(
     future_gain = 0.0
     future_signals: list[float] = []
     if minimum_future_effect_mase_rms is not None:
-        mase_scales = mase_scale_by_target(instance.history, instance.frequency)
+        mase_scales = _instance_mase_scale_by_target(instance)
         future_signals = [
             mechanism_effect_signal(
                 unit.future_delta,
@@ -3688,10 +3737,13 @@ def build_capability_group(
                 },
             )
         if capability_id in STRICT_FUTURE_EFFECT_CAPABILITIES:
+            realized_future_delta = (
+                instance.future + unit.future_delta
+            ) - instance.future
             _raw, signal, observed_count = mechanism_effect_signal(
-                unit.future_delta,
+                realized_future_delta,
                 instance.future_observed_mask,
-                mase_scale_by_target(instance.history, instance.frequency),
+                _instance_mase_scale_by_target(instance),
                 unit.affected,
             )
             if (

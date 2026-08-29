@@ -21,7 +21,7 @@ from cafe.benchmark_extension.native import (
 )
 
 
-FEV_ADAPTER_SCHEMA = "cafe.fev_native_adapter.v2"
+FEV_ADAPTER_SCHEMA = "cafe.fev_native_adapter.v3"
 FEV_BENCHMARK_ID = "fev_bench"
 FEV_MINI_SUITE_ID = "mini20"
 FEV_PACKAGE_VERSION = "0.8.0"

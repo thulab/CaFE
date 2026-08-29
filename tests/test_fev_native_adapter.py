@@ -255,13 +255,13 @@ def test_fev_research_validation_accepts_native_term_treatments(
         task,
         dataset_root=dataset_root,
         augmentation_seed=19,
-        capability_ids=("trend",),
+        capability_ids=("trend", "covariate_impulse_response"),
         model_max_contexts={"fixture": 64},
         max_instances=1,
         workers=1,
         shard_size=1,
     )
-    assert manifest["treatment_count"] == 5
+    assert manifest["treatment_count"] == 10
     assert validate_generation(dataset_root, mode="research", workers=1)[
         "accepted"
     ]
