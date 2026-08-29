@@ -267,7 +267,7 @@ def test_zero_compatible_rows_are_a_completed_model_invocation() -> None:
     assert _requested_execution_complete(["tirex2"], statuses, predictions)
 
 
-def test_four_card_replica_presets_match_measured_topologies() -> None:
+def test_four_card_replica_presets_honor_supported_contexts() -> None:
     assert {
         model_id: int(config["replicas_per_device"])
         for model_id, config in MODEL_EXECUTION_CONFIG.items()
@@ -276,7 +276,7 @@ def test_four_card_replica_presets_match_measured_topologies() -> None:
         "Timer-4.0": 2,
         "Timer-3.5": 1,
         "Chronos-2": 1,
-        "moirai2": 2,
+        "moirai2": 1,
         "toto2.0": 1,
         "timesfm2.5": 2,
         "tirex2": 2,
