@@ -44,7 +44,7 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v11"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v12"
 TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v7"
 LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
     "cafe.benchmark_extension_validation.v3"

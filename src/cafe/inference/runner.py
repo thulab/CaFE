@@ -22,7 +22,7 @@ import msgpack
 import numpy as np
 from cafe import core as protocol
 
-INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v3-group-row-aware"
+INPUT_ADAPTATION_POLICY_ID = "cafe-input-adaptation-v4-paired-covariates"
 
 # TimesFM's XReg path accepts covariates only when their history and forecast
 # horizon are supplied together.  GIFT-Eval past-only covariates therefore
@@ -1076,18 +1076,25 @@ def input_adaptation_plan(
             target_dim,
         )
     )
+    paired_history_future_covariates = bool(
+        capability.get("requires_future_covariates_with_history", False)
+    )
+    paired_known_future_only = bool(
+        paired_history_future_covariates
+        and 0 < future_covariate_dim < covariate_dim
+    )
+    supported_covariate_dim = (
+        future_covariate_dim if paired_known_future_only else covariate_dim
+    )
     covariates_native = (
         True
         if policy_id is None
         else _supports_native_covariates(
             capability,
-            covariate_dim=covariate_dim,
+            covariate_dim=supported_covariate_dim,
             horizon=horizon,
             requires_future=requires_future,
         )
-    )
-    paired_history_future_covariates = bool(
-        capability.get("requires_future_covariates_with_history", False)
     )
     if (
         covariates_native
@@ -1104,12 +1111,14 @@ def input_adaptation_plan(
         covariates_native
         and maximum_group_rows is not None
         and (
-            (target_dim if target_native else 1) + covariate_dim
+            (target_dim if target_native else 1) + supported_covariate_dim
             > maximum_group_rows
         )
     ):
         covariates_native = False
-    request_covariate_dim = covariate_dim if covariates_native else 0
+    request_covariate_dim = (
+        supported_covariate_dim if covariates_native else 0
+    )
     if target_native:
         target_mode = "native_univariate" if target_dim == 1 else "native_multivariate"
     else:
@@ -1117,9 +1126,12 @@ def input_adaptation_plan(
     if covariate_dim == 0:
         covariate_mode = "none"
     elif covariates_native:
-        covariate_mode = (
-            "native_known_future" if requires_future else "native_history_only"
-        )
+        if paired_known_future_only:
+            covariate_mode = "paired_known_future_only"
+        else:
+            covariate_mode = (
+                "native_known_future" if requires_future else "native_history_only"
+            )
     else:
         covariate_mode = "omitted_unsupported"
     target_request_count = target_dim if target_mode == "independent_univariate" else 1
@@ -1131,6 +1143,7 @@ def input_adaptation_plan(
         "covariate_mode": covariate_mode,
         "adapted": (
             target_mode == "independent_univariate"
+            or paired_known_future_only
             or covariate_mode == "omitted_unsupported"
         ),
         "original_target_dim": target_dim,
@@ -1148,6 +1161,11 @@ def input_adaptation_plan(
             if covariate_dim > 0
             and paired_history_future_covariates
             and not requires_future
+            else None
+        ),
+        "covariate_selection_reason": (
+            "model_requires_paired_history_future_covariates"
+            if paired_known_future_only and covariates_native
             else None
         ),
         "resolved_input_capability": capability,
@@ -1194,6 +1212,29 @@ def adapted_request_samples(
             child["covariate_column_names"] = []
             child["covariate_availability"] = []
             child["future_covariate_visible"] = []
+        elif plan["covariate_mode"] == "paired_known_future_only":
+            visible = np.asarray(
+                sample.get("future_covariate_visible"), dtype=bool
+            )
+            child["covariates"] = np.asarray(
+                sample["covariates"], dtype=float
+            )[:, visible].tolist()
+            child["covariate_dim"] = int(np.count_nonzero(visible))
+            for field in (
+                "covariate_column_names",
+                "covariate_availability",
+                "covariate_types",
+            ):
+                values = sample.get(field)
+                if values is not None:
+                    child[field] = [
+                        value
+                        for value, selected in zip(values, visible, strict=True)
+                        if selected
+                    ]
+            child["future_covariate_visible"] = [True] * int(
+                child["covariate_dim"]
+            )
         requests.append(child)
     return requests
 

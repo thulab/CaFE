@@ -479,6 +479,47 @@ def test_mixed_covariate_visibility_sends_only_known_future_columns() -> None:
     future = np.frombuffer(payload["future_covariates"], dtype=np.float32)
     np.testing.assert_array_equal(future, 1000.0 + np.arange(200.0, 250.0))
 
+    model = {
+        "model_id": "timesfm2.5",
+        "forecast_limits": {
+            "max_input_length": 200,
+            "min_input_length": 1,
+            "max_output_length": 64,
+            "max_group_rows": 64,
+            "input_mode": {
+                "max_target_count": 1,
+                "max_history_covariate_count": -1,
+                "supports_future_covariates": True,
+            },
+        },
+    }
+    plan = input_adaptation_plan(
+        model,
+        sample,
+        policy_id=inference_module.INPUT_ADAPTATION_POLICY_ID,
+    )
+    assert plan is not None
+    assert plan["covariate_mode"] == "paired_known_future_only"
+    assert plan["request_covariate_dim"] == 1
+    assert plan["request_future_covariate_dim"] == 1
+    assert plan["covariate_selection_reason"] == (
+        "model_requires_paired_history_future_covariates"
+    )
+    children = inference_module.adapted_request_samples(sample, plan)
+    assert len(children) == sample["target_dim"]
+    assert all(child["covariate_dim"] == 1 for child in children)
+    assert all(
+        child["covariate_column_names"] == ["known_0"]
+        for child in children
+    )
+    content, _shape, _horizon = _bulk_request_content(
+        "timesfm2.5", children
+    )
+    payload = msgpack.unpackb(content, raw=False)
+    assert payload["history_covariates_shape"] == [3, 1, 200]
+    assert payload["future_covariates_shape"] == [3, 1, 50]
+    assert payload["future_covariate_history_indices"] == [0]
+
 
 def test_bulk_batches_shrink_to_request_input_token_budget() -> None:
     model = {
