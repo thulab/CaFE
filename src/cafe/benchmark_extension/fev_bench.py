@@ -21,7 +21,7 @@ from cafe.benchmark_extension.native import (
 )
 
 
-FEV_ADAPTER_SCHEMA = "cafe.fev_native_adapter.v1"
+FEV_ADAPTER_SCHEMA = "cafe.fev_native_adapter.v2"
 FEV_BENCHMARK_ID = "fev_bench"
 FEV_MINI_SUITE_ID = "mini20"
 FEV_PACKAGE_VERSION = "0.8.0"
@@ -70,7 +70,9 @@ def _public_task_config(task: Any) -> dict[str, Any]:
 
 def _as_json_scalar(value: Any) -> Any:
     if isinstance(value, np.generic):
-        return value.item()
+        value = value.item()
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return value

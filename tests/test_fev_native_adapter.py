@@ -287,6 +287,7 @@ def test_fev_adapter_preserves_missing_masks_and_categorical_semantics(
                 ),
                 "target": [target.tolist()],
                 "state": [["closed", "open"] * (length // 2)],
+                "promo_week": [np.nan],
             }
         ),
         dataset_path,
@@ -303,6 +304,7 @@ def test_fev_adapter_preserves_missing_masks_and_categorical_semantics(
                 "  eval_metric: MASE",
                 "  target: target",
                 "  known_dynamic_columns: [state]",
+                "  static_columns: [promo_week]",
                 "  task_name: categorical_task",
             ]
         )
@@ -316,6 +318,7 @@ def test_fev_adapter_preserves_missing_masks_and_categorical_semantics(
     assert not bool(instance.future_observed_mask[0, 0])
     assert np.all(np.isfinite(instance.future))
     assert instance.covariate_types == ("categorical",)
+    assert instance.static_covariates == {"promo_week": None}
     assert instance.native_protocol["covariate_encodings"]["state"] == {
         "encoding": "sorted_string_category_codes_v1",
         "categories": ["closed", "open"],
