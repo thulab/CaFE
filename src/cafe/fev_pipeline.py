@@ -20,6 +20,7 @@ from cafe.benchmark_extension.fev_bench import (
     FevBenchAdapter,
 )
 from cafe.benchmark_extension.generation import (
+    DEFAULT_NATIVE_GENERATION_BATCH_BYTES,
     DEFAULT_OUTPUT_ROOT,
     PIPELINE_SCHEMA,
     generate_benchmark_task,
@@ -75,6 +76,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stop-after", choices=STAGES, default="analysis")
     parser.add_argument("--generation-workers", type=int, default=4)
     parser.add_argument("--generation-shard-size", type=int, default=256)
+    parser.add_argument(
+        "--generation-batch-mib",
+        type=int,
+        default=DEFAULT_NATIVE_GENERATION_BATCH_BYTES // (1024 * 1024),
+    )
     parser.add_argument("--validation-workers", type=int, default=4)
     parser.add_argument("--preprocess-workers", type=int, default=4)
     parser.add_argument("--analysis-workers", type=int, default=4)
@@ -259,6 +265,7 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         "capability_ids": list(args.capabilities),
         "augmentation_seed": int(args.augmentation_seed),
         "max_instances_per_task": args.max_instances,
+        "generation_batch_bytes": int(args.generation_batch_mib) * 1024 * 1024,
         "validation_mode": "research",
         "model_service_contracts": service_contracts,
     }
@@ -286,6 +293,9 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 max_instances=args.max_instances,
                 workers=int(args.generation_workers),
                 shard_size=int(args.generation_shard_size),
+                maximum_batch_bytes=(
+                    int(args.generation_batch_mib) * 1024 * 1024
+                ),
             )
     generation_manifests = [
         experiment_root / task_id / "01_generation" / "manifest.json"

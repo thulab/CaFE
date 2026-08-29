@@ -13,6 +13,8 @@ from cafe.benchmark_extension.fev_bench import (
     audit_fev_suite,
 )
 from cafe.benchmark_extension.generation import (
+    DEFAULT_NATIVE_GENERATION_BATCH_BYTES,
+    _native_instance_batches,
     generate_benchmark_task,
     iter_replayed_samples,
 )
@@ -208,6 +210,37 @@ def test_fev_generation_replay_and_research_validation(tmp_path: Path) -> None:
     report = validate_generation(dataset_root, mode="research")
     assert report["accepted"]
     assert report["benchmark_id"] == "fev_bench"
+
+
+def test_native_generation_compute_batches_do_not_change_source_shards(
+    tmp_path: Path,
+) -> None:
+    suite_path, _ = _fixture(tmp_path)
+    adapter = FevBenchAdapter(suite_path, num_proc=1)
+    task = adapter.list_tasks()[0]
+
+    batches = list(
+        _native_instance_batches(
+            adapter,
+            task,
+            augmentation_seed=17,
+            capability_ids=("trend",),
+            max_instances=None,
+            shard_size=256,
+            model_max_contexts={"fixture": 8},
+            maximum_batch_bytes=1,
+        )
+    )
+
+    assert DEFAULT_NATIVE_GENERATION_BATCH_BYTES == 16 * 1024 * 1024
+    assert len(batches) == 4
+    assert all(batch["source_shard_size"] == 256 for batch in batches)
+    assert [index for batch in batches for index, _ in batch["instances"]] == [
+        0,
+        1,
+        2,
+        3,
+    ]
 
 
 def test_fev_research_validation_accepts_native_term_treatments(

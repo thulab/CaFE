@@ -95,6 +95,7 @@ GENERATION_SCHEMA = "cafe.benchmark_extension_generation.v13"
 SAMPLE_SCHEMA = "cafe.benchmark_extension_sample.v12"
 CONTRACT_SCHEMA = "cafe.benchmark_extension_contract.v10"
 DEFAULT_OUTPUT_ROOT = protocol.REPO_ROOT / "runtime" / "experiments"
+DEFAULT_NATIVE_GENERATION_BATCH_BYTES = 16 * 1024 * 1024
 
 GENERIC_OFFICIAL_BASELINE = "benchmark_official_baseline"
 GENERIC_CAPABILITY_TREATMENT = "benchmark_capability_treatment"
@@ -1364,7 +1365,7 @@ def _native_instance_batches(
     max_instances: int | None,
     shard_size: int,
     model_max_contexts: dict[str, int],
-    maximum_batch_bytes: int = 128 * 1024 * 1024,
+    maximum_batch_bytes: int = DEFAULT_NATIVE_GENERATION_BATCH_BYTES,
 ) -> Iterator[dict[str, Any]]:
     current: list[tuple[int, NativeForecastInstance]] = []
     current_bytes = 0
@@ -1411,11 +1412,14 @@ def generate_benchmark_task(
     max_instances: int | None = None,
     workers: int = 1,
     shard_size: int = 256,
+    maximum_batch_bytes: int = DEFAULT_NATIVE_GENERATION_BATCH_BYTES,
 ) -> dict[str, Any]:
     """Generate compact CaFE contracts from any benchmark adapter."""
 
     if not model_max_contexts:
         raise ValueError("benchmark task generation requires selected model contexts")
+    if int(maximum_batch_bytes) < 1:
+        raise ValueError("maximum_batch_bytes must be positive")
     generation_dir = dataset_root / "01_generation"
     baseline_path = generation_dir / "official_instances.parquet"
     treatment_path = generation_dir / "treatment_contracts.parquet"
@@ -1465,6 +1469,7 @@ def generate_benchmark_task(
         max_instances=max_instances,
         shard_size=shard_size,
         model_max_contexts=model_max_contexts,
+        maximum_batch_bytes=maximum_batch_bytes,
     )
     try:
         if int(workers) <= 1:
@@ -1607,7 +1612,7 @@ def generate_benchmark_task(
         "generation_execution": {
             "workers": int(workers),
             "shard_size": int(shard_size),
-            "maximum_dense_batch_bytes": 128 * 1024 * 1024,
+            "maximum_dense_batch_bytes": int(maximum_batch_bytes),
         },
     }
     instance_count = counts["official_baselines"]
