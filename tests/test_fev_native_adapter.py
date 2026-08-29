@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from cafe import fev_pipeline
 from cafe.benchmark_extension.fev_bench import (
     FEV_MINI_SUITE_ID,
     FevBenchAdapter,
@@ -20,6 +22,34 @@ from cafe.benchmark_extension.generation import (
 )
 from cafe.benchmark_extension.mechanisms import build_capability_group
 from cafe.benchmark_extension.validation import validate_generation
+
+
+def test_fev_model_contract_uses_cafe_operational_context_cap(
+    monkeypatch,
+) -> None:
+    service_model = {
+        "forecast_limits": {
+            "max_input_length": 16384,
+            "max_output_length": 2048,
+        }
+    }
+    monkeypatch.setattr(
+        fev_pipeline,
+        "health_catalog",
+        lambda endpoint, api_prefix: (endpoint, {"moirai2": service_model}),
+    )
+    contracts = fev_pipeline._service_model_contracts(
+        argparse.Namespace(
+            endpoints=["http://service:10810"],
+            api_prefix="/ai/api/v1",
+            models=["moirai2"],
+        )
+    )
+    assert contracts["moirai2"]["service_maximum_context"] == 16384
+    assert contracts["moirai2"]["maximum_context"] == 8192
+    assert contracts["moirai2"]["context_policy"] == (
+        "min_service_and_cafe_operational_limit_v1"
+    )
 
 
 def _fixture(tmp_path: Path, *, length: int = 12) -> tuple[Path, Path]:

@@ -58,7 +58,7 @@ def test_distributed_worker_reuses_the_term_and_horizon_preflight() -> None:
         "Chronos-2": 8192,
         "Timer-3.5": 11520,
         "timesfm2.5": 15360,
-        "moirai2": 16384,
+        "moirai2": 8192,
         "toto2.0": 16384,
     }
     generation = {
@@ -208,16 +208,20 @@ def test_native_panel_is_preserved_in_generation_task() -> None:
     assert np.asarray(row["target"]).shape == (250, 3)
 
 
-def test_inference_model_context_must_match_generation_distance_contract() -> None:
+def test_inference_model_context_must_cover_generation_distance_contract() -> None:
     inference_module._validate_distance_context_contract(
         "tirex2",
-        {"forecast_limits": {"max_input_length": 2048}},
+        {"forecast_limits": {"max_input_length": 4096}},
         {"tirex2": 2048},
     )
-    with pytest.raises(ValueError, match="distance contract requires 2048"):
+    frozen = inference_module._model_with_context_contract(
+        {"forecast_limits": {"max_input_length": 4096}}, 2048
+    )
+    assert inference_module._maximum_context(frozen) == 2048
+    with pytest.raises(ValueError, match="contract requirement 2048"):
         inference_module._validate_distance_context_contract(
             "tirex2",
-            {"forecast_limits": {"max_input_length": 4096}},
+            {"forecast_limits": {"max_input_length": 1024}},
             {"tirex2": 2048},
         )
 

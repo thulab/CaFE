@@ -12,6 +12,7 @@ from cafe.benchmark_extension.inference import (
     DEFAULT_MAX_REQUEST_INPUT_TOKENS,
     MODEL_INPUT_TOKEN_CONFIG,
     _maximum_context,
+    _model_with_context_contract,
     _validate_distance_context_contract,
     _validate_forecast_limits,
     _validated_inputs,
@@ -78,7 +79,7 @@ def _validate_model_protocol(
     generation: dict[str, Any],
     model_id: str,
     model: dict[str, Any],
-) -> None:
+) -> int:
     config = generation.get("config") or {}
     raw_contexts = config.get("source_distance_configuration", {}).get(
         "model_max_contexts"
@@ -100,6 +101,7 @@ def _validate_model_protocol(
             )
     _validate_distance_context_contract(model_id, model, expected_contexts)
     _validate_forecast_limits(model_id, model, generation)
+    return int(expected_contexts[model_id])
 
 
 def _relocate_generation_files(
@@ -146,7 +148,9 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
             f"model {args.model_id!r} is unavailable at {args.endpoint!r}"
         )
     model = health[1][args.model_id]
-    _validate_model_protocol(generation, args.model_id, model)
+    maximum_context = _validate_model_protocol(generation, args.model_id, model)
+    service_maximum_context = _maximum_context(model)
+    model = _model_with_context_contract(model, maximum_context)
     execution = {
         **dict(MODEL_EXECUTION_CONFIG[args.model_id]),
         **dict(MODEL_INPUT_TOKEN_CONFIG[args.model_id]),
@@ -200,6 +204,8 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
                 "policy": "source_shard_index_modulo_worker_count_v1",
             },
             "maximum_context_materialization": _maximum_context(model),
+            "service_advertised_maximum_context": service_maximum_context,
+            "effective_maximum_context": maximum_context,
             "resolved_input_capability": resolve_input_capability(model),
             "input_adaptation_policy": INPUT_ADAPTATION_POLICY_ID,
             "maximum_request_input_tokens": int(

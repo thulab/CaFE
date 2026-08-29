@@ -70,10 +70,9 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "moirai2": {
-        # A single 10k-context univariate request can require another 8 GiB
-        # for attention bias on top of roughly 20 GiB already held by the
-        # worker.  Two replicas fit the short-term throughput scan but cannot
-        # honor Moirai's frozen 16k context contract on a 32 GiB card.
+        # A single long-context univariate request can occupy about 27 GiB.
+        # Two replicas fit the short-term throughput scan but cannot honor
+        # CaFE's reproducible 8192-token operating cap on a 32 GiB card.
         "replicas_per_device": 1,
         "http_concurrency": 8,
         "task_batch_size": 256,

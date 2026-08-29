@@ -44,7 +44,7 @@ from cafe.inference.runner import (
 )
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v12"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v13"
 TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v7"
 LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
     "cafe.benchmark_extension_validation.v3"
@@ -217,11 +217,23 @@ def _validate_distance_context_contract(
             f"model {model_id!r} is not part of the generation term protocol"
         )
     advertised = _maximum_context(model)
-    if advertised != expected:
+    if advertised is not None and advertised < expected:
         raise ValueError(
-            f"model {model_id!r} advertises max input length {advertised}, "
-            f"but the generation distance contract requires {expected}"
+            f"model {model_id!r} advertises max input length {advertised}, below "
+            f"the generation distance contract requirement {expected}"
         )
+
+
+def _model_with_context_contract(
+    model: dict[str, Any], maximum_context: int
+) -> dict[str, Any]:
+    """Apply the generation-frozen operational cap to service metadata."""
+
+    frozen = dict(model)
+    limits = dict(model.get("forecast_limits") or {})
+    limits["max_input_length"] = int(maximum_context)
+    frozen["forecast_limits"] = limits
+    return frozen
 
 
 def _validate_forecast_limits(
@@ -1676,15 +1688,15 @@ def main() -> int:
         if not candidates:
             raise ValueError(f"model {model_id!r} unavailable on all endpoints")
         endpoint_list = [endpoint for endpoint, _catalog in candidates]
-        model = candidates[0][1][model_id]
+        service_model = candidates[0][1][model_id]
         _validate_distance_context_contract(
-            model_id, model, expected_distance_contexts
+            model_id, service_model, expected_distance_contexts
         )
-        _validate_forecast_limits(model_id, model, generation)
+        _validate_forecast_limits(model_id, service_model, generation)
         model_contract = protocol.canonical_json(
             {
-                "forecast_limits": model.get("forecast_limits") or {},
-                "input_capability": resolve_input_capability(model),
+                "forecast_limits": service_model.get("forecast_limits") or {},
+                "input_capability": resolve_input_capability(service_model),
             }
         )
         if any(
@@ -1702,6 +1714,8 @@ def main() -> int:
             )
         if args.prepare_only:
             continue
+        effective_context = int(expected_distance_contexts[model_id])
+        model = _model_with_context_contract(service_model, effective_context)
         previous_status = next(
             (
                 row
@@ -1773,6 +1787,10 @@ def main() -> int:
                 unload_before_load=not bool(args.reuse_loaded_model),
                 unload_after=not bool(args.preserve_loaded_model),
             )
+        status["service_advertised_maximum_context"] = _maximum_context(
+            service_model
+        )
+        status["effective_maximum_context"] = effective_context
         status_by_model[model_id] = status
         prediction_records[model_id] = {
             "format": "partitioned_parquet",
@@ -1790,8 +1808,10 @@ def main() -> int:
         "dataset_id": args.dataset_id,
         "models": list(args.models),
         "input_history_policy": (
-            "treatment_applied_to_entire_official_history_then_model_max_context_suffix"
+            "treatment_applied_to_entire_official_history_then_generation_frozen_"
+            "model_context_suffix_v1"
         ),
+        "effective_model_maximum_contexts": expected_distance_contexts,
         "native_target_policy": (
             "native_if_supported_else_inference_only_independent_univariate_reassembly"
         ),

@@ -29,6 +29,7 @@ from cafe.benchmark_extension.inference import health_catalog
 from cafe.benchmark_extension.mechanisms import (
     CAPABILITY_IDS,
     DEFAULT_CAPABILITY_IDS,
+    SOURCE_DISTANCE_MODEL_MAX_CONTEXTS,
 )
 from cafe.benchmark_extension.validation import validate_generation
 from cafe.inference.runner import DEFAULT_MODELS
@@ -151,11 +152,21 @@ def _service_model_contracts(args: argparse.Namespace) -> dict[str, dict[str, An
             for row in observed[1:]
         ):
             raise ValueError(f"model {model_id!r} has inconsistent endpoint limits")
-        maximum_context = int(limits.get("max_input_length") or -1)
-        if maximum_context < 1:
+        service_maximum_context = int(limits.get("max_input_length") or -1)
+        if service_maximum_context < 1:
             raise ValueError(f"model {model_id!r} has no finite positive context limit")
+        maximum_context = min(
+            service_maximum_context,
+            int(
+                SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(
+                    model_id, service_maximum_context
+                )
+            ),
+        )
         contracts[model_id] = {
             "maximum_context": maximum_context,
+            "service_maximum_context": service_maximum_context,
+            "context_policy": "min_service_and_cafe_operational_limit_v1",
             "maximum_horizon": int(limits.get("max_output_length") or -1),
             "forecast_limits": limits,
         }
