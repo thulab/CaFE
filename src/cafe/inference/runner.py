@@ -70,11 +70,11 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "moirai2": {
-        # Keep one replica per 32 GiB card. CaFE bounds the actual univariate
-        # child rows in every bulk request, including children produced by
-        # splitting a high-dimensional panel, so the 16k service contract no
-        # longer depends on a parent-sample batch limit.
-        "replicas_per_device": 1,
+        # CaFE bounds the actual univariate child rows in every bulk request,
+        # including children produced by splitting a high-dimensional panel.
+        # Two replicas remain below 19 GiB under concurrent C=16k, B=8, H=900
+        # requests on a 32 GiB card and recover the measured short-term gain.
+        "replicas_per_device": 2,
         "http_concurrency": 8,
         "task_batch_size": 256,
         "transport": "msgpack_bulk",

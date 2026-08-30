@@ -318,7 +318,7 @@ def test_four_card_replica_presets_honor_supported_contexts() -> None:
         "Timer-4.0": 2,
         "Timer-3.5": 1,
         "Chronos-2": 1,
-        "moirai2": 1,
+        "moirai2": 2,
         "toto2.0": 1,
         "timesfm2.5": 2,
         "tirex2": 2,

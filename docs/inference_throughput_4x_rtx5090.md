@@ -91,7 +91,7 @@ panel 对显存、尾延迟的压力。单个view自身超过上限时仍允许�
 | Chronos-2 | 1 | 32 | 64 | 64 | 6,525,120 | 无 |
 | timesfm2.5 | 2 | 32 | 64 | — | 6,525,120 | C>8192按2倍token计 |
 | tirex2 | 2 | 32 | 64 | 8 | 6,525,120 | 原生panel通常并发2；C>512且D≥16时并发8 |
-| moirai2 | 1 | 32 | 8 | — | 13,050,240 | 16k长上下文 activation 边界；并行请求保持32 |
+| moirai2 | 2 | 32 | 8 | — | 13,050,240 | 16k按实际child限批；并行请求保持32 |
 | Timer-3.5 | 1 | 32 | 64 | — | 6,525,120 | 无；双replica显存不足 |
 | toto2.0 | 1 | 8 | 256 | 256 | 1,048,576 | request上限131,072；真实native batch |
 
@@ -148,8 +148,10 @@ bulk会额外申请约8.27 GiB并 OOM。最初的8行限制只约束parent sampl
 显存边界。当前实现改为在传输边界对实际child row按8行切块，同时保留parent
 级预测重组。32 GiB RTX 5090隔离测试中，C=16,384、B=1、H=96的峰值allocated
 为0.85 GiB；B=8、H=96为6.46 GiB；B=8、H=900为7.24 GiB，三者均成功。
-因此恢复Moirai2的16k上下文，保持每卡1个replica和32个并行HTTP请求。这个
-边界只限制单次模型forward的activation峰值，不收缩endpoint并行额度。
+双副本复测在单张32 GiB RTX 5090上同时发送4个C=16,384、B=8、H=900请求，
+全部成功；两worker各驻留约9.1 GiB，总显存峰值18.1 GiB。因而恢复每卡2个
+replica和32个并行HTTP请求。这个边界只限制单次模型forward的activation峰值，
+不收缩endpoint并行额度。
 
 对应的不可变服务器实验目录为：
 
