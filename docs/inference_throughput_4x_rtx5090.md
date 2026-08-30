@@ -82,7 +82,8 @@ Timer Service 的 `max_group_rows=64` 表示单个任务的
 131,072，因为真实 batch 后该值已经足以填满单卡，同时降低动态 shape 和超长
 panel 对显存、尾延迟的压力。单个view自身超过上限时仍允许独占请求。下表是
 当前代码中的四卡配置；“panel bulk”只在模型收到原生D>1请求时生效，模型级
-单变量拆分仍走普通bulk。
+单变量拆分仍走普通bulk。普通bulk上限约束的是实际发给服务的child row，而
+不是拆分前的parent sample数；单个高维parent展开出的child也会在传输边界切块。
 
 | 模型 | 每卡replica | 基础HTTP并发 | 普通bulk | panel bulk | endpoint在途预算 | 额外成本规则 |
 |---|---:|---:|---:|---:|---:|---|
@@ -90,7 +91,7 @@ panel 对显存、尾延迟的压力。单个view自身超过上限时仍允许�
 | Chronos-2 | 1 | 32 | 64 | 64 | 6,525,120 | 无 |
 | timesfm2.5 | 2 | 32 | 64 | — | 6,525,120 | C>8192按2倍token计 |
 | tirex2 | 2 | 32 | 64 | 8 | 6,525,120 | 原生panel通常并发2；C>512且D≥16时并发8 |
-| moirai2 | 2 | 32 | 8 | — | 13,050,240 | 长上下文 activation 边界；并行请求保持32 |
+| moirai2 | 1 | 32 | 8 | — | 13,050,240 | 16k长上下文 activation 边界；并行请求保持32 |
 | Timer-3.5 | 1 | 32 | 64 | — | 6,525,120 | 无；双replica显存不足 |
 | toto2.0 | 1 | 8 | 256 | 256 | 1,048,576 | request上限131,072；真实native batch |
 
@@ -142,10 +143,13 @@ model×dataset 状态全部 complete，失败、429、503均为0。小批实验�
 | toto2.0 | 3.65 | 3.07 | 7.20 | 7.04 |
 
 首次 medium smoke 暴露 Moirai2 在 C=16,384、H=480 时把37行放入一个
-bulk会额外申请约8.27 GiB并 OOM。将 Moirai2 单 bulk 固定为8行后重新运行：
-medium/long Jena 均能持续利用四卡，观测显存约15–22 GiB/卡，且保持8个
-replica与32个并行HTTP请求。这个边界只限制单请求的 activation 峰值，不收缩
-endpoint并行额度，是当前 medium/long 推荐配置。
+bulk会额外申请约8.27 GiB并 OOM。最初的8行限制只约束parent sample，FEV中
+一个100维parent转为独立单变量适配后仍会形成100行服务请求，因而再次越过
+显存边界。当前实现改为在传输边界对实际child row按8行切块，同时保留parent
+级预测重组。32 GiB RTX 5090隔离测试中，C=16,384、B=1、H=96的峰值allocated
+为0.85 GiB；B=8、H=96为6.46 GiB；B=8、H=900为7.24 GiB，三者均成功。
+因此恢复Moirai2的16k上下文，保持每卡1个replica和32个并行HTTP请求。这个
+边界只限制单次模型forward的activation峰值，不收缩endpoint并行额度。
 
 对应的不可变服务器实验目录为：
 

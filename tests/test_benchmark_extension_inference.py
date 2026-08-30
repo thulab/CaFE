@@ -14,6 +14,7 @@ from cafe.benchmark_extension.inference import (
     _InputTokenLimiter,
     _batch_input_tokens,
     _batch_scheduling_tokens,
+    _forecast_children_in_bounded_bulks,
     _iter_model_bulk_batches,
     _requested_execution_complete,
     _run_streaming_bulk_model,
@@ -52,13 +53,50 @@ def test_moirai_long_context_bulk_rows_are_memory_bounded() -> None:
     assert config["native_multivariate_maximum_bulk_rows"] == 8
 
 
+def test_expanded_children_are_split_at_the_transport_boundary(monkeypatch) -> None:
+    observed_bulk_sizes = []
+
+    async def fake_forecast(_client, *, children, **_kwargs):
+        observed_bulk_sizes.append(len(children))
+        values = np.asarray(
+            [int(child["child_index"]) for child in children], dtype=np.float32
+        )
+        return {
+            "forecasts": values[:, None, None],
+            "attempts": 1,
+            "elapsed_seconds": 0.01,
+            "error": None,
+        }
+
+    monkeypatch.setattr(
+        inference_module, "_forecast_bulk_with_retry", fake_forecast
+    )
+    result = asyncio.run(
+        _forecast_children_in_bounded_bulks(
+            object(),
+            forecast_url="http://service/forecast/bulk",
+            model_id="moirai2",
+            children=[{"child_index": index} for index in range(20)],
+            maximum_bulk_rows=8,
+            max_attempts=3,
+        )
+    )
+
+    assert observed_bulk_sizes == [8, 8, 4]
+    assert result["bulk_request_count"] == 3
+    assert result["attempts"] == 3
+    np.testing.assert_array_equal(
+        result["forecasts"][:, 0, 0], np.arange(20, dtype=np.float32)
+    )
+
+
 def test_distributed_worker_reuses_the_term_and_horizon_preflight() -> None:
     contexts = {
         "Timer-4.0": 8192,
         "Chronos-2": 8192,
         "Timer-3.5": 11520,
         "timesfm2.5": 15360,
-        "moirai2": 8192,
+        "moirai2": 16384,
         "toto2.0": 16384,
     }
     generation = {

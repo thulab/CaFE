@@ -70,9 +70,10 @@ MODEL_EXECUTION_CONFIG = {
         "transport": "msgpack_bulk",
     },
     "moirai2": {
-        # A single long-context univariate request can occupy about 27 GiB.
-        # Two replicas fit the short-term throughput scan but cannot honor
-        # CaFE's reproducible 8192-token operating cap on a 32 GiB card.
+        # Keep one replica per 32 GiB card. CaFE bounds the actual univariate
+        # child rows in every bulk request, including children produced by
+        # splitting a high-dimensional panel, so the 16k service contract no
+        # longer depends on a parent-sample batch limit.
         "replicas_per_device": 1,
         "http_concurrency": 8,
         "task_batch_size": 256,

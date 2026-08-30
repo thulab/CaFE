@@ -48,10 +48,7 @@ SOURCE_DISTANCE_MODEL_MAX_CONTEXTS = {
     "Chronos-2": 8192,
     "Timer-3.5": 11520,
     "timesfm2.5": 15360,
-    # The service advertises 16k, but on the experiment's 32 GiB GPUs a
-    # single Moirai worker crosses the memory boundary between L8831 and
-    # L8927.  Keep a reproducible power-of-two cap with operating headroom.
-    "moirai2": 8192,
+    "moirai2": 16384,
     "toto2.0": 16384,
 }
 SOURCE_DISTANCE_MODEL_MAX_CONTEXTS_BY_TERM = {

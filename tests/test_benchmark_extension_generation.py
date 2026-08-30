@@ -129,7 +129,7 @@ def test_generation_uses_all_official_instances_and_shared_baseline(
             "Chronos-2": 8192,
             "Timer-3.5": 11520,
             "timesfm2.5": 15360,
-            "moirai2": 8192,
+            "moirai2": 16384,
             "toto2.0": 16384,
         },
         "minimum_model_context_macro_distance": 0.10,

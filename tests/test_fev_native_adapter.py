@@ -46,7 +46,7 @@ def test_fev_model_contract_uses_cafe_operational_context_cap(
         )
     )
     assert contracts["moirai2"]["service_maximum_context"] == 16384
-    assert contracts["moirai2"]["maximum_context"] == 8192
+    assert contracts["moirai2"]["maximum_context"] == 16384
     assert contracts["moirai2"]["context_policy"] == (
         "min_service_and_cafe_operational_limit_v1"
     )

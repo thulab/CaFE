@@ -101,8 +101,9 @@ MODEL_INPUT_TOKEN_CONFIG["moirai2"].update(
             DEFAULT_CLIENT_INFLIGHT_INPUT_TOKENS * 2
         ),
         # Long-context Moirai requests have a much larger activation footprint
-        # than their scalar input-token count suggests. Keep each request small
-        # while allowing independent requests to fill the replicas.
+        # than their scalar input-token count suggests. This limit applies to
+        # actual service child rows, including independent-univariate children
+        # expanded from one high-dimensional parent sample.
         "maximum_bulk_rows": 8,
         "native_multivariate_maximum_bulk_rows": 8,
     }
@@ -577,6 +578,59 @@ def _batch_scheduling_tokens(
     )
 
 
+async def _forecast_children_in_bounded_bulks(
+    client: httpx.AsyncClient,
+    *,
+    forecast_url: str,
+    model_id: str,
+    children: list[dict[str, Any]],
+    maximum_bulk_rows: int,
+    max_attempts: int,
+) -> dict[str, Any]:
+    """Forecast children in ordered service bulks with a hard row ceiling.
+
+    A single parent panel can expand into many independent-univariate children.
+    Bounding only the number of parent samples therefore does not bound the
+    activation batch seen by the service. Keep parent reconstruction intact and
+    split only at the transport boundary, then concatenate forecasts in their
+    original child order.
+    """
+
+    maximum_bulk_rows = max(1, int(maximum_bulk_rows))
+    forecasts: list[np.ndarray] = []
+    attempts = 0
+    elapsed_seconds = 0.0
+    bulk_request_count = 0
+    for start in range(0, len(children), maximum_bulk_rows):
+        child_bulk = children[start : start + maximum_bulk_rows]
+        result = await _forecast_bulk_with_retry(
+            client,
+            forecast_url=forecast_url,
+            model_id=model_id,
+            children=child_bulk,
+            max_attempts=max_attempts,
+        )
+        attempts += int(result["attempts"])
+        elapsed_seconds += float(result["elapsed_seconds"])
+        if result["forecasts"] is None:
+            return {
+                "forecasts": None,
+                "attempts": attempts,
+                "elapsed_seconds": elapsed_seconds,
+                "error": result["error"],
+                "bulk_request_count": bulk_request_count,
+            }
+        forecasts.append(result["forecasts"])
+        bulk_request_count += 1
+    return {
+        "forecasts": np.concatenate(forecasts, axis=0),
+        "attempts": attempts,
+        "elapsed_seconds": elapsed_seconds,
+        "error": None,
+        "bulk_request_count": bulk_request_count,
+    }
+
+
 class _InputTokenLimiter:
     """Bound an endpoint by request cost while allowing one oversized request."""
 
@@ -899,11 +953,17 @@ async def _run_streaming_bulk_model(
                                     selected_panel_semaphore = large_panel_semaphore
                                 await selected_panel_semaphore.acquire()
                                 native_multivariate_acquired = True
-                            result = await _forecast_bulk_with_retry(
+                            result = await _forecast_children_in_bounded_bulks(
                                 async_client,
                                 forecast_url=forecast_url,
                                 model_id=model_id,
                                 children=children,
+                                maximum_bulk_rows=int(
+                                    execution.get(
+                                        "maximum_bulk_rows",
+                                        execution["task_batch_size"],
+                                    )
+                                ),
                                 max_attempts=max_attempts,
                             )
                         finally:
@@ -940,7 +1000,9 @@ async def _run_streaming_bulk_model(
                                     + "\n"
                                 )
                             continue
-                        stats["bulk_request_count"] += 1
+                        stats["bulk_request_count"] += int(
+                            result["bulk_request_count"]
+                        )
                         if tail_retry_round > 0:
                             stats["tail_retry_recovered_view_count"] += len(
                                 chunk
