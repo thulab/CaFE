@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 4,
+    "source_scan_count": 1,
+    "source_shard_count": 4
+  },
+  "config_sha256": "2276b7ef0f3e169d8c27f3163a327cd20375dca1713948b34316d056a821c7a7",
+  "created_at": "2026-08-28T07:01:02.107042+00:00",
+  "dataset_id": "gift_bitbrains_rnd_h",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 4401144,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/accuracy_rows.parquet",
+      "row_count": 217413,
+      "sha256": "a2c07846d79e07ebfbfb7af450aaa9f460b7a04a2b8489f13ce4eb8e67940bc4"
+    },
+    "accuracy_summary": {
+      "bytes": 84762,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/accuracy_summary.json",
+      "sha256": "3a9d4daeec244b0d60e4a816eb908710482d4762f210a5f01aa9152901d56c02"
+    },
+    "capability_effect_rows": {
+      "bytes": 15393583,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/capability_effect_rows.parquet",
+      "row_count": 210630,
+      "sha256": "9befb5e6d5b13debba86741ab400219f35e4d138cde71bc4695553f1ba5bf0cc"
+    },
+    "capability_effect_summary": {
+      "bytes": 255746,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/capability_effect_summary.json",
+      "sha256": "cd242717a21135bd8e1c689b9416288589379dc8df04a6bd2b6bbd823f6c4b10"
+    },
+    "input_ablation_rows": {
+      "bytes": 2461117,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/input_ablation_rows.parquet",
+      "row_count": 66290,
+      "sha256": "fb4b8e313ccc9de4bbf9895f6d4e12a9b3492ac7cf64a4559a54df52aefee5f4"
+    },
+    "input_ablation_summary": {
+      "bytes": 34854,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/input_ablation_summary.json",
+      "sha256": "fee1b47d4af8b2d78540433f5e16102e79bb27f569697e2427320e12d9d89502"
+    },
+    "official_accuracy": {
+      "bytes": 1964,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/official_accuracy.json",
+      "sha256": "6167fcfeedde22440471574eb35ca3b45f025d59fe0b57e467c1b28531015dd6"
+    }
+  },
+  "inference_manifest_sha256": "4080d3066e138502c58104fce4587655f7f44a897b1cb0a21d128a68fcee2f02",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

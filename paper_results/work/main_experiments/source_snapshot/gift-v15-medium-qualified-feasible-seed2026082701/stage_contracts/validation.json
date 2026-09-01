@@ -1,0 +1,141 @@
+{
+  "code": {
+    "git_branch": "main",
+    "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "git_dirty": false,
+    "git_revision": "0e8590ee466046941656ede43dd1edc61a92260a",
+    "git_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "config": {
+    "artifact_format": "parquet_zstd",
+    "augmentation_seed": 2026082701,
+    "benchmark_model_ids": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "dataset_ids": [
+      "gift_electricity_h",
+      "gift_solar_h",
+      "gift_ett1_h",
+      "gift_ett2_h",
+      "gift_jena_weather_h",
+      "gift_kdd_cup_h",
+      "gift_loop_seattle_h",
+      "gift_m_dense_h",
+      "gift_bizitobs_l2c_h",
+      "gift_bizitobs_application",
+      "gift_bizitobs_service"
+    ],
+    "dataset_suite": "source_available_intersection_with_official_gift_eval_term_configs_v1",
+    "execution": {
+      "analysis_workers": 4,
+      "client_inflight_input_tokens_override": null,
+      "generation_shard_size": 256,
+      "generation_shard_size_by_dataset": {
+        "gift_bizitobs_application": 1,
+        "gift_bizitobs_l2c_h": 1,
+        "gift_bizitobs_service": 14,
+        "gift_electricity_h": 256,
+        "gift_ett1_h": 2,
+        "gift_ett2_h": 2,
+        "gift_jena_weather_h": 1,
+        "gift_kdd_cup_h": 180,
+        "gift_loop_seattle_h": 216,
+        "gift_m_dense_h": 40,
+        "gift_solar_h": 92
+      },
+      "generation_source_shard_policy": "requested_cap_with_three_planned_source_shards_v1",
+      "generation_workers": 4,
+      "max_inflight_batches": 8,
+      "max_inflight_mib": 2048,
+      "max_open_shape_groups": 64,
+      "max_request_input_tokens_override": null,
+      "preprocess_workers": 4,
+      "requested_validation_dataset_workers": 2,
+      "validation_dataset_workers": 1,
+      "validation_mode": "research",
+      "validation_parallelism_policy": "one_dataset_at_a_time_with_row_group_process_pool",
+      "validation_workers": 8
+    },
+    "formal": true,
+    "max_instances": null,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "storage_preflight_sha256": "d9dac2805d6c4dd56098769a24e6ddc72bbd4af832217627105504bcc55329d1",
+    "term": "medium"
+  },
+  "contract_sha256": "8e2d3a9f5d6d9520a4fe1d13c7aa4cb64c340aed7102e75b6120db0280346337",
+  "created_at": "2026-08-28T13:03:08.555454+00:00",
+  "schema_version": "cafe.stage_contract.v1",
+  "stage": "validation",
+  "upstream": [
+    {
+      "path": "gift_bizitobs_application/01_generation/manifest.json",
+      "sha256": "68e39120383f9e932badf14d0d7c81282d22c2b4cdafe4d8b35ef1aca229ad7f",
+      "size_bytes": 9427
+    },
+    {
+      "path": "gift_bizitobs_l2c_h/01_generation/manifest.json",
+      "sha256": "b95dbaa11346a22d1fa610f77dda94f0c37f8eb855057ec69081222a453d26b9",
+      "size_bytes": 9271
+    },
+    {
+      "path": "gift_bizitobs_service/01_generation/manifest.json",
+      "sha256": "509ca9e77bea05bbaa76dbea95b658432d5ab4eea143725625886820690c0a8f",
+      "size_bytes": 9488
+    },
+    {
+      "path": "gift_electricity_h/01_generation/manifest.json",
+      "sha256": "b236ef528ae88fdfdcd3e6aa7c457c285dc36a6923bfead65fed8088ce0a3d35",
+      "size_bytes": 9634
+    },
+    {
+      "path": "gift_ett1_h/01_generation/manifest.json",
+      "sha256": "0e874ce78b584f8e14e984e1c88f697d42ca5bda05433245fbe4c887bd94d284",
+      "size_bytes": 9308
+    },
+    {
+      "path": "gift_ett2_h/01_generation/manifest.json",
+      "sha256": "37aeb14e41f48c1d9c6345b9679dcffe5c660d703607336479ad2816c3f287de",
+      "size_bytes": 9308
+    },
+    {
+      "path": "gift_jena_weather_h/01_generation/manifest.json",
+      "sha256": "446f2a5cc73b3d584b6c2d6bf24978dd8e6c9ac1f06c44a4f16cdaf5c4a265ee",
+      "size_bytes": 9294
+    },
+    {
+      "path": "gift_kdd_cup_h/01_generation/manifest.json",
+      "sha256": "2e6b6acb5d10b021c54a87d6720f6e17e3346209ba4335dbec3ce5cf3f250580",
+      "size_bytes": 9586
+    },
+    {
+      "path": "gift_loop_seattle_h/01_generation/manifest.json",
+      "sha256": "8431667e3279ee069c7533193a18f4e09c2fd0eeed5b17266962f7e4125958e5",
+      "size_bytes": 9623
+    },
+    {
+      "path": "gift_m_dense_h/01_generation/manifest.json",
+      "sha256": "fe09ef7a58d600591a92acee4704de4f2e6f23b85db4ae5b570a9d1451dd3ac2",
+      "size_bytes": 9563
+    },
+    {
+      "path": "gift_solar_h/01_generation/manifest.json",
+      "sha256": "53312d815457b532d424952641c85624c210a85a13ea0e142952f675021cb057",
+      "size_bytes": 9566
+    }
+  ]
+}

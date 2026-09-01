@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 8,
+    "source_scan_count": 1,
+    "source_shard_count": 1
+  },
+  "config_sha256": "531ad3b1b8144ec36a42edb68946ce76dabcf5cd5796ee910151c73f034f20c4",
+  "created_at": "2026-08-29T23:37:41.041757+00:00",
+  "dataset_id": "fev__uci_air_quality_1H",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 103293,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/accuracy_rows.parquet",
+      "row_count": 5145,
+      "sha256": "ce728a8f4526608873368a78347bf5879e52b00526d3d5027b9f93d940131ee2"
+    },
+    "accuracy_summary": {
+      "bytes": 96116,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/accuracy_summary.json",
+      "sha256": "479233cf8d4bdf815697065bf1d3b7cbd7433828101a8667ca91a473826c4d8f"
+    },
+    "capability_effect_rows": {
+      "bytes": 363080,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/capability_effect_rows.parquet",
+      "row_count": 5005,
+      "sha256": "49fb0a0af683aa08269e107b35c5f101998713ac8fc3ab9d525809b5501dcf8f"
+    },
+    "capability_effect_summary": {
+      "bytes": 290733,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/capability_effect_summary.json",
+      "sha256": "4ea3aef5a0ba2033200d357411bc6b010b1b1a9d93b0cc56518ab533b950619a"
+    },
+    "input_ablation_rows": {
+      "bytes": 92279,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/input_ablation_rows.parquet",
+      "row_count": 2100,
+      "sha256": "9e026ca0c31e7924f1f47c1a9ef1fbf30c460ef0b5720e792eeead5935f32305"
+    },
+    "input_ablation_summary": {
+      "bytes": 51270,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/input_ablation_summary.json",
+      "sha256": "d99bbd48afa31e040c3186f83d97f647df007f3e86ecc72b6618fb3a5cf3c1a4"
+    },
+    "official_accuracy": {
+      "bytes": 1946,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/official_accuracy.json",
+      "sha256": "b130f64d5b6d7d97fd7a767988cfc18844b8c01393e8f20d7170c772339d2bc0"
+    }
+  },
+  "inference_manifest_sha256": "ebb1804ebab492278adae791db0978ca40ab18c79a46e23977dfc834df5ad734",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

@@ -1,0 +1,129 @@
+{
+  "config": {
+    "aggregation": "arithmetic_mean_of_task_level_estimands",
+    "benchmark_ids": [
+      "fev_bench"
+    ],
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 20260826,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "suite_ids": [
+      "mini20"
+    ],
+    "task_ids": [
+      "fev__boomlet_1282",
+      "fev__boomlet_1676",
+      "fev__boomlet_619",
+      "fev__bizitobs_l2c_5T",
+      "fev__epf_np",
+      "fev__ETT_15T",
+      "fev__ETT_1H",
+      "fev__proenfo_gfc14",
+      "fev__hospital_admissions_1W",
+      "fev__hospital_admissions_1D",
+      "fev__jena_weather_1H",
+      "fev__M_DENSE_1D",
+      "fev__rohlik_orders_1D",
+      "fev__rossmann_1W",
+      "fev__rossmann_1D",
+      "fev__solar_with_weather_1H",
+      "fev__uci_air_quality_1H",
+      "fev__uk_covid_nation_1D-cumulative",
+      "fev__us_consumption_1Y",
+      "fev__world_co2_emissions"
+    ],
+    "uncertainty": "paired_nonparametric_task_bootstrap"
+  },
+  "config_sha256": "3276fc86eebb00266ed54080c992806f6fb917b4df82f168404c73284a39e21a",
+  "created_at": "2026-08-29T23:38:13.241478+00:00",
+  "files": {
+    "task_equal_summary": {
+      "bytes": 672467,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/04_analysis_suite/task_equal_summary.json",
+      "sha256": "d00b119f5e89c0da549ace6627b61c9f3ba6403bab41a1a7f537d07b6994dc85"
+    }
+  },
+  "schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+  "upstream_analysis": [
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_1282/04_analysis/manifest.json",
+      "sha256": "4307976bf9d63b8673e1d9f158f1391095435d886c30f6c38d86294e59dd52f2"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_1676/04_analysis/manifest.json",
+      "sha256": "e2f82362e286823b25db63fc89a46c7b6813fcca373ce29e4c3ebe08bcfe1000"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_619/04_analysis/manifest.json",
+      "sha256": "38892982f0a0c1c3fd86f862ce336036c619cd491737f0aec8293deecae23605"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__bizitobs_l2c_5T/04_analysis/manifest.json",
+      "sha256": "c3ab1757270e1c3b024e6a2a8fda067f4b1598eb623eb5e9afd5594cca5c4268"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__epf_np/04_analysis/manifest.json",
+      "sha256": "77574d8dd14e5caa07070861d8acd83276b4362b224b50e385a92edece4cb15a"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__ETT_15T/04_analysis/manifest.json",
+      "sha256": "42c3a51a4230d184e270bd1f9b86080bbf5771d03c4394b5e5bf884512c17058"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__ETT_1H/04_analysis/manifest.json",
+      "sha256": "2ef082ffb0626f7959e675287778f7b6de66be479e90d588a5b6bebc09c868b2"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__proenfo_gfc14/04_analysis/manifest.json",
+      "sha256": "7609077eafbe3de09faa17ca970a2bd8bcc46226b5ae3258d2b2c5af789ad057"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/manifest.json",
+      "sha256": "974db6a101ab5b7a6971277fe87eb5ecb9aa3f3ae1f93fe4503293f626f7babb"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1D/04_analysis/manifest.json",
+      "sha256": "e1e9e41f433979654fbc68121cc63dfeb1238e96229c2d1f0406ce5a855085eb"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/04_analysis/manifest.json",
+      "sha256": "9da1f7f6bc7d9ff86fdd3d13c02cd4e9a90bfa82e935693827687312073a215e"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__M_DENSE_1D/04_analysis/manifest.json",
+      "sha256": "30b9fb33e33a306e7a0a019a1b877f558eb4c7d67125569a6a626d30c7ddd101"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rohlik_orders_1D/04_analysis/manifest.json",
+      "sha256": "2615cfd7d521b53689572617cf4ce1d761018fb116ae98290e7fdc2d9154163f"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/manifest.json",
+      "sha256": "4f2df474f6d3c80646c9470d13b73db17fb81c9431aae4fee90e27f57723870d"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1D/04_analysis/manifest.json",
+      "sha256": "f11c438338f36284a5d58afc438ce71d3e0ca331d4f54bcdb190c7442ebb9619"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__solar_with_weather_1H/04_analysis/manifest.json",
+      "sha256": "0dff88d0ec0306c500f3eeca34093f2c4b7812786e72ee5e332b3215d1ba3ac8"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/04_analysis/manifest.json",
+      "sha256": "871fb60c8e8227b61e15ba74dea7a1f6dd086985bf904a33961ed18a1d4e5a8b"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uk_covid_nation_1D-cumulative/04_analysis/manifest.json",
+      "sha256": "319e77511355de82d07db5c64419d4d58a191ba0a304dd896dca6a7dbf51842b"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__us_consumption_1Y/04_analysis/manifest.json",
+      "sha256": "e5d2837c9492c0bf6b71dbeaff554c1f86e78357200147acb992b3e3c02a9e37"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/04_analysis/manifest.json",
+      "sha256": "15e1a27ccb6c7f6c9df0b41be36f1584eef3d8d5cb1e35634a54394101d33858"
+    }
+  ]
+}

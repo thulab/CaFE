@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 8,
+    "source_scan_count": 1,
+    "source_shard_count": 3
+  },
+  "config_sha256": "cd757fce22f22a9f747c659334ecb2b78e01ac70a030979781a3a6598a72093d",
+  "created_at": "2026-08-28T18:05:40.026549+00:00",
+  "dataset_id": "gift_bizitobs_service",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 84963,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/accuracy_rows.parquet",
+      "row_count": 3936,
+      "sha256": "90b2c635d33167e0903a3ee2026c7212ff3350209bb67b04da8669c12bfff1d6"
+    },
+    "accuracy_summary": {
+      "bytes": 72508,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/accuracy_summary.json",
+      "sha256": "9b614d90b806b443026e28f27368580b144d75140e3f2a4a608186d23f104549"
+    },
+    "capability_effect_rows": {
+      "bytes": 282293,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/capability_effect_rows.parquet",
+      "row_count": 3810,
+      "sha256": "e2ba7e04a257f87c90cbbd8abc60652cc10d721c5c163be4f4a73792c7aee7fa"
+    },
+    "capability_effect_summary": {
+      "bytes": 218588,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/capability_effect_summary.json",
+      "sha256": "f4dee91093046c2b6101365ba510c283a2af4aca627faa7f949e5298881b96bb"
+    },
+    "input_ablation_rows": {
+      "bytes": 54202,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/input_ablation_rows.parquet",
+      "row_count": 1080,
+      "sha256": "941280555d448bc76afaf4b548e47a10e95801a2edfaf89ca3167fe325567a61"
+    },
+    "input_ablation_summary": {
+      "bytes": 29374,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/input_ablation_summary.json",
+      "sha256": "d9d7e57478f890cfd1cde049a7a2c43ac61a1046ac372a5a04ae67f989ab66da"
+    },
+    "official_accuracy": {
+      "bytes": 1672,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/official_accuracy.json",
+      "sha256": "e847e180013fe211e0289235c58272b9b0ab3e25b159cf76d524401cc594dfe0"
+    }
+  },
+  "inference_manifest_sha256": "4168af323eb0615d141417d788ab8f7a83673a3ff4f1d3de48eb7c2d5312df1f",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

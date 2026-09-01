@@ -52,6 +52,20 @@ def test_fev_model_contract_uses_cafe_operational_context_cap(
     )
 
 
+def test_fev_native_contract_does_not_query_a_service(tmp_path: Path) -> None:
+    contracts = fev_pipeline._model_contracts(
+        argparse.Namespace(
+            backend="native",
+            model_root=tmp_path / "models",
+            models=["moirai2", "Chronos-2"],
+        )
+    )
+    assert contracts["moirai2"]["maximum_context"] == 16384
+    assert contracts["moirai2"]["advertised_maximum_context"] == -1
+    assert contracts["Chronos-2"]["maximum_context"] == 8192
+    assert contracts["Chronos-2"]["service_maximum_context"] is None
+
+
 def _fixture(tmp_path: Path, *, length: int = 12) -> tuple[Path, Path]:
     timestamps = [
         datetime(2024, 1, 1) + timedelta(hours=index) for index in range(length)

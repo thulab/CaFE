@@ -1,0 +1,1564 @@
+{
+  "rows": [
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "mae_mean": 277.21109596517067,
+      "mase_mean": 1.9510717181210862,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "mae_mean": 292.3087455509615,
+      "mase_mean": 2.050566637290939,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "mae_mean": 307.5397115425969,
+      "mase_mean": 2.1049086515618938,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "mae_mean": 324.7689432042406,
+      "mase_mean": 2.184332504143713,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "mae_mean": 329.1627118456356,
+      "mase_mean": 2.1517908334617086,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "mae_mean": 346.6553206247001,
+      "mase_mean": 2.2018856750257974,
+      "model_id": "Chronos-2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "mae_mean": 329.7818195077035,
+      "mase_mean": 2.034673419875253,
+      "model_id": "Chronos-2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "mae_mean": 321.64721764363964,
+      "mase_mean": 2.037037800299823,
+      "model_id": "Chronos-2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "mae_mean": 309.3206734981139,
+      "mase_mean": 2.0043483941119393,
+      "model_id": "Chronos-2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "mae_mean": 296.1176165880724,
+      "mase_mean": 1.9705687906064473,
+      "model_id": "Chronos-2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "mae_mean": 240.61841000599756,
+      "mase_mean": 1.6505780373508572,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "mae_mean": 240.61841000599756,
+      "mase_mean": 1.6505780373508572,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "mae_mean": 240.61841001493286,
+      "mase_mean": 1.6505780373677024,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "mae_mean": 242.1313501352898,
+      "mase_mean": 1.6535927022438595,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "mae_mean": 245.65459920173586,
+      "mase_mean": 1.6814253846737963,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "mae_mean": 246.1542286443116,
+      "mase_mean": 1.8170636429374925,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "mae_mean": 251.78810482378663,
+      "mase_mean": 1.8405648575109306,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "mae_mean": 258.2540175397031,
+      "mase_mean": 1.877043649205396,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "mae_mean": 269.72083087756835,
+      "mase_mean": 1.9307934408138259,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "mae_mean": 285.1083428899643,
+      "mase_mean": 2.0132901776897416,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "mae_mean": 283.0397362866523,
+      "mase_mean": 1.9112510658556285,
+      "model_id": "Chronos-2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "mae_mean": 282.42775572144524,
+      "mase_mean": 1.9120426827595165,
+      "model_id": "Chronos-2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "mae_mean": 281.70080806045706,
+      "mase_mean": 1.9130675955153915,
+      "model_id": "Chronos-2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "mae_mean": 280.95721242107106,
+      "mase_mean": 1.9151738065330473,
+      "model_id": "Chronos-2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "mae_mean": 280.44798948516865,
+      "mase_mean": 1.9184260466807062,
+      "model_id": "Chronos-2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": null,
+      "capability_level": 0,
+      "mae_mean": 240.61840570590334,
+      "mase_mean": 1.6505780355355453,
+      "model_id": "Chronos-2",
+      "official_instance_count": 2960,
+      "sample_kind": "official_baseline",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "mae_mean": 316.2789850790997,
+      "mase_mean": 2.284924810814692,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "mae_mean": 330.8896116745419,
+      "mase_mean": 2.3732668400248365,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "mae_mean": 337.94582269714994,
+      "mase_mean": 2.3871068049691804,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "mae_mean": 341.89417187311886,
+      "mase_mean": 2.453020326931233,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "mae_mean": 344.68871951120565,
+      "mase_mean": 2.5038861920473945,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "mae_mean": 370.5869985862835,
+      "mase_mean": 3.0522899204158733,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "mae_mean": 363.87569145590186,
+      "mase_mean": 2.9085981185690497,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "mae_mean": 342.3319489689017,
+      "mase_mean": 2.907284229845225,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "mae_mean": 328.5109202931345,
+      "mase_mean": 2.9225831984502997,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "mae_mean": 329.2001842010176,
+      "mase_mean": 2.93433432204243,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "mae_mean": 247.87044158380618,
+      "mase_mean": 1.8430071665394778,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "mae_mean": 247.8715749338083,
+      "mase_mean": 1.84301283484948,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "mae_mean": 247.35692873048376,
+      "mase_mean": 1.7980131930672891,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "mae_mean": 249.30854777886873,
+      "mase_mean": 1.833343214569605,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "mae_mean": 262.80374794931646,
+      "mase_mean": 1.9045034651577406,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "mae_mean": 257.01213289740554,
+      "mase_mean": 1.9888135287623638,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "mae_mean": 265.0933550756539,
+      "mase_mean": 2.019851010459745,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "mae_mean": 274.2057964435692,
+      "mase_mean": 2.0648402357059275,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "mae_mean": 291.2399475483283,
+      "mase_mean": 2.1364956029380258,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "mae_mean": 317.64412682635106,
+      "mase_mean": 2.2584149872882486,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "mae_mean": 299.42212626307787,
+      "mase_mean": 2.226196150866653,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "mae_mean": 298.80476578263347,
+      "mase_mean": 2.2118794565122513,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "mae_mean": 300.0459669036589,
+      "mase_mean": 2.206639191524771,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "mae_mean": 301.6654817339678,
+      "mase_mean": 2.2058558798155667,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "mae_mean": 303.3810989290396,
+      "mase_mean": 2.2189589803870367,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": null,
+      "capability_level": 0,
+      "mae_mean": 248.32122528400703,
+      "mase_mean": 1.8393690782560446,
+      "model_id": "Timer-3.5",
+      "official_instance_count": 2960,
+      "sample_kind": "official_baseline",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "mae_mean": 307.8215557619893,
+      "mase_mean": 2.05629971360162,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "mae_mean": 321.9743628045954,
+      "mase_mean": 2.162327799746419,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "mae_mean": 324.28022419598756,
+      "mase_mean": 2.2125780664751664,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "mae_mean": 330.4198928620264,
+      "mase_mean": 2.2445848407633044,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "mae_mean": 326.60572931741507,
+      "mase_mean": 2.2587233391298316,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "mae_mean": 325.3321395280344,
+      "mase_mean": 2.1619067843782003,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "mae_mean": 321.3472156882325,
+      "mase_mean": 2.0105219144406363,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "mae_mean": 314.9406293294906,
+      "mase_mean": 1.9706555231613057,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "mae_mean": 308.501244832044,
+      "mase_mean": 1.9171214303615298,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "mae_mean": 306.41723467689314,
+      "mase_mean": 1.905168984487856,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "mae_mean": 228.60581356432505,
+      "mase_mean": 1.640772929433267,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "mae_mean": 228.60581356432505,
+      "mase_mean": 1.640772929433267,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "mae_mean": 228.60581356432505,
+      "mase_mean": 1.640772929433267,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "mae_mean": 237.291313669752,
+      "mase_mean": 1.6883801505613876,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "mae_mean": 251.94825236892027,
+      "mase_mean": 1.763470265197826,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "mae_mean": 231.64243875065955,
+      "mase_mean": 1.7995170777356808,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "mae_mean": 237.53853346048496,
+      "mase_mean": 1.8251255261376935,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "mae_mean": 243.82118300505684,
+      "mase_mean": 1.8626987268367867,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "mae_mean": 255.54442301645017,
+      "mase_mean": 1.9203745159835666,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "mae_mean": 269.51969926323454,
+      "mase_mean": 2.002240169426628,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "mae_mean": 270.86105502634837,
+      "mase_mean": 1.9101970640549095,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "mae_mean": 272.54132597182377,
+      "mase_mean": 1.9130017332963976,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "mae_mean": 274.80280770546136,
+      "mase_mean": 1.9195946733566693,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "mae_mean": 277.98024307173574,
+      "mase_mean": 1.9294545249314312,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "mae_mean": 281.64637843196334,
+      "mase_mean": 1.944541569701722,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": null,
+      "capability_level": 0,
+      "mae_mean": 228.5829399098868,
+      "mase_mean": 1.640763151094579,
+      "model_id": "Timer-4.0",
+      "official_instance_count": 2960,
+      "sample_kind": "official_baseline",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "mae_mean": 356.26544230842546,
+      "mase_mean": 2.740380918870049,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "mae_mean": 368.6981059466009,
+      "mase_mean": 2.78768485508405,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "mae_mean": 375.92964433740644,
+      "mase_mean": 2.7940206232505838,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "mae_mean": 384.44005706461826,
+      "mase_mean": 2.82492270721446,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "mae_mean": 383.3599327412497,
+      "mase_mean": 2.835181621386154,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "mae_mean": 362.19671745354367,
+      "mase_mean": 4.225569927857743,
+      "model_id": "moirai2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "mae_mean": 345.0948698154004,
+      "mase_mean": 4.079094547351227,
+      "model_id": "moirai2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "mae_mean": 338.32546921029416,
+      "mase_mean": 4.00683641327396,
+      "model_id": "moirai2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "mae_mean": 327.6414104217255,
+      "mase_mean": 3.9702178309967158,
+      "model_id": "moirai2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "mae_mean": 324.14479698021717,
+      "mase_mean": 3.9448424186523012,
+      "model_id": "moirai2",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "mae_mean": 286.6117350352781,
+      "mase_mean": 2.3407667350429855,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "mae_mean": 286.58604431824534,
+      "mase_mean": 2.3304065096462128,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "mae_mean": 295.3534914681786,
+      "mase_mean": 2.345510321517206,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "mae_mean": 394.9402477055446,
+      "mase_mean": 2.668374604818645,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "mae_mean": 499.4758613075121,
+      "mase_mean": 3.0067383259354203,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "mae_mean": 302.658221597392,
+      "mase_mean": 2.620615147861668,
+      "model_id": "moirai2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "mae_mean": 315.87833035270967,
+      "mase_mean": 2.672502458199076,
+      "model_id": "moirai2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "mae_mean": 331.2648315092634,
+      "mase_mean": 2.771875593823769,
+      "model_id": "moirai2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "mae_mean": 354.6454902702549,
+      "mase_mean": 2.9261953887884338,
+      "model_id": "moirai2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "mae_mean": 383.5202618947174,
+      "mase_mean": 3.1275695942874764,
+      "model_id": "moirai2",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "mae_mean": 333.04733982561254,
+      "mase_mean": 2.959609330119284,
+      "model_id": "moirai2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "mae_mean": 333.85353399186965,
+      "mase_mean": 2.968832714576298,
+      "model_id": "moirai2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "mae_mean": 336.20785747043936,
+      "mase_mean": 2.985952823065746,
+      "model_id": "moirai2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "mae_mean": 341.9451507434344,
+      "mase_mean": 3.0078188450536514,
+      "model_id": "moirai2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "mae_mean": 350.172500572098,
+      "mase_mean": 3.0401588180731585,
+      "model_id": "moirai2",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": null,
+      "capability_level": 0,
+      "mae_mean": 286.61173269303487,
+      "mase_mean": 2.3407666754531333,
+      "model_id": "moirai2",
+      "official_instance_count": 2960,
+      "sample_kind": "official_baseline",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "mae_mean": 296.240029975311,
+      "mase_mean": 2.118415936367737,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "mae_mean": 312.1740637885802,
+      "mase_mean": 2.1804892332866945,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "mae_mean": 322.7384320017146,
+      "mase_mean": 2.2371182572596795,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "mae_mean": 332.8855608065577,
+      "mase_mean": 2.216086977482765,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "mae_mean": 336.1726207071854,
+      "mase_mean": 2.295291778006789,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "mae_mean": 312.25782338198974,
+      "mase_mean": 2.692566019523408,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "mae_mean": 296.6687350305792,
+      "mase_mean": 2.6171662778213185,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "mae_mean": 271.99414767037433,
+      "mase_mean": 2.5478106555021243,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "mae_mean": 289.90057563898745,
+      "mase_mean": 2.466665680113555,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "mae_mean": 281.94591138478654,
+      "mase_mean": 2.607517672007404,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "mae_mean": 235.0387598354673,
+      "mase_mean": 1.766045400202851,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "mae_mean": 235.03875983424297,
+      "mase_mean": 1.7660454001852803,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "mae_mean": 239.26843588998278,
+      "mase_mean": 1.7083931217930586,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "mae_mean": 246.34092518177175,
+      "mase_mean": 1.7211186042310909,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "mae_mean": 255.40284076211202,
+      "mase_mean": 1.7467342534212305,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "mae_mean": 241.60566075513725,
+      "mase_mean": 1.8777171878286067,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "mae_mean": 249.15327579980521,
+      "mase_mean": 1.8994075614095252,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "mae_mean": 256.5540522498422,
+      "mase_mean": 1.9323957398500324,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "mae_mean": 268.66974028708614,
+      "mase_mean": 1.9855743769996712,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "mae_mean": 286.7729694416738,
+      "mase_mean": 2.0636884445865795,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "mae_mean": 266.8472182519341,
+      "mase_mean": 2.0426482935967725,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "mae_mean": 266.7380038740276,
+      "mase_mean": 2.0426276989319665,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "mae_mean": 266.7173455827734,
+      "mase_mean": 2.0438552186511183,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "mae_mean": 267.10392776585815,
+      "mase_mean": 2.046311454617189,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "mae_mean": 268.1310985992332,
+      "mase_mean": 2.047058320874005,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": null,
+      "capability_level": 0,
+      "mae_mean": 235.03091835547127,
+      "mase_mean": 1.7658367747840658,
+      "model_id": "timesfm2.5",
+      "official_instance_count": 2960,
+      "sample_kind": "official_baseline",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "mae_mean": 377.3888939081299,
+      "mase_mean": 2.4204921256860406,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "mae_mean": 379.90286758229024,
+      "mase_mean": 2.466386952763812,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "mae_mean": 382.8318959381844,
+      "mase_mean": 2.5057156335563224,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "mae_mean": 386.2134547636141,
+      "mase_mean": 2.521991985246325,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "mae_mean": 389.42100744428257,
+      "mase_mean": 2.538691540377812,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "mae_mean": 528.0445415863068,
+      "mase_mean": 3.0077300370990545,
+      "model_id": "toto2.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "mae_mean": 524.3052331055737,
+      "mase_mean": 3.1986140256167497,
+      "model_id": "toto2.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "mae_mean": 515.5742829531665,
+      "mase_mean": 2.8924836512695102,
+      "model_id": "toto2.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "mae_mean": 514.7873604802882,
+      "mase_mean": 3.1346407570767933,
+      "model_id": "toto2.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "mae_mean": 508.04772540325325,
+      "mase_mean": 2.8101166841292637,
+      "model_id": "toto2.0",
+      "official_instance_count": 412,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "mae_mean": 354.8898193220879,
+      "mase_mean": 2.090829561782394,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "mae_mean": 354.90580801669506,
+      "mase_mean": 2.097573953813719,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "mae_mean": 349.17738621989093,
+      "mase_mean": 2.220315102989289,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "mae_mean": 370.75427142978526,
+      "mase_mean": 2.341981222588884,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "mae_mean": 415.7825307536012,
+      "mase_mean": 2.6075319048890284,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "mae_mean": 385.917334414331,
+      "mase_mean": 2.6907524032688817,
+      "model_id": "toto2.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "mae_mean": 398.2599605529967,
+      "mase_mean": 2.754957453284772,
+      "model_id": "toto2.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "mae_mean": 411.1398316857503,
+      "mase_mean": 2.8475097021118865,
+      "model_id": "toto2.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "mae_mean": 428.2894895627335,
+      "mase_mean": 2.980504539616722,
+      "model_id": "toto2.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "mae_mean": 449.9034113859593,
+      "mase_mean": 3.1420165959436934,
+      "model_id": "toto2.0",
+      "official_instance_count": 2371,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "mae_mean": 464.1906260131119,
+      "mase_mean": 2.995701316521129,
+      "model_id": "toto2.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "mae_mean": 464.4161533717522,
+      "mase_mean": 3.003033011132483,
+      "model_id": "toto2.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "mae_mean": 463.2676519090454,
+      "mase_mean": 3.010926584572082,
+      "model_id": "toto2.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "mae_mean": 459.01746579292416,
+      "mase_mean": 3.0191936088111335,
+      "model_id": "toto2.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "mae_mean": 453.43889507105825,
+      "mase_mean": 3.0311641467005668,
+      "model_id": "toto2.0",
+      "official_instance_count": 1539,
+      "sample_kind": "capability_treatment",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    },
+    {
+      "capability_id": null,
+      "capability_level": 0,
+      "mae_mean": 354.89433688487753,
+      "mase_mean": 2.0908348747225003,
+      "model_id": "toto2.0",
+      "official_instance_count": 2960,
+      "sample_kind": "official_baseline",
+      "schema_version": "cafe.forecast_accuracy_summary.v2"
+    }
+  ]
+}

@@ -16,6 +16,7 @@ from cafe.benchmark_extension.inference import (
     _validate_distance_context_contract,
     _validate_forecast_limits,
     _validated_inputs,
+    run_native_streaming_model,
     run_streaming_model,
 )
 from cafe.benchmark_extension.mechanisms import source_distance_model_max_contexts
@@ -27,7 +28,7 @@ from cafe.inference.runner import (
 )
 
 
-WORKER_STATUS_SCHEMA = "cafe.distributed_inference_worker.v1"
+WORKER_STATUS_SCHEMA = "cafe.distributed_inference_worker.v2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,9 +39,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--gift-eval-dir", type=Path, required=True)
     parser.add_argument("--model-id", required=True)
-    parser.add_argument("--endpoint", required=True)
+    parser.add_argument("--backend", choices=("native", "service"), default="native")
+    parser.add_argument("--endpoint", default=None)
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1")
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--model-root", type=Path, default=None)
+    parser.add_argument("--model-code-root", type=Path, default=None)
     parser.add_argument("--part-index", type=int, required=True)
     parser.add_argument("--part-count", type=int, required=True)
     parser.add_argument("--worker-output-dir", type=Path, required=True)
@@ -142,14 +147,23 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
     dataset_root = args.output_root.resolve() / args.dataset_id
     generation, _generation_path, _validation_path = _validated_inputs(dataset_root)
     generation = _relocate_generation_files(generation, dataset_root)
-    health = health_catalog(args.endpoint, args.api_prefix)
-    if health is None or args.model_id not in health[1]:
-        raise RuntimeError(
-            f"model {args.model_id!r} is unavailable at {args.endpoint!r}"
-        )
-    model = health[1][args.model_id]
+    if args.backend == "native":
+        from cafe.inference.native_catalog import native_catalog
+
+        if args.model_root is None or args.model_code_root is None:
+            raise ValueError("native worker requires --model-root and --model-code-root")
+        model = native_catalog(args.model_root)[args.model_id]
+    else:
+        if not args.endpoint:
+            raise ValueError("service worker requires --endpoint")
+        health = health_catalog(args.endpoint, args.api_prefix)
+        if health is None or args.model_id not in health[1]:
+            raise RuntimeError(
+                f"model {args.model_id!r} is unavailable at {args.endpoint!r}"
+            )
+        model = health[1][args.model_id]
     maximum_context = _validate_model_protocol(generation, args.model_id, model)
-    service_maximum_context = _maximum_context(model)
+    advertised_maximum_context = _maximum_context(model)
     model = _model_with_context_contract(model, maximum_context)
     execution = {
         **dict(MODEL_EXECUTION_CONFIG[args.model_id]),
@@ -166,45 +180,66 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
 
     prediction_dir = worker_dir / "predictions"
     failure_path = worker_dir / "failures.jsonl"
-    status = run_streaming_model(
-        model_id=args.model_id,
-        model=model,
-        execution=execution,
-        endpoints=[args.endpoint],
-        api_prefix=args.api_prefix,
-        devices=args.devices,
-        sample_factory=lambda: iter_replayed_samples(
-            generation,
-            gift_eval_dir=args.gift_eval_dir.resolve(),
-            replay_workers=max(1, int(args.preprocess_workers)),
-            source_shard_count=int(args.part_count),
-            source_shard_index=int(args.part_index),
-            maximum_context=_maximum_context(model),
-        ),
-        prediction_dir=prediction_dir,
-        failure_path=failure_path,
-        load_timeout_seconds=int(args.load_timeout_seconds),
-        forecast_timeout_seconds=int(args.forecast_timeout_seconds),
-        max_attempts=int(args.max_attempts),
-        maximum_open_groups=int(args.max_open_shape_groups),
-        maximum_inflight_batches=int(args.max_inflight_batches),
-        maximum_inflight_bytes=max(1, int(args.max_inflight_mib)) * 1024 * 1024,
-        unload_before_load=not bool(args.reuse_loaded_model),
-        unload_after=not bool(args.preserve_loaded_model),
+    sample_factory = lambda: iter_replayed_samples(
+        generation,
+        gift_eval_dir=args.gift_eval_dir.resolve(),
+        replay_workers=max(1, int(args.preprocess_workers)),
+        source_shard_count=int(args.part_count),
+        source_shard_index=int(args.part_index),
+        maximum_context=_maximum_context(model),
     )
+    if args.backend == "native":
+        status = run_native_streaming_model(
+            model_id=args.model_id,
+            model=model,
+            execution=execution,
+            model_root=args.model_root.resolve(),
+            model_code_root=args.model_code_root.resolve(),
+            device=args.device,
+            sample_factory=sample_factory,
+            prediction_dir=prediction_dir,
+            failure_path=failure_path,
+            maximum_open_groups=int(args.max_open_shape_groups),
+            maximum_inflight_bytes=max(1, int(args.max_inflight_mib)) * 1024 * 1024,
+        )
+    else:
+        status = run_streaming_model(
+            model_id=args.model_id,
+            model=model,
+            execution=execution,
+            endpoints=[args.endpoint],
+            api_prefix=args.api_prefix,
+            devices=args.devices,
+            sample_factory=sample_factory,
+            prediction_dir=prediction_dir,
+            failure_path=failure_path,
+            load_timeout_seconds=int(args.load_timeout_seconds),
+            forecast_timeout_seconds=int(args.forecast_timeout_seconds),
+            max_attempts=int(args.max_attempts),
+            maximum_open_groups=int(args.max_open_shape_groups),
+            maximum_inflight_batches=int(args.max_inflight_batches),
+            maximum_inflight_bytes=max(1, int(args.max_inflight_mib)) * 1024 * 1024,
+            unload_before_load=not bool(args.reuse_loaded_model),
+            unload_after=not bool(args.preserve_loaded_model),
+        )
     status.update(
         {
             "schema_version": WORKER_STATUS_SCHEMA,
             "dataset_id": args.dataset_id,
             "worker_hostname": socket.gethostname(),
-            "service_endpoint": args.endpoint,
+            "backend": args.backend,
+            "service_endpoint": args.endpoint if args.backend == "service" else None,
+            "native_device": args.device if args.backend == "native" else None,
             "source_shard_partition": {
                 "part_index": int(args.part_index),
                 "part_count": int(args.part_count),
                 "policy": "source_shard_index_modulo_worker_count_v1",
             },
             "maximum_context_materialization": _maximum_context(model),
-            "service_advertised_maximum_context": service_maximum_context,
+            "advertised_maximum_context": advertised_maximum_context,
+            "service_advertised_maximum_context": (
+                advertised_maximum_context if args.backend == "service" else None
+            ),
             "effective_maximum_context": maximum_context,
             "resolved_input_capability": resolve_input_capability(model),
             "input_adaptation_policy": INPUT_ADAPTATION_POLICY_ID,

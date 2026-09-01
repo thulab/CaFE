@@ -1,0 +1,5530 @@
+{
+  "accuracy_strata": [
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 65.68149447970217,
+      "row_count": 64
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 35.02918831172999,
+      "row_count": 61
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 42.71491148647807,
+      "row_count": 62
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 41.07345881211072,
+      "row_count": 64
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 63.716558829959446,
+      "row_count": 64
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 40.56297007473023,
+      "row_count": 62
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 49.85886776592889,
+      "row_count": 62
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 38.08117176241042,
+      "row_count": 61
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 34.899634630779715,
+      "row_count": 60
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 46.58981773866874,
+      "row_count": 62
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 304.9548021275362,
+      "row_count": 68
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 65.20456432092175,
+      "row_count": 63
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 310.5458246610029,
+      "row_count": 68
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 37.66901465277812,
+      "row_count": 56
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 313.0323885943108,
+      "row_count": 68
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 292.07970631968396,
+      "row_count": 63
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 55.24474598535286,
+      "row_count": 64
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 319.291568559297,
+      "row_count": 64
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 56.14390555692468,
+      "row_count": 64
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 289.2763241894659,
+      "row_count": 63
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 48.64195002564457,
+      "row_count": 64
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 280.3938360368655,
+      "row_count": 63
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 44.58816729394351,
+      "row_count": 64
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 308.7975859306589,
+      "row_count": 64
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 51.385021171249285,
+      "row_count": 64
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 62.672240161431155,
+      "row_count": 53
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 44.54258579234727,
+      "row_count": 54
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 26.49264815577787,
+      "row_count": 49
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 44.88686247574511,
+      "row_count": 57
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 65.43241317252289,
+      "row_count": 53
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 5.910087088110569,
+      "row_count": 17
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 25.120985991517955,
+      "row_count": 25
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 41.66940741936015,
+      "row_count": 24
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 9.211574758025579,
+      "row_count": 27
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "mase_sum": 6.1892382452700625,
+      "row_count": 17
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 34.74778969721486,
+      "row_count": 23
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 10.534412696632234,
+      "row_count": 17
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 25.84867288598926,
+      "row_count": 25
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 25.771010877288415,
+      "row_count": 21
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 34.76934194309651,
+      "row_count": 23
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 28.936644045637337,
+      "row_count": 20
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 34.2497169023095,
+      "row_count": 23
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 11.102568216577211,
+      "row_count": 16
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 27.529301130979665,
+      "row_count": 24
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 36.42939401574527,
+      "row_count": 20
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 52.334729533455516,
+      "row_count": 19
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 14.872300715542684,
+      "row_count": 22
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 14.88155430501188,
+      "row_count": 20
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 26.98696558065026,
+      "row_count": 25
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 55.65117033644826,
+      "row_count": 19
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 29.13951407801474,
+      "row_count": 25
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 34.28568230870051,
+      "row_count": 20
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 39.39689417900861,
+      "row_count": 24
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 14.318486210558223,
+      "row_count": 17
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 30.107546321842655,
+      "row_count": 25
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 10.423420094418567,
+      "row_count": 17
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 24.44527938484074,
+      "row_count": 25
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 22.154602805070056,
+      "row_count": 20
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 33.550129300233436,
+      "row_count": 24
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 13.110406344853894,
+      "row_count": 17
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 12.520469036027036,
+      "row_count": 20
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 9.472436730140737,
+      "row_count": 15
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 21.433084605748196,
+      "row_count": 20
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 34.797133234389605,
+      "row_count": 15
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 13.175156099998174,
+      "row_count": 20
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 18.39607009450248,
+      "row_count": 9
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 24.824076877386553,
+      "row_count": 10
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 3.141116323534022,
+      "row_count": 7
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 5.564277336562413,
+      "row_count": 7
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "mase_sum": 18.661591819035195,
+      "row_count": 9
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 2,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.12902560231096455,
+      "row_count": 1
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.13049811949667103,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.12814623887417342,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.16141992090505597,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.19349618738314625,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.12488325210925605,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.13676125079837737,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.12107827339602129,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.16116229404140942,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "mase_sum": 0.13810544481075449,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 254.1940132210847,
+      "row_count": 165
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 270.2529941818498,
+      "row_count": 183
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 236.110498870339,
+      "row_count": 189
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 256.9403696404572,
+      "row_count": 183
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 274.446874779458,
+      "row_count": 165
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 286.4157634038206,
+      "row_count": 171
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 358.601114641961,
+      "row_count": 193
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 300.8200109005193,
+      "row_count": 173
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 273.2118517933972,
+      "row_count": 183
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 278.1619689349442,
+      "row_count": 171
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 207.12078066799518,
+      "row_count": 183
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 219.16076325088497,
+      "row_count": 171
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 246.8568417380563,
+      "row_count": 193
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 219.9014913401215,
+      "row_count": 173
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 210.10852339856416,
+      "row_count": 183
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 177.19065685042824,
+      "row_count": 130
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 138.36128943317402,
+      "row_count": 130
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 163.75688378864098,
+      "row_count": 112
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 209.49814044578133,
+      "row_count": 122
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 185.36345748672267,
+      "row_count": 130
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 134.43472510451605,
+      "row_count": 108
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 117.72302327972639,
+      "row_count": 80
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 132.46063187203742,
+      "row_count": 90
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 109.58868954176877,
+      "row_count": 95
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "mase_sum": 134.5181590696202,
+      "row_count": 108
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7485136433261601,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.5874551506457623,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.4378139104043879,
+      "row_count": 2
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.084851811360257,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7955808413542377,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.602620586528708,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.4258719709218663,
+      "row_count": 2
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.0728373746494644,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7370049387136083,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7009980781306087,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.846603447167716,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7196896309025459,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.5306801641129635,
+      "row_count": 2
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.1050436619099415,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.8786577578670492,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.2273700812335715,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.8598986707858357,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.6717009896275818,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.5833171446218284,
+      "row_count": 2
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.0547602073181006,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.4073554777297583,
+      "row_count": 2
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.0494583191124378,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7318765784790373,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.5981608987245297,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.4262032211117268,
+      "row_count": 2
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.5998840390267404,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.423307610371869,
+      "row_count": 2
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.0419752696963258,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7536661154073864,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.6087494248857749,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.0502968471325869,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.7303342165025849,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 0.5982834978007414,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.423486601028132,
+      "row_count": 2
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "mase_sum": 1.0525735206749032,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.5175299217488541,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.76250700275194,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.5178184430383166,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.7435066930488623,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.5494430662895269,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.6139806913748284,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.9284216835929742,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.7273122804836257,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 1.1885847667056453,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.822716762220801,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.8659812306126968,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.7428218699352895,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.5179721780899622,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.7626851084104803,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.5423407050739186,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.7438263950729275,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.5191581224747694,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "mase_sum": 0.7498356620478843,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5607693871864393,
+      "row_count": 1
+    },
+    {
+      "capability_id": "common_factor",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5331065175332489,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5742031217820395,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5484769735684917,
+      "row_count": 1
+    },
+    {
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5787595510410406,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.653612767856767,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.6057132617403929,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.6406395633389729,
+      "row_count": 1
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.6169241121710977,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5547352874921835,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.575334038707034,
+      "row_count": 1
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5342534436196075,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5755030369590165,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5588413469385599,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5631014787327029,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.572650393755712,
+      "row_count": 1
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_jena_weather_h",
+      "mase_sum": 0.5437967676200213,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 91.59267830426363,
+      "row_count": 82
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 31.29367020006802,
+      "row_count": 35
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 84.25025236844871,
+      "row_count": 86
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 78.70219915869662,
+      "row_count": 81
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 91.19259536422605,
+      "row_count": 82
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 75.06886689705374,
+      "row_count": 74
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 102.07027729385094,
+      "row_count": 90
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 33.68445527402783,
+      "row_count": 35
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 82.78250987560462,
+      "row_count": 85
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 70.38549971898533,
+      "row_count": 74
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 79.92255684029176,
+      "row_count": 85
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 69.85891962141486,
+      "row_count": 74
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 96.81791338990031,
+      "row_count": 90
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 31.93444677730344,
+      "row_count": 35
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 83.7459070748675,
+      "row_count": 85
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 20.375374431498084,
+      "row_count": 23
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 72.75411439939792,
+      "row_count": 73
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 60.18188581114605,
+      "row_count": 61
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 81.38502543590177,
+      "row_count": 70
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 21.42513833340017,
+      "row_count": 23
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 13.612759486330841,
+      "row_count": 18
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 12.22617127403561,
+      "row_count": 9
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 8.520238142485914,
+      "row_count": 9
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 8.32649175975627,
+      "row_count": 11
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "mase_sum": 13.896414907264807,
+      "row_count": 18
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 108.35221393842832,
+      "row_count": 126
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 128.2847945146403,
+      "row_count": 139
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 109.98456877582221,
+      "row_count": 120
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 147.2447577987455,
+      "row_count": 169
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 116.4934723804111,
+      "row_count": 126
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 115.05647888248224,
+      "row_count": 119
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 158.86580706651944,
+      "row_count": 172
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 116.68075451333242,
+      "row_count": 124
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 136.1279590846839,
+      "row_count": 139
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 111.9895207007,
+      "row_count": 119
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 124.0175667178776,
+      "row_count": 139
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 102.76306341175389,
+      "row_count": 119
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 138.93687174352644,
+      "row_count": 172
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 102.08852902172643,
+      "row_count": 124
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 124.84543535650847,
+      "row_count": 139
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 2.7282714472876184,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 2.959789842765767,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 3.811947018635983,
+      "row_count": 3
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 6.301186011446072,
+      "row_count": 6
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 2.7119754897601833,
+      "row_count": 4
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 84.55873494646971,
+      "row_count": 101
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 49.12736867986192,
+      "row_count": 55
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 60.312338680156486,
+      "row_count": 70
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 37.33614305816849,
+      "row_count": 51
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "mase_sum": 84.86869904366274,
+      "row_count": 101
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 3.130522395725311,
+      "row_count": 6
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 9.853084906380843,
+      "row_count": 12
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 10.728171315153887,
+      "row_count": 10
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 7.161911581670745,
+      "row_count": 7
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 4.246105901478167,
+      "row_count": 6
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 16.6136114112785,
+      "row_count": 12
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 13.131940228384853,
+      "row_count": 7
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 10.783862305774326,
+      "row_count": 12
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 2.2214455981513566,
+      "row_count": 4
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 18.44652291325936,
+      "row_count": 12
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 1.4767303055088654,
+      "row_count": 4
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 9.780077510853555,
+      "row_count": 12
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 4.892747387055681,
+      "row_count": 7
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 8.035994613057289,
+      "row_count": 12
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 2.04945750786904,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 9.14130527257924,
+      "row_count": 12
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 1.7692751292261932,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 4.601250320368813,
+      "row_count": 6
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 4.245416160050522,
+      "row_count": 6
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 11.273767788330401,
+      "row_count": 12
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 2.5609674248857948,
+      "row_count": 5
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 2.364635074551241,
+      "row_count": 4
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 3.2805830736546646,
+      "row_count": 4
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 7.67784697763577,
+      "row_count": 10
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "mase_sum": 2.4447217290337915,
+      "row_count": 5
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 4.727319911862617,
+      "row_count": 7
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 7.36247985808723,
+      "row_count": 10
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 6.457433133744693,
+      "row_count": 12
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 26.558884239963422,
+      "row_count": 26
+    },
+    {
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 4.874903097893727,
+      "row_count": 7
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 7.069924083150675,
+      "row_count": 9
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 8.437613435252382,
+      "row_count": 13
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 23.104129231485754,
+      "row_count": 23
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 9.252861263395964,
+      "row_count": 10
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 7.2243952155253615,
+      "row_count": 9
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 29.732248769551667,
+      "row_count": 26
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 6.5011119715086725,
+      "row_count": 7
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 8.864022785685798,
+      "row_count": 10
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 7.936990393503882,
+      "row_count": 12
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 28.73963518332694,
+      "row_count": 26
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 6.421708094161964,
+      "row_count": 12
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 25.599915057435854,
+      "row_count": 26
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 4.615667200235021,
+      "row_count": 7
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 7.2613541004516255,
+      "row_count": 10
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 6.61177136435499,
+      "row_count": 12
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 2.007432475351105,
+      "row_count": 2
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 0.4285563637507945,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 4.566749143960091,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 1.3715203746380122,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 2.0713639006774414,
+      "row_count": 2
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 5.913041721179297,
+      "row_count": 8
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 6.137393444412636,
+      "row_count": 8
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 5.93795897421919,
+      "row_count": 9
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 10.32691118120063,
+      "row_count": 5
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "mase_sum": 5.919354482942642,
+      "row_count": 8
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 69.74414414625394,
+      "row_count": 74
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 60.00412769546426,
+      "row_count": 69
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 73.20519670797088,
+      "row_count": 68
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 66.88357774534073,
+      "row_count": 69
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 79.81721427543947,
+      "row_count": 74
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 89.2602896473466,
+      "row_count": 69
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 87.07539700266857,
+      "row_count": 73
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 80.67899095279941,
+      "row_count": 70
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 71.69885381397253,
+      "row_count": 68
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 84.16368615134603,
+      "row_count": 69
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 53.96292208152988,
+      "row_count": 68
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 67.89353086674035,
+      "row_count": 69
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 66.29868224818388,
+      "row_count": 73
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 63.36321037801988,
+      "row_count": 70
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 56.24050050337442,
+      "row_count": 68
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 0.8016870341352241,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 1.0040792982836086,
+      "row_count": 1
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 8.6178978467644,
+      "row_count": 5
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "mase_sum": 1.3580500687443517,
+      "row_count": 1
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 5.178959229838934,
+      "row_count": 10
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 4.432208559828507,
+      "row_count": 8
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.3359381879367573,
+      "row_count": 5
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 4.7173220718727045,
+      "row_count": 7
+    },
+    {
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 5.488311186806508,
+      "row_count": 10
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.6986878253474194,
+      "row_count": 5
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 7.255741452544682,
+      "row_count": 12
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 4.788756839020791,
+      "row_count": 8
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.228352203642541,
+      "row_count": 5
+    },
+    {
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.9003781758094918,
+      "row_count": 5
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.8369608005287708,
+      "row_count": 5
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.6104878047268647,
+      "row_count": 5
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 6.026759215362286,
+      "row_count": 12
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 4.640203812312145,
+      "row_count": 8
+    },
+    {
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.954677255922137,
+      "row_count": 5
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.5305043216542136,
+      "row_count": 7
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.5287271726244978,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.2559591944632547,
+      "row_count": 4
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 4.40036174444236,
+      "row_count": 9
+    },
+    {
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.817393967545553,
+      "row_count": 7
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.8899015405886233,
+      "row_count": 7
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.329266232455442,
+      "row_count": 5
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 2.247389274236905,
+      "row_count": 4
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.007988052737769,
+      "row_count": 5
+    },
+    {
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "mase_sum": 3.9493864198349895,
+      "row_count": 7
+    }
+  ],
+  "baseline_batches": 37,
+  "baseline_count": 2309,
+  "batch_size": 128,
+  "complete": true,
+  "context_length": 8192,
+  "corpus": "cross",
+  "dtype": "float32",
+  "effect_strata": [
+    {
+      "candidate_count": 64,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 3072,
+      "scored_count": 64,
+      "squared_error_sum": 3423.4008217883515,
+      "truth_squared_sum": 1157.133753838194
+    },
+    {
+      "candidate_count": 61,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2928,
+      "scored_count": 61,
+      "squared_error_sum": 68.48036865519742,
+      "truth_squared_sum": 2888.1866184019996
+    },
+    {
+      "candidate_count": 62,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2976,
+      "scored_count": 62,
+      "squared_error_sum": 388.77758469710955,
+      "truth_squared_sum": 7064.546269626437
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 3072,
+      "scored_count": 64,
+      "squared_error_sum": 273.0375390829461,
+      "truth_squared_sum": 6803.615213622077
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 3072,
+      "scored_count": 64,
+      "squared_error_sum": 1398.6569924226276,
+      "truth_squared_sum": 22312.196650079615
+    },
+    {
+      "candidate_count": 62,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2496,
+      "scored_count": 52,
+      "squared_error_sum": 86.0961281032337,
+      "truth_squared_sum": 217.41784251471614
+    },
+    {
+      "candidate_count": 62,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2784,
+      "scored_count": 58,
+      "squared_error_sum": 21681.90539805495,
+      "truth_squared_sum": 2261.2987164623496
+    },
+    {
+      "candidate_count": 61,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2784,
+      "scored_count": 58,
+      "squared_error_sum": 1117.01726218399,
+      "truth_squared_sum": 3228.9743028497155
+    },
+    {
+      "candidate_count": 60,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2880,
+      "scored_count": 60,
+      "squared_error_sum": 4676.952499965662,
+      "truth_squared_sum": 6160.625052896013
+    },
+    {
+      "candidate_count": 62,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2976,
+      "scored_count": 62,
+      "squared_error_sum": 2333.8954725731314,
+      "truth_squared_sum": 4565.346405351648
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 6528,
+      "scored_count": 68,
+      "squared_error_sum": 934.902125600822,
+      "truth_squared_sum": 6720.22359533384
+    },
+    {
+      "candidate_count": 63,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 6048,
+      "scored_count": 63,
+      "squared_error_sum": 6557.414555473458,
+      "truth_squared_sum": 5373.273220644084
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 6528,
+      "scored_count": 68,
+      "squared_error_sum": 1728.5934612638928,
+      "truth_squared_sum": 9750.824020454898
+    },
+    {
+      "candidate_count": 56,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 5376,
+      "scored_count": 56,
+      "squared_error_sum": 1286.5003703161742,
+      "truth_squared_sum": 3827.2857598587652
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 6528,
+      "scored_count": 68,
+      "squared_error_sum": 2494.6178905074057,
+      "truth_squared_sum": 7165.407686481069
+    },
+    {
+      "candidate_count": 63,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4704,
+      "scored_count": 63,
+      "squared_error_sum": 4407.596211200763,
+      "truth_squared_sum": 25003.768489837363
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4224,
+      "scored_count": 64,
+      "squared_error_sum": 4295.0494254738405,
+      "truth_squared_sum": 6673.977215964346
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4608,
+      "scored_count": 64,
+      "squared_error_sum": 5445.791925833895,
+      "truth_squared_sum": 4795.013078884954
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4560,
+      "scored_count": 64,
+      "squared_error_sum": 3668.540997060872,
+      "truth_squared_sum": 4440.51509460152
+    },
+    {
+      "candidate_count": 63,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4704,
+      "scored_count": 63,
+      "squared_error_sum": 5740.934761974763,
+      "truth_squared_sum": 4174.209437352797
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4416,
+      "scored_count": 64,
+      "squared_error_sum": 169.26974170481523,
+      "truth_squared_sum": 65708.15578558245
+    },
+    {
+      "candidate_count": 63,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4752,
+      "scored_count": 63,
+      "squared_error_sum": 154.08561464578247,
+      "truth_squared_sum": 82290.4085814981
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4800,
+      "scored_count": 64,
+      "squared_error_sum": 292.263167135984,
+      "truth_squared_sum": 53727.37855398214
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4464,
+      "scored_count": 64,
+      "squared_error_sum": 3943.481256820157,
+      "truth_squared_sum": 69139.39146710843
+    },
+    {
+      "candidate_count": 64,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4416,
+      "scored_count": 64,
+      "squared_error_sum": 494.6966493182208,
+      "truth_squared_sum": 65677.70720400497
+    },
+    {
+      "candidate_count": 53,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4032,
+      "scored_count": 52,
+      "squared_error_sum": 16631.419846867233,
+      "truth_squared_sum": 461.28930002931594
+    },
+    {
+      "candidate_count": 54,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 3840,
+      "scored_count": 54,
+      "squared_error_sum": 283.0404741088426,
+      "truth_squared_sum": 3319.7432356405225
+    },
+    {
+      "candidate_count": 49,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 3840,
+      "scored_count": 49,
+      "squared_error_sum": 392.6632133897703,
+      "truth_squared_sum": 2353.8867894675313
+    },
+    {
+      "candidate_count": 57,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4224,
+      "scored_count": 57,
+      "squared_error_sum": 601.232437321423,
+      "truth_squared_sum": 5563.835383126468
+    },
+    {
+      "candidate_count": 53,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 4128,
+      "scored_count": 53,
+      "squared_error_sum": 14095.681970299425,
+      "truth_squared_sum": 10978.208062107005
+    },
+    {
+      "candidate_count": 17,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 1104,
+      "scored_count": 17,
+      "squared_error_sum": 13.689161815333263,
+      "truth_squared_sum": 432.35292607478993
+    },
+    {
+      "candidate_count": 25,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 1776,
+      "scored_count": 25,
+      "squared_error_sum": 44.176719818479484,
+      "truth_squared_sum": 1769.8046673973367
+    },
+    {
+      "candidate_count": 24,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 1680,
+      "scored_count": 24,
+      "squared_error_sum": 2892.9427739108773,
+      "truth_squared_sum": 12800.105010308202
+    },
+    {
+      "candidate_count": 27,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 2064,
+      "scored_count": 27,
+      "squared_error_sum": 153.87767666729738,
+      "truth_squared_sum": 46276.455856518405
+    },
+    {
+      "candidate_count": 17,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_fast_h",
+      "observed_cell_count": 1104,
+      "scored_count": 17,
+      "squared_error_sum": 50.94866701571526,
+      "truth_squared_sum": 10479.72286289952
+    },
+    {
+      "candidate_count": 23,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1104,
+      "scored_count": 23,
+      "squared_error_sum": 37.4609249377015,
+      "truth_squared_sum": 177.08602760012124
+    },
+    {
+      "candidate_count": 17,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 816,
+      "scored_count": 17,
+      "squared_error_sum": 94.54888855487363,
+      "truth_squared_sum": 662.6834423101994
+    },
+    {
+      "candidate_count": 25,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1200,
+      "scored_count": 25,
+      "squared_error_sum": 212.82213904423426,
+      "truth_squared_sum": 3030.196424254726
+    },
+    {
+      "candidate_count": 21,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1008,
+      "scored_count": 21,
+      "squared_error_sum": 830.7532150520203,
+      "truth_squared_sum": 4247.488797998631
+    },
+    {
+      "candidate_count": 23,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1104,
+      "scored_count": 23,
+      "squared_error_sum": 85.93740715757423,
+      "truth_squared_sum": 3801.295746292358
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 912,
+      "scored_count": 19,
+      "squared_error_sum": 290.137564502836,
+      "truth_squared_sum": 399.1231050917954
+    },
+    {
+      "candidate_count": 23,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 960,
+      "scored_count": 20,
+      "squared_error_sum": 67.43988366053652,
+      "truth_squared_sum": 159.81812808779532
+    },
+    {
+      "candidate_count": 16,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 768,
+      "scored_count": 16,
+      "squared_error_sum": 172.6811848446956,
+      "truth_squared_sum": 159.91899014847303
+    },
+    {
+      "candidate_count": 24,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1152,
+      "scored_count": 24,
+      "squared_error_sum": 902.3670538409798,
+      "truth_squared_sum": 3670.099149566845
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 960,
+      "scored_count": 20,
+      "squared_error_sum": 4155.804695022256,
+      "truth_squared_sum": 8151.281503245493
+    },
+    {
+      "candidate_count": 19,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1824,
+      "scored_count": 19,
+      "squared_error_sum": 2917.589119130703,
+      "truth_squared_sum": 1681.8523466249246
+    },
+    {
+      "candidate_count": 22,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 2112,
+      "scored_count": 22,
+      "squared_error_sum": 355.58947078412666,
+      "truth_squared_sum": 1183.9957960043375
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1920,
+      "scored_count": 20,
+      "squared_error_sum": 745.098170382388,
+      "truth_squared_sum": 1093.5119632924218
+    },
+    {
+      "candidate_count": 25,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 2400,
+      "scored_count": 25,
+      "squared_error_sum": 1506.4838701814115,
+      "truth_squared_sum": 3204.1813040700617
+    },
+    {
+      "candidate_count": 19,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1824,
+      "scored_count": 19,
+      "squared_error_sum": 2097.752283435813,
+      "truth_squared_sum": 1791.2842862909233
+    },
+    {
+      "candidate_count": 25,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1968,
+      "scored_count": 25,
+      "squared_error_sum": 1607.8830568489477,
+      "truth_squared_sum": 7801.006019378148
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1344,
+      "scored_count": 20,
+      "squared_error_sum": 3663.52587995102,
+      "truth_squared_sum": 3138.773184804238
+    },
+    {
+      "candidate_count": 24,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1872,
+      "scored_count": 24,
+      "squared_error_sum": 2659.148154285668,
+      "truth_squared_sum": 2265.315763022042
+    },
+    {
+      "candidate_count": 17,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1296,
+      "scored_count": 17,
+      "squared_error_sum": 2322.928395809354,
+      "truth_squared_sum": 1368.1583897457235
+    },
+    {
+      "candidate_count": 25,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1968,
+      "scored_count": 25,
+      "squared_error_sum": 1591.4763312941377,
+      "truth_squared_sum": 1364.703645002587
+    },
+    {
+      "candidate_count": 17,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1440,
+      "scored_count": 17,
+      "squared_error_sum": 74.28947737498653,
+      "truth_squared_sum": 18549.984081284725
+    },
+    {
+      "candidate_count": 25,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1824,
+      "scored_count": 25,
+      "squared_error_sum": 281.53050465904033,
+      "truth_squared_sum": 32840.47882758509
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1440,
+      "scored_count": 20,
+      "squared_error_sum": 2758.216007943363,
+      "truth_squared_sum": 27516.037398884302
+    },
+    {
+      "candidate_count": 24,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1584,
+      "scored_count": 24,
+      "squared_error_sum": 207.6875520154548,
+      "truth_squared_sum": 26105.44542670055
+    },
+    {
+      "candidate_count": 17,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1440,
+      "scored_count": 17,
+      "squared_error_sum": 580.5134577452279,
+      "truth_squared_sum": 18524.65203373443
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1296,
+      "scored_count": 20,
+      "squared_error_sum": 118.80782836601881,
+      "truth_squared_sum": 170.5419066796882
+    },
+    {
+      "candidate_count": 15,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 912,
+      "scored_count": 15,
+      "squared_error_sum": 183.32730614200185,
+      "truth_squared_sum": 186.56203801762007
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1488,
+      "scored_count": 20,
+      "squared_error_sum": 1499.8325790335039,
+      "truth_squared_sum": 2641.546142434119
+    },
+    {
+      "candidate_count": 15,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1104,
+      "scored_count": 15,
+      "squared_error_sum": 6122.9250519637635,
+      "truth_squared_sum": 2111.89749551371
+    },
+    {
+      "candidate_count": 20,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 1296,
+      "scored_count": 20,
+      "squared_error_sum": 291.6418739913758,
+      "truth_squared_sum": 3084.349588435048
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 768,
+      "scored_count": 9,
+      "squared_error_sum": 30.719092171594735,
+      "truth_squared_sum": 1096.9316922009002
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 768,
+      "scored_count": 10,
+      "squared_error_sum": 77.47277005399691,
+      "truth_squared_sum": 1463.014845987311
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 528,
+      "scored_count": 7,
+      "squared_error_sum": 45.47463479497043,
+      "truth_squared_sum": 1815.6658790658564
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 576,
+      "scored_count": 7,
+      "squared_error_sum": 11.797659034930305,
+      "truth_squared_sum": 1511.245965015141
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_bitbrains_rnd_h",
+      "observed_cell_count": 768,
+      "scored_count": 9,
+      "squared_error_sum": 55.30815445816974,
+      "truth_squared_sum": 21668.27423099251
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 2,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 0.0884099327951754,
+      "truth_squared_sum": 22.65896158111004
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.436246417739949,
+      "truth_squared_sum": 11.092871168130412
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.6378739575835328,
+      "truth_squared_sum": 0.13540211300668892
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 22.595945820346707,
+      "truth_squared_sum": 4.38858293071902
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 5.675524680833144,
+      "truth_squared_sum": 40.907682108038415
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 1.092330728883293,
+      "truth_squared_sum": 31.057122051985047
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 0.5173467589630121,
+      "truth_squared_sum": 347.1256422824291
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 1.1946165896919814,
+      "truth_squared_sum": 7.801897024263332
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 3.6168112212311514,
+      "truth_squared_sum": 275.27309993633594
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_bizitobs_l2c_h",
+      "observed_cell_count": 144,
+      "scored_count": 1,
+      "squared_error_sum": 0.1968090253298637,
+      "truth_squared_sum": 58.93759499084987
+    },
+    {
+      "candidate_count": 165,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 7920,
+      "scored_count": 165,
+      "squared_error_sum": 9706.069222470993,
+      "truth_squared_sum": 35548.318736150155
+    },
+    {
+      "candidate_count": 183,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8784,
+      "scored_count": 183,
+      "squared_error_sum": 5087.159735539483,
+      "truth_squared_sum": 39231.95783287855
+    },
+    {
+      "candidate_count": 189,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 9072,
+      "scored_count": 189,
+      "squared_error_sum": 6401.333543327564,
+      "truth_squared_sum": 25354.92252814756
+    },
+    {
+      "candidate_count": 183,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8784,
+      "scored_count": 183,
+      "squared_error_sum": 8146.470952196625,
+      "truth_squared_sum": 23420.94491205201
+    },
+    {
+      "candidate_count": 165,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 7920,
+      "scored_count": 165,
+      "squared_error_sum": 10428.237193342507,
+      "truth_squared_sum": 35386.19107700889
+    },
+    {
+      "candidate_count": 171,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8208,
+      "scored_count": 171,
+      "squared_error_sum": 26700.200802710464,
+      "truth_squared_sum": 102516.93677742593
+    },
+    {
+      "candidate_count": 193,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 9264,
+      "scored_count": 193,
+      "squared_error_sum": 54901.07004186798,
+      "truth_squared_sum": 84825.68959553745
+    },
+    {
+      "candidate_count": 173,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8304,
+      "scored_count": 173,
+      "squared_error_sum": 36452.13183564108,
+      "truth_squared_sum": 41396.58276543207
+    },
+    {
+      "candidate_count": 183,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8784,
+      "scored_count": 183,
+      "squared_error_sum": 24217.907775331583,
+      "truth_squared_sum": 30736.17704447695
+    },
+    {
+      "candidate_count": 171,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8208,
+      "scored_count": 171,
+      "squared_error_sum": 20609.476720233124,
+      "truth_squared_sum": 16027.251382798106
+    },
+    {
+      "candidate_count": 183,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8784,
+      "scored_count": 183,
+      "squared_error_sum": 1.6647242168242407e-08,
+      "truth_squared_sum": 434390.7557415015
+    },
+    {
+      "candidate_count": 171,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8208,
+      "scored_count": 171,
+      "squared_error_sum": 2.42898177959058e-08,
+      "truth_squared_sum": 385775.9651021736
+    },
+    {
+      "candidate_count": 193,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 9264,
+      "scored_count": 193,
+      "squared_error_sum": 2.0941937310794126e-08,
+      "truth_squared_sum": 610335.3131122093
+    },
+    {
+      "candidate_count": 173,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8304,
+      "scored_count": 173,
+      "squared_error_sum": 24.800479913413,
+      "truth_squared_sum": 537281.59037642
+    },
+    {
+      "candidate_count": 183,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 8784,
+      "scored_count": 183,
+      "squared_error_sum": 624.1896497494993,
+      "truth_squared_sum": 434390.7557415015
+    },
+    {
+      "candidate_count": 130,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 6192,
+      "scored_count": 129,
+      "squared_error_sum": 124.30058257154535,
+      "truth_squared_sum": 9300.096519848075
+    },
+    {
+      "candidate_count": 130,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 6240,
+      "scored_count": 130,
+      "squared_error_sum": 255.52889621231537,
+      "truth_squared_sum": 16478.281663910086
+    },
+    {
+      "candidate_count": 112,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 5376,
+      "scored_count": 112,
+      "squared_error_sum": 931.1369108929371,
+      "truth_squared_sum": 34957.424910840346
+    },
+    {
+      "candidate_count": 122,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 5856,
+      "scored_count": 122,
+      "squared_error_sum": 13452.651399974728,
+      "truth_squared_sum": 181008.86902129313
+    },
+    {
+      "candidate_count": 130,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 6240,
+      "scored_count": 130,
+      "squared_error_sum": 1150.1110615977645,
+      "truth_squared_sum": 194633.36115346808
+    },
+    {
+      "candidate_count": 108,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 5184,
+      "scored_count": 108,
+      "squared_error_sum": 1.0547382857475194,
+      "truth_squared_sum": 12689.444492406923
+    },
+    {
+      "candidate_count": 80,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 3840,
+      "scored_count": 80,
+      "squared_error_sum": 4.2265308480657895,
+      "truth_squared_sum": 30116.367670917814
+    },
+    {
+      "candidate_count": 90,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 4320,
+      "scored_count": 90,
+      "squared_error_sum": 11.544475378912711,
+      "truth_squared_sum": 89637.96664422733
+    },
+    {
+      "candidate_count": 95,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 4560,
+      "scored_count": 95,
+      "squared_error_sum": 12.119669706065965,
+      "truth_squared_sum": 119511.00360319899
+    },
+    {
+      "candidate_count": 108,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_electricity_h",
+      "observed_cell_count": 5184,
+      "scored_count": 108,
+      "squared_error_sum": 19.710313123556865,
+      "truth_squared_sum": 270494.07650638453
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 0.5524504003660515,
+      "truth_squared_sum": 22.666556236503595
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 0.6984360076407456,
+      "truth_squared_sum": 6.065123681316839
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "common_factor",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 528,
+      "scored_count": 2,
+      "squared_error_sum": 6.208714378931952,
+      "truth_squared_sum": 434.9926407835708
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 8.972443778589305,
+      "truth_squared_sum": 343.68442262054793
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 6.086052781260237,
+      "truth_squared_sum": 367.75305991523095
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 7.034340104111268,
+      "truth_squared_sum": 9.31806684686914
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 5.805430978655233,
+      "truth_squared_sum": 1.9363515037182437
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 12.94406898529919,
+      "truth_squared_sum": 10.605403718822007
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 46.656064218555315,
+      "truth_squared_sum": 43.85919521623407
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 104.95899800389347,
+      "truth_squared_sum": 142.966990499168
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 38.57077989106226,
+      "truth_squared_sum": 175.08134737430558
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 49.975778521690664,
+      "truth_squared_sum": 148.4384373397324
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 672,
+      "scored_count": 2,
+      "squared_error_sum": 101.48890473769029,
+      "truth_squared_sum": 349.2175509109867
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 84.29929500915416,
+      "truth_squared_sum": 202.86036811122176
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 85.07536631483785,
+      "truth_squared_sum": 119.80243117796243
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 319.365397831124,
+      "truth_squared_sum": 335.4513674577712
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 172.86276184908408,
+      "truth_squared_sum": 181.20099361785242
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 33.08791757151668,
+      "truth_squared_sum": 666.0016681826053
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 480,
+      "scored_count": 2,
+      "squared_error_sum": 197.79001894833948,
+      "truth_squared_sum": 237.02330470904514
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 67.07014241155409,
+      "truth_squared_sum": 55.908562057994494
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 288,
+      "scored_count": 2,
+      "squared_error_sum": 4.3647434015775476e-11,
+      "truth_squared_sum": 2276.9521678116316
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 7.349819884007655e-11,
+      "truth_squared_sum": 2650.9821645064485
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 0.09193469883999279,
+      "truth_squared_sum": 2287.4729143891104
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.0817240046538492,
+      "truth_squared_sum": 162.9361268589689
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 288,
+      "scored_count": 2,
+      "squared_error_sum": 3.5229761789988343,
+      "truth_squared_sum": 2276.9521678116316
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 192,
+      "scored_count": 1,
+      "squared_error_sum": 0.7960495080532838,
+      "truth_squared_sum": 10.274023233459786
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 384,
+      "scored_count": 2,
+      "squared_error_sum": 3.7177306817848335,
+      "truth_squared_sum": 110.47583756231906
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 144,
+      "scored_count": 1,
+      "squared_error_sum": 2.904232246452118,
+      "truth_squared_sum": 74.51245819089317
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 192,
+      "scored_count": 1,
+      "squared_error_sum": 17.505755710393125,
+      "truth_squared_sum": 216.39613476292712
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 192,
+      "scored_count": 1,
+      "squared_error_sum": 6.054039972213714,
+      "truth_squared_sum": 289.4035034221803
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.00621835310165438,
+      "truth_squared_sum": 18.47859475537432
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 96,
+      "scored_count": 1,
+      "squared_error_sum": 0.02882444381812801,
+      "truth_squared_sum": 150.0828796758893
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 96,
+      "scored_count": 1,
+      "squared_error_sum": 0.10029285441212897,
+      "truth_squared_sum": 166.31760133437362
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 192,
+      "scored_count": 2,
+      "squared_error_sum": 0.34999461516020175,
+      "truth_squared_sum": 927.5738137933147
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_ett1_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.09890787628863246,
+      "truth_squared_sum": 348.69576097902956
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 0.46537206550641563,
+      "truth_squared_sum": 277.72070719763025
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 3.6410826105989553,
+      "truth_squared_sum": 62.685353786067424
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 2.248597738243294,
+      "truth_squared_sum": 4329.42493958652
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 3,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.21478211405315373,
+      "truth_squared_sum": 38.07309930435972
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 15.84095485539845,
+      "truth_squared_sum": 80.88519777002668
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 47.31794167991846,
+      "truth_squared_sum": 899.2588844634455
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 155.04815443193527,
+      "truth_squared_sum": 634.3757178572213
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 175.11413511959847,
+      "truth_squared_sum": 1172.497062911805
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 144,
+      "scored_count": 1,
+      "squared_error_sum": 919.0716796166639,
+      "truth_squared_sum": 821.0647615777323
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 192,
+      "scored_count": 1,
+      "squared_error_sum": 851.4543610525494,
+      "truth_squared_sum": 639.8111279557409
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 144,
+      "scored_count": 1,
+      "squared_error_sum": 229.3442654385924,
+      "truth_squared_sum": 126.31765474458663
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 336,
+      "scored_count": 1,
+      "squared_error_sum": 1.0053430119041627e-10,
+      "truth_squared_sum": 12066.997023015352
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 96,
+      "scored_count": 1,
+      "squared_error_sum": 0.04120407768180477,
+      "truth_squared_sum": 779.2378038526456
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 3.604241189359946,
+      "truth_squared_sum": 63.856057018035955
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 10.772728465523475,
+      "truth_squared_sum": 1106.362292646061
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 0.02860197172804298,
+      "truth_squared_sum": 235.66933855487548
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 0.12429380456884245,
+      "truth_squared_sum": 968.9399506466137
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_ett2_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 0.24582076551483312,
+      "truth_squared_sum": 3774.1160333989783
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 672,
+      "scored_count": 1,
+      "squared_error_sum": 4.492024320208585,
+      "truth_squared_sum": 179.0159201457172
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "common_factor",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 768,
+      "scored_count": 1,
+      "squared_error_sum": 16.696311251811515,
+      "truth_squared_sum": 483.5409659627351
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 1,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.6044146989623577,
+      "truth_squared_sum": 1.8495168516914315
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.5966225701295206,
+      "truth_squared_sum": 10.780123133733802
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "cross_series_dependence",
+      "capability_level": 5,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 7.866967295094993,
+      "truth_squared_sum": 28.72520941881681
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 1008,
+      "scored_count": 1,
+      "squared_error_sum": 90.82485602612878,
+      "truth_squared_sum": 892.3694440974955
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 1008,
+      "scored_count": 1,
+      "squared_error_sum": 137.00679145307595,
+      "truth_squared_sum": 1094.0916148870647
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 96,
+      "scored_count": 1,
+      "squared_error_sum": 541.1104578411737,
+      "truth_squared_sum": 1250.2502246667534
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 483.3843559048495,
+      "truth_squared_sum": 509.059886131247
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 0.375903370701255,
+      "truth_squared_sum": 1171.6026146639288
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 96,
+      "scored_count": 1,
+      "squared_error_sum": 1.0382302773097987,
+      "truth_squared_sum": 837.3958097259699
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 240,
+      "scored_count": 1,
+      "squared_error_sum": 2.152377777883735,
+      "truth_squared_sum": 1171.6026146639288
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 6.592378254463072,
+      "truth_squared_sum": 76.0313061224333
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 528,
+      "scored_count": 1,
+      "squared_error_sum": 6.448519483654175,
+      "truth_squared_sum": 75.65401494965525
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 288,
+      "scored_count": 1,
+      "squared_error_sum": 8.661188473992,
+      "truth_squared_sum": 1099.991768213841
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.13967891322894138,
+      "truth_squared_sum": 1189.1486816114216
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_jena_weather_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 1.673470342339342,
+      "truth_squared_sum": 2591.8018709556904
+    },
+    {
+      "candidate_count": 82,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3936,
+      "scored_count": 82,
+      "squared_error_sum": 566.1257172836874,
+      "truth_squared_sum": 578.4791032748201
+    },
+    {
+      "candidate_count": 35,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 1680,
+      "scored_count": 35,
+      "squared_error_sum": 315.5925032871808,
+      "truth_squared_sum": 261.13993201470663
+    },
+    {
+      "candidate_count": 86,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 4128,
+      "scored_count": 86,
+      "squared_error_sum": 830.6076923232076,
+      "truth_squared_sum": 682.1596502254262
+    },
+    {
+      "candidate_count": 81,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3888,
+      "scored_count": 81,
+      "squared_error_sum": 916.7539870394813,
+      "truth_squared_sum": 637.4248266766634
+    },
+    {
+      "candidate_count": 82,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3936,
+      "scored_count": 82,
+      "squared_error_sum": 920.1466588301824,
+      "truth_squared_sum": 560.327834570382
+    },
+    {
+      "candidate_count": 74,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3552,
+      "scored_count": 74,
+      "squared_error_sum": 990.7371827422203,
+      "truth_squared_sum": 2376.341831299573
+    },
+    {
+      "candidate_count": 90,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 4320,
+      "scored_count": 90,
+      "squared_error_sum": 1379.5463387878208,
+      "truth_squared_sum": 1520.1119104014988
+    },
+    {
+      "candidate_count": 35,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 1680,
+      "scored_count": 35,
+      "squared_error_sum": 557.2812925734737,
+      "truth_squared_sum": 443.9269519416759
+    },
+    {
+      "candidate_count": 85,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 4080,
+      "scored_count": 85,
+      "squared_error_sum": 841.7677429958076,
+      "truth_squared_sum": 678.7447737026172
+    },
+    {
+      "candidate_count": 74,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3552,
+      "scored_count": 74,
+      "squared_error_sum": 684.534236578546,
+      "truth_squared_sum": 375.14196169736874
+    },
+    {
+      "candidate_count": 85,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 4080,
+      "scored_count": 85,
+      "squared_error_sum": 13.154419562968394,
+      "truth_squared_sum": 10881.48611456068
+    },
+    {
+      "candidate_count": 74,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3552,
+      "scored_count": 74,
+      "squared_error_sum": 104.1261508267483,
+      "truth_squared_sum": 9278.044635073606
+    },
+    {
+      "candidate_count": 90,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 4320,
+      "scored_count": 90,
+      "squared_error_sum": 202.85705659417357,
+      "truth_squared_sum": 10424.472809534393
+    },
+    {
+      "candidate_count": 35,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 1680,
+      "scored_count": 35,
+      "squared_error_sum": 128.00339819218817,
+      "truth_squared_sum": 4543.76122296023
+    },
+    {
+      "candidate_count": 85,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 4080,
+      "scored_count": 85,
+      "squared_error_sum": 467.49420756560886,
+      "truth_squared_sum": 10881.48611456068
+    },
+    {
+      "candidate_count": 23,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 1104,
+      "scored_count": 23,
+      "squared_error_sum": 52.42892450736296,
+      "truth_squared_sum": 96.76120000885608
+    },
+    {
+      "candidate_count": 73,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3312,
+      "scored_count": 69,
+      "squared_error_sum": 389.3930379950296,
+      "truth_squared_sum": 537.1296298801254
+    },
+    {
+      "candidate_count": 61,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 2928,
+      "scored_count": 61,
+      "squared_error_sum": 426.11827282685283,
+      "truth_squared_sum": 936.4861034803802
+    },
+    {
+      "candidate_count": 70,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 3360,
+      "scored_count": 70,
+      "squared_error_sum": 679.3403701720788,
+      "truth_squared_sum": 2128.6070965029253
+    },
+    {
+      "candidate_count": 23,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 1104,
+      "scored_count": 23,
+      "squared_error_sum": 274.5411614714049,
+      "truth_squared_sum": 1909.6291109576061
+    },
+    {
+      "candidate_count": 18,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 864,
+      "scored_count": 18,
+      "squared_error_sum": 3.4221022663516583,
+      "truth_squared_sum": 90.94031604694068
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 432,
+      "scored_count": 9,
+      "squared_error_sum": 0.7052052093882963,
+      "truth_squared_sum": 104.62065533353504
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 432,
+      "scored_count": 9,
+      "squared_error_sum": 7.222326359024832,
+      "truth_squared_sum": 255.4860855777666
+    },
+    {
+      "candidate_count": 11,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 528,
+      "scored_count": 11,
+      "squared_error_sum": 5.23316426909642,
+      "truth_squared_sum": 688.5264006711118
+    },
+    {
+      "candidate_count": 18,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_kdd_cup_h",
+      "observed_cell_count": 864,
+      "scored_count": 18,
+      "squared_error_sum": 45.91180807554728,
+      "truth_squared_sum": 1919.3980938360362
+    },
+    {
+      "candidate_count": 126,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 6048,
+      "scored_count": 126,
+      "squared_error_sum": 415.4184926764715,
+      "truth_squared_sum": 1714.6219568035212
+    },
+    {
+      "candidate_count": 139,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 6672,
+      "scored_count": 139,
+      "squared_error_sum": 767.8276936068906,
+      "truth_squared_sum": 1843.5550080389366
+    },
+    {
+      "candidate_count": 120,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 5760,
+      "scored_count": 120,
+      "squared_error_sum": 764.1660979294787,
+      "truth_squared_sum": 1563.0913975011852
+    },
+    {
+      "candidate_count": 169,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 8112,
+      "scored_count": 169,
+      "squared_error_sum": 1181.6941441749336,
+      "truth_squared_sum": 2542.1747919352165
+    },
+    {
+      "candidate_count": 126,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 6048,
+      "scored_count": 126,
+      "squared_error_sum": 1096.3919577415818,
+      "truth_squared_sum": 1666.6521840008575
+    },
+    {
+      "candidate_count": 119,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 5712,
+      "scored_count": 119,
+      "squared_error_sum": 1462.348229681336,
+      "truth_squared_sum": 6395.125688759625
+    },
+    {
+      "candidate_count": 172,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 8256,
+      "scored_count": 172,
+      "squared_error_sum": 3436.2065336076953,
+      "truth_squared_sum": 5259.302499269256
+    },
+    {
+      "candidate_count": 124,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 5952,
+      "scored_count": 124,
+      "squared_error_sum": 2572.572914664968,
+      "truth_squared_sum": 2549.996761140879
+    },
+    {
+      "candidate_count": 139,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 6672,
+      "scored_count": 139,
+      "squared_error_sum": 1809.0054396679795,
+      "truth_squared_sum": 1839.422100105987
+    },
+    {
+      "candidate_count": 119,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 5712,
+      "scored_count": 119,
+      "squared_error_sum": 1342.4756492713752,
+      "truth_squared_sum": 1078.178393820055
+    },
+    {
+      "candidate_count": 139,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 6672,
+      "scored_count": 139,
+      "squared_error_sum": 20.020838496351182,
+      "truth_squared_sum": 29516.870062713828
+    },
+    {
+      "candidate_count": 119,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 5712,
+      "scored_count": 119,
+      "squared_error_sum": 28.03810253472172,
+      "truth_squared_sum": 24119.27270487987
+    },
+    {
+      "candidate_count": 172,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 8256,
+      "scored_count": 172,
+      "squared_error_sum": 91.68681937588617,
+      "truth_squared_sum": 37502.22414668142
+    },
+    {
+      "candidate_count": 124,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 5952,
+      "scored_count": 124,
+      "squared_error_sum": 97.08225495638152,
+      "truth_squared_sum": 25734.32378329335
+    },
+    {
+      "candidate_count": 139,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 6672,
+      "scored_count": 139,
+      "squared_error_sum": 214.44584100628373,
+      "truth_squared_sum": 29516.870062713828
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 8.598985749782086,
+      "truth_squared_sum": 24.05399899751737
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 5.872986708128932,
+      "truth_squared_sum": 41.168506341318334
+    },
+    {
+      "candidate_count": 3,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 144,
+      "scored_count": 3,
+      "squared_error_sum": 6.86090738466727,
+      "truth_squared_sum": 8.341891843466996
+    },
+    {
+      "candidate_count": 6,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 288,
+      "scored_count": 6,
+      "squared_error_sum": 31.6317854759597,
+      "truth_squared_sum": 162.0948562298505
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 22.072596770366975,
+      "truth_squared_sum": 431.05943105359006
+    },
+    {
+      "candidate_count": 101,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 4848,
+      "scored_count": 101,
+      "squared_error_sum": 4.168705970950841,
+      "truth_squared_sum": 1271.1628671616172
+    },
+    {
+      "candidate_count": 55,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 2640,
+      "scored_count": 55,
+      "squared_error_sum": 7.55608587103749,
+      "truth_squared_sum": 1562.08482284398
+    },
+    {
+      "candidate_count": 70,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 3360,
+      "scored_count": 70,
+      "squared_error_sum": 16.082017208593122,
+      "truth_squared_sum": 4300.453569018158
+    },
+    {
+      "candidate_count": 51,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 2448,
+      "scored_count": 51,
+      "squared_error_sum": 11.80511693367659,
+      "truth_squared_sum": 6228.022550195639
+    },
+    {
+      "candidate_count": 101,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_loop_seattle_h",
+      "observed_cell_count": 4848,
+      "scored_count": 101,
+      "squared_error_sum": 62.803468525901174,
+      "truth_squared_sum": 26001.742104502046
+    },
+    {
+      "candidate_count": 6,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 288,
+      "scored_count": 6,
+      "squared_error_sum": 18.527295507166265,
+      "truth_squared_sum": 150.34622716867682
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 120.7826953342646,
+      "truth_squared_sum": 330.57288169976323
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 605.9438761715494,
+      "truth_squared_sum": 12894.915590554096
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 305.2213483549673,
+      "truth_squared_sum": 6032.317757898212
+    },
+    {
+      "candidate_count": 6,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 288,
+      "scored_count": 6,
+      "squared_error_sum": 90.58682355913344,
+      "truth_squared_sum": 196.66035312495168
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 5288.337278116481,
+      "truth_squared_sum": 40861.37077614169
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 12550.563822958584,
+      "truth_squared_sum": 24192.82822298112
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 304.14755755133257,
+      "truth_squared_sum": 378.6340095310002
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 116.76009671859114,
+      "truth_squared_sum": 98.51203767718684
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 8415.381023952817,
+      "truth_squared_sum": 5321.750723368725
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 2.281290716375772,
+      "truth_squared_sum": 1285.7471361388355
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 81.30536204721828,
+      "truth_squared_sum": 214246.711177397
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 26.17393081741381,
+      "truth_squared_sum": 66088.21191081923
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 36.62512367251483,
+      "truth_squared_sum": 4924.377602024052
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 26.298060777859423,
+      "truth_squared_sum": 1285.7471361388355
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 45.903943969578094,
+      "truth_squared_sum": 49.18696431326235
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 29.439670259949253,
+      "truth_squared_sum": 35.22650800351136
+    },
+    {
+      "candidate_count": 6,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 288,
+      "scored_count": 6,
+      "squared_error_sum": 41.0681636054924,
+      "truth_squared_sum": 228.37131552270026
+    },
+    {
+      "candidate_count": 6,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 288,
+      "scored_count": 6,
+      "squared_error_sum": 85.01235181904943,
+      "truth_squared_sum": 455.48491061983407
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 244.93797347511716,
+      "truth_squared_sum": 1078.6649397747428
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 0.7421233557707646,
+      "truth_squared_sum": 85.78723849599207
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 4.511345558887916,
+      "truth_squared_sum": 250.33418505800432
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 3.1396854650715182,
+      "truth_squared_sum": 374.63504828234045
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 52.53042763220177,
+      "truth_squared_sum": 104866.58565115674
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_m4_hourly",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 2.0036635633021858,
+      "truth_squared_sum": 1441.348140605091
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 4.999930624209439,
+      "truth_squared_sum": 54.20763752574798
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 9.96183408354341,
+      "truth_squared_sum": 204.58895951302446
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 9.209417258420558,
+      "truth_squared_sum": 468.02218815139565
+    },
+    {
+      "candidate_count": 26,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 1248,
+      "scored_count": 26,
+      "squared_error_sum": 43.285236581715665,
+      "truth_squared_sum": 2223.6143785725267
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "covariate_impulse_response",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 19.770447425697917,
+      "truth_squared_sum": 1106.6619401253265
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 432,
+      "scored_count": 9,
+      "squared_error_sum": 26.96660157827763,
+      "truth_squared_sum": 217.85405560569174
+    },
+    {
+      "candidate_count": 13,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 624,
+      "scored_count": 13,
+      "squared_error_sum": 39.52683674657719,
+      "truth_squared_sum": 275.85153182017604
+    },
+    {
+      "candidate_count": 23,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 1104,
+      "scored_count": 23,
+      "squared_error_sum": 155.90791257050915,
+      "truth_squared_sum": 470.27162781106193
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 121.93889387899523,
+      "truth_squared_sum": 234.4214297842376
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 432,
+      "scored_count": 9,
+      "squared_error_sum": 71.89091830239357,
+      "truth_squared_sum": 185.89027098220882
+    },
+    {
+      "candidate_count": 26,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 1248,
+      "scored_count": 26,
+      "squared_error_sum": 628.1038548535734,
+      "truth_squared_sum": 2455.6499894807034
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 252.48637010974278,
+      "truth_squared_sum": 390.7698267629301
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 219.66439467093983,
+      "truth_squared_sum": 222.42334863506306
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 172.21064704240572,
+      "truth_squared_sum": 248.5353010679302
+    },
+    {
+      "candidate_count": 26,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 1248,
+      "scored_count": 26,
+      "squared_error_sum": 428.1224183389752,
+      "truth_squared_sum": 354.2852518673852
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 1.3066568642815944e-10,
+      "truth_squared_sum": 3837.0188503377008
+    },
+    {
+      "candidate_count": 26,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 1248,
+      "scored_count": 26,
+      "squared_error_sum": 2.9619011611552945e-10,
+      "truth_squared_sum": 9148.493892412778
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 0.4099679913405895,
+      "truth_squared_sum": 2430.193456614877
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 4.348364203039118,
+      "truth_squared_sum": 3587.666474302295
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 5.945015614418402,
+      "truth_squared_sum": 3837.0188503377008
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 96,
+      "scored_count": 2,
+      "squared_error_sum": 1.4828633278487822,
+      "truth_squared_sum": 5.817496681876495
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.28191908396547033,
+      "truth_squared_sum": 23.528357883986125
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 4.27288261672167,
+      "truth_squared_sum": 23.01521844804726
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 0.7346883306363199,
+      "truth_squared_sum": 6.437861910995479
+    },
+    {
+      "candidate_count": 2,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 96,
+      "scored_count": 2,
+      "squared_error_sum": 3.5685592657697662,
+      "truth_squared_sum": 87.51739480025995
+    },
+    {
+      "candidate_count": 8,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 384,
+      "scored_count": 8,
+      "squared_error_sum": 0.08382453123961438,
+      "truth_squared_sum": 127.9411611727432
+    },
+    {
+      "candidate_count": 8,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 384,
+      "scored_count": 8,
+      "squared_error_sum": 0.12559425648015163,
+      "truth_squared_sum": 358.818717443068
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 432,
+      "scored_count": 9,
+      "squared_error_sum": 0.3908229115359306,
+      "truth_squared_sum": 817.7734986109307
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 0.1919355655035792,
+      "truth_squared_sum": 1131.7613555416092
+    },
+    {
+      "candidate_count": 8,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_m_dense_h",
+      "observed_cell_count": 384,
+      "scored_count": 8,
+      "squared_error_sum": 1.1397406626617341,
+      "truth_squared_sum": 2884.885231474318
+    },
+    {
+      "candidate_count": 74,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3552,
+      "scored_count": 74,
+      "squared_error_sum": 841.9895882167397,
+      "truth_squared_sum": 4127.808006787861
+    },
+    {
+      "candidate_count": 69,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3312,
+      "scored_count": 69,
+      "squared_error_sum": 847.4054593106823,
+      "truth_squared_sum": 3779.121407368466
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3264,
+      "scored_count": 68,
+      "squared_error_sum": 857.1271258381807,
+      "truth_squared_sum": 3603.6056504231965
+    },
+    {
+      "candidate_count": 69,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3312,
+      "scored_count": 69,
+      "squared_error_sum": 1049.1770554546622,
+      "truth_squared_sum": 4235.146889637777
+    },
+    {
+      "candidate_count": 74,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3552,
+      "scored_count": 74,
+      "squared_error_sum": 1575.888547085842,
+      "truth_squared_sum": 4295.255825098071
+    },
+    {
+      "candidate_count": 69,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3312,
+      "scored_count": 69,
+      "squared_error_sum": 5122.582421377038,
+      "truth_squared_sum": 18418.788150631444
+    },
+    {
+      "candidate_count": 73,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3504,
+      "scored_count": 73,
+      "squared_error_sum": 5162.1845603438305,
+      "truth_squared_sum": 9293.830386638123
+    },
+    {
+      "candidate_count": 70,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3360,
+      "scored_count": 70,
+      "squared_error_sum": 4327.456229021358,
+      "truth_squared_sum": 5557.702325890194
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3264,
+      "scored_count": 68,
+      "squared_error_sum": 3725.059147651788,
+      "truth_squared_sum": 3772.379989995558
+    },
+    {
+      "candidate_count": 69,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3312,
+      "scored_count": 69,
+      "squared_error_sum": 3623.5769471715694,
+      "truth_squared_sum": 2902.9327976468453
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3264,
+      "scored_count": 68,
+      "squared_error_sum": 57.826875118240885,
+      "truth_squared_sum": 60187.62563857736
+    },
+    {
+      "candidate_count": 69,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3312,
+      "scored_count": 69,
+      "squared_error_sum": 88.60736682546245,
+      "truth_squared_sum": 60971.081216037164
+    },
+    {
+      "candidate_count": 73,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3504,
+      "scored_count": 73,
+      "squared_error_sum": 169.93793835595955,
+      "truth_squared_sum": 65415.57932922515
+    },
+    {
+      "candidate_count": 70,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3360,
+      "scored_count": 70,
+      "squared_error_sum": 498.4311004981435,
+      "truth_squared_sum": 62406.79226762299
+    },
+    {
+      "candidate_count": 68,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 3264,
+      "scored_count": 68,
+      "squared_error_sum": 340.05053170030556,
+      "truth_squared_sum": 60187.62563857736
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 18.255516122472606,
+      "truth_squared_sum": 25.05937502780538
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 5.301483798325106,
+      "truth_squared_sum": 125.11377616780595
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 41.71288127584937,
+      "truth_squared_sum": 1306.1852615760065
+    },
+    {
+      "candidate_count": 1,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_solar_h",
+      "observed_cell_count": 48,
+      "scored_count": 1,
+      "squared_error_sum": 41.47339064841451,
+      "truth_squared_sum": 544.3457134310871
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "multi_seasonal",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 21.903129506616562,
+      "truth_squared_sum": 65.26362000122265
+    },
+    {
+      "candidate_count": 8,
+      "capability_id": "multi_seasonal",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 384,
+      "scored_count": 8,
+      "squared_error_sum": 28.000178117555958,
+      "truth_squared_sum": 58.11891139573174
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "multi_seasonal",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 22.691103757937707,
+      "truth_squared_sum": 35.698196830671066
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "multi_seasonal",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 54.01417073950905,
+      "truth_squared_sum": 85.79558350046244
+    },
+    {
+      "candidate_count": 10,
+      "capability_id": "multi_seasonal",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 480,
+      "scored_count": 10,
+      "squared_error_sum": 48.5422471018223,
+      "truth_squared_sum": 61.996691041896035
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 147.1830557490795,
+      "truth_squared_sum": 288.47642012617007
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 162.61144588188182,
+      "truth_squared_sum": 258.7123928936987
+    },
+    {
+      "candidate_count": 8,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 384,
+      "scored_count": 8,
+      "squared_error_sum": 36.544641912405154,
+      "truth_squared_sum": 84.75563925524058
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 42.30834907388844,
+      "truth_squared_sum": 41.99746602081995
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "predictable_intermittency",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 50.460234243848234,
+      "truth_squared_sum": 37.67590944368181
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "regime_switching",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 0.1499880952621405,
+      "truth_squared_sum": 769.7549505059972
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "regime_switching",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 2.3246912311915238,
+      "truth_squared_sum": 1013.6961429033821
+    },
+    {
+      "candidate_count": 12,
+      "capability_id": "regime_switching",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 576,
+      "scored_count": 12,
+      "squared_error_sum": 12.801605616567809,
+      "truth_squared_sum": 1378.4678889758538
+    },
+    {
+      "candidate_count": 8,
+      "capability_id": "regime_switching",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 384,
+      "scored_count": 8,
+      "squared_error_sum": 6.663744649999929,
+      "truth_squared_sum": 1058.6690606223285
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "regime_switching",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 5.557436027422203,
+      "truth_squared_sum": 769.7549505059972
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 5.318902358987199,
+      "truth_squared_sum": 9.333624786722366
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 5.585259922440073,
+      "truth_squared_sum": 19.103068419391942
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 18.62033871269489,
+      "truth_squared_sum": 27.2893185621042
+    },
+    {
+      "candidate_count": 9,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 432,
+      "scored_count": 9,
+      "squared_error_sum": 21.35316263494566,
+      "truth_squared_sum": 130.24657661813237
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "time_varying_seasonality",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 18.359158268666214,
+      "truth_squared_sum": 207.02421087066364
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "trend",
+      "capability_level": 1,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 1.242431376149536,
+      "truth_squared_sum": 88.63267037883048
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "trend",
+      "capability_level": 2,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 0.21961135768680462,
+      "truth_squared_sum": 84.247955210766
+    },
+    {
+      "candidate_count": 4,
+      "capability_id": "trend",
+      "capability_level": 3,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 192,
+      "scored_count": 4,
+      "squared_error_sum": 1.4456373952142225,
+      "truth_squared_sum": 145.74201773814957
+    },
+    {
+      "candidate_count": 5,
+      "capability_id": "trend",
+      "capability_level": 4,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 240,
+      "scored_count": 5,
+      "squared_error_sum": 1.330640610590704,
+      "truth_squared_sum": 557.0774634686657
+    },
+    {
+      "candidate_count": 7,
+      "capability_id": "trend",
+      "capability_level": 5,
+      "dataset_id": "gift_sz_taxi_h",
+      "observed_cell_count": 336,
+      "scored_count": 7,
+      "squared_error_sum": 4.050031004251243,
+      "truth_squared_sum": 1832.269053758412
+    }
+  ],
+  "elapsed_seconds": 105.38333628186956,
+  "model": "/tmp/chronos2-step-16000-bi1z6qgv/model",
+  "prediction_length": 48,
+  "rank": 3,
+  "schema_version": "chronos2.cafe_direct_metric_part.v1",
+  "step": 16000,
+  "treatment_batches": 236,
+  "treatment_count": 12091,
+  "world_size": 4
+}

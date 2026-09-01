@@ -33,22 +33,28 @@ different treatment batch over the same official samples.
 
 The source Arrow files remain the only stored copy of authentic paths.
 Generation writes compact replay contracts to ZSTD Parquet; it does not copy
-full targets or native covariates. Inference rebuilds bounded batches in
-memory, sends MessagePack bulk requests across compatible endpoints/GPUs, and
-writes source-sharded float32 Parquet forecasts. No model-specific task JSONL
-is materialized. Analysis scans one prediction shard at a time.
+full targets or native covariates. Native inference reconstructs bounded
+batches inside GPU worker processes, invokes model packages in process, and
+writes source-sharded float32 Parquet forecasts. No model-specific task JSONL,
+HTTP serialization, REST server, ZMQ coordinator, or service database is in
+the default path. Analysis scans one prediction shard at a time.
 
-Multi-host inference is optional.  Supplying one `--distributed-worker`
-mapping per endpoint moves source-shard replay, bulk construction, the local
-service request, and prediction writing onto that endpoint's host.  Omitting
-the mappings retains the ordinary single-orchestrator path.  For example:
+Each native worker owns one model replica on one GPU. Source shards are
+partitioned deterministically over all `host × GPU × replica` workers. Repeat
+`--worker-host` to use multiple machines; every host uses the device list and
+must contain the same staged runtime under `--distributed-repo-root`:
 
 ```bash
---endpoints http://192.168.99.90:10810 http://192.168.99.92:10810 \
---distributed-worker http://192.168.99.90:10810=192.168.99.90 \
---distributed-worker http://192.168.99.92:10810=local \
+--backend native \
+--worker-host gpu-host-a \
+--worker-host gpu-host-b \
+--devices 0,1,2,3 \
 --distributed-repo-root /data/xmy/CaFE
 ```
+
+The controller verifies the staged runtime manifest on every remote host
+before dispatch. `--backend service` and `--distributed-worker` remain only
+for transition-time parity checks.
 
 Generation keeps the requested source-shard size as a cap and plans roughly
 three shards for smaller datasets.  This layout is topology-independent: one
@@ -110,8 +116,17 @@ datasets or high-window-count tasks from dominating the benchmark result.
 ## Install and test
 
 ```bash
-uv sync --extra test
+uv sync --extra inference --extra test
 uv run pytest
+```
+
+Native inference requires Python 3.12 for the Toto 2.0 package. Stage the
+model-only code and a private copy of all checkpoint directories once:
+
+```bash
+uv run python scripts/stage_native_runtime.py \
+  --source ../timer-rest-service \
+  --destination runtime
 ```
 
 Install FEV support and freeze the exact Mini-20 suite definition with:
@@ -144,15 +159,17 @@ uv run cafe run \
 `--max-instances` selects a non-formal source-order prefix. Omitting it uses
 all official GIFT-Eval test instances.
 
-An FEV research smoke run uses the same four stages and queries the configured
-service for the selected models' actual context/output limits:
+An FEV research smoke run uses the same four stages and the same native model
+catalog:
 
 ```bash
 uv run python -m cafe.fev_pipeline \
   --experiment-id fev-mini-smoke \
   --task-id fev__ETT_1H \
   --models Timer-4.0 \
-  --endpoints http://100.102.176.45:10810 \
+  --backend native \
+  --worker-host timecho92 \
+  --distributed-repo-root /data/xmy/CaFE \
   --capabilities trend \
   --max-instances 1
 ```
@@ -178,7 +195,10 @@ uv run cafe run \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
   --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \
-  --endpoints http://100.102.176.45:10810 \
+  --backend native \
+  --worker-host timecho92 \
+  --devices 0,1,2,3 \
+  --distributed-repo-root /data/xmy/CaFE \
   --generation-workers 8 \
   --preprocess-workers 8 \
   --disk-budget-gb 40
@@ -198,10 +218,12 @@ Artifacts use this layout:
     └── 04_analysis/
 ```
 
-See [docs/protocol.md](docs/protocol.md) for the frozen scientific protocol
+See [docs/native_inference.md](docs/native_inference.md) for model adapters,
+deployment, multi-GPU/multi-host scheduling, and parity evidence;
+[docs/protocol.md](docs/protocol.md) describes the frozen scientific protocol
 and [docs/real_anchored_ten_capability_design.md](docs/real_anchored_ten_capability_design.md)
-for mechanism formulas. Four-card Timer Service bulk and concurrency settings
-are recorded in
+contains the mechanism formulas. Historical four-card Timer Service bulk and
+concurrency measurements remain in
 [docs/inference_throughput_4x_rtx5090.md](docs/inference_throughput_4x_rtx5090.md).
 
 ## History

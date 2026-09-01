@@ -30,6 +30,7 @@ from cafe.inference.runner import (
     _bulk_request_content,
     input_adaptation_plan,
 )
+from cafe.inference.native_catalog import NATIVE_MODEL_SPECS, native_catalog
 
 
 def _sample() -> dict:
@@ -234,6 +235,51 @@ def test_remote_worker_prefix_selects_the_worker_source_tree() -> None:
         "PYTHONPATH=/data/xmy/CaFE-worker/src",
         "/data/xmy/CaFE-worker/.venv/bin/python",
     ]
+
+
+def test_native_catalog_is_static_and_points_inside_the_runtime_root(
+    tmp_path: Path,
+) -> None:
+    catalog = native_catalog(tmp_path)
+    assert set(catalog) == set(NATIVE_MODEL_SPECS)
+    assert catalog["Chronos-2"]["native_runtime"]["provider"] == (
+        "chronos-forecasting"
+    )
+    assert catalog["Chronos-2"]["native_runtime"]["weight_path"] == str(
+        (tmp_path / "builtin" / "chronos_2").resolve()
+    )
+    assert catalog["timesfm2.5"]["forecast_limits"]["input_mode"][
+        "requires_future_covariates_with_history"
+    ]
+
+
+def test_native_worker_command_has_no_service_transport_arguments() -> None:
+    args = argparse.Namespace(
+        preprocess_workers=2,
+        max_open_shape_groups=8,
+        max_inflight_mib=512,
+        max_request_input_tokens=None,
+        client_inflight_input_tokens=None,
+    )
+    command = inference_module._native_worker_command(
+        python_prefix=["/data/xmy/CaFE/.venv/bin/python"],
+        dataset_id="gift_fixture",
+        output_root=Path("/data/xmy/CaFE/runtime/experiments/fixture"),
+        gift_eval_dir=Path("/data/xmy/CaFE/data/gift-eval"),
+        model_id="Chronos-2",
+        device="cuda:3",
+        model_root=Path("/data/xmy/CaFE/runtime/models"),
+        model_code_root=Path("/data/xmy/CaFE/runtime/model_runtime"),
+        part_index=3,
+        part_count=8,
+        worker_output_dir=Path("/data/xmy/CaFE/runtime/worker"),
+        args=args,
+    )
+    assert "--backend" in command
+    assert command[command.index("--backend") + 1] == "native"
+    assert command[command.index("--device") + 1] == "cuda:3"
+    assert "--endpoint" not in command
+    assert "--api-prefix" not in command
 
 
 def test_native_panel_is_preserved_in_generation_task() -> None:

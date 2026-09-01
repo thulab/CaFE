@@ -1,0 +1,282 @@
+{
+  "available_instance_count_by_capability": {
+    "common_factor": 20,
+    "covariate_impulse_response": 20,
+    "cross_series_dependence": 20,
+    "multi_seasonal": 20,
+    "predictable_intermittency": 13,
+    "regime_switching": 20,
+    "time_varying_seasonality": 17,
+    "trend": 13
+  },
+  "benchmark_id": "fev_bench",
+  "config": {
+    "adapter_schema_version": "cafe.fev_native_adapter.v3",
+    "artifact_storage": {
+      "compression": "zstd",
+      "dense_covariates_stored": false,
+      "dense_targets_stored": false,
+      "format": "parquet",
+      "replay_policy": "benchmark_adapter_plus_deterministic_contract_v1"
+    },
+    "augmentation_seed": 2026082601,
+    "benchmark_id": "fev_bench",
+    "benchmark_source": {
+      "source_manifest": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "source_revision": "fev-v0.8.0-f1afffbf97bc51a4a233080d331633c6f7ab32f6+fev-datasets-f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8",
+      "source_root": "/data/xmy/CaFE/data/fev-mini-v0.8.0",
+      "suite_artifact": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml"
+    },
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "covariate_impulse_policy": "continuous_numeric_dynamic_covariates_only_v1",
+    "dataset_id": "uci_air_quality_1H",
+    "formal": true,
+    "frequency": "h",
+    "future_label_eligibility_policy": "adapter_native_complete_future_labels_v1",
+    "generation_execution": {
+      "maximum_dense_batch_bytes": 16777216,
+      "shard_size": 256,
+      "workers": 8
+    },
+    "input_ablation_policy": "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2",
+    "instance_selection": "all_adapter_eligible_native_instances",
+    "max_instances": null,
+    "mechanism_scoring_policy": {
+      "metric": "authentic_history_mase_scaled_future_effect_rms",
+      "minimum_required_mase_rms": 0.05
+    },
+    "native_covariate_policy": "preserve_dynamic_visibility_static_values_and_semantic_types",
+    "native_target_policy": "preserve_benchmark_target_dimension",
+    "observed_covariate_availability": [
+      "known_future"
+    ],
+    "observed_covariate_types": [
+      "continuous_numeric"
+    ],
+    "official_window_count": 20,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "prediction_length": 168,
+    "randomness_policy": "qualified_pool_then_seed_sampled_structure_shared_across_levels_plus_level_dose_v2",
+    "randomness_schema": "cafe.structural_randomness.v2",
+    "seasonality": 24,
+    "seed_independent_candidate_qualification": {
+      "covariate_impulse_pool_size": 8,
+      "cross_series_pool_size": 12,
+      "cross_series_scan_limit": 48,
+      "qualification_uses_existing_gates_only": true
+    },
+    "source_distance_configuration": {
+      "maximum_model_context_channel_distance": 3.0,
+      "maximum_model_context_macro_distance": 2.0,
+      "minimum_model_context_macro_distance": 0.1,
+      "model_max_contexts": {
+        "Chronos-2": 8192,
+        "Timer-3.5": 11520,
+        "Timer-4.0": 8192,
+        "moirai2": 8192,
+        "timesfm2.5": 15360,
+        "tirex2": 2048,
+        "toto2.0": 16384
+      },
+      "strength_reference": "full_native_history_macro_normalized_rms"
+    },
+    "source_distance_policy": "full_history_strength_actual_selected_model_context_bounds_v4",
+    "strength_level_intervals": [
+      [
+        0.1,
+        0.15
+      ],
+      [
+        0.17,
+        0.22
+      ],
+      [
+        0.25,
+        0.32
+      ],
+      [
+        0.36,
+        0.46
+      ],
+      [
+        0.5,
+        0.65
+      ]
+    ],
+    "strength_sampling_policy": "uniform_within_nominal_level_intersected_with_analytic_source_distance_and_future_effect_feasible_bounds_v1",
+    "suite_id": "mini20",
+    "task_id": "fev__uci_air_quality_1H",
+    "task_spec": {
+      "benchmark_id": "fev_bench",
+      "config_sha256": "e1c5400e8f6e69064dab9e1a4979d66eb1b7140051c710f29411400da8c51e36",
+      "display_name": "uci_air_quality_1H",
+      "frequency": "h",
+      "horizon": 168,
+      "known_dynamic_columns": [
+        "AH",
+        "RH",
+        "T"
+      ],
+      "native_config": {
+        "dataset_config": "uci_air_quality_1H",
+        "dataset_fingerprint": "62f958117014ee08",
+        "dataset_path": "autogluon/fev_datasets",
+        "eval_metric": "SQL",
+        "extra_metrics": [
+          "MASE",
+          {
+            "epsilon": 1.0,
+            "name": "WAPE"
+          },
+          {
+            "epsilon": 1.0,
+            "name": "WQL"
+          }
+        ],
+        "fev_version": "0.8.0",
+        "generate_univariate_targets_from": null,
+        "horizon": 168,
+        "id_column": "id",
+        "initial_cutoff": -3360,
+        "known_dynamic_columns": [
+          "AH",
+          "RH",
+          "T"
+        ],
+        "max_context_length": null,
+        "min_context_length": 1,
+        "num_windows": 20,
+        "past_dynamic_columns": [],
+        "quantile_levels": [
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9
+        ],
+        "seasonality": 24,
+        "static_columns": [],
+        "target": [
+          "C6H6(GT)",
+          "CO(GT)",
+          "NO2(GT)",
+          "NOx(GT)"
+        ],
+        "task_name": "uci_air_quality_1H",
+        "timestamp_column": "timestamp",
+        "window_step_size": 168
+      },
+      "past_dynamic_columns": [],
+      "seasonality": 24,
+      "source_dataset_id": "uci_air_quality_1H",
+      "static_columns": [],
+      "suite_id": "mini20",
+      "target_column_names": [
+        "C6H6(GT)",
+        "CO(GT)",
+        "NO2(GT)",
+        "NOx(GT)"
+      ],
+      "task_id": "fev__uci_air_quality_1H",
+      "window_count": 20
+    },
+    "term": "native",
+    "treatment_history_scope": "entire_benchmark_native_input_history"
+  },
+  "config_sha256": "22a68d387a3fc5acfa1de76efb2dddd69345eff81fb9b8525ffbccdeb304387a",
+  "created_at": "2026-08-29T17:30:58.030912+00:00",
+  "dataset_id": "uci_air_quality_1H",
+  "files": {
+    "availability": {
+      "bytes": 39332,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/01_generation/availability.parquet",
+      "row_count": 160,
+      "sha256": "e28416f096d896081a7d619baaf0852a2ba0200c161331fcc8cbda97aab6a1e0"
+    },
+    "capability_treatments": {
+      "bytes": 474418,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/01_generation/treatment_contracts.parquet",
+      "row_count": 715,
+      "sha256": "7e1757de15a6dbf490ebb7f84bcdb479f70fdec91466b3af75488eea3de8c742"
+    },
+    "input_ablations": {
+      "bytes": 232216,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/01_generation/input_ablation_contracts.parquet",
+      "row_count": 300,
+      "sha256": "036088491b617c2b6a8146d548c55f653727a4c0c77af57e4db93c5fd2b03af8"
+    },
+    "official_baselines": {
+      "bytes": 21997,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uci_air_quality_1H/01_generation/official_instances.parquet",
+      "row_count": 20,
+      "sha256": "ce2d24880192cc60f6c7ebeca4c410ebf0fe6264f4a4fd3068b17c434a5ff40d"
+    }
+  },
+  "input_ablation_count": 300,
+  "official_instance_count": 20,
+  "official_window_selection_audit": {
+    "complete_future_label_count": 20,
+    "fully_missing_future_label_count": 0,
+    "official_window_count": 20,
+    "partially_missing_future_label_count": 0
+  },
+  "schema_version": "cafe.benchmark_extension_generation.v13",
+  "source_files": [
+    {
+      "bytes": 10094,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml",
+      "sha256": "992ac3b7fa76f0a400d2783535b989549decab381006da5a866e28b61b963edb"
+    },
+    {
+      "bytes": 287093,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/datasets/uci_air_quality_1H.parquet",
+      "sha256": "a851746a468adaad941201ac0dfcef1a94c62593458380a435f1f2c3db406b34"
+    },
+    {
+      "bytes": 5861,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "sha256": "92830cbea58c92456be4c830990ec6b73dab56437657d3ebb495a8bf7460f4c1"
+    }
+  ],
+  "suite_id": "mini20",
+  "task_id": "fev__uci_air_quality_1H",
+  "treatment_count": 715,
+  "unavailable_reason_count_by_capability": {
+    "common_factor": {},
+    "covariate_impulse_response": {},
+    "cross_series_dependence": {},
+    "multi_seasonal": {},
+    "predictable_intermittency": {
+      "future_mechanism_effect_not_observable": 1,
+      "level_5_below_minimum_model_context_macro_distance": 6
+    },
+    "regime_switching": {},
+    "time_varying_seasonality": {
+      "constrained_am_envelope_not_resolved": 3
+    },
+    "trend": {
+      "history_trend_direction_not_stable": 7
+    }
+  }
+}

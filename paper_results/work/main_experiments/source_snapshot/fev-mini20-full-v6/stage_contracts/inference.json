@@ -1,0 +1,417 @@
+{
+  "code": {
+    "git_branch": "main",
+    "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "git_dirty": false,
+    "git_revision": "bd1e42d943182b1ab5bf369f415f0fa0f72dd776",
+    "git_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "config": {
+    "augmentation_seed": 2026082601,
+    "benchmark_id": "fev_bench",
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "endpoints": [
+      "http://100.102.176.45:10810"
+    ],
+    "generation_batch_bytes": 16777216,
+    "max_instances_per_task": null,
+    "model_ids": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "tirex2",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "model_service_contracts": {
+      "Chronos-2": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 1024,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 1024,
+          "max_group_rows": 64,
+          "max_input_length": 8192,
+          "max_output_length": 1024,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 8192,
+        "maximum_horizon": 1024,
+        "service_maximum_context": 8192
+      },
+      "Timer-3.5": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 272,
+          "input_mode": {
+            "max_history_covariate_count": 0,
+            "max_static_covariate_count": 0,
+            "max_target_count": 1,
+            "supports_future_covariates": false
+          },
+          "max_future_covs_length": 2048,
+          "max_group_rows": 64,
+          "max_input_length": 11520,
+          "max_output_length": 2048,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 11520,
+        "maximum_horizon": 2048,
+        "service_maximum_context": 11520
+      },
+      "Timer-4.0": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 960,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 960,
+          "max_group_rows": 64,
+          "max_input_length": 8192,
+          "max_output_length": 960,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 8192,
+        "maximum_horizon": 960,
+        "service_maximum_context": 8192
+      },
+      "moirai2": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 96,
+          "input_mode": {
+            "max_history_covariate_count": 0,
+            "max_static_covariate_count": 0,
+            "max_target_count": 1,
+            "supports_future_covariates": false
+          },
+          "max_future_covs_length": 2048,
+          "max_group_rows": 64,
+          "max_input_length": 16384,
+          "max_output_length": 2048,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 8192,
+        "maximum_horizon": 2048,
+        "service_maximum_context": 16384
+      },
+      "timesfm2.5": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 128,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": 1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 1024,
+          "max_group_rows": 64,
+          "max_input_length": 15360,
+          "max_output_length": 1024,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 15360,
+        "maximum_horizon": 1024,
+        "service_maximum_context": 15360
+      },
+      "tirex2": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 320,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 320,
+          "max_group_rows": 64,
+          "max_input_length": 2048,
+          "max_output_length": 320,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 2048,
+        "maximum_horizon": 320,
+        "service_maximum_context": 2048
+      },
+      "toto2.0": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 32,
+          "input_mode": {
+            "max_history_covariate_count": 0,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": false
+          },
+          "max_future_covs_length": 2048,
+          "max_group_rows": 64,
+          "max_input_length": 16384,
+          "max_output_length": 2048,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 16384,
+        "maximum_horizon": 2048,
+        "service_maximum_context": 16384
+      }
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "suite_id": "mini20",
+    "task_ids": [
+      "fev__boomlet_1282",
+      "fev__boomlet_1676",
+      "fev__boomlet_619",
+      "fev__bizitobs_l2c_5T",
+      "fev__epf_np",
+      "fev__ETT_15T",
+      "fev__ETT_1H",
+      "fev__proenfo_gfc14",
+      "fev__hospital_admissions_1W",
+      "fev__hospital_admissions_1D",
+      "fev__jena_weather_1H",
+      "fev__M_DENSE_1D",
+      "fev__rohlik_orders_1D",
+      "fev__rossmann_1W",
+      "fev__rossmann_1D",
+      "fev__solar_with_weather_1H",
+      "fev__uci_air_quality_1H",
+      "fev__uk_covid_nation_1D-cumulative",
+      "fev__us_consumption_1Y",
+      "fev__world_co2_emissions"
+    ],
+    "validation_mode": "research"
+  },
+  "contract_sha256": "705dcfb2e4fbb01b0afa75652e28d34f96714ab595843670a9d79616aa105282",
+  "created_at": "2026-08-29T17:31:36.254057+00:00",
+  "schema_version": "cafe.stage_contract.v1",
+  "stage": "inference",
+  "upstream": [
+    {
+      "path": "fev__ETT_15T/01_generation/manifest.json",
+      "sha256": "a2baa5881bf260c11b1030980bb2538e27756b768f4ab0b731d328c1d08403a8",
+      "size_bytes": 8819
+    },
+    {
+      "path": "fev__ETT_15T/02_validation/report.json",
+      "sha256": "032119adcdf801490cdd79a5ba923891b19b274bed0e5f59464c5dd0a2d57340",
+      "size_bytes": 942
+    },
+    {
+      "path": "fev__ETT_1H/01_generation/manifest.json",
+      "sha256": "ae24389d74d56878a1c5425e85b5ae63add89e63b3019f54fed8e29934fc21e8",
+      "size_bytes": 8801
+    },
+    {
+      "path": "fev__ETT_1H/02_validation/report.json",
+      "sha256": "49ecacbe77d765951b0e3da6ae58a0da9cafb1d93cdade7affae24b921f60d45",
+      "size_bytes": 941
+    },
+    {
+      "path": "fev__M_DENSE_1D/01_generation/manifest.json",
+      "sha256": "6ceb198bea7c5d256c4b5fd94df8c679770a4723661bccee7e4568644ca30a44",
+      "size_bytes": 8794
+    },
+    {
+      "path": "fev__M_DENSE_1D/02_validation/report.json",
+      "sha256": "f323414339032fbc1108c68becb1c3d118801bb06cf3e0bc95a6315206bde473",
+      "size_bytes": 946
+    },
+    {
+      "path": "fev__bizitobs_l2c_5T/01_generation/manifest.json",
+      "sha256": "3df2001c9e61470be6665c6d0db126e356298159dd157f44c722a96cfc6d5a19",
+      "size_bytes": 9043
+    },
+    {
+      "path": "fev__bizitobs_l2c_5T/02_validation/report.json",
+      "sha256": "bb645ad4666e7d6a7611b25b488cf37865b9f857e66fb353dccaf72f446396d7",
+      "size_bytes": 947
+    },
+    {
+      "path": "fev__boomlet_1282/01_generation/manifest.json",
+      "sha256": "d361bd96e6bcc868984c7b5a51f838b9f732e96bef469b65deab0a3a4bec8fc3",
+      "size_bytes": 10108
+    },
+    {
+      "path": "fev__boomlet_1282/02_validation/report.json",
+      "sha256": "f603438afe3fc8e3a5afb6e1a3776e22376985c656300d98ec6a0efc7da41b88",
+      "size_bytes": 944
+    },
+    {
+      "path": "fev__boomlet_1676/01_generation/manifest.json",
+      "sha256": "d226c480c904812cf321fc2c4e225f0c39be995069d3e911b58bc4187299cfa4",
+      "size_bytes": 12967
+    },
+    {
+      "path": "fev__boomlet_1676/02_validation/report.json",
+      "sha256": "943f47136380bd77052ad36dbf70c38aa5d2f37007e41bbb8ddd8e0a16f03895",
+      "size_bytes": 944
+    },
+    {
+      "path": "fev__boomlet_619/01_generation/manifest.json",
+      "sha256": "ece308cd25cb77a865dfcf815d901edd1312ef473c3c00a2ed0c85c61ea8042e",
+      "size_bytes": 10842
+    },
+    {
+      "path": "fev__boomlet_619/02_validation/report.json",
+      "sha256": "7c83d1b03eb1f6a0118253041b89019d790fcc137d1d73cdf39053fbf9214c7e",
+      "size_bytes": 943
+    },
+    {
+      "path": "fev__epf_np/01_generation/manifest.json",
+      "sha256": "54aa4736c0b98996c08ae9ba96cfc19b943468c7ce672ace9f2320e3d9fc65c6",
+      "size_bytes": 8830
+    },
+    {
+      "path": "fev__epf_np/02_validation/report.json",
+      "sha256": "744d60ad9a706d91b5703f5b8bf258f9e992447115755bf37dddfb7c3a13197a",
+      "size_bytes": 938
+    },
+    {
+      "path": "fev__hospital_admissions_1D/01_generation/manifest.json",
+      "sha256": "1dc5a841174ed0efc6fc65bfdc4b8a77cd2f1e71c7012bde4f80465e1409af57",
+      "size_bytes": 8960
+    },
+    {
+      "path": "fev__hospital_admissions_1D/02_validation/report.json",
+      "sha256": "6a05799cda89af0c2620218fc56fb512db30ee2df7cd711e6c739fe6dc84ff6e",
+      "size_bytes": 956
+    },
+    {
+      "path": "fev__hospital_admissions_1W/01_generation/manifest.json",
+      "sha256": "792dda5395d3123a5a4aa47f0ea5302168cd8bbd5a9081ebc77471e6a8093440",
+      "size_bytes": 8972
+    },
+    {
+      "path": "fev__hospital_admissions_1W/02_validation/report.json",
+      "sha256": "8f0e1e6d462c3dc6e246592469324821bb7b667be17d5a07d7994fb9c7e6aea3",
+      "size_bytes": 957
+    },
+    {
+      "path": "fev__jena_weather_1H/01_generation/manifest.json",
+      "sha256": "440ae6e20c1e2fe6d54fe4ecd850ffe6431eb6383b4f6072ef651e24ea4a7d85",
+      "size_bytes": 9521
+    },
+    {
+      "path": "fev__jena_weather_1H/02_validation/report.json",
+      "sha256": "c9d7c4f08a4a83d959fdf9f43ae093ecab60cbc303589865e967562c27be1f99",
+      "size_bytes": 947
+    },
+    {
+      "path": "fev__proenfo_gfc14/01_generation/manifest.json",
+      "sha256": "80c75862bbb4c7aa7567eaefa87ccf78a1f72c4621b29d8b37b5edd53d9ea72f",
+      "size_bytes": 8979
+    },
+    {
+      "path": "fev__proenfo_gfc14/02_validation/report.json",
+      "sha256": "58110b1d92972ac472f340f29be7b55190784a388cdafadf81bd3b214b287382",
+      "size_bytes": 944
+    },
+    {
+      "path": "fev__rohlik_orders_1D/01_generation/manifest.json",
+      "sha256": "ceeb8e27ef7dc3efa9e5ee7cffb9fd621f572e7007c1b25ec1d96dfadc60c9dd",
+      "size_bytes": 9564
+    },
+    {
+      "path": "fev__rohlik_orders_1D/02_validation/report.json",
+      "sha256": "a737c720b5cc7bf6fd23f7649f6d1788e27c44b021d9924de8ed90d9fde20823",
+      "size_bytes": 948
+    },
+    {
+      "path": "fev__rossmann_1D/01_generation/manifest.json",
+      "sha256": "348b11fdc5976fa8520f0fc93e2a59cf8281d1cdfe97e33862b3a146758e6b1f",
+      "size_bytes": 9881
+    },
+    {
+      "path": "fev__rossmann_1D/02_validation/report.json",
+      "sha256": "c1ea17630a614d733a5165bb52fb1bdaf4daff05b782b371345e7c8a83b3eb6e",
+      "size_bytes": 961
+    },
+    {
+      "path": "fev__rossmann_1W/01_generation/manifest.json",
+      "sha256": "4cdaa4cd9d7c4e9e300a9614aaef59bdc89e3422b086424b2d0fc8ba5a9b9e56",
+      "size_bytes": 9894
+    },
+    {
+      "path": "fev__rossmann_1W/02_validation/report.json",
+      "sha256": "518d5ecad2a8ef17138f0427f0c83f6ce2a48c010628fb752b6bb5b81f82f3b5",
+      "size_bytes": 960
+    },
+    {
+      "path": "fev__solar_with_weather_1H/01_generation/manifest.json",
+      "sha256": "0b88863538acbae8560bc1a41509a79978e5435db9e954c6d85ab47b03e29dea",
+      "size_bytes": 9364
+    },
+    {
+      "path": "fev__solar_with_weather_1H/02_validation/report.json",
+      "sha256": "9e0b38eb84997d865d45d0e9dddf6a08245ef413382564656d7f09a1df2961e6",
+      "size_bytes": 953
+    },
+    {
+      "path": "fev__uci_air_quality_1H/01_generation/manifest.json",
+      "sha256": "216deb2eafd4708e63156a841fc04a4c2cc52528243fc1a0de97bf6c48bd4f73",
+      "size_bytes": 9162
+    },
+    {
+      "path": "fev__uci_air_quality_1H/02_validation/report.json",
+      "sha256": "81dad695bcd00eb7d0f55797b56e9d23d64fea1a8df44076f1b5906b61983449",
+      "size_bytes": 950
+    },
+    {
+      "path": "fev__uk_covid_nation_1D-cumulative/01_generation/manifest.json",
+      "sha256": "a8bba4a1412efa6d89924e093413b017965425fac8e359a8c7a573a8f7d91588",
+      "size_bytes": 9349
+    },
+    {
+      "path": "fev__uk_covid_nation_1D-cumulative/02_validation/report.json",
+      "sha256": "bfa0050273a4de59d0b87e70d097912cbcf7137d2a9156e5327a8b6c02f574cc",
+      "size_bytes": 965
+    },
+    {
+      "path": "fev__us_consumption_1Y/01_generation/manifest.json",
+      "sha256": "4d73f9194f57fef72cb17d345293d4bc0679de93c17b9f3e520f6a57c7ddc4fa",
+      "size_bytes": 9191
+    },
+    {
+      "path": "fev__us_consumption_1Y/02_validation/report.json",
+      "sha256": "4e44e731b0961a2417e4291aa3791d33eba9153729faa7ce2e7505470f4fb768",
+      "size_bytes": 952
+    },
+    {
+      "path": "fev__world_co2_emissions/01_generation/manifest.json",
+      "sha256": "b5f9c3bad2bd69a6125d87c60d834c9dc2e530ebc61943aab66354b19680db32",
+      "size_bytes": 9235
+    },
+    {
+      "path": "fev__world_co2_emissions/02_validation/report.json",
+      "sha256": "e5e888dbd520663a3ac526e46448b0593f21ae0088bc52dfbfe63bfdb59e44ed",
+      "size_bytes": 960
+    }
+  ]
+}

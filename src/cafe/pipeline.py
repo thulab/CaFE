@@ -65,9 +65,23 @@ def parse_args() -> argparse.Namespace:
         default=list(DEFAULT_CAPABILITY_IDS),
     )
     parser.add_argument("--models", nargs="+", default=None)
+    parser.add_argument(
+        "--backend", choices=("native", "service"), default="native"
+    )
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1")
+    parser.add_argument("--worker-host", action="append", default=[])
+    parser.add_argument(
+        "--model-root",
+        type=Path,
+        default=protocol.REPO_ROOT / "runtime" / "models",
+    )
+    parser.add_argument(
+        "--model-code-root",
+        type=Path,
+        default=protocol.REPO_ROOT / "runtime" / "model_runtime",
+    )
     parser.add_argument(
         "--distributed-worker",
         action="append",
@@ -189,6 +203,8 @@ def _inference_command(
     execute_model: str | None = None,
     reuse_loaded_model: bool = False,
     preserve_loaded_model: bool = False,
+    devices_override: str | None = None,
+    worker_hosts_override: list[str] | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -200,12 +216,18 @@ def _inference_command(
         str(experiment_root),
         "--models",
         *args.models,
+        "--backend",
+        args.backend,
         "--endpoints",
         *args.endpoints,
         "--api-prefix",
         args.api_prefix,
         "--devices",
-        args.devices,
+        devices_override or args.devices,
+        "--model-root",
+        str(args.model_root),
+        "--model-code-root",
+        str(args.model_code_root),
         "--gift-eval-dir",
         str(args.gift_eval_dir),
         "--preprocess-workers",
@@ -229,6 +251,12 @@ def _inference_command(
         command.append("--prepare-only")
     for worker in args.distributed_worker:
         command.extend(("--distributed-worker", str(worker)))
+    for host in (
+        args.worker_host
+        if worker_hosts_override is None
+        else worker_hosts_override
+    ):
+        command.extend(("--worker-host", str(host)))
     if args.distributed_worker:
         command.extend(
             ("--distributed-repo-root", str(args.distributed_repo_root))
@@ -541,11 +569,21 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         for dataset_id in dataset_ids
     ]
     if "inference" in stages:
+        native_runtime_manifest = args.model_root.resolve().parent / "model_runtime_manifest.json"
+        if args.backend == "native" and not native_runtime_manifest.is_file():
+            raise FileNotFoundError(
+                "native runtime is not staged; expected "
+                f"{native_runtime_manifest}. Run scripts/stage_native_runtime.py first."
+            )
         inference_config = {
             **common,
+            "backend": args.backend,
             "models": list(args.models),
             "endpoints": list(args.endpoints),
             "distributed_workers": list(args.distributed_worker),
+            "worker_hosts": list(args.worker_host),
+            "model_root": str(args.model_root),
+            "model_code_root": str(args.model_code_root),
             "distributed_repo_root": (
                 str(args.distributed_repo_root)
                 if args.distributed_worker
@@ -559,7 +597,15 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             experiment_root,
             "inference",
             inference_config,
-            [*generation_manifests, *validation_reports],
+            [
+                *generation_manifests,
+                *validation_reports,
+                *(
+                    [native_runtime_manifest]
+                    if args.backend == "native"
+                    else []
+                ),
+            ],
         )
         if args.prepare_only:
             for dataset_id in dataset_ids:
@@ -569,8 +615,8 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                     check=True,
                 )
         else:
-            # Model-major execution loads each model once across all compatible
-            # endpoints/GPUs, streams every dataset, then unloads before the next.
+            # Model-major execution assigns pending datasets across stable
+            # host/GPU lanes before advancing to the next model.
             for model_id in args.models:
                 pending_datasets: list[str] = []
                 for dataset_id in dataset_ids:
@@ -599,21 +645,71 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                         if model_id in complete_models and artifacts_valid:
                             continue
                     pending_datasets.append(dataset_id)
-                for dataset_index, dataset_id in enumerate(pending_datasets):
-                    subprocess.run(
-                        _inference_command(
-                            args,
-                            experiment_root,
-                            dataset_id,
-                            execute_model=model_id,
-                            reuse_loaded_model=dataset_index > 0,
-                            preserve_loaded_model=(
-                                dataset_index < len(pending_datasets) - 1
+                if args.backend == "native" and pending_datasets:
+                    devices = [
+                        value.strip()
+                        for value in str(args.devices).split(",")
+                        if value.strip()
+                    ]
+                    hosts = list(args.worker_host or ["local"])
+                    slots = [(host, device) for host in hosts for device in devices]
+                    if not slots:
+                        raise ValueError("native inference has no host/device slots")
+
+                    def run_lane(lane_index: int) -> None:
+                        host, device = slots[lane_index]
+                        for dataset_id in pending_datasets[lane_index :: len(slots)]:
+                            subprocess.run(
+                                _inference_command(
+                                    args,
+                                    experiment_root,
+                                    dataset_id,
+                                    execute_model=model_id,
+                                    devices_override=device,
+                                    worker_hosts_override=[host],
+                                ),
+                                cwd=protocol.REPO_ROOT,
+                                check=True,
+                            )
+
+                    if len(pending_datasets) >= len(slots):
+                        with ThreadPoolExecutor(max_workers=len(slots)) as executor:
+                            futures = [
+                                executor.submit(run_lane, index)
+                                for index in range(len(slots))
+                            ]
+                            for future in futures:
+                                future.result()
+                    else:
+                        # With fewer datasets than GPUs, give each dataset the
+                        # complete topology instead of leaving cards idle.
+                        for dataset_id in pending_datasets:
+                            subprocess.run(
+                                _inference_command(
+                                    args,
+                                    experiment_root,
+                                    dataset_id,
+                                    execute_model=model_id,
+                                ),
+                                cwd=protocol.REPO_ROOT,
+                                check=True,
+                            )
+                else:
+                    for dataset_index, dataset_id in enumerate(pending_datasets):
+                        subprocess.run(
+                            _inference_command(
+                                args,
+                                experiment_root,
+                                dataset_id,
+                                execute_model=model_id,
+                                reuse_loaded_model=dataset_index > 0,
+                                preserve_loaded_model=(
+                                    dataset_index < len(pending_datasets) - 1
+                                ),
                             ),
-                        ),
-                        cwd=protocol.REPO_ROOT,
-                        check=True,
-                    )
+                            cwd=protocol.REPO_ROOT,
+                            check=True,
+                        )
     inference_manifests = [
         experiment_root / dataset_id / "03_inference" / "manifest.json"
         for dataset_id in dataset_ids

@@ -1,0 +1,361 @@
+{
+  "available_instance_count_by_capability": {
+    "common_factor": 20,
+    "covariate_impulse_response": 0,
+    "cross_series_dependence": 20,
+    "multi_seasonal": 20,
+    "predictable_intermittency": 20,
+    "regime_switching": 20,
+    "time_varying_seasonality": 20,
+    "trend": 20
+  },
+  "benchmark_id": "fev_bench",
+  "config": {
+    "adapter_schema_version": "cafe.fev_native_adapter.v3",
+    "artifact_storage": {
+      "compression": "zstd",
+      "dense_covariates_stored": false,
+      "dense_targets_stored": false,
+      "format": "parquet",
+      "replay_policy": "benchmark_adapter_plus_deterministic_contract_v1"
+    },
+    "augmentation_seed": 2026082601,
+    "benchmark_id": "fev_bench",
+    "benchmark_source": {
+      "source_manifest": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "source_revision": "fev-v0.8.0-f1afffbf97bc51a4a233080d331633c6f7ab32f6+fev-datasets-f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8",
+      "source_root": "/data/xmy/CaFE/data/fev-mini-v0.8.0",
+      "suite_artifact": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml"
+    },
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "covariate_impulse_policy": "continuous_numeric_dynamic_covariates_only_v1",
+    "dataset_id": "boomlet_619",
+    "formal": true,
+    "frequency": "min",
+    "future_label_eligibility_policy": "adapter_native_complete_future_labels_v1",
+    "generation_execution": {
+      "maximum_dense_batch_bytes": 16777216,
+      "shard_size": 256,
+      "workers": 8
+    },
+    "input_ablation_policy": "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2",
+    "instance_selection": "all_adapter_eligible_native_instances",
+    "max_instances": null,
+    "mechanism_scoring_policy": {
+      "metric": "authentic_history_mase_scaled_future_effect_rms",
+      "minimum_required_mase_rms": 0.05
+    },
+    "native_covariate_policy": "preserve_dynamic_visibility_static_values_and_semantic_types",
+    "native_target_policy": "preserve_benchmark_target_dimension",
+    "observed_covariate_availability": [],
+    "observed_covariate_types": [],
+    "official_window_count": 20,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "prediction_length": 60,
+    "randomness_policy": "qualified_pool_then_seed_sampled_structure_shared_across_levels_plus_level_dose_v2",
+    "randomness_schema": "cafe.structural_randomness.v2",
+    "seasonality": 1440,
+    "seed_independent_candidate_qualification": {
+      "covariate_impulse_pool_size": 8,
+      "cross_series_pool_size": 12,
+      "cross_series_scan_limit": 48,
+      "qualification_uses_existing_gates_only": true
+    },
+    "source_distance_configuration": {
+      "maximum_model_context_channel_distance": 3.0,
+      "maximum_model_context_macro_distance": 2.0,
+      "minimum_model_context_macro_distance": 0.1,
+      "model_max_contexts": {
+        "Chronos-2": 8192,
+        "Timer-3.5": 11520,
+        "Timer-4.0": 8192,
+        "moirai2": 8192,
+        "timesfm2.5": 15360,
+        "tirex2": 2048,
+        "toto2.0": 16384
+      },
+      "strength_reference": "full_native_history_macro_normalized_rms"
+    },
+    "source_distance_policy": "full_history_strength_actual_selected_model_context_bounds_v4",
+    "strength_level_intervals": [
+      [
+        0.1,
+        0.15
+      ],
+      [
+        0.17,
+        0.22
+      ],
+      [
+        0.25,
+        0.32
+      ],
+      [
+        0.36,
+        0.46
+      ],
+      [
+        0.5,
+        0.65
+      ]
+    ],
+    "strength_sampling_policy": "uniform_within_nominal_level_intersected_with_analytic_source_distance_and_future_effect_feasible_bounds_v1",
+    "suite_id": "mini20",
+    "task_id": "fev__boomlet_619",
+    "task_spec": {
+      "benchmark_id": "fev_bench",
+      "config_sha256": "f01a8fb5eec1c471f3137233b72e63f3e5a7fb1f22bb20a709497b074ccbca6e",
+      "display_name": "boomlet_619",
+      "frequency": "min",
+      "horizon": 60,
+      "known_dynamic_columns": [],
+      "native_config": {
+        "dataset_config": "boomlet_619",
+        "dataset_fingerprint": "a20d9d612ea2e091",
+        "dataset_path": "autogluon/fev_datasets",
+        "eval_metric": "SQL",
+        "extra_metrics": [
+          "MASE",
+          {
+            "epsilon": 1.0,
+            "name": "WAPE"
+          },
+          {
+            "epsilon": 1.0,
+            "name": "WQL"
+          }
+        ],
+        "fev_version": "0.8.0",
+        "generate_univariate_targets_from": null,
+        "horizon": 60,
+        "id_column": "id",
+        "initial_cutoff": -1200,
+        "known_dynamic_columns": [],
+        "max_context_length": null,
+        "min_context_length": 1,
+        "num_windows": 20,
+        "past_dynamic_columns": [],
+        "quantile_levels": [
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9
+        ],
+        "seasonality": 1440,
+        "static_columns": [],
+        "target": [
+          "target_0",
+          "target_1",
+          "target_10",
+          "target_11",
+          "target_12",
+          "target_13",
+          "target_14",
+          "target_15",
+          "target_16",
+          "target_17",
+          "target_18",
+          "target_19",
+          "target_2",
+          "target_20",
+          "target_21",
+          "target_22",
+          "target_23",
+          "target_24",
+          "target_25",
+          "target_26",
+          "target_27",
+          "target_28",
+          "target_29",
+          "target_3",
+          "target_30",
+          "target_31",
+          "target_32",
+          "target_33",
+          "target_34",
+          "target_35",
+          "target_36",
+          "target_37",
+          "target_38",
+          "target_39",
+          "target_4",
+          "target_40",
+          "target_41",
+          "target_42",
+          "target_43",
+          "target_44",
+          "target_45",
+          "target_46",
+          "target_47",
+          "target_48",
+          "target_49",
+          "target_5",
+          "target_50",
+          "target_51",
+          "target_6",
+          "target_7",
+          "target_8",
+          "target_9"
+        ],
+        "task_name": "boomlet_619",
+        "timestamp_column": "timestamp",
+        "window_step_size": 60
+      },
+      "past_dynamic_columns": [],
+      "seasonality": 1440,
+      "source_dataset_id": "boomlet_619",
+      "static_columns": [],
+      "suite_id": "mini20",
+      "target_column_names": [
+        "target_0",
+        "target_1",
+        "target_10",
+        "target_11",
+        "target_12",
+        "target_13",
+        "target_14",
+        "target_15",
+        "target_16",
+        "target_17",
+        "target_18",
+        "target_19",
+        "target_2",
+        "target_20",
+        "target_21",
+        "target_22",
+        "target_23",
+        "target_24",
+        "target_25",
+        "target_26",
+        "target_27",
+        "target_28",
+        "target_29",
+        "target_3",
+        "target_30",
+        "target_31",
+        "target_32",
+        "target_33",
+        "target_34",
+        "target_35",
+        "target_36",
+        "target_37",
+        "target_38",
+        "target_39",
+        "target_4",
+        "target_40",
+        "target_41",
+        "target_42",
+        "target_43",
+        "target_44",
+        "target_45",
+        "target_46",
+        "target_47",
+        "target_48",
+        "target_49",
+        "target_5",
+        "target_50",
+        "target_51",
+        "target_6",
+        "target_7",
+        "target_8",
+        "target_9"
+      ],
+      "task_id": "fev__boomlet_619",
+      "window_count": 20
+    },
+    "term": "native",
+    "treatment_history_scope": "entire_benchmark_native_input_history"
+  },
+  "config_sha256": "ba9151a07953e613cc6da29ef225bc82cd4082ad07ad48b812d4e81ed426ab6f",
+  "created_at": "2026-08-29T17:22:27.262028+00:00",
+  "dataset_id": "boomlet_619",
+  "files": {
+    "availability": {
+      "bytes": 47321,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_619/01_generation/availability.parquet",
+      "row_count": 160,
+      "sha256": "f8d0b39d7340681bdb20541740bc195f4034119ba353cdc9f80fa7953cb53487"
+    },
+    "capability_treatments": {
+      "bytes": 1778843,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_619/01_generation/treatment_contracts.parquet",
+      "row_count": 700,
+      "sha256": "e4f958233e1076820fc7094afeeabf10a89e1e85bd494981acc952c9026d31fc"
+    },
+    "input_ablations": {
+      "bytes": 677882,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_619/01_generation/input_ablation_contracts.parquet",
+      "row_count": 200,
+      "sha256": "5834f26e5d206445a06b76ecd1e32e6e94e4d8647ae9034d57f38b6d7da024ae"
+    },
+    "official_baselines": {
+      "bytes": 16644,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__boomlet_619/01_generation/official_instances.parquet",
+      "row_count": 20,
+      "sha256": "b733277db052ea3537b13d47160f918e97abf0cb2d24f9bf03c5dbfb044a931b"
+    }
+  },
+  "input_ablation_count": 200,
+  "official_instance_count": 20,
+  "official_window_selection_audit": {
+    "complete_future_label_count": 20,
+    "fully_missing_future_label_count": 0,
+    "official_window_count": 20,
+    "partially_missing_future_label_count": 0
+  },
+  "schema_version": "cafe.benchmark_extension_generation.v13",
+  "source_files": [
+    {
+      "bytes": 10094,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml",
+      "sha256": "992ac3b7fa76f0a400d2783535b989549decab381006da5a866e28b61b963edb"
+    },
+    {
+      "bytes": 1288923,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/datasets/boomlet_619.parquet",
+      "sha256": "2109e42892cec9caae5f2e3338058267842402b8957fe19754dc79ae8809352b"
+    },
+    {
+      "bytes": 5861,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "sha256": "92830cbea58c92456be4c830990ec6b73dab56437657d3ebb495a8bf7460f4c1"
+    }
+  ],
+  "suite_id": "mini20",
+  "task_id": "fev__boomlet_619",
+  "treatment_count": 700,
+  "unavailable_reason_count_by_capability": {
+    "common_factor": {},
+    "covariate_impulse_response": {
+      "no_native_dynamic_covariate": 20
+    },
+    "cross_series_dependence": {},
+    "multi_seasonal": {},
+    "predictable_intermittency": {},
+    "regime_switching": {},
+    "time_varying_seasonality": {},
+    "trend": {}
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 4,
+    "source_scan_count": 1,
+    "source_shard_count": 11
+  },
+  "config_sha256": "0c405f8ea6ba1f4f0f2e8c3f3d0bff8dc2781906f60933e362785268fca99867",
+  "created_at": "2026-08-28T06:56:37.418068+00:00",
+  "dataset_id": "gift_solar_h",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 5606413,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/accuracy_rows.parquet",
+      "row_count": 292656,
+      "sha256": "ccf74faa2f09685c446f13a657dc7b1d5c2a03a6c812db60a67c09f1ef2d9b98"
+    },
+    "accuracy_summary": {
+      "bytes": 49686,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/accuracy_summary.json",
+      "sha256": "e7e23ba3735f5a41236557f490e35da82e2fff0c266dbee6b6f17c5dab6848fb"
+    },
+    "capability_effect_rows": {
+      "bytes": 18389988,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/capability_effect_rows.parquet",
+      "row_count": 274435,
+      "sha256": "0c227c153a0b29033cefd98d87e6638ee673891ca1f46017abe96e0ce55b5e95"
+    },
+    "capability_effect_summary": {
+      "bytes": 145634,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/capability_effect_summary.json",
+      "sha256": "5ff2703f44a8d7c42bca66b38cd74d9ace6dd13507890a46c3be5ab5473d1222"
+    },
+    "input_ablation_rows": {
+      "bytes": 3303,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/input_ablation_rows.parquet",
+      "row_count": 0,
+      "sha256": "8bf1e0cb815f83f5b2c5584175b54f58ceef4af251eeaa64c7af1b7a418b6bbf"
+    },
+    "input_ablation_summary": {
+      "bytes": 17,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/input_ablation_summary.json",
+      "sha256": "fb2989323b717f2e869a06272d8ee4b35b4e516d6a555f4ce3d19f9ee3606ff0"
+    },
+    "official_accuracy": {
+      "bytes": 1977,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/official_accuracy.json",
+      "sha256": "0d609a7f5378c826c74b71ab50cf56b4d7d86bc0beb4c2a9e9038f297015a804"
+    }
+  },
+  "inference_manifest_sha256": "a5e771fc085005198e6d228939c31a9beab044f06f099fd349b71d10b4e2a9a1",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

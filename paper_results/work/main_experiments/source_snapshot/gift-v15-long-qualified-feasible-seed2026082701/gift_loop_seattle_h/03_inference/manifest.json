@@ -1,0 +1,3455 @@
+{
+  "complete": true,
+  "config": {
+    "bulk_request_input_token_policy": "shape_aware_max_request_and_weighted_endpoint_inflight_v1",
+    "client_inflight_input_tokens_override": null,
+    "dataset_id": "gift_loop_seattle_h",
+    "default_client_inflight_input_tokens_per_endpoint": 6525120,
+    "default_maximum_request_input_tokens": 815640,
+    "distributed_execution_policy": "source_shard_modulo_near_endpoint_replay_v1",
+    "distributed_repo_root": "/data/xmy/CaFE",
+    "distributed_workers": {
+      "http://192.168.99.89:10810": "timecho89",
+      "http://192.168.99.92:10810": "local"
+    },
+    "endpoint_policy": "model_major_all_compatible_endpoints",
+    "input_history_policy": "treatment_applied_to_entire_official_history_then_model_max_context_suffix",
+    "max_inflight_batches_per_endpoint": 8,
+    "max_inflight_mib": 2048,
+    "max_open_shape_groups": 64,
+    "max_request_input_tokens_override": null,
+    "model_input_token_config": {
+      "Chronos-2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "TimePFN": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-3.5": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-4.0": {
+        "client_inflight_input_tokens": 13050240,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 2.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "moirai2": {
+        "client_inflight_input_tokens": 13050240,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 8,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "timesfm2.5": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0,
+        "very_long_context_input_token_multiplier": 2.0,
+        "very_long_context_threshold": 8192
+      },
+      "tirex2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "large_panel_context_threshold": 512,
+        "large_panel_http_concurrency": 8,
+        "large_panel_target_dim_threshold": 16,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_http_concurrency": 2,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "toto2.0": {
+        "client_inflight_input_tokens": 1048576,
+        "http_concurrency": 8,
+        "maximum_bulk_rows": 256,
+        "maximum_request_input_tokens": 131072,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 256,
+        "output_horizon_token_multiplier": 1.0
+      }
+    },
+    "models": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "native_target_policy": "native_if_supported_else_inference_only_independent_univariate_reassembly",
+    "overload_retry_policy": "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter",
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "preprocess_workers": 8,
+    "request_materialization": "distributed_near_endpoint_source_shard_replay_no_model_task_artifact",
+    "transport": "msgpack_bulk"
+  },
+  "config_sha256": "cecc849cd13fbbd0fca6c0438819463675c11843cb65e56fbba1fd4d70868f94",
+  "created_at": "2026-08-28T16:48:16.501164+00:00",
+  "dataset_id": "gift_loop_seattle_h",
+  "generation_manifest": {
+    "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/01_generation/manifest.json",
+    "sha256": "7d47b0f4269634b32897ca91547e18af233902ffd7e10e7b407c68c3f48829ea"
+  },
+  "model_predictions": {
+    "Chronos-2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "Chronos-2",
+      "parts": [
+        {
+          "bytes": 9452788,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000000.parquet",
+          "row_count": 3871,
+          "sha256": "8f91c8edc4a334cef99da82ac089a3e386729689cd99f3a13e935306a097b47f",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 9642242,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000001.parquet",
+          "row_count": 3941,
+          "sha256": "71357240b29623bf2023834e26cd588b9714c5bfa47773450633d6a0e513a875",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 9379416,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000002.parquet",
+          "row_count": 3874,
+          "sha256": "3249f256a5cc715450bde9a2e70a686c720c287dbe39fd62a44ec53dd1a9bdcb",
+          "source_shard_index": 2
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 11686
+    },
+    "Timer-3.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "Timer-3.5",
+      "parts": [
+        {
+          "bytes": 7175396,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000000.parquet",
+          "row_count": 3871,
+          "sha256": "5d118bdd71d792ef46314c68f375f1f9bc47c973f5bbcefd58808df3b98e0c3d",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 7343050,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000001.parquet",
+          "row_count": 3941,
+          "sha256": "ca6359e57c757295b9b3c22aac69ce9723248196a7584f48b3a5f4a31961eec1",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 7295684,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000002.parquet",
+          "row_count": 3874,
+          "sha256": "d71abaa8565cc3a70fb28b0817c897e5fa31b305e80833ca1c3cd8c24e1e3138",
+          "source_shard_index": 2
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 11686
+    },
+    "Timer-4.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "Timer-4.0",
+      "parts": [
+        {
+          "bytes": 8051116,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000000.parquet",
+          "row_count": 3871,
+          "sha256": "3574e95fc3c61b5a39580c01801455c9e45421507cfbe14b9e1bc6110634115a",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 8247547,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000001.parquet",
+          "row_count": 3941,
+          "sha256": "c9b4918460dab683f5c11443bded37e7be1714b8949f890ad9dba406ea374318",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 8133633,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000002.parquet",
+          "row_count": 3874,
+          "sha256": "206ed0bbc0ed8e58ac00a3ebadd8ada32746373fc5ee9b6a2af4a2554d36d41e",
+          "source_shard_index": 2
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 960,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 11686
+    },
+    "moirai2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "moirai2",
+      "parts": [
+        {
+          "bytes": 9472789,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000000.parquet",
+          "row_count": 3871,
+          "sha256": "8f8ef17b8d4e9de9b55ae90080f8751975abb483e6c5ff235c55bfc8592680c9",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 9654726,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000001.parquet",
+          "row_count": 3941,
+          "sha256": "6603c56ea2512d931d89cbd63117202dfee50526aacc60df7c74908e7c1d3049",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 9396767,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000002.parquet",
+          "row_count": 3874,
+          "sha256": "cf25cadac0632b690b26d4a008c30b027dc8797d3c6ae18dd1a9db34a13c743c",
+          "source_shard_index": 2
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 11686
+    },
+    "timesfm2.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "timesfm2.5",
+      "parts": [
+        {
+          "bytes": 9435315,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000000.parquet",
+          "row_count": 3871,
+          "sha256": "a1cd927218d1279ea1a090c7326b3189e6a55ed7cca6c51d3f59c92f25ef5c68",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 9618277,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000001.parquet",
+          "row_count": 3941,
+          "sha256": "5f1a9d3a4a96eae359d5eb604761bd66867b36999fd0c784e5f23ddbb8ecff90",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 9359900,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000002.parquet",
+          "row_count": 3874,
+          "sha256": "ae7b1276a9541a530b3b59c436a3c413f6264482ce48853eb156681c6576fcdd",
+          "source_shard_index": 2
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": true,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 11686
+    },
+    "toto2.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "toto2.0",
+      "parts": [
+        {
+          "bytes": 9449225,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000000.parquet",
+          "row_count": 3871,
+          "sha256": "41021e2c65b8d92a9f4ded30fe77f9c6ace79e556be922768114ca06b7e1148d",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 9628110,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000001.parquet",
+          "row_count": 3941,
+          "sha256": "d4951de9af28866c6c2962130b047fe308523a5c58d424f8ba7e83158193e0e1",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 9371453,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000002.parquet",
+          "row_count": 3874,
+          "sha256": "fd65e9d724f887564245afdcbc97ece2abb246c9302ea8260fd4567c7035ccff",
+          "source_shard_index": 2
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 11686
+    }
+  },
+  "model_statuses": [
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 185,
+      "bulk_request_count": 185,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 11686,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 122,
+            "bulk_request_count": 122,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 7745,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 10.247,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 7745,
+            "expected_original_view_count": 7745,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3503275
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3503272
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3503273
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3503274
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3503911
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3503910
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3503909
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3503908
+                  }
+                ],
+                "model_id": "Timer-4.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-4.0",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 2.0,
+            "native_view_count": 7745,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 7745,
+            "prediction_parts": [
+              {
+                "bytes": 8051116,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000000.parquet",
+                "row_count": 3871,
+                "sha256": "3574e95fc3c61b5a39580c01801455c9e45421507cfbe14b9e1bc6110634115a",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 8133633,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000002.parquet",
+                "row_count": 3874,
+                "sha256": "206ed0bbc0ed8e58ac00a3ebadd8ada32746373fc5ee9b6a2af4a2554d36d41e",
+                "source_shard_index": 2
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 960,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 25,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 23,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 63,
+            "bulk_request_count": 63,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 3941,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 6.87,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 3941,
+            "expected_original_view_count": 3941,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2894479
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2894480
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2894478
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2894481
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2895099
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2895096
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2895097
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2895098
+                  }
+                ],
+                "model_id": "Timer-4.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-4.0",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 2.0,
+            "native_view_count": 3941,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 3941,
+            "prediction_parts": [
+              {
+                "bytes": 8247547,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000001.parquet",
+                "row_count": 3941,
+                "sha256": "c9b4918460dab683f5c11443bded37e7be1714b8949f890ad9dba406ea374318",
+                "source_shard_index": 1
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 960,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 25,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 23,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 10.247,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 11686,
+      "expected_original_view_count": 11686,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 3503275
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3503272
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3503273
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3503274
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3503911
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3503910
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3503909
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3503908
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 2894479
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2894480
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2894478
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2894481
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2895099
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2895096
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2895097
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2895098
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-4.0",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 2.0,
+      "native_view_count": 11686,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 11686,
+      "shape_group_count": 4,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 25,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 23,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 25,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 23,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 185,
+      "bulk_request_count": 185,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 11686,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 122,
+            "bulk_request_count": 122,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 7745,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 11.555,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 7745,
+            "expected_original_view_count": 7745,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3511680
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3511679
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3511681
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3511682
+                  }
+                ],
+                "model_id": "Chronos-2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Chronos-2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 7745,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 7745,
+            "prediction_parts": [
+              {
+                "bytes": 9452788,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000000.parquet",
+                "row_count": 3871,
+                "sha256": "8f91c8edc4a334cef99da82ac089a3e386729689cd99f3a13e935306a097b47f",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 9379416,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000002.parquet",
+                "row_count": 3874,
+                "sha256": "3249f256a5cc715450bde9a2e70a686c720c287dbe39fd62a44ec53dd1a9bdcb",
+                "source_shard_index": 2
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 12,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 63,
+            "bulk_request_count": 63,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 3941,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 7.016,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 3941,
+            "expected_original_view_count": 3941,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2897613
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2897615
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2897614
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2897616
+                  }
+                ],
+                "model_id": "Chronos-2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Chronos-2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 3941,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 3941,
+            "prediction_parts": [
+              {
+                "bytes": 9642242,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000001.parquet",
+                "row_count": 3941,
+                "sha256": "71357240b29623bf2023834e26cd588b9714c5bfa47773450633d6a0e513a875",
+                "source_shard_index": 1
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 12,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 11.555,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 11686,
+      "expected_original_view_count": 11686,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3511680
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3511679
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3511681
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3511682
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 2897613
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2897615
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2897614
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2897616
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Chronos-2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 11686,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 11686,
+      "shape_group_count": 4,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 185,
+      "bulk_request_count": 185,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 11686,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 122,
+            "bulk_request_count": 122,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 7745,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 30.519,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 7745,
+            "expected_original_view_count": 7745,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3517445
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3517443
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3517444
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3517442
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3518070
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3518069
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3518071
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3518068
+                  }
+                ],
+                "model_id": "timesfm2.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 15360,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "timesfm2.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 7745,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 7745,
+            "prediction_parts": [
+              {
+                "bytes": 9435315,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000000.parquet",
+                "row_count": 3871,
+                "sha256": "a1cd927218d1279ea1a090c7326b3189e6a55ed7cca6c51d3f59c92f25ef5c68",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 9359900,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000002.parquet",
+                "row_count": 3874,
+                "sha256": "ae7b1276a9541a530b3b59c436a3c413f6264482ce48853eb156681c6576fcdd",
+                "source_shard_index": 2
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": true,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 12,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 2.0,
+            "very_long_context_threshold": 8192,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 63,
+            "bulk_request_count": 63,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 3941,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 16.245,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 3941,
+            "expected_original_view_count": 3941,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2900067
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2900068
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2900070
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2900069
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2900688
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2900685
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2900686
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2900687
+                  }
+                ],
+                "model_id": "timesfm2.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 15360,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "timesfm2.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 3941,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 3941,
+            "prediction_parts": [
+              {
+                "bytes": 9618277,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000001.parquet",
+                "row_count": 3941,
+                "sha256": "5f1a9d3a4a96eae359d5eb604761bd66867b36999fd0c784e5f23ddbb8ecff90",
+                "source_shard_index": 1
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": true,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 12,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 2.0,
+            "very_long_context_threshold": 8192,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 30.519,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 11686,
+      "expected_original_view_count": 11686,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 3517445
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3517443
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3517444
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3517442
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3518070
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3518069
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3518071
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3518068
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 2900067
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2900068
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2900070
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2900069
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2900688
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2900685
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2900686
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2900687
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "timesfm2.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 11686,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 11686,
+      "shape_group_count": 4,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 2.0,
+      "very_long_context_threshold": 8192
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 1463,
+      "bulk_request_count": 1463,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 11686,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 969,
+            "bulk_request_count": 969,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 7745,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 250.722,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 7745,
+            "expected_original_view_count": 7745,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3524717
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3524716
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3524715
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3524718
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3525346
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3525345
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3525348
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3525347
+                  }
+                ],
+                "model_id": "moirai2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "moirai2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 7745,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 7745,
+            "prediction_parts": [
+              {
+                "bytes": 9472789,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000000.parquet",
+                "row_count": 3871,
+                "sha256": "8f8ef17b8d4e9de9b55ae90080f8751975abb483e6c5ff235c55bfc8592680c9",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 9396767,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000002.parquet",
+                "row_count": 3874,
+                "sha256": "cf25cadac0632b690b26d4a008c30b027dc8797d3c6ae18dd1a9db34a13c743c",
+                "source_shard_index": 2
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 58560,
+                "maximum_weighted_request_input_tokens": 64320,
+                "minimum_dynamic_concurrency_ceiling": 32,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 64320,
+                "maximum_weighted_request_input_tokens": 70080,
+                "minimum_dynamic_concurrency_ceiling": 32,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 494,
+            "bulk_request_count": 494,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 3941,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 125.216,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 3941,
+            "expected_original_view_count": 3941,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2903882
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2903879
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2903881
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2903880
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2904564
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2904563
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2904561
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2904562
+                  }
+                ],
+                "model_id": "moirai2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "moirai2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 3941,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 3941,
+            "prediction_parts": [
+              {
+                "bytes": 9654726,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000001.parquet",
+                "row_count": 3941,
+                "sha256": "6603c56ea2512d931d89cbd63117202dfee50526aacc60df7c74908e7c1d3049",
+                "source_shard_index": 1
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 58560,
+                "maximum_weighted_request_input_tokens": 64320,
+                "minimum_dynamic_concurrency_ceiling": 32,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 64320,
+                "maximum_weighted_request_input_tokens": 70080,
+                "minimum_dynamic_concurrency_ceiling": 32,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 250.722,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 11686,
+      "expected_original_view_count": 11686,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3524717
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3524716
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3524715
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3524718
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3525346
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3525345
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3525348
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3525347
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 2903882
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2903879
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2903881
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2903880
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2904564
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2904563
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2904561
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2904562
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "moirai2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 11686,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 11686,
+      "shape_group_count": 4,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 58560,
+          "maximum_weighted_request_input_tokens": 64320,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 64320,
+          "maximum_weighted_request_input_tokens": 70080,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 58560,
+          "maximum_weighted_request_input_tokens": 64320,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        },
+        {
+          "maximum_request_input_tokens": 64320,
+          "maximum_weighted_request_input_tokens": 70080,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 185,
+      "bulk_request_count": 185,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 11686,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 122,
+            "bulk_request_count": 122,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 7745,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 45.02,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 7745,
+            "expected_original_view_count": 7745,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3540954
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3540953
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3540951
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3540952
+                  }
+                ],
+                "model_id": "Timer-3.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 11520,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-3.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 7745,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 7745,
+            "prediction_parts": [
+              {
+                "bytes": 7175396,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000000.parquet",
+                "row_count": 3871,
+                "sha256": "5d118bdd71d792ef46314c68f375f1f9bc47c973f5bbcefd58808df3b98e0c3d",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 7295684,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000002.parquet",
+                "row_count": 3874,
+                "sha256": "d71abaa8565cc3a70fb28b0817c897e5fa31b305e80833ca1c3cd8c24e1e3138",
+                "source_shard_index": 2
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 12,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 63,
+            "bulk_request_count": 63,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 3941,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 22.468,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 3941,
+            "expected_original_view_count": 3941,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2915346
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2915344
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2915345
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2915347
+                  }
+                ],
+                "model_id": "Timer-3.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 11520,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-3.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 3941,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 3941,
+            "prediction_parts": [
+              {
+                "bytes": 7343050,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000001.parquet",
+                "row_count": 3941,
+                "sha256": "ca6359e57c757295b9b3c22aac69ce9723248196a7584f48b3a5f4a31961eec1",
+                "source_shard_index": 1
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 468480,
+                "maximum_weighted_request_input_tokens": 514560,
+                "minimum_dynamic_concurrency_ceiling": 12,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 514560,
+                "maximum_weighted_request_input_tokens": 560640,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 45.02,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 11686,
+      "expected_original_view_count": 11686,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 3540954
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3540953
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3540951
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3540952
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 2915346
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2915344
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2915345
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2915347
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-3.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 11686,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 11686,
+      "shape_group_count": 4,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 468480,
+          "maximum_weighted_request_input_tokens": 514560,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        },
+        {
+          "maximum_request_input_tokens": 514560,
+          "maximum_weighted_request_input_tokens": 560640,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 787,
+      "bulk_request_count": 787,
+      "client_inflight_input_tokens_per_endpoint": 1048576,
+      "compatible_sample_count": 11686,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 521,
+            "bulk_request_count": 521,
+            "client_inflight_input_tokens": 1048576,
+            "client_inflight_input_tokens_per_endpoint": 1048576,
+            "compatible_sample_count": 7745,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 41.228,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 7745,
+            "expected_original_view_count": 7745,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 8,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 8,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3547411
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3547412
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3547410
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3547409
+                  }
+                ],
+                "model_id": "toto2.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 131072,
+            "model_id": "toto2.0",
+            "native_multivariate_http_concurrency": 8,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 7745,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 7745,
+            "prediction_parts": [
+              {
+                "bytes": 9449225,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000000.parquet",
+                "row_count": 3871,
+                "sha256": "41021e2c65b8d92a9f4ded30fe77f9c6ace79e556be922768114ca06b7e1148d",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 9371453,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000002.parquet",
+                "row_count": 3874,
+                "sha256": "fd65e9d724f887564245afdcbc97ece2abb246c9302ea8260fd4567c7035ccff",
+                "source_shard_index": 2
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 117120,
+                "maximum_weighted_request_input_tokens": 128640,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 112560,
+                "maximum_weighted_request_input_tokens": 122640,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 266,
+            "bulk_request_count": 266,
+            "client_inflight_input_tokens": 1048576,
+            "client_inflight_input_tokens_per_endpoint": 1048576,
+            "compatible_sample_count": 3941,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_loop_seattle_h",
+            "elapsed_seconds": 22.264,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 3941,
+            "expected_original_view_count": 3941,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 8,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 8,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 0.0,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2918371
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2918370
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2918372
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2918373
+                  }
+                ],
+                "model_id": "toto2.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 131072,
+            "model_id": "toto2.0",
+            "native_multivariate_http_concurrency": 8,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 3941,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 3941,
+            "prediction_parts": [
+              {
+                "bytes": 9628110,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000001.parquet",
+                "row_count": 3941,
+                "sha256": "d4951de9af28866c6c2962130b047fe308523a5c58d424f8ba7e83158193e0e1",
+                "source_shard_index": 1
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 2,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 117120,
+                "maximum_weighted_request_input_tokens": 128640,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  7320,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              },
+              {
+                "maximum_request_input_tokens": 112560,
+                "maximum_weighted_request_input_tokens": 122640,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  8040,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 41.228,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 11686,
+      "expected_original_view_count": 11686,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 8,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3547411
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3547412
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3547410
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3547409
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 2918371
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2918370
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2918372
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2918373
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 131072,
+      "model_id": "toto2.0",
+      "native_multivariate_http_concurrency": 8,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 11686,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 11686,
+      "shape_group_count": 4,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 117120,
+          "maximum_weighted_request_input_tokens": 128640,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 112560,
+          "maximum_weighted_request_input_tokens": 122640,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 117120,
+          "maximum_weighted_request_input_tokens": 128640,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            7320,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        },
+        {
+          "maximum_request_input_tokens": 112560,
+          "maximum_weighted_request_input_tokens": 122640,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            8040,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    }
+  ],
+  "model_tasks": {},
+  "prepare_only": false,
+  "schema_version": "cafe.benchmark_extension_inference.v11",
+  "validation_report": {
+    "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_loop_seattle_h/02_validation/report.json",
+    "sha256": "613d68a37fd96cf754b252a10680af1f9248077df283a5a4773c6d12bf112d61"
+  }
+}

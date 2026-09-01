@@ -1,0 +1,2410 @@
+{
+  "complete": true,
+  "config": {
+    "bulk_request_input_token_policy": "shape_aware_max_request_and_weighted_endpoint_inflight_v1",
+    "client_inflight_input_tokens_override": null,
+    "dataset_id": "fev__world_co2_emissions",
+    "default_client_inflight_input_tokens_per_endpoint": 6525120,
+    "default_maximum_request_input_tokens": 815640,
+    "distributed_execution_policy": null,
+    "distributed_repo_root": null,
+    "distributed_workers": {},
+    "effective_model_maximum_contexts": {
+      "Chronos-2": 8192,
+      "Timer-3.5": 11520,
+      "Timer-4.0": 8192,
+      "moirai2": 8192,
+      "timesfm2.5": 15360,
+      "tirex2": 2048,
+      "toto2.0": 16384
+    },
+    "endpoint_policy": "model_major_all_compatible_endpoints",
+    "input_history_policy": "treatment_applied_to_entire_official_history_then_generation_frozen_model_context_suffix_v1",
+    "max_inflight_batches_per_endpoint": 8,
+    "max_inflight_mib": 2048,
+    "max_open_shape_groups": 64,
+    "max_request_input_tokens_override": null,
+    "model_input_token_config": {
+      "Chronos-2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "TimePFN": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-3.5": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-4.0": {
+        "client_inflight_input_tokens": 13050240,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 2.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "moirai2": {
+        "client_inflight_input_tokens": 13050240,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 8,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "timesfm2.5": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0,
+        "very_long_context_input_token_multiplier": 2.0,
+        "very_long_context_threshold": 8192
+      },
+      "tirex2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "large_panel_context_threshold": 512,
+        "large_panel_http_concurrency": 8,
+        "large_panel_target_dim_threshold": 16,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_http_concurrency": 2,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "toto2.0": {
+        "client_inflight_input_tokens": 1048576,
+        "http_concurrency": 8,
+        "maximum_bulk_rows": 256,
+        "maximum_request_input_tokens": 131072,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 256,
+        "output_horizon_token_multiplier": 1.0
+      }
+    },
+    "models": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "tirex2",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "native_target_policy": "native_if_supported_else_inference_only_independent_univariate_reassembly",
+    "overload_retry_policy": "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter",
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "preprocess_workers": 8,
+    "request_materialization": "bounded_in_memory_source_contract_replay_no_model_task_artifact",
+    "transport": "msgpack_bulk"
+  },
+  "config_sha256": "7d459479e64ef2f445f3b0f777e0e19d965269b5698ac89a4ded7226736b2d6d",
+  "created_at": "2026-08-29T23:28:06.016597+00:00",
+  "dataset_id": "fev__world_co2_emissions",
+  "generation_manifest": {
+    "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/01_generation/manifest.json",
+    "sha256": "b5f9c3bad2bd69a6125d87c60d834c9dc2e530ebc61943aab66354b19680db32"
+  },
+  "model_predictions": {
+    "Chronos-2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Chronos-2",
+      "parts": [
+        {
+          "bytes": 19087,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "81dc18a439fd6bb1c0a11b1e1a329067ff4727c0d6865a0dc33809aee0662c9e",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 52618,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "04148b169b13844318ffdcb3cc7b7929af0ff0985cd176a147e7e9d13d0a1565",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 90066,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "9cb57d07bbae31fb8c8512db0f1baa2a933eb27d76fc1005aa74833c8ec676c4",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 102811,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "e626b569d5b0b6de1316dd4311110c30157a021b6fc6ddd533ac93ce1c57a471",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 129717,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "04ec3ad960fd7afee7308f17e8a46167788d912c98dbff56bcf312ebc2a31734",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 130942,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "3f46393d16ff3cf20264b08afa4fa23f7267db1e3d3d05a926771dd03a52b2b2",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 93092,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Chronos-2/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "0aed2d03e9d843fafa454c10711d37e68cf6b6fabf792664d678f911d0af251f",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 23704
+    },
+    "Timer-3.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Timer-3.5",
+      "parts": [
+        {
+          "bytes": 17528,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "342dea72d5e02d72505ee3fad26e3cdfb0006af73df3081b7d4c8fc451b08906",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 46853,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "ebc5f54a0f9de5378670bed66c76cf7ef48a55eb57b349eedbe1d7183e292af1",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 80926,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "491d58f068b2203b314044133cfb7f5aa3ea1fb7e723b4744c4e994d3892a5b4",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 91185,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "c6098c470d43d17456ea162335e4c1b62675c9f07dad41ac6db379f98f2648c3",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 114151,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "f024207dbd1506e24bdcb0dcfdccbad256400ad7ada27479d3a5b70cfad0d094",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 115045,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "f15d8aa5e28fe3f9f62a0e29ff02386cb46f46e43a94e400caa1e245f87565f6",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 81095,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-3_5/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "2a274c06cf692482a8217db6861f23cb0f7419d94383c962d1a3fad547e49e04",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 23704
+    },
+    "Timer-4.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Timer-4.0",
+      "parts": [
+        {
+          "bytes": 18943,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "52a14b4374bae8ebf467f691d913c66b85805590b60c333aade6606530ac406f",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 52685,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "639bc74bc9f7ef4642c91116fb2d908ab3d55b3f2004983676603acdfab7beb4",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 89326,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "c45ffb42622484ecfcfe0b000b389208e635b992b1d17825ccd18caa554bbcc7",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 99976,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "bef694496efa701892215971a02d2064a1f1fbc4d8212408ca240c31764103b2",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 126230,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "f2bad80536c689687e67d7923330041de8c9c244ba68fc1677b786e2cc48ae4e",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 127662,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "6725eb05b8f7b1919686f7bef10981910a0a79e5421763b150d39206d1abce6f",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 90668,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/Timer-4_0/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "f0f746f3fc1d0e643979876e21c99eab0e01e43eff162c7fc99edcc3a5b3287e",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 960,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 23704
+    },
+    "moirai2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "moirai2",
+      "parts": [
+        {
+          "bytes": 19136,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "9638524ec581a87e99a6c7b0c29a847b8a4815d45e2a18b7e0539896e5656679",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 53640,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "17ba57e076659f724e8eb00765785b143c883b687437eb94df7d71946245bd98",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 91612,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "41586f24e969465f93964767c90fc6505d905a08e8e9b4b0db192236d88f2a9f",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 104680,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "bbdabb12e3d35570cd8ad8c99e050af786a85de2036a4015bd3844ffcdd9d138",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 132352,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "4730c267212f9e495e2fdb337258a3b4431c31138ace797c58c1b4c9fad77d1d",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 133666,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "dbca2d7f188aa32dcf792ab0a0ce00dca79387f36bd5fca6996b90d505417174",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 95194,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/moirai2/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "7198fc84093d8b764a8685ec9714022543684be1dc5cee2496b6021753110a6a",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 23704
+    },
+    "timesfm2.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "timesfm2.5",
+      "parts": [
+        {
+          "bytes": 19123,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "0dc50a7754e367eb4fbd19bccfa27439ff7c9ad46a6d21b32f106b7e4a141399",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 52703,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "de11bb5ac76238ddb5bcb41936b4964ac0864dbffadb882d119e8bfe774636b9",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 90117,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "b27570f8e73f68e2d06b35d73612d5864d06fb104d499ad617fe4dfa28687390",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 102944,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "ac250b976759d40a6e4576f1e468f9b853eaa48bad0e20c07ada60b22ee4284e",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 129953,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "ec675f1d4d58b3ecb8be34efe1f8af29ace3d65d402c2158277220c7e70d2577",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 131091,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "79f80ab6ff449091d873ac297af2f53613bb02d1c82c92eefe440a71e6699fd7",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 93297,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/timesfm2_5/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "478f25853124ccee8870e9d540ecad4fee124e04e796f70d7d47e61c7641a119",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": true,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 23704
+    },
+    "tirex2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "tirex2",
+      "parts": [
+        {
+          "bytes": 19128,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "f71b98c447f069b1ba48f03386322a8d0e9f48c12dd0e5c604b47f18d6fe0934",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 52668,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "fc5242f1f7d8800dc58df76f69063da572d037a22083123d5c077b3d890dc822",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 90155,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "40068ed207d0a40e2588046a8915edab21307fca017b61d6e58aa5e7dba35277",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 102985,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "2e391908ac7b7ff60ec4ca8f6aeacda640f48e26e150a635984d613cb63793ac",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 129861,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "cf185c9309b0257dcf453a5c0b3c01cea46e52beb0230bc46d4733aaf7e0a290",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 131082,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "3dda4126daa368341686b197107b601aef42a25edd972c6520e86ac2f83990fa",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 93399,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/tirex2/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "e80bb44513526c7d2bb47d7f14e4ade837791f4180e3098a9af4c20d2f781718",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 320,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 23704
+    },
+    "toto2.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "toto2.0",
+      "parts": [
+        {
+          "bytes": 19026,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000000.parquet",
+          "row_count": 526,
+          "sha256": "70fade2a4bca5bd6fedf9ba199af5d2aa893182158b7902eeaeb00bc6cdc2582",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 52639,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000001.parquet",
+          "row_count": 2011,
+          "sha256": "6e136ee64177e6273c1be6ac4d6849bb70103743b450f4d078779d21592f6c34",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 89882,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000002.parquet",
+          "row_count": 3446,
+          "sha256": "a94d34563baa4c953a2f5c8d90be877a32f9eed14a546f20379ace120c15c1d4",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 102845,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000003.parquet",
+          "row_count": 4031,
+          "sha256": "59c13ad7165a21fb046205485a6e6c93a465cd1b071f51d89715cc5f30aead92",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 129675,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000004.parquet",
+          "row_count": 5006,
+          "sha256": "997027729ebf19576ac9b9c84b116aca7c5c744974a275580294ee0d55feca4b",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 130908,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000005.parquet",
+          "row_count": 5066,
+          "sha256": "b181e1c29fd33cc1a107ca6891f6f1d9dbcfed842a98bcdd4e61d21a60eac1b7",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 93086,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/03_inference/models/toto2_0/predictions/part_000006.parquet",
+          "row_count": 3618,
+          "sha256": "d44d95421ced645a5c3ec901336e132a56d7673d4d57f941b29f563dfcaca2b4",
+          "source_shard_index": 6
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 23704
+    }
+  },
+  "model_statuses": [
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 378,
+      "bulk_request_count": 378,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 15.814,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3170178
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3170180
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3170177
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3170179
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3170796
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3170794
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3170795
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3170797
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-4.0",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 2.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 8192,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 960,
+          "maximum_weighted_request_input_tokens": 1280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1280,
+          "maximum_weighted_request_input_tokens": 1600,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1600,
+          "maximum_weighted_request_input_tokens": 1920,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1920,
+          "maximum_weighted_request_input_tokens": 2240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2240,
+          "maximum_weighted_request_input_tokens": 2560,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2560,
+          "maximum_weighted_request_input_tokens": 2880,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2880,
+          "maximum_weighted_request_input_tokens": 3200,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3200,
+          "maximum_weighted_request_input_tokens": 3520,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3520,
+          "maximum_weighted_request_input_tokens": 3840,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 378,
+      "bulk_request_count": 378,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 13.222,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3175031
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3175030
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3175032
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3175033
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Chronos-2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 8192,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 960,
+          "maximum_weighted_request_input_tokens": 1280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1280,
+          "maximum_weighted_request_input_tokens": 1600,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1600,
+          "maximum_weighted_request_input_tokens": 1920,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1920,
+          "maximum_weighted_request_input_tokens": 2240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2240,
+          "maximum_weighted_request_input_tokens": 2560,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2560,
+          "maximum_weighted_request_input_tokens": 2880,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2880,
+          "maximum_weighted_request_input_tokens": 3200,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3200,
+          "maximum_weighted_request_input_tokens": 3520,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3520,
+          "maximum_weighted_request_input_tokens": 3840,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 378,
+      "bulk_request_count": 378,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 15360,
+      "elapsed_seconds": 16.435,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3179212
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3179211
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3179213
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3179210
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3179829
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3179831
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3179830
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3179832
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "timesfm2.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 15360,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 960,
+          "maximum_weighted_request_input_tokens": 1280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1280,
+          "maximum_weighted_request_input_tokens": 1600,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1600,
+          "maximum_weighted_request_input_tokens": 1920,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1920,
+          "maximum_weighted_request_input_tokens": 2240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2240,
+          "maximum_weighted_request_input_tokens": 2560,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2560,
+          "maximum_weighted_request_input_tokens": 2880,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2880,
+          "maximum_weighted_request_input_tokens": 3200,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3200,
+          "maximum_weighted_request_input_tokens": 3520,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3520,
+          "maximum_weighted_request_input_tokens": 3840,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 2.0,
+      "very_long_context_threshold": 8192
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 378,
+      "bulk_request_count": 378,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 2048,
+      "elapsed_seconds": 16.092,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": 512,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": 16,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 3186550
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3186553
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3186551
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3186552
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3187169
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3187171
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3187170
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3187168
+            }
+          ],
+          "model_id": "tirex2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "tirex2",
+      "native_multivariate_http_concurrency": 2,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 2048,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 960,
+          "maximum_weighted_request_input_tokens": 1280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1280,
+          "maximum_weighted_request_input_tokens": 1600,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1600,
+          "maximum_weighted_request_input_tokens": 1920,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1920,
+          "maximum_weighted_request_input_tokens": 2240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2240,
+          "maximum_weighted_request_input_tokens": 2560,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2560,
+          "maximum_weighted_request_input_tokens": 2880,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2880,
+          "maximum_weighted_request_input_tokens": 3200,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3200,
+          "maximum_weighted_request_input_tokens": 3520,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3520,
+          "maximum_weighted_request_input_tokens": 3840,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 2969,
+      "bulk_request_count": 2969,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 18.575,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3192630
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3192631
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3192632
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3192629
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "moirai2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 16384,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 120,
+          "maximum_weighted_request_input_tokens": 160,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 160,
+          "maximum_weighted_request_input_tokens": 200,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 200,
+          "maximum_weighted_request_input_tokens": 240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 240,
+          "maximum_weighted_request_input_tokens": 280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 280,
+          "maximum_weighted_request_input_tokens": 320,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 320,
+          "maximum_weighted_request_input_tokens": 360,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 360,
+          "maximum_weighted_request_input_tokens": 400,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 400,
+          "maximum_weighted_request_input_tokens": 440,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 440,
+          "maximum_weighted_request_input_tokens": 480,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 378,
+      "bulk_request_count": 378,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 11520,
+      "elapsed_seconds": 17.654,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3197953
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3197952
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3197954
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3197951
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-3.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 11520,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 960,
+          "maximum_weighted_request_input_tokens": 1280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1280,
+          "maximum_weighted_request_input_tokens": 1600,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1600,
+          "maximum_weighted_request_input_tokens": 1920,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1920,
+          "maximum_weighted_request_input_tokens": 2240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2240,
+          "maximum_weighted_request_input_tokens": 2560,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2560,
+          "maximum_weighted_request_input_tokens": 2880,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2880,
+          "maximum_weighted_request_input_tokens": 3200,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3200,
+          "maximum_weighted_request_input_tokens": 3520,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3520,
+          "maximum_weighted_request_input_tokens": 3840,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 101,
+      "bulk_request_count": 101,
+      "client_inflight_input_tokens_per_endpoint": 1048576,
+      "compatible_sample_count": 23704,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 16384,
+      "elapsed_seconds": 14.644,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 23704,
+      "expected_original_view_count": 23704,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 8,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3203461
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3203462
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3203459
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3203460
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 131072,
+      "model_id": "toto2.0",
+      "native_multivariate_http_concurrency": 8,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 23704,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 23704,
+      "service_advertised_maximum_context": 16384,
+      "shape_group_count": 9,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 2865,
+          "maximum_weighted_request_input_tokens": 3820,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            15,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 5120,
+          "maximum_weighted_request_input_tokens": 6400,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            20,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 6400,
+          "maximum_weighted_request_input_tokens": 7680,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            25,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 7680,
+          "maximum_weighted_request_input_tokens": 8960,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            30,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 8960,
+          "maximum_weighted_request_input_tokens": 10240,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            35,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 10240,
+          "maximum_weighted_request_input_tokens": 11520,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            40,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 11520,
+          "maximum_weighted_request_input_tokens": 12800,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            45,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 12800,
+          "maximum_weighted_request_input_tokens": 14080,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            50,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 14080,
+          "maximum_weighted_request_input_tokens": 15360,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            55,
+            5,
+            1,
+            0,
+            "YE-DEC",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    }
+  ],
+  "model_tasks": {},
+  "prepare_only": false,
+  "schema_version": "cafe.benchmark_extension_inference.v13",
+  "validation_report": {
+    "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__world_co2_emissions/02_validation/report.json",
+    "sha256": "e5e888dbd520663a3ac526e46448b0593f21ae0088bc52dfbfe63bfdb59e44ed"
+  }
+}

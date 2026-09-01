@@ -1,0 +1,213 @@
+{
+  "code": {
+    "git_branch": "main",
+    "git_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "git_dirty": false,
+    "git_revision": "bd1e42d943182b1ab5bf369f415f0fa0f72dd776",
+    "git_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "config": {
+    "augmentation_seed": 2026082601,
+    "benchmark_id": "fev_bench",
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "generation_batch_bytes": 16777216,
+    "max_instances_per_task": null,
+    "model_ids": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "tirex2",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "model_service_contracts": {
+      "Chronos-2": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 1024,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 1024,
+          "max_group_rows": 64,
+          "max_input_length": 8192,
+          "max_output_length": 1024,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 8192,
+        "maximum_horizon": 1024,
+        "service_maximum_context": 8192
+      },
+      "Timer-3.5": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 272,
+          "input_mode": {
+            "max_history_covariate_count": 0,
+            "max_static_covariate_count": 0,
+            "max_target_count": 1,
+            "supports_future_covariates": false
+          },
+          "max_future_covs_length": 2048,
+          "max_group_rows": 64,
+          "max_input_length": 11520,
+          "max_output_length": 2048,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 11520,
+        "maximum_horizon": 2048,
+        "service_maximum_context": 11520
+      },
+      "Timer-4.0": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 960,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 960,
+          "max_group_rows": 64,
+          "max_input_length": 8192,
+          "max_output_length": 960,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 8192,
+        "maximum_horizon": 960,
+        "service_maximum_context": 8192
+      },
+      "moirai2": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 96,
+          "input_mode": {
+            "max_history_covariate_count": 0,
+            "max_static_covariate_count": 0,
+            "max_target_count": 1,
+            "supports_future_covariates": false
+          },
+          "max_future_covs_length": 2048,
+          "max_group_rows": 64,
+          "max_input_length": 16384,
+          "max_output_length": 2048,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 8192,
+        "maximum_horizon": 2048,
+        "service_maximum_context": 16384
+      },
+      "timesfm2.5": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 128,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": 1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 1024,
+          "max_group_rows": 64,
+          "max_input_length": 15360,
+          "max_output_length": 1024,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 15360,
+        "maximum_horizon": 1024,
+        "service_maximum_context": 15360
+      },
+      "tirex2": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 320,
+          "input_mode": {
+            "max_history_covariate_count": -1,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": true
+          },
+          "max_future_covs_length": 320,
+          "max_group_rows": 64,
+          "max_input_length": 2048,
+          "max_output_length": 320,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 2048,
+        "maximum_horizon": 320,
+        "service_maximum_context": 2048
+      },
+      "toto2.0": {
+        "context_policy": "min_service_and_cafe_operational_limit_v1",
+        "forecast_limits": {
+          "default_output_length": 32,
+          "input_mode": {
+            "max_history_covariate_count": 0,
+            "max_static_covariate_count": 0,
+            "max_target_count": -1,
+            "supports_future_covariates": false
+          },
+          "max_future_covs_length": 2048,
+          "max_group_rows": 64,
+          "max_input_length": 16384,
+          "max_output_length": 2048,
+          "max_request_input_tokens": -1,
+          "min_input_length": 1
+        },
+        "maximum_context": 16384,
+        "maximum_horizon": 2048,
+        "service_maximum_context": 16384
+      }
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "suite_id": "mini20",
+    "task_ids": [
+      "fev__boomlet_1282",
+      "fev__boomlet_1676",
+      "fev__boomlet_619",
+      "fev__bizitobs_l2c_5T",
+      "fev__epf_np",
+      "fev__ETT_15T",
+      "fev__ETT_1H",
+      "fev__proenfo_gfc14",
+      "fev__hospital_admissions_1W",
+      "fev__hospital_admissions_1D",
+      "fev__jena_weather_1H",
+      "fev__M_DENSE_1D",
+      "fev__rohlik_orders_1D",
+      "fev__rossmann_1W",
+      "fev__rossmann_1D",
+      "fev__solar_with_weather_1H",
+      "fev__uci_air_quality_1H",
+      "fev__uk_covid_nation_1D-cumulative",
+      "fev__us_consumption_1Y",
+      "fev__world_co2_emissions"
+    ],
+    "validation_mode": "research"
+  },
+  "contract_sha256": "afb5f352cc87eb1b3132f876eb3923955f7d004993e685f9e534e49f7f1357b6",
+  "created_at": "2026-08-29T17:01:53.152502+00:00",
+  "schema_version": "cafe.stage_contract.v1",
+  "stage": "generation",
+  "upstream": []
+}

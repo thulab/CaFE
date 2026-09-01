@@ -1,0 +1,39 @@
+{
+  "batch_size": 32,
+  "checkpoint_progress": [
+    0.01,
+    0.02,
+    0.05,
+    0.1,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "checkpoint_steps": [
+    4000,
+    8000,
+    12000,
+    16000,
+    20000,
+    24000,
+    28000,
+    32000,
+    36000,
+    40000
+  ],
+  "context_length": 2048,
+  "dataset": "/data/xmy/chronos-forecasting/chronos-2-finetuned/cafe-v15-qf-moirai16k-window10-seed-transfer/data/horizon-48",
+  "epoch_steps": 3917,
+  "horizon": 48,
+  "learning_rate": 0.0001,
+  "min_past": 64,
+  "model": "/data/xmy/timer-rest-service/data/models/builtin/chronos2",
+  "nominal_epoch_progress": 10.211896859841715,
+  "sampling": "random_with_replacement",
+  "schema_version": "chronos2.cafe_seed_transfer_training.v1",
+  "seed": 2026082701,
+  "trained_steps": 40000,
+  "training_rows": 50535
+}

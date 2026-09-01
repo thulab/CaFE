@@ -1,0 +1,49 @@
+{
+  "captured_at_local_date": "2026-09-02",
+  "remote_host": "timecho92",
+  "remote_repository": "/data/xmy/chronos-forecasting",
+  "remote_git_head": "8589d1988e9676817548e9626738ff06b6ca6370",
+  "remote_worktree_warning": "The run-relevant scripts were untracked and dataset.py/pipeline.py were modified. Experiment manifests do not record code hashes, so the hashes below identify the inspected post-run files, not an immutable run-time code snapshot.",
+  "remote_files": {
+    "scripts/cafe_seed_transfer.py": {
+      "sha256": "27488b2fa931555c08ffec9c1b92bbe93076f58dd4fa88d05f8a6f777f4597cb",
+      "git_status": "untracked",
+      "mtime_utc": "2026-08-30T16:44:30.527294741Z"
+    },
+    "scripts/cafe_effect_finetune.py": {
+      "sha256": "ebd32d358d28508a8440ad914a826cabdb19765a945bedef6fe971089adad3ff",
+      "git_status": "untracked",
+      "mtime_utc": "2026-08-31T12:50:13.765462429Z"
+    },
+    "scripts/cafe_direct_checkpoint_evaluation.py": {
+      "sha256": "b63025c94e38ca59fce6bd01fa11bc68dda745d8383746dd14d40c731d12ca2b",
+      "git_status": "untracked",
+      "mtime_utc": "2026-08-30T16:59:33.502627142Z"
+    },
+    "scripts/aggregate_cafe_direct_curve.py": {
+      "sha256": "df14ef82eef2d7eb93d00548a643ce28212de415504807491a5ad4abf67e7f26",
+      "git_status": "untracked",
+      "mtime_utc": "2026-08-31T16:17:30.955226779Z"
+    },
+    "src/chronos/chronos2/model.py": {
+      "sha256": "2aaab2f90cc9bb486d69483cb1f0d11b593643ce54c97f4902958a7776905782",
+      "git_status": "tracked-clean-at-inspection",
+      "mtime_utc": "2026-08-25T10:43:53.893886383Z"
+    },
+    "src/chronos/chronos2/dataset.py": {
+      "sha256": "649cbbf636442062a918c31c446f94628676db100a06ba95b14c522340eb6fcf",
+      "git_status": "tracked-modified",
+      "mtime_utc": "2026-08-25T17:05:18.423193296Z"
+    },
+    "src/chronos/chronos2/pipeline.py": {
+      "sha256": "8ecc9c622e8287fe96f53b0aa02c74842559d5c9e682235eeee9ed046149df10",
+      "git_status": "tracked-modified",
+      "mtime_utc": "2026-08-25T17:05:18.424193284Z"
+    }
+  },
+  "remote_experiments": {
+    "default": "/data/xmy/chronos-forecasting/chronos-2-finetuned/cafe-v15-qf-moirai16k-window10-replacement-40k",
+    "effect_nrmse": "/data/xmy/chronos-forecasting/chronos-2-finetuned/cafe-v15-qf-moirai16k-window10-nrmse-replacement-40k"
+  },
+  "local_snapshot": "raw/"
+}

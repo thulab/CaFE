@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 4,
+    "source_scan_count": 1,
+    "source_shard_count": 10
+  },
+  "config_sha256": "dd75b6d6d910c6aa0009f9baa58a440c4a55e581c698974c9362f0968cb71973",
+  "created_at": "2026-08-28T07:00:32.290184+00:00",
+  "dataset_id": "gift_bitbrains_fast_h",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 10938709,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/accuracy_rows.parquet",
+      "row_count": 541219,
+      "sha256": "9973d8afbda220efbfc687ec3e7d4db86b84769280b25ffe7b56fd85f6aec57a"
+    },
+    "accuracy_summary": {
+      "bytes": 85049,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/accuracy_summary.json",
+      "sha256": "da3ab40d9de8b26e12ecefc3c99fe816919cb267a2be6d3473af1985a86347f0"
+    },
+    "capability_effect_rows": {
+      "bytes": 38205190,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/capability_effect_rows.parquet",
+      "row_count": 524230,
+      "sha256": "45742fa869623e9265c35345e64f0e2700aa7154dc8b027cbb90ff5b88a857cb"
+    },
+    "capability_effect_summary": {
+      "bytes": 256348,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/capability_effect_summary.json",
+      "sha256": "d7e50ef0a6e4246dcd5dc80535417a892548d6d36e7db934c6744c785d5ff64c"
+    },
+    "input_ablation_rows": {
+      "bytes": 6148490,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/input_ablation_rows.parquet",
+      "row_count": 165515,
+      "sha256": "9f13a2b8c22c4cf5c868aa6956935309e275e2c7152b49b164f4302b5d01deaa"
+    },
+    "input_ablation_summary": {
+      "bytes": 35000,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/input_ablation_summary.json",
+      "sha256": "9415dff5a981011d284b335685589de5991c3c8424303f8ee9b4617b0a0387b8"
+    },
+    "official_accuracy": {
+      "bytes": 1976,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/official_accuracy.json",
+      "sha256": "30ee60ce0f5fd95d7fea0714e9018f944e709d2d097fd9581edde0abfd2a8bfa"
+    }
+  },
+  "inference_manifest_sha256": "19a2ad71467e5572bfdd8ad0ae0ade0e74e90269829e34c30b389dbc5d44d81e",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

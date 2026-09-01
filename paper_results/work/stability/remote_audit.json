@@ -1,0 +1,1009 @@
+{
+  "experiments": [
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082701",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082701,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082702",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082702,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082703",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082703,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082704",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082704,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082705",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082705,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082706",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082706,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082707",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082707,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082708",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082708,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082709",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082709,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    },
+    {
+      "analysis_manifest_count": 10,
+      "capabilities": [
+        "common_factor",
+        "covariate_impulse_response",
+        "cross_series_dependence",
+        "multi_seasonal",
+        "predictable_intermittency",
+        "regime_switching",
+        "time_varying_seasonality",
+        "trend"
+      ],
+      "capability_count": 8,
+      "counts_by_metric": {
+        "capability_effect_nrmse": 280,
+        "input_ablation_mase_degradation": 105,
+        "official_mase": 7
+      },
+      "experiment_id": "gift-v15-short-stability10-head78ef32f-seed2026082710",
+      "generation_manifest_count": 10,
+      "inference_complete_count": 10,
+      "inference_failed_model_status_count": 0,
+      "inference_failure_count": 0,
+      "inference_model_status_count": 70,
+      "input_ablation_count": 39495,
+      "levels": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "model_count": 7,
+      "models": [
+        "Chronos-2",
+        "Timer-3.5",
+        "Timer-4.0",
+        "moirai2",
+        "timesfm2.5",
+        "tirex2",
+        "toto2.0"
+      ],
+      "official_instance_count": 10528,
+      "seed": 2026082710,
+      "suite_row_count": 392,
+      "suite_schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+      "task_count": 10,
+      "task_ids": [
+        "gift_bitbrains_fast_h",
+        "gift_bitbrains_rnd_h",
+        "gift_bizitobs_application",
+        "gift_bizitobs_l2c_h",
+        "gift_bizitobs_service",
+        "gift_ett1_h",
+        "gift_ett2_h",
+        "gift_jena_weather_h",
+        "gift_loop_seattle_h",
+        "gift_m_dense_h"
+      ],
+      "treatment_count": 239030,
+      "validation_accepted_count": 10,
+      "validation_failure_count": 0
+    }
+  ],
+  "remote_root": "/data/xmy/CaFE",
+  "representative_parquet_schemas": [
+    {
+      "artifact": "availability",
+      "fields": [
+        {
+          "name": "artifact_schema",
+          "type": "string"
+        },
+        {
+          "name": "record_kind",
+          "type": "string"
+        },
+        {
+          "name": "dataset_id",
+          "type": "string"
+        },
+        {
+          "name": "official_instance_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_id",
+          "type": "null"
+        },
+        {
+          "name": "capability_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_level",
+          "type": "null"
+        },
+        {
+          "name": "available",
+          "type": "bool"
+        },
+        {
+          "name": "payload_json",
+          "type": "string"
+        }
+      ],
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-stability10-head78ef32f-seed2026082701/gift_bitbrains_fast_h/01_generation/availability.parquet",
+      "row_count": 19416,
+      "row_group_count": 2
+    },
+    {
+      "artifact": "treatment_contracts",
+      "fields": [
+        {
+          "name": "artifact_schema",
+          "type": "string"
+        },
+        {
+          "name": "record_kind",
+          "type": "string"
+        },
+        {
+          "name": "dataset_id",
+          "type": "string"
+        },
+        {
+          "name": "official_instance_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_level",
+          "type": "int64"
+        },
+        {
+          "name": "available",
+          "type": "null"
+        },
+        {
+          "name": "payload_json",
+          "type": "string"
+        }
+      ],
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-stability10-head78ef32f-seed2026082701/gift_bitbrains_fast_h/01_generation/treatment_contracts.parquet",
+      "row_count": 74890,
+      "row_group_count": 5
+    },
+    {
+      "artifact": "input_ablation_contracts",
+      "fields": [
+        {
+          "name": "artifact_schema",
+          "type": "string"
+        },
+        {
+          "name": "record_kind",
+          "type": "string"
+        },
+        {
+          "name": "dataset_id",
+          "type": "string"
+        },
+        {
+          "name": "official_instance_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_level",
+          "type": "int64"
+        },
+        {
+          "name": "available",
+          "type": "null"
+        },
+        {
+          "name": "payload_json",
+          "type": "string"
+        }
+      ],
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-stability10-head78ef32f-seed2026082701/gift_bitbrains_fast_h/01_generation/input_ablation_contracts.parquet",
+      "row_count": 23645,
+      "row_group_count": 2
+    },
+    {
+      "artifact": "accuracy_rows",
+      "fields": [
+        {
+          "name": "schema_version",
+          "type": "string"
+        },
+        {
+          "name": "model_id",
+          "type": "string"
+        },
+        {
+          "name": "dataset_id",
+          "type": "string"
+        },
+        {
+          "name": "official_instance_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_kind",
+          "type": "string"
+        },
+        {
+          "name": "capability_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_level",
+          "type": "int8"
+        },
+        {
+          "name": "mase",
+          "type": "double"
+        },
+        {
+          "name": "mae",
+          "type": "double"
+        }
+      ],
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-stability10-head78ef32f-seed2026082701/gift_bitbrains_fast_h/04_analysis/accuracy_rows.parquet",
+      "row_count": 541219,
+      "row_group_count": 10
+    },
+    {
+      "artifact": "capability_effect_rows",
+      "fields": [
+        {
+          "name": "schema_version",
+          "type": "string"
+        },
+        {
+          "name": "model_id",
+          "type": "string"
+        },
+        {
+          "name": "dataset_id",
+          "type": "string"
+        },
+        {
+          "name": "official_instance_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_level",
+          "type": "int8"
+        },
+        {
+          "name": "controlled_coordinate",
+          "type": "string"
+        },
+        {
+          "name": "sampled_coordinate",
+          "type": "double"
+        },
+        {
+          "name": "effect_score_status",
+          "type": "string"
+        },
+        {
+          "name": "effect_nrmse",
+          "type": "double"
+        },
+        {
+          "name": "effect_correlation",
+          "type": "double"
+        },
+        {
+          "name": "effect_amplitude_ratio",
+          "type": "double"
+        },
+        {
+          "name": "effect_decay_shape_nrmse",
+          "type": "double"
+        },
+        {
+          "name": "effect_half_life_status",
+          "type": "string"
+        },
+        {
+          "name": "truth_effect_half_life",
+          "type": "double"
+        },
+        {
+          "name": "forecast_effect_half_life",
+          "type": "double"
+        },
+        {
+          "name": "effect_half_life_absolute_error",
+          "type": "double"
+        },
+        {
+          "name": "truth_effect_rms",
+          "type": "double"
+        },
+        {
+          "name": "truth_effect_mase_rms",
+          "type": "double"
+        },
+        {
+          "name": "observed_effect_cell_count",
+          "type": "int64"
+        },
+        {
+          "name": "standardized_squared_error_sum",
+          "type": "double"
+        },
+        {
+          "name": "standardized_truth_squared_sum",
+          "type": "double"
+        },
+        {
+          "name": "standardized_forecast_squared_sum",
+          "type": "double"
+        },
+        {
+          "name": "treatment_mase",
+          "type": "double"
+        },
+        {
+          "name": "treatment_mae",
+          "type": "double"
+        }
+      ],
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-stability10-head78ef32f-seed2026082701/gift_bitbrains_fast_h/04_analysis/capability_effect_rows.parquet",
+      "row_count": 524230,
+      "row_group_count": 10
+    },
+    {
+      "artifact": "input_ablation_rows",
+      "fields": [
+        {
+          "name": "schema_version",
+          "type": "string"
+        },
+        {
+          "name": "model_id",
+          "type": "string"
+        },
+        {
+          "name": "dataset_id",
+          "type": "string"
+        },
+        {
+          "name": "official_instance_id",
+          "type": "string"
+        },
+        {
+          "name": "sample_id",
+          "type": "string"
+        },
+        {
+          "name": "source_treatment_sample_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_id",
+          "type": "string"
+        },
+        {
+          "name": "capability_level",
+          "type": "int8"
+        },
+        {
+          "name": "assessed_target_indices",
+          "type": "list<element: int32>"
+        },
+        {
+          "name": "ablated_input_indices",
+          "type": "list<element: int32>"
+        },
+        {
+          "name": "full_input_mase",
+          "type": "double"
+        },
+        {
+          "name": "ablated_input_mase",
+          "type": "double"
+        },
+        {
+          "name": "input_ablation_mase_degradation",
+          "type": "double"
+        },
+        {
+          "name": "input_ablation_forecast_change_rms",
+          "type": "double"
+        },
+        {
+          "name": "input_ablation_response_ratio",
+          "type": "double"
+        }
+      ],
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-stability10-head78ef32f-seed2026082701/gift_bitbrains_fast_h/04_analysis/input_ablation_rows.parquet",
+      "row_count": 165515,
+      "row_group_count": 10
+    }
+  ],
+  "seeds": [
+    2026082701,
+    2026082702,
+    2026082703,
+    2026082704,
+    2026082705,
+    2026082706,
+    2026082707,
+    2026082708,
+    2026082709,
+    2026082710
+  ]
+}

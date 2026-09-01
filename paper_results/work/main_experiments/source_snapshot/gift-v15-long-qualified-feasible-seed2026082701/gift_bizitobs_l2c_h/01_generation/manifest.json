@@ -1,0 +1,263 @@
+{
+  "available_instance_count_by_capability": {
+    "common_factor": 1,
+    "covariate_impulse_response": 0,
+    "cross_series_dependence": 1,
+    "multi_seasonal": 1,
+    "predictable_intermittency": 1,
+    "regime_switching": 1,
+    "time_varying_seasonality": 1,
+    "trend": 1
+  },
+  "config": {
+    "adapter_schema_version": "cafe.gift_eval_native_adapter.v3",
+    "artifact_storage": {
+      "compression": "zstd",
+      "dense_covariates_stored": false,
+      "dense_targets_stored": false,
+      "format": "parquet",
+      "replay_policy": "source_arrow_plus_deterministic_contract_v2"
+    },
+    "augmentation_seed": 2026082701,
+    "capability_horizon_support_policy": {
+      "common_factor": {
+        "continuation": "history_fitted_stable_latent_harmonic",
+        "minimum_latent_harmonic_share": 0.05,
+        "minimum_tail_head_rms_ratio": 0.5
+      },
+      "covariate_impulse_response": {
+        "continuation": "fixed_causal_kernel_from_visible_impulses",
+        "future_energy": "minimum_0.05_mase_rms_for_all_levels_by_construction",
+        "past_only_future_input": "omitted"
+      },
+      "nonlinear_persistence": {
+        "extreme_state_minimum_abs": 1.5,
+        "future_aggregation": "paired_path_mean",
+        "future_innovation_minimum_block_length": 4,
+        "future_innovation_path_count": 128,
+        "future_innovation_policy": "centered_circular_moving_block_bootstrap_shared_by_paired_branches",
+        "headroom_fraction_intervals": [
+          [
+            0.2,
+            0.26
+          ],
+          [
+            0.3,
+            0.38
+          ],
+          [
+            0.42,
+            0.5
+          ],
+          [
+            0.56,
+            0.66
+          ],
+          [
+            0.72,
+            0.84
+          ]
+        ],
+        "holdout_fraction": 0.25,
+        "identifiability": "blocked_suffix_one_step_and_rolling_multistep_nonlinear_vs_linear_ar1",
+        "maximum_future_peak_fraction": 0.5,
+        "maximum_tail_peak_ratio": 0.9,
+        "mechanism": "same_innovation_state_dependent_persistence_recurrence",
+        "minimum_future_profile_range": 0.1,
+        "minimum_history_length": 96,
+        "minimum_holdout_incremental_r2": 0.005,
+        "minimum_multistep_holdout_incremental_r2": 0.0,
+        "multistep_audit_origin_count": 4,
+        "ordinary_state_maximum_abs": 0.75,
+        "stability_limit": 0.98
+      },
+      "other_capabilities": "capability_specific_or_not_applicable",
+      "time_varying_seasonality": {
+        "active_amplitude_fraction": 0.25,
+        "continuation": "history_fitted_constrained_am",
+        "minimum_future_active_fraction": 0.25,
+        "minimum_incremental_r2": 0.01
+      }
+    },
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "dataset_id": "gift_bizitobs_l2c_h",
+    "formal": true,
+    "frequency": "H",
+    "future_label_eligibility_policy": "require_every_horizon_target_cell_finite_v1",
+    "generation_execution": {
+      "parallelism_status": "enabled",
+      "shard_size": 1,
+      "workers": 8
+    },
+    "gift_eval_source_root": "/data/xmy/CaFE/data/gift-eval",
+    "gift_eval_split_source": "SalesforceAIResearch/gift-eval@26df7582a5a2a2ef7602b5ded3a9a12fd4da74b2:src/gift_eval/data.py",
+    "input_ablation_policy": "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2",
+    "instance_selection": "complete_future_label_subset_of_official_test_instances",
+    "max_instances": null,
+    "mechanism_scoring_policy": {
+      "low_signal_policy": "treatment_accuracy_retained_mechanism_score_unavailable",
+      "metric": "observed_affected_future_mase_standardized_rms",
+      "minimum_required_mase_rms": 0.05
+    },
+    "multi_seasonal_policy": {
+      "additional_period_source": "protocol_generated",
+      "component_energy_policy": "one_source_history_scale_rms_before_aggregate_gain",
+      "fallback": "protocol_generated_anchor",
+      "harmonic_relative_tolerance": 0.05,
+      "history_anchor_candidate_count": 3,
+      "history_anchor_component_visibility": 0.05,
+      "history_anchor_split_amplitude_ratio_minimum": 0.5,
+      "history_anchor_split_phase_cosine_minimum": 0.5,
+      "level_coordinate": "additional_independent_period_count",
+      "maximum_additional_periods": 5,
+      "maximum_harmonic_multiple": 8,
+      "minimum_frequency_separation_cycles": 0.5,
+      "minimum_future_cycle_fraction": 0.5,
+      "minimum_period": 4.0,
+      "minimum_shortest_context_cycles": 3.0,
+      "period_candidate_count": 512,
+      "shared_full_history_macro_rms_interval": [
+        0.22,
+        0.28
+      ],
+      "total_controlled_period_counts": [
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "native_covariate_policy": "preserve_source_fields_and_declared_future_visibility",
+    "native_target_policy": "preserve_gift_eval_target_dimension",
+    "observed_covariate_availability": [
+      "past_only"
+    ],
+    "official_window_count": 1,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "prediction_length": 720,
+    "randomness_policy": "qualified_pool_then_seed_sampled_structure_shared_across_levels_plus_level_dose_v2",
+    "randomness_schema": "cafe.structural_randomness.v2",
+    "seed_independent_candidate_qualification": {
+      "covariate_impulse_pool_size": 8,
+      "cross_series_pool_size": 12,
+      "cross_series_scan_limit": 48,
+      "qualification_uses_existing_gates_only": true
+    },
+    "source_distance_configuration": {
+      "maximum_model_context_channel_distance": 3.0,
+      "maximum_model_context_macro_distance": 2.0,
+      "minimum_model_context_macro_distance": 0.1,
+      "model_max_contexts": {
+        "Chronos-2": 8192,
+        "Timer-3.5": 11520,
+        "Timer-4.0": 8192,
+        "moirai2": 16384,
+        "timesfm2.5": 15360,
+        "toto2.0": 16384
+      },
+      "strength_reference": "full_official_history_macro_normalized_rms"
+    },
+    "source_distance_policy": "full_history_strength_actual_model_context_bounds_v3",
+    "strength_level_intervals": [
+      [
+        0.1,
+        0.15
+      ],
+      [
+        0.17,
+        0.22
+      ],
+      [
+        0.25,
+        0.32
+      ],
+      [
+        0.36,
+        0.46
+      ],
+      [
+        0.5,
+        0.65
+      ]
+    ],
+    "strength_sampling_policy": "uniform_within_nominal_level_intersected_with_analytic_source_distance_and_future_effect_feasible_bounds_v1",
+    "term": "long",
+    "treatment_history_scope": "entire_official_input_history"
+  },
+  "config_sha256": "a832d4eab5a125378763cc9286a27b0db1e2f7041e714c2bdbaadb4c96d67c22",
+  "created_at": "2026-08-28T15:34:51.655368+00:00",
+  "dataset_id": "gift_bizitobs_l2c_h",
+  "files": {
+    "availability": {
+      "bytes": 11295,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_l2c_h/01_generation/availability.parquet",
+      "row_count": 8,
+      "sha256": "6115adf62e87f1bc3b8ecc27954f7b0f3e7755759711bd9e0913f99cb8bcb764"
+    },
+    "capability_treatments": {
+      "bytes": 28316,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_l2c_h/01_generation/treatment_contracts.parquet",
+      "row_count": 35,
+      "sha256": "d098c4b559f4f4239f861e560b24a1393cdadf1435070d6d8f147b6bab995e30"
+    },
+    "input_ablations": {
+      "bytes": 14807,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_l2c_h/01_generation/input_ablation_contracts.parquet",
+      "row_count": 10,
+      "sha256": "b1d5e00eba7237bfa19de62b2ca3b6142877ebeda4e690acad86019b59543f4d"
+    },
+    "official_baselines": {
+      "bytes": 14718,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_bizitobs_l2c_h/01_generation/official_instances.parquet",
+      "row_count": 1,
+      "sha256": "f58acb596f4faf7ad0e2fc85de238fb2a1ec147b51bf2910edfdceaa9d7c453d"
+    }
+  },
+  "input_ablation_count": 10,
+  "official_instance_count": 1,
+  "official_window_selection_audit": {
+    "complete_future_label_count": 1,
+    "fully_missing_future_label_count": 0,
+    "official_window_count": 1,
+    "partially_missing_future_label_count": 0
+  },
+  "schema_version": "cafe.benchmark_extension_generation.v13",
+  "source_files": [
+    {
+      "bytes": 97560,
+      "path": "/data/xmy/CaFE/data/gift-eval/bizitobs_l2c/H/data-00000-of-00001.arrow",
+      "sha256": "0fbdf78cd13228941dd873f3cf0443c8beb70bd40104c1de01582f4e401db2be"
+    }
+  ],
+  "treatment_count": 35,
+  "unavailable_reason_count_by_capability": {
+    "common_factor": {},
+    "covariate_impulse_response": {
+      "insufficient_history_for_repeated_covariate_impulses": 1
+    },
+    "cross_series_dependence": {},
+    "multi_seasonal": {},
+    "predictable_intermittency": {},
+    "regime_switching": {},
+    "time_varying_seasonality": {},
+    "trend": {}
+  }
+}

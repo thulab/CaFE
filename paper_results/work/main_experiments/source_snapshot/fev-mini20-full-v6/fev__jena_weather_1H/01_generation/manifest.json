@@ -1,0 +1,299 @@
+{
+  "available_instance_count_by_capability": {
+    "common_factor": 20,
+    "covariate_impulse_response": 0,
+    "cross_series_dependence": 20,
+    "multi_seasonal": 20,
+    "predictable_intermittency": 20,
+    "regime_switching": 20,
+    "time_varying_seasonality": 20,
+    "trend": 20
+  },
+  "benchmark_id": "fev_bench",
+  "config": {
+    "adapter_schema_version": "cafe.fev_native_adapter.v3",
+    "artifact_storage": {
+      "compression": "zstd",
+      "dense_covariates_stored": false,
+      "dense_targets_stored": false,
+      "format": "parquet",
+      "replay_policy": "benchmark_adapter_plus_deterministic_contract_v1"
+    },
+    "augmentation_seed": 2026082601,
+    "benchmark_id": "fev_bench",
+    "benchmark_source": {
+      "source_manifest": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "source_revision": "fev-v0.8.0-f1afffbf97bc51a4a233080d331633c6f7ab32f6+fev-datasets-f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8",
+      "source_root": "/data/xmy/CaFE/data/fev-mini-v0.8.0",
+      "suite_artifact": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml"
+    },
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "covariate_impulse_policy": "continuous_numeric_dynamic_covariates_only_v1",
+    "dataset_id": "jena_weather_1H",
+    "formal": true,
+    "frequency": "h",
+    "future_label_eligibility_policy": "adapter_native_complete_future_labels_v1",
+    "generation_execution": {
+      "maximum_dense_batch_bytes": 16777216,
+      "shard_size": 256,
+      "workers": 8
+    },
+    "input_ablation_policy": "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2",
+    "instance_selection": "all_adapter_eligible_native_instances",
+    "max_instances": null,
+    "mechanism_scoring_policy": {
+      "metric": "authentic_history_mase_scaled_future_effect_rms",
+      "minimum_required_mase_rms": 0.05
+    },
+    "native_covariate_policy": "preserve_dynamic_visibility_static_values_and_semantic_types",
+    "native_target_policy": "preserve_benchmark_target_dimension",
+    "observed_covariate_availability": [],
+    "observed_covariate_types": [],
+    "official_window_count": 20,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "prediction_length": 24,
+    "randomness_policy": "qualified_pool_then_seed_sampled_structure_shared_across_levels_plus_level_dose_v2",
+    "randomness_schema": "cafe.structural_randomness.v2",
+    "seasonality": 24,
+    "seed_independent_candidate_qualification": {
+      "covariate_impulse_pool_size": 8,
+      "cross_series_pool_size": 12,
+      "cross_series_scan_limit": 48,
+      "qualification_uses_existing_gates_only": true
+    },
+    "source_distance_configuration": {
+      "maximum_model_context_channel_distance": 3.0,
+      "maximum_model_context_macro_distance": 2.0,
+      "minimum_model_context_macro_distance": 0.1,
+      "model_max_contexts": {
+        "Chronos-2": 8192,
+        "Timer-3.5": 11520,
+        "Timer-4.0": 8192,
+        "moirai2": 8192,
+        "timesfm2.5": 15360,
+        "tirex2": 2048,
+        "toto2.0": 16384
+      },
+      "strength_reference": "full_native_history_macro_normalized_rms"
+    },
+    "source_distance_policy": "full_history_strength_actual_selected_model_context_bounds_v4",
+    "strength_level_intervals": [
+      [
+        0.1,
+        0.15
+      ],
+      [
+        0.17,
+        0.22
+      ],
+      [
+        0.25,
+        0.32
+      ],
+      [
+        0.36,
+        0.46
+      ],
+      [
+        0.5,
+        0.65
+      ]
+    ],
+    "strength_sampling_policy": "uniform_within_nominal_level_intersected_with_analytic_source_distance_and_future_effect_feasible_bounds_v1",
+    "suite_id": "mini20",
+    "task_id": "fev__jena_weather_1H",
+    "task_spec": {
+      "benchmark_id": "fev_bench",
+      "config_sha256": "aeb3534a313f6e2885df70a2983bf61103f6545bfbb8aeee0193ab39daa9b9ae",
+      "display_name": "jena_weather_1H",
+      "frequency": "h",
+      "horizon": 24,
+      "known_dynamic_columns": [],
+      "native_config": {
+        "dataset_config": "jena_weather_1H",
+        "dataset_fingerprint": "75bfd3b5994a5acf",
+        "dataset_path": "autogluon/fev_datasets",
+        "eval_metric": "SQL",
+        "extra_metrics": [
+          "MASE",
+          {
+            "epsilon": 1.0,
+            "name": "WAPE"
+          },
+          {
+            "epsilon": 1.0,
+            "name": "WQL"
+          }
+        ],
+        "fev_version": "0.8.0",
+        "generate_univariate_targets_from": null,
+        "horizon": 24,
+        "id_column": "id",
+        "initial_cutoff": -480,
+        "known_dynamic_columns": [],
+        "max_context_length": null,
+        "min_context_length": 1,
+        "num_windows": 20,
+        "past_dynamic_columns": [],
+        "quantile_levels": [
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9
+        ],
+        "seasonality": 24,
+        "static_columns": [],
+        "target": [
+          "target_0",
+          "target_1",
+          "target_10",
+          "target_11",
+          "target_12",
+          "target_13",
+          "target_14",
+          "target_15",
+          "target_16",
+          "target_17",
+          "target_18",
+          "target_19",
+          "target_2",
+          "target_20",
+          "target_3",
+          "target_4",
+          "target_5",
+          "target_6",
+          "target_7",
+          "target_8",
+          "target_9"
+        ],
+        "task_name": "jena_weather_1H",
+        "timestamp_column": "timestamp",
+        "window_step_size": 24
+      },
+      "past_dynamic_columns": [],
+      "seasonality": 24,
+      "source_dataset_id": "jena_weather_1H",
+      "static_columns": [],
+      "suite_id": "mini20",
+      "target_column_names": [
+        "target_0",
+        "target_1",
+        "target_10",
+        "target_11",
+        "target_12",
+        "target_13",
+        "target_14",
+        "target_15",
+        "target_16",
+        "target_17",
+        "target_18",
+        "target_19",
+        "target_2",
+        "target_20",
+        "target_3",
+        "target_4",
+        "target_5",
+        "target_6",
+        "target_7",
+        "target_8",
+        "target_9"
+      ],
+      "task_id": "fev__jena_weather_1H",
+      "window_count": 20
+    },
+    "term": "native",
+    "treatment_history_scope": "entire_benchmark_native_input_history"
+  },
+  "config_sha256": "31b3e1f404206637cb5838fc3cf23e9718f68b0e4d062eaf58eff5067f694dc9",
+  "created_at": "2026-08-29T17:27:33.980372+00:00",
+  "dataset_id": "jena_weather_1H",
+  "files": {
+    "availability": {
+      "bytes": 37945,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/01_generation/availability.parquet",
+      "row_count": 160,
+      "sha256": "3df5d7ad4c4a782aef09dd60713924906d11554a5d61f502c41a8999f0f8097c"
+    },
+    "capability_treatments": {
+      "bytes": 984125,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/01_generation/treatment_contracts.parquet",
+      "row_count": 700,
+      "sha256": "9e613e8e4b5ae9a6a14062fd368a35a6d481eb8eb560384bb98fbe1260e241d0"
+    },
+    "input_ablations": {
+      "bytes": 352005,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/01_generation/input_ablation_contracts.parquet",
+      "row_count": 200,
+      "sha256": "62e2fa3f6a28477ba96165e95cbd044edf6d49437e2abb4ddf3f0116a103bf94"
+    },
+    "official_baselines": {
+      "bytes": 25417,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/01_generation/official_instances.parquet",
+      "row_count": 20,
+      "sha256": "b78de59b3d157c063c6800ab7f9a6db3aedca3fd7c4afd9c09da44be55f781ce"
+    }
+  },
+  "input_ablation_count": 200,
+  "official_instance_count": 20,
+  "official_window_selection_audit": {
+    "complete_future_label_count": 20,
+    "fully_missing_future_label_count": 0,
+    "official_window_count": 20,
+    "partially_missing_future_label_count": 0
+  },
+  "schema_version": "cafe.benchmark_extension_generation.v13",
+  "source_files": [
+    {
+      "bytes": 10094,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml",
+      "sha256": "992ac3b7fa76f0a400d2783535b989549decab381006da5a866e28b61b963edb"
+    },
+    {
+      "bytes": 765995,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/datasets/jena_weather_1H.parquet",
+      "sha256": "3fb5a84924facab11a47ffab0d0cc96136e6a70cadb09c36cf89c364bf2c1d86"
+    },
+    {
+      "bytes": 5861,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "sha256": "92830cbea58c92456be4c830990ec6b73dab56437657d3ebb495a8bf7460f4c1"
+    }
+  ],
+  "suite_id": "mini20",
+  "task_id": "fev__jena_weather_1H",
+  "treatment_count": 700,
+  "unavailable_reason_count_by_capability": {
+    "common_factor": {},
+    "covariate_impulse_response": {
+      "no_native_dynamic_covariate": 20
+    },
+    "cross_series_dependence": {},
+    "multi_seasonal": {},
+    "predictable_intermittency": {},
+    "regime_switching": {},
+    "time_varying_seasonality": {},
+    "trend": {}
+  }
+}

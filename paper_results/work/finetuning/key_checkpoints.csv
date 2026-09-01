@@ -1,0 +1,33 @@
+objective_id,objective_label,corpus,corpus_label,metric,metric_label,selection,step,value,absolute_change,relative_change_percent,gain_percent
+default,Chronos default (quantile),train,Seed A (training),mase,Macro-stratum MASE,baseline,0,1.019933492515609,0.0,0.0,0.0
+default,Chronos default (quantile),train,Seed A (training),mase,Macro-stratum MASE,best_all,40000,0.9605248416492236,-0.05940865086638536,-5.824757329995823,5.824757329995826
+default,Chronos default (quantile),train,Seed A (training),mase,Macro-stratum MASE,best_nonzero,40000,0.9605248416492236,-0.05940865086638536,-5.824757329995823,5.824757329995826
+default,Chronos default (quantile),train,Seed A (training),mase,Macro-stratum MASE,final,40000,0.9605248416492236,-0.05940865086638536,-5.824757329995823,5.824757329995826
+default,Chronos default (quantile),train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,baseline,0,0.4636874988436824,0.0,0.0,0.0
+default,Chronos default (quantile),train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,best_all,16000,0.4305732135081319,-0.0331142853355505,-7.141509188435968,7.141509188435967
+default,Chronos default (quantile),train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,best_nonzero,16000,0.4305732135081319,-0.0331142853355505,-7.141509188435968,7.141509188435967
+default,Chronos default (quantile),train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,final,40000,0.47703165736740427,0.013344158523721894,2.8778344374171816,-2.877834437417183
+default,Chronos default (quantile),cross,Seed B (cross-seed),mase,Macro-stratum MASE,baseline,0,0.9488962161137494,0.0,0.0,0.0
+default,Chronos default (quantile),cross,Seed B (cross-seed),mase,Macro-stratum MASE,best_all,40000,0.8545754270819911,-0.09432078903175833,-9.940053235542845,9.940053235542841
+default,Chronos default (quantile),cross,Seed B (cross-seed),mase,Macro-stratum MASE,best_nonzero,40000,0.8545754270819911,-0.09432078903175833,-9.940053235542845,9.940053235542841
+default,Chronos default (quantile),cross,Seed B (cross-seed),mase,Macro-stratum MASE,final,40000,0.8545754270819911,-0.09432078903175833,-9.940053235542845,9.940053235542841
+default,Chronos default (quantile),cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,baseline,0,0.4593690301366515,0.0,0.0,0.0
+default,Chronos default (quantile),cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,best_all,8000,0.439471990430117,-0.019897039706534503,-4.331384660523496,4.331384660523502
+default,Chronos default (quantile),cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,best_nonzero,8000,0.439471990430117,-0.019897039706534503,-4.331384660523496,4.331384660523502
+default,Chronos default (quantile),cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,final,40000,0.48647233659446965,0.027103306457818166,5.900116176694703,-5.900116176694708
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),mase,Macro-stratum MASE,baseline,0,1.019933492515609,0.0,0.0,0.0
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),mase,Macro-stratum MASE,best_all,0,1.019933492515609,0.0,0.0,0.0
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),mase,Macro-stratum MASE,best_nonzero,8000,1.1752844296114813,0.15535093709587233,15.231477173350584,-15.231477173350582
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),mase,Macro-stratum MASE,final,40000,1.2356737418449482,0.21574024932933922,21.152384043907404,-21.15238404390741
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,baseline,0,0.4636874988436824,0.0,0.0,0.0
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,best_all,36000,0.344063418888624,-0.11962407995505836,-25.798426796790963,25.79842679679097
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,best_nonzero,36000,0.344063418888624,-0.11962407995505836,-25.798426796790963,25.79842679679097
+effect_nrmse,Paired effect NRMSE,train,Seed A (training),effect_nrmse,Macro-stratum effect NRMSE,final,40000,0.34471673621743615,-0.11897076262624623,-25.657530755719915,25.657530755719915
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),mase,Macro-stratum MASE,baseline,0,0.9488962161137494,0.0,0.0,0.0
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),mase,Macro-stratum MASE,best_all,0,0.9488962161137494,0.0,0.0,0.0
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),mase,Macro-stratum MASE,best_nonzero,8000,1.0782137300433587,0.12931751392960933,13.628204194894522,-13.628204194894517
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),mase,Macro-stratum MASE,final,40000,1.1378586437967384,0.188962427682989,19.91391940173328,-19.91391940173329
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,baseline,0,0.4593690301366515,0.0,0.0,0.0
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,best_all,28000,0.38519017643785547,-0.07417885369879601,-16.14798752905252,16.14798752905252
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,best_nonzero,28000,0.38519017643785547,-0.07417885369879601,-16.14798752905252,16.14798752905252
+effect_nrmse,Paired effect NRMSE,cross,Seed B (cross-seed),effect_nrmse,Macro-stratum effect NRMSE,final,40000,0.38870336308530684,-0.07066566705134464,-15.38320226557791,15.383202265577909

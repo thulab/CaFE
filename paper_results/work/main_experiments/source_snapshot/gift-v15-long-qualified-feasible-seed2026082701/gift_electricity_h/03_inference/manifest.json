@@ -1,0 +1,3551 @@
+{
+  "complete": true,
+  "config": {
+    "bulk_request_input_token_policy": "shape_aware_max_request_and_weighted_endpoint_inflight_v1",
+    "client_inflight_input_tokens_override": null,
+    "dataset_id": "gift_electricity_h",
+    "default_client_inflight_input_tokens_per_endpoint": 6525120,
+    "default_maximum_request_input_tokens": 815640,
+    "distributed_execution_policy": "source_shard_modulo_near_endpoint_replay_v1",
+    "distributed_repo_root": "/data/xmy/CaFE",
+    "distributed_workers": {
+      "http://192.168.99.89:10810": "timecho89",
+      "http://192.168.99.92:10810": "local"
+    },
+    "endpoint_policy": "model_major_all_compatible_endpoints",
+    "input_history_policy": "treatment_applied_to_entire_official_history_then_model_max_context_suffix",
+    "max_inflight_batches_per_endpoint": 8,
+    "max_inflight_mib": 2048,
+    "max_open_shape_groups": 64,
+    "max_request_input_tokens_override": null,
+    "model_input_token_config": {
+      "Chronos-2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "TimePFN": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-3.5": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-4.0": {
+        "client_inflight_input_tokens": 13050240,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 2.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "moirai2": {
+        "client_inflight_input_tokens": 13050240,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 8,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "timesfm2.5": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0,
+        "very_long_context_input_token_multiplier": 2.0,
+        "very_long_context_threshold": 8192
+      },
+      "tirex2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "large_panel_context_threshold": 512,
+        "large_panel_http_concurrency": 8,
+        "large_panel_target_dim_threshold": 16,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_http_concurrency": 2,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "toto2.0": {
+        "client_inflight_input_tokens": 1048576,
+        "http_concurrency": 8,
+        "maximum_bulk_rows": 256,
+        "maximum_request_input_tokens": 131072,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 256,
+        "output_horizon_token_multiplier": 1.0
+      }
+    },
+    "models": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "native_target_policy": "native_if_supported_else_inference_only_independent_univariate_reassembly",
+    "overload_retry_policy": "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter",
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "preprocess_workers": 8,
+    "request_materialization": "distributed_near_endpoint_source_shard_replay_no_model_task_artifact",
+    "transport": "msgpack_bulk"
+  },
+  "config_sha256": "81be4c5f6097a9193cdfbccfdce3795b406344d26c8c1d6a0b1fc01b85c67e47",
+  "created_at": "2026-08-28T16:46:37.164986+00:00",
+  "dataset_id": "gift_electricity_h",
+  "generation_manifest": {
+    "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/01_generation/manifest.json",
+    "sha256": "2cf3a0a4e8815b2b5be383c6982b3f4d92b4c8d26452af1dec3717f72c82dcdc"
+  },
+  "model_predictions": {
+    "Chronos-2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "Chronos-2",
+      "parts": [
+        {
+          "bytes": 11129512,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000000.parquet",
+          "row_count": 4971,
+          "sha256": "3f2e3ab04b4c58e3bd52a14c9adae6389d940eece927c610d8a088e1131a8462",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 11517953,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000001.parquet",
+          "row_count": 5126,
+          "sha256": "d15c29522c88ab1f9a4f02edaec8646064bb042825c54eebbc650458cb0552ad",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 10945198,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000002.parquet",
+          "row_count": 4936,
+          "sha256": "e58fcaa8df05eb64c3f9757259a26b183de5ef56c90fd3f78a912017ef6bdb1a",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 9842348,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000003.parquet",
+          "row_count": 4466,
+          "sha256": "fa79d692c3dece5612760e9f2403eb7886498e09b722f8cbbe4d53d623653834",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 9062643,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000004.parquet",
+          "row_count": 4186,
+          "sha256": "4ac2e6fe2e5b3a0a0e9c050c1c62e9bd8cbf1d53610fe3db247f16cb83cb555e",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 8966512,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000005.parquet",
+          "row_count": 4131,
+          "sha256": "2f5c41011f8180d147414efbf26a49d17c01ec0e1d6a3af2a6876e942a919421",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 10908324,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000006.parquet",
+          "row_count": 4846,
+          "sha256": "17302e21f7c61320fc9076026b775403b0f71c20749a7728bcd03db78ad7dc0a",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 2443463,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000007.parquet",
+          "row_count": 1093,
+          "sha256": "52513cb4750638f3a3830eefa2dbb556ac539c0a67b2423cdf4c29754001e2e7",
+          "source_shard_index": 7
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 33755
+    },
+    "Timer-3.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "Timer-3.5",
+      "parts": [
+        {
+          "bytes": 8156648,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000000.parquet",
+          "row_count": 4971,
+          "sha256": "cd300800301b1cd2c90890a358292c9d5c5339415f304f15a5fcd9dd66a6a00c",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 8415290,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000001.parquet",
+          "row_count": 5126,
+          "sha256": "da5d2e6dcfc19256178932f26c05f7f9787c3665f4baba91ace729cbb492808d",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 7238622,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000002.parquet",
+          "row_count": 4936,
+          "sha256": "cbbd9cf31ff4a84b031c4b1dddaa35e6ca72edad2803651062c9bc9e13547460",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 6717317,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000003.parquet",
+          "row_count": 4466,
+          "sha256": "d8fd446f940c0828cf64310515b2d15a5b203d5f7c187a05a9c0506bdd893e80",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 6202250,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000004.parquet",
+          "row_count": 4186,
+          "sha256": "12ad38e5217ee68224a134370e9d8cc694c8be815cbbc7c4e3cfa5551ca2257b",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 6207198,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000005.parquet",
+          "row_count": 4131,
+          "sha256": "9d11753e7808ac2b0747c0e8b01c842b1a61686b80093c9ad73e200067ee5e55",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 7063616,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000006.parquet",
+          "row_count": 4846,
+          "sha256": "4dbf96b0e8631eeda329c042a8d5b95306d569d8948629dc19c3c8199124bd96",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 1625046,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000007.parquet",
+          "row_count": 1093,
+          "sha256": "f0d2c37e8ce487e8a3e5ec80ec49e032ba06c3e2e9185b24e8b9b8406cb5aaa1",
+          "source_shard_index": 7
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 33755
+    },
+    "Timer-4.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "Timer-4.0",
+      "parts": [
+        {
+          "bytes": 9343789,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000000.parquet",
+          "row_count": 4971,
+          "sha256": "2199d9755c10d525f862870658a71f912f1b62bc6d2471cab1f0af521301fd6c",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 9572378,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000001.parquet",
+          "row_count": 5126,
+          "sha256": "04076df69db0cb2230d6b7235768713639837cbf4796c3d6b755f11e5a844ca6",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 8328245,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000002.parquet",
+          "row_count": 4936,
+          "sha256": "f682d2d8618b0db99a904ebf40a749bbb3c0948c2372bc27450d3804d940689f",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 7795454,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000003.parquet",
+          "row_count": 4466,
+          "sha256": "1cd236807d890efa871cd9743bc5e9a6c030084f7f962176d37d37c372f131aa",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 7076114,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000004.parquet",
+          "row_count": 4186,
+          "sha256": "c1cf3b3f5c2953f560042493b9257e3c70c1e6a51a8eff8a28dba6ddb64698df",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 7039945,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000005.parquet",
+          "row_count": 4131,
+          "sha256": "45537e86c3fcd6c4e07245ff53d2c9b7f379025b65a01e889835711d8651bc88",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 8286552,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000006.parquet",
+          "row_count": 4846,
+          "sha256": "edb81d2d2b04845abc388d41d10de7c6e5802de0f6cc60ff15d2207151a66afa",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 1898043,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000007.parquet",
+          "row_count": 1093,
+          "sha256": "8c0ef3350ee06ea7f6bfff4bea75b4bc7e655f54d4280d82c4659b57ed89cc90",
+          "source_shard_index": 7
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 960,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 33755
+    },
+    "moirai2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "moirai2",
+      "parts": [
+        {
+          "bytes": 11969719,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000000.parquet",
+          "row_count": 4971,
+          "sha256": "06ca20f15def5e5c8c83515de8f3717489739181147c561d7b0fe2e0ab57abde",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 12397205,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000001.parquet",
+          "row_count": 5126,
+          "sha256": "b547f22826a286b23f779bef85ea57b5e98206edccdbf883cae39f08dc331dd6",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 11876980,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000002.parquet",
+          "row_count": 4936,
+          "sha256": "8c7ea1af49cd85d26d90142200da6f7b3b838e81a15d7d3db266ed914aaadce2",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 10772227,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000003.parquet",
+          "row_count": 4466,
+          "sha256": "f5b50c819ec598b82379e11485edade383bfaec9a2a9587dad83bdaca35b54ac",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 10043976,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000004.parquet",
+          "row_count": 4186,
+          "sha256": "06aa8ca36fb8168ee8abbdd42f3606b7e87885dd0e91467a39980e61c1f83a01",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 9917245,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000005.parquet",
+          "row_count": 4131,
+          "sha256": "ee3602b02361dbb0f35acf5e9dbe45aa67e11594c2130f51dcd64e5dc71ac3d8",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 11866291,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000006.parquet",
+          "row_count": 4846,
+          "sha256": "75c0f5e6e96ef7c77087d8cff84c7caf6ecd66a889945c99bc29f0c2f0c9db78",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 2673203,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000007.parquet",
+          "row_count": 1093,
+          "sha256": "0915bcda05434a3dd31bb5c9ba7cd0432202c33878b3a4b3e474cf6f74fa0d2c",
+          "source_shard_index": 7
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 33755
+    },
+    "timesfm2.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "timesfm2.5",
+      "parts": [
+        {
+          "bytes": 11902917,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000000.parquet",
+          "row_count": 4971,
+          "sha256": "eba1718c1c7954e99a77dec7cf6f61979daaaa87399729104453fa23eb6ff137",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 12358838,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000001.parquet",
+          "row_count": 5126,
+          "sha256": "0269e9ba78e19d8acd5def8455750ba63b5272eaddb3dc91f18e5600ca080bb5",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 11786533,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000002.parquet",
+          "row_count": 4936,
+          "sha256": "1d9b6bc48b14fb8b30862b8cf5aa5f0f4a9ec552628e4760f30e110b75442ed0",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 10631868,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000003.parquet",
+          "row_count": 4466,
+          "sha256": "b13c5cb7d60ef6458749f70b494d7906ef2588138c164e07fc04597b87d56854",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 9968632,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000004.parquet",
+          "row_count": 4186,
+          "sha256": "1a1079b1e2a0bc826c2f440490e13c008df80566ac4d18f1c7c2f8e8dcc8e12b",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 9754575,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000005.parquet",
+          "row_count": 4131,
+          "sha256": "7fb5acbafb95ea0c33c7400ad6fdf74aae8423d8076a7a13414ee4614b91fec4",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 11729962,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000006.parquet",
+          "row_count": 4846,
+          "sha256": "e0d0b42534da02c47f54f62535c5544b6cedc7f9ce5ce436a87535d57ddea7ee",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 2655773,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000007.parquet",
+          "row_count": 1093,
+          "sha256": "07546adbc2b48957edab2c0e782ac22823cbab3e7b1d86527f3046dd38aa26e9",
+          "source_shard_index": 7
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": true,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 33755
+    },
+    "toto2.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+      "model_id": "toto2.0",
+      "parts": [
+        {
+          "bytes": 12007168,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000000.parquet",
+          "row_count": 4971,
+          "sha256": "d2dc0e04d9e50a01ebaa50804a0e82f5b0071c7bf854d00e3a9b6a83178d8b4c",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 12458579,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000001.parquet",
+          "row_count": 5126,
+          "sha256": "df28a1e0f7d8c41cc9d017b4129a71c18cc3be9a9d229da9ce7a824ad345ef2d",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 11914702,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000002.parquet",
+          "row_count": 4936,
+          "sha256": "466899b37bb07eb0f6384ce628bc7a31358ee656f039f97768a85c9200778983",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 10788758,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000003.parquet",
+          "row_count": 4466,
+          "sha256": "e30566d88ff360bd37d8dd7188b49dbaeeb808c45f0d1f5ea40e64f39e5d50ca",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 10033918,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000004.parquet",
+          "row_count": 4186,
+          "sha256": "cbfb62d028dac06f1513f7a2ef91058cdff9c513765ea98fce6509e21d9d7c80",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 9927005,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000005.parquet",
+          "row_count": 4131,
+          "sha256": "2f4ef566e88d367c9fe961dde619bc932f597940313b34feee85ca065aeeb49b",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 11848697,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000006.parquet",
+          "row_count": 4846,
+          "sha256": "127f3fdd1f3f7b1f68623275b0c47232815e893f39586a6bfb0da5c0ad774514",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 2662436,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000007.parquet",
+          "row_count": 1093,
+          "sha256": "436f05c93236d25ab7a392ce07ccb912d8b1ce8668fcdfbfd2d5b5c5df75d863",
+          "source_shard_index": 7
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 33755
+    }
+  },
+  "model_statuses": [
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 532,
+      "bulk_request_count": 532,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 33755,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 298,
+            "bulk_request_count": 298,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 18939,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 59.842,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 18939,
+            "expected_original_view_count": 18939,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 29.240188444033265,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3503275
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3503272
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3503273
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3503274
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3503911
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3503910
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3503909
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3503908
+                  }
+                ],
+                "model_id": "Timer-4.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-4.0",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 2.0,
+            "native_view_count": 18939,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 18939,
+            "prediction_parts": [
+              {
+                "bytes": 9343789,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000000.parquet",
+                "row_count": 4971,
+                "sha256": "2199d9755c10d525f862870658a71f912f1b62bc6d2471cab1f0af521301fd6c",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 8328245,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000002.parquet",
+                "row_count": 4936,
+                "sha256": "f682d2d8618b0db99a904ebf40a749bbb3c0948c2372bc27450d3804d940689f",
+                "source_shard_index": 2
+              },
+              {
+                "bytes": 7076114,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000004.parquet",
+                "row_count": 4186,
+                "sha256": "c1cf3b3f5c2953f560042493b9257e3c70c1e6a51a8eff8a28dba6ddb64698df",
+                "source_shard_index": 4
+              },
+              {
+                "bytes": 8286552,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_000/predictions/part_000006.parquet",
+                "row_count": 4846,
+                "sha256": "edb81d2d2b04845abc388d41d10de7c6e5802de0f6cc60ff15d2207151a66afa",
+                "source_shard_index": 6
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 960,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 524288,
+                "maximum_weighted_request_input_tokens": 570368,
+                "minimum_dynamic_concurrency_ceiling": 22,
+                "request_group": [
+                  8192,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 234,
+            "bulk_request_count": 234,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 14816,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 54.867,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 14816,
+            "expected_original_view_count": 14816,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 28.200197234749794,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2894479
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2894480
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2894478
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2894481
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2895099
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2895096
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2895097
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2895098
+                  }
+                ],
+                "model_id": "Timer-4.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-4.0",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 2.0,
+            "native_view_count": 14816,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 14816,
+            "prediction_parts": [
+              {
+                "bytes": 9572378,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000001.parquet",
+                "row_count": 5126,
+                "sha256": "04076df69db0cb2230d6b7235768713639837cbf4796c3d6b755f11e5a844ca6",
+                "source_shard_index": 1
+              },
+              {
+                "bytes": 7795454,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000003.parquet",
+                "row_count": 4466,
+                "sha256": "1cd236807d890efa871cd9743bc5e9a6c030084f7f962176d37d37c372f131aa",
+                "source_shard_index": 3
+              },
+              {
+                "bytes": 7039945,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000005.parquet",
+                "row_count": 4131,
+                "sha256": "45537e86c3fcd6c4e07245ff53d2c9b7f379025b65a01e889835711d8651bc88",
+                "source_shard_index": 5
+              },
+              {
+                "bytes": 1898043,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-4_0/worker_001/predictions/part_000007.parquet",
+                "row_count": 1093,
+                "sha256": "8c0ef3350ee06ea7f6bfff4bea75b4bc7e655f54d4280d82c4659b57ed89cc90",
+                "source_shard_index": 7
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 960,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 524288,
+                "maximum_weighted_request_input_tokens": 570368,
+                "minimum_dynamic_concurrency_ceiling": 22,
+                "request_group": [
+                  8192,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 59.842,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 33755,
+      "expected_original_view_count": 33755,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 29.240188444033265,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 3503275
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3503272
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3503273
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3503274
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3503911
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3503910
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3503909
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3503908
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 2894479
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2894480
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2894478
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2894481
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2895099
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2895096
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2895097
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2895098
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-4.0",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 2.0,
+      "native_view_count": 33755,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 33755,
+      "shape_group_count": 2,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 524288,
+          "maximum_weighted_request_input_tokens": 570368,
+          "minimum_dynamic_concurrency_ceiling": 22,
+          "request_group": [
+            8192,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 524288,
+          "maximum_weighted_request_input_tokens": 570368,
+          "minimum_dynamic_concurrency_ceiling": 22,
+          "request_group": [
+            8192,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 532,
+      "bulk_request_count": 532,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 33755,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 298,
+            "bulk_request_count": 298,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 18939,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 40.866,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 18939,
+            "expected_original_view_count": 18939,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 9.045519617851824,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3511680
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3511679
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3511681
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3511682
+                  }
+                ],
+                "model_id": "Chronos-2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Chronos-2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 18939,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 18939,
+            "prediction_parts": [
+              {
+                "bytes": 11129512,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000000.parquet",
+                "row_count": 4971,
+                "sha256": "3f2e3ab04b4c58e3bd52a14c9adae6389d940eece927c610d8a088e1131a8462",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 10945198,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000002.parquet",
+                "row_count": 4936,
+                "sha256": "e58fcaa8df05eb64c3f9757259a26b183de5ef56c90fd3f78a912017ef6bdb1a",
+                "source_shard_index": 2
+              },
+              {
+                "bytes": 9062643,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000004.parquet",
+                "row_count": 4186,
+                "sha256": "4ac2e6fe2e5b3a0a0e9c050c1c62e9bd8cbf1d53610fe3db247f16cb83cb555e",
+                "source_shard_index": 4
+              },
+              {
+                "bytes": 10908324,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_000/predictions/part_000006.parquet",
+                "row_count": 4846,
+                "sha256": "17302e21f7c61320fc9076026b775403b0f71c20749a7728bcd03db78ad7dc0a",
+                "source_shard_index": 6
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 524288,
+                "maximum_weighted_request_input_tokens": 570368,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8192,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 234,
+            "bulk_request_count": 234,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 14816,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 36.671,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 14816,
+            "expected_original_view_count": 14816,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 9.041147463023663,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2897613
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2897615
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2897614
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2897616
+                  }
+                ],
+                "model_id": "Chronos-2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 8192,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Chronos-2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 14816,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 14816,
+            "prediction_parts": [
+              {
+                "bytes": 11517953,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000001.parquet",
+                "row_count": 5126,
+                "sha256": "d15c29522c88ab1f9a4f02edaec8646064bb042825c54eebbc650458cb0552ad",
+                "source_shard_index": 1
+              },
+              {
+                "bytes": 9842348,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000003.parquet",
+                "row_count": 4466,
+                "sha256": "fa79d692c3dece5612760e9f2403eb7886498e09b722f8cbbe4d53d623653834",
+                "source_shard_index": 3
+              },
+              {
+                "bytes": 8966512,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000005.parquet",
+                "row_count": 4131,
+                "sha256": "2f5c41011f8180d147414efbf26a49d17c01ec0e1d6a3af2a6876e942a919421",
+                "source_shard_index": 5
+              },
+              {
+                "bytes": 2443463,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Chronos-2/worker_001/predictions/part_000007.parquet",
+                "row_count": 1093,
+                "sha256": "52513cb4750638f3a3830eefa2dbb556ac539c0a67b2423cdf4c29754001e2e7",
+                "source_shard_index": 7
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 524288,
+                "maximum_weighted_request_input_tokens": 570368,
+                "minimum_dynamic_concurrency_ceiling": 11,
+                "request_group": [
+                  8192,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 40.866,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 33755,
+      "expected_original_view_count": 33755,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 9.045519617851824,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3511680
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3511679
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3511681
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3511682
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 2897613
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2897615
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2897614
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2897616
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Chronos-2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 33755,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 33755,
+      "shape_group_count": 2,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 524288,
+          "maximum_weighted_request_input_tokens": 570368,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8192,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 524288,
+          "maximum_weighted_request_input_tokens": 570368,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8192,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 678,
+      "bulk_request_count": 678,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 33755,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 380,
+            "bulk_request_count": 380,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 18939,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 239.323,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 18939,
+            "expected_original_view_count": 18939,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 23.134057738352567,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3517445
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3517443
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3517444
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3517442
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3518070
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3518069
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3518071
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3518068
+                  }
+                ],
+                "model_id": "timesfm2.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 15360,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "timesfm2.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 18939,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 18939,
+            "prediction_parts": [
+              {
+                "bytes": 11902917,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000000.parquet",
+                "row_count": 4971,
+                "sha256": "eba1718c1c7954e99a77dec7cf6f61979daaaa87399729104453fa23eb6ff137",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 11786533,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000002.parquet",
+                "row_count": 4936,
+                "sha256": "1d9b6bc48b14fb8b30862b8cf5aa5f0f4a9ec552628e4760f30e110b75442ed0",
+                "source_shard_index": 2
+              },
+              {
+                "bytes": 9968632,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000004.parquet",
+                "row_count": 4186,
+                "sha256": "1a1079b1e2a0bc826c2f440490e13c008df80566ac4d18f1c7c2f8e8dcc8e12b",
+                "source_shard_index": 4
+              },
+              {
+                "bytes": 11729962,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_000/predictions/part_000006.parquet",
+                "row_count": 4846,
+                "sha256": "e0d0b42534da02c47f54f62535c5544b6cedc7f9ce5ce436a87535d57ddea7ee",
+                "source_shard_index": 6
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": true,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 768000,
+                "maximum_weighted_request_input_tokens": 1608000,
+                "minimum_dynamic_concurrency_ceiling": 4,
+                "request_group": [
+                  15360,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 2.0,
+            "very_long_context_threshold": 8192,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 298,
+            "bulk_request_count": 298,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 14816,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 196.278,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 14816,
+            "expected_original_view_count": 14816,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 22.119403888937086,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2900067
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2900068
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2900070
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2900069
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2900688
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2900685
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2900686
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2900687
+                  }
+                ],
+                "model_id": "timesfm2.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 15360,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "timesfm2.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 14816,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 14816,
+            "prediction_parts": [
+              {
+                "bytes": 12358838,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000001.parquet",
+                "row_count": 5126,
+                "sha256": "0269e9ba78e19d8acd5def8455750ba63b5272eaddb3dc91f18e5600ca080bb5",
+                "source_shard_index": 1
+              },
+              {
+                "bytes": 10631868,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000003.parquet",
+                "row_count": 4466,
+                "sha256": "b13c5cb7d60ef6458749f70b494d7906ef2588138c164e07fc04597b87d56854",
+                "source_shard_index": 3
+              },
+              {
+                "bytes": 9754575,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000005.parquet",
+                "row_count": 4131,
+                "sha256": "7fb5acbafb95ea0c33c7400ad6fdf74aae8423d8076a7a13414ee4614b91fec4",
+                "source_shard_index": 5
+              },
+              {
+                "bytes": 2655773,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/timesfm2_5/worker_001/predictions/part_000007.parquet",
+                "row_count": 1093,
+                "sha256": "07546adbc2b48957edab2c0e782ac22823cbab3e7b1d86527f3046dd38aa26e9",
+                "source_shard_index": 7
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 1024,
+              "max_group_rows": 64,
+              "max_history_covariate_count": null,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": true,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": true,
+              "supports_history_covariates": true
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 768000,
+                "maximum_weighted_request_input_tokens": 1608000,
+                "minimum_dynamic_concurrency_ceiling": 4,
+                "request_group": [
+                  15360,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 2.0,
+            "very_long_context_threshold": 8192,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 239.323,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 33755,
+      "expected_original_view_count": 33755,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 23.134057738352567,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 3517445
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3517443
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3517444
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3517442
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3518070
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3518069
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3518071
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3518068
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 2900067
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2900068
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2900070
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2900069
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2900688
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2900685
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2900686
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2900687
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "timesfm2.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 33755,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 33755,
+      "shape_group_count": 2,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 768000,
+          "maximum_weighted_request_input_tokens": 1608000,
+          "minimum_dynamic_concurrency_ceiling": 4,
+          "request_group": [
+            15360,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 768000,
+          "maximum_weighted_request_input_tokens": 1608000,
+          "minimum_dynamic_concurrency_ceiling": 4,
+          "request_group": [
+            15360,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 2.0,
+      "very_long_context_threshold": 8192
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 4278,
+      "bulk_request_count": 4223,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 33755,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 2372,
+            "bulk_request_count": 2369,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 18939,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 2012.124,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 18939,
+            "expected_original_view_count": 18939,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 18.101621047127992,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3524717
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3524716
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3524715
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3524718
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3525346
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3525345
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3525348
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3525347
+                  }
+                ],
+                "model_id": "moirai2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "moirai2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 18939,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 18939,
+            "prediction_parts": [
+              {
+                "bytes": 11969719,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000000.parquet",
+                "row_count": 4971,
+                "sha256": "06ca20f15def5e5c8c83515de8f3717489739181147c561d7b0fe2e0ab57abde",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 11876980,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000002.parquet",
+                "row_count": 4936,
+                "sha256": "8c7ea1af49cd85d26d90142200da6f7b3b838e81a15d7d3db266ed914aaadce2",
+                "source_shard_index": 2
+              },
+              {
+                "bytes": 10043976,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000004.parquet",
+                "row_count": 4186,
+                "sha256": "06aa8ca36fb8168ee8abbdd42f3606b7e87885dd0e91467a39980e61c1f83a01",
+                "source_shard_index": 4
+              },
+              {
+                "bytes": 11866291,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_000/predictions/part_000006.parquet",
+                "row_count": 4846,
+                "sha256": "75c0f5e6e96ef7c77087d8cff84c7caf6ecd66a889945c99bc29f0c2f0c9db78",
+                "source_shard_index": 6
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 131072,
+                "maximum_weighted_request_input_tokens": 136832,
+                "minimum_dynamic_concurrency_ceiling": 32,
+                "request_group": [
+                  16384,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 1906,
+            "bulk_request_count": 1854,
+            "client_inflight_input_tokens": 13050240,
+            "client_inflight_input_tokens_per_endpoint": 13050240,
+            "compatible_sample_count": 14816,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 1606.936,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 14816,
+            "expected_original_view_count": 14816,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 18.0971043612808,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3",
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2903882
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2903879
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2903881
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2903880
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2904564
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2904563
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2904561
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2904562
+                  }
+                ],
+                "model_id": "moirai2",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "moirai2",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 14816,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 14816,
+            "prediction_parts": [
+              {
+                "bytes": 12397205,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000001.parquet",
+                "row_count": 5126,
+                "sha256": "b547f22826a286b23f779bef85ea57b5e98206edccdbf883cae39f08dc331dd6",
+                "source_shard_index": 1
+              },
+              {
+                "bytes": 10772227,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000003.parquet",
+                "row_count": 4466,
+                "sha256": "f5b50c819ec598b82379e11485edade383bfaec9a2a9587dad83bdaca35b54ac",
+                "source_shard_index": 3
+              },
+              {
+                "bytes": 9917245,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000005.parquet",
+                "row_count": 4131,
+                "sha256": "ee3602b02361dbb0f35acf5e9dbe45aa67e11594c2130f51dcd64e5dc71ac3d8",
+                "source_shard_index": 5
+              },
+              {
+                "bytes": 2673203,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/moirai2/worker_001/predictions/part_000007.parquet",
+                "row_count": 1093,
+                "sha256": "0915bcda05434a3dd31bb5c9ba7cd0432202c33878b3a4b3e474cf6f74fa0d2c",
+                "source_shard_index": 7
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 131072,
+                "maximum_weighted_request_input_tokens": 136832,
+                "minimum_dynamic_concurrency_ceiling": 32,
+                "request_group": [
+                  16384,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 2,
+            "tail_retry_recovered_view_count": 16,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 2012.124,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 33755,
+      "expected_original_view_count": 33755,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 18.101621047127992,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3524717
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3524716
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3524715
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3524718
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3525346
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3525345
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3525348
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3525347
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 2903882
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2903879
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2903881
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2903880
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2904564
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2904563
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2904561
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2904562
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "moirai2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 33755,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 33755,
+      "shape_group_count": 2,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 131072,
+          "maximum_weighted_request_input_tokens": 136832,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            16384,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 131072,
+          "maximum_weighted_request_input_tokens": 136832,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            16384,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 2,
+      "tail_retry_recovered_view_count": 16,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 532,
+      "bulk_request_count": 532,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 33755,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 298,
+            "bulk_request_count": 298,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 18939,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 164.72,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 18939,
+            "expected_original_view_count": 18939,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 30.197448575869203,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3540954
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3540953
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3540951
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3540952
+                  }
+                ],
+                "model_id": "Timer-3.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 11520,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-3.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 18939,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 18939,
+            "prediction_parts": [
+              {
+                "bytes": 8156648,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000000.parquet",
+                "row_count": 4971,
+                "sha256": "cd300800301b1cd2c90890a358292c9d5c5339415f304f15a5fcd9dd66a6a00c",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 7238622,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000002.parquet",
+                "row_count": 4936,
+                "sha256": "cbbd9cf31ff4a84b031c4b1dddaa35e6ca72edad2803651062c9bc9e13547460",
+                "source_shard_index": 2
+              },
+              {
+                "bytes": 6202250,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000004.parquet",
+                "row_count": 4186,
+                "sha256": "12ad38e5217ee68224a134370e9d8cc694c8be815cbbc7c4e3cfa5551ca2257b",
+                "source_shard_index": 4
+              },
+              {
+                "bytes": 7063616,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_000/predictions/part_000006.parquet",
+                "row_count": 4846,
+                "sha256": "4dbf96b0e8631eeda329c042a8d5b95306d569d8948629dc19c3c8199124bd96",
+                "source_shard_index": 6
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 737280,
+                "maximum_weighted_request_input_tokens": 783360,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  11520,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 234,
+            "bulk_request_count": 234,
+            "client_inflight_input_tokens": 6525120,
+            "client_inflight_input_tokens_per_endpoint": 6525120,
+            "compatible_sample_count": 14816,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 137.62,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 14816,
+            "expected_original_view_count": 14816,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 32,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 32,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 28.199441142380238,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2915346
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2915344
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2915345
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2915347
+                  }
+                ],
+                "model_id": "Timer-3.5",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 11520,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 815640,
+            "model_id": "Timer-3.5",
+            "native_multivariate_http_concurrency": 32,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 14816,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 14816,
+            "prediction_parts": [
+              {
+                "bytes": 8415290,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000001.parquet",
+                "row_count": 5126,
+                "sha256": "da5d2e6dcfc19256178932f26c05f7f9787c3665f4baba91ace729cbb492808d",
+                "source_shard_index": 1
+              },
+              {
+                "bytes": 6717317,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000003.parquet",
+                "row_count": 4466,
+                "sha256": "d8fd446f940c0828cf64310515b2d15a5b203d5f7c187a05a9c0506bdd893e80",
+                "source_shard_index": 3
+              },
+              {
+                "bytes": 6207198,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000005.parquet",
+                "row_count": 4131,
+                "sha256": "9d11753e7808ac2b0747c0e8b01c842b1a61686b80093c9ad73e200067ee5e55",
+                "source_shard_index": 5
+              },
+              {
+                "bytes": 1625046,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/Timer-3_5/worker_001/predictions/part_000007.parquet",
+                "row_count": 1093,
+                "sha256": "f0d2c37e8ce487e8a3e5ec80ec49e032ba06c3e2e9185b24e8b9b8406cb5aaa1",
+                "source_shard_index": 7
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": 1,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 737280,
+                "maximum_weighted_request_input_tokens": 783360,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  11520,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 164.72,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 33755,
+      "expected_original_view_count": 33755,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 30.197448575869203,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:3",
+              "worker_pid": 3540954
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3540953
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3540951
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3540952
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 2915346
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2915344
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 2915345
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2915347
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-3.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 33755,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 33755,
+      "shape_group_count": 2,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 737280,
+          "maximum_weighted_request_input_tokens": 783360,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            11520,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 737280,
+          "maximum_weighted_request_input_tokens": 783360,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            11520,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 4827,
+      "bulk_request_count": 4827,
+      "client_inflight_input_tokens_per_endpoint": 1048576,
+      "compatible_sample_count": 33755,
+      "covariates_omitted_view_count": 0,
+      "distributed_execution": {
+        "policy": "source_shard_modulo_near_endpoint_replay_v1",
+        "worker_count": 2,
+        "worker_statuses": [
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 2708,
+            "bulk_request_count": 2708,
+            "client_inflight_input_tokens": 1048576,
+            "client_inflight_input_tokens_per_endpoint": 1048576,
+            "compatible_sample_count": 18939,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 240.833,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 18939,
+            "expected_original_view_count": 18939,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 8,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 8,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 36.23797536175698,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 3547411
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 3547412
+                  },
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 3547410
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 3547409
+                  }
+                ],
+                "model_id": "toto2.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 131072,
+            "model_id": "toto2.0",
+            "native_multivariate_http_concurrency": 8,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 18939,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 18939,
+            "prediction_parts": [
+              {
+                "bytes": 12007168,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000000.parquet",
+                "row_count": 4971,
+                "sha256": "d2dc0e04d9e50a01ebaa50804a0e82f5b0071c7bf854d00e3a9b6a83178d8b4c",
+                "source_shard_index": 0
+              },
+              {
+                "bytes": 11914702,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000002.parquet",
+                "row_count": 4936,
+                "sha256": "466899b37bb07eb0f6384ce628bc7a31358ee656f039f97768a85c9200778983",
+                "source_shard_index": 2
+              },
+              {
+                "bytes": 10033918,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000004.parquet",
+                "row_count": 4186,
+                "sha256": "cbfb62d028dac06f1513f7a2ef91058cdff9c513765ea98fce6509e21d9d7c80",
+                "source_shard_index": 4
+              },
+              {
+                "bytes": 11848697,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_000/predictions/part_000006.parquet",
+                "row_count": 4846,
+                "sha256": "127f3fdd1f3f7b1f68623275b0c47232815e893f39586a6bfb0da5c0ad774514",
+                "source_shard_index": 6
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 114688,
+                "maximum_weighted_request_input_tokens": 119728,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  16384,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 0,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          },
+          {
+            "adapted_view_count": 0,
+            "attempt_count": 2119,
+            "bulk_request_count": 2119,
+            "client_inflight_input_tokens": 1048576,
+            "client_inflight_input_tokens_per_endpoint": 1048576,
+            "compatible_sample_count": 14816,
+            "covariates_omitted_view_count": 0,
+            "dataset_id": "gift_electricity_h",
+            "elapsed_seconds": 197.051,
+            "endpoint_count": 1,
+            "endpoints": [
+              "http://127.0.0.1:10810"
+            ],
+            "expected_http_request_count": 14816,
+            "expected_original_view_count": 14816,
+            "failure_count": 0,
+            "http_concurrency_per_endpoint": 8,
+            "input_adaptation_policy": "cafe-input-adaptation-v3-group-row-aware",
+            "large_panel_context_threshold": -1,
+            "large_panel_http_concurrency": 8,
+            "large_panel_target_dim_threshold": -1,
+            "load_seconds_max": 35.287025562953204,
+            "loaded_topologies": [
+              {
+                "devices": [
+                  "cuda:0",
+                  "cuda:1",
+                  "cuda:2",
+                  "cuda:3"
+                ],
+                "endpoints": [
+                  {
+                    "device": "cuda:1",
+                    "worker_pid": 2918371
+                  },
+                  {
+                    "device": "cuda:0",
+                    "worker_pid": 2918370
+                  },
+                  {
+                    "device": "cuda:2",
+                    "worker_pid": 2918372
+                  },
+                  {
+                    "device": "cuda:3",
+                    "worker_pid": 2918373
+                  }
+                ],
+                "model_id": "toto2.0",
+                "status": "loaded"
+              }
+            ],
+            "maximum_context_materialization": 16384,
+            "maximum_inflight_bytes": 2147483648,
+            "maximum_request_input_tokens": 131072,
+            "model_id": "toto2.0",
+            "native_multivariate_http_concurrency": 8,
+            "native_multivariate_input_token_multiplier": 1.0,
+            "native_view_count": 14816,
+            "output_horizon_token_multiplier": 1.0,
+            "prediction_count": 14816,
+            "prediction_parts": [
+              {
+                "bytes": 12458579,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000001.parquet",
+                "row_count": 5126,
+                "sha256": "df28a1e0f7d8c41cc9d017b4129a71c18cc3be9a9d229da9ce7a824ad345ef2d",
+                "source_shard_index": 1
+              },
+              {
+                "bytes": 10788758,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000003.parquet",
+                "row_count": 4466,
+                "sha256": "e30566d88ff360bd37d8dd7188b49dbaeeb808c45f0d1f5ea40e64f39e5d50ca",
+                "source_shard_index": 3
+              },
+              {
+                "bytes": 9927005,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000005.parquet",
+                "row_count": 4131,
+                "sha256": "2f4ef566e88d367c9fe961dde619bc932f597940313b34feee85ca065aeeb49b",
+                "source_shard_index": 5
+              },
+              {
+                "bytes": 2662436,
+                "compression": "zstd",
+                "format": "parquet",
+                "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/03_inference/distributed_workers/toto2_0/worker_001/predictions/part_000007.parquet",
+                "row_count": 1093,
+                "sha256": "436f05c93236d25ab7a392ce07ccb912d8b1ce8668fcdfbfd2d5b5c5df75d863",
+                "source_shard_index": 7
+              }
+            ],
+            "resolved_input_capability": {
+              "max_future_covariate_length": 2048,
+              "max_group_rows": 64,
+              "max_history_covariate_count": 0,
+              "max_target_count": null,
+              "requires_future_covariates_with_history": false,
+              "schema_version": "cafe.resolved_input_capability.v3",
+              "source_schema": "input_mode",
+              "supports_future_covariates": false,
+              "supports_history_covariates": false
+            },
+            "schema_version": "cafe.distributed_inference_worker.v1",
+            "service_endpoint": "http://127.0.0.1:10810",
+            "shape_group_count": 1,
+            "shape_group_token_stats": [
+              {
+                "maximum_request_input_tokens": 114688,
+                "maximum_weighted_request_input_tokens": 119728,
+                "minimum_dynamic_concurrency_ceiling": 8,
+                "request_group": [
+                  16384,
+                  720,
+                  1,
+                  0,
+                  "H",
+                  1,
+                  "native_univariate",
+                  "none",
+                  1,
+                  0,
+                  0
+                ]
+              }
+            ],
+            "source_shard_partition": {
+              "part_count": 2,
+              "part_index": 1,
+              "policy": "source_shard_index_modulo_worker_count_v1"
+            },
+            "split_target_view_count": 0,
+            "status": "complete",
+            "tail_retry_bulk_request_count": 0,
+            "tail_retry_recovered_view_count": 0,
+            "unsupported_window_view_count": 0,
+            "very_long_context_input_token_multiplier": 1.0,
+            "very_long_context_threshold": -1,
+            "worker_hostname": "timecho-vm"
+          }
+        ]
+      },
+      "elapsed_seconds": 240.833,
+      "endpoint_count": 2,
+      "endpoints": [
+        "http://192.168.99.89:10810",
+        "http://192.168.99.92:10810"
+      ],
+      "expected_http_request_count": 33755,
+      "expected_original_view_count": 33755,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 8,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 36.23797536175698,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3547411
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3547412
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3547410
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3547409
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        },
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 2918371
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 2918370
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 2918372
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 2918373
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes_per_endpoint": 2147483648,
+      "maximum_request_input_tokens": 131072,
+      "model_id": "toto2.0",
+      "native_multivariate_http_concurrency": 8,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 33755,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 33755,
+      "shape_group_count": 2,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 114688,
+          "maximum_weighted_request_input_tokens": 119728,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            16384,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 0
+        },
+        {
+          "maximum_request_input_tokens": 114688,
+          "maximum_weighted_request_input_tokens": 119728,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            16384,
+            720,
+            1,
+            0,
+            "H",
+            1,
+            "native_univariate",
+            "none",
+            1,
+            0,
+            0
+          ],
+          "worker_part_index": 1
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    }
+  ],
+  "model_tasks": {},
+  "prepare_only": false,
+  "schema_version": "cafe.benchmark_extension_inference.v11",
+  "validation_report": {
+    "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-long-qualified-feasible-seed2026082701/gift_electricity_h/02_validation/report.json",
+    "sha256": "360ce4f820d1878d6001e8b0b8c609857839c78b16e64b7dc2a305102d9eb606"
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 8,
+    "source_scan_count": 1,
+    "source_shard_count": 2
+  },
+  "config_sha256": "afdc4ad6031614b6e3463202e9101b0e53d2acd840c9196ea44c9c0ccb213737",
+  "created_at": "2026-08-28T15:29:00.217661+00:00",
+  "dataset_id": "gift_jena_weather_h",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 15427,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/accuracy_rows.parquet",
+      "row_count": 432,
+      "sha256": "84f667b21e534295d9b3382fea365aa71abe47ee53b67f87c4baf6efcdee632b"
+    },
+    "accuracy_summary": {
+      "bytes": 72101,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/accuracy_summary.json",
+      "sha256": "562bde890082752ff1a4a6d55f3ecb3181ff589c489686ad9728323b0e61acae"
+    },
+    "capability_effect_rows": {
+      "bytes": 45966,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/capability_effect_rows.parquet",
+      "row_count": 420,
+      "sha256": "0a00c9dd55e1a9face42fa7aebf73a2892dafff6229cf0a08b946766361e2e64"
+    },
+    "capability_effect_summary": {
+      "bytes": 217518,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/capability_effect_summary.json",
+      "sha256": "57a6c8915d429a8b08ab282c3f063da18df4295bb92b194404ba91115d45ecc1"
+    },
+    "input_ablation_rows": {
+      "bytes": 16478,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/input_ablation_rows.parquet",
+      "row_count": 120,
+      "sha256": "f9d9362b97dc39a75340de3ea3bd63d0300036d735a8b4b9f579e37951c334c9"
+    },
+    "input_ablation_summary": {
+      "bytes": 28930,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/input_ablation_summary.json",
+      "sha256": "2d4dce0f4920ea26f26bbc94f73b03b961dbbaa69d287c1d729d9c8de28c513f"
+    },
+    "official_accuracy": {
+      "bytes": 1666,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/official_accuracy.json",
+      "sha256": "c9fdc87ea80ec4fa2d5c3f267c14eb583e912d28e2ca4fbeff7e5491b0896337"
+    }
+  },
+  "inference_manifest_sha256": "a7f88bf0463c88b38a95647efdc8e5a22e16feee96f3d211b34a71ee776b06e4",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

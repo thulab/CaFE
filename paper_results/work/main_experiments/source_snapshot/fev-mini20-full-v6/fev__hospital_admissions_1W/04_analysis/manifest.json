@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 8,
+    "source_scan_count": 1,
+    "source_shard_count": 1
+  },
+  "config_sha256": "531ad3b1b8144ec36a42edb68946ce76dabcf5cd5796ee910151c73f034f20c4",
+  "created_at": "2026-08-29T23:31:23.490158+00:00",
+  "dataset_id": "fev__hospital_admissions_1W",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 390189,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/accuracy_rows.parquet",
+      "row_count": 20251,
+      "sha256": "ffeb3b2096bd6679b458db3724b4283a21f4308b45c4aac361d9c31cdce05e20"
+    },
+    "accuracy_summary": {
+      "bytes": 60769,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/accuracy_summary.json",
+      "sha256": "a50a762684bdda78fd4afeb3d765936e72c7020a4d88b7d26c4013ac49d4aa85"
+    },
+    "capability_effect_rows": {
+      "bytes": 1340046,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/capability_effect_rows.parquet",
+      "row_count": 19355,
+      "sha256": "4bfa3fa68ebb2ad783a448d2eb401f0050d5b99586a2fcb92914346ac352d11e"
+    },
+    "capability_effect_summary": {
+      "bytes": 181402,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/capability_effect_summary.json",
+      "sha256": "65de2341ce5c302b5da67380368bf0bf09ed20f20da652e8fa54b08f71e18632"
+    },
+    "input_ablation_rows": {
+      "bytes": 3303,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/input_ablation_rows.parquet",
+      "row_count": 0,
+      "sha256": "8bf1e0cb815f83f5b2c5584175b54f58ceef4af251eeaa64c7af1b7a418b6bbf"
+    },
+    "input_ablation_summary": {
+      "bytes": 17,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/input_ablation_summary.json",
+      "sha256": "fb2989323b717f2e869a06272d8ee4b35b4e516d6a555f4ce3d19f9ee3606ff0"
+    },
+    "official_accuracy": {
+      "bytes": 1960,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__hospital_admissions_1W/04_analysis/official_accuracy.json",
+      "sha256": "a71ecd45d3fcb5aa0aa512ea1829b484271e00ca213df2da73b6e8b147d79158"
+    }
+  },
+  "inference_manifest_sha256": "c92c868bb7d987f2a3c438f32d1df741e464285134a2a77d49f132491d674e17",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

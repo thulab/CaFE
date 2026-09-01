@@ -1,0 +1,129 @@
+{
+  "config": {
+    "aggregation": "arithmetic_mean_of_task_level_estimands",
+    "benchmark_ids": [
+      "gift_eval"
+    ],
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 20260826,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "suite_ids": [
+      "short"
+    ],
+    "task_ids": [
+      "gift_electricity_h",
+      "gift_solar_h",
+      "gift_ett1_h",
+      "gift_ett2_h",
+      "gift_jena_weather_h",
+      "gift_kdd_cup_h",
+      "gift_loop_seattle_h",
+      "gift_sz_taxi_h",
+      "gift_m_dense_h",
+      "gift_bitbrains_fast_h",
+      "gift_bitbrains_rnd_h",
+      "gift_bizitobs_l2c_h",
+      "gift_bizitobs_application",
+      "gift_bizitobs_service",
+      "gift_restaurant_d",
+      "gift_hierarchical_sales_d",
+      "gift_m4_hourly",
+      "gift_us_births_d",
+      "gift_saugeenday_d",
+      "gift_temperature_rain_d"
+    ],
+    "uncertainty": "paired_nonparametric_task_bootstrap"
+  },
+  "config_sha256": "d1724f0c34203b49d080b34a21410cedc215b9b929a956c30faab30bf9d343a7",
+  "created_at": "2026-08-28T07:14:55.881375+00:00",
+  "files": {
+    "task_equal_summary": {
+      "bytes": 672485,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/04_analysis_suite/task_equal_summary.json",
+      "sha256": "403e01939c1eb0351e71e001b36601947ecc381d9fa19314a43b78ad24a766ec"
+    }
+  },
+  "schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+  "upstream_analysis": [
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_electricity_h/04_analysis/manifest.json",
+      "sha256": "a87f2c95716d1dce458f19b296ab65ed1f52df95e02e3a83a89d480f619efb7d"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/manifest.json",
+      "sha256": "79238b9b45679381b4126f055d1cf3614ba1bb9282d3d4bcf0cce8d1c499efac"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_ett1_h/04_analysis/manifest.json",
+      "sha256": "0aaeab1c3c50b48a2e0dc3f6dc801c02ba856da8ac17da138af7de1509253ad7"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_ett2_h/04_analysis/manifest.json",
+      "sha256": "5301bdf24cbcc2e707e6bf2095b90c6a9b12df6dc0c2365322a2eff6d85806c0"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/manifest.json",
+      "sha256": "7ba0cf425f3b3541adb6c3ecf87583393c163550ab9ff3a2888fea2fca4dd6d5"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_kdd_cup_h/04_analysis/manifest.json",
+      "sha256": "07e8dd496daa629339a18b643e505f1bd045726a1e3a7bfda3ad13376d4b4348"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_loop_seattle_h/04_analysis/manifest.json",
+      "sha256": "d5c5ea99ef1f6ba8854a61eff628cd00c18ca6d79bee4f0230b11f33993af084"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_sz_taxi_h/04_analysis/manifest.json",
+      "sha256": "4e51d7492272cb606a21d82ecd0465d4478e4c8fd3f50953d9702d5424ff7a67"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_m_dense_h/04_analysis/manifest.json",
+      "sha256": "656a5b845c9e0eb1611470d5152d67f3b624a4187eda028a39ab3099336ea41a"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_fast_h/04_analysis/manifest.json",
+      "sha256": "4231d4abcf938136ebce6d36ff819e8a65d42af3788251f9fc6e373005a1e7fa"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bitbrains_rnd_h/04_analysis/manifest.json",
+      "sha256": "098f1d0dc07d1dbd2e56fa7bc11f47e8057f32f32153d2be2c125ae3249f611a"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bizitobs_l2c_h/04_analysis/manifest.json",
+      "sha256": "f898989e6d99152abecbff35de4e8240d24eaab2cc8125f24a44bb8f45488ae1"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/manifest.json",
+      "sha256": "70cc156af2d7de4d39d397a9a01f2089f610a0cf07b0de6f2e830cb512788175"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/manifest.json",
+      "sha256": "4f7087300c662749bf8e2c1b6426ca36e4d2c3957da522148f0cbd756eb17737"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_restaurant_d/04_analysis/manifest.json",
+      "sha256": "74adf13b14e9cb9ee282d749a99d82c2c1edcdca89b20060fd6cea1d5edc228f"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/manifest.json",
+      "sha256": "5e53b77e46998e9e603c31dd3516f730baa306263ac091fcd15999f7f53d90b6"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_m4_hourly/04_analysis/manifest.json",
+      "sha256": "3ed2362e8c6bfd95ffaa6f9763808a340f07ce5e766d3410a90bb8a2bc197cfd"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_us_births_d/04_analysis/manifest.json",
+      "sha256": "8c66caf956d725cd49ba035a893bd4c47e3f2b87ac3d260a64c18a2ec7ec5373"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_saugeenday_d/04_analysis/manifest.json",
+      "sha256": "3a06cfefe81ac07c357ef24fcb521aed66564bc59f5d3cd936ee08deccab16d0"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/manifest.json",
+      "sha256": "72075fabd1f3428d16e60aaaddb66e2539d945e558ae5b12ac005fa4f699d039"
+    }
+  ]
+}

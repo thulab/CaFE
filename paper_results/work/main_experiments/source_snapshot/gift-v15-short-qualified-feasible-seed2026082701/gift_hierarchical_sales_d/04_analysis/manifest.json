@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 4,
+    "source_scan_count": 1,
+    "source_shard_count": 2
+  },
+  "config_sha256": "ecdaee970ea97c7118f3489677375726a3bff897bbcf5813d3e03db9634b4dbd",
+  "created_at": "2026-08-28T07:01:54.154308+00:00",
+  "dataset_id": "gift_hierarchical_sales_d",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 1383732,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/accuracy_rows.parquet",
+      "row_count": 69699,
+      "sha256": "b935ec334e3441f19649cdd5ec9896e0fd39f76b13d8424c481da12ba87c213c"
+    },
+    "accuracy_summary": {
+      "bytes": 60913,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/accuracy_summary.json",
+      "sha256": "200f73f9735c83f824f42613958e6cc9a6bbd38111815efc86dfb880bc24ff86"
+    },
+    "capability_effect_rows": {
+      "bytes": 4624500,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/capability_effect_rows.parquet",
+      "row_count": 66395,
+      "sha256": "63bb1987e443bdcbc46414ea02a5ac03fa338e4a3aec1ca7faf1e423ebaea6b1"
+    },
+    "capability_effect_summary": {
+      "bytes": 181488,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/capability_effect_summary.json",
+      "sha256": "67e9ea29625e8b2543ff9a17bb9bfb0c9f64da32bd614d087101c198d55ee613"
+    },
+    "input_ablation_rows": {
+      "bytes": 3303,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/input_ablation_rows.parquet",
+      "row_count": 0,
+      "sha256": "8bf1e0cb815f83f5b2c5584175b54f58ceef4af251eeaa64c7af1b7a418b6bbf"
+    },
+    "input_ablation_summary": {
+      "bytes": 17,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/input_ablation_summary.json",
+      "sha256": "fb2989323b717f2e869a06272d8ee4b35b4e516d6a555f4ce3d19f9ee3606ff0"
+    },
+    "official_accuracy": {
+      "bytes": 1961,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_hierarchical_sales_d/04_analysis/official_accuracy.json",
+      "sha256": "af2424a59d463c5a4e8476fa1b29f242230c5c403233aec30e67885c41670def"
+    }
+  },
+  "inference_manifest_sha256": "0ac1723150ea2755be18b045a09eef1160fb73f8d17dd6f9b70fa62f7a530b9d",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

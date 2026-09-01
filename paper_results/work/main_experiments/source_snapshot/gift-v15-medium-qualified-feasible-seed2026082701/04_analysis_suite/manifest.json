@@ -1,0 +1,84 @@
+{
+  "config": {
+    "aggregation": "arithmetic_mean_of_task_level_estimands",
+    "benchmark_ids": [
+      "gift_eval"
+    ],
+    "bootstrap_repetitions": 2000,
+    "bootstrap_seed": 20260826,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "suite_ids": [
+      "medium"
+    ],
+    "task_ids": [
+      "gift_electricity_h",
+      "gift_solar_h",
+      "gift_ett1_h",
+      "gift_ett2_h",
+      "gift_jena_weather_h",
+      "gift_kdd_cup_h",
+      "gift_loop_seattle_h",
+      "gift_m_dense_h",
+      "gift_bizitobs_l2c_h",
+      "gift_bizitobs_application",
+      "gift_bizitobs_service"
+    ],
+    "uncertainty": "paired_nonparametric_task_bootstrap"
+  },
+  "config_sha256": "2cb2cb05f1309ee8f80fff82210e4a181f515c97aabf13d573ee2943f3d56477",
+  "created_at": "2026-08-28T15:29:39.454720+00:00",
+  "files": {
+    "task_equal_summary": {
+      "bytes": 505888,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/04_analysis_suite/task_equal_summary.json",
+      "sha256": "5783a12d1a7bdae61f8a593a4a66783348443b91ab9ca640fed81d11d00dcb4c"
+    }
+  },
+  "schema_version": "cafe.benchmark_extension_suite_analysis.v1",
+  "upstream_analysis": [
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_electricity_h/04_analysis/manifest.json",
+      "sha256": "e4ebb2ebd59b9a5582db695744b2d919e3cc3a4e76eb5418bcb1d80ed1885fd6"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_solar_h/04_analysis/manifest.json",
+      "sha256": "b3645ef9fd26eb5d760bfef91850664b775010eccfba7c219365e7cd59244471"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_ett1_h/04_analysis/manifest.json",
+      "sha256": "7d10e0f3b25b2a432eeb6f2f841c6930f6b94745fc14ad99e3cd65bbda585c9a"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_ett2_h/04_analysis/manifest.json",
+      "sha256": "2025351191125f772587cc042f580d68c2f53e0dfa6e091f0889bb02d0e164bf"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_jena_weather_h/04_analysis/manifest.json",
+      "sha256": "45f2c05f2a56a0754a9ee1679e637f765e6dd92a356c106735b17a5535dddaad"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_kdd_cup_h/04_analysis/manifest.json",
+      "sha256": "e784a7fa48aa935723b682a5b8518cd6e961e5a6d73f5c1dbe90f2d061ae771e"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_loop_seattle_h/04_analysis/manifest.json",
+      "sha256": "41e4b4d07ee88710eb4bfaf83b5d28b67fdf5a4e04e26e05b12eef43058aeb5f"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_m_dense_h/04_analysis/manifest.json",
+      "sha256": "b4f6a6be50814366b934c71816bcb1629fe920f5d251307f4e1adcd2be338171"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_l2c_h/04_analysis/manifest.json",
+      "sha256": "1e8b8ca3d5d6532d3f044300ac750f097be8d915263cf0e53fe8a541d415a3d1"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/manifest.json",
+      "sha256": "4bc7c108cdd43d179cbb66bf368cdcada9dc031b911295ef82ec8ad1561689f1"
+    },
+    {
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_service/04_analysis/manifest.json",
+      "sha256": "f9c2647ad1b100a4c2481f7800bdebdba061b70ae93bfcc455736f9ce491b913"
+    }
+  ]
+}

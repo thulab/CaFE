@@ -1,0 +1,5 @@
+objective_id,objective_label,metric,metric_label,trajectory_steps,pearson_gain_train_vs_cross,spearman_gain_train_vs_cross,train_best_step,train_best_gain_percent,cross_best_step,cross_best_gain_percent,final_train_gain_percent,final_cross_gain_percent,final_train_minus_cross_gain_pp
+default,Chronos default (quantile),mase,Macro-stratum MASE,4000..40000,0.9025280903393007,0.9515151515151514,40000,5.824757329995826,40000,9.940053235542841,5.824757329995826,9.940053235542841,-4.115295905547015
+default,Chronos default (quantile),effect_nrmse,Macro-stratum effect NRMSE,4000..40000,0.8244364594506928,0.8060606060606059,16000,7.141509188435967,8000,4.331384660523502,-2.877834437417183,-5.900116176694708,3.0222817392775254
+effect_nrmse,Paired effect NRMSE,mase,Macro-stratum MASE,4000..40000,0.9946138108781252,0.9757575757575757,0,0.0,0,0.0,-21.15238404390741,-19.91391940173329,-1.2384646421741223
+effect_nrmse,Paired effect NRMSE,effect_nrmse,Macro-stratum effect NRMSE,4000..40000,0.5209651148936959,0.6242424242424242,36000,25.79842679679097,28000,16.14798752905252,25.657530755719915,15.383202265577909,10.274328490142006

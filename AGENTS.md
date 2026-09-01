@@ -27,9 +27,11 @@ the official instance id, capability, level, and augmentation seed.
 
 The source Arrow files remain the single copy of authentic series. Generation
 stores replayable treatment contracts in compressed Parquet rather than dense
-curves. Inference reconstructs bounded batches in memory, uses MessagePack bulk
-requests across configured endpoints and GPUs, and stores float32 prediction
-shards in Parquet. Analysis joins one source shard at a time.
+curves. Inference reconstructs bounded batches inside native GPU workers,
+invokes model packages directly, distributes source shards over configured
+hosts/GPUs/replicas, and stores float32 prediction shards in Parquet. The REST
+service backend is compatibility-only. Analysis joins one source shard at a
+time.
 
 ## Stage contracts
 

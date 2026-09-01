@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "generation_task_count_checked": 62,
+  "suite_count_checked": 4,
+  "model_capability_level_cells_checked": 1040,
+  "generation_treatment_identity": "treatment_count == 5 * sum(available instances over capabilities)",
+  "inference_failure_count": 0,
+  "inference_status_complete": true,
+  "aggregation_checks": [
+    "level-averaged capability equals arithmetic mean of 5 frozen suite levels",
+    "derived macro equals arithmetic mean of 8 level-averaged capabilities"
+  ],
+  "effect_scoring_coverage_minimum": 0.954663651780667
+}

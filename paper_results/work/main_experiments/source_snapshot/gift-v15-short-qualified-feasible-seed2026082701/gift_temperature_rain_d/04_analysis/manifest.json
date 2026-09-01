@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 4,
+    "source_scan_count": 1,
+    "source_shard_count": 375
+  },
+  "config_sha256": "ec2679bb49337d23d55f2708ae707f120ae3fbc22ec49108994a285222a0a3a3",
+  "created_at": "2026-08-28T07:14:53.547697+00:00",
+  "dataset_id": "gift_temperature_rain_d",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 313968712,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/accuracy_rows.parquet",
+      "row_count": 15652749,
+      "sha256": "88532ba39a747d13e923dfcd1747acac6ebe25a4fdd3312884472c2fe5654f8e"
+    },
+    "accuracy_summary": {
+      "bytes": 61189,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/accuracy_summary.json",
+      "sha256": "62f1cf4691544bd2640a0dd354dce46126b2f4b79cf3ca7d7938654cac5ca602"
+    },
+    "capability_effect_rows": {
+      "bytes": 1062656342,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/capability_effect_rows.parquet",
+      "row_count": 14981365,
+      "sha256": "ee3f07a517cc59de3113640fd5ad7854a523a3ec8186bb107fbda142ff8bfe70"
+    },
+    "capability_effect_summary": {
+      "bytes": 183435,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/capability_effect_summary.json",
+      "sha256": "f89a1e0d14933e04dc8d3e1d6a96b745c06e880a86b5fcfebcab8271b63b43b2"
+    },
+    "input_ablation_rows": {
+      "bytes": 3303,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/input_ablation_rows.parquet",
+      "row_count": 0,
+      "sha256": "8bf1e0cb815f83f5b2c5584175b54f58ceef4af251eeaa64c7af1b7a418b6bbf"
+    },
+    "input_ablation_summary": {
+      "bytes": 17,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/input_ablation_summary.json",
+      "sha256": "fb2989323b717f2e869a06272d8ee4b35b4e516d6a555f4ce3d19f9ee3606ff0"
+    },
+    "official_accuracy": {
+      "bytes": 1997,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-short-qualified-feasible-seed2026082701/gift_temperature_rain_d/04_analysis/official_accuracy.json",
+      "sha256": "91e80b497d5282e486a582a81fe1fd2e30b9715a01132119268e9f17f07d6a1a"
+    }
+  },
+  "inference_manifest_sha256": "2ef4e94230dd5f0e8efdd10221e3518cc4eb5f561365cd09d316e86119d08e19",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

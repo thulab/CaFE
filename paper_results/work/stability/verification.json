@@ -1,0 +1,30 @@
+{
+  "all_passed": true,
+  "checks": [
+    {
+      "check": "model_overall_matches_remote",
+      "passed": true,
+      "rows": 7
+    },
+    {
+      "check": "effect_cells_match_remote",
+      "passed": true,
+      "rows": 280
+    },
+    {
+      "check": "key_summary_statistics_match_remote",
+      "passed": true
+    },
+    {
+      "check": "remote_run_completeness",
+      "experiments": 10,
+      "passed": true
+    },
+    {
+      "check": "figure_files_nonempty",
+      "files": 12,
+      "passed": true
+    }
+  ],
+  "schema_version": "cafe.paper_stability_verification.v1"
+}

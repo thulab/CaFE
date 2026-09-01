@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 8,
+    "source_scan_count": 1,
+    "source_shard_count": 2
+  },
+  "config_sha256": "afdc4ad6031614b6e3463202e9101b0e53d2acd840c9196ea44c9c0ccb213737",
+  "created_at": "2026-08-28T15:29:29.635825+00:00",
+  "dataset_id": "gift_bizitobs_application",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 14896,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/accuracy_rows.parquet",
+      "row_count": 372,
+      "sha256": "41df859769c7784f922bf6e9e8d99110b8023cd9f85f51e9b1058cdf079b0e43"
+    },
+    "accuracy_summary": {
+      "bytes": 62634,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/accuracy_summary.json",
+      "sha256": "11cc086515b64cbc8b415248a2a0a984b218174cfad4311c1a6ba7805b29bde9"
+    },
+    "capability_effect_rows": {
+      "bytes": 42032,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/capability_effect_rows.parquet",
+      "row_count": 360,
+      "sha256": "0ec46619470ef2976bc11d198f5d06f4d61555e6ee76610ee22dff4752eacfaf"
+    },
+    "capability_effect_summary": {
+      "bytes": 186778,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/capability_effect_summary.json",
+      "sha256": "45c6b6451ae066b5f315f08926fd49f9ab719fc499383ef9822ee6926385409c"
+    },
+    "input_ablation_rows": {
+      "bytes": 17290,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/input_ablation_rows.parquet",
+      "row_count": 120,
+      "sha256": "064e5e5f9495cbda0a19d8aff923ccfb3677a44a2dc021179b3681701d738bda"
+    },
+    "input_ablation_summary": {
+      "bytes": 29599,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/input_ablation_summary.json",
+      "sha256": "4da0d1f5c96d187b64c016e0516f3a7734f47b38a1565715ace43eaff77e3117"
+    },
+    "official_accuracy": {
+      "bytes": 1657,
+      "path": "/data/xmy/CaFE/runtime/experiments/gift-v15-medium-qualified-feasible-seed2026082701/gift_bizitobs_application/04_analysis/official_accuracy.json",
+      "sha256": "4a40bd7f62059a20f9d0456a5534709f44c4c475e9094baf4deea36eb0938fe8"
+    }
+  },
+  "inference_manifest_sha256": "a3027d0d7a30d0b5d7ce676213c88716043824a1b3c5ad29cea1c950f3133c4d",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

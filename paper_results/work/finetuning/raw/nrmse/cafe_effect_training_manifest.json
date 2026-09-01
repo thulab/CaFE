@@ -1,0 +1,40 @@
+{
+  "batch_size_series_budget": 32,
+  "checkpoint_progress": [
+    0.01,
+    0.02,
+    0.05,
+    0.1,
+    0.2,
+    0.4,
+    0.6,
+    0.8,
+    1.0
+  ],
+  "checkpoint_steps": [
+    4000,
+    8000,
+    12000,
+    16000,
+    20000,
+    24000,
+    28000,
+    32000,
+    36000,
+    40000
+  ],
+  "context_length": 2048,
+  "dataset": "/data/xmy/chronos-forecasting/chronos-2-finetuned/cafe-v15-qf-moirai16k-window10-nrmse-replacement-40k/data/effect-horizon-48",
+  "epoch_steps": 7407,
+  "finetune_mode": "lora",
+  "fixed_forecast_origin": true,
+  "horizon": 48,
+  "learning_rate": 1e-05,
+  "model": "/data/xmy/timer-rest-service/data/models/builtin/chronos2",
+  "objective": "batch_pooled_squared_mase_standardized_effect_nrmse",
+  "sampling": "random_with_replacement",
+  "schema_version": "chronos2.cafe_paired_effect_training.v1",
+  "seed": 2026082701,
+  "trained_steps": 40000,
+  "training_pairs": 50535
+}

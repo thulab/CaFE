@@ -1,0 +1,277 @@
+{
+  "available_instance_count_by_capability": {
+    "common_factor": 80,
+    "covariate_impulse_response": 80,
+    "cross_series_dependence": 80,
+    "multi_seasonal": 80,
+    "predictable_intermittency": 80,
+    "regime_switching": 80,
+    "time_varying_seasonality": 80,
+    "trend": 80
+  },
+  "benchmark_id": "fev_bench",
+  "config": {
+    "adapter_schema_version": "cafe.fev_native_adapter.v3",
+    "artifact_storage": {
+      "compression": "zstd",
+      "dense_covariates_stored": false,
+      "dense_targets_stored": false,
+      "format": "parquet",
+      "replay_policy": "benchmark_adapter_plus_deterministic_contract_v1"
+    },
+    "augmentation_seed": 2026082601,
+    "benchmark_id": "fev_bench",
+    "benchmark_source": {
+      "source_manifest": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "source_revision": "fev-v0.8.0-f1afffbf97bc51a4a233080d331633c6f7ab32f6+fev-datasets-f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8",
+      "source_root": "/data/xmy/CaFE/data/fev-mini-v0.8.0",
+      "suite_artifact": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml"
+    },
+    "capability_ids": [
+      "trend",
+      "multi_seasonal",
+      "time_varying_seasonality",
+      "regime_switching",
+      "predictable_intermittency",
+      "common_factor",
+      "cross_series_dependence",
+      "covariate_impulse_response"
+    ],
+    "covariate_impulse_policy": "continuous_numeric_dynamic_covariates_only_v1",
+    "dataset_id": "uk_covid_nation_1D/cumulative",
+    "formal": true,
+    "frequency": "D",
+    "future_label_eligibility_policy": "adapter_native_complete_future_labels_v1",
+    "generation_execution": {
+      "maximum_dense_batch_bytes": 16777216,
+      "shard_size": 256,
+      "workers": 8
+    },
+    "input_ablation_policy": "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2",
+    "instance_selection": "all_adapter_eligible_native_instances",
+    "max_instances": null,
+    "mechanism_scoring_policy": {
+      "metric": "authentic_history_mase_scaled_future_effect_rms",
+      "minimum_required_mase_rms": 0.05
+    },
+    "native_covariate_policy": "preserve_dynamic_visibility_static_values_and_semantic_types",
+    "native_target_policy": "preserve_benchmark_target_dimension",
+    "observed_covariate_availability": [
+      "past_only"
+    ],
+    "observed_covariate_types": [
+      "continuous_numeric"
+    ],
+    "official_window_count": 20,
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "prediction_length": 28,
+    "randomness_policy": "qualified_pool_then_seed_sampled_structure_shared_across_levels_plus_level_dose_v2",
+    "randomness_schema": "cafe.structural_randomness.v2",
+    "seasonality": 1,
+    "seed_independent_candidate_qualification": {
+      "covariate_impulse_pool_size": 8,
+      "cross_series_pool_size": 12,
+      "cross_series_scan_limit": 48,
+      "qualification_uses_existing_gates_only": true
+    },
+    "source_distance_configuration": {
+      "maximum_model_context_channel_distance": 3.0,
+      "maximum_model_context_macro_distance": 2.0,
+      "minimum_model_context_macro_distance": 0.1,
+      "model_max_contexts": {
+        "Chronos-2": 8192,
+        "Timer-3.5": 11520,
+        "Timer-4.0": 8192,
+        "moirai2": 8192,
+        "timesfm2.5": 15360,
+        "tirex2": 2048,
+        "toto2.0": 16384
+      },
+      "strength_reference": "full_native_history_macro_normalized_rms"
+    },
+    "source_distance_policy": "full_history_strength_actual_selected_model_context_bounds_v4",
+    "strength_level_intervals": [
+      [
+        0.1,
+        0.15
+      ],
+      [
+        0.17,
+        0.22
+      ],
+      [
+        0.25,
+        0.32
+      ],
+      [
+        0.36,
+        0.46
+      ],
+      [
+        0.5,
+        0.65
+      ]
+    ],
+    "strength_sampling_policy": "uniform_within_nominal_level_intersected_with_analytic_source_distance_and_future_effect_feasible_bounds_v1",
+    "suite_id": "mini20",
+    "task_id": "fev__uk_covid_nation_1D-cumulative",
+    "task_spec": {
+      "benchmark_id": "fev_bench",
+      "config_sha256": "e324c341d449447ecfba2da9590044755c931e457c449a457e973655fb130096",
+      "display_name": "uk_covid_nation_1D/cumulative",
+      "frequency": "D",
+      "horizon": 28,
+      "known_dynamic_columns": [],
+      "native_config": {
+        "dataset_config": "uk_covid_nation_1D",
+        "dataset_fingerprint": "c8dff53b6fcb4695",
+        "dataset_path": "autogluon/fev_datasets",
+        "eval_metric": "SQL",
+        "extra_metrics": [
+          "MASE",
+          {
+            "epsilon": 1.0,
+            "name": "WAPE"
+          },
+          {
+            "epsilon": 1.0,
+            "name": "WQL"
+          }
+        ],
+        "fev_version": "0.8.0",
+        "generate_univariate_targets_from": null,
+        "horizon": 28,
+        "id_column": "id",
+        "initial_cutoff": -560,
+        "known_dynamic_columns": [],
+        "max_context_length": null,
+        "min_context_length": 1,
+        "num_windows": 20,
+        "past_dynamic_columns": [
+          "cumulative_vaccinated_1",
+          "cumulative_vaccinated_2",
+          "cumulative_vaccinated_3",
+          "hospital_cases",
+          "icu_ventilator_occupancy"
+        ],
+        "quantile_levels": [
+          0.1,
+          0.2,
+          0.3,
+          0.4,
+          0.5,
+          0.6,
+          0.7,
+          0.8,
+          0.9
+        ],
+        "seasonality": 1,
+        "static_columns": [],
+        "target": [
+          "cumulative_admissions",
+          "cumulative_cases",
+          "cumulative_deaths"
+        ],
+        "task_name": "uk_covid_nation_1D/cumulative",
+        "timestamp_column": "timestamp",
+        "window_step_size": 28
+      },
+      "past_dynamic_columns": [
+        "cumulative_vaccinated_1",
+        "cumulative_vaccinated_2",
+        "cumulative_vaccinated_3",
+        "hospital_cases",
+        "icu_ventilator_occupancy"
+      ],
+      "seasonality": 1,
+      "source_dataset_id": "uk_covid_nation_1D/cumulative",
+      "static_columns": [],
+      "suite_id": "mini20",
+      "target_column_names": [
+        "cumulative_admissions",
+        "cumulative_cases",
+        "cumulative_deaths"
+      ],
+      "task_id": "fev__uk_covid_nation_1D-cumulative",
+      "window_count": 20
+    },
+    "term": "native",
+    "treatment_history_scope": "entire_benchmark_native_input_history"
+  },
+  "config_sha256": "34720e821c9c165c15656a81915070eaec68d95e0fc85a4538c47ba674778783",
+  "created_at": "2026-08-29T17:31:08.693860+00:00",
+  "dataset_id": "uk_covid_nation_1D/cumulative",
+  "files": {
+    "availability": {
+      "bytes": 100470,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uk_covid_nation_1D-cumulative/01_generation/availability.parquet",
+      "row_count": 640,
+      "sha256": "a1f65a6e219019ab8de95babea14dceee82206fa7b63c01ff00e6baf56f3df45"
+    },
+    "capability_treatments": {
+      "bytes": 1718719,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uk_covid_nation_1D-cumulative/01_generation/treatment_contracts.parquet",
+      "row_count": 3200,
+      "sha256": "352fd39c8af857f87363e9f7b819fc115e070831eb1b509987cae2986ce010e7"
+    },
+    "input_ablations": {
+      "bytes": 848206,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uk_covid_nation_1D-cumulative/01_generation/input_ablation_contracts.parquet",
+      "row_count": 1200,
+      "sha256": "4a4cf92e08d95e8c359f33400f7ff83851f1fc2f11bac4d760a6531a7db70750"
+    },
+    "official_baselines": {
+      "bytes": 36899,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__uk_covid_nation_1D-cumulative/01_generation/official_instances.parquet",
+      "row_count": 80,
+      "sha256": "a2d0c2f11d43760b372ec265862a78ebb3452ea94f0997ebc4f2e1f13cd2c218"
+    }
+  },
+  "input_ablation_count": 1200,
+  "official_instance_count": 80,
+  "official_window_selection_audit": {
+    "complete_future_label_count": 80,
+    "fully_missing_future_label_count": 0,
+    "official_window_count": 80,
+    "partially_missing_future_label_count": 0
+  },
+  "schema_version": "cafe.benchmark_extension_generation.v13",
+  "source_files": [
+    {
+      "bytes": 10094,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/tasks_mini.yaml",
+      "sha256": "992ac3b7fa76f0a400d2783535b989549decab381006da5a866e28b61b963edb"
+    },
+    {
+      "bytes": 143361,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/datasets/uk_covid_nation_1D.parquet",
+      "sha256": "636caf7112e45632479c9bf6d9cf91d4ed1b634d5f40d9ff1e0f0765199cd6dc"
+    },
+    {
+      "bytes": 5861,
+      "path": "/data/xmy/CaFE/data/fev-mini-v0.8.0/source_manifest.json",
+      "sha256": "92830cbea58c92456be4c830990ec6b73dab56437657d3ebb495a8bf7460f4c1"
+    }
+  ],
+  "suite_id": "mini20",
+  "task_id": "fev__uk_covid_nation_1D-cumulative",
+  "treatment_count": 3200,
+  "unavailable_reason_count_by_capability": {
+    "common_factor": {},
+    "covariate_impulse_response": {},
+    "cross_series_dependence": {},
+    "multi_seasonal": {},
+    "predictable_intermittency": {},
+    "regime_switching": {},
+    "time_varying_seasonality": {},
+    "trend": {}
+  }
+}

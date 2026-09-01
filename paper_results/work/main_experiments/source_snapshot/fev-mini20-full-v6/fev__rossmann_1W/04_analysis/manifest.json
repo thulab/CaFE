@@ -1,0 +1,80 @@
+{
+  "config": {
+    "estimands": {
+      "capability_effect": "mase_standardized_pooled_forecast_delta_vs_truth_delta_on_scoreable_affected_targets",
+      "input_ablation_attribution": "same_treatment_truth_with_auxiliary_histories_temporally_misaligned",
+      "official_accuracy": "benchmark-native official future MASE/MAE",
+      "treatment_accuracy": "treatment future MASE/MAE on authentic MASE scale"
+    },
+    "execution": "process_parallel_source_shards_all_model_prediction_join",
+    "mechanism_scoring_policy": {
+      "aggregation": "ratio_of_standardized_squared_sums",
+      "low_signal_status": "unavailable_low_truth_effect",
+      "low_signal_treatment_accuracy_retained": true,
+      "minimum_truth_effect_mase_rms": 0.05,
+      "nonlinear_persistence_diagnostics": {
+        "censoring_policy": "report_count_and_exclude_from_half_life_mae",
+        "decay_shape_metric": "peak_normalized_profile_nrmse",
+        "half_life_metric": "first_half_peak_crossing_after_peak",
+        "ranking_use": "diagnostic_only"
+      },
+      "primary_metric": "mase_standardized_pooled_nrmse_v1"
+    },
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "row_artifact_format": "parquet_zstd",
+    "shard_workers": 8,
+    "source_scan_count": 1,
+    "source_shard_count": 35
+  },
+  "config_sha256": "67944bd970a30d6666808330118884c2cc32e0be2bd04e45750408661cf840fc",
+  "created_at": "2026-08-29T23:34:11.148392+00:00",
+  "dataset_id": "fev__rossmann_1W",
+  "files": {
+    "accuracy_rows": {
+      "bytes": 32571772,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/accuracy_rows.parquet",
+      "row_count": 1637440,
+      "sha256": "60ea7be925d38b7e93d40624992560406289dce798fcf0de8ce0267424f6e406"
+    },
+    "accuracy_summary": {
+      "bytes": 73125,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/accuracy_summary.json",
+      "sha256": "8d3e64837e6c3431baf9c0d226596abe82ec88c3b1c72381f3c3ccdb62e0f0e5"
+    },
+    "capability_effect_rows": {
+      "bytes": 112796193,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/capability_effect_rows.parquet",
+      "row_count": 1575000,
+      "sha256": "4653e1e9fe24e53b509f9263d40a89e417860a69d49bea74daaa406e8c7f503d"
+    },
+    "capability_effect_summary": {
+      "bytes": 219429,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/capability_effect_summary.json",
+      "sha256": "9355062ab2d976dd6615cc094dbf8bf4363d784e6d79743990d07cd83ed4a28b"
+    },
+    "input_ablation_rows": {
+      "bytes": 8589583,
+      "compression": "zstd",
+      "format": "parquet",
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/input_ablation_rows.parquet",
+      "row_count": 234150,
+      "sha256": "af1d1f5235171b64ba3684e8fae3607af8b855cd51aac2106527ccaaf7ad21d5"
+    },
+    "input_ablation_summary": {
+      "bytes": 17683,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/input_ablation_summary.json",
+      "sha256": "af7c47f3412aa1bcfc39c6a344230f9ba108cc634b7e3c9ebbcdfdec61c8e360"
+    },
+    "official_accuracy": {
+      "bytes": 1983,
+      "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/04_analysis/official_accuracy.json",
+      "sha256": "6591c22d7b6cf61fa2ae4253f69e41f30242b8cf228d199a369eca3864a64157"
+    }
+  },
+  "inference_manifest_sha256": "ab7aed2ccea41d89db82f049c771d47a4c59a0ef5fbf743f47d809b2b2b0e895",
+  "schema_version": "cafe.benchmark_extension_analysis.v12"
+}

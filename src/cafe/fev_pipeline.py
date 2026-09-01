@@ -33,6 +33,7 @@ from cafe.benchmark_extension.mechanisms import (
 )
 from cafe.benchmark_extension.validation import validate_generation
 from cafe.inference.runner import DEFAULT_MODELS
+from cafe.inference.native_catalog import native_catalog
 
 
 STAGES = ("generation", "validation", "inference", "analysis")
@@ -66,12 +67,30 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument(
+        "--backend", choices=("native", "service"), default="native"
+    )
+    parser.add_argument(
         "--endpoints",
         nargs="+",
         default=["http://100.102.176.45:10810"],
     )
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1")
+    parser.add_argument("--worker-host", action="append", default=[])
+    parser.add_argument(
+        "--model-root",
+        type=Path,
+        default=protocol.REPO_ROOT / "runtime" / "models",
+    )
+    parser.add_argument(
+        "--model-code-root",
+        type=Path,
+        default=protocol.REPO_ROOT / "runtime" / "model_runtime",
+    )
+    parser.add_argument(
+        "--distributed-repo-root",
+        default="/data/xmy/CaFE",
+    )
     parser.add_argument("--max-instances", type=int, default=None)
     parser.add_argument("--start-at", choices=STAGES, default="generation")
     parser.add_argument("--stop-after", choices=STAGES, default="analysis")
@@ -127,24 +146,31 @@ def _contract(
     )
 
 
-def _service_model_contracts(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
-    results: list[tuple[str, dict[str, dict[str, Any]]]] = []
-    with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
-        futures = [
-            executor.submit(health_catalog, endpoint, args.api_prefix)
-            for endpoint in args.endpoints
-        ]
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                results.append(result)
-    if not results:
-        raise RuntimeError("no inference service is available for model preflight")
+def _model_contracts(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    backend = str(getattr(args, "backend", "service"))
+    if backend == "native":
+        catalogs = [native_catalog(Path(args.model_root))]
+    else:
+        catalogs = []
+        results: list[tuple[str, dict[str, dict[str, Any]]]] = []
+        with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
+            futures = [
+                executor.submit(health_catalog, endpoint, args.api_prefix)
+                for endpoint in args.endpoints
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    results.append(result)
+        if not results:
+            raise RuntimeError("no inference service is available for model preflight")
+        catalogs = [catalog for _endpoint, catalog in results]
+
     contracts: dict[str, dict[str, Any]] = {}
     for model_id in args.models:
-        observed = [catalog[model_id] for _endpoint, catalog in results if model_id in catalog]
+        observed = [catalog[model_id] for catalog in catalogs if model_id in catalog]
         if not observed:
-            raise ValueError(f"model {model_id!r} is unavailable on all endpoints")
+            raise ValueError(f"model {model_id!r} is unavailable for {backend} inference")
         limits = observed[0].get("forecast_limits") or {}
         signature = protocol.canonical_json(limits)
         if any(
@@ -152,25 +178,42 @@ def _service_model_contracts(args: argparse.Namespace) -> dict[str, dict[str, An
             for row in observed[1:]
         ):
             raise ValueError(f"model {model_id!r} has inconsistent endpoint limits")
-        service_maximum_context = int(limits.get("max_input_length") or -1)
-        if service_maximum_context < 1:
-            raise ValueError(f"model {model_id!r} has no finite positive context limit")
-        maximum_context = min(
-            service_maximum_context,
-            int(
-                SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(
-                    model_id, service_maximum_context
-                )
-            ),
+        advertised_maximum_context = int(limits.get("max_input_length") or -1)
+        operational_maximum_context = SOURCE_DISTANCE_MODEL_MAX_CONTEXTS.get(model_id)
+        if advertised_maximum_context < 1 and operational_maximum_context is None:
+            raise ValueError(
+                f"model {model_id!r} has neither a runtime nor CaFE context limit"
+            )
+        maximum_context = int(
+            advertised_maximum_context
+            if operational_maximum_context is None
+            else (
+                operational_maximum_context
+                if advertised_maximum_context < 1
+                else min(advertised_maximum_context, operational_maximum_context)
+            )
         )
         contracts[model_id] = {
             "maximum_context": maximum_context,
-            "service_maximum_context": service_maximum_context,
-            "context_policy": "min_service_and_cafe_operational_limit_v1",
+            "advertised_maximum_context": advertised_maximum_context,
+            "service_maximum_context": (
+                advertised_maximum_context if backend == "service" else None
+            ),
+            "context_policy": (
+                "min_service_and_cafe_operational_limit_v1"
+                if backend == "service"
+                else "min_runtime_and_cafe_operational_limit_v2"
+            ),
             "maximum_horizon": int(limits.get("max_output_length") or -1),
             "forecast_limits": limits,
         }
     return contracts
+
+
+def _service_model_contracts(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
+    """Compatibility wrapper for callers that explicitly test service metadata."""
+
+    return _model_contracts(argparse.Namespace(**{**vars(args), "backend": "service"}))
 
 
 def _inference_command(
@@ -181,6 +224,8 @@ def _inference_command(
     execute_model: str | None = None,
     reuse_loaded_model: bool = False,
     preserve_loaded_model: bool = False,
+    devices_override: str | None = None,
+    worker_hosts_override: list[str] | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -192,12 +237,20 @@ def _inference_command(
         str(experiment_root),
         "--models",
         *args.models,
+        "--backend",
+        args.backend,
         "--endpoints",
         *args.endpoints,
         "--api-prefix",
         args.api_prefix,
         "--devices",
-        args.devices,
+        devices_override or args.devices,
+        "--model-root",
+        str(args.model_root),
+        "--model-code-root",
+        str(args.model_code_root),
+        "--distributed-repo-root",
+        str(args.distributed_repo_root),
         "--preprocess-workers",
         str(args.preprocess_workers),
         "--max-open-shape-groups",
@@ -207,6 +260,13 @@ def _inference_command(
         "--max-inflight-mib",
         str(args.max_inflight_mib),
     ]
+    configured_hosts = (
+        worker_hosts_override
+        if worker_hosts_override is not None
+        else args.worker_host
+    )
+    for host in configured_hosts:
+        command.extend(("--worker-host", host))
     if execute_model is not None:
         command.extend(("--execute-models", execute_model, "--resume"))
     elif args.resume_inference:
@@ -250,11 +310,11 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         experiment_id=experiment_root.name,
         created_at=protocol.utc_now(),
     )
-    service_contracts = _service_model_contracts(args)
+    runtime_contracts = _model_contracts(args)
     for task in tasks:
         incompatible = [
             model_id
-            for model_id, contract in service_contracts.items()
+            for model_id, contract in runtime_contracts.items()
             if 0 <= int(contract["maximum_horizon"]) < int(task.horizon)
         ]
         if incompatible:
@@ -264,7 +324,7 @@ def run_pipeline(args: argparse.Namespace) -> Path:
             )
     model_contexts = {
         model_id: int(contract["maximum_context"])
-        for model_id, contract in service_contracts.items()
+        for model_id, contract in runtime_contracts.items()
     }
     task_ids = [task.task_id for task in tasks]
     common = {
@@ -278,7 +338,8 @@ def run_pipeline(args: argparse.Namespace) -> Path:
         "max_instances_per_task": args.max_instances,
         "generation_batch_bytes": int(args.generation_batch_mib) * 1024 * 1024,
         "validation_mode": "research",
-        "model_service_contracts": service_contracts,
+        "model_runtime_contracts": runtime_contracts,
+        "inference_backend": args.backend,
     }
 
     if "generation" in stages:
@@ -336,11 +397,33 @@ def run_pipeline(args: argparse.Namespace) -> Path:
     ]
 
     if "inference" in stages:
+        native_runtime_manifest = (
+            args.model_root.resolve().parent / "model_runtime_manifest.json"
+        )
+        if args.backend == "native" and not native_runtime_manifest.is_file():
+            raise FileNotFoundError(
+                "native runtime is not staged; expected "
+                f"{native_runtime_manifest}. Run scripts/stage_native_runtime.py first."
+            )
         _contract(
             experiment_root,
             "inference",
-            {**common, "endpoints": list(args.endpoints)},
-            [*generation_manifests, *validation_reports],
+            {
+                **common,
+                "endpoints": list(args.endpoints),
+                "worker_hosts": list(args.worker_host),
+                "model_root": str(args.model_root),
+                "model_code_root": str(args.model_code_root),
+            },
+            [
+                *generation_manifests,
+                *validation_reports,
+                *(
+                    [native_runtime_manifest]
+                    if args.backend == "native"
+                    else []
+                ),
+            ],
         )
         if args.prepare_only:
             for task_id in task_ids:
@@ -351,19 +434,67 @@ def run_pipeline(args: argparse.Namespace) -> Path:
                 )
         else:
             for model_id in args.models:
-                for index, task_id in enumerate(task_ids):
-                    subprocess.run(
-                        _inference_command(
-                            args,
-                            experiment_root,
-                            task_id,
-                            execute_model=model_id,
-                            reuse_loaded_model=index > 0,
-                            preserve_loaded_model=index < len(task_ids) - 1,
-                        ),
-                        cwd=protocol.REPO_ROOT,
-                        check=True,
-                    )
+                if args.backend == "native":
+                    devices = [
+                        value.strip()
+                        for value in str(args.devices).split(",")
+                        if value.strip()
+                    ]
+                    hosts = list(args.worker_host or ["local"])
+                    lanes = [(host, device) for host in hosts for device in devices]
+                    if not lanes:
+                        raise ValueError("native inference has no host/device lanes")
+
+                    def run_lane(lane_index: int) -> None:
+                        host, device = lanes[lane_index]
+                        for task_id in task_ids[lane_index :: len(lanes)]:
+                            subprocess.run(
+                                _inference_command(
+                                    args,
+                                    experiment_root,
+                                    task_id,
+                                    execute_model=model_id,
+                                    devices_override=device,
+                                    worker_hosts_override=[host],
+                                ),
+                                cwd=protocol.REPO_ROOT,
+                                check=True,
+                            )
+
+                    if len(task_ids) >= len(lanes):
+                        with ThreadPoolExecutor(max_workers=len(lanes)) as executor:
+                            futures = [
+                                executor.submit(run_lane, index)
+                                for index in range(len(lanes))
+                            ]
+                            for future in futures:
+                                future.result()
+                    else:
+                        for task_id in task_ids:
+                            subprocess.run(
+                                _inference_command(
+                                    args,
+                                    experiment_root,
+                                    task_id,
+                                    execute_model=model_id,
+                                ),
+                                cwd=protocol.REPO_ROOT,
+                                check=True,
+                            )
+                else:
+                    for index, task_id in enumerate(task_ids):
+                        subprocess.run(
+                            _inference_command(
+                                args,
+                                experiment_root,
+                                task_id,
+                                execute_model=model_id,
+                                reuse_loaded_model=index > 0,
+                                preserve_loaded_model=index < len(task_ids) - 1,
+                            ),
+                            cwd=protocol.REPO_ROOT,
+                            check=True,
+                        )
     inference_manifests = [
         experiment_root / task_id / "03_inference" / "manifest.json"
         for task_id in task_ids

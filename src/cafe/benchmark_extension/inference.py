@@ -42,9 +42,11 @@ from cafe.inference.runner import (
     resolve_input_capability,
     safe_filename,
 )
+from cafe.inference.native_catalog import native_catalog
+from cafe.inference.native_runtime import NativeForecastRuntime
 
 
-INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v13"
+INFERENCE_SCHEMA = "cafe.benchmark_extension_inference.v14"
 TASK_SCHEMA = "cafe.benchmark_extension_forecast_task.v7"
 LEGACY_PUBLICATION_VALIDATION_SCHEMA = (
     "cafe.benchmark_extension_validation.v3"
@@ -125,12 +127,38 @@ def parse_args() -> argparse.Namespace:
         description="Forecast native GIFT-Eval baselines and capability treatments."
     )
     parser.add_argument("--dataset-id", required=True)
+    parser.add_argument(
+        "--backend",
+        choices=("native", "service"),
+        default="native",
+        help="Run models in CaFE workers or use the legacy REST service.",
+    )
     parser.add_argument("--output-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--execute-models", nargs="+", default=None)
     parser.add_argument("--endpoints", nargs="+", default=list(DEFAULT_ENDPOINTS))
     parser.add_argument("--api-prefix", default="/ai/api/v1")
     parser.add_argument("--devices", default="0,1")
+    parser.add_argument(
+        "--worker-host",
+        action="append",
+        default=[],
+        help=(
+            "Native worker host (repeat for multiple hosts); defaults to local. "
+            "Every host uses --devices and the model replica count."
+        ),
+    )
+    parser.add_argument(
+        "--model-root",
+        type=Path,
+        default=protocol.REPO_ROOT / "runtime" / "models",
+    )
+    parser.add_argument(
+        "--model-code-root",
+        type=Path,
+        default=protocol.REPO_ROOT / "runtime" / "model_runtime",
+        help="Staged model-only implementation tree; no REST server is started.",
+    )
     parser.add_argument("--load-timeout-seconds", type=int, default=1800)
     parser.add_argument("--forecast-timeout-seconds", type=int, default=1200)
     parser.add_argument("--max-attempts", type=int, default=3)
@@ -403,6 +431,7 @@ def _iter_model_bulk_batches(
             summary["unsupported_window_view_count"] += 1
             continue
         summary["compatible_sample_count"] += 1
+        summary["expected_model_input_count"] += int(plan["target_request_count"])
         summary["expected_http_request_count"] += int(plan["target_request_count"])
         summary[
             "adapted_view_count" if plan["adapted"] else "native_view_count"
@@ -472,6 +501,9 @@ def _adaptation_summary() -> dict[str, int]:
         "adapted_view_count": 0,
         "split_target_view_count": 0,
         "covariates_omitted_view_count": 0,
+        "expected_model_input_count": 0,
+        # Retained for service-manifest compatibility. Native manifests use
+        # expected_model_input_count and never issue an HTTP request.
         "expected_http_request_count": 0,
     }
 
@@ -1209,6 +1241,134 @@ def run_streaming_model(
     }
 
 
+def run_native_streaming_model(
+    *,
+    model_id: str,
+    model: dict[str, Any],
+    execution: dict[str, Any],
+    model_root: Path,
+    model_code_root: Path,
+    device: str,
+    sample_factory: Any,
+    prediction_dir: Path,
+    failure_path: Path,
+    maximum_open_groups: int,
+    maximum_inflight_bytes: int,
+) -> dict[str, Any]:
+    """Replay, batch, infer, and persist inside one GPU worker process."""
+
+    started = time.monotonic()
+    runtime = NativeForecastRuntime.load(
+        model_id=model_id,
+        model_root=model_root,
+        model_code_root=model_code_root,
+        device=device,
+    )
+    summary = _adaptation_summary()
+    prediction_dir.mkdir(parents=True, exist_ok=True)
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    failure_path.write_text("", encoding="utf-8")
+    part_records: list[dict[str, Any]] = []
+    current_shard: int | None = None
+    writer: PredictionParquetWriter | None = None
+    batch_count = 0
+    native_forward_count = 0
+    maximum_native_batch_rows = 0
+    maximum_bulk_rows = max(1, int(execution.get("maximum_bulk_rows", 64)))
+
+    def finish_shard() -> None:
+        nonlocal writer
+        if writer is None or current_shard is None:
+            return
+        row_count = writer.close()
+        part_records.append(
+            {
+                **parquet_file_record(writer.path, row_count=row_count),
+                "source_shard_index": int(current_shard),
+            }
+        )
+        writer = None
+
+    try:
+        batches = _iter_model_bulk_batches(
+            sample_factory(),
+            model=model,
+            execution=execution,
+            maximum_open_groups=maximum_open_groups,
+            maximum_buffered_bytes=max(1, int(maximum_inflight_bytes)),
+            summary=summary,
+        )
+        for source_shard, _group_key, chunk in batches:
+            if current_shard is None or int(source_shard) != current_shard:
+                finish_shard()
+                current_shard = int(source_shard)
+                writer = PredictionParquetWriter(
+                    prediction_dir / f"part_{current_shard:06d}.parquet"
+                )
+            assert writer is not None
+            children = [
+                child
+                for _sample, _plan, child_rows in chunk
+                for child in child_rows
+            ]
+            forecasts: list[np.ndarray] = []
+            for start in range(0, len(children), maximum_bulk_rows):
+                child_bulk = children[start : start + maximum_bulk_rows]
+                forecasts.extend(runtime.forecast(child_bulk))
+                native_forward_count += 1
+                maximum_native_batch_rows = max(
+                    maximum_native_batch_rows, len(child_bulk)
+                )
+            child_offset = 0
+            prediction_rows: list[dict[str, Any]] = []
+            for sample, plan, child_rows in chunk:
+                selected = forecasts[child_offset : child_offset + len(child_rows)]
+                child_offset += len(child_rows)
+                if plan["target_mode"] == "independent_univariate":
+                    forecast = np.concatenate(
+                        [np.asarray(value, dtype=np.float32).T for value in selected],
+                        axis=1,
+                    )
+                else:
+                    forecast = np.asarray(selected[0], dtype=np.float32).T
+                prediction_rows.append(
+                    {
+                        "model_id": model_id,
+                        "sample_id": str(sample["sample_id"]),
+                        "forecast": forecast,
+                        "input_adaptation": plan,
+                    }
+                )
+            writer.write_batch(prediction_rows)
+            batch_count += 1
+        finish_shard()
+    except Exception:
+        if writer is not None:
+            writer.abort()
+        for path in prediction_dir.glob("*.tmp"):
+            path.unlink(missing_ok=True)
+        raise
+
+    prediction_count = sum(int(record["row_count"]) for record in part_records)
+    complete = prediction_count == summary["compatible_sample_count"]
+    summary.pop("expected_http_request_count", None)
+    return {
+        "model_id": model_id,
+        "status": "complete" if complete else "incomplete",
+        **summary,
+        "prediction_count": prediction_count,
+        "failure_count": 0,
+        "worker_count": 1,
+        "native_batch_count": batch_count,
+        "native_forward_count": native_forward_count,
+        "maximum_native_batch_rows": maximum_native_batch_rows,
+        "load_seconds_max": runtime.load_seconds,
+        "elapsed_seconds": round(time.monotonic() - started, 3),
+        "runtime": runtime.provenance(),
+        "prediction_parts": part_records,
+    }
+
+
 def _command_output(command: list[str], *, cwd: Path | None = None) -> str:
     completed = subprocess.run(
         command,
@@ -1241,6 +1401,7 @@ def _sync_distributed_inputs(
     local_dataset_root: Path,
     remote_experiment_root: Path,
     generation: dict[str, Any],
+    require_revision: bool = True,
 ) -> None:
     """Copy immutable source/contracts only when the remote hashes differ."""
 
@@ -1254,7 +1415,7 @@ def _sync_distributed_inputs(
         host,
         f"cd {shlex.quote(str(remote_repo_root))} && git rev-parse HEAD",
     )
-    if remote_revision != local_revision:
+    if require_revision and remote_revision != local_revision:
         raise RuntimeError(
             f"distributed worker {host} revision {remote_revision} != {local_revision}"
         )
@@ -1322,6 +1483,41 @@ def _sync_distributed_inputs(
         _command_output(["rsync", "-a", str(local_source), f"{host}:{remote_source}"])
         if remote_sha(remote_source) != str(record["sha256"]):
             raise RuntimeError(f"failed to synchronize {local_source} to {host}")
+
+
+def _sync_native_project_source(host: str, remote_repo_root: Path) -> None:
+    """Synchronize the exact CaFE Python tree used by native remote workers."""
+
+    _remote_output(
+        host,
+        "mkdir -p "
+        + shlex.quote(str(remote_repo_root / "src" / "cafe"))
+        + " "
+        + shlex.quote(str(remote_repo_root / "scripts")),
+    )
+    for local_path, remote_path in (
+        (protocol.REPO_ROOT / "src" / "cafe", remote_repo_root / "src" / "cafe"),
+        (protocol.REPO_ROOT / "scripts", remote_repo_root / "scripts"),
+    ):
+        _command_output(
+            [
+                "rsync",
+                "-a",
+                "--checksum",
+                str(local_path) + "/",
+                f"{host}:{remote_path}/",
+            ]
+        )
+    for name in ("pyproject.toml", "uv.lock"):
+        _command_output(
+            [
+                "rsync",
+                "-a",
+                "--checksum",
+                str(protocol.REPO_ROOT / name),
+                f"{host}:{remote_repo_root / name}",
+            ]
+        )
 
 
 def _distributed_worker_command(
@@ -1397,6 +1593,69 @@ def _distributed_worker_command(
     return command
 
 
+def _native_worker_command(
+    *,
+    python_prefix: list[str],
+    dataset_id: str,
+    output_root: Path,
+    gift_eval_dir: Path,
+    model_id: str,
+    device: str,
+    model_root: Path,
+    model_code_root: Path,
+    part_index: int,
+    part_count: int,
+    worker_output_dir: Path,
+    args: argparse.Namespace,
+) -> list[str]:
+    command = [
+        *python_prefix,
+        "-m",
+        "cafe.benchmark_extension.distributed_worker",
+        "--backend",
+        "native",
+        "--dataset-id",
+        dataset_id,
+        "--output-root",
+        str(output_root),
+        "--gift-eval-dir",
+        str(gift_eval_dir),
+        "--model-id",
+        model_id,
+        "--device",
+        device,
+        "--model-root",
+        str(model_root),
+        "--model-code-root",
+        str(model_code_root),
+        "--part-index",
+        str(part_index),
+        "--part-count",
+        str(part_count),
+        "--worker-output-dir",
+        str(worker_output_dir),
+        "--preprocess-workers",
+        str(args.preprocess_workers),
+        "--max-open-shape-groups",
+        str(args.max_open_shape_groups),
+        "--max-inflight-mib",
+        str(args.max_inflight_mib),
+        "--resume",
+    ]
+    if args.max_request_input_tokens is not None:
+        command.extend(
+            ("--max-request-input-tokens", str(args.max_request_input_tokens))
+        )
+    if args.client_inflight_input_tokens is not None:
+        command.extend(
+            (
+                "--client-inflight-input-tokens",
+                str(args.client_inflight_input_tokens),
+            )
+        )
+    return command
+
+
 def _remote_worker_python_prefix(remote_repo_root: Path) -> list[str]:
     """Run the worker tree's source with dependencies from its local venv."""
 
@@ -1461,6 +1720,7 @@ def _aggregate_distributed_statuses(
         "adapted_view_count",
         "split_target_view_count",
         "covariates_omitted_view_count",
+        "expected_model_input_count",
         "expected_http_request_count",
         "bulk_request_count",
         "attempt_count",
@@ -1655,6 +1915,261 @@ def run_distributed_streaming_model(
     )
 
 
+def _aggregate_native_statuses(
+    *,
+    model_id: str,
+    statuses: list[dict[str, Any]],
+    local_worker_dirs: list[Path],
+) -> dict[str, Any]:
+    from cafe.benchmark_extension.distributed_worker import WORKER_STATUS_SCHEMA
+
+    count = len(statuses)
+    observed_parts: set[int] = set()
+    prediction_parts: list[dict[str, Any]] = []
+    normalized_statuses: list[dict[str, Any]] = []
+    for status, worker_dir in zip(statuses, local_worker_dirs, strict=True):
+        if status.get("schema_version") != WORKER_STATUS_SCHEMA:
+            raise ValueError("native worker status schema mismatch")
+        partition = status.get("source_shard_partition") or {}
+        index = int(partition.get("part_index", -1))
+        if int(partition.get("part_count", -1)) != count or index in observed_parts:
+            raise ValueError("native worker partition coverage is invalid")
+        observed_parts.add(index)
+        normalized = dict(status)
+        normalized_parts: list[dict[str, Any]] = []
+        for record in status.get("prediction_parts") or []:
+            source_shard = int(record["source_shard_index"])
+            if source_shard % count != index:
+                raise ValueError("native prediction part is outside its worker partition")
+            local_part = worker_dir / "predictions" / Path(str(record["path"])).name
+            if (
+                not local_part.is_file()
+                or protocol.file_sha256(local_part) != record["sha256"]
+            ):
+                raise ValueError(f"native prediction part is invalid: {local_part}")
+            normalized_record = {**record, "path": str(local_part)}
+            normalized_parts.append(normalized_record)
+            prediction_parts.append(normalized_record)
+        normalized["prediction_parts"] = normalized_parts
+        normalized_statuses.append(normalized)
+    if observed_parts != set(range(count)):
+        raise ValueError("native worker partitions are incomplete")
+    shard_indexes = [int(row["source_shard_index"]) for row in prediction_parts]
+    if len(shard_indexes) != len(set(shard_indexes)):
+        raise ValueError("native workers emitted duplicate source shards")
+
+    summed_fields = (
+        "prediction_count",
+        "failure_count",
+        "expected_original_view_count",
+        "compatible_sample_count",
+        "unsupported_window_view_count",
+        "native_view_count",
+        "adapted_view_count",
+        "split_target_view_count",
+        "covariates_omitted_view_count",
+        "expected_model_input_count",
+        "native_batch_count",
+        "native_forward_count",
+    )
+    aggregate = {
+        "model_id": model_id,
+        "status": (
+            "complete"
+            if all(row.get("status") == "complete" for row in normalized_statuses)
+            else "incomplete"
+        ),
+        **{
+            field: sum(int(row.get(field, 0)) for row in normalized_statuses)
+            for field in summed_fields
+        },
+        "worker_count": count,
+        "maximum_native_batch_rows": max(
+            int(row.get("maximum_native_batch_rows", 0))
+            for row in normalized_statuses
+        ),
+        "load_seconds_max": max(
+            float(row.get("load_seconds_max", 0.0)) for row in normalized_statuses
+        ),
+        "elapsed_seconds": max(
+            float(row.get("elapsed_seconds", 0.0)) for row in normalized_statuses
+        ),
+        "runtimes": [row.get("runtime") for row in normalized_statuses],
+        "prediction_parts": sorted(
+            prediction_parts, key=lambda row: int(row["source_shard_index"])
+        ),
+        "distributed_execution": {
+            "policy": "source_shard_modulo_native_gpu_worker_v1",
+            "worker_count": count,
+            "worker_statuses": normalized_statuses,
+        },
+    }
+    if (
+        aggregate["failure_count"] != 0
+        or aggregate["prediction_count"] != aggregate["compatible_sample_count"]
+    ):
+        aggregate["status"] = "incomplete"
+    return aggregate
+
+
+def run_native_distributed_streaming_model(
+    *,
+    args: argparse.Namespace,
+    generation: dict[str, Any],
+    dataset_root: Path,
+    model_id: str,
+) -> dict[str, Any]:
+    devices = [value.strip() for value in str(args.devices).split(",") if value.strip()]
+    if not devices or len(devices) != len(set(devices)):
+        raise ValueError("--devices must contain unique CUDA device indexes")
+    hosts = list(dict.fromkeys(args.worker_host or ["local"]))
+    replicas = int(MODEL_EXECUTION_CONFIG[model_id]["replicas_per_device"])
+    worker_slots = [
+        (host, device, replica)
+        for host in hosts
+        for device in devices
+        for replica in range(replicas)
+    ]
+    if not worker_slots:
+        raise ValueError("native execution has no worker slots")
+
+    remote_repo_root = Path(str(args.distributed_repo_root))
+    remote_experiment_root = (
+        remote_repo_root / "runtime" / "experiments" / args.output_root.name
+    )
+    local_model_root = (
+        dataset_root
+        / "03_inference"
+        / "native_workers"
+        / safe_filename(model_id)
+    )
+    synchronized_hosts: set[str] = set()
+    local_runtime_manifest = (
+        args.model_root.resolve().parent / "model_runtime_manifest.json"
+    )
+    local_runtime_manifest_sha256 = protocol.file_sha256(local_runtime_manifest)
+    descriptors: list[dict[str, Any]] = []
+    for index, (host, device, replica) in enumerate(worker_slots):
+        local_worker_dir = local_model_root / f"worker_{index:03d}"
+        if host.lower() == "local":
+            worker_output = local_worker_dir
+            output_root = args.output_root.resolve()
+            gift_eval_dir = args.gift_eval_dir.resolve()
+            model_root = args.model_root.resolve()
+            model_code_root = args.model_code_root.resolve()
+        else:
+            if host not in synchronized_hosts:
+                remote_runtime_manifest = (
+                    remote_repo_root / "runtime" / "model_runtime_manifest.json"
+                )
+                remote_runtime_sha256 = _remote_output(
+                    host,
+                    "if test -f "
+                    + shlex.quote(str(remote_runtime_manifest))
+                    + "; then sha256sum "
+                    + shlex.quote(str(remote_runtime_manifest))
+                    + " | awk '{print $1}'; fi",
+                )
+                if remote_runtime_sha256 != local_runtime_manifest_sha256:
+                    raise RuntimeError(
+                        f"native runtime manifest mismatch on {host}: "
+                        f"{remote_runtime_sha256 or 'missing'} != "
+                        f"{local_runtime_manifest_sha256}"
+                    )
+                _sync_native_project_source(host, remote_repo_root)
+                _sync_distributed_inputs(
+                    host=host,
+                    remote_repo_root=remote_repo_root,
+                    local_dataset_root=dataset_root,
+                    remote_experiment_root=remote_experiment_root,
+                    generation=generation,
+                    require_revision=False,
+                )
+                synchronized_hosts.add(host)
+            worker_output = (
+                remote_experiment_root
+                / dataset_root.name
+                / "03_inference"
+                / "native_workers"
+                / safe_filename(model_id)
+                / f"worker_{index:03d}"
+            )
+            output_root = remote_experiment_root
+            gift_eval_dir = remote_repo_root / "data" / "gift-eval"
+            model_root = remote_repo_root / "runtime" / "models"
+            model_code_root = remote_repo_root / "runtime" / "model_runtime"
+        descriptors.append(
+            {
+                "host": host,
+                "device": device,
+                "replica": replica,
+                "local_worker_dir": local_worker_dir,
+                "worker_output": worker_output,
+                "output_root": output_root,
+                "gift_eval_dir": gift_eval_dir,
+                "model_root": model_root,
+                "model_code_root": model_code_root,
+            }
+        )
+
+    def run_one(index: int) -> dict[str, Any]:
+        descriptor = descriptors[index]
+        host = str(descriptor["host"])
+        local_worker_dir = Path(descriptor["local_worker_dir"])
+        local_worker_dir.mkdir(parents=True, exist_ok=True)
+        python_prefix = (
+            [sys.executable]
+            if host.lower() == "local"
+            else _remote_worker_python_prefix(remote_repo_root)
+        )
+        command = _native_worker_command(
+            python_prefix=python_prefix,
+            dataset_id=dataset_root.name,
+            output_root=Path(descriptor["output_root"]),
+            gift_eval_dir=Path(descriptor["gift_eval_dir"]),
+            model_id=model_id,
+            device=f"cuda:{descriptor['device']}",
+            model_root=Path(descriptor["model_root"]),
+            model_code_root=Path(descriptor["model_code_root"]),
+            part_index=index,
+            part_count=len(descriptors),
+            worker_output_dir=Path(descriptor["worker_output"]),
+            args=args,
+        )
+        if host.lower() == "local":
+            output = _command_output(command, cwd=protocol.REPO_ROOT)
+        else:
+            remote_command = (
+                f"cd {shlex.quote(str(remote_repo_root))} && "
+                + " ".join(shlex.quote(value) for value in command)
+            )
+            output = _command_output(
+                ["ssh", "-o", "BatchMode=yes", host, remote_command]
+            )
+            _command_output(
+                [
+                    "rsync",
+                    "-a",
+                    f"{host}:{descriptor['worker_output']}/",
+                    str(local_worker_dir) + "/",
+                ]
+            )
+        (local_worker_dir / "worker.log").write_text(output, encoding="utf-8")
+        status_path = local_worker_dir / "status.json"
+        if not status_path.is_file():
+            raise RuntimeError(f"native worker did not write {status_path}")
+        return protocol.read_json(status_path)
+
+    with ThreadPoolExecutor(max_workers=len(descriptors)) as executor:
+        futures = [executor.submit(run_one, index) for index in range(len(descriptors))]
+        statuses = [future.result() for future in futures]
+    return _aggregate_native_statuses(
+        model_id=model_id,
+        statuses=statuses,
+        local_worker_dirs=[Path(row["local_worker_dir"]) for row in descriptors],
+    )
+
+
 def main() -> int:
     args = parse_args()
     if args.max_request_input_tokens is not None and args.max_request_input_tokens < 1:
@@ -1666,10 +2181,32 @@ def main() -> int:
         raise ValueError("client-inflight-input-tokens must be positive")
     if len(args.models) != len(set(args.models)):
         raise ValueError("models must be unique")
-    distributed_workers = parse_distributed_workers(
-        list(args.distributed_worker),
-        configured_endpoints=list(args.endpoints),
+    native_runtime_manifest_path = (
+        args.model_root.resolve().parent / "model_runtime_manifest.json"
     )
+    native_runtime_manifest = None
+    if args.backend == "native":
+        if not native_runtime_manifest_path.is_file():
+            raise FileNotFoundError(
+                f"native runtime manifest is missing: {native_runtime_manifest_path}"
+            )
+        native_runtime_manifest = protocol.read_json(native_runtime_manifest_path)
+        if native_runtime_manifest.get("schema_version") != (
+            "cafe.staged_native_model_runtime.v1"
+        ):
+            raise ValueError("unsupported native runtime manifest")
+    distributed_workers = (
+        parse_distributed_workers(
+            list(args.distributed_worker),
+            configured_endpoints=list(args.endpoints),
+        )
+        if args.backend == "service"
+        else {}
+    )
+    if args.backend == "native" and args.distributed_worker:
+        raise ValueError("native mode uses --worker-host instead of --distributed-worker")
+    if args.backend == "service" and args.worker_host:
+        raise ValueError("service mode uses --distributed-worker instead of --worker-host")
     if distributed_workers and set(distributed_workers) != set(args.endpoints):
         raise ValueError(
             "distributed mode requires exactly one --distributed-worker for "
@@ -1693,18 +2230,21 @@ def main() -> int:
         )
     inference_dir.mkdir(parents=True, exist_ok=True)
     health_results: list[tuple[str, dict[str, dict[str, Any]]]] = []
-    with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
-        futures = [
-            executor.submit(health_catalog, endpoint, args.api_prefix)
-            for endpoint in args.endpoints
-        ]
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                health_results.append(result)
-    if not health_results:
-        raise RuntimeError("no inference service is available")
-    health_results.sort(key=lambda item: item[0])
+    if args.backend == "native":
+        health_results = [("native", native_catalog(args.model_root.resolve()))]
+    else:
+        with ThreadPoolExecutor(max_workers=len(args.endpoints)) as executor:
+            futures = [
+                executor.submit(health_catalog, endpoint, args.api_prefix)
+                for endpoint in args.endpoints
+            ]
+            for future in as_completed(futures):
+                result = future.result()
+                if result is not None:
+                    health_results.append(result)
+        if not health_results:
+            raise RuntimeError("no inference service is available")
+        health_results.sort(key=lambda item: item[0])
     previous_manifest = (
         protocol.read_json(manifest_path)
         if manifest_path.exists() and args.resume
@@ -1815,7 +2355,14 @@ def main() -> int:
             execution["client_inflight_input_tokens"] = int(
                 args.client_inflight_input_tokens
             )
-        if distributed_workers:
+        if args.backend == "native":
+            status = run_native_distributed_streaming_model(
+                args=args,
+                generation=generation,
+                dataset_root=dataset_root,
+                model_id=model_id,
+            )
+        elif distributed_workers:
             status = run_distributed_streaming_model(
                 args=args,
                 generation=generation,
@@ -1849,8 +2396,9 @@ def main() -> int:
                 unload_before_load=not bool(args.reuse_loaded_model),
                 unload_after=not bool(args.preserve_loaded_model),
             )
-        status["service_advertised_maximum_context"] = _maximum_context(
-            service_model
+        status["advertised_maximum_context"] = _maximum_context(service_model)
+        status["service_advertised_maximum_context"] = (
+            _maximum_context(service_model) if args.backend == "service" else None
         )
         status["effective_maximum_context"] = effective_context
         status_by_model[model_id] = status
@@ -1877,13 +2425,22 @@ def main() -> int:
         "native_target_policy": (
             "native_if_supported_else_inference_only_independent_univariate_reassembly"
         ),
+        "backend": args.backend,
         "request_materialization": (
-            "distributed_near_endpoint_source_shard_replay_no_model_task_artifact"
-            if distributed_workers
-            else "bounded_in_memory_source_contract_replay_no_model_task_artifact"
+            "source_shard_replay_inside_native_gpu_worker_no_model_task_artifact"
+            if args.backend == "native"
+            else (
+                "distributed_near_endpoint_source_shard_replay_no_model_task_artifact"
+                if distributed_workers
+                else "bounded_in_memory_source_contract_replay_no_model_task_artifact"
+            )
         ),
-        "transport": "msgpack_bulk",
-        "endpoint_policy": "model_major_all_compatible_endpoints",
+        "transport": "in_process_tensors" if args.backend == "native" else "msgpack_bulk",
+        "endpoint_policy": (
+            "one_process_per_gpu_replica_across_worker_hosts"
+            if args.backend == "native"
+            else "model_major_all_compatible_endpoints"
+        ),
         "bulk_request_input_token_policy": (
             "shape_aware_max_request_and_weighted_endpoint_inflight_v1"
         ),
@@ -1899,20 +2456,42 @@ def main() -> int:
             args.client_inflight_input_tokens
         ),
         "overload_retry_policy": (
-            "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter"
+            None
+            if args.backend == "native"
+            else "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter"
         ),
         "max_open_shape_groups": int(args.max_open_shape_groups),
         "max_inflight_batches_per_endpoint": int(args.max_inflight_batches),
         "max_inflight_mib": int(args.max_inflight_mib),
         "preprocess_workers": int(args.preprocess_workers),
         "distributed_workers": distributed_workers,
+        "worker_hosts": list(args.worker_host or (["local"] if args.backend == "native" else [])),
+        "native_model_root": (
+            str(args.model_root.resolve()) if args.backend == "native" else None
+        ),
+        "native_model_code_root": (
+            str(args.model_code_root.resolve()) if args.backend == "native" else None
+        ),
+        "native_runtime_manifest": (
+            {
+                "path": str(native_runtime_manifest_path),
+                "sha256": protocol.file_sha256(native_runtime_manifest_path),
+                "content_sha256": native_runtime_manifest.get("content_sha256"),
+            }
+            if native_runtime_manifest is not None
+            else None
+        ),
         "distributed_repo_root": (
             str(args.distributed_repo_root) if distributed_workers else None
         ),
         "distributed_execution_policy": (
-            "source_shard_modulo_near_endpoint_replay_v1"
-            if distributed_workers
-            else None
+            "source_shard_modulo_native_gpu_worker_v1"
+            if args.backend == "native"
+            else (
+                "source_shard_modulo_near_endpoint_replay_v1"
+                if distributed_workers
+                else None
+            )
         ),
     }
     manifest = {

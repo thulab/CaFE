@@ -1,0 +1,4048 @@
+{
+  "complete": true,
+  "config": {
+    "bulk_request_input_token_policy": "shape_aware_max_request_and_weighted_endpoint_inflight_v1",
+    "client_inflight_input_tokens_override": null,
+    "dataset_id": "fev__rossmann_1W",
+    "default_client_inflight_input_tokens_per_endpoint": 6525120,
+    "default_maximum_request_input_tokens": 815640,
+    "distributed_execution_policy": null,
+    "distributed_repo_root": null,
+    "distributed_workers": {},
+    "effective_model_maximum_contexts": {
+      "Chronos-2": 8192,
+      "Timer-3.5": 11520,
+      "Timer-4.0": 8192,
+      "moirai2": 8192,
+      "timesfm2.5": 15360,
+      "tirex2": 2048,
+      "toto2.0": 16384
+    },
+    "endpoint_policy": "model_major_all_compatible_endpoints",
+    "input_history_policy": "treatment_applied_to_entire_official_history_then_generation_frozen_model_context_suffix_v1",
+    "max_inflight_batches_per_endpoint": 8,
+    "max_inflight_mib": 2048,
+    "max_open_shape_groups": 64,
+    "max_request_input_tokens_override": null,
+    "model_input_token_config": {
+      "Chronos-2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "TimePFN": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-3.5": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-4.0": {
+        "client_inflight_input_tokens": 13050240,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 2.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "moirai2": {
+        "client_inflight_input_tokens": 13050240,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 8,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "timesfm2.5": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0,
+        "very_long_context_input_token_multiplier": 2.0,
+        "very_long_context_threshold": 8192
+      },
+      "tirex2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "large_panel_context_threshold": 512,
+        "large_panel_http_concurrency": 8,
+        "large_panel_target_dim_threshold": 16,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_http_concurrency": 2,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "toto2.0": {
+        "client_inflight_input_tokens": 1048576,
+        "http_concurrency": 8,
+        "maximum_bulk_rows": 256,
+        "maximum_request_input_tokens": 131072,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 256,
+        "output_horizon_token_multiplier": 1.0
+      }
+    },
+    "models": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "tirex2",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "native_target_policy": "native_if_supported_else_inference_only_independent_univariate_reassembly",
+    "overload_retry_policy": "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter",
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "preprocess_workers": 8,
+    "request_materialization": "bounded_in_memory_source_contract_replay_no_model_task_artifact",
+    "transport": "msgpack_bulk"
+  },
+  "config_sha256": "733fea486d8c87e6ea2ffb755772448f43600f41e380fbfff952e7d3101ec627",
+  "created_at": "2026-08-29T23:21:52.381566+00:00",
+  "dataset_id": "fev__rossmann_1W",
+  "generation_manifest": {
+    "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/01_generation/manifest.json",
+    "sha256": "4cdaa4cd9d7c4e9e300a9614aaef59bdc89e3422b086424b2d0fc8ba5a9b9e56"
+  },
+  "model_predictions": {
+    "Chronos-2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Chronos-2",
+      "parts": [
+        {
+          "bytes": 234914,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "12e239068846ef9687891a030b815a12a086ec9b14ff646d4fd853383a0c3d9d",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 236128,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "1c63ba79676c5c33f7dc2541bf901efb393dac0472e85a14c4bfa56b9e3b7fb8",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 239570,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "231a9fec57d54742690fef23ad47b7821d7876d6628169c98a1a6e6467ea11e4",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 233963,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "de4d0d0a3ab0b582540e8634a844c3f87f1851bde165fde8c00e2f18b500cd00",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 288526,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "9670588197f3aa293b1acce7380705f6005bdf2abafbfecd97c97342fd66bc53",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 311077,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "0ad82e3016f0c2b4ded1a7e5c03e44fc5e07192a65139a4f6b8be653b12ff15e",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 310829,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "be3dbd135aec49bf202cff4707aea343fd921134933e2e2f3b3f6de0b7b2bfaf",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 307211,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "ca5e64c6139dd347c695867e7d9e6d0d3b280bc50c0c13eea7e2dd239aa36034",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 346937,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "42dda4ecc2242f48bb37825c27d2a6451f379bfcb642d62f594d6d5444aae877",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 446992,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "65a16dfe1712a9080365650c0edee8f6aed5a2de5dbb0d0ba8eb9bc49d5b0909",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 447703,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "1bb4771cb177bc6f023a22ed28c054114f918c31d8997fb7a2fbfc67c91eef83",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 450262,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "d11f4fccce3209b45c55da21675b8b1d33ad47125955cf50583c0a3c9ef2f0ad",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 449080,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "3d126497e02ee5c41df0d140043c1a06e3e793988bf816e9bdd4a67849b64f41",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 450135,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "0c5569131e2347122851c8dbc89c688952319733f53b74d0cfaa0ee2c97f03ca",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 445493,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "00ac179efd681f9947d8492c9a94ded7481e45fe8721975f8b077936b9c90acd",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 445644,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "593e0681f0e44c298bca26e0419a2115092c23a174647426ca81e9f2e6b12691",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 447733,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "841ed6e52d5503537cd144abf54d49d6dc468129348d65fa10481b06ff35119e",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 446661,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "4d20fdff870b0ea221884407517ec2ac3ae2051b998721277c554983fe7df33d",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 444664,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "dfca47b4da56bc395cebe24e50a381bf3f23fafd3edfbbad9fa02a2505730659",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 441482,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "e0b84880b28c667f1b357a15d5d5ab325f0da643a87dc0dea9995b5016738dfb",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 441585,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "9c679b086961204e55b39729b02e859b1b7e202571b1dd13180516264f8ae401",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 440786,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "ae12e1ae4c03f46cbbe7fdb80698efdb9f5eddef44b853e2a1ea28dfa4af0364",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 439414,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "6bdde659b4c951e0ba762bad50cfbf794005a3164e14dce0dd07842fbb658f83",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 438735,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "e85517603a091a81e014d2b8b4d5ae40df63fcfeeb1a49b0794b4252a22cdf97",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 447877,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "c472efeb18327dbe7ea2f5947597ec82533bcf6dbd33edd53b89bbc412ca09a4",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 439053,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "59aebc062c1152f6b789842a3b1b49e2bbc6791cee4cb2498b161010d7064a50",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 462786,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "be660ee6020c7f7692805ee758f8378f2a0a924493491aa850cd59b8742bb6d8",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 466688,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "b9562330cb9c8d4b87413c2239114d348a0716cc8a54436bcd0f3bb1d5e4d5a1",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 467613,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "d25f0a2137ba3f61aa0a386ecf2698bb5bb4e4a69ba4d2b98f558063bab0820b",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 466826,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "11e3d07a9eb542137e8a6f9aad4db43c282ea0c586eebee1b4dba73260a764ff",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 460376,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "1ee43163ff49787c0ebc90750de169f9b157cbeb3eb2f41e802ac933d24de30c",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 458714,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "8512d5fad8bf7e42eb20ab5a202714069ca4710b1b76a7740aa9aa940b9916eb",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 461477,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "45b9921093dbd29a8b74458db8a5729b451b84a6c734eefe89306b9272398c1d",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 462921,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "757bb04db15daa1c2ffad6866684f21fdb1107937c097c1f0bd379a149cb3a32",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 383621,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Chronos-2/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "175b983c7b55ee06f5f0ff67dc01db2b390220ddbf5a821381e91f0a4f807027",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 267370
+    },
+    "Timer-3.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Timer-3.5",
+      "parts": [
+        {
+          "bytes": 222802,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "a03365c41c43f03193d989fd8fb57cc23f7ef39f43f0694130b250baf2ca5234",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 226342,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "924474d94e483a9715affd852253f9bbfc0ae2a8446743cdf8e8779b5d22a9c0",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 224571,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "e73557259bde2cc315874987733233191a4dfb34d7b5c43a6d8acbf4615e742c",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 222716,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "21066c0cdfffaee354dece4c8de315d493bdd19d1c2c8df7d417b6e8c5aac671",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 268028,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "e8b3c828ab6dc9685e99ea0cb14bed6c33a18c72ffa65e12be269063da469930",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 286851,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "02e79a02d59d85a994cf2e225c37faba87fbddbfa962c2272892860fc4f07485",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 287846,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "18b9ebdab5bd99e28da97d35d10b60f960e3e7b0c6e9693708c7c0abc3ec3dfb",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 284079,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "f1318f21b40de8659f643206111606daf9109e6d0f7a4bce5e49ce14e287c7fe",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 306907,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "19e4893cbcf12361f765c9c8cba4fe90a72d02f63ce744da64ba5f44b732544e",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 367235,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "529c22056bec0355594610a98a0a8cf6b5afdd01783e72cbed3666b9a5941a7a",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 362488,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "8dd9224bd47d8de75359372b3d4c29492edc2dd51e597f08ed83580792982d5e",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 365889,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "3f797ff409aa582d9d5cca5fc4e534ae155d259b6830979e212995df67b38cc9",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 363824,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "ce217afebcf2c049cfca60b4fc73dc9cdb7aa608e06ffe5749f4e1779a5ffbc4",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 362942,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "525ccb43d209d3d5efdd8bc1f847ad9440961b01e96dccec4dc05cf7e6b9dc3a",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 357332,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "2aaac89b0a17667b7690d60020489d0bfd2a8b4c4df731f741acc0908d9ea5b4",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 359721,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "d7b53ec480f3a094647c8d70f7a082031fd80912d73e840dddcdd1c03bc9acc7",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 361058,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "e96c1b4265e65330d2541560e977eb676b66e00568c627589386b68c21c36001",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 352876,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "1c51a12d1ddbb9acc78a15d1b63454949cf117823d9cf81f74872163fec07899",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 349068,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "5c82153d90f2b98219398fe86cc0c925bd64525bb7e86783f73df92e8734d0a4",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 352674,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "41cfcbe320351fc3d8b72ad7afbbe41f3c52aa5c12710576011a2a8338486742",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 347124,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "466f3a9e334024185d897381f352dc8b666172c6bf116f94ff7f2510245a63ed",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 345066,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "a386853610f98840ee3996c4be2ea7e312732f225c83438b6bf5a494f6f8dd62",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 335561,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "350390a70a2377320081e67a59913d669034b0c3bd7cbfc3d3985f2365bf86f6",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 338535,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "b119565f7762d2a67612a7e2da7d657dcbb2273f41394686c3e9b24cfb708956",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 342894,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "8d0f9333c80cd44ab501e089cbe177318c7dbde5a1eabed28cc34cb28be263ed",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 336242,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "f658053f195bb9547a6e148efbf4d17425e42caeb7b3479383cd719803524c15",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 360529,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "69e61a4072d0fa276a72e495fbce28f1f430157f292e23c1ccef10aaef7f74d4",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 369773,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "82a72b6bf6d834ed2f75f604bcfbe62b325e02c1ae7ce41e62bab9cd17fd21fb",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 367584,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "abaff8771eb7147f48a0596baef220dbd751038e6e82d0999d7c30ce32c0eace",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 367728,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "83ebc662c41512e81ad1127effda4289e3ec6cc74d824307a1380ce51119988a",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 364784,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "5c737ca38a3822a49ada6a377d83b59beb989228d7492e331ac441ba4179bd4f",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 361626,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "5c39c2a366c1a458cb3b05acfe1bb008cbbe0ce148b57d0f2abfe4c400c43a0f",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 362130,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "dee782716b516453f97e5ecf085a77b36b9feb8db28128104c03738f08020bfe",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 364619,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "c42d4a8b3bbe43b1b180d63d46f9a78e8260632ef39fc9e93da06895a71a2bd4",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 302264,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-3_5/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "6892d8bb083c6563a3c0d5b29e8992c8749a008f86c2a0eb18e58558d96fedf2",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 267370
+    },
+    "Timer-4.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Timer-4.0",
+      "parts": [
+        {
+          "bytes": 228328,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "63f05823322f3d024a224f69899d50d10921c4a6ae057259418ab6e743b0f7bf",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 233201,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "b07e99f2d773e86e26dee0b84e02ccc5ae59d35a133caf4f537adc149036e209",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 232204,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "3b21bd410d202b177f3d49b9a10ba279d287287ae553fa8c7c4e031fb682ab54",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 228220,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "4bba1a2b440253a4b819d8597648b87538446b093be6a507c471111b75fc0e61",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 282152,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "cb486afce6648fbca460ca3c5b55b68d5f6553df22e7b561dce205e9026d4f63",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 303934,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "a891590f684ab8b5fadd28f6f07bb8f3bddb62a003790511ee82ec79d2f45b3a",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 305948,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "2f2b44049c90fca29073c6b5316d8d77ed9cbe7812081862baf77c05e0395cfd",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 301555,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "197f5075a81f6d661b9d446a01022a3f2bd2d98cc20f4b3d4da84ccbe164390b",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 343725,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "7ff2b86c729f51c6565f9dea6fa71b25579bb4854bae08cd5c7c2050aa7cb24f",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 448903,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "d7cfac1c6f214eb7f9cc45877abe39607fd456a4d0d28bcdb5164939d50a97f9",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 447279,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "2b456c5037624231a957c8332906af0c34377cbbfa12879fa3ca86ba5b6342f6",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 451549,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "3b12922f0a50fb88742e69a0d10e4a1a8a2f07168b4b0864cb572117ffe79400",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 449136,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "82244e4206158fe8657e33d0dee5b1555e57d01b833216e7e9a3eb7f0ac72fee",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 441174,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "b2e4c7aec7dd6566b28ca193f24157b0010d12348d62486153dce501615841c1",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 436770,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "baa4e3112b40e0462d1fc72fe1ccc2645010fe8ccbb5c46c88ec50b843b515dc",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 436484,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "7eed90be8ded8e30ccc035d8bacae151f99279e33f27dbf7c8d89e2f9b976c43",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 439367,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "8236869e67e518cf07d04af61a6f2d3ebb85a413a9cf0193367c3e8256174c4a",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 440295,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "86ee633c42d702336e91358d504969a1da16931191a0519ea48a9db05c1d3079",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 438447,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "8a417cbbe84e77dca2ed791f813a3558136ef29608579394fad0d433d52825fb",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 434286,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "a1549077a6299b5b9895e2152ec89693350df57cd1c548fb7c945304abb4a1c7",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 439040,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "f36961b66efe88a238dcde83f6c0e295c63f28b859b9f846fc9c025e81f7804f",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 435169,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "52f3694d62c831a53d96f0aeac8c3eff25b67ff5264ffcb87e0b1c7374ba78c6",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 432272,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "d57149de8810e4582a012f31a6f8fb5c49888c894453882000e522392b55c6dd",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 432342,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "8a1d9ee186fa125a8e5fc9c646a2b3d32da3a720a835165dd6cd19591be1ccc4",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 435819,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "0b6573e761d9e0d3b3fd9f95451557b47463419887b14378f1e8e07b16910793",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 433229,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "9648e7c3d7de17d35aed88f13774f54d1a7db11fda0e42763c50c76bd98df06a",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 460378,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "af86dff809d223faeb54ec629efc2139bfb7fcadd6d877f30f6454231451d493",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 463113,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "246d542b3b5c8f334ed2b499a5fac0ec4f7afd1180ca033baa0ea00e62e5a42a",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 462028,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "77da92e36c0aaf8d6641c4547d2bb438f45872ded1f52c580652ebe1651ba4fc",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 461519,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "bb9785f910a6561c494a90f8402773efb676afde37ea4ab612224b294044b4a3",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 456151,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "fa75068ba5fed758bcdd03d5e00ca9f8a92e3b82dab3a29aae66893cbc17e4a3",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 454323,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "20466fc0beffa741609fc34401fe188a7af003d982edeab750a756cfae031ff7",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 454775,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "6715663602b0d66c6322e219c739ef520df5a31c522692a710c7112dc691d83c",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 457892,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "cecdf1ab99cb2785b0a8e74250eda6c5df4b257de4a698a93f5659ed6ca3ef1e",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 379235,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/Timer-4_0/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "4cf1984601d35efdeab27ef94006a20d746d92c5317f206063a7ba4cd1c0c84c",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 960,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 267370
+    },
+    "moirai2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "moirai2",
+      "parts": [
+        {
+          "bytes": 230507,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "e49ee0a4a368511053b010ca6df7a50230ed34df135cbc18c88959acb23c3249",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 235404,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "8797fdedd003feb4bc5e9199c84c0c389a5705aa5dd4653e8e3fa9615646f5cd",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 234125,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "81ef32fdbd9ab67ad0eabae6bee53d70106e306199e160b7cb13c983eddbbbac",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 230514,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "03af57ed0df81b795c4b11fa5c74b21cbcf923afd8486e32b21d297f52a83461",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 283121,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "f4a24acd08784295752f4fd7d71cbf5cd753d1eab894b57159f10e4e8e9faac6",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 305054,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "00b1e5a78e5d92c4ab83bc5be14f461b0430f7157dd2eda5abc946e8d7c8d9d1",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 306765,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "ca9350f45608e16d3b9b5040fef0ac536a761366e76eafb493ecbda04269c809",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 304076,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "d038bb351010897b80fb86634d635f6833ba8aa9cc9ee380b1c4c62fb1537066",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 326376,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "acd1698d6cbf3b9b5589602b32a01ef91cf6d7ee77a096327f9961c19eedb785",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 385041,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "52e974b78184915974fa3045bbeb6eeb56e23cf5a11e3793abe893c59f5ff08f",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 384704,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "0dcb40f94b3312db699446796e7fd636ddf70415fd1d66ad556278f44bd21ecb",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 389641,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "2bc4cb090fcadd45a33e4dadd29bb8f501366867e5ef75582f12ae0858d8946f",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 386948,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "a3dd1530977640945c8059f5f24b58392b9a4d0040b2b8a7519c42baf9df530d",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 388329,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "11132cf09d468499c00c6bb229c58e1df6aae5f06bf08148e59f5b9d42d7c397",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 384648,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "e63b6bade5bf8cb73e5f470ddb7feca0c6e03a8bb7555ac9aeb8e11b79f542a2",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 385521,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "0d52ba8aafdbb1c82b0a43131db954e05a6c61b746c49f8743b68710784e9309",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 387604,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "9526ed9d1fa7496a63fcc14441795561d68dd02d2d0b4b0aabe369b644ea1b8e",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 387930,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "814c14cc583c0011129318234c48702cb1b4b49d635667a403a449b1c64ac8c2",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 386677,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "72a57fb1afcb72e7187a3b8218875120e1e3fb25f88b582cf622bb79fe2bb113",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 385448,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "cd1dac39c5ef90e231fd0dd70e65c3f8335b536b225a8e67e3c4d1dd84866d14",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 384636,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "e91699426163faebf097f521839c41163ba813d87e2e194c890502c6524823e9",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 383821,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "461c4dc8d4bc08773f26dd7d3cad45401200c80f12e3244951664aabf4296727",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 381035,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "cd9b53ec29faf06d5793d7f7ad2a858f8d0bd13796f30017f339087a3eec9a76",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 380138,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "240c93ea0333a96697ddfccaf97d3ed9f24e97ce3aaf5097b31f032b70bf50d1",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 385254,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "c2811a742ac54f4c55884d007fe630a0499a7710409cbd9109a08da1187fc894",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 380462,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "6ce681a01177e3ae0ed93f97459f853327f27ab8d75b7fc9ababdd3bcd8baae9",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 398674,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "af9cbee92a7ffc8d82f02fda8c7ef6be70d0732b967bdeac13839b8d269b68fd",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 403624,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "49bfab90ea233956673ffbcc2f808bf84519ab645209e543065f9108ee58e629",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 403927,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "541716dee08ee0766d1aa40f221def018f30e383dd621606ede1b2193aed6d8d",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 402257,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "8ba9ed8c6210604983750fd799ef8d565244ad5f2dc1a9336822b31ec4be8033",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 399122,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "5c6f45435fa2517dd8d7a822f36a011c9a352a6592d54c2b466a5f170fbd7575",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 396040,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "199b498e164d2ebbe3502a0240a494c6186b4d4fedd0f2dd8be3c5a5889015a3",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 397583,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "1b732962c444fe719fffec7e30e288866c6ae72021e90dbb84c8d1b8e032d42b",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 399418,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "7db071a0477dc99e31ead453d3ec1803509d99dc511916d817318b8faa3d0743",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 330127,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/moirai2/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "7722c0b1bb8449cb18c4a9ed18125627781b45e316093dcb8b08162c42fd9b5b",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 267370
+    },
+    "timesfm2.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "timesfm2.5",
+      "parts": [
+        {
+          "bytes": 225993,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "b3ab9e1507e53bf3ea44cc70867053ddba8acbbff138c99a21f020afa42f4e43",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 227852,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "3551ffca05511e053d0fae118f8a97181a570a1ba2a81e946769d0c1e2374c55",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 230327,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "9920f39a84f7d97220eff34acd3cd0edaec772e29ddfa67aff9cb57c7d89e360",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 226397,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "4fc74176f4b50792eb30ac621db62e2cee78769eeae886ab0cfbd0070b0131bd",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 278844,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "86c2a8043ab33c331369f86e1063a1b00e983707dc924460ad200ae3cd3d1e82",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 299559,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "d2db3e7774648271c33446f6279586d4d697b03f50af6a5169e5a50a80a01021",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 302090,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "b1b9fb4308b3175aaf7fed9be6386e7e3e0dec89b995bd689189002357832335",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 298073,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "541644bbac9169b1c5cc21d6714f9fdf9e1448d1abe633816632eea2cc22d67b",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 333600,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "ec36b76721542606684b0d8c09c01865851f53aca20ed931d970091381e9c6b9",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 424105,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "d4d1eabed6a7571dfa492e307823e14862a07fbab883e68652e5681eed6177cd",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 427087,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "e120c69306d8a5b8c691c1ed41ea3e207898380a35e2ee53d368a35dbc660f05",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 433110,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "b8f18d82d9d4e9ef629529507407f0c51e5e4ae2eb49afc250277899eeb083ae",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 426758,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "6ea7d7b5aabfd5f87ca091ddccc6cca93b597a57c5f8117a2c6b2a66b44c4743",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 429101,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "3e1e95d8f234c6224a1574b86b59ce91abce448760042b03bbd978e641cdefa7",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 430537,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "a25f015590a4d1945db97160505728952ab73f3ecd0868543563c8e5e8f60d0c",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 429441,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "1254cb803017439b1f9bca3fae9e7fc56bcc11bbb34dc91d0e232f3ea000f2c6",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 431152,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "c6dcd76fff9fd1dbb3929ca2365ff24837bdaf7d0447cde8d5640353d5a9d800",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 432887,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "edfb6957111efcb6e4ffeb479f2adbc9a8787f36820ea1d37c1ee3a10512b768",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 431197,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "7183523a94119a96c7e6e7c24d79f718062df38a487f94d1ce585803d0746234",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 431657,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "e40f4d21ba62d349576d93a52ef8ece0f0fd1e40870445ad07a3df83d3c0bd92",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 426730,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "3b9db95306aa69388c8479212678e7c7489cf7ee330c075017c5b684a007e832",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 427162,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "9a7e4890d68a9e27238cde9c35dab6c1f3b82777c0e1409421b9b8b0d1e47af6",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 422885,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "6eab163fddbad91fac058ca5283d379ff40d2f53bbc25d7dfad52bea27cf9e0f",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 422787,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "0da2fa182506d0c84a54a1cb4b1cdb1d552085f1e437e2c6d67a0381ea3fe740",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 429457,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "c8528b809b01f27268334ec28e3dad338d64313a5fed60b237a2df873ebef0e0",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 424474,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "b78567cdb24d11fa507e9a974b6675ebebaa8dad00fabf0d7c9d7ff93b23eea3",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 440533,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "5233aee0f801d108184a61251b74b267df68317e66e884a9772bcac4bcb7ed64",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 447167,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "eab1ca0fe73548789d25a8b33811ffd59ef865e92ae7109225a28739a7c08617",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 443178,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "2e636e48e2503ade6cf55eb995f4a2911ceeda5d2d1323fb9017406a1470ed8c",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 441211,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "aa3bf7f801d389d47c3900c63022529dd29b87c5b9d2f55250b41bbb4729a73f",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 438041,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "6a161186bcd11a7d45e16bcbc821edcfce073c8887a750fe30df4273adc0cb31",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 441438,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "3289bc6b32344000cadbd0de89bc065f60a702cf270b7c9a90c647004e45f483",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 436465,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "57187d59bdb7382c349968c4834afd405e3f167eb02196d32fe80d6dcca9d000",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 442157,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "7905b1128758620d20499fec5a911ce838aaf516d27fd3b6a50432612d92d70f",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 363414,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/timesfm2_5/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "0db70b4edeedbb5d8ec1f93378bebd721171d591b857154ce3c4c00717f04c78",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": true,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 267370
+    },
+    "tirex2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "tirex2",
+      "parts": [
+        {
+          "bytes": 235395,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "e79ca936345ed7529dde7863b31bc9366daa8f87899bd8a9a67fd93e17fb187a",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 243357,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "5e9cbb4b2a5362a74edd6827652ee7c0c4c0174330dcc2766917b9309db11254",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 241740,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "fbed22b1c2bc564d91e112b0ecc6bbc24a56eb3e42bb4559f3fd7989ec26c147",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 235252,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "b3e5457d420d53eb96bf556c3b14f45f18cc2b6029713536c3ba8497f2c26cd9",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 284448,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "72d81d7261fc4c37266a5a46e35279059382d6a72fe6a7cbed837a1a072f5680",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 304260,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "00d91e35691d06c4148b37110e67e7fb8d00660d69b1d7c5726b07369ba1dff4",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 307081,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "d99e8e1dd5ce0263be1cb2c70bd87b8f0cbc9fc7ca2387b4c97c437c52562c10",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 302905,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "820e4ac066d3fd81f68cacf5628e78f25a2917a432c38aa0d5f51ac144e191c9",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 351022,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "e7955fc4354c9e7f4ea4d5126d65be3eeff11b1329f598273a628b4cd6450e70",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 449494,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "599827b8e0c7c878592ebbbd9dd1ab422f6bfdeb646d3f72c32e7e7e44608420",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 451259,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "0f788f7110a0eac025247df64c8f977a88b4fde187548ec44b49d1d6a3535bbd",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 458946,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "b4275e29fea81b367d7c8de27022427ec1a545d5e10c184d2633711a79e7400f",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 452074,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "a0f467ab5a2bee534cb3da8b3491e5c163d55a683038458cadbd70773531b4a8",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 449256,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "b980527becf528f1a6c5325377b1091c2c6b309f8340e0b3ff255b7c91b33641",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 448637,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "b989fd6644cf60fb2996ae02367ec5b018857fb2a45286f8fcfda85c8269cd70",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 449511,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "fbb671339430da54fd1c878351f1ce7249543b60aa7bf3c93b26284eed427f1b",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 446320,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "84585794633d03c5feafa5523f2604027f1bfa22ef614dcfe69f489b03d1e6db",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 450419,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "ccf9f49b7ee32837d80f22b3668cbc3a7cc0991415b00afdac7121ef129579c8",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 447569,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "8b481751ff55d1f2f0c9d90d1a15c1c578b531fb0797a04cb65800f81d61ad6c",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 446318,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "351e53c21c36a44438d1efe162daafe562f4e5a6e31e4c1cdc65e2a962704ef8",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 444811,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "b708e8888a6da55bac15002fca3e6aea11815ea3cc48c384dd68f5bc1a5bb581",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 446415,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "259b546b9358c5fbe6771c6a55b1a65cfd000a4d302d93f71b99f4c3b9c00847",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 438548,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "ffecf1e2ef2ac1fb500e58e2e0a55dc83ab7882ddaebdb09b275e6a7e4b14a91",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 437771,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "128c40924ded667a29ace9b7c6f4975e510ef6721fcc44b6b67243ebc393963c",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 445982,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "85fb36e8e2dc9b410cc316a95d47e284f36f2d5581b3302f36d98289cce48393",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 437816,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "faeaae96885b8fa54ba0508f2d3a71659807fe88a84bb62f460ea27affe8d12d",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 469201,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "903b4b7e90fbf1c86341bf12825f6d903114b04964f99eaefa61930b60de9b47",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 473649,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "944aeb412f3abc12a4664941c1a672271d13cf85587953441fd97a33c1294d77",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 467082,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "17152e80719c44312c20b8cb547c13daa16ce6338b200522a0bb1e94375056f2",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 472101,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "945863dff8e42746e0568cfa7b100851bdea02850ad588983ccd37e085bd93e2",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 468881,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "178339270d666a85afbdc50e2ac7dad272292f3ae45fa971c82363c87e8744b9",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 459920,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "c5267fb87995baad0d463b1947d1406593b9308470aa855e279baff3add011d0",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 462107,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "3524fa32f2598a725ffe9a4020d0c0893939e7b6f35d424f31492ca768c5d674",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 469251,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "d9c3d3519a971943ab517c90c2a970156c80b8cc49cc98724042df207a378d55",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 384551,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/tirex2/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "b95997d08d5ab81d818188fd0e0c88721dff1ceb80560daea705c251b385d14f",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 320,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 267370
+    },
+    "toto2.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "toto2.0",
+      "parts": [
+        {
+          "bytes": 224330,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000000.parquet",
+          "row_count": 4446,
+          "sha256": "929b469cf2cd5e1f6261bb9cf6d8d5c993f139a681642c1064d92ea56af185da",
+          "source_shard_index": 0
+        },
+        {
+          "bytes": 227960,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000001.parquet",
+          "row_count": 4511,
+          "sha256": "b24912c3f992aad371b6a681c2fdcb8fed5b0174210793b4c8e9b38e49239b1a",
+          "source_shard_index": 1
+        },
+        {
+          "bytes": 229869,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000002.parquet",
+          "row_count": 4486,
+          "sha256": "fbcddd822e59585c59155ca287e37bccf406b3594778add6870cbbd9ce42c11d",
+          "source_shard_index": 2
+        },
+        {
+          "bytes": 223900,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000003.parquet",
+          "row_count": 4451,
+          "sha256": "971db7fb89863f3706d5bd8dd8dc8c1e62e4b57ad295af77ec87a6a652ce2f0e",
+          "source_shard_index": 3
+        },
+        {
+          "bytes": 276591,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000004.parquet",
+          "row_count": 5456,
+          "sha256": "18fb6ac2878101254877ca9900c6e8e837b2ddda453b6e7954c478188708ed8c",
+          "source_shard_index": 4
+        },
+        {
+          "bytes": 298288,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000005.parquet",
+          "row_count": 5896,
+          "sha256": "b334c8648621ad65d6565db3f5ffe1140f1977fc8918bc2608a4152f3aef27f5",
+          "source_shard_index": 5
+        },
+        {
+          "bytes": 298600,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000006.parquet",
+          "row_count": 5926,
+          "sha256": "83f591827062638cf1d71154046ac9d91f45c9a1b5d2cee8b43858a0db8c8ce1",
+          "source_shard_index": 6
+        },
+        {
+          "bytes": 295059,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000007.parquet",
+          "row_count": 5856,
+          "sha256": "b743d7e30b21c2f3cb8777fc0e32e79f92d4910be3815fe964638cfdcdd2e3e3",
+          "source_shard_index": 7
+        },
+        {
+          "bytes": 318154,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000008.parquet",
+          "row_count": 6561,
+          "sha256": "90cfc50e6da9b3fb63ca855be176b9eddc6254067129a0dd1272130822198c92",
+          "source_shard_index": 8
+        },
+        {
+          "bytes": 372918,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000009.parquet",
+          "row_count": 8441,
+          "sha256": "48c12e6c2c1f140948888374858eb251d53bd8cf25490b4c0951214bd30a7b98",
+          "source_shard_index": 9
+        },
+        {
+          "bytes": 373715,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000010.parquet",
+          "row_count": 8466,
+          "sha256": "d09ba88e40ad2e9a4b521d0846cef6aa535f9abe6cb8e9927af5a1a322f63896",
+          "source_shard_index": 10
+        },
+        {
+          "bytes": 377304,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000011.parquet",
+          "row_count": 8526,
+          "sha256": "8351b91cd5287c0af5a6fe228a73b399ccc8bfd9d3fbf2631ac279e707e6714e",
+          "source_shard_index": 11
+        },
+        {
+          "bytes": 375608,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000012.parquet",
+          "row_count": 8486,
+          "sha256": "e21e168f4eabd0d4f34cd03f0bc0c2dbe931ad95d1e77e16932d34d4dd492651",
+          "source_shard_index": 12
+        },
+        {
+          "bytes": 381916,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000013.parquet",
+          "row_count": 8526,
+          "sha256": "8d15664b493e934270bab4ebc347373f823a6afb88f6941fc20d6ddfbbc9ff4f",
+          "source_shard_index": 13
+        },
+        {
+          "bytes": 373675,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000014.parquet",
+          "row_count": 8441,
+          "sha256": "f3718009503909a3fb368281513d992e620b6178d649a10c5b1a6d670b86e025",
+          "source_shard_index": 14
+        },
+        {
+          "bytes": 373176,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000015.parquet",
+          "row_count": 8446,
+          "sha256": "eaf3a823299191826f4cad83f525df18317a3b7ab076439a18b7e827dfdfd808",
+          "source_shard_index": 15
+        },
+        {
+          "bytes": 375431,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000016.parquet",
+          "row_count": 8501,
+          "sha256": "3eb4e68d3747e017bf59cd44af38bb6c06da92ba8abf86a7366430dbc0b6e7b5",
+          "source_shard_index": 16
+        },
+        {
+          "bytes": 380296,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000017.parquet",
+          "row_count": 8411,
+          "sha256": "35d53ba7347a3339bcf278fd73f3c2870d074ef19d3b67ddedee38e0a9cbda05",
+          "source_shard_index": 17
+        },
+        {
+          "bytes": 375412,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000018.parquet",
+          "row_count": 8356,
+          "sha256": "b49d72cbc3bf0b535ddea7f15a03356b339ab8e88d0cdefc779f262b5670cb54",
+          "source_shard_index": 18
+        },
+        {
+          "bytes": 372603,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000019.parquet",
+          "row_count": 8311,
+          "sha256": "c1ac5d01c139f3ba1cdf86e13d30276b479cad76ccb2a90d0859e64a51dab4dd",
+          "source_shard_index": 19
+        },
+        {
+          "bytes": 373326,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000020.parquet",
+          "row_count": 8301,
+          "sha256": "946318f5993adc5199465fbb1e57a3c620ac2a0b413e9b5e5e0aced99c1157e2",
+          "source_shard_index": 20
+        },
+        {
+          "bytes": 371281,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000021.parquet",
+          "row_count": 8306,
+          "sha256": "4572cf608de8724c80ee16e0ace5c3627efcc6aa6d3411c9bbd65e6870364d65",
+          "source_shard_index": 21
+        },
+        {
+          "bytes": 370648,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000022.parquet",
+          "row_count": 8256,
+          "sha256": "1dea99843748493fe7aff43168797510b26453f2de5bc22bc77c291aa9b2c980",
+          "source_shard_index": 22
+        },
+        {
+          "bytes": 367543,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000023.parquet",
+          "row_count": 8246,
+          "sha256": "6ac27639ce483b7b65ba3b700b3677ff7d508a743b66ae707becf0185c630ce9",
+          "source_shard_index": 23
+        },
+        {
+          "bytes": 372726,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000024.parquet",
+          "row_count": 8306,
+          "sha256": "dc5acdde1f153858d5af30bc695ebc47414b2646099f4496f6ba4485140bf836",
+          "source_shard_index": 24
+        },
+        {
+          "bytes": 368284,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000025.parquet",
+          "row_count": 8246,
+          "sha256": "0f5b06301059cfcc1840605c4127b8b74fb39817f5183a950d33776a23cc18d3",
+          "source_shard_index": 25
+        },
+        {
+          "bytes": 386640,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000026.parquet",
+          "row_count": 8701,
+          "sha256": "497478c940bcecc6135fb20543e7f2dfac087423fed3a2439e4e1525f4409fd9",
+          "source_shard_index": 26
+        },
+        {
+          "bytes": 391895,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000027.parquet",
+          "row_count": 8821,
+          "sha256": "aee6b498cb540d68b880e39130efbad38907cc781b90b69811a5f32cfa7df372",
+          "source_shard_index": 27
+        },
+        {
+          "bytes": 390449,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000028.parquet",
+          "row_count": 8806,
+          "sha256": "5ff909a9f1e688bcc55a18dfba55ba41ce1f9485758cdce51f24b52ce96df3cc",
+          "source_shard_index": 28
+        },
+        {
+          "bytes": 389902,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000029.parquet",
+          "row_count": 8796,
+          "sha256": "222b1bc40b37829c3a27f760ac5d2c71048d90adbb9da1e90bbec4bef30c7b2b",
+          "source_shard_index": 29
+        },
+        {
+          "bytes": 386904,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000030.parquet",
+          "row_count": 8721,
+          "sha256": "54568b2de5d37c68426d8618c347debadb8b8b2ff6516e939e3de8d9bbd3ed9b",
+          "source_shard_index": 30
+        },
+        {
+          "bytes": 383895,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000031.parquet",
+          "row_count": 8661,
+          "sha256": "cc474ab0b5d9651d9c2d633ead0320d5ef51aeceb3e6e8f7809baa6687600c18",
+          "source_shard_index": 31
+        },
+        {
+          "bytes": 384866,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000032.parquet",
+          "row_count": 8696,
+          "sha256": "33ec41094cdb6b5473ad9032b3bd9c90b6c45025f538305960f1c854b245eb5e",
+          "source_shard_index": 32
+        },
+        {
+          "bytes": 388087,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000033.parquet",
+          "row_count": 8736,
+          "sha256": "e1771e68a200c5c381c59c3820daf86d93ba8ee733aa5bb6e6e00f201dc67c37",
+          "source_shard_index": 33
+        },
+        {
+          "bytes": 320122,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/03_inference/models/toto2_0/predictions/part_000034.parquet",
+          "row_count": 7271,
+          "sha256": "74fff6ec1356c4d0841dfb646efd0b3fc61a271e58ace5075c676c2f62759682",
+          "source_shard_index": 34
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 267370
+    }
+  },
+  "model_statuses": [
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 4195,
+      "bulk_request_count": 4195,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 147.113,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3170178
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3170180
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3170177
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3170179
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3170796
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3170794
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3170795
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3170797
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-4.0",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 2.0,
+      "native_view_count": 267370,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 8192,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 44416,
+          "maximum_weighted_request_input_tokens": 45248,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 49408,
+          "maximum_weighted_request_input_tokens": 50240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 14464,
+          "maximum_weighted_request_input_tokens": 15296,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 19456,
+          "maximum_weighted_request_input_tokens": 20288,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 24448,
+          "maximum_weighted_request_input_tokens": 25280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 29440,
+          "maximum_weighted_request_input_tokens": 30272,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 34432,
+          "maximum_weighted_request_input_tokens": 35264,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 39424,
+          "maximum_weighted_request_input_tokens": 40256,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 4195,
+      "bulk_request_count": 4195,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 141.539,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3175031
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3175030
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3175032
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3175033
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Chronos-2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 267370,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 8192,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 44416,
+          "maximum_weighted_request_input_tokens": 45248,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 49408,
+          "maximum_weighted_request_input_tokens": 50240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 14464,
+          "maximum_weighted_request_input_tokens": 15296,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 19456,
+          "maximum_weighted_request_input_tokens": 20288,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 24448,
+          "maximum_weighted_request_input_tokens": 25280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 29440,
+          "maximum_weighted_request_input_tokens": 30272,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 34432,
+          "maximum_weighted_request_input_tokens": 35264,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 39424,
+          "maximum_weighted_request_input_tokens": 40256,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 267370,
+      "attempt_count": 4195,
+      "bulk_request_count": 4195,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 15360,
+      "elapsed_seconds": 237.825,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3179212
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3179211
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3179213
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3179210
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3179829
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3179831
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3179830
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3179832
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "timesfm2.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 15360,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 37568,
+          "maximum_weighted_request_input_tokens": 38400,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 41728,
+          "maximum_weighted_request_input_tokens": 42560,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 12608,
+          "maximum_weighted_request_input_tokens": 13440,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 16768,
+          "maximum_weighted_request_input_tokens": 17600,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 20928,
+          "maximum_weighted_request_input_tokens": 21760,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 25088,
+          "maximum_weighted_request_input_tokens": 25920,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 29248,
+          "maximum_weighted_request_input_tokens": 30080,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 33408,
+          "maximum_weighted_request_input_tokens": 34240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "paired_known_future_only",
+            1,
+            4,
+            4
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 2.0,
+      "very_long_context_threshold": 8192
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 4195,
+      "bulk_request_count": 4195,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 2048,
+      "elapsed_seconds": 262.459,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": 512,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": 16,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 3186550
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3186553
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3186551
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3186552
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3187169
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3187171
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3187170
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3187168
+            }
+          ],
+          "model_id": "tirex2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "tirex2",
+      "native_multivariate_http_concurrency": 2,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 267370,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 2048,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 44416,
+          "maximum_weighted_request_input_tokens": 45248,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 49408,
+          "maximum_weighted_request_input_tokens": 50240,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 14464,
+          "maximum_weighted_request_input_tokens": 15296,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 19456,
+          "maximum_weighted_request_input_tokens": 20288,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 24448,
+          "maximum_weighted_request_input_tokens": 25280,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 29440,
+          "maximum_weighted_request_input_tokens": 30272,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 34432,
+          "maximum_weighted_request_input_tokens": 35264,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 39424,
+          "maximum_weighted_request_input_tokens": 40256,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "native_known_future",
+            1,
+            5,
+            4
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 267370,
+      "attempt_count": 33435,
+      "bulk_request_count": 33435,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 267370,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 176.325,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3192630
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3192631
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3192632
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3192629
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "moirai2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 16384,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 856,
+          "maximum_weighted_request_input_tokens": 960,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 960,
+          "maximum_weighted_request_input_tokens": 1064,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 232,
+          "maximum_weighted_request_input_tokens": 336,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 336,
+          "maximum_weighted_request_input_tokens": 440,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 440,
+          "maximum_weighted_request_input_tokens": 544,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 544,
+          "maximum_weighted_request_input_tokens": 648,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 648,
+          "maximum_weighted_request_input_tokens": 752,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 752,
+          "maximum_weighted_request_input_tokens": 856,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 267370,
+      "attempt_count": 4195,
+      "bulk_request_count": 4195,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 267370,
+      "effective_maximum_context": 11520,
+      "elapsed_seconds": 151.886,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3197953
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3197952
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3197954
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3197951
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-3.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 11520,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 6848,
+          "maximum_weighted_request_input_tokens": 7680,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 7680,
+          "maximum_weighted_request_input_tokens": 8512,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 1856,
+          "maximum_weighted_request_input_tokens": 2688,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 2688,
+          "maximum_weighted_request_input_tokens": 3520,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 3520,
+          "maximum_weighted_request_input_tokens": 4352,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 4352,
+          "maximum_weighted_request_input_tokens": 5184,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 5184,
+          "maximum_weighted_request_input_tokens": 6016,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 6016,
+          "maximum_weighted_request_input_tokens": 6848,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 267370,
+      "attempt_count": 1068,
+      "bulk_request_count": 1068,
+      "client_inflight_input_tokens_per_endpoint": 1048576,
+      "compatible_sample_count": 267370,
+      "covariates_omitted_view_count": 267370,
+      "effective_maximum_context": 16384,
+      "elapsed_seconds": 143.647,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 267370,
+      "expected_original_view_count": 267370,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 8,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3203461
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3203462
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3203459
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3203460
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 131072,
+      "model_id": "toto2.0",
+      "native_multivariate_http_concurrency": 8,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 267370,
+      "service_advertised_maximum_context": 16384,
+      "shape_group_count": 8,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 27392,
+          "maximum_weighted_request_input_tokens": 30720,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            107,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 30720,
+          "maximum_weighted_request_input_tokens": 34048,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            120,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 7424,
+          "maximum_weighted_request_input_tokens": 10752,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            29,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 10752,
+          "maximum_weighted_request_input_tokens": 14080,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            42,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 14080,
+          "maximum_weighted_request_input_tokens": 17408,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            55,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 17408,
+          "maximum_weighted_request_input_tokens": 20736,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            68,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 20736,
+          "maximum_weighted_request_input_tokens": 24064,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            81,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 24064,
+          "maximum_weighted_request_input_tokens": 27392,
+          "minimum_dynamic_concurrency_ceiling": 8,
+          "request_group": [
+            94,
+            13,
+            1,
+            5,
+            "W-SUN",
+            1,
+            "native_univariate",
+            "omitted_unsupported",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    }
+  ],
+  "model_tasks": {},
+  "prepare_only": false,
+  "schema_version": "cafe.benchmark_extension_inference.v13",
+  "validation_report": {
+    "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__rossmann_1W/02_validation/report.json",
+    "sha256": "518d5ecad2a8ef17138f0427f0c83f6ce2a48c010628fb752b6bb5b81f82f3b5"
+  }
+}

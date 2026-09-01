@@ -1,0 +1,25 @@
+objective_id,corpus,metric,selection,step,stratum_count,macro_absolute_change,paired_stratum_bootstrap_95ci_low,paired_stratum_bootstrap_95ci_high,improved_stratum_fraction,interval_note
+default,train,mase,best_all,40000,390,-0.05940865086638535,-0.06992264315404599,-0.049342587843333625,0.6615384615384615,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,train,mase,best_nonzero,40000,390,-0.05940865086638535,-0.06980807404815861,-0.04952804561605686,0.6615384615384615,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,train,mase,final,40000,390,-0.05940865086638535,-0.06972229432018942,-0.049338909128297484,0.6615384615384615,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,train,effect_nrmse,best_all,16000,388,-0.0331142853355506,-0.04464463060226947,-0.021426355656790592,0.6778350515463918,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,train,effect_nrmse,best_nonzero,16000,388,-0.0331142853355506,-0.04472945250964253,-0.021396014993987005,0.6778350515463918,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,train,effect_nrmse,final,40000,388,0.013344158523721844,-0.0025941838988028584,0.030316661053034995,0.47680412371134023,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,cross,mase,best_all,40000,390,-0.09432078903175836,-0.11705106185315284,-0.07333536963748877,0.6282051282051282,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,cross,mase,best_nonzero,40000,390,-0.09432078903175836,-0.117354318416699,-0.07325485861274077,0.6282051282051282,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,cross,mase,final,40000,390,-0.09432078903175836,-0.11742037267690936,-0.07336417235051096,0.6282051282051282,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,cross,effect_nrmse,best_all,8000,390,-0.019897039706534447,-0.028917772876693955,-0.01104812496996885,0.5948717948717949,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,cross,effect_nrmse,best_nonzero,8000,390,-0.019897039706534447,-0.02868888166261834,-0.010992644450980695,0.5948717948717949,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+default,cross,effect_nrmse,final,40000,390,0.027103306457818176,0.01193976665547562,0.04301594502204422,0.4282051282051282,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,train,mase,best_all,0,390,0.0,0.0,0.0,0.0,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,train,mase,best_nonzero,8000,390,0.1553509370958723,0.12553493736484553,0.18829342113563707,0.1641025641025641,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,train,mase,final,40000,390,0.2157402493293394,0.18239745931866155,0.2515370250922119,0.14615384615384616,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,train,effect_nrmse,best_all,36000,388,-0.1196240799550584,-0.13769162408050095,-0.10215114102162491,0.7345360824742269,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,train,effect_nrmse,best_nonzero,36000,388,-0.1196240799550584,-0.1374684749610862,-0.10175541418249241,0.7345360824742269,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,train,effect_nrmse,final,40000,388,-0.1189707626262463,-0.13720364806704044,-0.10127391337131515,0.7345360824742269,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,cross,mase,best_all,0,390,0.0,0.0,0.0,0.0,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,cross,mase,best_nonzero,8000,390,0.12931751392960944,0.11202014270307946,0.14735675692295921,0.17692307692307693,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,cross,mase,final,40000,390,0.18896242768298893,0.1682118235785369,0.2108019187310396,0.1282051282051282,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,cross,effect_nrmse,best_all,28000,390,-0.0741788536987959,-0.09249561002590549,-0.055305951637051154,0.6410256410256411,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,cross,effect_nrmse,best_nonzero,28000,390,-0.0741788536987959,-0.09256314704965356,-0.055130506523543316,0.6410256410256411,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.
+effect_nrmse,cross,effect_nrmse,final,40000,390,-0.07066566705134457,-0.09035559715854106,-0.049857648887656335,0.6461538461538462,Descriptive paired bootstrap over dataset-capability-level cells; hierarchy ignored.

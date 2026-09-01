@@ -1,0 +1,2050 @@
+{
+  "complete": true,
+  "config": {
+    "bulk_request_input_token_policy": "shape_aware_max_request_and_weighted_endpoint_inflight_v1",
+    "client_inflight_input_tokens_override": null,
+    "dataset_id": "fev__jena_weather_1H",
+    "default_client_inflight_input_tokens_per_endpoint": 6525120,
+    "default_maximum_request_input_tokens": 815640,
+    "distributed_execution_policy": null,
+    "distributed_repo_root": null,
+    "distributed_workers": {},
+    "effective_model_maximum_contexts": {
+      "Chronos-2": 8192,
+      "Timer-3.5": 11520,
+      "Timer-4.0": 8192,
+      "moirai2": 8192,
+      "timesfm2.5": 15360,
+      "tirex2": 2048,
+      "toto2.0": 16384
+    },
+    "endpoint_policy": "model_major_all_compatible_endpoints",
+    "input_history_policy": "treatment_applied_to_entire_official_history_then_generation_frozen_model_context_suffix_v1",
+    "max_inflight_batches_per_endpoint": 8,
+    "max_inflight_mib": 2048,
+    "max_open_shape_groups": 64,
+    "max_request_input_tokens_override": null,
+    "model_input_token_config": {
+      "Chronos-2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "TimePFN": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-3.5": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "Timer-4.0": {
+        "client_inflight_input_tokens": 13050240,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 2.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "moirai2": {
+        "client_inflight_input_tokens": 13050240,
+        "http_concurrency": 32,
+        "maximum_bulk_rows": 8,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "timesfm2.5": {
+        "client_inflight_input_tokens": 6525120,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 64,
+        "output_horizon_token_multiplier": 1.0,
+        "very_long_context_input_token_multiplier": 2.0,
+        "very_long_context_threshold": 8192
+      },
+      "tirex2": {
+        "client_inflight_input_tokens": 6525120,
+        "http_concurrency": 32,
+        "large_panel_context_threshold": 512,
+        "large_panel_http_concurrency": 8,
+        "large_panel_target_dim_threshold": 16,
+        "maximum_bulk_rows": 64,
+        "maximum_request_input_tokens": 815640,
+        "native_multivariate_http_concurrency": 2,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 8,
+        "output_horizon_token_multiplier": 1.0
+      },
+      "toto2.0": {
+        "client_inflight_input_tokens": 1048576,
+        "http_concurrency": 8,
+        "maximum_bulk_rows": 256,
+        "maximum_request_input_tokens": 131072,
+        "native_multivariate_input_token_multiplier": 1.0,
+        "native_multivariate_maximum_bulk_rows": 256,
+        "output_horizon_token_multiplier": 1.0
+      }
+    },
+    "models": [
+      "Timer-4.0",
+      "Chronos-2",
+      "timesfm2.5",
+      "tirex2",
+      "moirai2",
+      "Timer-3.5",
+      "toto2.0"
+    ],
+    "native_target_policy": "native_if_supported_else_inference_only_independent_univariate_reassembly",
+    "overload_retry_policy": "http_429_503_exponential_1s_2s_with_0_to_25pct_jitter",
+    "pipeline_schema_version": "cafe.pipeline.v15",
+    "preprocess_workers": 8,
+    "request_materialization": "bounded_in_memory_source_contract_replay_no_model_task_artifact",
+    "transport": "msgpack_bulk"
+  },
+  "config_sha256": "4d570e96d3dda2115fd8c8975033dc878ee36022bbf7630698a234e3beaf36bb",
+  "created_at": "2026-08-29T23:19:13.953686+00:00",
+  "dataset_id": "fev__jena_weather_1H",
+  "generation_manifest": {
+    "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/01_generation/manifest.json",
+    "sha256": "440ae6e20c1e2fe6d54fe4ecd850ffe6431eb6383b4f6072ef651e24ea4a7d85"
+  },
+  "model_predictions": {
+    "Chronos-2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Chronos-2",
+      "parts": [
+        {
+          "bytes": 1725741,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/Chronos-2/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "9aa2733fe88e3c060553e8bf7d8dd1ca003625a282734a301168678c6ae8465b",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 920
+    },
+    "Timer-3.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Timer-3.5",
+      "parts": [
+        {
+          "bytes": 894340,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/Timer-3_5/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "16096744d4157ecbd5eee17b32416abe9626b0adb682dabe24f491c11d9fd6c7",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 920
+    },
+    "Timer-4.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "Timer-4.0",
+      "parts": [
+        {
+          "bytes": 1263058,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/Timer-4_0/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "b20aa83a289472c4be8beeed706fdcf9dd323fd5c745b3ef7fe19deeef100ff4",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 960,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 920
+    },
+    "moirai2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "moirai2",
+      "parts": [
+        {
+          "bytes": 878598,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/moirai2/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "f57acfdb65466c15c4bd159a1d662cd68b5ec0911624ed1a2ddca5e3689a122e",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 920
+    },
+    "timesfm2.5": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "timesfm2.5",
+      "parts": [
+        {
+          "bytes": 908590,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/timesfm2_5/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "0aca76d29d8d3885d32403742c36ae45342df9c6c3aaa7a682197f194c65104a",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 1024,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": 1,
+        "requires_future_covariates_with_history": true,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 920
+    },
+    "tirex2": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "tirex2",
+      "parts": [
+        {
+          "bytes": 1730567,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/tirex2/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "3eae2344ec55c94c0c6e5b4c74fe03b03a0b2ff633b1a89e7623f25e81518076",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 320,
+        "max_group_rows": 64,
+        "max_history_covariate_count": null,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": true,
+        "supports_history_covariates": true
+      },
+      "row_count": 920
+    },
+    "toto2.0": {
+      "compression": "zstd",
+      "format": "partitioned_parquet",
+      "input_adaptation_policy": "cafe-input-adaptation-v4-paired-covariates",
+      "model_id": "toto2.0",
+      "parts": [
+        {
+          "bytes": 1723900,
+          "compression": "zstd",
+          "format": "parquet",
+          "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/03_inference/models/toto2_0/predictions/part_000000.parquet",
+          "row_count": 920,
+          "sha256": "e4c31cf8f2b7dff2ea47d7d1a92705f40331fc11d8e703fc1de466ad3511a83c",
+          "source_shard_index": 0
+        }
+      ],
+      "resolved_input_capability": {
+        "max_future_covariate_length": 2048,
+        "max_group_rows": 64,
+        "max_history_covariate_count": 0,
+        "max_target_count": null,
+        "requires_future_covariates_with_history": false,
+        "schema_version": "cafe.resolved_input_capability.v3",
+        "source_schema": "input_mode",
+        "supports_future_covariates": false,
+        "supports_history_covariates": false
+      },
+      "row_count": 920
+    }
+  },
+  "model_statuses": [
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 230,
+      "bulk_request_count": 230,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 14.464,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 920,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3170178
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3170180
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3170177
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3170179
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3170796
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3170794
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3170795
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3170797
+            }
+          ],
+          "model_id": "Timer-4.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-4.0",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 2.0,
+      "native_view_count": 920,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 8192,
+      "shape_group_count": 1,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 688128,
+          "maximum_weighted_request_input_tokens": 1380288,
+          "minimum_dynamic_concurrency_ceiling": 9,
+          "request_group": [
+            8192,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 230,
+      "bulk_request_count": 230,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 26.165,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 920,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3175031
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3175030
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3175032
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3175033
+            }
+          ],
+          "model_id": "Chronos-2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Chronos-2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 920,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 8192,
+      "shape_group_count": 1,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 688128,
+          "maximum_weighted_request_input_tokens": 690144,
+          "minimum_dynamic_concurrency_ceiling": 9,
+          "request_group": [
+            8192,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 920,
+      "attempt_count": 321,
+      "bulk_request_count": 320,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 15360,
+      "elapsed_seconds": 172.463,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 19320,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3179212
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3179211
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3179213
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3179210
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3179829
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3179831
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3179830
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3179832
+            }
+          ],
+          "model_id": "timesfm2.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "timesfm2.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 15360,
+      "shape_group_count": 20,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 523152,
+          "maximum_weighted_request_input_tokens": 1049328,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8304,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 524664,
+          "maximum_weighted_request_input_tokens": 1052352,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8328,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 526176,
+          "maximum_weighted_request_input_tokens": 1055376,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8352,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 527688,
+          "maximum_weighted_request_input_tokens": 1058400,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8376,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 529200,
+          "maximum_weighted_request_input_tokens": 1061424,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8400,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 530712,
+          "maximum_weighted_request_input_tokens": 1064448,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8424,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 532224,
+          "maximum_weighted_request_input_tokens": 1067472,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8448,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 533736,
+          "maximum_weighted_request_input_tokens": 1070496,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8472,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 535248,
+          "maximum_weighted_request_input_tokens": 1073520,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8496,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 536760,
+          "maximum_weighted_request_input_tokens": 1076544,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8520,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 538272,
+          "maximum_weighted_request_input_tokens": 1079568,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8544,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 539784,
+          "maximum_weighted_request_input_tokens": 1082592,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8568,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 541296,
+          "maximum_weighted_request_input_tokens": 1085616,
+          "minimum_dynamic_concurrency_ceiling": 6,
+          "request_group": [
+            8592,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 542808,
+          "maximum_weighted_request_input_tokens": 1088640,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8616,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 544320,
+          "maximum_weighted_request_input_tokens": 1091664,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8640,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 545832,
+          "maximum_weighted_request_input_tokens": 1094688,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8664,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 547344,
+          "maximum_weighted_request_input_tokens": 1097712,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8688,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 548856,
+          "maximum_weighted_request_input_tokens": 1100736,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8712,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 550368,
+          "maximum_weighted_request_input_tokens": 1103760,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8736,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 551880,
+          "maximum_weighted_request_input_tokens": 1106784,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8760,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 920,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 2.0,
+      "very_long_context_threshold": 8192
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 115,
+      "bulk_request_count": 115,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 2048,
+      "elapsed_seconds": 23.983,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 920,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": 512,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": 16,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3",
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:0",
+              "worker_pid": 3186550
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3186553
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3186551
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3186552
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3187169
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3187171
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3187170
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3187168
+            }
+          ],
+          "model_id": "tirex2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "tirex2",
+      "native_multivariate_http_concurrency": 2,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 920,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 2048,
+      "shape_group_count": 1,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 344064,
+          "maximum_weighted_request_input_tokens": 348096,
+          "minimum_dynamic_concurrency_ceiling": 18,
+          "request_group": [
+            2048,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 920,
+      "attempt_count": 920,
+      "bulk_request_count": 920,
+      "client_inflight_input_tokens_per_endpoint": 13050240,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 8192,
+      "elapsed_seconds": 155.519,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 19320,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:1",
+              "worker_pid": 3192630
+            },
+            {
+              "device": "cuda:2",
+              "worker_pid": 3192631
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3192632
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3192629
+            }
+          ],
+          "model_id": "moirai2",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "moirai2",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 16384,
+      "shape_group_count": 1,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 172032,
+          "maximum_weighted_request_input_tokens": 172536,
+          "minimum_dynamic_concurrency_ceiling": 32,
+          "request_group": [
+            8192,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 920,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 920,
+      "attempt_count": 320,
+      "bulk_request_count": 320,
+      "client_inflight_input_tokens_per_endpoint": 6525120,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 11520,
+      "elapsed_seconds": 175.741,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 19320,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 32,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 32,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3197953
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3197952
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3197954
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3197951
+            }
+          ],
+          "model_id": "Timer-3.5",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 815640,
+      "model_id": "Timer-3.5",
+      "native_multivariate_http_concurrency": 32,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 0,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 11520,
+      "shape_group_count": 20,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 523152,
+          "maximum_weighted_request_input_tokens": 524664,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8304,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 524664,
+          "maximum_weighted_request_input_tokens": 526176,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8328,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 526176,
+          "maximum_weighted_request_input_tokens": 527688,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8352,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 527688,
+          "maximum_weighted_request_input_tokens": 529200,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8376,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 529200,
+          "maximum_weighted_request_input_tokens": 530712,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8400,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 530712,
+          "maximum_weighted_request_input_tokens": 532224,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8424,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 532224,
+          "maximum_weighted_request_input_tokens": 533736,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8448,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 533736,
+          "maximum_weighted_request_input_tokens": 535248,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8472,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 535248,
+          "maximum_weighted_request_input_tokens": 536760,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8496,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 536760,
+          "maximum_weighted_request_input_tokens": 538272,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8520,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 538272,
+          "maximum_weighted_request_input_tokens": 539784,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8544,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 539784,
+          "maximum_weighted_request_input_tokens": 541296,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8568,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 541296,
+          "maximum_weighted_request_input_tokens": 542808,
+          "minimum_dynamic_concurrency_ceiling": 12,
+          "request_group": [
+            8592,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 542808,
+          "maximum_weighted_request_input_tokens": 544320,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8616,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 544320,
+          "maximum_weighted_request_input_tokens": 545832,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8640,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 545832,
+          "maximum_weighted_request_input_tokens": 547344,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8664,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 547344,
+          "maximum_weighted_request_input_tokens": 548856,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8688,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 548856,
+          "maximum_weighted_request_input_tokens": 550368,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8712,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 550368,
+          "maximum_weighted_request_input_tokens": 551880,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8736,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 551880,
+          "maximum_weighted_request_input_tokens": 553392,
+          "minimum_dynamic_concurrency_ceiling": 11,
+          "request_group": [
+            8760,
+            24,
+            21,
+            0,
+            "h",
+            21,
+            "independent_univariate",
+            "none",
+            1,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 920,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    },
+    {
+      "adapted_view_count": 0,
+      "attempt_count": 920,
+      "bulk_request_count": 920,
+      "client_inflight_input_tokens_per_endpoint": 1048576,
+      "compatible_sample_count": 920,
+      "covariates_omitted_view_count": 0,
+      "effective_maximum_context": 16384,
+      "elapsed_seconds": 110.919,
+      "endpoint_count": 1,
+      "endpoints": [
+        "http://100.102.176.45:10810"
+      ],
+      "expected_http_request_count": 920,
+      "expected_original_view_count": 920,
+      "failure_count": 0,
+      "http_concurrency_per_endpoint": 8,
+      "large_panel_context_threshold": -1,
+      "large_panel_http_concurrency": 8,
+      "large_panel_target_dim_threshold": -1,
+      "load_seconds_max": 0.0,
+      "loaded_topologies": [
+        {
+          "devices": [
+            "cuda:0",
+            "cuda:1",
+            "cuda:2",
+            "cuda:3"
+          ],
+          "endpoints": [
+            {
+              "device": "cuda:2",
+              "worker_pid": 3203461
+            },
+            {
+              "device": "cuda:3",
+              "worker_pid": 3203462
+            },
+            {
+              "device": "cuda:0",
+              "worker_pid": 3203459
+            },
+            {
+              "device": "cuda:1",
+              "worker_pid": 3203460
+            }
+          ],
+          "model_id": "toto2.0",
+          "status": "loaded"
+        }
+      ],
+      "maximum_inflight_bytes": 2147483648,
+      "maximum_request_input_tokens": 131072,
+      "model_id": "toto2.0",
+      "native_multivariate_http_concurrency": 8,
+      "native_multivariate_input_token_multiplier": 1.0,
+      "native_view_count": 920,
+      "output_horizon_token_multiplier": 1.0,
+      "prediction_count": 920,
+      "service_advertised_maximum_context": 16384,
+      "shape_group_count": 20,
+      "shape_group_token_stats": [
+        {
+          "maximum_request_input_tokens": 174384,
+          "maximum_weighted_request_input_tokens": 174888,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8304,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 174888,
+          "maximum_weighted_request_input_tokens": 175392,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8328,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 175392,
+          "maximum_weighted_request_input_tokens": 175896,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8352,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 175896,
+          "maximum_weighted_request_input_tokens": 176400,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8376,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 176400,
+          "maximum_weighted_request_input_tokens": 176904,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8400,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 176904,
+          "maximum_weighted_request_input_tokens": 177408,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8424,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 177408,
+          "maximum_weighted_request_input_tokens": 177912,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8448,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 177912,
+          "maximum_weighted_request_input_tokens": 178416,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8472,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 178416,
+          "maximum_weighted_request_input_tokens": 178920,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8496,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 178920,
+          "maximum_weighted_request_input_tokens": 179424,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8520,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 179424,
+          "maximum_weighted_request_input_tokens": 179928,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8544,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 179928,
+          "maximum_weighted_request_input_tokens": 180432,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8568,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 180432,
+          "maximum_weighted_request_input_tokens": 180936,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8592,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 180936,
+          "maximum_weighted_request_input_tokens": 181440,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8616,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 181440,
+          "maximum_weighted_request_input_tokens": 181944,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8640,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 181944,
+          "maximum_weighted_request_input_tokens": 182448,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8664,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 182448,
+          "maximum_weighted_request_input_tokens": 182952,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8688,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 182952,
+          "maximum_weighted_request_input_tokens": 183456,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8712,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 183456,
+          "maximum_weighted_request_input_tokens": 183960,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8736,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        },
+        {
+          "maximum_request_input_tokens": 183960,
+          "maximum_weighted_request_input_tokens": 184464,
+          "minimum_dynamic_concurrency_ceiling": 5,
+          "request_group": [
+            8760,
+            24,
+            21,
+            0,
+            "h",
+            1,
+            "native_multivariate",
+            "none",
+            21,
+            0,
+            0
+          ]
+        }
+      ],
+      "split_target_view_count": 0,
+      "status": "complete",
+      "tail_retry_bulk_request_count": 0,
+      "tail_retry_recovered_view_count": 0,
+      "unsupported_window_view_count": 0,
+      "very_long_context_input_token_multiplier": 1.0,
+      "very_long_context_threshold": -1
+    }
+  ],
+  "model_tasks": {},
+  "prepare_only": false,
+  "schema_version": "cafe.benchmark_extension_inference.v13",
+  "validation_report": {
+    "path": "/data/xmy/CaFE/runtime/experiments/fev-mini20-full-v6/fev__jena_weather_1H/02_validation/report.json",
+    "sha256": "c9d7c4f08a4a83d959fdf9f43ae093ecab60cbc303589865e967562c27be1f99"
+  }
+}
