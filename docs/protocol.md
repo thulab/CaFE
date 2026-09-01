@@ -240,6 +240,16 @@ then independently rebuilds every official instance, five-level treatment, and
 input ablation. Dense targets, futures, and native covariates are transient
 replay values and are not generation artifacts.
 
+For multivariate input attribution, common-factor and cross-series ablations
+expose only the assessed target channel while preserving its treated history
+and future exactly. Covariate-impulse ablations preserve the target panel and
+remove the treated covariate carrier column, including its visibility metadata.
+The original-to-ablated target-index mapping is stored explicitly so analysis
+compares the same scored target when the retained channel was not column zero.
+Attribution is reported only when the full model request actually exposed the
+removed input: native multivariate target input for common/cross, and a model-
+visible carrier for covariate impulse response.
+
 ## 7. Inference
 
 Inference reads source Arrow and compact contracts directly. It rebuilds a

@@ -472,79 +472,18 @@ def _treatment_row(
     }
 
 
-def _least_aligned_circular_shift(
-    values: np.ndarray,
-    *,
-    official_instance_id: str,
-    capability_id: str,
-    capability_level: int,
-    augmentation_seed: int,
-    channel: int,
-) -> tuple[np.ndarray, int, float | None]:
-    """Return a deterministic, marginal-preserving temporal donor.
-
-    Candidate shifts come only from the model-visible history.  Choosing the
-    least aligned candidate avoids accidentally retaining a dominant period,
-    while circular shifting preserves the exact empirical marginal scale.
-    """
-
-    source = np.asarray(values, dtype=float)
-    length = int(source.size)
-    if length < 4:
-        raise ValueError("input_ablation_requires_history_length_at_least_four")
-    rng = np.random.default_rng(
-        protocol.stable_seed(
-            official_instance_id,
-            capability_id,
-            capability_level,
-            channel,
-            "input_ablation",
-            base=int(augmentation_seed),
-        )
-    )
-    lower = max(1, length // 8)
-    upper = max(lower + 1, length - lower)
-    candidate_count = min(24, max(1, upper - lower))
-    candidates = sorted(
-        {
-            int(value)
-            for value in rng.integers(lower, upper, size=candidate_count)
-            if int(value) % length
-        }
-    )
-    if not candidates:
-        candidates = [max(1, length // 2)]
-    source_std = float(np.std(source))
-    best: tuple[float, int, np.ndarray, float | None] | None = None
-    for shift in candidates:
-        shifted = np.roll(source, shift)
-        shifted_std = float(np.std(shifted))
-        correlation = (
-            None
-            if source_std <= 1e-12 or shifted_std <= 1e-12
-            else float(np.corrcoef(source, shifted)[0, 1])
-        )
-        score = 0.0 if correlation is None else abs(correlation)
-        candidate = (score, shift, shifted, correlation)
-        if best is None or candidate[:2] < best[:2]:
-            best = candidate
-    assert best is not None
-    return best[2], int(best[1]), best[3]
-
-
 def _input_ablation_row(
     instance: GiftEvalInstance,
     group: CapabilityGroup,
     treatment: CapabilityTreatment,
     treatment_row: dict[str, Any],
-    *,
-    augmentation_seed: int,
 ) -> dict[str, Any] | None:
     """Build the mandatory auxiliary-input attribution task.
 
-    The assessed target history and the complete scored future stay identical
-    to the main treatment.  Only auxiliary histories are temporally misaligned,
-    so the row measures whether a model actually uses cross-channel inputs.
+    Common-factor and cross-series tasks expose only the assessed target.  The
+    covariate task removes its treated carrier.  In both cases the assessed
+    history and scored future are unchanged, so the pair measures the value of
+    the removed auxiliary input rather than sensitivity to a synthetic shift.
     """
 
     if group.capability_id not in {
@@ -555,25 +494,23 @@ def _input_ablation_row(
         return None
     metadata = treatment.metadata
     if group.capability_id == "covariate_impulse_response":
-        assessed = (int(metadata["eligible_target_index"]),)
+        assessed = int(metadata["eligible_target_index"])
         covariate = int(metadata["covariate_index"])
-        impulse_delta = np.asarray(
-            treatment.history_covariate_delta[:, covariate], dtype=float
-        )
-        shifted, shift, correlation = _least_aligned_circular_shift(
-            impulse_delta,
-            official_instance_id=instance.official_instance_id,
-            capability_id=group.capability_id,
-            capability_level=treatment.level,
-            augmentation_seed=augmentation_seed,
-            channel=covariate,
-        )
         source_covariates = np.asarray(treatment_row["covariates"], dtype=float)
-        result_covariates = source_covariates.copy()
-        context = int(treatment_row["context_length"])
-        result_covariates[:context, covariate] = (
-            instance.history_covariates[:, covariate] + shifted
-        )
+        kept_covariates = [
+            index for index in range(source_covariates.shape[1])
+            if index != covariate
+        ]
+
+        def kept_metadata(field: str) -> list[Any]:
+            values = list(treatment_row.get(field) or [])
+            if not values:
+                return []
+            if len(values) != source_covariates.shape[1]:
+                raise ValueError(f"{field} must match covariate_dim")
+            return [values[index] for index in kept_covariates]
+
+        result_covariates = source_covariates[:, kept_covariates]
         target = np.asarray(treatment_row["target"], dtype=float)
         row = dict(treatment_row)
         row.update(
@@ -586,16 +523,28 @@ def _input_ablation_row(
                 "counterfactual_member": 2,
                 "input_ablation_source_sample_id": treatment_row["sample_id"],
                 "input_ablation_source_target_sha256": treatment_row["target_sha256"],
-                "assessed_target_indices": list(assessed),
+                "assessed_target_indices": [assessed],
+                "ablation_target_indices": [assessed],
                 "ablated_input_indices": [covariate],
                 "target": target.copy(),
-                "covariates": result_covariates,
+                "covariate_dim": len(kept_covariates),
+                "covariate_column_names": kept_metadata(
+                    "covariate_column_names"
+                ),
+                "covariate_availability": kept_metadata(
+                    "covariate_availability"
+                ),
+                "future_covariate_visible": kept_metadata(
+                    "future_covariate_visible"
+                ),
+                "covariate_types": kept_metadata("covariate_types"),
+                "covariates": result_covariates if kept_covariates else None,
                 "target_sha256": treatment_row["target_sha256"],
                 "history_sha256": treatment_row["history_sha256"],
                 "future_sha256": treatment_row["future_sha256"],
                 "covariate_sha256": _target_sha256(result_covariates),
-                "input_ablation_delta_sha256": _target_sha256(
-                    result_covariates - source_covariates
+                "input_ablation_removed_input_sha256": _target_sha256(
+                    source_covariates[:, covariate : covariate + 1]
                 ),
                 "source_distance_gate": {
                     "policy": "not_applicable_auxiliary_input_ablation",
@@ -606,22 +555,15 @@ def _input_ablation_row(
                     "status": "not_applicable",
                 },
                 "input_ablation_metadata": {
-                    "policy": "shift_only_constructed_covariate_impulse_v1",
+                    "policy": "auxiliary_input_removal_v1",
+                    "mode": "remove_treated_covariate",
                     "assessed_target_history_unchanged": True,
                     "scored_future_unchanged": True,
-                    "authentic_covariate_path_unchanged": True,
-                    "channel_audit": {
-                        str(covariate): {
-                            "circular_shift": shift,
-                            "absolute_alignment_correlation": (
-                                None if correlation is None else abs(correlation)
-                            ),
-                            "source_impulse_delta_sha256": _target_sha256(
-                                impulse_delta
-                            ),
-                            "ablated_impulse_delta_sha256": _target_sha256(shifted),
-                        }
-                    },
+                    "removed_source_covariate_indices": [covariate],
+                    "kept_source_covariate_indices": kept_covariates,
+                    "removed_source_covariate_names": [
+                        treatment_row["covariate_column_names"][covariate]
+                    ],
                 },
                 "included_in_capability_ranking": False,
                 "excluded_from_primary_score": True,
@@ -629,46 +571,29 @@ def _input_ablation_row(
         )
         return row
     if group.capability_id == "cross_series_dependence":
-        assessed = (int(metadata["responder_target_index"]),)
-        ablated = (int(metadata["driver_target_index"]),)
+        assessed = int(metadata["responder_target_index"])
     else:
         loading = np.asarray(metadata["loading"], dtype=float)
-        assessed = (int(np.argmax(np.abs(loading))),)
-        ablated = tuple(index for index in range(instance.target_dim) if index not in assessed)
+        assessed = int(np.argmax(np.abs(loading)))
+    ablated = tuple(
+        index for index in range(instance.target_dim) if index != assessed
+    )
     if not ablated:
         raise ValueError("input_ablation_has_no_auxiliary_channel")
 
-    target = np.asarray(treatment_row["target"], dtype=float)
+    source_target = np.asarray(treatment_row["target"], dtype=float)
     context = int(treatment_row["context_length"])
-    result = target.copy()
-    channel_audit: dict[str, Any] = {}
-    for channel in ablated:
-        source = target[:context, channel]
-        shifted, shift, correlation = _least_aligned_circular_shift(
-            source,
-            official_instance_id=instance.official_instance_id,
-            capability_id=group.capability_id,
-            capability_level=treatment.level,
-            augmentation_seed=augmentation_seed,
-            channel=channel,
-        )
-        result[:context, channel] = shifted
-        channel_audit[str(channel)] = {
-            "circular_shift": shift,
-            "absolute_alignment_correlation": (
-                None if correlation is None else abs(correlation)
-            ),
-            "source_history_sha256": _target_sha256(source),
-            "ablated_history_sha256": _target_sha256(shifted),
-            "source_mean": float(np.mean(source)),
-            "source_std": float(np.std(source)),
-            "ablated_mean": float(np.mean(shifted)),
-            "ablated_std": float(np.std(shifted)),
-        }
-    np.testing.assert_array_equal(
-        result[:context, list(assessed)], target[:context, list(assessed)]
-    )
-    np.testing.assert_array_equal(result[context:], target[context:])
+    result = source_target[:, assessed : assessed + 1].copy()
+    source_scales = list(treatment_row["mase_scale_by_target"])
+    future_mask = np.asarray(treatment_row["future_observed_mask"], dtype=bool)[
+        :, assessed : assessed + 1
+    ]
+    source_history = np.asarray(instance.history, dtype=float)[
+        :, assessed : assessed + 1
+    ]
+    source_future = np.asarray(instance.future, dtype=float)[
+        :, assessed : assessed + 1
+    ]
 
     row = dict(treatment_row)
     row.update(
@@ -681,20 +606,27 @@ def _input_ablation_row(
             "counterfactual_member": 2,
             "input_ablation_source_sample_id": treatment_row["sample_id"],
             "input_ablation_source_target_sha256": treatment_row["target_sha256"],
-            "assessed_target_indices": list(assessed),
+            "assessed_target_indices": [assessed],
+            "ablation_target_indices": [0],
             "ablated_input_indices": list(ablated),
+            "target_dim": 1,
+            "target_column_names": [treatment_row["target_column_names"][assessed]],
+            "affected_target_indices": [0],
             "target": result,
+            "future_observed_mask": future_mask,
+            "mase_scale": float(source_scales[assessed]),
+            "mase_scale_by_target": [float(source_scales[assessed])],
             "target_sha256": _target_sha256(result),
             "history_sha256": _target_sha256(result[:context]),
             "future_sha256": _target_sha256(result[context:]),
             "history_delta_sha256": _target_sha256(
-                result[:context] - instance.history
+                result[:context] - source_history
             ),
             "future_delta_sha256": _target_sha256(
-                result[context:] - instance.future
+                result[context:] - source_future
             ),
-            "input_ablation_delta_sha256": _target_sha256(
-                result[:context] - target[:context]
+            "input_ablation_removed_input_sha256": _target_sha256(
+                source_target[:context, list(ablated)]
             ),
             "source_distance_gate": {
                 "policy": "not_applicable_auxiliary_input_ablation",
@@ -705,11 +637,12 @@ def _input_ablation_row(
                 "status": "not_applicable",
             },
             "input_ablation_metadata": {
-                "policy": "deterministic_least_aligned_circular_shift_v1",
+                "policy": "auxiliary_input_removal_v1",
+                "mode": "assessed_target_only",
                 "assessed_target_history_unchanged": True,
                 "scored_future_unchanged": True,
-                "empirical_marginal_preserved": True,
-                "channel_audit": channel_audit,
+                "kept_source_target_indices": [assessed],
+                "removed_source_target_indices": list(ablated),
             },
             "included_in_capability_ranking": False,
             "excluded_from_primary_score": True,
@@ -817,7 +750,6 @@ def _materialized_capability_rows(
             group,
             treatment,
             treatment_row,
-            augmentation_seed=augmentation_seed,
         )
         if ablation_row is not None:
             rows.append(("input_ablations", ablation_row))
@@ -1152,8 +1084,46 @@ def _replay_contract_instance(
             if source_covariates is None
             else np.asarray(source_covariates, dtype=float).copy()
         )
+        ablation_metadata = contract["input_ablation_metadata"]
+        if ablation_metadata.get("policy") == "auxiliary_input_removal_v1":
+            mode = str(ablation_metadata["mode"])
+            if mode == "assessed_target_only":
+                kept_targets = [
+                    int(value)
+                    for value in ablation_metadata[
+                        "kept_source_target_indices"
+                    ]
+                ]
+                target = target[:, kept_targets]
+                future_observed_mask = np.asarray(
+                    instance.future_observed_mask, dtype=bool
+                )[:, kept_targets]
+            elif mode == "remove_treated_covariate":
+                kept_covariates = [
+                    int(value)
+                    for value in ablation_metadata[
+                        "kept_source_covariate_indices"
+                    ]
+                ]
+                ablated_covariates = ablated_covariates[:, kept_covariates]
+                future_observed_mask = instance.future_observed_mask
+            else:
+                raise ValueError(f"unknown input ablation removal mode: {mode}")
+            output.append(
+                _dense_contract_row(
+                    contract,
+                    target=target,
+                    covariates=ablated_covariates,
+                    future_observed_mask=future_observed_mask,
+                    materialized_history_start=start,
+                )
+            )
+            continue
+
+        # Historical v15 contracts used temporal shifts.  Keep replay support
+        # so completed experiments remain readable without changing them.
         context = int(contract["context_length"])
-        audit = contract["input_ablation_metadata"]["channel_audit"]
+        audit = ablation_metadata["channel_audit"]
         if str(contract["capability_id"]) == "covariate_impulse_response":
             metadata = contract["mechanism_metadata"]
             channel = int(metadata["covariate_index"])
@@ -1600,7 +1570,7 @@ def generate_benchmark_task(
             "continuous_numeric_dynamic_covariates_only_v1"
         ),
         "input_ablation_policy": (
-            "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2"
+            "common_cross_target_only_or_treated_covariate_removal_v1"
         ),
         "artifact_storage": {
             "format": "parquet",
@@ -1993,7 +1963,7 @@ def generate_dataset(
             ),
         },
         "input_ablation_policy": (
-            "common_cross_auxiliary_or_covariate_impulse_alignment_shift_v2"
+            "common_cross_target_only_or_treated_covariate_removal_v1"
         ),
         "artifact_storage": {
             "format": "parquet",

@@ -11,6 +11,7 @@ from cafe.benchmark_extension.analysis import (
     _aggregate_effects,
     _effect_decay_measurement,
     _effect_measurement,
+    _input_ablation_is_exposed,
     _input_ablation_rows,
     analyse_model,
     run_analysis,
@@ -194,7 +195,7 @@ def test_effect_summary_uses_pooled_standardized_energy() -> None:
     assert np.isclose(summary["effect_nrmse_pooled"], np.sqrt(4.0 / 101.0))
 
 
-def test_input_ablation_reports_measured_degradation_without_model_type_shortcut() -> None:
+def test_input_ablation_scores_only_models_exposed_to_removed_input() -> None:
     history = np.arange(20.0)[:, None]
     future = np.arange(20.0, 24.0)[:, None]
     baseline = {
@@ -228,9 +229,9 @@ def test_input_ablation_reports_measured_degradation_without_model_type_shortcut
         {"treatment": treatment},
         [ablation],
         {"treatment": perfect, "ablation": perfect.copy()},
+        {"treatment": {"target_mode": "independent_univariate"}},
     )
-    assert rows[0]["input_ablation_mase_degradation"] == 0.0
-    assert rows[0]["input_ablation_response_ratio"] == 0.0
+    assert rows == []
 
     rows = _input_ablation_rows(
         "native-panel",
@@ -238,10 +239,86 @@ def test_input_ablation_reports_measured_degradation_without_model_type_shortcut
         {"treatment": treatment},
         [ablation],
         {"treatment": perfect, "ablation": perfect - 1.0},
+        {"treatment": {"target_mode": "native_multivariate"}},
     )
     assert rows[0]["full_input_mase"] == 0.0
     assert rows[0]["ablated_input_mase"] == 1.0
     assert rows[0]["input_ablation_mase_degradation"] == 1.0
+
+
+def test_input_ablation_maps_source_target_to_target_only_forecast() -> None:
+    history = np.column_stack(
+        (np.arange(20.0), np.arange(20.0) + 10.0, np.arange(20.0) + 20.0)
+    )
+    future = np.column_stack(
+        (np.arange(20.0, 24.0), np.arange(30.0, 34.0), np.arange(40.0, 44.0))
+    )
+    baseline = {
+        "sample_id": "baseline",
+        "official_instance_id": "official",
+        "dataset_id": "gift_fixture",
+        "context_length": 20,
+        "target": np.vstack((history, future)).tolist(),
+        "future_observed_mask": np.ones((4, 3), dtype=bool).tolist(),
+        "mase_scale_by_target": [1.0, 1.0, 1.0],
+    }
+    treatment_future = future.copy()
+    treatment_future[:, 2] += 2.0
+    treatment = {
+        **baseline,
+        "sample_id": "treatment",
+        "baseline_sample_id": "baseline",
+        "capability_id": "cross_series_dependence",
+        "capability_level": 1,
+        "target": np.vstack((history, treatment_future)).tolist(),
+    }
+    ablation = {
+        **treatment,
+        "sample_id": "ablation",
+        "target": np.vstack((history[:, 2:3], treatment_future[:, 2:3])).tolist(),
+        "input_ablation_source_sample_id": "treatment",
+        "assessed_target_indices": [2],
+        "ablation_target_indices": [0],
+        "ablated_input_indices": [0, 1],
+    }
+    full_forecast = treatment_future.copy()
+    ablated_forecast = treatment_future[:, 2:3] - 1.0
+    rows = _input_ablation_rows(
+        "native-panel",
+        {"baseline": baseline},
+        {"treatment": treatment},
+        [ablation],
+        {"treatment": full_forecast, "ablation": ablated_forecast},
+        {"treatment": {"target_mode": "native_multivariate"}},
+    )
+    assert rows[0]["assessed_target_indices"] == [2]
+    assert rows[0]["ablation_target_indices"] == [0]
+    assert rows[0]["full_input_mase"] == 0.0
+    assert rows[0]["ablated_input_mase"] == 1.0
+
+
+def test_covariate_ablation_requires_carrier_to_be_in_full_request() -> None:
+    source = {
+        "capability_id": "covariate_impulse_response",
+        "future_covariate_visible": [False, True],
+    }
+    paired_plan = {"covariate_mode": "paired_known_future_only"}
+    assert not _input_ablation_is_exposed(
+        source, {"ablated_input_indices": [0]}, paired_plan
+    )
+    assert _input_ablation_is_exposed(
+        source, {"ablated_input_indices": [1]}, paired_plan
+    )
+    assert _input_ablation_is_exposed(
+        source,
+        {"ablated_input_indices": [0]},
+        {"covariate_mode": "native_history_only"},
+    )
+    assert not _input_ablation_is_exposed(
+        source,
+        {"ablated_input_indices": [1]},
+        {"covariate_mode": "omitted_unsupported"},
+    )
 
 
 def test_analysis_writes_separate_accuracy_effect_and_ablation_tables(

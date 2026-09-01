@@ -96,9 +96,11 @@ Analysis keeps three result families separate: baseline and treatment
 MASE/MAE; MASE-standardized pooled effect NRMSE, correlation, coverage, and
 amplitude ratio; and a
 common/cross/covariate input-ablation table. The ablation keeps the assessed
-target history and treatment future fixed while temporally misaligning only
-the relevant auxiliary treatment signal, so it measures whether intact inputs
-improve the forecast.
+target history and treatment future fixed. Common/cross rows retain only that
+target channel; covariate rows remove the treated carrier column. The paired
+forecast change therefore measures the value of the removed auxiliary input,
+without introducing a synthetic shifted path. Analysis includes only model/task
+pairs whose full request actually exposed that input.
 
 The analysis stage also writes a suite-level task-equal summary. A GIFT
 dataset and an FEV task each contribute one value, and model comparisons use a

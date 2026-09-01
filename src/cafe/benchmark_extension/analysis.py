@@ -93,6 +93,7 @@ ABLATION_METRIC_SCHEMA = pa.schema(
         ("capability_id", pa.string()),
         ("capability_level", pa.int8()),
         ("assessed_target_indices", pa.list_(pa.int32())),
+        ("ablation_target_indices", pa.list_(pa.int32())),
         ("ablated_input_indices", pa.list_(pa.int32())),
         ("full_input_mase", pa.float64()),
         ("ablated_input_mase", pa.float64()),
@@ -488,35 +489,62 @@ def _input_ablation_rows(
     treatments: dict[str, dict[str, Any]],
     ablations: Iterable[dict[str, Any]],
     predictions: dict[str, np.ndarray],
+    input_adaptations: dict[str, dict[str, Any] | None] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for ablation in ablations:
         source = treatments[str(ablation["input_ablation_source_sample_id"])]
         baseline = baselines[str(source["baseline_sample_id"])]
+        if input_adaptations is not None and not _input_ablation_is_exposed(
+            source,
+            ablation,
+            input_adaptations.get(str(source["sample_id"])),
+        ):
+            continue
         full_forecast = predictions.get(str(source["sample_id"]))
         ablated_forecast = predictions.get(str(ablation["sample_id"]))
         if full_forecast is None or ablated_forecast is None:
             continue
         truth = _future(source)
-        if not np.array_equal(truth, _future(ablation)):
-            raise ValueError("input ablation changed scored future")
-        mask = np.asarray(source["future_observed_mask"], dtype=bool)
         assessed = [int(value) for value in ablation["assessed_target_indices"]]
-        assessed_mask = np.zeros_like(mask, dtype=bool)
-        assessed_mask[:, assessed] = mask[:, assessed]
-        scales = np.asarray(baseline["mase_scale_by_target"], dtype=float)
-        full_scaled_error = np.abs(full_forecast - truth) / scales[None, :]
-        ablated_scaled_error = np.abs(ablated_forecast - truth) / scales[None, :]
+        ablation_targets = [
+            int(value)
+            for value in ablation.get("ablation_target_indices", assessed)
+        ]
+        if len(assessed) != len(ablation_targets):
+            raise ValueError("input ablation target index mapping is invalid")
+        ablated_truth = _future(ablation)[:, ablation_targets]
+        assessed_truth = truth[:, assessed]
+        if not np.array_equal(assessed_truth, ablated_truth):
+            raise ValueError("input ablation changed scored future")
+        assessed_mask = np.asarray(
+            source["future_observed_mask"], dtype=bool
+        )[:, assessed]
+        scales = np.asarray(
+            baseline["mase_scale_by_target"], dtype=float
+        )[assessed]
+        full_assessed = full_forecast[:, assessed]
+        ablated_assessed = ablated_forecast[:, ablation_targets]
+        full_scaled_error = (
+            np.abs(full_assessed - assessed_truth) / scales[None, :]
+        )
+        ablated_scaled_error = (
+            np.abs(ablated_assessed - assessed_truth) / scales[None, :]
+        )
         full_mase = float(np.mean(_masked(full_scaled_error, assessed_mask)))
         ablated_mase = float(np.mean(_masked(ablated_scaled_error, assessed_mask)))
-        forecast_change = _masked(ablated_forecast - full_forecast, assessed_mask)
-        truth_effect = _masked(truth - _future(baseline), assessed_mask)
+        forecast_change = _masked(
+            ablated_assessed - full_assessed, assessed_mask
+        )
+        truth_effect = _masked(
+            assessed_truth - _future(baseline)[:, assessed], assessed_mask
+        )
         truth_effect_rms = max(
             float(np.sqrt(np.mean(np.square(truth_effect)))), 1e-8
         )
         rows.append(
             {
-                "schema_version": "cafe.capability_input_ablation_metric.v1",
+                "schema_version": "cafe.capability_input_ablation_metric.v3",
                 "model_id": model_id,
                 "dataset_id": source["dataset_id"],
                 "official_instance_id": source["official_instance_id"],
@@ -525,6 +553,7 @@ def _input_ablation_rows(
                 "capability_id": source["capability_id"],
                 "capability_level": int(source["capability_level"]),
                 "assessed_target_indices": assessed,
+                "ablation_target_indices": ablation_targets,
                 "ablated_input_indices": [
                     int(value) for value in ablation["ablated_input_indices"]
                 ],
@@ -540,6 +569,38 @@ def _input_ablation_rows(
             }
         )
     return rows
+
+
+def _input_ablation_is_exposed(
+    source: dict[str, Any],
+    ablation: dict[str, Any],
+    input_adaptation: dict[str, Any] | None,
+) -> bool:
+    """Whether the full request actually contained the removed input."""
+
+    if input_adaptation is None:
+        # Prediction artifacts written before adaptation metadata was recorded
+        # remain analysable with their historical all-pairs behavior.
+        return True
+    policy = str((ablation.get("input_ablation_metadata") or {}).get("policy"))
+    if policy in {
+        "deterministic_least_aligned_circular_shift_v1",
+        "shift_only_constructed_covariate_impulse_v1",
+    }:
+        return True
+    capability = str(source["capability_id"])
+    if capability in {"common_factor", "cross_series_dependence"}:
+        return input_adaptation.get("target_mode") == "native_multivariate"
+    if capability != "covariate_impulse_response":
+        return False
+    covariate_mode = str(input_adaptation.get("covariate_mode"))
+    if covariate_mode in {"none", "omitted_unsupported"}:
+        return False
+    if covariate_mode != "paired_known_future_only":
+        return True
+    removed = int(ablation["ablated_input_indices"][0])
+    visible = [bool(value) for value in source["future_covariate_visible"]]
+    return removed < len(visible) and visible[removed]
 
 
 def _aggregate_input_ablations(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -691,16 +752,19 @@ def _aggregate_effects(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _load_prediction_part(
     record: dict[str, Any] | None,
-) -> dict[str, np.ndarray]:
+) -> dict[str, dict[str, Any]]:
     if record is None:
         return {}
     path = validate_parquet_record(record)
-    output: dict[str, np.ndarray] = {}
+    output: dict[str, dict[str, Any]] = {}
     for row in iter_prediction_parquet(path):
         sample_id = str(row["sample_id"])
         if sample_id in output:
             raise ValueError(f"duplicate prediction for {sample_id} in {path}")
-        output[sample_id] = np.asarray(row["forecast"], dtype=float)
+        output[sample_id] = {
+            "forecast": np.asarray(row["forecast"], dtype=float),
+            "input_adaptation": row.get("input_adaptation"),
+        }
     return output
 
 
@@ -748,7 +812,7 @@ def _consume_replayed_samples(
     samples: Iterable[dict[str, Any]],
     *,
     model_ids: list[str],
-    predictions_by_model: dict[str, dict[str, np.ndarray]],
+    predictions_by_model: dict[str, dict[str, dict[str, Any]]],
     accuracy_writer: TypedParquetWriter,
     effect_writer: TypedParquetWriter,
     ablation_writer: TypedParquetWriter,
@@ -769,9 +833,21 @@ def _consume_replayed_samples(
 
     for sample in samples:
         sample_id = str(sample["sample_id"])
-        forecasts = {
+        prediction_rows = {
             model_id: predictions_by_model[model_id].get(sample_id)
             for model_id in model_ids
+        }
+        forecasts = {
+            model_id: (
+                None if prediction is None else prediction["forecast"]
+            )
+            for model_id, prediction in prediction_rows.items()
+        }
+        input_adaptations = {
+            model_id: (
+                None if prediction is None else prediction["input_adaptation"]
+            )
+            for model_id, prediction in prediction_rows.items()
         }
         table = str(sample["evaluation_table"])
         if table in {"gift_eval_official_baseline", "benchmark_official_baseline"}:
@@ -831,6 +907,7 @@ def _consume_replayed_samples(
                 "row": sample,
                 "future": future,
                 "forecasts": forecasts,
+                "input_adaptations": input_adaptations,
                 "baseline": baseline,
             }
             mask = baseline["mask"]
@@ -1004,12 +1081,23 @@ def _consume_replayed_samples(
         truth = source["future"]
         mask = baseline["mask"]
         assessed = [int(value) for value in sample["assessed_target_indices"]]
-        assessed_mask = np.zeros_like(mask, dtype=bool)
-        assessed_mask[:, assessed] = mask[:, assessed]
+        ablation_targets = [
+            int(value)
+            for value in sample.get("ablation_target_indices", assessed)
+        ]
+        if len(assessed) != len(ablation_targets):
+            raise ValueError("input ablation target index mapping is invalid")
+        assessed_mask = mask[:, assessed]
         if not np.any(assessed_mask):
             continue
-        scales = baseline["scales"]
-        truth_effect = _masked(truth - baseline["future"], assessed_mask)
+        scales = baseline["scales"][assessed]
+        assessed_truth = truth[:, assessed]
+        ablated_truth = _future(sample)[:, ablation_targets]
+        if not np.array_equal(assessed_truth, ablated_truth):
+            raise ValueError("input ablation changed scored future")
+        truth_effect = _masked(
+            assessed_truth - baseline["future"][:, assessed], assessed_mask
+        )
         truth_effect_rms = max(
             float(np.sqrt(np.mean(np.square(truth_effect)))), 1e-8
         )
@@ -1017,10 +1105,18 @@ def _consume_replayed_samples(
             full_forecast = source["forecasts"][model_id]
             if forecast is None or full_forecast is None:
                 continue
+            if not _input_ablation_is_exposed(
+                source["row"],
+                sample,
+                source["input_adaptations"][model_id],
+            ):
+                continue
+            full_assessed = full_forecast[:, assessed]
+            ablated_assessed = forecast[:, ablation_targets]
             full_mase = float(
                 np.mean(
                     _masked(
-                        np.abs(full_forecast - truth) / scales[None, :],
+                        np.abs(full_assessed - assessed_truth) / scales[None, :],
                         assessed_mask,
                     )
                 )
@@ -1028,18 +1124,21 @@ def _consume_replayed_samples(
             ablated_mase = float(
                 np.mean(
                     _masked(
-                        np.abs(forecast - truth) / scales[None, :],
+                        np.abs(ablated_assessed - assessed_truth)
+                        / scales[None, :],
                         assessed_mask,
                     )
                 )
             )
-            forecast_change = _masked(forecast - full_forecast, assessed_mask)
+            forecast_change = _masked(
+                ablated_assessed - full_assessed, assessed_mask
+            )
             response_ratio = float(
                 np.sqrt(np.mean(np.square(forecast_change))) / truth_effect_rms
             )
             ablation_writer.write(
                 {
-                    "schema_version": "cafe.capability_input_ablation_metric.v2",
+                    "schema_version": "cafe.capability_input_ablation_metric.v3",
                     "model_id": model_id,
                     "dataset_id": sample["dataset_id"],
                     "official_instance_id": sample["official_instance_id"],
@@ -1048,6 +1147,7 @@ def _consume_replayed_samples(
                     "capability_id": source["row"]["capability_id"],
                     "capability_level": int(source["row"]["capability_level"]),
                     "assessed_target_indices": assessed,
+                    "ablation_target_indices": ablation_targets,
                     "ablated_input_indices": [
                         int(value) for value in sample["ablated_input_indices"]
                     ],
@@ -1615,7 +1715,8 @@ def _write_sharded_analysis_outputs(
                 "on_scoreable_affected_targets"
             ),
             "input_ablation_attribution": (
-                "same_treatment_truth_with_auxiliary_histories_temporally_misaligned"
+                "same_assessed_treatment_truth_with_exposed_relevant_auxiliary_"
+                "inputs_removed"
             ),
         },
         "mechanism_scoring_policy": {

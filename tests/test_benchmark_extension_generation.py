@@ -8,7 +8,12 @@ import pyarrow as pa
 import pyarrow.ipc as pa_ipc
 
 from cafe import core as protocol
-from cafe.benchmark_extension.generation import generate_dataset, iter_replayed_samples
+from cafe.benchmark_extension.generation import (
+    _replay_contract_instance,
+    generate_dataset,
+    iter_replay_contract_work_items,
+    iter_replayed_samples,
+)
 from cafe.benchmark_extension.storage import (
     iter_compact_parquet,
     parquet_file_record,
@@ -224,7 +229,7 @@ def test_generation_excludes_incomplete_future_label_windows_and_audits_counts(
     assert report["accepted"]
 
 
-def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatment(
+def test_common_and_cross_emit_one_target_only_input_ablation_per_treatment(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -255,23 +260,28 @@ def test_common_and_cross_emit_one_marginal_preserving_input_ablation_per_treatm
         source = treatments[row["input_ablation_source_sample_id"]]
         target = np.asarray(row["target"])
         source_target = np.asarray(source["target"])
-        context = int(row["context_length"])
-        assessed = row["assessed_target_indices"]
+        assessed = int(row["assessed_target_indices"][0])
+        removed = [
+            index for index in range(source_target.shape[1]) if index != assessed
+        ]
+        assert row["target_dim"] == 1
+        assert row["ablation_target_indices"] == [0]
+        assert row["ablated_input_indices"] == removed
         np.testing.assert_array_equal(
-            target[:context, assessed], source_target[:context, assessed]
+            target[:, 0], source_target[:, assessed]
         )
-        np.testing.assert_array_equal(target[context:], source_target[context:])
-        for channel in row["ablated_input_indices"]:
-            assert not np.array_equal(
-                target[:context, channel], source_target[:context, channel]
-            )
-            np.testing.assert_allclose(
-                np.sort(target[:context, channel]),
-                np.sort(source_target[:context, channel]),
-            )
+        np.testing.assert_array_equal(row["covariates"], source["covariates"])
+        assert row["input_ablation_metadata"] == {
+            "policy": "auxiliary_input_removal_v1",
+            "mode": "assessed_target_only",
+            "assessed_target_history_unchanged": True,
+            "scored_future_unchanged": True,
+            "kept_source_target_indices": [assessed],
+            "removed_source_target_indices": removed,
+        }
 
 
-def test_covariate_impulse_ablation_keeps_target_and_shifts_only_impulse(
+def test_covariate_impulse_ablation_removes_treated_covariate(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -287,11 +297,6 @@ def test_covariate_impulse_ablation_keeps_target_and_shifts_only_impulse(
         max_instances=1,
     )
     replayed = list(iter_replayed_samples(manifest, gift_eval_dir=gift_root))
-    baseline = next(
-        row
-        for row in replayed
-        if row["evaluation_table"] == "gift_eval_official_baseline"
-    )
     treatments = {
         row["sample_id"]: row
         for row in replayed
@@ -306,19 +311,29 @@ def test_covariate_impulse_ablation_keeps_target_and_shifts_only_impulse(
     for ablation in ablations:
         treatment = treatments[ablation["input_ablation_source_sample_id"]]
         np.testing.assert_array_equal(ablation["target"], treatment["target"])
-        assert not np.array_equal(
-            ablation["covariates"], treatment["covariates"]
-        )
-        context = int(ablation["context_length"])
+        removed = int(ablation["ablated_input_indices"][0])
+        kept = [
+            index for index in range(int(treatment["covariate_dim"]))
+            if index != removed
+        ]
+        assert ablation["ablation_target_indices"] == [
+            int(ablation["assessed_target_indices"][0])
+        ]
+        assert ablation["covariate_dim"] == len(kept)
         np.testing.assert_array_equal(
-            np.asarray(ablation["covariates"])[context:],
-            np.asarray(treatment["covariates"])[context:],
+            np.asarray(ablation["covariates"]),
+            np.asarray(treatment["covariates"])[:, kept],
         )
-        assert not np.array_equal(
-            np.asarray(treatment["covariates"])[:context],
-            np.asarray(baseline["covariates"])[:context],
+        for field in (
+            "covariate_column_names",
+            "covariate_availability",
+            "future_covariate_visible",
+            "covariate_types",
+        ):
+            assert ablation[field] == [treatment[field][index] for index in kept]
+        assert ablation["input_ablation_metadata"]["mode"] == (
+            "remove_treated_covariate"
         )
-        assert ablation["future_covariate_visible"] == [False, False]
 
 
 def test_replay_handles_panel_ablations_without_native_covariates(
@@ -349,6 +364,53 @@ def test_replay_handles_panel_ablations_without_native_covariates(
     ]
     assert len(ablations) == 5
     assert all(row["covariates"] is None for row in ablations)
+
+
+def test_replay_keeps_legacy_shift_contract_compatibility(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    gift_root = _panel_fixture(tmp_path, monkeypatch)
+    dataset_root = tmp_path / "experiment-legacy-replay" / "gift_panel_fixture"
+    manifest = generate_dataset(
+        "gift_panel_fixture",
+        gift_eval_dir=gift_root,
+        dataset_root=dataset_root,
+        term="short",
+        augmentation_seed=43,
+        capability_ids=("common_factor",),
+        max_instances=1,
+    )
+    instance, baseline, treatments, ablations = next(
+        iter_replay_contract_work_items(manifest, gift_eval_dir=gift_root)
+    )
+    source = treatments[0]
+    legacy = dict(ablations[0])
+    legacy.update(
+        {
+            "target_dim": source["target_dim"],
+            "target_column_names": source["target_column_names"],
+            "future_observed_mask": source.get("future_observed_mask"),
+            "input_ablation_metadata": {
+                "policy": "deterministic_least_aligned_circular_shift_v1",
+                "channel_audit": {
+                    str(channel): {"circular_shift": 1}
+                    for channel in legacy["ablated_input_indices"]
+                },
+            },
+        }
+    )
+    replayed = _replay_contract_instance(
+        instance, baseline, [source], [legacy]
+    )
+    treatment_target = np.asarray(replayed[1]["target"])
+    legacy_target = np.asarray(replayed[2]["target"])
+    context = int(legacy["context_length"])
+    for channel in legacy["ablated_input_indices"]:
+        np.testing.assert_array_equal(
+            legacy_target[:context, channel],
+            np.roll(treatment_target[:context, channel], 1),
+        )
 
 
 def test_compact_contract_replay_matches_every_stored_delta_hash(
@@ -416,10 +478,7 @@ def test_compact_contract_replay_matches_every_stored_delta_hash(
 
     ablation_path = dataset_root / "01_generation" / "input_ablation_contracts.parquet"
     tampered = list(iter_compact_parquet(ablation_path))
-    first_channel = str(tampered[0]["ablated_input_indices"][0])
-    tampered[0]["input_ablation_metadata"]["channel_audit"][first_channel][
-        "circular_shift"
-    ] += 1
+    tampered[0]["input_ablation_metadata"]["kept_source_target_indices"] = [1]
     write_compact_parquet(ablation_path, tampered)
     manifest_path = dataset_root / "01_generation" / "manifest.json"
     changed_manifest = protocol.read_json(manifest_path)
