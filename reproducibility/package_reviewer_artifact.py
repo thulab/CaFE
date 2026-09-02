@@ -241,27 +241,40 @@ def project_parquet(
             for column in text_columns:
                 field_index = table.schema.get_field_index(column)
                 field = table.schema.field(field_index)
-                values = table[column].to_pylist()
-                projected_values: list[str | None] = []
-                embedded_keep: list[bool] = []
-                for value in values:
-                    if value is None:
-                        projected_values.append(None)
-                        embedded_keep.append(True)
-                    elif column.endswith("json"):
-                        projected, retain = sanitize_embedded_json(value)
-                        projected_values.append(projected)
-                        embedded_keep.append(retain)
-                    else:
-                        projected_values.append(sanitize_string(value))
-                        embedded_keep.append(True)
+                projected_values = table[column]
+                for old, new in (
+                    ("/data/xmy/CaFE", "${CAFE_ROOT}"),
+                    ("/data/xmy/chronos-forecasting", "${CHRONOS_ROOT}"),
+                    ("/data/xmy/timer-rest-service", "${MODEL_RUNTIME_ROOT}"),
+                    ("/data/xmy", "${DATA_ROOT}"),
+                    ("Timer-4.0", "${OMITTED_UNRELEASED_MODEL}"),
+                    ("Timer-4_0", "${OMITTED_UNRELEASED_MODEL}"),
+                ):
+                    projected_values = pc.replace_substring(
+                        projected_values,
+                        pattern=old,
+                        replacement=new,
+                    )
+                projected_values = pc.replace_substring_regex(
+                    projected_values,
+                    pattern=r"https?://192\.168\.99\.\d+(?::\d+)?",
+                    replacement="${WORKER_ENDPOINT}",
+                )
+                projected_values = pc.replace_substring_regex(
+                    projected_values,
+                    pattern=r"\b192\.168\.99\.\d+\b",
+                    replacement="${WORKER_IP}",
+                )
+                projected_values = pc.replace_substring_regex(
+                    projected_values,
+                    pattern=r"\btimecho\d+\b",
+                    replacement="${WORKER_HOST}",
+                )
                 table = table.set_column(
                     field_index,
                     field,
-                    pa.array(projected_values, type=field.type),
+                    projected_values,
                 )
-                if not all(embedded_keep):
-                    mask = pc.and_(mask, pa.array(embedded_keep))
             writer.write_table(table.filter(mask))
     return original_hash
 
