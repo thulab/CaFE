@@ -5,7 +5,7 @@
   "derived_macro_warning": "The macro NRMSE is a descriptive display metric, not a protocol-defined single leaderboard score. It equally averages eight capabilities and five levels despite unequal capability coverage.",
   "bootstrap_repetitions_for_derived_summaries": 20000,
   "bootstrap_seed_for_derived_summaries": 20260902,
-  "total_prediction_count": 25279591,
+  "total_prediction_count": 21649666,
   "total_inference_failure_count": 0,
   "suites": {
     "GIFT-Short": {
@@ -19,8 +19,8 @@
         "official_instance_count": 120784,
         "treatment_count": 2662855,
         "generated_legacy_ablation_count": 39495,
-        "model_count": 7,
-        "prediction_count": 19761938,
+        "model_count": 6,
+        "prediction_count": 16938804,
         "inference_failure_count": 0,
         "all_inference_status_complete": true,
         "accuracy_metric_row_count": 19485473,
@@ -41,7 +41,7 @@
         "stratified_task_bootstrap_95_ci_lower": 0.4631525422037703,
         "stratified_task_bootstrap_95_ci_upper": 0.6083803980909508,
         "cell_win_count_out_of_40": 13,
-        "uncorrected_significant_cell_pairwise_wins": 88,
+        "uncorrected_significant_cell_pairwise_wins": 65,
         "uncorrected_significant_cell_pairwise_losses": 7
       },
       "level_averaged_capability_winners": {
@@ -55,11 +55,11 @@
         },
         "cross_series_dependence": {
           "model_id": "Chronos-2",
-          "level_averaged_effect_nrmse": 0.9892779551081445
+          "level_averaged_effect_nrmse": 0.9892779551081444
         },
         "multi_seasonal": {
           "model_id": "toto2.0",
-          "level_averaged_effect_nrmse": 0.6367942714714226
+          "level_averaged_effect_nrmse": 0.6367942714714225
         },
         "predictable_intermittency": {
           "model_id": "timesfm2.5",
@@ -75,15 +75,15 @@
         },
         "trend": {
           "model_id": "Chronos-2",
-          "level_averaged_effect_nrmse": 0.08208250936340761
+          "level_averaged_effect_nrmse": 0.0820825093634076
         }
       },
       "minimum_capability_task_coverage": 0.2,
       "official_vs_macro_rank_correlation": {
         "suite": "GIFT-Short",
-        "model_count": 7,
-        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.14285714285714288,
-        "two_sided_p_value": 0.7599453002180928
+        "model_count": 6,
+        "spearman_rho_official_mase_vs_derived_macro_nrmse": -0.08571428571428573,
+        "two_sided_p_value": 0.8717434402332361
       },
       "treatment_mase_effect_winner_concordance": {
         "suite": "GIFT-Short",
@@ -117,21 +117,15 @@
           "capability_rank_minus_official_rank": -1.0
         },
         {
-          "model_id": "Timer-4.0",
-          "official_mase_rank": 5.0,
-          "derived_macro_rank": 6.0,
-          "capability_rank_minus_official_rank": 1.0
-        },
-        {
           "model_id": "Chronos-2",
-          "official_mase_rank": 6.0,
+          "official_mase_rank": 5.0,
           "derived_macro_rank": 1.0,
-          "capability_rank_minus_official_rank": -5.0
+          "capability_rank_minus_official_rank": -4.0
         },
         {
           "model_id": "moirai2",
-          "official_mase_rank": 7.0,
-          "derived_macro_rank": 7.0,
+          "official_mase_rank": 6.0,
+          "derived_macro_rank": 6.0,
           "capability_rank_minus_official_rank": 0.0
         }
       ]
@@ -147,8 +141,8 @@
         "official_instance_count": 4077,
         "treatment_count": 70995,
         "generated_legacy_ablation_count": 1090,
-        "model_count": 6,
-        "prediction_count": 456972,
+        "model_count": 5,
+        "prediction_count": 380810,
         "inference_failure_count": 0,
         "all_inference_status_complete": true,
         "accuracy_metric_row_count": 450432,
@@ -169,7 +163,7 @@
         "stratified_task_bootstrap_95_ci_lower": 0.5342983822228804,
         "stratified_task_bootstrap_95_ci_upper": 0.7798994507799645,
         "cell_win_count_out_of_40": 25,
-        "uncorrected_significant_cell_pairwise_wins": 105,
+        "uncorrected_significant_cell_pairwise_wins": 81,
         "uncorrected_significant_cell_pairwise_losses": 1
       },
       "level_averaged_capability_winners": {
@@ -199,25 +193,25 @@
         },
         "time_varying_seasonality": {
           "model_id": "Chronos-2",
-          "level_averaged_effect_nrmse": 0.7866182767295097
+          "level_averaged_effect_nrmse": 0.7866182767295098
         },
         "trend": {
           "model_id": "Chronos-2",
-          "level_averaged_effect_nrmse": 0.051070267503850415
+          "level_averaged_effect_nrmse": 0.05107026750385043
         }
       },
       "minimum_capability_task_coverage": 0.36363636363636365,
       "official_vs_macro_rank_correlation": {
         "suite": "GIFT-Medium",
-        "model_count": 6,
-        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.7714285714285715,
-        "two_sided_p_value": 0.07239650145772594
+        "model_count": 5,
+        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.7999999999999999,
+        "two_sided_p_value": 0.10408803866182788
       },
       "treatment_mase_effect_winner_concordance": {
         "suite": "GIFT-Medium",
         "matching_winner_count_out_of_8": 4,
         "matching_capabilities": "regime_switching;common_factor;multi_seasonal;cross_series_dependence",
-        "mismatches_json": "[{\"capability_id\": \"trend\", \"treatment_mase_winner\": \"Timer-4.0\", \"effect_nrmse_winner\": \"Chronos-2\"}, {\"capability_id\": \"covariate_impulse_response\", \"treatment_mase_winner\": \"Chronos-2\", \"effect_nrmse_winner\": \"timesfm2.5\"}, {\"capability_id\": \"time_varying_seasonality\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"Chronos-2\"}, {\"capability_id\": \"predictable_intermittency\", \"treatment_mase_winner\": \"Chronos-2\", \"effect_nrmse_winner\": \"moirai2\"}]"
+        "mismatches_json": "[{\"capability_id\": \"trend\", \"treatment_mase_winner\": \"Timer-3.5\", \"effect_nrmse_winner\": \"Chronos-2\"}, {\"capability_id\": \"covariate_impulse_response\", \"treatment_mase_winner\": \"Chronos-2\", \"effect_nrmse_winner\": \"timesfm2.5\"}, {\"capability_id\": \"time_varying_seasonality\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"Chronos-2\"}, {\"capability_id\": \"predictable_intermittency\", \"treatment_mase_winner\": \"Chronos-2\", \"effect_nrmse_winner\": \"moirai2\"}]"
       },
       "rank_shifts": [
         {
@@ -229,8 +223,8 @@
         {
           "model_id": "Timer-3.5",
           "official_mase_rank": 2.0,
-          "derived_macro_rank": 4.0,
-          "capability_rank_minus_official_rank": 2.0
+          "derived_macro_rank": 3.0,
+          "capability_rank_minus_official_rank": 1.0
         },
         {
           "model_id": "timesfm2.5",
@@ -239,21 +233,15 @@
           "capability_rank_minus_official_rank": -1.0
         },
         {
-          "model_id": "Timer-4.0",
-          "official_mase_rank": 4.0,
-          "derived_macro_rank": 3.0,
-          "capability_rank_minus_official_rank": -1.0
-        },
-        {
           "model_id": "moirai2",
-          "official_mase_rank": 5.0,
-          "derived_macro_rank": 6.0,
+          "official_mase_rank": 4.0,
+          "derived_macro_rank": 5.0,
           "capability_rank_minus_official_rank": 1.0
         },
         {
           "model_id": "toto2.0",
-          "official_mase_rank": 6.0,
-          "derived_macro_rank": 5.0,
+          "official_mase_rank": 5.0,
+          "derived_macro_rank": 4.0,
           "capability_rank_minus_official_rank": -1.0
         }
       ]
@@ -269,8 +257,8 @@
         "official_instance_count": 2902,
         "treatment_count": 50090,
         "generated_legacy_ablation_count": 730,
-        "model_count": 6,
-        "prediction_count": 322332,
+        "model_count": 5,
+        "prediction_count": 268610,
         "inference_failure_count": 0,
         "all_inference_status_complete": true,
         "accuracy_metric_row_count": 317952,
@@ -291,7 +279,7 @@
         "stratified_task_bootstrap_95_ci_lower": 0.5134288837667009,
         "stratified_task_bootstrap_95_ci_upper": 0.6418480866425201,
         "cell_win_count_out_of_40": 34,
-        "uncorrected_significant_cell_pairwise_wins": 141,
+        "uncorrected_significant_cell_pairwise_wins": 110,
         "uncorrected_significant_cell_pairwise_losses": 1
       },
       "level_averaged_capability_winners": {
@@ -309,11 +297,11 @@
         },
         "multi_seasonal": {
           "model_id": "Chronos-2",
-          "level_averaged_effect_nrmse": 0.9144960363714026
+          "level_averaged_effect_nrmse": 0.9144960363714024
         },
         "predictable_intermittency": {
           "model_id": "Chronos-2",
-          "level_averaged_effect_nrmse": 1.0510773702612888
+          "level_averaged_effect_nrmse": 1.0510773702612886
         },
         "regime_switching": {
           "model_id": "Chronos-2",
@@ -331,9 +319,9 @@
       "minimum_capability_task_coverage": 0.2727272727272727,
       "official_vs_macro_rank_correlation": {
         "suite": "GIFT-Long",
-        "model_count": 6,
-        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.7714285714285715,
-        "two_sided_p_value": 0.07239650145772594
+        "model_count": 5,
+        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.7999999999999999,
+        "two_sided_p_value": 0.10408803866182788
       },
       "treatment_mase_effect_winner_concordance": {
         "suite": "GIFT-Long",
@@ -351,8 +339,8 @@
         {
           "model_id": "Timer-3.5",
           "official_mase_rank": 2.0,
-          "derived_macro_rank": 4.0,
-          "capability_rank_minus_official_rank": 2.0
+          "derived_macro_rank": 3.0,
+          "capability_rank_minus_official_rank": 1.0
         },
         {
           "model_id": "timesfm2.5",
@@ -361,21 +349,15 @@
           "capability_rank_minus_official_rank": -1.0
         },
         {
-          "model_id": "Timer-4.0",
-          "official_mase_rank": 4.0,
-          "derived_macro_rank": 3.0,
-          "capability_rank_minus_official_rank": -1.0
-        },
-        {
           "model_id": "moirai2",
-          "official_mase_rank": 5.0,
-          "derived_macro_rank": 6.0,
+          "official_mase_rank": 4.0,
+          "derived_macro_rank": 5.0,
           "capability_rank_minus_official_rank": 1.0
         },
         {
           "model_id": "toto2.0",
-          "official_mase_rank": 6.0,
-          "derived_macro_rank": 5.0,
+          "official_mase_rank": 5.0,
+          "derived_macro_rank": 4.0,
           "capability_rank_minus_official_rank": -1.0
         }
       ]
@@ -391,8 +373,8 @@
         "official_instance_count": 23062,
         "treatment_count": 563570,
         "generated_legacy_ablation_count": 90275,
-        "model_count": 7,
-        "prediction_count": 4738349,
+        "model_count": 6,
+        "prediction_count": 4061442,
         "inference_failure_count": 0,
         "all_inference_status_complete": true,
         "accuracy_metric_row_count": 4051264,
@@ -409,11 +391,11 @@
       },
       "derived_macro_nrmse_winner": {
         "model_id": "toto2.0",
-        "derived_macro_effect_nrmse": 0.5193434020280348,
+        "derived_macro_effect_nrmse": 0.519343402028035,
         "stratified_task_bootstrap_95_ci_lower": 0.4552806082255075,
         "stratified_task_bootstrap_95_ci_upper": 0.5889715504600974,
         "cell_win_count_out_of_40": 19,
-        "uncorrected_significant_cell_pairwise_wins": 112,
+        "uncorrected_significant_cell_pairwise_wins": 91,
         "uncorrected_significant_cell_pairwise_losses": 5
       },
       "level_averaged_capability_winners": {
@@ -427,15 +409,15 @@
         },
         "cross_series_dependence": {
           "model_id": "tirex2",
-          "level_averaged_effect_nrmse": 0.7172170314986113
+          "level_averaged_effect_nrmse": 0.7172170314986112
         },
         "multi_seasonal": {
           "model_id": "toto2.0",
-          "level_averaged_effect_nrmse": 0.8093271821844576
+          "level_averaged_effect_nrmse": 0.8093271821844578
         },
         "predictable_intermittency": {
           "model_id": "toto2.0",
-          "level_averaged_effect_nrmse": 0.8516150683935734
+          "level_averaged_effect_nrmse": 0.8516150683935735
         },
         "regime_switching": {
           "model_id": "moirai2",
@@ -447,21 +429,21 @@
         },
         "trend": {
           "model_id": "moirai2",
-          "level_averaged_effect_nrmse": 0.08749395195976753
+          "level_averaged_effect_nrmse": 0.08749395195976754
         }
       },
       "minimum_capability_task_coverage": 0.4,
       "official_vs_macro_rank_correlation": {
         "suite": "FEV-Mini20",
-        "model_count": 7,
-        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.39285714285714296,
-        "two_sided_p_value": 0.3833168704269725
+        "model_count": 6,
+        "spearman_rho_official_mase_vs_derived_macro_nrmse": 0.5428571428571429,
+        "two_sided_p_value": 0.26570262390670546
       },
       "treatment_mase_effect_winner_concordance": {
         "suite": "FEV-Mini20",
         "matching_winner_count_out_of_8": 3,
         "matching_capabilities": "covariate_impulse_response;time_varying_seasonality;multi_seasonal",
-        "mismatches_json": "[{\"capability_id\": \"trend\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"moirai2\"}, {\"capability_id\": \"regime_switching\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"moirai2\"}, {\"capability_id\": \"common_factor\", \"treatment_mase_winner\": \"Timer-4.0\", \"effect_nrmse_winner\": \"Chronos-2\"}, {\"capability_id\": \"predictable_intermittency\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"toto2.0\"}, {\"capability_id\": \"cross_series_dependence\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"tirex2\"}]"
+        "mismatches_json": "[{\"capability_id\": \"trend\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"moirai2\"}, {\"capability_id\": \"regime_switching\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"moirai2\"}, {\"capability_id\": \"common_factor\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"Chronos-2\"}, {\"capability_id\": \"predictable_intermittency\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"toto2.0\"}, {\"capability_id\": \"cross_series_dependence\", \"treatment_mase_winner\": \"timesfm2.5\", \"effect_nrmse_winner\": \"tirex2\"}]"
       },
       "rank_shifts": [
         {
@@ -483,28 +465,22 @@
           "capability_rank_minus_official_rank": 3.0
         },
         {
-          "model_id": "Timer-4.0",
-          "official_mase_rank": 4.0,
-          "derived_macro_rank": 7.0,
-          "capability_rank_minus_official_rank": 3.0
-        },
-        {
           "model_id": "Timer-3.5",
-          "official_mase_rank": 5.0,
+          "official_mase_rank": 4.0,
           "derived_macro_rank": 4.0,
-          "capability_rank_minus_official_rank": -1.0
+          "capability_rank_minus_official_rank": 0.0
         },
         {
           "model_id": "tirex2",
-          "official_mase_rank": 6.0,
+          "official_mase_rank": 5.0,
           "derived_macro_rank": 3.0,
-          "capability_rank_minus_official_rank": -3.0
+          "capability_rank_minus_official_rank": -2.0
         },
         {
           "model_id": "Chronos-2",
-          "official_mase_rank": 7.0,
+          "official_mase_rank": 6.0,
           "derived_macro_rank": 5.0,
-          "capability_rank_minus_official_rank": -2.0
+          "capability_rank_minus_official_rank": -1.0
         }
       ]
     }

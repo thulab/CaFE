@@ -269,6 +269,10 @@ inference = [
 ]
 plots = [
     { name = "matplotlib" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "pandas", version = "3.0.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 test = [
     { name = "pytest" },
@@ -288,6 +292,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'plots'", specifier = ">=3.8" },
     { name = "msgpack", specifier = ">=1.1" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "pandas", marker = "extra == 'plots'", specifier = ">=2.0" },
     { name = "peft", marker = "extra == 'inference'", specifier = ">=0.17,<1" },
     { name = "pyarrow", specifier = ">=15" },
     { name = "pydantic", marker = "extra == 'inference'", specifier = ">=2.5" },
@@ -296,6 +301,7 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'inference'", specifier = ">=6.0" },
     { name = "safetensors", marker = "extra == 'inference'", specifier = ">=0.6.2,<1.0" },
     { name = "scipy", marker = "extra == 'inference'", specifier = ">=1.12,<2" },
+    { name = "scipy", marker = "extra == 'plots'", specifier = ">=1.12" },
     { name = "socksio", marker = "extra == 'fev'", specifier = ">=1.0.0" },
     { name = "timesfm", extras = ["torch"], marker = "extra == 'inference'", specifier = ">=3,<4" },
     { name = "tokenizers", marker = "extra == 'inference'", specifier = ">=0.22.0,<=0.23.0" },

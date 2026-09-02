@@ -1,0 +1,104 @@
+{
+  "schema_version": "cafe.chronos2_finetuning_reproduction.v1",
+  "upstream": {
+    "repository": "https://github.com/amazon-science/chronos-forecasting.git",
+    "commit": "8589d1988e9676817548e9626738ff06b6ca6370",
+    "license": "Apache-2.0"
+  },
+  "base_model": {
+    "repository": "amazon/chronos-2",
+    "revision": "29ec3766d36d6f73f0696f85560a422f50e8498c",
+    "config_sha256": "ef1143bfdc9c0376d9a056eefca46cb4b1ec3d0ffacd541ff56feb40fb708031",
+    "weights_sha256": "ddcda3c7508bf2528087723e98a20707cc04b7f370ae275a9fd88078ddba4f42"
+  },
+  "data": {
+    "datasets": [
+      "gift_bitbrains_fast_h",
+      "gift_bitbrains_rnd_h",
+      "gift_bizitobs_application",
+      "gift_bizitobs_l2c_h",
+      "gift_bizitobs_service",
+      "gift_electricity_h",
+      "gift_ett1_h",
+      "gift_ett2_h",
+      "gift_hierarchical_sales_d",
+      "gift_jena_weather_h",
+      "gift_kdd_cup_h",
+      "gift_loop_seattle_h",
+      "gift_m4_hourly",
+      "gift_m_dense_h",
+      "gift_restaurant_d",
+      "gift_saugeenday_d",
+      "gift_solar_h",
+      "gift_sz_taxi_h",
+      "gift_temperature_rain_d",
+      "gift_us_births_d"
+    ],
+    "fit": {
+      "experiment_id": "gift-v15-short-qualified-feasible-moirai16k-seed2026082701-r1",
+      "augmentation_seed": 2026082701,
+      "fold_count": 10,
+      "fold_index": 0,
+      "fold_role": "eval",
+      "fold_salt": "moirai16k-seed2026082701-window-v1",
+      "treatment_count": 50535,
+      "official_instance_count": 2382
+    },
+    "evaluation": {
+      "experiment_id": "gift-v15-short-qualified-feasible-moirai16k-seed2026082702-r1",
+      "augmentation_seed": 2026082702,
+      "fold_count": 10,
+      "fold_index": 0,
+      "fold_role": "eval",
+      "fold_salt": "moirai16k-seed2026082702-window-v1",
+      "treatment_count": 48365,
+      "official_instance_count": 2309
+    },
+    "horizon": 48,
+    "materialized_maximum_context": 8192,
+    "capability_levels": [1, 2, 3, 4, 5]
+  },
+  "shared_training": {
+    "finetune_mode": "lora",
+    "context_length": 2048,
+    "batch_size_series_budget": 32,
+    "sampling": "random_with_replacement",
+    "seed": 2026082701,
+    "steps": 40000,
+    "checkpoint_interval": 4000
+  },
+  "objectives": {
+    "default": {
+      "entrypoint": "cafe_seed_transfer.py finetune",
+      "learning_rate": 0.0001,
+      "min_past": 64,
+      "training_rows": 50535,
+      "nominal_epoch_steps": 3917
+    },
+    "effect_nrmse": {
+      "entrypoint": "cafe_effect_finetune.py",
+      "learning_rate": 0.00001,
+      "training_pairs": 50535,
+      "nominal_epoch_steps": 7407,
+      "objective": "batch_pooled_squared_mase_standardized_effect_nrmse"
+    }
+  },
+  "evaluation": {
+    "context_length": 8192,
+    "dtype": "float32",
+    "checkpoint_steps": [0, 4000, 8000, 12000, 16000, 20000, 24000, 28000, 32000, 36000, 40000],
+    "aggregation": "macro over (dataset, capability, level) strata"
+  },
+  "recorded_environment": {
+    "python": "3.12.3",
+    "cuda": "12.8",
+    "torch": "2.11.0+cu128",
+    "chronos_forecasting": "2.3.1",
+    "transformers": "5.15.1",
+    "datasets": "4.8.5",
+    "peft": "0.20.0",
+    "accelerate": "1.14.0",
+    "numpy": "2.5.2",
+    "pyarrow": "25.0.1"
+  }
+}

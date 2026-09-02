@@ -60,13 +60,13 @@ EXPERIMENTS = {
 
 MODEL_ORDER = [
     "Chronos-2",
-    "Timer-4.0",
     "Timer-3.5",
     "timesfm2.5",
     "tirex2",
     "moirai2",
     "toto2.0",
 ]
+EXCLUDED_MODELS = {"Timer-4.0"}
 
 CAPABILITY_ORDER = [
     "trend",
@@ -225,6 +225,20 @@ def load_all() -> dict[str, pd.DataFrame]:
         "analysis_manifests": pd.DataFrame(analysis_manifest_rows),
         "inference_status": pd.DataFrame(inference_status_rows),
     }
+
+
+def public_model_view(data: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Exclude non-released systems before any paper-facing aggregation."""
+
+    output: dict[str, pd.DataFrame] = {}
+    model_columns = ("model_id", "left_model_id", "right_model_id")
+    for name, frame in data.items():
+        mask = pd.Series(True, index=frame.index)
+        for column in model_columns:
+            if column in frame.columns:
+                mask &= ~frame[column].isin(EXCLUDED_MODELS)
+        output[name] = frame.loc[mask].copy()
+    return output
 
 
 def experiment_inventory(data: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -1256,7 +1270,7 @@ def make_figures(
 def main() -> None:
     TABLES.mkdir(parents=True, exist_ok=True)
     FIGURES.mkdir(parents=True, exist_ok=True)
-    data = load_all()
+    data = public_model_view(load_all())
 
     inventory = experiment_inventory(data)
     availability = capability_availability(data)

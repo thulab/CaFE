@@ -226,6 +226,10 @@ contains the mechanism formulas. Historical four-card Timer Service bulk and
 concurrency measurements remain in
 [docs/inference_throughput_4x_rtx5090.md](docs/inference_throughput_4x_rtx5090.md).
 
+Reviewer-facing commands, frozen experiment identifiers, result checksums, and
+the separate Chronos-2 fine-tuning overlay are documented in
+[reproducibility/README.md](reproducibility/README.md).
+
 ## History
 
 CaFE was extracted from TSBenchmark at commit `21b8452`. The

@@ -29,7 +29,6 @@ MODEL_ORDER = (
     "Chronos-2",
     "timesfm2.5",
     "Timer-3.5",
-    "Timer-4.0",
     "tirex2",
     "moirai2",
     "toto2.0",
@@ -40,12 +39,25 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output-stem", type=Path, required=True)
+    parser.add_argument("--output-data", type=Path)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    rows = list(csv.DictReader(args.input.open(encoding="utf-8")))
+    rows = [
+        row
+        for row in csv.DictReader(args.input.open(encoding="utf-8"))
+        if row["model_id"] in MODEL_ORDER
+    ]
+    if args.output_data is not None:
+        args.output_data.parent.mkdir(parents=True, exist_ok=True)
+        with args.output_data.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=list(rows[0]), lineterminator="\n"
+            )
+            writer.writeheader()
+            writer.writerows(rows)
     lookup = {
         (
             row["suite"],

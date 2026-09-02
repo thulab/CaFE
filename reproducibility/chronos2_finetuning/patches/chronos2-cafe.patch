@@ -1,0 +1,172 @@
+diff --git a/src/chronos/chronos2/dataset.py b/src/chronos/chronos2/dataset.py
+index 766c6f7..eddf7a0 100644
+--- a/src/chronos/chronos2/dataset.py
++++ b/src/chronos/chronos2/dataset.py
+@@ -5,8 +5,9 @@
+ 
+ import logging
+ import math
++from collections.abc import Iterator, Mapping, Sequence
+ from enum import Enum
+-from typing import Any, Iterator, Mapping, Sequence, TypeAlias, cast
++from typing import Any, Literal, TypeAlias, cast
+ 
+ import numpy as np
+ import torch
+@@ -123,6 +124,12 @@ class Chronos2Dataset(IterableDataset):
+         `min_past + prediction_length` are filtered out, by default 1
+     mode
+         `DatasetMode` governing whether to generate training, validation or test samples, by default "train"
++    training_sampling
++        Sampling policy used in training mode. ``"random_with_replacement"`` preserves the default
++        infinite stream. ``"shuffle_without_replacement"`` yields one finite, deterministically
++        shuffled pass over the inputs.
++    shuffle_seed
++        Seed used by ``"shuffle_without_replacement"``.
+     """
+ 
+     def __init__(
+@@ -134,6 +141,10 @@ class Chronos2Dataset(IterableDataset):
+         output_patch_size: int,
+         min_past: int = 1,
+         mode: str | DatasetMode = DatasetMode.TRAIN,
++        training_sampling: Literal["random_with_replacement", "shuffle_without_replacement"] = (
++            "random_with_replacement"
++        ),
++        shuffle_seed: int = 0,
+     ) -> None:
+         super().__init__()
+         assert mode in {DatasetMode.TRAIN, DatasetMode.VALIDATION, DatasetMode.TEST}, f"Invalid mode: {mode}"
+@@ -178,6 +189,10 @@ class Chronos2Dataset(IterableDataset):
+         self.num_output_patches = math.ceil(prediction_length / output_patch_size)
+         self.min_past = min_past
+         self.mode = mode
++        if training_sampling not in {"random_with_replacement", "shuffle_without_replacement"}:
++            raise ValueError(f"Invalid training_sampling: {training_sampling}")
++        self.training_sampling = training_sampling
++        self.shuffle_seed = shuffle_seed
+ 
+     def _construct_slice(self, input_idx: int) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor, int]:
+         prepared = self.inputs[input_idx]
+@@ -274,6 +289,26 @@ class Chronos2Dataset(IterableDataset):
+         }
+ 
+     def _generate_train_batches(self):
++        if self.training_sampling == "shuffle_without_replacement":
++            rng = np.random.default_rng(self.shuffle_seed)
++            input_indices = np.arange(len(self.inputs))
++            rng.shuffle(input_indices)
++            current_batch_size = 0
++            batch_indices: list[int] = []
++            for raw_input_idx in input_indices:
++                input_idx = int(raw_input_idx)
++                if self.inputs[input_idx]["context"].shape[-1] < self.min_length:
++                    continue
++                batch_indices.append(input_idx)
++                current_batch_size += self.inputs[input_idx]["context"].shape[0]
++                if current_batch_size >= self.batch_size:
++                    yield self._build_batch(batch_indices)
++                    current_batch_size = 0
++                    batch_indices = []
++            if batch_indices:
++                yield self._build_batch(batch_indices)
++            return
++
+         while True:
+             current_batch_size = 0
+             input_indices = []
+diff --git a/src/chronos/chronos2/pipeline.py b/src/chronos/chronos2/pipeline.py
+index d2b3f02..152958c 100644
+--- a/src/chronos/chronos2/pipeline.py
++++ b/src/chronos/chronos2/pipeline.py
+@@ -7,9 +7,10 @@ import logging
+ import math
+ import time
+ import warnings
++from collections.abc import Callable, Mapping, Sequence
+ from copy import deepcopy
+ from pathlib import Path
+-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence
++from typing import TYPE_CHECKING, Literal
+ 
+ import numpy as np
+ import pandas as pd
+@@ -120,6 +121,10 @@ class Chronos2Pipeline(BaseChronosPipeline):
+         callbacks: list["TrainerCallback"] | None = None,
+         remove_printer_callback: bool = False,
+         disable_data_parallel: bool = True,
++        training_sampling: Literal["random_with_replacement", "shuffle_without_replacement"] = (
++            "random_with_replacement"
++        ),
++        shuffle_seed: int = 0,
+         **extra_trainer_kwargs,
+     ) -> "Chronos2Pipeline":
+         """
+@@ -166,6 +171,11 @@ class Chronos2Pipeline(BaseChronosPipeline):
+             If True, all instances of `PrinterCallback` are removed from callbacks
+         disable_data_parallel
+             If True, ensures that DataParallel is disabled and training happens on a single GPU
++        training_sampling
++            Sampling policy for training inputs. The default preserves the infinite random stream.
++            ``"shuffle_without_replacement"`` performs one finite shuffled pass over all inputs.
++        shuffle_seed
++            Seed used when ``training_sampling="shuffle_without_replacement"``.
+         **extra_trainer_kwargs
+             Extra kwargs are directly forwarded to `TrainingArguments`
+ 
+@@ -242,6 +252,8 @@ class Chronos2Pipeline(BaseChronosPipeline):
+             output_patch_size=self.model_output_patch_size,
+             min_past=min_past,
+             mode=DatasetMode.TRAIN,
++            training_sampling=training_sampling,
++            shuffle_seed=shuffle_seed,
+         )
+ 
+         if output_dir is None:
+diff --git a/test/test_chronos2.py b/test/test_chronos2.py
+index c96c9a0..f6297a2 100644
+--- a/test/test_chronos2.py
++++ b/test/test_chronos2.py
+@@ -1298,6 +1298,41 @@ def test_train_dataset_raises_when_all_lazy_inputs_too_short():
+     assert src.access_count == MAX_REJECTED_SAMPLES
+ 
+ 
++def test_train_dataset_can_shuffle_once_without_replacement():
++    inputs = [
++        {
++            "context": torch.full((1, 32), float(index)),
++            "future_covariates": torch.zeros(1, 0),
++            "n_targets": 1,
++            "n_covariates": 0,
++            "n_future_covariates": 0,
++        }
++        for index in range(7)
++    ]
++
++    def observed_order(seed: int) -> list[int]:
++        dataset = Chronos2Dataset(
++            inputs=inputs,
++            context_length=16,
++            prediction_length=4,
++            batch_size=2,
++            output_patch_size=16,
++            min_past=4,
++            mode=DatasetMode.TRAIN,
++            training_sampling="shuffle_without_replacement",
++            shuffle_seed=seed,
++        )
++        return [
++            int(value)
++            for batch in dataset
++            for value in batch["context"][:, -1].tolist()
++        ]
++
++    assert observed_order(17) == observed_order(17)
++    assert observed_order(17) != observed_order(18)
++    assert sorted(observed_order(17)) == list(range(7))
++
++
+ def test_validation_dataset_filters_too_short_preprocessed_inputs():
+     prediction_length, min_past = 8, 4
+     inputs = [
+

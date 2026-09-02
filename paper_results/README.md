@@ -84,4 +84,4 @@ Medium、Long、FEV level curves，official MASE 区间、seed/task uncertainty 
 
 ## 复现提示
 
-分析脚本中的默认输入可能保留本机缓存或远端路径约定，执行前请先阅读对应 `work/*/README.md` 与 provenance。微调远端目录存在未被训练 manifest 记录的脚本代码状态，因此当前 bundle 可复核数值汇总，但若要声称完全可重复训练，应先冻结训练代码 commit/hash、数据 manifest 与运行环境。
+分析脚本中的默认输入可能保留本机缓存或远端路径约定，执行前请先阅读对应 `work/*/README.md` 与 provenance。审稿人入口位于 [`../reproducibility/README.md`](../reproducibility/README.md)。其中已经冻结微调所用的 Chronos 上游 commit、CaFE overlay、基础模型 revision/hash、数据选择和训练环境；`work/finetuning/provenance.json` 保留的是冻结前审计时的历史状态说明。

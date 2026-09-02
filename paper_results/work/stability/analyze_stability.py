@@ -59,10 +59,10 @@ MODEL_SHORT = {
     "timesfm2.5": "TF2.5",
     "Timer-3.5": "T3.5",
     "tirex2": "TiRex",
-    "Timer-4.0": "T4.0",
     "moirai2": "M2",
     "toto2.0": "Toto",
 }
+EXCLUDED_MODELS = {"Timer-4.0"}
 
 
 def finite(values: Iterable[float | None]) -> list[float]:
@@ -164,7 +164,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
             if field not in fields:
                 fields.append(field)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -232,7 +232,11 @@ def load_inputs() -> tuple[
     for seed in SEEDS:
         path = RAW_SUITE / f"seed{seed}.json"
         payload = json.loads(path.read_text(encoding="utf-8"))
-        rows = payload["rows"]
+        rows = [
+            row
+            for row in payload["rows"]
+            if row["model_id"] not in EXCLUDED_MODELS
+        ]
         task_ids = list(payload["task_ids"])
         if task_ids_reference is None:
             task_ids_reference = task_ids

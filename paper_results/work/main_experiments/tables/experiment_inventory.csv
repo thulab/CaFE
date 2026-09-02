@@ -1,5 +1,5 @@
 suite,benchmark,horizon_group,task_count,horizon_min,horizon_max,official_instance_count,treatment_count,generated_legacy_ablation_count,model_count,prediction_count,inference_failure_count,all_inference_status_complete,accuracy_metric_row_count,effect_metric_row_count,legacy_ablation_metric_row_count,pipeline_schema,analysis_schema
-GIFT-Short,GIFT-Eval,short,20,30,60,120784,2662855,39495,7,19761938,0,True,19485473,18639985,276465,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
-GIFT-Medium,GIFT-Eval,medium,11,480,600,4077,70995,1090,6,456972,0,True,450432,425970,6540,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
-GIFT-Long,GIFT-Eval,long,11,720,900,2902,50090,730,6,322332,0,True,317952,300540,4380,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
-FEV-Mini20,FEV-Bench,native,20,5,288,23062,563570,90275,7,4738349,0,True,4051264,3944990,631925,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
+GIFT-Short,GIFT-Eval,short,20,30,60,120784,2662855,39495,6,16938804,0,True,19485473,18639985,276465,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
+GIFT-Medium,GIFT-Eval,medium,11,480,600,4077,70995,1090,5,380810,0,True,450432,425970,6540,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
+GIFT-Long,GIFT-Eval,long,11,720,900,2902,50090,730,5,268610,0,True,317952,300540,4380,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12
+FEV-Mini20,FEV-Bench,native,20,5,288,23062,563570,90275,6,4061442,0,True,4051264,3944990,631925,cafe.pipeline.v15,cafe.benchmark_extension_analysis.v12

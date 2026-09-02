@@ -1,0 +1,95 @@
+{
+  "schema_version": "cafe.paper_reproduction.v1",
+  "capabilities": [
+    "trend",
+    "multi_seasonal",
+    "time_varying_seasonality",
+    "regime_switching",
+    "predictable_intermittency",
+    "common_factor",
+    "cross_series_dependence",
+    "covariate_impulse_response"
+  ],
+  "public_models": [
+    "Chronos-2",
+    "timesfm2.5",
+    "tirex2",
+    "moirai2",
+    "Timer-3.5",
+    "toto2.0"
+  ],
+  "main_experiments": {
+    "gift_short": {
+      "runner": "gift",
+      "experiment_id": "gift-v15-short-qualified-feasible-seed2026082701",
+      "term": "short",
+      "augmentation_seed": 2026082701,
+      "source_code_revision": "0e8590ee466046941656ede43dd1edc61a92260a"
+    },
+    "gift_medium": {
+      "runner": "gift",
+      "experiment_id": "gift-v15-medium-qualified-feasible-seed2026082701",
+      "term": "medium",
+      "augmentation_seed": 2026082701,
+      "source_code_revision": "0e8590ee466046941656ede43dd1edc61a92260a"
+    },
+    "gift_long": {
+      "runner": "gift",
+      "experiment_id": "gift-v15-long-qualified-feasible-seed2026082701",
+      "term": "long",
+      "augmentation_seed": 2026082701,
+      "source_code_revision": "0e8590ee466046941656ede43dd1edc61a92260a"
+    },
+    "fev": {
+      "runner": "fev",
+      "experiment_id": "fev-mini20-full-v6",
+      "suite_id": "mini20",
+      "augmentation_seed": 2026082601,
+      "source_code_revision": "bd1e42d943182b1ab5bf369f415f0fa0f72dd776",
+      "fev_version": "0.8.0",
+      "fev_revision": "f1afffbf97bc51a4a233080d331633c6f7ab32f6",
+      "dataset_revision": "f71c0fff4cf81283a2c43e7f3a73aa4f9826aef8"
+    }
+  },
+  "stability": {
+    "runner": "gift",
+    "term": "short",
+    "augmentation_seeds": [
+      2026082701,
+      2026082702,
+      2026082703,
+      2026082704,
+      2026082705,
+      2026082706,
+      2026082707,
+      2026082708,
+      2026082709,
+      2026082710
+    ],
+    "source_code_revision": "78ef32fe1dd71583b9312a73f17e4cb81126917f",
+    "task_panel_size": 10,
+    "dataset_ids": [
+      "gift_bitbrains_fast_h",
+      "gift_bitbrains_rnd_h",
+      "gift_bizitobs_application",
+      "gift_bizitobs_l2c_h",
+      "gift_bizitobs_service",
+      "gift_ett1_h",
+      "gift_ett2_h",
+      "gift_jena_weather_h",
+      "gift_loop_seattle_h",
+      "gift_m_dense_h"
+    ]
+  },
+  "target_only_ablation": {
+    "definition": "remove auxiliary inputs while preserving the assessed target history and treatment future",
+    "sources": [
+      "gift-v15-short-qualified-feasible-seed2026082701",
+      "fev-mini20-full-v6"
+    ],
+    "summary_ids": [
+      "gift-v15-seed2026082701-target-only-v1",
+      "fev-mini20-full-v6-target-only-v1"
+    ]
+  }
+}

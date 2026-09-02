@@ -1,0 +1,75 @@
+{
+  "schema_version": "cafe.paper_expected_results.v1",
+  "scope": "public_models_only",
+  "files": [
+    {
+      "path": "paper_results/work/main_experiments/tables/experiment_inventory.csv",
+      "sha256": "90401150f59be592802d4b5f19bedf428b5510fbc25ec0572c6c03a555aba99c",
+      "size_bytes": 932,
+      "csv_rows": 4
+    },
+    {
+      "path": "paper_results/work/main_experiments/tables/official_mase_suite.csv",
+      "sha256": "1a1b02d393f1deffbf6195afdcf4f946684cc2321c52303643fea1b7c80f36eb",
+      "size_bytes": 3448,
+      "csv_rows": 22
+    },
+    {
+      "path": "paper_results/work/main_experiments/tables/effect_nrmse_derived_macro.csv",
+      "sha256": "7dbf073e954763980bf97cc036e5f787d258704f7f8e76f36cfd17c4a8de268b",
+      "size_bytes": 7281,
+      "csv_rows": 22
+    },
+    {
+      "path": "paper_results/work/main_experiments/tables/treatment_mase_by_suite_model_capability_level.csv",
+      "sha256": "def45884273c94f51ffe831cc5aae319a4509bbd2e61b7ef20e6bb5bd5a82e8f",
+      "size_bytes": 74176,
+      "csv_rows": 880
+    },
+    {
+      "path": "paper_results/work/stability/tables/model_overall_stability_extended.csv",
+      "sha256": "35aef7c88fb02d1e0261b5f5cf291f2ca1d4ce12ba8fabd2973931b13ab9e8e7",
+      "size_bytes": 5072,
+      "csv_rows": 6
+    },
+    {
+      "path": "paper_results/work/stability/tables/capability_level_winner_consistency.csv",
+      "sha256": "f34a31d5a699db6b3a50984faa603ddf3b83f3858f1dc095640b87fa52da3e88",
+      "size_bytes": 15913,
+      "csv_rows": 40
+    },
+    {
+      "path": "paper_results/work/ablation/ablation_collapsed_summary_public.csv",
+      "sha256": "d677d0c0df469dec6750dc90cf944722ca71081b00454c18aa931fe5b547dafc",
+      "size_bytes": 5240,
+      "csv_rows": 27
+    },
+    {
+      "path": "paper_results/work/finetuning/key_checkpoints.csv",
+      "sha256": "d7171409ec02571e7a61913fc169567b211d267c95b848ae29c89e6ebf3044c6",
+      "size_bytes": 5540,
+      "csv_rows": 32
+    },
+    {
+      "path": "paper_results/work/main_experiments/figures/fig_capability_heatmaps.pdf",
+      "sha256": "37bcebe7a559d3ed488ef19121373b96dfbd3a22cc5b328b76e8ec458a5072d9",
+      "size_bytes": 75820
+    },
+    {
+      "path": "paper_results/work/ablation/fig_target_only_ablation.pdf",
+      "sha256": "6b2a1e6852a96331d72786da3aeca66db74720419839ce12237f0c705854eb86",
+      "size_bytes": 39637
+    },
+    {
+      "path": "paper_results/work/stability/figures/fig_stability_overall.pdf",
+      "sha256": "0dec49c7019f049e67dcff394a55d5748e08b51898546e16aa3dbf9392f67718",
+      "size_bytes": 27630
+    },
+    {
+      "path": "paper_results/work/finetuning/finetuning_curves_absolute.pdf",
+      "sha256": "3d3b612f547c6582ebe37091317a1d241ccca41f652aea0de21ad3e2eea6e46b",
+      "size_bytes": 24730
+    }
+  ]
+}
+
