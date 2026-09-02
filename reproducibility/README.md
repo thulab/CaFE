@@ -191,9 +191,104 @@ versions. Reproductions should therefore compare aggregate metrics with a
 documented floating-point tolerance rather than require byte-identical model
 weights.
 
+The acceptance thresholds are frozen before reviewer replay as follows. Every
+comparison uses the displayed aggregation unit and the common set of
+identifier keys; coverage counts and missingness states must match exactly.
+
+| Replayed block | Comparison unit | Accepted numerical deviation |
+|---|---|---:|
+| Main and stability Reference/probe MASE and paired NRMSE | each shared suite-model-capability-level cell; suite-model cell for Reference MASE | `max(1e-4, 1% of abs(reference))` |
+| Auxiliary-input removal | each shared suite-model-capability cell in `Delta MASE` | absolute deviation at most `1e-3` |
+| Fine-tuning checkpoint evaluation | each objective-checkpoint-metric cell | `max(5e-4, 1% of abs(reference))` |
+| Fine-tuning replay from step 0 | each objective-checkpoint-metric cell | `max(2e-3, 2% of abs(reference))` |
+
+A replay fails if any required key is absent, a previously numeric cell becomes
+nonnumeric, an unsupported or metric-undefined state changes category, a
+coverage count changes, or any cell exceeds its applicable threshold. Derived
+ranks and figures are regenerated only after the cell-level gate passes; ranks
+are not used as a substitute tolerance for nearly tied values.
+
+## End-to-end GPU smoke test
+
+After staging the native model runtime, the following bounded run exercises one
+official instance, one five-level treatment group, one Chronos-2 request stream,
+and compact analysis:
+
+```bash
+uv run cafe run \
+  --experiment-id reviewer-smoke-2026082701 \
+  --dataset-id gift_ett1_h \
+  --term short \
+  --gift-eval-dir "$GIFT_EVAL_DIR" \
+  --output-root "$CAFE_OUTPUT_ROOT" \
+  --augmentation-seed 2026082701 \
+  --capabilities trend \
+  --models Chronos-2 \
+  --backend native \
+  --model-root "$CAFE_MODEL_ROOT" \
+  --model-code-root "$CAFE_MODEL_CODE_ROOT" \
+  --devices 0 \
+  --max-instances 1 \
+  --generation-workers 1 \
+  --validation-workers 1 \
+  --validation-dataset-workers 1 \
+  --preprocess-workers 1 \
+  --analysis-workers 1 \
+  --disk-budget-gb 5
+
+python reproducibility/reproduce.py smoke-check \
+  "$CAFE_OUTPUT_ROOT/reviewer-smoke-2026082701"
+```
+
+On success, the final command prints:
+
+```text
+smoke check passed: dataset=gift_ett1_h, instances=1, treatments=5, models=1, stages=4
+```
+
+Runtime depends mainly on the first Chronos-2 load and local download cache;
+the smoke scope, rather than a wall-clock promise, is the acceptance contract.
+
+## Recovery and cleanup
+
+`experiment.json` fixes the experiment identity. Each file in
+`stage_contracts/` fixes that stage's code, configuration, and upstream hashes.
+Before resuming, compare the requested arguments with those records; a mismatch
+requires a new experiment ID.
+
+- Generation, validation, and analysis are immutable after their terminal
+  manifest or report exists. Reuse them with `--start-at` set to the next stage.
+  If an interruption occurred before the terminal file was written, move only
+  that exact incomplete stage directory to a quarantine location and rerun the
+  stage with the same experiment ID and arguments. Never merge files from two
+  experiment roots.
+- Inference is the resumable stage. Rerun the original command with
+  `--start-at inference --resume-inference`; completed model shards are accepted
+  only when their recorded hashes still match, and pending models are issued
+  again. Temporary `*.tmp` files inside the affected prediction directory may
+  be removed after the process has stopped.
+- Analysis scratch data under `04_analysis/.source_shard_parts/` are disposable
+  only when `04_analysis/manifest.json` is absent. Completed analysis outputs
+  and every upstream generation, validation, and inference artifact remain
+  immutable.
+- Fine-tuning preparation caches are reusable when their local manifest exists.
+  An incomplete cache is quarantined and rebuilt from the CaFE contracts.
+  Training does not claim optimizer-state recovery: restart an interrupted
+  recipe in a new empty model directory. Completed LoRA checkpoints may be
+  evaluated independently, and incomplete metric-part directories may be
+  regenerated without rerunning training.
+
+After any recovery, rerun `smoke-check` or the full frozen verification and
+confirm that every stage contract points to the same experiment ID and upstream
+hashes. Deleting an entire output root, completed stage, contract, checkpoint,
+or source snapshot is never part of the recovery procedure.
+
 ## Data availability
 
 Git contains code, compact manifests, analysis snapshots, tables, and figures.
 Source benchmark files, replay contracts, predictions, and fine-tuned adapters
 belong in the external artifact archive. `DATA_ARTIFACTS.md` defines its single
-complete reviewer-facing layout.
+complete reviewer-facing layout. The designated distribution folder is
+[Tsinghua Cloud](https://cloud.tsinghua.edu.cn/d/77e1d26573a347e89b6b/); use the
+byte size and SHA-256 recorded in `DATA_ARTIFACTS.md` to identify and verify the
+uploaded archive.

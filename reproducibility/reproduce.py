@@ -56,6 +56,94 @@ def verify() -> int:
     return 0
 
 
+def smoke_check(experiment_root: Path) -> int:
+    experiment_root = experiment_root.resolve()
+    failures: list[str] = []
+    if not (experiment_root / "experiment.json").is_file():
+        failures.append("missing experiment.json")
+
+    expected_stages = ("generation", "validation", "inference", "analysis")
+    for stage in expected_stages:
+        if not (experiment_root / "stage_contracts" / f"{stage}.json").is_file():
+            failures.append(f"missing stage contract: {stage}")
+
+    dataset_roots = (
+        sorted(
+            path
+            for path in experiment_root.iterdir()
+            if path.is_dir()
+            and (path / "01_generation" / "manifest.json").is_file()
+        )
+        if experiment_root.is_dir()
+        else []
+    )
+    if len(dataset_roots) != 1:
+        failures.append(f"expected one generated dataset, found {len(dataset_roots)}")
+
+    dataset_id = "unknown"
+    instances = treatments = models = 0
+    if len(dataset_roots) == 1:
+        dataset_root = dataset_roots[0]
+        dataset_id = dataset_root.name
+        required = {
+            "generation": dataset_root / "01_generation" / "manifest.json",
+            "validation": dataset_root / "02_validation" / "report.json",
+            "inference": dataset_root / "03_inference" / "manifest.json",
+            "analysis": dataset_root / "04_analysis" / "manifest.json",
+        }
+        records: dict[str, dict[str, Any]] = {}
+        for stage, path in required.items():
+            if not path.is_file():
+                failures.append(f"missing {stage} terminal record for {dataset_id}")
+                continue
+            records[stage] = json.loads(path.read_text(encoding="utf-8"))
+
+        generation = records.get("generation", {})
+        instances = int(generation.get("official_instance_count", 0))
+        treatments = int(generation.get("treatment_count", 0))
+        config = generation.get("config") or {}
+        if instances != 1:
+            failures.append(f"expected one official instance, found {instances}")
+        if treatments != 5:
+            failures.append(f"expected five treatments, found {treatments}")
+        if list(config.get("capability_ids") or []) != ["trend"]:
+            failures.append("generation capability is not exactly trend")
+        if int(config.get("max_instances") or 0) != 1:
+            failures.append("generation max_instances is not one")
+
+        validation = records.get("validation", {})
+        if not validation.get("accepted"):
+            failures.append("validation was not accepted")
+
+        inference = records.get("inference", {})
+        statuses = list(inference.get("model_statuses") or [])
+        models = len(statuses)
+        if not inference.get("complete"):
+            failures.append("inference is not complete")
+        if models != 1 or str(statuses[0].get("model_id", "")) != "Chronos-2":
+            failures.append("inference is not exactly one completed Chronos-2 model")
+        elif statuses[0].get("status") != "complete":
+            failures.append("Chronos-2 status is not complete")
+        if sum(int(row.get("failure_count", 0)) for row in statuses) != 0:
+            failures.append("inference reports failed requests")
+
+        suite_summary = experiment_root / "04_analysis_suite" / "task_equal_summary.json"
+        if not suite_summary.is_file():
+            failures.append("missing compact suite analysis")
+
+    if failures:
+        print("smoke check failed:", file=sys.stderr)
+        for failure in failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 1
+    print(
+        "smoke check passed: "
+        f"dataset={dataset_id}, instances={instances}, treatments={treatments}, "
+        f"models={models}, stages={len(expected_stages)}"
+    )
+    return 0
+
+
 def common_arguments(experiment: dict[str, Any]) -> list[str]:
     return [
         "--experiment-id", str(experiment["experiment_id"]),
@@ -154,6 +242,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("verify", help="verify the frozen reviewer artifacts")
+    smoke = subparsers.add_parser(
+        "smoke-check", help="validate a completed one-instance GPU smoke run"
+    )
+    smoke.add_argument("experiment_root", type=Path)
     commands = subparsers.add_parser("commands", help="print full-run commands")
     commands.add_argument(
         "experiment",
@@ -169,6 +261,8 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "verify":
         return verify()
+    if args.command == "smoke-check":
+        return smoke_check(args.experiment_root)
     if args.command == "commands":
         return print_commands(args.experiment)
     return figures(args.target, no_plots=args.no_plots)

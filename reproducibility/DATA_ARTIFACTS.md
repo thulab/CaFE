@@ -4,6 +4,18 @@ The external artifact is one self-contained ZIP paired with the frozen CaFE
 source revision recorded in its manifest. Sizes below were measured on the
 experiment server on 2026-09-02.
 
+The designated reviewer-data folder is
+[Tsinghua Cloud](https://cloud.tsinghua.edu.cn/d/77e1d26573a347e89b6b/).
+The current release candidate is `cafe-reviewer-artifact-v1.zip` (22,844,720,139
+bytes), with container SHA-256
+`3485293f8ba7b06fec17e492b07ca9cbb80812c3edd5b3f0d90c1f4cd4c57cf0` and
+manifest schema `cafe.reviewer_artifact.v1`. Its manifest binds the source
+snapshot to CaFE commit
+`55bd36e3aae9ce523d97faabde6e1243969d42da`. The folder URL is a distribution
+location, while the filename, byte size, digest, and manifest identify the
+bytes. Availability should be claimed only after an uploaded copy has been
+downloaded and checked against this digest.
+
 | Item | Measured size | Contents and purpose |
 |---|---:|---|
 | CaFE source snapshot | less than 10 MB | exact `research` revision, reproduction scripts, configs, compact analysis snapshots, and tests |

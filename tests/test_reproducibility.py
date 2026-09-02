@@ -59,6 +59,47 @@ def test_frozen_results_verify() -> None:
     assert "verified" in completed.stdout
 
 
+def test_smoke_check_accepts_complete_bounded_run(tmp_path: Path) -> None:
+    module = load_module("cafe_reproduce_smoke", REPRODUCIBILITY / "reproduce.py")
+    root = tmp_path / "reviewer-smoke"
+    dataset = root / "gift_ett1_h"
+    (root / "stage_contracts").mkdir(parents=True)
+    (root / "experiment.json").write_text("{}\n", encoding="utf-8")
+    for stage in ("generation", "validation", "inference", "analysis"):
+        (root / "stage_contracts" / f"{stage}.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+    records = {
+        "01_generation/manifest.json": {
+            "official_instance_count": 1,
+            "treatment_count": 5,
+            "config": {"capability_ids": ["trend"], "max_instances": 1},
+        },
+        "02_validation/report.json": {"accepted": True},
+        "03_inference/manifest.json": {
+            "complete": True,
+            "model_statuses": [
+                {"model_id": "Chronos-2", "status": "complete", "failure_count": 0}
+            ],
+        },
+        "04_analysis/manifest.json": {"schema_version": "test"},
+    }
+    for relative, record in records.items():
+        path = dataset / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+    suite = root / "04_analysis_suite" / "task_equal_summary.json"
+    suite.parent.mkdir(parents=True)
+    suite.write_text("{}\n", encoding="utf-8")
+
+    assert module.smoke_check(root) == 0
+
+
+def test_smoke_check_rejects_incomplete_run(tmp_path: Path) -> None:
+    module = load_module("cafe_reproduce_bad_smoke", REPRODUCIBILITY / "reproduce.py")
+    assert module.smoke_check(tmp_path) == 1
+
+
 def test_finetuning_dry_run_is_self_contained(tmp_path: Path) -> None:
     script = REPRODUCIBILITY / "chronos2_finetuning" / "run_finetuning.py"
     completed = subprocess.run(

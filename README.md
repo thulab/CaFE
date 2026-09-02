@@ -2,6 +2,8 @@
 
 > **Reviewer resources:** [Reproduce the experiments](reproducibility/README.md)
 > · [Explore the interactive leaderboard](paper_results/leaderboard/index.html)
+> · [Read the supplementary material](reproducibility/CaFE-supplementary.pdf)
+> · [Data artifacts (Tsinghua Cloud)](https://cloud.tsinghua.edu.cn/d/77e1d26573a347e89b6b/)
 
 CaFE (Capability-Focused Extension) extends existing time-series benchmarks
 with controlled capability treatments. Its benchmark-neutral native-window
