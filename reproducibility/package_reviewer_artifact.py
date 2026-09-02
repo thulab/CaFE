@@ -64,6 +64,16 @@ def contains_private_model(value: str) -> bool:
 
 
 def sanitize_string(value: str) -> str:
+    if not any(
+        marker in value
+        for marker in (
+            *PRIVATE_MODEL_TOKENS,
+            "/data/xmy",
+            "192.168.99.",
+            "timecho",
+        )
+    ):
+        return value
     replacements = (
         ("/data/xmy/CaFE", "${CAFE_ROOT}"),
         ("/data/xmy/chronos-forecasting", "${CHRONOS_ROOT}"),
@@ -171,19 +181,30 @@ def parquet_projection_columns(source: Path) -> tuple[list[str], list[str]]:
     import pyarrow.parquet as pq
 
     schema = pq.read_schema(source)
-    filter_columns = [name for name in schema.names if name in MODEL_ID_FIELDS]
-    text_columns = [
+    string_columns = [
         field.name
         for field in schema
         if pa.types.is_string(field.type) or pa.types.is_large_string(field.type)
     ]
-    has_embedded_metadata = any(
-        name.endswith("json") or "path" in name.lower() for name in text_columns
-    )
-    return filter_columns, text_columns if filter_columns or has_embedded_metadata else []
+    filter_columns = [
+        name
+        for name in string_columns
+        if name in MODEL_ID_FIELDS
+        or name in {"model", "models"}
+        or "model_id" in name
+        or name.endswith("_model")
+    ]
+    text_columns = [
+        name
+        for name in string_columns
+        if name.endswith("json") or "path" in name.lower()
+    ]
+    return filter_columns, text_columns
 
 
 def sanitize_embedded_json(value: str) -> tuple[str, bool]:
+    if sanitize_string(value) == value:
+        return value, True
     try:
         parsed = json.loads(value)
     except (json.JSONDecodeError, TypeError):
