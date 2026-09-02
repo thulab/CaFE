@@ -84,7 +84,7 @@ def sanitize_string(value: str) -> str:
         value = value.replace(source, replacement)
     value = re.sub(r"https?://192\.168\.99\.\d+(?::\d+)?", "${WORKER_ENDPOINT}", value)
     value = re.sub(r"\b192\.168\.99\.\d+\b", "${WORKER_IP}", value)
-    value = re.sub(r"\btimecho\d+\b", "${WORKER_HOST}", value)
+    value = re.sub(r"\btimecho[\w.-]*", "${WORKER_HOST}", value)
     for token in PRIVATE_MODEL_TOKENS:
         value = value.replace(token, "${OMITTED_UNRELEASED_MODEL}")
     return value
@@ -267,7 +267,7 @@ def project_parquet(
                 )
                 projected_values = pc.replace_substring_regex(
                     projected_values,
-                    pattern=r"\btimecho\d+\b",
+                    pattern=r"\btimecho[\w.-]*",
                     replacement="${WORKER_HOST}",
                 )
                 table = table.set_column(

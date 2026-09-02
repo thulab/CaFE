@@ -100,14 +100,14 @@ def test_reviewer_projection_removes_private_deployment_details() -> None:
         ],
         "root": "/data/xmy/CaFE/runtime/experiments/example",
         "endpoint": "http://192.168.99.92:10810",
-        "host": "timecho89",
+        "host": "timecho-vm",
     }
     projected = module.sanitize_json_value(payload)
     rendered = json.dumps(projected)
     assert "Timer-4.0" not in rendered
     assert "/data/xmy" not in rendered
     assert "192.168.99.92" not in rendered
-    assert "timecho89" not in rendered
+    assert "timecho-vm" not in rendered
     assert projected["models"] == ["Chronos-2"]
     assert projected["rows"] == [{"model_id": "Chronos-2", "score": 0.2}]
 
