@@ -166,14 +166,40 @@ def project_text(source: Path) -> tuple[bytes, str]:
     return ("\n".join(projected) + "\n").encode("utf-8"), original_hash
 
 
-def parquet_model_columns(source: Path) -> list[str]:
+def parquet_projection_columns(source: Path) -> tuple[list[str], list[str]]:
+    import pyarrow as pa
     import pyarrow.parquet as pq
 
-    names = pq.read_schema(source).names
-    return [name for name in names if name in MODEL_ID_FIELDS]
+    schema = pq.read_schema(source)
+    filter_columns = [name for name in schema.names if name in MODEL_ID_FIELDS]
+    text_columns = [
+        field.name
+        for field in schema
+        if pa.types.is_string(field.type) or pa.types.is_large_string(field.type)
+    ]
+    has_embedded_metadata = any(
+        name.endswith("json") or "path" in name.lower() for name in text_columns
+    )
+    return filter_columns, text_columns if filter_columns or has_embedded_metadata else []
 
 
-def project_parquet(source: Path, destination: Path, columns: list[str]) -> str:
+def sanitize_embedded_json(value: str) -> tuple[str, bool]:
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return sanitize_string(value), True
+    projected = sanitize_json_value(parsed)
+    if projected is DROP:
+        return "{}", False
+    return json.dumps(projected, sort_keys=True, separators=(",", ":")), True
+
+
+def project_parquet(
+    source: Path,
+    destination: Path,
+    filter_columns: list[str],
+    text_columns: list[str],
+) -> str:
     import pyarrow as pa
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
@@ -185,12 +211,36 @@ def project_parquet(source: Path, destination: Path, columns: list[str]) -> str:
         for batch in parquet_file.iter_batches(batch_size=65_536):
             table = pa.Table.from_batches([batch])
             mask = pa.array([True] * table.num_rows)
-            for column in columns:
+            for column in filter_columns:
                 values = pc.cast(table[column], pa.string())
                 keep = pc.invert(
                     pc.is_in(values, value_set=pa.array(PRIVATE_MODEL_TOKENS))
                 )
                 mask = pc.and_(mask, pc.fill_null(keep, True))
+            for column in text_columns:
+                field_index = table.schema.get_field_index(column)
+                field = table.schema.field(field_index)
+                values = table[column].to_pylist()
+                projected_values: list[str | None] = []
+                embedded_keep: list[bool] = []
+                for value in values:
+                    if value is None:
+                        projected_values.append(None)
+                        embedded_keep.append(True)
+                    elif column.endswith("json"):
+                        projected, retain = sanitize_embedded_json(value)
+                        projected_values.append(projected)
+                        embedded_keep.append(retain)
+                    else:
+                        projected_values.append(sanitize_string(value))
+                        embedded_keep.append(True)
+                table = table.set_column(
+                    field_index,
+                    field,
+                    pa.array(projected_values, type=field.type),
+                )
+                if not all(embedded_keep):
+                    mask = pc.and_(mask, pa.array(embedded_keep))
             writer.write_table(table.filter(mask))
     return original_hash
 
@@ -449,10 +499,15 @@ def build(args: argparse.Namespace) -> None:
                         print(f"archived {file_count} files", flush=True)
                     suffix = source.suffix.lower()
                     if suffix == ".parquet":
-                        columns = parquet_model_columns(source)
-                        if columns:
+                        filter_columns, text_columns = parquet_projection_columns(source)
+                        if filter_columns or text_columns:
                             projected_path = temporary_root / "projected.parquet"
-                            original_hash = project_parquet(source, projected_path, columns)
+                            original_hash = project_parquet(
+                                source,
+                                projected_path,
+                                filter_columns,
+                                text_columns,
+                            )
                             writer.add_path(
                                 projected_path,
                                 archive_path,

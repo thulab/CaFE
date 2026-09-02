@@ -110,3 +110,60 @@ def test_reviewer_projection_removes_private_deployment_details() -> None:
     assert "timecho89" not in rendered
     assert projected["models"] == ["Chronos-2"]
     assert projected["rows"] == [{"model_id": "Chronos-2", "score": 0.2}]
+
+    embedded, retain = module.sanitize_embedded_json(
+        json.dumps(
+            {
+                "context_groups": [
+                    {"model_ids": ["Chronos-2", "Timer-4.0"]},
+                ]
+            }
+        )
+    )
+    assert retain
+    assert json.loads(embedded) == {
+        "context_groups": [{"model_ids": ["Chronos-2"]}]
+    }
+
+
+def test_reviewer_parquet_projection_filters_rows_and_embedded_json(
+    tmp_path: Path,
+) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    module = load_module(
+        "cafe_package_reviewer_parquet",
+        REPRODUCIBILITY / "package_reviewer_artifact.py",
+    )
+    source = tmp_path / "source.parquet"
+    destination = tmp_path / "projected.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "model_id": ["Timer-4.0", "Chronos-2"],
+                "payload_json": [
+                    json.dumps({"model_ids": ["Timer-4.0"]}),
+                    json.dumps(
+                        {
+                            "model_ids": ["Chronos-2", "Timer-4.0"],
+                            "root": "/data/xmy/CaFE/runtime",
+                        }
+                    ),
+                ],
+            }
+        ),
+        source,
+    )
+    filter_columns, text_columns = module.parquet_projection_columns(source)
+    module.project_parquet(
+        source,
+        destination,
+        filter_columns,
+        text_columns,
+    )
+    rows = pq.read_table(destination).to_pylist()
+    assert len(rows) == 1
+    assert rows[0]["model_id"] == "Chronos-2"
+    assert "Timer-4.0" not in rows[0]["payload_json"]
+    assert "/data/xmy" not in rows[0]["payload_json"]
