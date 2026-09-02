@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Interactive public-model leaderboard for the CaFE forecasting benchmark extension."
+    />
+    <title>CaFE Forecasting Leaderboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to leaderboard</a>
+    <header class="site-header">
+      <a class="brand" href="../../README.md" aria-label="CaFE repository home">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span>
+          <strong>CaFE</strong>
+          <small>Capability-Focused Extension</small>
+        </span>
+      </a>
+      <nav aria-label="Reviewer navigation">
+        <a href="../../reproducibility/README.md">Reproduce</a>
+        <a href="../../paper_results/README.md">Results bundle</a>
+        <a href="../../README.md">Repository</a>
+      </nav>
+    </header>
+
+    <main id="main-content">
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">Frozen reviewer results · public models only</p>
+        <h1 id="page-title">Capability-focused forecasting leaderboard</h1>
+        <p class="hero-copy">
+          Compare authentic-future accuracy with performance on controlled
+          diagnostic probes. Every displayed metric is lower-is-better and
+          aggregated with equal weight across available benchmark suites.
+        </p>
+        <div class="hero-controls">
+          <label for="suite-select">
+            Benchmark view
+            <select id="suite-select"></select>
+          </label>
+          <p class="control-note" id="suite-note">
+            Coverage is shown explicitly when a model does not run on every suite.
+          </p>
+        </div>
+      </section>
+
+      <section class="summary-grid" aria-label="Active leaderboard summary">
+        <article class="summary-card">
+          <span>Leading model</span>
+          <strong id="summary-leader">—</strong>
+          <small id="summary-leader-metric">—</small>
+        </article>
+        <article class="summary-card">
+          <span>Benchmark scope</span>
+          <strong id="summary-suite">—</strong>
+          <small id="summary-coverage">—</small>
+        </article>
+        <article class="summary-card">
+          <span>Capability probes</span>
+          <strong>8 mechanisms</strong>
+          <small>Five controlled levels per mechanism</small>
+        </article>
+      </section>
+
+      <section class="panel" aria-labelledby="overall-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-index">01 · Overall leaderboard</p>
+            <h2 id="overall-heading">Rank models by evaluation metric</h2>
+            <p>
+              The active metric controls rank. Other columns remain visible to
+              expose differences between reference accuracy and treatment response.
+            </p>
+          </div>
+          <div class="metric-switch" id="overall-metric-switch" aria-label="Rank by metric"></div>
+        </div>
+        <div class="table-shell" tabindex="0" aria-label="Scrollable overall leaderboard">
+          <table id="overall-table">
+            <caption>Overall CaFE model leaderboard</caption>
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="table-footnote" id="overall-note"></p>
+      </section>
+
+      <section class="panel" aria-labelledby="capability-heading">
+        <div class="section-heading capability-heading">
+          <div>
+            <p class="section-index">02 · Capability leaderboard</p>
+            <h2 id="capability-heading">Inspect model × capability profiles</h2>
+            <p>
+              Select a probe metric, then rank by any capability or by the
+              eight-capability average. Pale cells indicate relative performance;
+              the best observed value in each column has a thin dark outline.
+            </p>
+          </div>
+          <div class="select-grid">
+            <label for="capability-metric-select">
+              Probe metric
+              <select id="capability-metric-select"></select>
+            </label>
+            <label for="capability-sort-select">
+              Rank by
+              <select id="capability-sort-select"></select>
+            </label>
+          </div>
+        </div>
+        <div class="table-shell capability-shell" tabindex="0" aria-label="Scrollable capability leaderboard">
+          <table id="capability-table">
+            <caption>CaFE model by capability leaderboard</caption>
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="legend" aria-label="Heatmap legend">
+          <span>Relative within-column score</span>
+          <span class="legend-swatch legend-best"></span><span>Best</span>
+          <span class="legend-swatch legend-mid"></span><span>Middle</span>
+          <span class="legend-swatch legend-high"></span><span>Higher error</span>
+        </div>
+      </section>
+
+      <section class="method-note" aria-labelledby="method-heading">
+        <div>
+          <p class="section-index">Reading the results</p>
+          <h2 id="method-heading">Aggregation and scope</h2>
+        </div>
+        <div class="method-columns">
+          <p>
+            <strong>Overall:</strong> each benchmark suite contributes one value.
+            Models with partial suite coverage remain visible and carry an explicit
+            coverage count.
+          </p>
+          <p>
+            <strong>Capabilities:</strong> five treatment levels are averaged within
+            each suite before suites are averaged. Missing cells are never imputed.
+          </p>
+          <p>
+            <strong>Source:</strong> frozen task-equal summaries under
+            <code>paper_results/work/main_experiments</code>. See the reproduction
+            guide for exact experiment identifiers and checksums.
+          </p>
+        </div>
+      </section>
+      <p id="live-status" class="sr-only" aria-live="polite"></p>
+    </main>
+
+    <footer>
+      <span>CaFE reviewer artifact</span>
+      <span>Lower is better for every displayed metric.</span>
+    </footer>
+
+    <script src="leaderboard-data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

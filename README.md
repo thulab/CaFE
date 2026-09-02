@@ -1,5 +1,8 @@
 # CaFE
 
+> **Reviewer resources:** [Reproduce the experiments](reproducibility/README.md)
+> · [Explore the interactive leaderboard](paper_results/leaderboard/index.html)
+
 CaFE (Capability-Focused Extension) extends existing time-series benchmarks
 with controlled capability treatments. Its benchmark-neutral native-window
 contract currently supports GIFT-Eval and the official FEV v0.8.0 Mini-20
@@ -49,7 +52,7 @@ must contain the same staged runtime under `--distributed-repo-root`:
 --worker-host gpu-host-a \
 --worker-host gpu-host-b \
 --devices 0,1,2,3 \
---distributed-repo-root /data/xmy/CaFE
+--distributed-repo-root /path/to/CaFE
 ```
 
 The controller verifies the staged runtime manifest on every remote host
@@ -66,7 +69,7 @@ context truncation happens afterward. Amplitude-controlled levels are calibrated
 by the full-history macro normalized RMS. Multi-seasonality instead keeps one
 shared full-history RMS across all five levels so that only the number of periods
 changes. Qualification checks the distinct contexts actually received by the
-seven evaluated models: every model-context macro distance must be in
+six public evaluated models: every model-context macro distance must be in
 `[0.10, 2.0]`, and every affected channel must remain at or below `3.0`. These
 checks reject a treatment group but never rescale it.
 
@@ -166,10 +169,10 @@ catalog:
 uv run python -m cafe.fev_pipeline \
   --experiment-id fev-mini-smoke \
   --task-id fev__ETT_1H \
-  --models Timer-4.0 \
+  --models Chronos-2 \
   --backend native \
-  --worker-host timecho92 \
-  --distributed-repo-root /data/xmy/CaFE \
+  --worker-host gpu-host-a \
+  --distributed-repo-root /path/to/CaFE \
   --capabilities trend \
   --max-instances 1
 ```
@@ -194,11 +197,11 @@ uv run cafe run \
   --experiment-id gift-v13-formal \
   --dataset-ids gift_electricity_h gift_ett1_h gift_jena_weather_h \
   --augmentation-seed 2026081601 \
-  --models Timer-4.0 Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \
+  --models Chronos-2 timesfm2.5 tirex2 moirai2 Timer-3.5 toto2.0 \
   --backend native \
-  --worker-host timecho92 \
+  --worker-host gpu-host-a \
   --devices 0,1,2,3 \
-  --distributed-repo-root /data/xmy/CaFE \
+  --distributed-repo-root /path/to/CaFE \
   --generation-workers 8 \
   --preprocess-workers 8 \
   --disk-budget-gb 40
@@ -225,12 +228,3 @@ and [docs/real_anchored_ten_capability_design.md](docs/real_anchored_ten_capabil
 contains the mechanism formulas. Historical four-card Timer Service bulk and
 concurrency measurements remain in
 [docs/inference_throughput_4x_rtx5090.md](docs/inference_throughput_4x_rtx5090.md).
-
-Reviewer-facing commands, frozen experiment identifiers, result checksums, and
-the separate Chronos-2 fine-tuning overlay are documented in
-[reproducibility/README.md](reproducibility/README.md).
-
-## History
-
-CaFE was extracted from TSBenchmark at commit `21b8452`. The
-`monorepo-cutover-2026-07-28` tag and ancestor history remain available.
