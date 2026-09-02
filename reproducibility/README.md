@@ -14,6 +14,34 @@ requirements:
 The paper reports only publicly available models. The machine-readable configs
 and the commands emitted here therefore omit unreleased systems.
 
+## Software and hardware environment
+
+Three reproduction levels have different requirements:
+
+| Level | Required environment | Compute and storage |
+|---|---|---|
+| Verify frozen artifacts | Linux or macOS, Python 3.11+ | CPU only, less than 1 GB RAM and disk |
+| Reconstruct tables and figures | Linux or macOS, Python 3.11+, `uv`, dependencies from `pyproject.toml`/`uv.lock` | CPU only; 4 cores, 8 GB RAM, and 5 GB free disk recommended |
+| End-to-end CaFE experiments | Linux x86-64, Python 3.12, NVIDIA driver compatible with CUDA 12.8, `uv sync --extra fev --extra inference --extra plots` | one or more NVIDIA GPUs; 32 GB VRAM per worker, 16 CPU cores, 64 GB RAM, and 100 GB free disk recommended |
+
+The recorded CaFE runs used Ubuntu 24.04.4 (kernel 6.8), Python 3.12.3,
+`uv` 0.12.0, NVIDIA driver 575.57.08, CUDA 12.8, and a primary worker with
+an Intel Xeon Gold 6530, 48 logical CPUs, 188 GiB RAM, and four RTX 5090 GPUs
+with 32 GB VRAM each. Distributed inference used two or three workers depending
+on the experiment block. Worker count changes throughput, not the experiment
+definition or deterministic treatment contracts.
+
+The principal recorded Python packages were PyTorch 2.10.0+cu128, NumPy 2.5.1,
+PyArrow 25.0.0, pandas 2.3.3, SciPy 1.18.1, Matplotlib 3.11.1, FEV 0.8.0,
+GluonTS 0.17.0, datasets 4.8.5, huggingface-hub 1.28.0, and safetensors
+0.8.0. `uv.lock` remains the authoritative CaFE dependency lock; the versions
+above document the machine that produced the archived outputs.
+
+Four GPUs and multiple workers are not correctness requirements. A reviewer
+may run models sequentially on fewer devices, provided each model's context
+and memory requirements are met. CPU-derived verification and plotting require
+no GPU.
+
 ## Quick verification
 
 Use Python 3.11 or newer:
@@ -135,7 +163,7 @@ structures over the same official instances. Run the ten commands emitted by
 
 The Git bundle already contains the ten compact suite summaries needed to
 reconstruct the reported stability figures. Full per-seed experiments are
-listed as optional audit artifacts in `DATA_ARTIFACTS.md`.
+included in the external reviewer artifact described by `DATA_ARTIFACTS.md`.
 
 ## Chronos-2 fine-tuning
 
@@ -166,7 +194,6 @@ weights.
 ## Data availability
 
 Git contains code, compact manifests, analysis snapshots, tables, and figures.
-Source benchmark files, replay contracts, predictions, and optional adapters
-belong in the external artifact archive. `DATA_ARTIFACTS.md` gives the proposed
-minimal and extended archive contents, their measured sizes, and why each item
-is or is not needed.
+Source benchmark files, replay contracts, predictions, and fine-tuned adapters
+belong in the external artifact archive. `DATA_ARTIFACTS.md` defines its single
+complete reviewer-facing layout.

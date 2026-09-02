@@ -103,7 +103,7 @@ def print_commands(name: str) -> int:
         stability = CONFIG["stability"]
         for seed in stability["augmentation_seeds"]:
             experiment = {
-                "experiment_id": f"gift-v15-short-stability-seed{seed}",
+                "experiment_id": stability["experiment_id_template"].format(seed=seed),
                 "augmentation_seed": seed,
             }
             command = [

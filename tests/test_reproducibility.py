@@ -15,6 +15,7 @@ def load_module(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -27,6 +28,11 @@ def test_reviewer_commands_use_only_public_models() -> None:
         assert not any("/data/xmy" in value for value in command)
         for model in module.CONFIG["public_models"]:
             assert model in command
+
+    stability = module.CONFIG["stability"]
+    assert stability["experiment_id_template"] == (
+        "gift-v15-short-stability10-head78ef32f-seed{seed}"
+    )
 
 
 def test_finetuning_config_pins_model_and_data() -> None:
@@ -79,3 +85,28 @@ def test_finetuning_dry_run_is_self_contained(tmp_path: Path) -> None:
     assert "gift-v15-short-qualified-feasible-moirai16k-seed2026082702-r1" in completed.stdout
     assert "--num-steps 40000" in completed.stdout
     assert "/data/xmy" not in completed.stdout
+
+
+def test_reviewer_projection_removes_private_deployment_details() -> None:
+    module = load_module(
+        "cafe_package_reviewer",
+        REPRODUCIBILITY / "package_reviewer_artifact.py",
+    )
+    payload = {
+        "models": ["Chronos-2", "Timer-4.0"],
+        "rows": [
+            {"model_id": "Timer-4.0", "score": 0.1},
+            {"model_id": "Chronos-2", "score": 0.2},
+        ],
+        "root": "/data/xmy/CaFE/runtime/experiments/example",
+        "endpoint": "http://192.168.99.92:10810",
+        "host": "timecho89",
+    }
+    projected = module.sanitize_json_value(payload)
+    rendered = json.dumps(projected)
+    assert "Timer-4.0" not in rendered
+    assert "/data/xmy" not in rendered
+    assert "192.168.99.92" not in rendered
+    assert "timecho89" not in rendered
+    assert projected["models"] == ["Chronos-2"]
+    assert projected["rows"] == [{"model_id": "Chronos-2", "score": 0.2}]
